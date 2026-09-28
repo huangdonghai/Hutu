@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Sample.Avalonia.Android/Sample.Avalonia.Android.csproj">
+      <Deploy />
+    </Project>
+    <Project Path="samples/Sample.Avalonia.Browser/Sample.Avalonia.Browser.csproj" />
+    <Project Path="samples/Sample.Avalonia.Desktop/Sample.Avalonia.Desktop.csproj" />
+    <Project Path="samples/Sample.Avalonia.iOS/Sample.Avalonia.iOS.csproj">
+      <Deploy />
+    </Project>
+    <Project Path="samples/Sample.Avalonia/Sample.Avalonia.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Packages.props" />
+  </Folder>
+  <Project Path="src/Hutu.Avalonia/Hutu.Avalonia.csproj" Id="706fcf07-ae08-4319-b163-5e78c3e992bc" />
+  <Project Path="src/Hutu.Maui/Hutu.Maui.csproj" Id="94cfab19-a968-4430-8824-110fcb8233f6" />
+  <Project Path="src/Hutu.MewUi/Hutu.MewUi.csproj" Id="4088c58d-4dd9-4109-9a1c-790ef460de66" />
+  <Project Path="src/Hutu.Uno/Hutu.Uno.csproj" Id="53be2c35-1235-49df-8753-a34335ce226a" />
+  <Project Path="src/Hutu/Hutu.csproj" Id="8568473a-82c8-4c7a-ace9-6e17fb275e5e" />
+</Solution>
