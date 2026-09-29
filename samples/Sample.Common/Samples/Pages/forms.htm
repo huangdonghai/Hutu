@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Form Controls</title>
+    <link rel="stylesheet" href="../Css/demo.css">
+    <style>
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+        label { display: block; margin-bottom: 5px; font-weight: 600; }
+        input, select, textarea, button { max-width: 100%; padding: 9px 11px; border: 1px solid #bdcbd9; border-radius: 6px; font: inherit; }
+        input[type="checkbox"], input[type="radio"] { width: auto; }
+        textarea { width: 100%; min-height: 90px; }
+        button { color: #fff; border-color: #0369a1; background: #0284c7; cursor: pointer; }
+        .choice { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+    </style>
+</head>
+<body>
+    <main class="demo">
+        <span class="eyebrow">HTML Basics / 03</span>
+        <h1>Form Controls</h1>
+        <p class="lead">Demo common input types, select menus, radio buttons, checkboxes, and buttons.</p>
+        <form class="demo-card" action="#" method="get">
+            <div class="form-grid">
+                <div><label for="name">Display Name</label><input id="name" name="name" type="text" placeholder="Enter a display name"></div>
+                <div><label for="email">Email Address</label><input id="email" name="email" type="email" placeholder="name@example.com"></div>
+                <div><label for="date">Date</label><input id="date" name="date" type="date"></div>
+                <div><label for="color">Theme Color</label><input id="color" name="color" type="color" value="#0284c7"></div>
+                <div><label for="topic">Test Category</label><select id="topic" name="topic"><option>HTML Elements</option><option>CSS Layout</option><option>Image Assets</option></select></div>
+            </div>
+            <h2>Display Preferences</h2>
+            <label class="choice"><input type="radio" name="mode" value="light" checked> Light Mode</label>
+            <label class="choice"><input type="radio" name="mode" value="dark"> Dark Mode</label>
+            <label class="choice"><input type="checkbox" name="newsletter"> Subscribe to test updates</label>
+            <label for="message">Notes</label>
+            <textarea id="message" name="message" placeholder="Enter a message"></textarea>
+            <p><button type="submit">Submit Form</button></p>
+        </form>
+    </main>
+</body>
+</html>

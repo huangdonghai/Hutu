@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>中日混排与文字方向</title>
+    <link rel="stylesheet" href="../Css/demo.css">
+    <style>
+        .comparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+        .sample { min-width: 0; padding: 14px; border: 1px solid #dce5ef; border-radius: 10px; background: #f8fafc; }
+        .sample h2 { margin: 0 0 10px; font-size: 16px; }
+        .vertical-box { height: 340px; overflow: auto; padding: 18px; border: 1px solid #cbd5e1; background: #fff; writing-mode: vertical-rl; }
+        .mixed { text-orientation: mixed; }
+        .upright { text-orientation: upright; }
+        .sideways { text-orientation: sideways; }
+        .tcy { text-combine-upright: all; }
+        .sample-copy { height: 100%; margin: 0; font-size: 17px; line-height: 1.9; }
+        .annotation { margin-top: 14px; color: #718096; font-size: 13px; }
+        @media (max-width: 560px) { .comparison { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <main class="demo">
+        <span class="eyebrow">竖排文字 / 混排</span>
+        <h1>中日混排与文字方向</h1>
+        <p class="lead">比较 mixed、upright 与 sideways 的文字方向，并检查中英文、数字与标点混排。</p>
+        <div class="comparison">
+            <section class="sample">
+                <h2>mixed（默认混合方向）</h2>
+                <div class="vertical-box mixed"><p class="sample-copy">中文与日本語を同じ段落に配置，English ABC 与数字<span class="tcy">2026</span>年并列测试。</p></div>
+            </section>
+            <section class="sample">
+                <h2>upright（字符保持直立）</h2>
+                <div class="vertical-box upright"><p class="sample-copy">中文、日本語、English ABC，以及标点「」『』的方向观察。</p></div>
+            </section>
+            <section class="sample">
+                <h2>sideways（字符横向旋转）</h2>
+                <div class="vertical-box sideways"><p class="sample-copy">中文、日本語、English ABC，以及横向文字旋转效果。</p></div>
+            </section>
+        </div>
+        <p class="annotation">外层使用 <code>writing-mode: vertical-rl</code>；可观察不同 <code>text-orientation</code> 对拉丁字符和中日韩文字的影响。</p>
+    </main>
+</body>
+</html>

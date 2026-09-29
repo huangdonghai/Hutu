@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title">
+  <title id="title">彩色几何图形</title>
+  <rect width="640" height="360" rx="24" fill="#f1f5f9" />
+  <circle cx="180" cy="180" r="92" fill="#38bdf8" />
+  <rect x="286" y="82" width="170" height="170" rx="22" transform="rotate(12 371 167)" fill="#fb7185" />
+  <path d="m505 260 70-140 70 140Z" transform="translate(-38 0)" fill="#a3e635" />
+  <circle cx="500" cy="90" r="20" fill="#fbbf24" />
+</svg>

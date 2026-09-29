@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Sample.Avalonia.ViewModels"
+             xmlns:hutu="using:Hutu.Avalonia"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="Sample.Avalonia.Views.MainView"
              x:DataType="vm:MainViewModel">
@@ -12,7 +13,14 @@
         <vm:MainViewModel />
     </Design.DataContext>
 
-    <TextBox Text="{Binding Greeting}"
-             HorizontalAlignment="Center"
-             VerticalAlignment="Center" />
+    <Grid RowDefinitions="Auto,*" RowSpacing="8">
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="6">
+            <Button Grid.Column="0" Content="←" ToolTip.Tip="后退" />
+            <Button Grid.Column="1" Content="→" ToolTip.Tip="前进" />
+            <Button Grid.Column="2" Content="⟳" ToolTip.Tip="刷新" />
+            <TextBox Grid.Column="3" x:Name="AddressBar" PlaceholderText="输入网址..." KeyDown="AddressBar_KeyDown" />
+        </Grid>
+
+        <hutu:HutuView Grid.Row="1" x:Name="MyHutuView"/>
+    </Grid>
 </ContentPage>

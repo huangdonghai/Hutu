@@ -9,6 +9,7 @@
       <Deploy />
     </Project>
     <Project Path="samples/Sample.Avalonia/Sample.Avalonia.csproj" />
+    <Project Path="samples/Sample.Common/Sample.Common.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path="Directory.Packages.props" />

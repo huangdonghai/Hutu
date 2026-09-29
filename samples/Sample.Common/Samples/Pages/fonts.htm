@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fonts and Typography</title>
+    <link rel="stylesheet" href="../Css/demo.css">
+    <style>
+        .font-sample { margin: 12px 0; padding: 14px; border: 1px solid #dce5ef; border-radius: 8px; }
+        .sans { font-family: Arial, "Microsoft YaHei", sans-serif; }
+        .serif { font-family: Georgia, "Songti SC", serif; }
+        .mono { font-family: Consolas, "Courier New", monospace; }
+        .weight { font-size: 21px; font-weight: 700; }
+        .spacing { letter-spacing: .16em; }
+        .line-height { max-width: 620px; line-height: 2; }
+    </style>
+</head>
+<body>
+    <main class="demo">
+        <span class="eyebrow">CSS Demos / 04</span>
+        <h1>Fonts and Typography</h1>
+        <p class="lead">Test font families, sizes, weights, letter spacing, and line height. Font files can be placed in Samples/Fonts.</p>
+        <div class="font-sample sans">Sans-serif: The quick brown fox jumps over the lazy dog.</div>
+        <div class="font-sample serif">Serif: Typography makes written language readable.</div>
+        <div class="font-sample mono">Monospace: const answer = 42;</div>
+        <p class="weight">Bold Weight / 700</p>
+        <p class="spacing">Letter Spacing Test</p>
+        <p class="line-height">Line-height test: This paragraph uses increased line height to demonstrate the readability of multi-line text. Resize the viewport to see the paragraph wrap naturally while maintaining comfortable spacing.</p>
+        <p class="note">This demo uses generic system font families and does not depend on web fonts. Add a redistributable font file to the Fonts directory and declare it with @font-face in a stylesheet.</p>
+    </main>
+</body>
+</html>

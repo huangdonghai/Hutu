@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>日本語の縦書き</title>
+    <link rel="stylesheet" href="../Css/demo.css">
+    <style>
+        .vertical-panel {
+            height: 460px;
+            overflow: auto;
+            padding: 24px;
+            border: 1px solid #e5c9c9;
+            border-radius: 10px;
+            color: #382b31;
+            background: #fff8f6;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+        }
+        .vertical-title { margin: 0 0 0 22px; color: #963d50; font-size: 24px; }
+        .vertical-copy { height: 100%; margin: 0 18px 0 0; font-size: 18px; line-height: 2; }
+        ruby { ruby-position: over; }
+        rt { color: #a65367; font-size: 11px; }
+        .tcy { text-combine-upright: all; }
+        .annotation { margin-top: 14px; color: #718096; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <main class="demo">
+        <span class="eyebrow">縦書き / 日本語</span>
+        <h1>日本語の縦書き</h1>
+        <p class="lead">日本語の句読点、漢字、ひらがな、カタカナ、ルビを縦書きで表示します。</p>
+        <section class="vertical-panel" aria-label="日本語の縦書きサンプル">
+            <h2 class="vertical-title">春の朝</h2>
+            <p class="vertical-copy"><ruby>春<rt>はる</rt></ruby>の朝、窓を開けると、やわらかな風が部屋を通り抜けた。庭の小さな木には新しい葉が芽生え、鳥の声が静かな空にひびいている。遠くの山は朝もやに包まれ、町はゆっくりと目を覚ます。今日は<span class="tcy">2026</span>年、縦書きの句読点「、。」と長音ー、ルビの配置も確認します。</p>
+        </section>
+        <p class="annotation">ルビには HTML の <code>&lt;ruby&gt;</code> と <code>&lt;rt&gt;</code> を使用しています。</p>
+    </main>
+</body>
+</html>

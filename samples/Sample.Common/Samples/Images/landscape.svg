@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
+  <title id="title">山谷日出</title>
+  <desc id="desc">蓝色天空、暖色太阳与层叠的山脉</desc>
+  <defs>
+	<linearGradient id="sky" x2="0" y2="1">
+	  <stop stop-color="#7dd3fc" />
+	  <stop offset="1" stop-color="#fef3c7" />
+	</linearGradient>
+	<linearGradient id="front" x2="0" y2="1">
+	  <stop stop-color="#0f766e" />
+	  <stop offset="1" stop-color="#164e63" />
+	</linearGradient>
+  </defs>
+  <rect width="960" height="420" fill="url(#sky)" />
+  <circle cx="730" cy="120" r="58" fill="#fb923c" />
+  <path d="M0 310 190 115l155 165 160-190 250 220 110-115 95 115v110H0Z" fill="#64748b" />
+  <path d="m0 340 220-145 155 130 190-170 230 185 95-75 70 55v100H0Z" fill="url(#front)" />
+  <path d="M0 355q170-45 340 5t330 0 290 5v55H0Z" fill="#0f766e" opacity=".65" />
+</svg>

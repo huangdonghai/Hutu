@@ -23,5 +23,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Hutu.Avalonia\Hutu.Avalonia.csproj" />
+    <ProjectReference Include="..\Sample.Common\Sample.Common.csproj" />
   </ItemGroup>
 </Project>

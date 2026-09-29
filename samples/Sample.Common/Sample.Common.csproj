@@ -7,8 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AngleSharp" />
-    <PackageReference Include="AngleSharp.Css" />
+    <!-- 让 Samples 文件夹下的所有文件（包括子目录）自动全部成为嵌入式资源 -->
+    <EmbeddedResource Include="Samples\**\*" />
   </ItemGroup>
-
 </Project>

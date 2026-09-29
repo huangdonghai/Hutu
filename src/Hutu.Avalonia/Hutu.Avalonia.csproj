@@ -7,6 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="AngleSharp" />
+    <PackageReference Include="AngleSharp.Css" />
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Skia" />
   </ItemGroup>

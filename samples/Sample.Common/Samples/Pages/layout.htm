@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Flexbox and Grid Layout</title>
+    <link rel="stylesheet" href="../Css/demo.css">
+    <style>
+        .flex-row { display: flex; flex-wrap: wrap; gap: 12px; }
+        .flex-item { flex: 1 1 145px; min-height: 100px; padding: 16px; border-radius: 8px; color: #164e63; background: #cffafe; }
+        .grid-demo { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+        .grid-item { min-height: 76px; padding: 14px; border-radius: 8px; color: #312e81; background: #e0e7ff; }
+        .grid-item:first-child { grid-column: span 2; }
+        @media (max-width: 520px) { .grid-demo { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    </style>
+</head>
+<body>
+    <main class="demo">
+        <span class="eyebrow">CSS Demos / 02</span>
+        <h1>Flexbox and Grid Layout</h1>
+        <p class="lead">Compare a wrapping flex layout with a two-dimensional grid at different viewport widths.</p>
+        <h2>Flexbox: Wrapping Cards</h2>
+        <div class="flex-row">
+            <div class="flex-item"><strong>Item A</strong><br>Flex growth and base width</div>
+            <div class="flex-item"><strong>Item B</strong><br>Gaps and automatic wrapping</div>
+            <div class="flex-item"><strong>Item C</strong><br>Content-driven height</div>
+        </div>
+        <h2>Grid: Three-Column Layout</h2>
+        <div class="grid-demo">
+            <div class="grid-item">Item spanning two columns</div>
+            <div class="grid-item">Item 2</div>
+            <div class="grid-item">Item 3</div>
+            <div class="grid-item">Item 4</div>
+            <div class="grid-item">Item 5</div>
+        </div>
+    </main>
+</body>
+</html>

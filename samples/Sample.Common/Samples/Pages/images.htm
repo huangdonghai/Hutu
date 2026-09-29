@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Images and Backgrounds</title>
+    <link rel="stylesheet" href="../Css/demo.css">
+    <style>
+        figure { margin: 16px 0 26px; }
+        figure img { display: block; width: 100%; max-height: 320px; object-fit: cover; border-radius: 12px; }
+        figcaption { margin-top: 7px; color: #718096; font-size: 13px; }
+        .background-panel { min-height: 190px; padding: 22px; border-radius: 12px; color: #fff; background: linear-gradient(90deg, rgba(15, 23, 42, .72), rgba(15, 23, 42, .08)), url('../Images/landscape.svg') center / cover no-repeat; }
+        .shape-image { width: min(100%, 640px); }
+    </style>
+</head>
+<body>
+    <main class="demo">
+        <span class="eyebrow">CSS Demos / 03</span>
+        <h1>Images and Backgrounds</h1>
+        <p class="lead">Image assets are in Samples/Images for testing relative URLs, sizing, and background rendering.</p>
+        <figure>
+            <img src="../Images/landscape.svg" alt="Illustration of sunrise over a blue mountain valley">
+            <figcaption>SVG image: scales to the container width and is cropped with object-fit.</figcaption>
+        </figure>
+        <h2>Shapes and Colors</h2>
+        <img class="shape-image" src="../Images/color-shapes.svg" alt="A blue circle, pink square, and green triangle">
+        <h2>CSS Background Image with Gradient Overlay</h2>
+        <div class="background-panel"><strong>Background Test Area</strong><br>Combined image, gradient, and background positioning</div>
+    </main>
+</body>
+</html>

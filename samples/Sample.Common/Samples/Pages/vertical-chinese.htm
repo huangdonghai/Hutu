@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>中文竖排</title>
+    <link rel="stylesheet" href="../Css/demo.css">
+    <style>
+        .vertical-panel {
+            height: 440px;
+            overflow: auto;
+            padding: 24px;
+            border: 1px solid #d8c7a1;
+            border-radius: 10px;
+            color: #342d25;
+            background: #fbf6e9;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+        }
+        .vertical-title { margin: 0 0 0 22px; color: #8b3a32; font-size: 24px; }
+        .vertical-copy { height: 100%; margin: 0 18px 0 0; font-size: 18px; line-height: 2; }
+        .tcy { text-combine-upright: all; }
+        .annotation { margin-top: 14px; color: #718096; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <main class="demo">
+        <span class="eyebrow">竖排文字 / 中文</span>
+        <h1>中文竖排阅读</h1>
+        <p class="lead">使用 <code>writing-mode: vertical-rl</code> 模拟传统中文从右向左、从上向下的排版。</p>
+        <section class="vertical-panel" aria-label="中文竖排示例">
+            <h2 class="vertical-title">春日小记</h2>
+            <p class="vertical-copy">春风入城，细雨润物。窗前新叶初展，远处江水映着晨光。人们沿着街道慢慢前行，听见檐下风铃清脆作响。愿每一次阅读，都能发现文字与留白之间的宁静。今日是<span class="tcy">2026</span>年，继续测试数字组合、标点符号（「」『』）以及中文竖排的显示效果。</p>
+        </section>
+        <p class="annotation">提示：面板可滚动；数字组合使用 <code>text-combine-upright</code>。</p>
+    </main>
+</body>
+</html>

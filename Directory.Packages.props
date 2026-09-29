@@ -6,8 +6,8 @@
   <ItemGroup>
     <!-- Avalonia packages -->
     <!-- Important: keep version in sync! -->
-    <PackageVersion Include="AngleSharp" Version="1.8.2" />
-    <PackageVersion Include="AngleSharp.Css" Version="1.1.2" />
+    <PackageVersion Include="AngleSharp" Version="1.8.3-beta.762" />
+    <PackageVersion Include="AngleSharp.Css" Version="1.1.3-beta.330" />
     <PackageVersion Include="Avalonia" Version="12.1.3" />
     <PackageVersion Include="Avalonia.Skia" Version="12.1.3" />
     <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.3" />
@@ -18,7 +18,10 @@
     <PackageVersion Include="Avalonia.Android" Version="12.1.3" />
     <PackageVersion Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3" />
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageVersion Include="HarfBuzzSharp" Version="14.2.1.500-preview.1.26471.14" />
+    <PackageVersion Include="SkiaSharp" Version="4.155.0-preview.1.26471.14" />
     <PackageVersion Include="SkiaSharp.HarfBuzz" Version="4.154.0-preview.1.26454.9" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.WebAssembly" Version="4.155.0-preview.1.26471.14" />
     <PackageVersion Include="Xamarin.AndroidX.Core.SplashScreen" Version="1.0.1.15" />
   </ItemGroup>
 </Project>
