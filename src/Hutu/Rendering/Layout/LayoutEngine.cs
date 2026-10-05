@@ -1,5 +1,6 @@
 using Hutu.Rendering.Boxes;
 using System;
+using System.Collections.Generic;
 
 namespace Hutu.Rendering.Layout;
 
@@ -7,22 +8,56 @@ namespace Hutu.Rendering.Layout;
 /// Turns the box tree into a layout tree with resolved geometry.
 /// </summary>
 /// <remarks>
-/// This implements the block and inline formatting contexts the MVP needs: a block stacks its
-/// block-level children and resolves the box model around them, while a block whose content is
-/// entirely inline-level delegates to <see cref="InlineLayout"/>. Adjacent sibling margins collapse;
-/// parent/child collapsing, floats, positioning, flex and grid are not implemented yet.
+/// Layout runs in two phases. <see cref="Measure"/> answers how large a box wants to be given the
+/// space that is available to it, without producing any geometry; <see cref="Arrange"/> then fixes
+/// that size into a rectangle and positions the content. A formatting context that has to decide how
+/// to share space - flex, grid, a table - needs the sizes before it can hand positions out, which is
+/// exactly what the split provides.
+/// <para>
+/// Sizes are resolved against the containing block rather than the viewport. A percentage is a
+/// fraction of the containing block, <c>width: auto</c> fills whatever its margins leave of it, and a
+/// declared size covers the padding and the border only when <c>box-sizing</c> says so. The
+/// containing block of a box is its parent's content box; the one the root sees is the viewport.
+/// Both facts are carried by <see cref="LayoutContext"/> rather than read from the render device.
+/// </para>
+/// <para>
+/// Measurements are cached for the duration of a pass, keyed by the box and the basis the size was
+/// resolved from. A viewport-sized layout therefore measures each box at most once per distinct
+/// available width, however many times a formatting context negotiates around it.
+/// </para>
 /// </remarks>
 public sealed class LayoutEngine
 {
     private readonly InlineLayout _inline;
+    private readonly BlockLayout _block;
+    private readonly FlexFormattingContext _flex;
+    private readonly GridFormattingContext _grid;
+    private readonly TableFormattingContext _table;
+    private readonly PositionedLayout _positioned;
+    private readonly ITextMeasurer _measurer;
+    private readonly Dictionary<MeasureKey, Size> _cache = new();
 
-    public LayoutEngine(ITextMeasurer measurer) => _inline = new InlineLayout(measurer);
+    public LayoutEngine(ITextMeasurer measurer)
+    {
+        _measurer = measurer ?? throw new ArgumentNullException(nameof(measurer));
+        _inline = new InlineLayout(measurer);
+        _block = new BlockLayout(this, _inline);
+        _flex = new FlexFormattingContext(this);
+        _grid = new GridFormattingContext(this);
+        _table = new TableFormattingContext(this);
+        _positioned = new PositionedLayout(this);
+    }
 
     /// <summary>
-    /// Lays the box tree out at the given viewport width. The root is placed at the origin; null
-    /// means there is nothing to lay out.
+    /// Lays the box tree out in the given viewport. The root is placed at the origin; null means
+    /// there is nothing to lay out.
     /// </summary>
-    public LayoutResult? Layout(Box? root, Double viewportWidth)
+    /// <param name="viewportHeight">
+    /// The viewport's height, which is the initial containing block's. A percentage height only
+    /// resolves against it when it is positive; zero means the initial containing block has no
+    /// definite height and a percentage height behaves as <c>auto</c>.
+    /// </param>
+    public LayoutResult? Layout(Box? root, Double viewportWidth, Double viewportHeight = 0, Offset scroll = default)
     {
         if (root is null)
         {
@@ -30,179 +65,196 @@ public sealed class LayoutEngine
         }
 
         var width = Math.Max(1, viewportWidth);
-        var rootBox = LayoutBlock(root, width, 0, 0);
+        var viewport = new Size(width, Math.Max(0, viewportHeight));
+        var context = new LayoutContext(viewport, viewport, scroll, _measurer);
+
+        _cache.Clear();
+
+        var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+        var margin = BoxModel.UsedMargin(root.Style, width, size.Width);
+        var rootBox = Arrange(root, new Rect(margin.Left, 0, size.Width, size.Height), context);
         var height = rootBox.BorderBox.Bottom + rootBox.Margin.Bottom;
 
         return new LayoutResult(rootBox, width, height);
     }
 
-    private LayoutBox LayoutBlock(Box box, Double availableWidth, Double borderX, Double borderY)
+    /// <summary>
+    /// Measures a box against the available space, returning the size of its border box. The result
+    /// is cached, so a formatting context may ask repeatedly without paying for it repeatedly.
+    /// </summary>
+    internal Size Measure(Box box, MeasureConstraints constraints, LayoutContext context)
     {
-        var style = box.Style;
-        var margin = MarginOf(style);
-        var border = BorderOf(style);
-        var padding = PaddingOf(style);
+        var key = new MeasureKey(
+            box,
+            constraints.AvailableWidth ?? context.ContainingBlock.Width,
+            constraints.AvailableHeight ?? context.ContainingBlock.Height);
 
-        if (box.Kind == BoxKind.HorizontalRule && border.Horizontal == 0 && border.Vertical == 0)
+        if (_cache.TryGetValue(key, out var cached))
         {
-            // A rule with no border of its own still draws its line.
-            border = new Thickness(1, 0, 0, 0);
+            return cached;
         }
 
-        if (box.IsReplaced)
+        var size = MeasureCore(box, constraints, context);
+        _cache[key] = size;
+        return size;
+    }
+
+    /// <summary>
+    /// Produces the geometry of a measured box inside the given border box and applies whatever its
+    /// <c>position</c> then asks of it: a relative displacement, or the rule that pins a sticky box.
+    /// </summary>
+    internal LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context)
+    {
+        var layout = ArrangeCore(box, borderBox, context);
+
+        // An anonymous box borrows its parent's style; honouring the positioning it inherits would
+        // displace the wrapper a second time, because the parent's own displacement already took it
+        // along.
+        if (box.IsAnonymous)
         {
-            return LayoutReplaced(box, style, margin, border, padding, borderX, borderY);
+            return layout;
         }
 
-        Double borderBoxWidth;
-        Double contentWidth;
+        var position = PositionStyle.Read(box.Style);
 
-        if (style.Width is { } specifiedWidth)
-        {
-            contentWidth = Math.Max(0, specifiedWidth);
-            borderBoxWidth = contentWidth + padding.Horizontal + border.Horizontal;
-        }
-        else
-        {
-            borderBoxWidth = Math.Max(0, availableWidth);
-            contentWidth = Math.Max(0, borderBoxWidth - padding.Horizontal - border.Horizontal);
+        layout.Position = position.Position;
+        layout.ZIndex = position.HasZIndex ? position.ZIndex : 0;
 
-            // min-width/max-width constrain the content box; the border box follows.
-            if (style.MaxWidth is { } maxWidth && contentWidth > maxWidth)
-            {
-                contentWidth = maxWidth;
-                borderBoxWidth = contentWidth + padding.Horizontal + border.Horizontal;
-            }
-
-            if (style.MinWidth is { } minWidth && contentWidth < minWidth)
-            {
-                contentWidth = minWidth;
-                borderBoxWidth = contentWidth + padding.Horizontal + border.Horizontal;
-            }
-        }
-
-        var layout = new LayoutBox(box, box.Kind == BoxKind.HorizontalRule ? LayoutKind.HorizontalRule : LayoutKind.Block)
-        {
-            Margin = margin,
-            Border = border,
-            Padding = padding,
-            BorderBox = new Rect(borderX, borderY, borderBoxWidth, 0),
-        };
-
-        var contentX = borderX + border.Left + padding.Left;
-        var contentY = borderY + border.Top + padding.Top;
-        Double contentHeight;
-
-        if (box.Children.Count == 0)
-        {
-            contentHeight = 0;
-        }
-        else if (HasBlockChildren(box))
-        {
-            contentHeight = LayoutBlockChildren(box, layout, contentX, contentY, contentWidth);
-        }
-        else
-        {
-            contentHeight = _inline.Layout(box, layout, contentX, contentY, contentWidth);
-        }
-
-        var height = style.Height ?? contentHeight;
-
-        if (style.MaxHeight is { } maxHeight && height > maxHeight)
-        {
-            height = maxHeight;
-        }
-
-        if (style.MinHeight is { } minHeight && height < minHeight)
-        {
-            height = minHeight;
-        }
-
-        layout.BorderBox = new Rect(borderX, borderY, borderBoxWidth, height + padding.Vertical + border.Vertical);
-
+        _positioned.Finish(layout, position, context);
         return layout;
     }
 
     /// <summary>
-    /// Lays out a replaced box - an image. Its used size comes from the intrinsic size and the CSS
-    /// constraints, and it has no children to lay out, so the box is complete once sized.
+    /// Lays an out-of-flow box out against its containing block. It is the block context that calls
+    /// this, once the in-flow children have been placed, because an <c>absolute</c> or <c>fixed</c>
+    /// box takes no part in their stacking.
     /// </summary>
-    private static LayoutBox LayoutReplaced(
-        Box box,
-        ComputedStyle style,
-        Thickness margin,
-        Thickness border,
-        Thickness padding,
-        Double borderX,
-        Double borderY)
+    internal LayoutBox ArrangePositioned(Box box, Offset staticPosition, LayoutContext context) =>
+        _positioned.Arrange(box, staticPosition, context);
+
+    /// <summary>Produces the geometry of a measured box inside the given border box.</summary>
+    private LayoutBox ArrangeCore(Box box, Rect borderBox, LayoutContext context) =>
+        box.Kind switch
+        {
+            BoxKind.Flex => _flex.Arrange(box, borderBox, context),
+            BoxKind.Grid => _grid.Arrange(box, borderBox, context),
+            BoxKind.Table => _table.Arrange(box, borderBox, context),
+            _ => box.IsReplaced
+                ? ArrangeReplaced(box, borderBox, context)
+                : _block.Arrange(box, borderBox, context),
+        };
+
+    /// <summary>
+    /// Measures the sizes a box's content wants when nothing constrains it: its <c>min-content</c>
+    /// and <c>max-content</c> inline sizes. A flex or grid container answers for its items, so an
+    /// item with an automatic basis can ask its own intrinsic width before anything is decided.
+    /// </summary>
+    internal IntrinsicSize MeasureIntrinsic(Box box, LayoutContext context) =>
+        box.Kind switch
+        {
+            BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
+            BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
+            BoxKind.Table => _table.MeasureIntrinsic(box, context),
+            _ => _block.MeasureIntrinsic(box, context),
+        };
+
+    /// <summary>
+    /// The sizes a box's content wants once its own declared width is set aside. It is what the
+    /// automatic minimum size of a flex item is built from, which is why the declared width must not
+    /// be consulted here.
+    /// </summary>
+    internal IntrinsicSize MeasureContentIntrinsic(Box box, LayoutContext context) =>
+        box.Kind switch
+        {
+            BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
+            BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
+            BoxKind.Table => _table.MeasureIntrinsic(box, context),
+            _ => _block.MeasureContentIntrinsic(box, context),
+        };
+
+    private Size MeasureCore(Box box, MeasureConstraints constraints, LayoutContext context) =>
+        box.Kind switch
+        {
+            BoxKind.Flex => _flex.Measure(box, constraints, context),
+            BoxKind.Grid => _grid.Measure(box, constraints, context),
+            BoxKind.Table => _table.Measure(box, constraints, context),
+            _ => box.IsReplaced
+                ? MeasureReplaced(box, constraints, context)
+                : _block.Measure(box, constraints, context),
+        };
+
+    /// <summary>
+    /// Measures a replaced box - an image. Its used size comes from the intrinsic size and the CSS
+    /// constraints; the insets are added around it, because the constraints describe the content.
+    /// </summary>
+    private static Size MeasureReplaced(Box box, MeasureConstraints constraints, LayoutContext context)
     {
-        var (usedWidth, usedHeight) = ReplacedSizing.Resolve(box);
+        var style = box.Style;
+        var basisWidth = constraints.AvailableWidth ?? context.ContainingBlock.Width;
+        var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
+        var (width, height) = ReplacedSizing.Resolve(box, basisWidth, basisHeight);
+        var padding = style.Padding.Resolve(basisWidth);
+
+        return new Size(
+            width + padding.Horizontal + BorderHorizontal(style),
+            height + padding.Vertical + BorderVertical(style));
+    }
+
+    private static LayoutBox ArrangeReplaced(Box box, Rect borderBox, LayoutContext context)
+    {
+        var style = box.Style;
+        var basis = context.ContainingBlock.Width;
 
         return new LayoutBox(box, LayoutKind.Image)
         {
-            Margin = margin,
-            Border = border,
-            Padding = padding,
+            Margin = BoxModel.UsedMargin(style, basis, borderBox.Width),
+            Padding = style.Padding.Resolve(basis),
+            Border = new Thickness(
+                style.BorderTopWidth,
+                style.BorderRightWidth,
+                style.BorderBottomWidth,
+                style.BorderLeftWidth),
             ImageUrl = box.SourceUrl,
             ImageFit = style.ObjectFit,
             CornerRadius = style.CornerRadius,
-            BorderBox = new Rect(
-                borderX,
-                borderY,
-                usedWidth + padding.Horizontal + border.Horizontal,
-                usedHeight + padding.Vertical + border.Vertical),
+            BorderBox = borderBox,
         };
     }
 
-    private Double LayoutBlockChildren(Box box, LayoutBox parent, Double contentX, Double contentY, Double contentWidth)
+    private static Double BorderHorizontal(ComputedStyle style) =>
+        style.BorderLeftWidth + style.BorderRightWidth;
+
+    private static Double BorderVertical(ComputedStyle style) =>
+        style.BorderTopWidth + style.BorderBottomWidth;
+
+    /// <summary>
+    /// The cache key: a box and the basis its size resolves from. Both dimensions are part of it
+    /// because a percentage height depends on the containing block's height as much as a percentage
+    /// width does on its width.
+    /// </summary>
+    private readonly struct MeasureKey : IEquatable<MeasureKey>
     {
-        var cursor = contentY;
-        var previousBottomMargin = 0.0;
-        var first = true;
+        private readonly Box _box;
+        private readonly Double _width;
+        private readonly Double _height;
 
-        foreach (var child in box.Children)
+        public MeasureKey(Box box, Double width, Double height)
         {
-            if (!child.IsBlockLevel)
-            {
-                continue;
-            }
-
-            var margin = MarginOf(child.Style);
-            var spacing = first ? margin.Top : Math.Max(previousBottomMargin, margin.Top);
-            var childLayout = LayoutBlock(
-                child,
-                Math.Max(0, contentWidth - margin.Horizontal),
-                contentX + margin.Left,
-                cursor + spacing);
-
-            parent.Children.Add(childLayout);
-            cursor = childLayout.BorderBox.Bottom;
-            previousBottomMargin = margin.Bottom;
-            first = false;
+            _box = box;
+            _width = width;
+            _height = height;
         }
 
-        return cursor + previousBottomMargin - contentY;
+        public Boolean Equals(MeasureKey other) =>
+            ReferenceEquals(_box, other._box) &&
+            _width.Equals(other._width) &&
+            _height.Equals(other._height);
+
+        public override Boolean Equals(Object? obj) => obj is MeasureKey other && Equals(other);
+
+        public override Int32 GetHashCode() => HashCode.Combine(
+            System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_box),
+            _width,
+            _height);
     }
-
-    private static Boolean HasBlockChildren(Box box)
-    {
-        foreach (var child in box.Children)
-        {
-            if (child.IsBlockLevel)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static Thickness MarginOf(ComputedStyle style) =>
-        new(style.MarginTop, style.MarginRight, style.MarginBottom, style.MarginLeft);
-
-    private static Thickness BorderOf(ComputedStyle style) =>
-        new(style.BorderTopWidth, style.BorderRightWidth, style.BorderBottomWidth, style.BorderLeftWidth);
-
-    private static Thickness PaddingOf(ComputedStyle style) =>
-        new(style.PaddingTop, style.PaddingRight, style.PaddingBottom, style.PaddingLeft);
 }

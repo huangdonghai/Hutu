@@ -21,6 +21,91 @@ public sealed class InlineLayout
     public InlineLayout(ITextMeasurer measurer) => _measurer = measurer;
 
     /// <summary>
+    /// Measures the height the inline children need at the given content width, without producing
+    /// any geometry. This is what the measuring phase of a block asks for before it knows where the
+    /// lines will sit.
+    /// </summary>
+    public Double MeasureHeight(Box container, Double contentWidth)
+    {
+        var items = new List<InlineItem>();
+        Collect(container, items);
+
+        if (items.Count == 0)
+        {
+            return 0;
+        }
+
+        var height = 0.0;
+
+        foreach (var line in BuildLines(items, contentWidth))
+        {
+            if (line.Height > 0)
+            {
+                height += line.Height;
+            }
+        }
+
+        return height;
+    }
+
+    /// <summary>
+    /// Measures the intrinsic inline widths of the container's content: the widest thing that cannot
+    /// be broken - <c>min-content</c> - and the width on a single line - <c>max-content</c>.
+    /// </summary>
+    /// <param name="basis">
+    /// The width a percentage among a replaced box's constraints resolves against; there is no
+    /// definite line to use, so the containing block's width stands in.
+    /// </param>
+    public IntrinsicSize MeasureIntrinsic(Box container, Double basis)
+    {
+        var items = new List<InlineItem>();
+        Collect(container, items);
+
+        var minContent = 0.0;
+        var maxContent = 0.0;
+        var unbreakable = 0.0;
+
+        foreach (var item in items)
+        {
+            if (item.IsBreak)
+            {
+                minContent = Math.Max(minContent, unbreakable);
+                unbreakable = 0;
+                continue;
+            }
+
+            if (item.IsReplaced)
+            {
+                var (width, _) = ReplacedSizing.Resolve(item.Box, basis, 0);
+                minContent = Math.Max(minContent, width);
+                maxContent += width;
+                unbreakable += width;
+                continue;
+            }
+
+            foreach (var chunk in TextChunker.Chunks(item.Text!))
+            {
+                var width = _measurer.MeasureWidth(chunk, item.Style.GetFont());
+                maxContent += width;
+
+                if (TextChunker.IsWhiteSpace(chunk))
+                {
+                    // A collapsible space is a break opportunity: the run before it can be split.
+                    minContent = Math.Max(minContent, unbreakable);
+                    unbreakable = 0;
+                }
+                else
+                {
+                    unbreakable += width;
+                }
+            }
+        }
+
+        minContent = Math.Max(minContent, unbreakable);
+        return new IntrinsicSize(minContent, Math.Max(maxContent, minContent));
+    }
+
+    /// <summary>
     /// Lays out the inline children of the container, appending line boxes to it, and returns the
     /// used height.
     /// </summary>
@@ -171,7 +256,10 @@ public sealed class InlineLayout
 
             if (item.IsReplaced)
             {
-                var (width, height) = ReplacedSizing.Resolve(item.Box);
+                // The container's content width is the containing block of everything on the line,
+                // so that is what a percentage width among the item's constraints resolves against.
+                // A line box has no definite height, so a percentage height behaves as `auto`.
+                var (width, height) = ReplacedSizing.Resolve(item.Box, maxWidth, 0);
 
                 if (builder.HasContent && maxWidth > 0 && builder.Width + width > maxWidth)
                 {

@@ -2,6 +2,7 @@ using Hutu.Rendering.Layout;
 using Hutu.Rendering.Paint;
 using SkiaSharp;
 using System;
+using System.Collections.Generic;
 
 namespace Hutu.Skia;
 
@@ -28,11 +29,41 @@ public sealed class SkiaPaintExecutor
         _images = images;
     }
 
-    public void Execute(PaintList list, SKCanvas canvas)
+    /// <param name="scroll">
+    /// How far the content is scrolled. It is what keeps a fixed box on screen and pins a sticky one
+    /// to its edge; a host that does not scroll leaves it at zero.
+    /// </param>
+    public void Execute(PaintList list, SKCanvas canvas, Offset scroll = default)
     {
         canvas.Clear(SKColors.White);
 
-        foreach (var command in list.Commands)
+        Draw(canvas, list.Commands);
+
+        // A sticky box is pinned to an edge of the scrollport, so it is drawn shifted by whatever its
+        // constraint asks for at this scroll position.
+        foreach (var layer in list.Sticky)
+        {
+            var shift = layer.Constraint.Shift(scroll);
+
+            canvas.Save();
+            canvas.Translate((Single)shift.X, (Single)shift.Y);
+            Draw(canvas, layer.Commands);
+            canvas.Restore();
+        }
+
+        // A fixed box is already in viewport coordinates, so cancelling the scroll keeps it in place.
+        if (list.FixedCommands.Count > 0)
+        {
+            canvas.Save();
+            canvas.Translate((Single)scroll.X, (Single)scroll.Y);
+            Draw(canvas, list.FixedCommands);
+            canvas.Restore();
+        }
+    }
+
+    private void Draw(SKCanvas canvas, List<PaintCommand> commands)
+    {
+        foreach (var command in commands)
         {
             switch (command)
             {

@@ -15,11 +15,97 @@ namespace Hutu.Rendering;
 /// </remarks>
 internal static class CssMathLengths
 {
-    public static Double? Evaluate(String text, Func<String, Double?> resolve)
+    public static Double? Evaluate(String? text, Func<String, Double?> resolve)
     {
-        var trimmed = text.Trim();
+        var call = Parse(text);
 
-        if (trimmed.Length == 0 || trimmed[^1] != ')')
+        if (call is not { } parsed)
+        {
+            return null;
+        }
+
+        var values = new List<Double>(parsed.Arguments.Count);
+
+        foreach (var argument in parsed.Arguments)
+        {
+            var value = resolve(argument);
+
+            if (value is null)
+            {
+                return null;
+            }
+
+            values.Add(value.Value);
+        }
+
+        return Combine(parsed.Function, values);
+    }
+
+    /// <summary>
+    /// Same as <see cref="Evaluate"/>, but the arguments keep their units, so a percentage among
+    /// them is still a percentage when the result is used. The box model needs this: collapsing
+    /// <c>min(100%, 640px)</c> to pixels here would resolve its percentage against the viewport
+    /// rather than against the containing block.
+    /// </summary>
+    public static StyleLength? Evaluate(String? text, Func<String, StyleLength?> resolve)
+    {
+        var call = Parse(text);
+
+        if (call is not { } parsed)
+        {
+            return null;
+        }
+
+        var values = new List<StyleLength>(parsed.Arguments.Count);
+
+        foreach (var argument in parsed.Arguments)
+        {
+            var value = resolve(argument);
+
+            if (value is null)
+            {
+                return null;
+            }
+
+            values.Add(value.Value);
+        }
+
+        if (parsed.Function == StyleMathFunction.Clamp)
+        {
+            return values.Count == 3 ? StyleLength.Clamp(values) : null;
+        }
+
+        return parsed.Function == StyleMathFunction.Min ? StyleLength.Min(values) : StyleLength.Max(values);
+    }
+
+    private static Double? Combine(StyleMathFunction function, List<Double> values)
+    {
+        if (values.Count == 0)
+        {
+            return null;
+        }
+
+        if (function == StyleMathFunction.Clamp)
+        {
+            return values.Count == 3 ? Math.Clamp(values[1], values[0], values[2]) : null;
+        }
+
+        var result = values[0];
+
+        foreach (var value in values)
+        {
+            result = function == StyleMathFunction.Min ? Math.Min(result, value) : Math.Max(result, value);
+        }
+
+        return result;
+    }
+
+    /// <summary>Takes <c>min(...)</c>, <c>max(...)</c> or <c>clamp(...)</c> apart.</summary>
+    private static (StyleMathFunction Function, List<String> Arguments)? Parse(String? text)
+    {
+        var trimmed = text?.Trim();
+
+        if (String.IsNullOrEmpty(trimmed) || trimmed[^1] != ')')
         {
             return null;
         }
@@ -32,48 +118,27 @@ internal static class CssMathLengths
         }
 
         var name = trimmed[..open].Trim();
-        var isMinimum = name.Equals("min", StringComparison.OrdinalIgnoreCase);
-        var isMaximum = name.Equals("max", StringComparison.OrdinalIgnoreCase);
-        var isClamp = name.Equals("clamp", StringComparison.OrdinalIgnoreCase);
+        StyleMathFunction function;
 
-        if (!isMinimum && !isMaximum && !isClamp)
+        if (name.Equals("min", StringComparison.OrdinalIgnoreCase))
+        {
+            function = StyleMathFunction.Min;
+        }
+        else if (name.Equals("max", StringComparison.OrdinalIgnoreCase))
+        {
+            function = StyleMathFunction.Max;
+        }
+        else if (name.Equals("clamp", StringComparison.OrdinalIgnoreCase))
+        {
+            function = StyleMathFunction.Clamp;
+        }
+        else
         {
             return null;
         }
 
         var arguments = CssValueList.SplitTopLevel(trimmed[(open + 1)..^1]);
 
-        if (arguments.Count == 0)
-        {
-            return null;
-        }
-
-        var values = new List<Double>(arguments.Count);
-
-        foreach (var argument in arguments)
-        {
-            var value = resolve(argument);
-
-            if (value is null)
-            {
-                return null;
-            }
-
-            values.Add(value.Value);
-        }
-
-        if (isClamp)
-        {
-            return values.Count == 3 ? Math.Clamp(values[1], values[0], values[2]) : null;
-        }
-
-        var result = values[0];
-
-        foreach (var value in values)
-        {
-            result = isMinimum ? Math.Min(result, value) : Math.Max(result, value);
-        }
-
-        return result;
+        return arguments.Count == 0 ? null : (function, arguments);
     }
 }

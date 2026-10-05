@@ -2,6 +2,7 @@ using AngleSharp.Css;
 using AngleSharp.Css.RenderTree;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
+using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
@@ -98,13 +99,40 @@ public static class BoxBuilder
 
         var box = new Box(kind, style) { Element = element };
 
-        if (kind == BoxKind.Block)
+        switch (kind)
         {
-            GroupChildren(box, children);
-        }
-        else
-        {
-            box.Children.AddRange(children);
+            // A cell is an ordinary block container; only the table context above it is different.
+            case BoxKind.Block:
+            case BoxKind.TableCell:
+                GroupChildren(box, children);
+                break;
+
+            // A flex or grid container's children are all items, so a run of inline content is one
+            // item even when there is nothing else around it - it is wrapped rather than left to
+            // form a line box, which is what makes a bare word inside either container behave.
+            case BoxKind.Flex:
+            case BoxKind.Grid:
+                GroupChildren(box, children, true);
+                break;
+
+            case BoxKind.Table:
+                box.Children.AddRange(children);
+                TableFixup.NormalizeTable(box);
+                break;
+
+            case BoxKind.TableRowGroup:
+                box.Children.AddRange(children);
+                TableFixup.NormalizeRowGroup(box);
+                break;
+
+            case BoxKind.TableRow:
+                box.Children.AddRange(children);
+                TableFixup.NormalizeRow(box);
+                break;
+
+            default:
+                box.Children.AddRange(children);
+                break;
         }
 
         return box;
@@ -168,9 +196,56 @@ public static class BoxBuilder
             return BoxKind.HorizontalRule;
         }
 
+        var display = style.Display;
+
+        // The table spellings are matched before the inline test, because `inline-table` starts with
+        // "inline" but is a table. The engine does not model the outer role of `inline-table`, so it
+        // is treated as a block-level table.
+        switch (display.ToLowerInvariant())
+        {
+            case "table":
+            case "inline-table":
+                return BoxKind.Table;
+
+            case "table-row-group":
+            case "table-header-group":
+            case "table-footer-group":
+                return BoxKind.TableRowGroup;
+
+            case "table-row":
+                return BoxKind.TableRow;
+
+            case "table-cell":
+                return BoxKind.TableCell;
+
+            case "table-caption":
+                return BoxKind.TableCaption;
+
+            case "table-column":
+                return BoxKind.TableColumn;
+
+            case "table-column-group":
+                return BoxKind.TableColumnGroup;
+        }
+
+        // A flex or grid container is a container whichever form it takes; the engine does not yet
+        // model the outer role of `inline-flex` or `inline-grid`, so both spellings of each produce
+        // the same kind.
+        if (display.StartsWith("flex", StringComparison.OrdinalIgnoreCase) ||
+            display.StartsWith("inline-flex", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Flex;
+        }
+
+        if (display.StartsWith("grid", StringComparison.OrdinalIgnoreCase) ||
+            display.StartsWith("inline-grid", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Grid;
+        }
+
         // Everything that starts with "inline" (inline, inline-block, inline-flex, ...) takes part
         // in the surrounding line box; the rest is treated as block-level for now.
-        return style.Display.StartsWith("inline", StringComparison.OrdinalIgnoreCase)
+        return display.StartsWith("inline", StringComparison.OrdinalIgnoreCase)
             ? BoxKind.Inline
             : BoxKind.Block;
     }
@@ -198,7 +273,12 @@ public static class BoxBuilder
     /// Wraps runs of inline-level boxes in anonymous blocks when the container also has block-level
     /// children, and drops white-space-only text that only separates blocks.
     /// </summary>
-    private static void GroupChildren(Box parent, List<Box> children)
+    /// <param name="wrapInline">
+    /// Whether inline content is wrapped even when the container has no block-level children. A grid
+    /// container needs it, because every child of a grid is an item and a run of inline content is
+    /// therefore one item rather than a line box.
+    /// </param>
+    internal static void GroupChildren(Box parent, List<Box> children, Boolean wrapInline = false)
     {
         var hasBlock = false;
 
@@ -214,7 +294,17 @@ public static class BoxBuilder
         // A block whose content is all inline-level is itself the inline formatting context.
         if (!hasBlock)
         {
-            parent.Children.AddRange(children);
+            if (wrapInline && children.Count > 0)
+            {
+                var item = new Box(BoxKind.Block, parent.Style) { IsAnonymous = true };
+                item.Children.AddRange(children);
+                parent.Children.Add(item);
+            }
+            else
+            {
+                parent.Children.AddRange(children);
+            }
+
             return;
         }
 

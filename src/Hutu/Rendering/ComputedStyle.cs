@@ -2,6 +2,7 @@ using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Values;
 using AngleSharp.Dom;
+using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
@@ -15,9 +16,15 @@ namespace Hutu.Rendering;
 /// <remarks>
 /// AngleSharp.Css exposes computed values either as strings
 /// (<see cref="ICssProperties.GetPropertyValue"/>) or as untyped <see cref="ICssValue"/> instances
-/// (<c>GetProperty(name).RawValue</c>). Relative units are resolved here, against the render
-/// device, rather than by AngleSharp - which is why every length accessor names the axis the value
-/// resolves against and why the device must carry a real viewport before layout runs.
+/// (<c>GetProperty(name).RawValue</c>). Font-relative units are resolved here, against the render
+/// device, which is why those accessors name the axis the value resolves against and why the device
+/// must carry a real viewport before layout runs.
+/// <para>
+/// The box model is the exception: <c>width</c>, <c>height</c>, their min and max constraints and
+/// the margin and padding insets come back as <see cref="StyleLength"/> and
+/// <see cref="StyleThickness"/>, with their percentages still unresolved, because a percentage is
+/// relative to the containing block and only the layout pass knows that.
+/// </para>
 /// <para>
 /// This is a value type: it is created per box and must stay cheap to copy.
 /// </para>
@@ -183,17 +190,71 @@ public readonly struct ComputedStyle
 
     // --- Box model ------------------------------------------------------
 
-    public Double? Width => NullableLength("width", RenderMode.Horizontal);
+    /// <summary>
+    /// Gets which box a declared width and height describe.
+    /// </summary>
+    public BoxSizing BoxSizing
+    {
+        get
+        {
+            // The type is named for the Css module because the layout namespace has a BoxModel too.
+            if (_style.GetProperty("box-sizing")?.RawValue is CssConstantValue<AngleSharp.Css.Dom.BoxModel> constant &&
+                constant.Value == AngleSharp.Css.Dom.BoxModel.BorderBox)
+            {
+                return BoxSizing.BorderBox;
+            }
 
-    public Double? Height => NullableLength("height", RenderMode.Vertical);
+            return _style.GetPropertyValue("box-sizing").Trim()
+                .Equals("border-box", StringComparison.OrdinalIgnoreCase)
+                    ? BoxSizing.BorderBox
+                    : BoxSizing.ContentBox;
+        }
+    }
 
-    public Double? MinWidth => NullableLength("min-width", RenderMode.Horizontal);
+    /// <summary>
+    /// Gets the flex longhands, both the container's and the item's. They are read together because
+    /// the same declaration serves both roles depending on the parent.
+    /// </summary>
+    public FlexStyle Flex => FlexStyle.Read(this);
 
-    public Double? MaxWidth => NullableLength("max-width", RenderMode.Horizontal);
+    /// <summary>
+    /// Gets the grid longhands: the track lists, the automatic track sizes, the automatic flow, the
+    /// container's alignment and the gaps. Items also read their placement and their own alignment
+    /// through this, because the same declarations serve both roles.
+    /// </summary>
+    /// <remarks>
+    /// Internal, unlike the flex and table readers, because the grid value model - tracks, breadths
+    /// and lines - is a richer shape than the other contexts need and there is no reason to publish
+    /// it. The layout engine is the only consumer.
+    /// </remarks>
+    internal GridStyle Grid => GridStyle.Read(this);
 
-    public Double? MinHeight => NullableLength("min-height", RenderMode.Vertical);
+    /// <summary>
+    /// Gets the table longhands. <c>border-collapse</c>, <c>border-spacing</c> and friends only
+    /// matter on a table box; <c>vertical-align</c> is meaningful on a cell.
+    /// </summary>
+    public TableStyle Table => TableStyle.Read(this);
 
-    public Double? MaxHeight => NullableLength("max-height", RenderMode.Vertical);
+    /// <summary>
+    /// Gets the cascaded declaration. It is the one that still carries a percentage, because
+    /// computing the style folds a percentage into pixels against the render device - the viewport -
+    /// and the layout engine has to resolve it against the containing block instead.
+    /// </summary>
+    internal ICssStyleDeclaration? Specified => _specified;
+
+    internal IRenderDimensions Dimensions => _dimensions;
+
+    public StyleLength Width => ReadLength("width", RenderMode.Horizontal, StyleLength.Auto);
+
+    public StyleLength Height => ReadLength("height", RenderMode.Vertical, StyleLength.Auto);
+
+    public StyleLength MinWidth => ReadLength("min-width", RenderMode.Horizontal, StyleLength.None);
+
+    public StyleLength MaxWidth => ReadLength("max-width", RenderMode.Horizontal, StyleLength.None);
+
+    public StyleLength MinHeight => ReadLength("min-height", RenderMode.Vertical, StyleLength.None);
+
+    public StyleLength MaxHeight => ReadLength("max-height", RenderMode.Vertical, StyleLength.None);
 
     /// <summary>
     /// Gets how replaced content (an image) is fitted into its box. Geometry is decided elsewhere;
@@ -233,21 +294,15 @@ public readonly struct ComputedStyle
         }
     }
 
-    public Double MarginTop => Length("margin-top", RenderMode.Horizontal);
+    /// <summary>
+    /// Gets the four margins, with their units intact: <c>auto</c> survives, which is what makes
+    /// <c>margin: 0 auto</c> able to centre a box. A percentage margin resolves against the
+    /// containing block's width on all four sides.
+    /// </summary>
+    public StyleThickness Margin => ReadThickness("margin", StyleLength.Zero);
 
-    public Double MarginRight => Length("margin-right", RenderMode.Horizontal);
-
-    public Double MarginBottom => Length("margin-bottom", RenderMode.Horizontal);
-
-    public Double MarginLeft => Length("margin-left", RenderMode.Horizontal);
-
-    public Double PaddingTop => Length("padding-top", RenderMode.Horizontal);
-
-    public Double PaddingRight => Length("padding-right", RenderMode.Horizontal);
-
-    public Double PaddingBottom => Length("padding-bottom", RenderMode.Horizontal);
-
-    public Double PaddingLeft => Length("padding-left", RenderMode.Horizontal);
+    /// <summary>Gets the four paddings. As with margins, every side resolves against the width.</summary>
+    public StyleThickness Padding => ReadThickness("padding", StyleLength.Zero);
 
     public Double BorderTopWidth => BorderWidth("border-top-width", "border-top-style");
 
@@ -272,6 +327,19 @@ public readonly struct ComputedStyle
     public Boolean BorderBottomVisible => HasBorder("border-bottom-style");
 
     public Boolean BorderLeftVisible => HasBorder("border-left-style");
+
+    /// <summary>
+    /// Gets the four border style keywords. The collapsing border model breaks a tie between two
+    /// borders of equal width by their styles, so the keyword itself has to survive, not just the
+    /// question of whether the border is drawn.
+    /// </summary>
+    public String BorderTopStyle => Keyword("border-top-style", "none");
+
+    public String BorderRightStyle => Keyword("border-right-style", "none");
+
+    public String BorderBottomStyle => Keyword("border-bottom-style", "none");
+
+    public String BorderLeftStyle => Keyword("border-left-style", "none");
 
     // --- Helpers --------------------------------------------------------
 
@@ -326,8 +394,18 @@ public readonly struct ComputedStyle
     public Double Length(String name, RenderMode mode, Double fallback = 0) =>
         TryLength(name, mode, out var pixels) ? pixels : fallback;
 
-    private Double? NullableLength(String name, RenderMode mode) =>
-        TryLength(name, mode, out var pixels) ? pixels : null;
+    /// <summary>
+    /// Reads a box-model length, deferring its percentage to the layout pass. The cascaded
+    /// declaration is asked first because computing the style folds percentages into pixels.
+    /// </summary>
+    private StyleLength ReadLength(String name, RenderMode mode, StyleLength fallback) =>
+        LengthReader.TryRead(_specified, _style, name, mode, _dimensions, out var length) ? length : fallback;
+
+    private StyleThickness ReadThickness(String prefix, StyleLength fallback) => new(
+        ReadLength(prefix + "-top", RenderMode.Horizontal, fallback),
+        ReadLength(prefix + "-right", RenderMode.Horizontal, fallback),
+        ReadLength(prefix + "-bottom", RenderMode.Horizontal, fallback),
+        ReadLength(prefix + "-left", RenderMode.Horizontal, fallback));
 
     private Double BorderWidth(String widthName, String styleName)
     {

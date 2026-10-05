@@ -20,80 +20,137 @@ internal static class ReplacedSizing
     /// <summary>The object size the specification assumes when nothing else is known.</summary>
     private static readonly ImageSize Fallback = new(300, 150);
 
-    public static (Double Width, Double Height) Resolve(Box box) =>
-        Resolve(box.Style, box.IntrinsicSize is { IsValid: true } intrinsic ? intrinsic : Fallback);
+    /// <param name="containingBlockWidth">What a percentage width is measured from.</param>
+    /// <param name="containingBlockHeight">
+    /// What a percentage height is measured from. Zero or less means the containing block has no
+    /// definite height, in which case a percentage height behaves as <c>auto</c>.
+    /// </param>
+    public static (Double Width, Double Height) Resolve(Box box, Double containingBlockWidth, Double containingBlockHeight) =>
+        Resolve(
+            box.Style,
+            box.IntrinsicSize is { IsValid: true } intrinsic ? intrinsic : Fallback,
+            containingBlockWidth,
+            containingBlockHeight);
 
-    public static (Double Width, Double Height) Resolve(ComputedStyle style, ImageSize intrinsic)
+    /// <summary>
+    /// Resolves the used <em>content</em> size. Under <c>box-sizing: border-box</c> a declared size
+    /// covers the padding and the border as well, so the insets come off before the intrinsic ratio
+    /// is applied and the caller adds them back around the result.
+    /// </summary>
+    public static (Double Width, Double Height) Resolve(
+        ComputedStyle style,
+        ImageSize intrinsic,
+        Double containingBlockWidth,
+        Double containingBlockHeight)
     {
         var aspect = intrinsic.AspectRatio > 0 ? intrinsic.AspectRatio : 1;
+        var isBorderBox = style.BoxSizing == BoxSizing.BorderBox;
+        var insets = Insets(style, containingBlockWidth);
+        var horizontal = isBorderBox ? insets.Horizontal : 0;
+        var vertical = isBorderBox ? insets.Vertical : 0;
 
-        var specifiedWidth = style.Width;
-        var specifiedHeight = style.Height;
+        var specifiedWidth = ContentLength(style.Width, containingBlockWidth, horizontal);
+        var specifiedHeight = ContentLength(style.Height, containingBlockHeight, vertical);
+        var maxWidth = ContentLength(style.MaxWidth, containingBlockWidth, horizontal);
+        var maxHeight = ContentLength(style.MaxHeight, containingBlockHeight, vertical);
+        var minWidth = ContentLength(style.MinWidth, containingBlockWidth, horizontal);
+        var minHeight = ContentLength(style.MinHeight, containingBlockHeight, vertical);
 
         Double width;
         Double height;
 
-        if (specifiedWidth.HasValue && specifiedHeight.HasValue)
+        if (specifiedWidth is { } declaredWidth && specifiedHeight is { } declaredHeight)
         {
-            width = specifiedWidth.Value;
-            height = specifiedHeight.Value;
+            width = declaredWidth;
+            height = declaredHeight;
         }
-        else if (specifiedWidth.HasValue)
+        else if (specifiedWidth is { } onlyWidth)
         {
-            width = specifiedWidth.Value;
+            width = onlyWidth;
             height = width / aspect;
         }
-        else if (specifiedHeight.HasValue)
+        else if (specifiedHeight is { } onlyHeight)
         {
-            height = specifiedHeight.Value;
+            height = onlyHeight;
             width = height * aspect;
         }
         else
         {
-            width = intrinsic.Width;
-            height = intrinsic.Height;
+            // With neither axis declared the box is the intrinsic size, which is already a content
+            // size, so there is nothing to take the insets off.
+            width = Math.Max(0, intrinsic.Width);
+            height = Math.Max(0, intrinsic.Height);
         }
 
-        if (style.MaxWidth is { } maxWidth && width > maxWidth)
+        if (maxWidth is { } maximumWidth && width > maximumWidth)
         {
-            width = maxWidth;
+            width = maximumWidth;
 
-            if (!specifiedHeight.HasValue)
+            if (specifiedHeight is null)
             {
                 height = width / aspect;
             }
         }
 
-        if (style.MinWidth is { } minWidth && width < minWidth)
+        if (minWidth is { } minimumWidth && width < minimumWidth)
         {
-            width = minWidth;
+            width = minimumWidth;
 
-            if (!specifiedHeight.HasValue)
+            if (specifiedHeight is null)
             {
                 height = width / aspect;
             }
         }
 
-        if (style.MaxHeight is { } maxHeight && height > maxHeight)
+        if (maxHeight is { } maximumHeight && height > maximumHeight)
         {
-            height = maxHeight;
+            height = maximumHeight;
 
-            if (!specifiedWidth.HasValue)
+            if (specifiedWidth is null)
             {
                 width = height * aspect;
             }
         }
 
-        if (style.MinHeight is { } minHeight && height < minHeight)
+        if (minHeight is { } minimumHeight && height < minimumHeight)
         {
-            height = minHeight;
+            height = minimumHeight;
 
-            if (!specifiedWidth.HasValue)
+            if (specifiedWidth is null)
             {
                 width = height * aspect;
             }
         }
 
         return (Math.Max(0, width), Math.Max(0, height));
+    }
+
+    /// <summary>Gets the padding plus the border, which the caller adds around the content size.</summary>
+    private static Thickness Insets(ComputedStyle style, Double basis)
+    {
+        var padding = style.Padding.Resolve(basis);
+
+        return new Thickness(
+            padding.Top + style.BorderTopWidth,
+            padding.Right + style.BorderRightWidth,
+            padding.Bottom + style.BorderBottomWidth,
+            padding.Left + style.BorderLeftWidth);
+    }
+
+    private static Double? ContentLength(StyleLength length, Double basis, Double insets)
+    {
+        if (!length.HasValue)
+        {
+            return null;
+        }
+
+        // A percentage against a containing block with no definite size behaves as `auto`.
+        if (length.Kind == StyleLengthKind.Percent && basis <= 0)
+        {
+            return null;
+        }
+
+        var value = length.Resolve(basis);
+        return Math.Max(0, insets > 0 ? value - insets : value);
     }
 }

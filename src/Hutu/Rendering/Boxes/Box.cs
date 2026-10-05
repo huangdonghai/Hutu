@@ -22,6 +22,35 @@ public enum BoxKind
 
     /// <summary>A horizontal rule (<c>&lt;hr&gt;</c>), which is block-level.</summary>
     HorizontalRule,
+
+    /// <summary>A flex container, which is block-level and lays its children out along an axis.</summary>
+    Flex,
+
+    /// <summary>A grid container, which is block-level and lays its children out into rows and
+    /// columns rather than a single axis.</summary>
+    Grid,
+
+    /// <summary>A table wrapper box. Block-level in its parent's context, but lays its children out
+    /// with the table algorithms rather than in normal flow.</summary>
+    Table,
+
+    /// <summary>A <c>thead</c>/<c>tbody</c>/<c>tfoot</c> row group.</summary>
+    TableRowGroup,
+
+    /// <summary>A table row.</summary>
+    TableRow,
+
+    /// <summary>A table cell.</summary>
+    TableCell,
+
+    /// <summary>A table caption, positioned above or below the rows.</summary>
+    TableCaption,
+
+    /// <summary>A table column, which contributes a width hint but generates no geometry.</summary>
+    TableColumn,
+
+    /// <summary>A table column group, which is a container for column hints only.</summary>
+    TableColumnGroup,
 }
 
 /// <summary>
@@ -78,7 +107,17 @@ public sealed class Box
 
     public List<Box> Children { get; } = new();
 
-    public Boolean IsBlockLevel => Kind is BoxKind.Block or BoxKind.HorizontalRule;
+    /// <summary>
+    /// Gets whether the box takes part in normal block flow. Every table part counts as block-level:
+    /// the table algorithms arrange them, but if one ever leaks into normal flow - a stray <c>td</c>
+    /// inside a <c>div</c>, say - it degrades to an empty block instead of joining a line box.
+    /// </summary>
+    public Boolean IsBlockLevel => Kind is BoxKind.Block or BoxKind.HorizontalRule or BoxKind.Flex or
+        BoxKind.Grid or BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or BoxKind.TableCell or
+        BoxKind.TableCaption or BoxKind.TableColumn or BoxKind.TableColumnGroup;
 
     public Boolean IsInlineLevel => !IsBlockLevel;
+
+    /// <summary>Gets whether the box generates no geometry of its own and only carries a width hint.</summary>
+    public Boolean IsTableColumnHint => Kind is BoxKind.TableColumn or BoxKind.TableColumnGroup;
 }

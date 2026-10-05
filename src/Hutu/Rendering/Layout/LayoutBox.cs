@@ -1,3 +1,4 @@
+using AngleSharp.Css.Dom;
 using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
@@ -21,6 +22,43 @@ public enum LayoutKind
 
     /// <summary>A replaced box - an image - whose content is drawn rather than laid out.</summary>
     Image,
+
+    /// <summary>A table wrapper box.</summary>
+    Table,
+
+    /// <summary>A row group, whose box spans its rows so its background can be painted.</summary>
+    TableRowGroup,
+
+    /// <summary>A table row, whose box spans its cells so its background can be painted.</summary>
+    TableRow,
+
+    /// <summary>A table cell.</summary>
+    TableCell,
+}
+
+/// <summary>The four border colours of a box, in ARGB order.</summary>
+/// <remarks>
+/// A box normally takes its border colours from its own style, but a collapsed table edge is shared
+/// with a neighbour and the colour that wins may belong to the neighbour, so the resolution has to be
+/// carried on the box instead.
+/// </remarks>
+public readonly struct BorderColors
+{
+    public BorderColors(UInt32 top, UInt32 right, UInt32 bottom, UInt32 left)
+    {
+        Top = top;
+        Right = right;
+        Bottom = bottom;
+        Left = left;
+    }
+
+    public UInt32 Top { get; }
+
+    public UInt32 Right { get; }
+
+    public UInt32 Bottom { get; }
+
+    public UInt32 Left { get; }
 }
 
 /// <summary>
@@ -44,6 +82,19 @@ public sealed class LayoutBox
     public LayoutKind Kind { get; }
 
     public Rect BorderBox { get; set; }
+
+    /// <summary>Gets or sets how the box is positioned, which decides whether it joins the stacking
+    /// order and whether it took part in normal flow at all.</summary>
+    public PositionMode Position { get; set; }
+
+    /// <summary>Gets or sets the declared stacking level, or zero for an automatic one.</summary>
+    public Int32 ZIndex { get; set; }
+
+    /// <summary>Gets or sets the rule that pins a sticky box to the viewport as the page scrolls.</summary>
+    public StickyConstraint? Sticky { get; set; }
+
+    /// <summary>Gets whether the box was taken out of normal flow by <c>absolute</c> or <c>fixed</c>.</summary>
+    public Boolean IsOutOfFlow => Position is PositionMode.Absolute or PositionMode.Fixed;
 
     public Thickness Margin { get; set; }
 
@@ -70,6 +121,18 @@ public sealed class LayoutBox
 
     /// <summary>Gets the radius painted content is clipped to.</summary>
     public Double CornerRadius { get; set; }
+
+    /// <summary>Gets or sets whether the background is skipped, as on a cell under
+    /// <c>empty-cells: hide</c>.</summary>
+    public Boolean SuppressBackground { get; set; }
+
+    /// <summary>Gets or sets whether the border is skipped, which <c>empty-cells: hide</c> also does
+    /// in the separated border model.</summary>
+    public Boolean SuppressBorder { get; set; }
+
+    /// <summary>Gets or sets the border colours to paint instead of the box's own, set when the
+    /// borders come from a shared table grid line.</summary>
+    public BorderColors? BorderColors { get; set; }
 
     public Rect ContentBox => new(
         BorderBox.X + Border.Left + Padding.Left,

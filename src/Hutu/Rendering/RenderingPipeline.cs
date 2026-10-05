@@ -76,7 +76,10 @@ public sealed class RenderingPipeline
         var window = document.DefaultView;
         RenderTree = window?.Render(_device);
         BoxTree = BoxBuilder.Build(RenderTree, _device, _images);
-        Layout = _layout?.Layout(BoxTree, _device.RenderWidth);
+        // The viewport is the initial containing block, so both of its dimensions matter: the height
+        // is what a percentage height on the root - and on everything it makes definite - resolves
+        // against.
+        Layout = _layout?.Layout(BoxTree, _device.RenderWidth, _device.RenderHeight);
         Paint = Layout is null ? null : _painter.Paint(Layout);
         return RenderTree;
     }

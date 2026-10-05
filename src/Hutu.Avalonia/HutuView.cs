@@ -6,6 +6,7 @@ using System;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Offset = Hutu.Rendering.Layout.Offset;
 
 namespace Hutu.Avalonia;
 
@@ -79,5 +80,16 @@ public class HutuView : ScrollViewer
         }
 
         return arranged;
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+
+        // Scrolling only moves the viewport-anchored content, so it repaints rather than relayouts.
+        if (change.Property == OffsetProperty)
+        {
+            _surface.SetScrollOffset(new Offset(Offset.X, Offset.Y));
+        }
     }
 }

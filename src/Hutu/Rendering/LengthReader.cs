@@ -1,0 +1,173 @@
+using System;
+using System.Collections.Generic;
+using AngleSharp.Css;
+using AngleSharp.Css.Dom;
+using AngleSharp.Css.Values;
+
+namespace Hutu.Rendering;
+
+/// <summary>
+/// Reads a CSS length without resolving its percentage, so that the layout pass can resolve it
+/// against the containing block instead.
+/// </summary>
+/// <remarks>
+/// The computed declaration cannot be used on its own. <c>CssLengthValue.Compute</c> folds every
+/// non-pixel unit - percentages included - into pixels while the style is computed, and it does so
+/// against the render device, whose width is the viewport. That is the whole reason
+/// <c>width: 100%</c> used to mean "one window" rather than "one container". The cascaded
+/// declaration still holds the percentage, so it is asked first and the computed one only serves as
+/// a fallback for properties that were never declared - and those can only hold an initial value,
+/// which is never a percentage.
+/// </remarks>
+internal static class LengthReader
+{
+    public static Boolean TryRead(
+        ICssStyleDeclaration? specified,
+        ICssStyleDeclaration? computed,
+        String name,
+        RenderMode mode,
+        IRenderDimensions dimensions,
+        out StyleLength length)
+    {
+        return TryRead(specified, name, mode, dimensions, out length) ||
+               TryRead(computed, name, mode, dimensions, out length);
+    }
+
+    public static Boolean TryRead(
+        ICssStyleDeclaration? declaration,
+        String name,
+        RenderMode mode,
+        IRenderDimensions dimensions,
+        out StyleLength length)
+    {
+        length = default;
+
+        if (declaration is null)
+        {
+            return false;
+        }
+
+        if (CssMathLengths.Evaluate(declaration.GetPropertyValue(name), text => FromText(text, mode, dimensions)) is { } math)
+        {
+            length = math;
+            return true;
+        }
+
+        return TryReadValue(declaration.GetProperty(name)?.RawValue, mode, dimensions, out length);
+    }
+
+    /// <summary>
+    /// Reads a value that has already been fetched from a declaration. Track lists, <c>minmax</c> and
+    /// the items of a shorthand tuple all arrive as loose values rather than as named properties.
+    /// </summary>
+    public static Boolean TryReadValue(ICssValue? value, RenderMode mode, IRenderDimensions dimensions, out StyleLength length)
+    {
+        length = default;
+
+        switch (value)
+        {
+            case CssLengthValue css:
+                // `auto`, `normal` and `content` share the length type but carry no number, and the
+                // only way to tell them apart is the text they serialise to.
+                if (Double.IsNaN(css.Value) || Double.IsInfinity(css.Value))
+                {
+                    length = css.CssText.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase)
+                        ? StyleLength.Auto
+                        : StyleLength.None;
+                    return true;
+                }
+
+                if (FromCssLength(css, mode, dimensions) is not { } resolved)
+                {
+                    return false;
+                }
+
+                length = resolved;
+                return true;
+
+            case CssPercentageValue percentage when !Double.IsNaN(percentage.Value):
+                length = StyleLength.FromPercent(percentage.Value / 100.0);
+                return true;
+
+            case CssConstantValue<CssLengthValue> constant when Double.IsNaN(constant.Value.Value):
+                length = constant.Value.CssText.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase)
+                    ? StyleLength.Auto
+                    : StyleLength.None;
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Gets the individual values of a shorthand that carries more than one, or null when the value is
+    /// a single one. AngleSharp declares a non-generic <c>CssTupleValue</c> deriving from the generic
+    /// one, but the values a shorthand actually produces are instantiations of the generic type;
+    /// matching that class therefore silently fails, and only the interface catches them all.
+    /// </summary>
+    public static IReadOnlyList<ICssValue>? Items(ICssValue? value)
+    {
+        if (value is not ICssMultipleValue multiple || multiple.Count == 0)
+        {
+            return null;
+        }
+
+        var items = new ICssValue[multiple.Count];
+
+        for (var index = 0; index < items.Length; index++)
+        {
+            items[index] = multiple[index];
+        }
+
+        return items;
+    }
+
+    /// <summary>Reads a single argument of a length function, which is always plain text.</summary>
+    private static StyleLength? FromText(String text, RenderMode mode, IRenderDimensions dimensions)
+    {
+        var trimmed = text.Trim();
+
+        if (trimmed.Length == 0)
+        {
+            return null;
+        }
+
+        if (trimmed.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return StyleLength.Auto;
+        }
+
+        if (trimmed.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return StyleLength.None;
+        }
+
+        if (!CssLengthValue.TryParse(trimmed, out var parsed) || Double.IsNaN(parsed.Value) || Double.IsInfinity(parsed.Value))
+        {
+            return null;
+        }
+
+        return FromCssLength(parsed, mode, dimensions);
+    }
+
+    private static StyleLength? FromCssLength(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions)
+    {
+        if (value.Type == CssLengthValue.Unit.Percent)
+        {
+            return StyleLength.FromPercent(value.Value / 100.0);
+        }
+
+        try
+        {
+            var pixels = value.ToPixel(dimensions, mode);
+            return Double.IsNaN(pixels) || Double.IsInfinity(pixels) ? null : StyleLength.FromPixels(pixels);
+        }
+        catch (InvalidOperationException)
+        {
+            // A unitless non-zero number, and anything else the device cannot convert. Both are
+            // invalid where a length is expected, so this is a downgrade rather than a failure.
+            return null;
+        }
+    }
+}

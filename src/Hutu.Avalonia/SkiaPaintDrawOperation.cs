@@ -4,6 +4,7 @@ using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
 using Hutu.Rendering.Paint;
 using Hutu.Skia;
+using Offset = Hutu.Rendering.Layout.Offset;
 
 namespace Hutu.Avalonia;
 
@@ -16,12 +17,14 @@ internal sealed class SkiaPaintDrawOperation : ICustomDrawOperation
 {
     private readonly PaintList _paint;
     private readonly SkiaPaintExecutor _executor;
+    private readonly Offset _scroll;
 
-    public SkiaPaintDrawOperation(Rect bounds, PaintList paint, SkiaPaintExecutor executor)
+    public SkiaPaintDrawOperation(Rect bounds, PaintList paint, SkiaPaintExecutor executor, Offset scroll)
     {
         Bounds = bounds;
         _paint = paint;
         _executor = executor;
+        _scroll = scroll;
     }
 
     public Rect Bounds { get; }
@@ -44,6 +47,6 @@ internal sealed class SkiaPaintDrawOperation : ICustomDrawOperation
         }
 
         using var lease = feature.Lease();
-        _executor.Execute(_paint, lease.SkCanvas);
+        _executor.Execute(_paint, lease.SkCanvas, _scroll);
     }
 }
