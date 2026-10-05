@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Offset = Hutu.Rendering.Layout.Offset;
+using ScrollAlignment = Hutu.Rendering.Layout.ScrollAlignment;
 
 namespace Hutu.Avalonia;
 
@@ -21,6 +22,8 @@ namespace Hutu.Avalonia;
 /// </remarks>
 public class HutuView : ScrollViewer
 {
+    protected override Type StyleKeyOverride => typeof(ScrollViewer);
+
     private readonly SkiaTextMeasurer _measurer = new();
     private readonly SkiaImageLoader _images = new();
     private readonly HutuViewInternal _internalView;
@@ -63,6 +66,111 @@ public class HutuView : ScrollViewer
     public string GetHtml()
     {
         return _internalView.GetHtml();
+    }
+
+    /// <summary>
+    /// Scrolls to an absolute offset, clamped to the range the document can scroll through, so a
+    /// document height or an out-of-range delta is safe to pass in.
+    /// </summary>
+    /// <remarks>
+    /// The range comes from the geometry Hutu produced rather than from
+    /// <see cref="ScrollViewer.Extent"/>, which is only ever as fresh as the last layout pass. A
+    /// scroll issued straight after a load would otherwise be clamped against the extent of the
+    /// previous document - or, on the first load, against nothing at all - and quietly be lost.
+    /// </remarks>
+    public void ScrollTo(double x, double y)
+    {
+        // The pass is caught up on rather than deferred: the scroller clamps whatever offset it is
+        // handed against the extent it knows about, so it has to know about the new document first.
+        // An already arranged document needs nothing, which keeps repeated scrolling - a per-frame
+        // animation, say - from forcing a pass it does not need.
+        if (!IsMeasureValid || !IsArrangeValid)
+        {
+            UpdateLayout();
+        }
+
+        var range = ScrollableRange();
+
+        Offset = new Vector(
+            Math.Clamp(x, 0, range.X),
+            Math.Clamp(y, 0, range.Y));
+    }
+
+    /// <summary>Scrolls to the top of the document, keeping the horizontal position.</summary>
+    public void ScrollToTop()
+    {
+        ScrollTo(Offset.X, 0);
+    }
+
+    /// <summary>Scrolls to the end of the document, keeping the horizontal position.</summary>
+    public void ScrollToBottom()
+    {
+        ScrollTo(Offset.X, _internalView.Layout?.Height ?? 0);
+    }
+
+    /// <summary>Scrolls by a delta, clamped the way <see cref="ScrollTo"/> clamps.</summary>
+    public void ScrollBy(double dx, double dy)
+    {
+        ScrollTo(Offset.X + dx, Offset.Y + dy);
+    }
+
+    /// <summary>
+    /// Brings an element into view and reports whether it had a box to scroll to. By default it
+    /// moves the least amount needed, so an element that is already visible stays where it is.
+    /// </summary>
+    public bool ScrollToElement(
+        IElement element,
+        ScrollAlignment alignment = ScrollAlignment.Nearest)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+
+        var target = _internalView.GetVerticalScrollOffset(element, alignment, Offset.Y);
+
+        if (target is null)
+        {
+            return false;
+        }
+
+        ScrollTo(Offset.X, target.Value);
+        return true;
+    }
+
+    /// <summary>
+    /// Scrolls to an anchor - an id, or the name of an anchor element - aligning it with the top of
+    /// the viewport the way following a fragment link does. Reports whether the anchor named
+    /// anything in the document.
+    /// </summary>
+    public bool ScrollToAnchor(
+        string anchor,
+        ScrollAlignment alignment = ScrollAlignment.Start)
+    {
+        var element = _internalView.FindAnchor(anchor);
+
+        return element is not null && ScrollToElement(element, alignment);
+    }
+
+    /// <summary>
+    /// Gets how far through the document the viewport has moved, from 0 at the top to 1 at the end.
+    /// A document that fits is reported as fully scrolled.
+    /// </summary>
+    public double VerticalScrollProgress
+    {
+        get
+        {
+            var scrollable = ScrollableRange().Y;
+
+            return scrollable <= 0 ? 1 : Math.Clamp(Offset.Y / scrollable, 0, 1);
+        }
+    }
+
+    /// <summary>Gets the distance the document can scroll, which is zero where it fits the viewport.</summary>
+    private Vector ScrollableRange()
+    {
+        var layout = _internalView.Layout;
+
+        return new Vector(
+            Math.Max(0, (layout?.Width ?? 0) - _internalView.ViewportWidth),
+            Math.Max(0, (layout?.Height ?? 0) - _internalView.ViewportHeight));
     }
 
     protected override Size ArrangeOverride(Size finalSize)

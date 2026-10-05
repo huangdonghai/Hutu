@@ -21,6 +21,6 @@
             <TextBox Grid.Column="3" x:Name="AddressBar" PlaceholderText="输入网址..." KeyDown="AddressBar_KeyDown" />
         </Grid>
 
-        <hutu:HutuView Grid.Row="1" x:Name="MyHutuView"/>
+        <hutu:HutuView Grid.Row="1" x:Name="MyHutuView" VerticalScrollBarVisibility ="Visible" />
     </Grid>
 </ContentPage>

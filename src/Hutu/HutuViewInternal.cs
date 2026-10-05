@@ -144,6 +144,86 @@ public sealed class HutuViewInternal : IDisposable
     }
 
     /// <summary>
+    /// Gets the document-space rectangle of the first box an element generated, or null when it
+    /// generated none - the element may be unrendered, or nothing may be laid out yet.
+    /// </summary>
+    /// <remarks>
+    /// A box pinned to the viewport by <c>position: fixed</c> reports viewport coordinates, since
+    /// that is where it was placed.
+    /// </remarks>
+    public Rect? GetElementBounds(IElement element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        return Layout?.FindBox(element)?.BorderBox;
+    }
+
+    /// <summary>
+    /// Resolves an anchor to the element it names: an id, or the name of an anchor element. The
+    /// fragment part of a URL is what is read from <paramref name="anchor"/>, so a link's href can
+    /// be passed in unchanged.
+    /// </summary>
+    public IElement? FindAnchor(string anchor)
+    {
+        if (Document is null || string.IsNullOrWhiteSpace(anchor))
+        {
+            return null;
+        }
+
+        // A fragment always trails the URL, so anything before the hash names the document rather
+        // than the target - and the view has already resolved that by loading it.
+        var hash = anchor.LastIndexOf('#');
+        var name = (hash >= 0 ? anchor[(hash + 1)..] : anchor).Trim();
+
+        if (name.Length == 0)
+        {
+            return null;
+        }
+
+        var byId = Document.GetElementById(name);
+
+        if (byId is not null)
+        {
+            return byId;
+        }
+
+        foreach (var element in Document.GetElementsByTagName("a"))
+        {
+            if (string.Equals(element.GetAttribute("name"), name, StringComparison.Ordinal))
+            {
+                return element;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the vertical offset that brings an element into view, or null when it generated no box.
+    /// The viewport the styles were last computed for is what the element is placed against, since
+    /// that is the width the document was laid out at.
+    /// </summary>
+    public double? GetVerticalScrollOffset(
+        IElement element,
+        ScrollAlignment alignment,
+        double currentOffset = 0)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+
+        var layout = Layout;
+
+        if (layout is null)
+        {
+            return null;
+        }
+
+        var bounds = layout.FindBox(element)?.BorderBox;
+
+        return bounds is null
+            ? null
+            : layout.VerticalScrollOffsetFor(bounds.Value, ViewportHeight, alignment, currentOffset);
+    }
+
+    /// <summary>
     /// Updates the viewport the styles are computed against and rebuilds the render tree. Returns
     /// whether the size actually changed, so the host can skip a relayout when it did not.
     /// </summary>
@@ -237,7 +317,7 @@ public sealed class HutuViewInternal : IDisposable
     /// The requesters the browsing context uses, in the order they are consulted.
     /// </summary>
     private List<IRequester> CreateRequesterChain() =>
-        new(_resourceRequesters) { new HookHttpRequest(_resourceRequesters) };
+        new(_resourceRequesters) { new FileRequester(), new HookHttpRequest(_resourceRequesters) };
 
     /// <summary>
     /// Fetches and decodes the images the document refers to, then lays out again so the boxes can
