@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="NUnit" />
+    <PackageReference Include="NUnit3TestAdapter" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Hutu\Hutu.csproj" />
+    <ProjectReference Include="..\Hutu.Skia\Hutu.Skia.csproj" />
+    <ProjectReference Include="..\..\samples\Sample.Common\Sample.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Served through the res: protocol by the embedded resource requester, exactly like the samples. -->
+    <EmbeddedResource Include="TestImages\**\*" />
+  </ItemGroup>
+
+</Project>

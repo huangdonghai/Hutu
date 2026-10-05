@@ -1,0 +1,13 @@
+<Project>
+
+  <!--
+    The AngleSharp submodules are built against their own published package versions and do not
+    use Central Package Management. Without this opt-out they would pick up the repository's
+    Directory.Packages.props while walking up the tree, and every PackageReference that still
+    carries a Version - which all of theirs do - would fail restore with NU1008.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+</Project>

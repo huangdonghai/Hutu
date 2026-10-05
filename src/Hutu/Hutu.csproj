@@ -6,9 +6,15 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    The vendored AngleSharp sources are referenced as projects rather than packages so that the
+    style engine can be patched in place: the published AngleSharp.Css (1.1.2, and the newest
+    1.1.3-beta.330) both still throw while computing a layered background, and Hutu depends on
+    that being fixed. See deps/Directory.Packages.props for the CPM opt-out this requires.
+  -->
   <ItemGroup>
-    <PackageReference Include="AngleSharp" />
-    <PackageReference Include="AngleSharp.Css" />
+    <ProjectReference Include="..\..\deps\AngleSharp.Css\src\AngleSharp.Css\AngleSharp.Css.csproj" />
+    <ProjectReference Include="..\..\deps\AngleSharp\src\AngleSharp\AngleSharp.Core.csproj" />
   </ItemGroup>
 
 </Project>

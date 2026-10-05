@@ -1,4 +1,5 @@
 using AngleSharp;
+using AngleSharp.Dom;
 using AngleSharp.Io;
 using System;
 using System.IO;
@@ -12,18 +13,26 @@ namespace Hutu;
 public sealed class EmbeddedResourceRequester : BaseRequester
 {
     private readonly Assembly _assembly;
+    private readonly string _folder;
+    private readonly string _protocol = "resource";
 
-    public EmbeddedResourceRequester(Assembly assembly)
+    public EmbeddedResourceRequester(Assembly assembly, string? folder = null)
     {
         _assembly = assembly ?? throw new ArgumentNullException(nameof(assembly));
+        _folder = folder ?? "";
     }
 
     public override bool SupportsProtocol(string protocol)
     {
-        return string.Equals(
-            protocol,
-            "resource",
-            StringComparison.OrdinalIgnoreCase);
+        return string.Equals(protocol, "res", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string UrlToPath(Url url)
+    {
+        var path = _assembly.GetName().Name + ".";
+        path += string.IsNullOrEmpty(_folder) ? "" : _folder + ".";
+        path += Uri.UnescapeDataString(url.Data).TrimStart('/').Replace('/', '.');
+        return path;
     }
 
     protected override Task<IResponse?> PerformRequestAsync(
@@ -34,10 +43,10 @@ public sealed class EmbeddedResourceRequester : BaseRequester
 
         var url = request.Address;
 
-        if (!SupportsProtocol(url.Protocol))
+        if (!SupportsProtocol(url.Scheme))
             return Task.FromResult<IResponse?>(null);
 
-        var resourceName = Uri.UnescapeDataString(url.Path).TrimStart('/');
+        var resourceName = UrlToPath(url);
 
         if (resourceName.Length == 0)
             return Task.FromResult<IResponse?>(null);

@@ -13,7 +13,7 @@ public partial class MainView : ContentPage
         InitializeComponent();
 
         // Init some controls
-        MyHutuView.AddEmbeddedResourceSource(SampleUtils.GetSampleAssembly());
+        MyHutuView.AddEmbeddedResourceSource(SampleUtils.GetSampleAssembly(), "Samples");
     }
 
     private void AddressBar_KeyDown(object? sender, KeyEventArgs e)

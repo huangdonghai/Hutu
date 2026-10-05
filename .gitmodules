@@ -1,0 +1,9 @@
+[submodule "deps/AngleSharp"]
+	path = deps/AngleSharp
+	url = https://github.com/huangdonghai/AngleSharp.git
+[submodule "deps/AngleSharp.Css"]
+	path = deps/AngleSharp.Css
+	url = https://github.com/huangdonghai/AngleSharp.Css.git
+[submodule "deps/AngleSharp.Js"]
+	path = deps/AngleSharp.Js
+	url = https://github.com/AngleSharp/AngleSharp.Js.git
