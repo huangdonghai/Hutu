@@ -2,7 +2,6 @@ using AngleSharp;
 using AngleSharp.Dom;
 using AngleSharp.Io;
 using System;
-using System.IO;
 using System.Net;
 using System.Reflection;
 using System.Threading;
@@ -14,7 +13,6 @@ public sealed class EmbeddedResourceRequester : BaseRequester
 {
     private readonly Assembly _assembly;
     private readonly string _folder;
-    private readonly string _protocol = "resource";
 
     public EmbeddedResourceRequester(Assembly assembly, string? folder = null)
     {
@@ -59,37 +57,9 @@ public sealed class EmbeddedResourceRequester : BaseRequester
         var response = VirtualResponse.Create(response => response
             .Address(url)
             .Status(HttpStatusCode.OK)
-            .Header("Content-Type", GetContentType(resourceName))
+            .Header("Content-Type", ContentTypes.FromPath(resourceName))
             .Content(stream, shouldDispose: true));
 
         return Task.FromResult<IResponse?>(response);
-    }
-
-    private static string GetContentType(string resourceName)
-    {
-        return Path.GetExtension(resourceName).ToLowerInvariant() switch
-        {
-            ".html" => "text/html",
-            ".htm" => "text/html",
-            ".xhtml" => "application/xhtml+xml",
-            ".css" => "text/css",
-            ".js" => "text/javascript",
-            ".mjs" => "text/javascript",
-            ".json" => "application/json",
-            ".xml" => "application/xml",
-            ".svg" => "image/svg+xml",
-            ".png" => "image/png",
-            ".jpg" => "image/jpeg",
-            ".jpeg" => "image/jpeg",
-            ".gif" => "image/gif",
-            ".webp" => "image/webp",
-            ".ico" => "image/x-icon",
-            ".bmp" => "image/bmp",
-            ".woff" => "font/woff",
-            ".woff2" => "font/woff2",
-            ".ttf" => "font/ttf",
-            ".otf" => "font/otf",
-            _ => "application/octet-stream"
-        };
     }
 }
