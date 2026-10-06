@@ -487,7 +487,6 @@ public sealed class SkiaRenderingTests
 
         var topbar = OneOfClass(view, "topbar");
         var workspace = OneOfClass(view, "workspace");
-        var sidebar = OneOfClass(view, "sidebar");
         var content = OneOfClass(view, "content");
 
         // `body` is a grid of `auto minmax(0, 1fr)` at the full height of the viewport, so the bar
@@ -496,18 +495,15 @@ public sealed class SkiaRenderingTests
         Assert.That(workspace.BorderBox.Y, Is.EqualTo(topbar.BorderBox.Bottom).Within(1), "the second row starts after the first");
         Assert.That(workspace.BorderBox.Bottom, Is.EqualTo(600).Within(1), "the fraction row reaches the bottom of the viewport");
 
-        // The workspace is a grid of `240px minmax(0, 1fr)` with a 14 pixel gap and padding.
-        Assert.That(sidebar.BorderBox.Width, Is.EqualTo(240).Within(1), "the fixed column");
-        Assert.That(sidebar.BorderBox.X, Is.EqualTo(14).Within(1), "the padding");
-        Assert.That(content.BorderBox.X, Is.EqualTo(sidebar.BorderBox.Right + 14).Within(1), "the gap");
-        Assert.That(content.BorderBox.Right, Is.EqualTo(900 - 14).Within(1), "the fraction column takes the rest");
+        // The workspace is a grid of one column padded by 14 pixels, and the directory fills it.
+        Assert.That(content.BorderBox.X, Is.EqualTo(14).Within(1), "the padding");
+        Assert.That(content.BorderBox.Right, Is.EqualTo(900 - 14).Within(1), "the column takes the whole width");
 
-        // Both items sit in the grid's one implicit row with `stretch`, so they share a top edge and a
-        // height. That row is an `auto` track sized by the sidebar's long list of links, so it is
-        // taller than the workspace's own box - which overflows, exactly as it does in a browser.
+        // The single item stretches to the grid's one implicit row - an `auto` track sized by the list
+        // of sample links - so it is taller than the workspace's own box, which overflows exactly as
+        // it does in a browser.
         Assert.That(content.BorderBox.Y, Is.EqualTo(workspace.BorderBox.Y + 14).Within(1), "the workspace padding");
-        Assert.That(content.BorderBox.Height, Is.EqualTo(sidebar.BorderBox.Height).Within(1), "both items stretch to the row");
-        Assert.That(sidebar.BorderBox.Height, Is.GreaterThan(workspace.BorderBox.Height - 28), "the row is as tall as the tallest item");
+        Assert.That(content.BorderBox.Height, Is.GreaterThan(workspace.BorderBox.Height - 28), "the row is as tall as the list of links");
 
         Assert.That(CountNonWhitePixels(view.Paint!, measurer), Is.GreaterThan(1000));
     }

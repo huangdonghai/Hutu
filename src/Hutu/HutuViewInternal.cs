@@ -5,6 +5,7 @@ using AngleSharp.Dom;
 using AngleSharp.Css.RenderTree;
 using AngleSharp.Io;
 using Hutu.Rendering;
+using Hutu.Rendering.Interaction;
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using Hutu.Rendering.Paint;
@@ -25,8 +26,10 @@ public sealed class HutuViewInternal : IDisposable
     private readonly RenderingPipeline _pipeline;
     private readonly IImageLoader? _imageLoader;
     private readonly ITextMeasurer? _textMeasurer;
+    private readonly InteractionState _state = new();
     private IBrowsingContext? _context;
     private TextSelector? _selector;
+    private ElementHitTester? _hitTester;
     private TextSelection? _selection;
 
     /// <summary>
@@ -44,6 +47,16 @@ public sealed class HutuViewInternal : IDisposable
     }
 
     public IDocument? Document { get; private set; }
+
+    /// <summary>
+    /// Gets or sets how the host answers whether an address has been visited before. It is the answer
+    /// <c>:visited</c> is matched against, and it stays the host's to give: where a reader has already
+    /// been is browsing history, which is not the document's business and differs per host.
+    /// </summary>
+    /// <remarks>
+    /// Without an answer no link is ever marked visited, which is a page that shows everything as new.
+    /// </remarks>
+    public Func<String, Boolean>? IsVisited { get; set; }
 
     /// <summary>
     /// Gets the styled render tree for the current document, or null when nothing is loaded. It
@@ -86,6 +99,16 @@ public sealed class HutuViewInternal : IDisposable
     /// repaint; the highlight itself is already part of the paint list.
     /// </summary>
     public event Action? SelectionChanged;
+
+    /// <summary>
+    /// Raised when a link is followed to a document other than the one it is in.
+    /// </summary>
+    /// <remarks>
+    /// Loading is the host's business, so the request is handed over rather than acted on: that is what
+    /// lets one host open the address in place and another hand it to something else entirely. A link
+    /// into the document it is in never gets here - it is a scroll, which the document can do itself.
+    /// </remarks>
+    public event Action<LinkTarget>? NavigationRequested;
 
     /// <summary>
     /// Starts a selection at a point in document coordinates, replacing whatever was selected.
@@ -144,6 +167,86 @@ public sealed class HutuViewInternal : IDisposable
     /// cursor over a stretch of page a click could not select.
     /// </remarks>
     public bool HasTextAt(double x, double y) => _selector?.IsTextAt(x, y) ?? false;
+
+    /// <summary>
+    /// Moves the pointer to a point in document coordinates, marking what it is over.
+    /// </summary>
+    /// <remarks>
+    /// The point is in document coordinates: a host that scrolls adds its offset before calling, so
+    /// nothing here has to know about scrolling. The answer carries both whether the document has to
+    /// be painted again and what the pointer should look like there, because one hit test serves both.
+    /// </remarks>
+    public PointerInfo PointerMoved(double x, double y)
+    {
+        var hit = Hit(x, y);
+        var changed = _state.Hover(hit.Chain);
+
+        if (changed)
+        {
+            // The states are what the styles are computed from, so a state that changed means the
+            // document is built again - and the hit is taken again with it, because `:hover` may
+            // have moved the very box the pointer is over.
+            Rebuild(CaptureSelection());
+            hit = Hit(x, y);
+        }
+
+        return new PointerInfo(changed, CursorFor(hit), HintFor(hit));
+    }
+
+    /// <summary>
+    /// Presses at a point in document coordinates, marking what the button went down on. Returns
+    /// whether the document changed and has to be painted again.
+    /// </summary>
+    public bool PointerPressed(double x, double y) => Change(_state.Press(Hit(x, y).Chain));
+
+    /// <summary>Releases the button, clearing whatever was being pressed.</summary>
+    public bool PointerReleased() => Change(_state.Release());
+
+    /// <summary>
+    /// Re-reads the visited marks against the answer the host now gives, and rebuilds when that
+    /// changed what the document shows. A host calls this after recording an address it has just
+    /// loaded, which is what turns the links to it purple.
+    /// </summary>
+    /// <returns>
+    /// Whether anything changed. Marking an address that was already marked changes nothing, so a
+    /// reload or a repeated navigation does not rebuild the document.
+    /// </returns>
+    public bool RefreshVisited() => Change(MarkVisited());
+
+    /// <summary>Leaves the document, clearing the hover: a pointer that is gone is over nothing.</summary>
+    public bool PointerExited() => Change(_state.Hover(Array.Empty<IElement>()));
+
+    /// <summary>
+    /// Gets the link a point in document coordinates is on, or null when it is on none. A host asks
+    /// this when the button goes down, so that what is let go of is what was pressed.
+    /// </summary>
+    public LinkTarget? LinkAt(double x, double y) => Hit(x, y).Link;
+
+    /// <summary>
+    /// Follows a link a reader clicked.
+    /// </summary>
+    /// <returns>
+    /// The anchor the link names when it points into the document it is in, so the host can bring it
+    /// into view - it is marked as the target on the way. Null when there is nothing to scroll to:
+    /// either the link points elsewhere and the host has been asked to load it instead, or it names an
+    /// anchor this document does not have.
+    /// </returns>
+    public string? Activate(LinkTarget link)
+    {
+        if (!link.IsFragment)
+        {
+            NavigationRequested?.Invoke(link);
+            return null;
+        }
+
+        if (link.Fragment is not { Length: > 0 } fragment || FindAnchor(fragment) is not { } anchor)
+        {
+            return null;
+        }
+
+        ApplyTarget(anchor);
+        return fragment;
+    }
 
     public void AddEpubResourceSource(string epubFileName)
     {
@@ -322,7 +425,9 @@ public sealed class HutuViewInternal : IDisposable
     {
         Document = null;
         _selector = null;
+        _hitTester = null;
         _selection = null;
+        _state.Clear();
         _pipeline.Invalidate();
         _context?.Dispose();
         _context = null;
@@ -382,34 +487,127 @@ public sealed class HutuViewInternal : IDisposable
         Document = document;
         previousContext?.Dispose();
 
+        // The marks belong to the document being left, so they are taken back before the new one is
+        // built: nothing about where the pointer was carries over to a different page. What has been
+        // read before does carry over, so it is placed before the first build rather than after it.
+        _state.Clear();
+        MarkVisited();
+
         UpdateRenderTree();
     }
 
     /// <summary>
     /// Recomputes the styled render tree for the active document, if any. The render tree is what
-    /// the box tree is built from; it carries no geometry.
+    /// the box tree is built from; it carries no geometry. Whatever was selected is dropped, which
+    /// is what a document or a viewport changing asks for.
     /// </summary>
-    private void UpdateRenderTree()
+    private void UpdateRenderTree() => Rebuild(null);
+
+    /// <summary>
+    /// Rebuilds everything the document is described by, carrying the selection across when it can
+    /// be found again.
+    /// </summary>
+    /// <param name="restore">
+    /// Where the selection was, in terms that outlive a relayout. Null drops it, which is what
+    /// loading a document asks for; a selection that cannot be found again afterwards is dropped
+    /// too, because a position naming a box that no longer exists means nothing.
+    /// </param>
+    /// <remarks>
+    /// A rebuild is what a state change needs - the styles, and so the boxes, are computed from the
+    /// states - and it is also what would otherwise throw a selection away, since the boxes it names
+    /// are replaced. Carrying it across is what lets a reader keep a stretch of text selected while
+    /// the pointer moves over a link and the document is built again underneath.
+    /// </remarks>
+    private void Rebuild(SelectionSnapshot? restore)
     {
         if (Document is null)
             return;
 
         _pipeline.Build(Document);
 
-        // The selector answers against the boxes of the layout it was built from, so it is rebuilt
-        // with the new one - and the selection it described goes with it, because a position naming
-        // a box that no longer exists means nothing. The pipeline has already dropped the highlight
-        // along with the layout, so nothing needs repainting here.
+        // The selector and the hit tester answer against the boxes of the layout they were built
+        // from, so they are rebuilt with the new one.
         _selector = _pipeline.Layout is { } layout && _textMeasurer is not null
             ? new TextSelector(layout, _textMeasurer)
             : null;
 
-        if (_selection is not null)
+        _hitTester = _pipeline.Layout is { } measured ? new ElementHitTester(measured) : null;
+
+        var had = _selection is not null;
+        _selection = restore is { } snapshot ? Restore(snapshot) : null;
+
+        // The pipeline drops the highlight along with the layout, so the selection has to be pointed
+        // at the new boxes again or it would be a selection nothing draws.
+        _pipeline.SetHighlight(_selector?.Highlights(_selection));
+
+        if (had && _selection is null)
         {
-            _selection = null;
             SelectionChanged?.Invoke();
         }
     }
+
+    /// <summary>
+    /// Records where a selection is, as the runs its two ends name and the offsets within them. The
+    /// run order is what survives a relayout: the boxes are new, but the same document lays the same
+    /// runs out in the same order, so an index still names the same text.
+    /// </summary>
+    private SelectionSnapshot? CaptureSelection()
+    {
+        if (_selection is not { } selection || _selector is null)
+        {
+            return null;
+        }
+
+        var anchor = RunAt(selection.Anchor.Box);
+        var caret = RunAt(selection.Caret.Box);
+
+        return anchor < 0 || caret < 0
+            ? null
+            : new SelectionSnapshot(anchor, selection.Anchor.Index, caret, selection.Caret.Index);
+    }
+
+    /// <summary>
+    /// Gets the selection a snapshot describes against the layout in hand, or null when it names a
+    /// run that is no longer there.
+    /// </summary>
+    private TextSelection? Restore(SelectionSnapshot snapshot)
+    {
+        if (_selector is not { } selector ||
+            snapshot.AnchorRun >= selector.Runs.Count ||
+            snapshot.CaretRun >= selector.Runs.Count)
+        {
+            return null;
+        }
+
+        return new TextSelection(
+            Clamp(selector.Runs[snapshot.AnchorRun], snapshot.AnchorIndex),
+            Clamp(selector.Runs[snapshot.CaretRun], snapshot.CaretIndex));
+    }
+
+    /// <summary>Gets where a run sits in the collected order, or -1 when it is not one of them.</summary>
+    private int RunAt(LayoutBox? box)
+    {
+        if (box is null || _selector is null)
+        {
+            return -1;
+        }
+
+        var runs = _selector.Runs;
+
+        for (var index = 0; index < runs.Count; index++)
+        {
+            if (ReferenceEquals(runs[index], box))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>Gets a position on a run, with the offset pulled back inside the text it names.</summary>
+    private static TextPosition Clamp(LayoutBox run, int index) =>
+        new(run, Math.Clamp(index, 0, run.Text?.Length ?? 0));
 
     /// <summary>
     /// Publishes a selection: records it, turns it into the highlight the painter draws, and tells
@@ -439,6 +637,89 @@ public sealed class HutuViewInternal : IDisposable
         {
             Apply(null);
         }
+    }
+
+    /// <summary>Gets what a point in document coordinates lands on, or nothing when there is no
+    /// layout to hit against.</summary>
+    private HitResult Hit(double x, double y) => _hitTester?.Hit(x, y) ?? HitResult.None;
+
+    /// <summary>
+    /// Rebuilds the document when a state changed, carrying the selection across, and reports whether
+    /// it did.
+    /// </summary>
+    private bool Change(bool changed)
+    {
+        if (changed)
+        {
+            Rebuild(CaptureSelection());
+        }
+
+        return changed;
+    }
+
+    /// <summary>
+    /// Marks the anchor a link was followed to, which is what <c>:target</c> answers to. The mark is a
+    /// state the styles are computed from, so the document is built again when it moves.
+    /// </summary>
+    private void ApplyTarget(IElement anchor)
+    {
+        if (_state.Target(anchor))
+        {
+            Rebuild(CaptureSelection());
+        }
+    }
+
+    /// <summary>
+    /// Puts the visited mark on the links the host says it has been to, and takes it off the rest.
+    /// </summary>
+    /// <remarks>
+    /// Only the mark is placed here; whether to build the document again is the caller's to decide,
+    /// because the two callers want different things. Loading a document marks before the first build,
+    /// where a rebuild would be wasted work; a host recording an address marks after it, where the
+    /// build is exactly what shows the new colour.
+    /// </remarks>
+    private bool MarkVisited() =>
+        Document is not null &&
+        IsVisited is not null &&
+        _state.Visited(Document.GetElementsByTagName("a"), IsVisited);
+
+    /// <summary>
+    /// Gets the pointer a hit asks for: what the element declares, and otherwise what lies under the
+    /// point - text set down a column is read with a turned I-beam, text along a line with an upright
+    /// one, and everything else with the ordinary arrow.
+    /// </summary>
+    private static CursorKind CursorFor(HitResult hit)
+    {
+        var declared = hit.Box?.Source.Style.Cursor ?? CursorKind.Auto;
+
+        if (declared != CursorKind.Auto)
+        {
+            return declared;
+        }
+
+        if (!hit.IsText)
+        {
+            return CursorKind.Default;
+        }
+
+        return hit.IsVerticalText ? CursorKind.VerticalText : CursorKind.Text;
+    }
+
+    /// <summary>
+    /// Gets the hint a point asks for: the nearest element it is inside that names one, which is how
+    /// a title on a wrapper is shown for everything the wrapper holds.
+    /// </summary>
+    private static string? HintFor(HitResult hit)
+    {
+        foreach (var element in hit.Chain)
+        {
+            if (element.GetAttribute("title") is { Length: > 0 } title && !string.IsNullOrWhiteSpace(title))
+            {
+                return title;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -525,5 +806,28 @@ public sealed class HutuViewInternal : IDisposable
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Where a selection is, in the terms that outlive the boxes it was made against: which run each
+    /// end belongs to, and how far into that run it reaches.
+    /// </summary>
+    private readonly struct SelectionSnapshot
+    {
+        public SelectionSnapshot(int anchorRun, int anchorIndex, int caretRun, int caretIndex)
+        {
+            AnchorRun = anchorRun;
+            AnchorIndex = anchorIndex;
+            CaretRun = caretRun;
+            CaretIndex = caretIndex;
+        }
+
+        public int AnchorRun { get; }
+
+        public int AnchorIndex { get; }
+
+        public int CaretRun { get; }
+
+        public int CaretIndex { get; }
     }
 }

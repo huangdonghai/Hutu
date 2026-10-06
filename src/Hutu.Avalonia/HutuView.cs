@@ -3,8 +3,10 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
+using Hutu.Rendering.Interaction;
 using Hutu.Skia;
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,12 +34,25 @@ public class HutuView : ScrollViewer
     private readonly HutuViewInternal _internalView;
     private readonly HutuSurface _surface;
 
+    /// <summary>
+    /// The addresses this view has been to. It lives here rather than in the renderer because it is
+    /// browsing history: it outlives any one document, and another host would keep it somewhere else.
+    /// </summary>
+    private readonly HashSet<String> _visited = new(StringComparer.Ordinal);
+
     public HutuView()
     {
         // The same loader decodes the images for layout and draws them, so a run is never measured
         // against one decode and painted from another.
         _internalView = new HutuViewInternal(_measurer, _images);
-        _surface = new HutuSurface(_internalView, new SkiaPaintExecutor(_measurer, _images));
+
+        // The renderer asks where the reader has been; the answer is this view's to give, and a view
+        // that was never told anything answers that nothing has been read.
+        _internalView.IsVisited = _visited.Contains;
+
+        // The surface reports a gesture; what a click on a link comes to is decided here, where the
+        // scrolling that following an anchor asks for lives.
+        _surface = new HutuSurface(_internalView, new SkiaPaintExecutor(_measurer, _images), Follow);
         Content = _surface;
 
         // The core owns the selection and the highlight is already part of the paint list, so a
@@ -119,6 +134,47 @@ public class HutuView : ScrollViewer
         add => _internalView.SelectionChanged += value;
         remove => _internalView.SelectionChanged -= value;
     }
+
+    /// <summary>
+    /// Raised when a link is followed to a document other than the one it is in.
+    /// </summary>
+    /// <remarks>
+    /// The address, the context it asks for and whether it asks to be saved all travel with the
+    /// request; loading it is left to whoever listens, because whether there is anywhere to load it
+    /// into is the host's to know. A link into this document is not a navigation - it is a scroll, and
+    /// it has already happened by the time this would have been raised.
+    /// </remarks>
+    public event Action<LinkTarget>? NavigationRequested
+    {
+        add => _internalView.NavigationRequested += value;
+        remove => _internalView.NavigationRequested -= value;
+    }
+
+    /// <summary>
+    /// Records that an address has been read, so that every link to it is painted as visited.
+    /// </summary>
+    /// <remarks>
+    /// The address is the whole one - what a link resolves to rather than what its href says - because
+    /// that is what is compared against. Recording an address that is already there changes nothing, so
+    /// reloading a page is not a repaint of every link on it.
+    /// </remarks>
+    public void MarkVisited(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !_visited.Add(url))
+        {
+            return;
+        }
+
+        // Marking is only visible where the document has a link to the address, which is what the
+        // renderer reports: a navigation elsewhere - the first load of a page - changes nothing.
+        if (_internalView.RefreshVisited())
+        {
+            _surface.Refresh();
+        }
+    }
+
+    /// <summary>Gets the addresses that have been read, which is what links are marked against.</summary>
+    public IReadOnlyCollection<string> VisitedAddresses => _visited;
 
     /// <summary>Clears the selection, so nothing is highlighted and a copy has nothing to take.</summary>
     public void ClearSelection()
@@ -233,6 +289,24 @@ public class HutuView : ScrollViewer
         var element = _internalView.FindAnchor(anchor);
 
         return element is not null && ScrollToElement(element, alignment);
+    }
+
+    /// <summary>
+    /// Follows a link the reader clicked: an anchor in this document is scrolled to, and anything else
+    /// is handed to whoever listens for a navigation.
+    /// </summary>
+    /// <remarks>
+    /// Which of the two it is is the core's answer, because it is a question about the document; this
+    /// only acts on it. Following an anchor marks it as the target as well, so the document is built
+    /// again with the styles that rule selects - hence a refresh rather than a plain repaint.
+    /// </remarks>
+    private void Follow(LinkTarget link)
+    {
+        if (_internalView.Activate(link) is { } anchor)
+        {
+            ScrollToAnchor(anchor);
+            _surface.Refresh();
+        }
     }
 
     /// <summary>

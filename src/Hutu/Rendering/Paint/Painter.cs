@@ -85,6 +85,47 @@ public sealed class Painter
                 PaintBlock(box, list, target);
                 break;
         }
+
+        // The outline is emitted last because it is drawn around the box rather than in it, which also
+        // puts it after the clip the children were wrapped in: the box's own overflow must not cut it
+        // off, while the clip of the nearest ancestor that hides its overflow still holds it in.
+        // A line box and a run of text are not elements of their own - both borrow the style of what
+        // they sit in - so an outline must not be emitted for them, or a block would grow one per line.
+        if (box.Kind is not (LayoutKind.Line or LayoutKind.Text))
+        {
+            AddOutline(box, box.Source.Style, target);
+        }
+    }
+
+    /// <summary>
+    /// Emits the outline of a box, a stroke drawn outside the border box that takes no part in the
+    /// layout. Nothing is emitted for a box that was never given an outline to draw.
+    /// </summary>
+    private static void AddOutline(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
+    {
+        var stroke = style.OutlineStyle;
+
+        // Asked before the width, which is the more expensive of the two and which no box that was
+        // never given an outline has anything to say about.
+        if (stroke == BorderLineStyle.None)
+        {
+            return;
+        }
+
+        var width = style.OutlineWidth;
+
+        if (width <= 0)
+        {
+            return;
+        }
+
+        target.Add(new OutlineCommand(
+            box.BorderBox,
+            box.Radii,
+            stroke,
+            width,
+            style.OutlineOffset,
+            ToArgb(style.OutlineColor)));
     }
 
     private void PaintBlock(LayoutBox box, PaintList list, List<PaintCommand> target)

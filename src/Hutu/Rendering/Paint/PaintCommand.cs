@@ -77,6 +77,48 @@ public sealed class BorderCommand : PaintCommand
 }
 
 /// <summary>
+/// Draws the outline of a box: one unbroken stroke drawn just outside the border box, which is what
+/// makes it useful for marking a box the reader is pointing at without disturbing the layout.
+/// </summary>
+/// <remarks>
+/// <see cref="PaintCommand.Bounds"/> is the border box, not the outline's own rectangle: the stroke
+/// runs from <c>outline-offset</c> outside that rectangle outwards for <c>outline-width</c>, so it is
+/// the backend that inflates the rectangle it draws. A rounded box's outline follows its corner radii,
+/// grown to match the distance it stands away, so that it runs parallel to the border it surrounds.
+/// </remarks>
+public sealed class OutlineCommand : PaintCommand
+{
+    public OutlineCommand(
+        Rect bounds,
+        CornerRadii radii,
+        BorderLineStyle style,
+        Double width,
+        Double offset,
+        UInt32 color)
+        : base(bounds)
+    {
+        Radii = radii;
+        Style = style;
+        Width = width;
+        Offset = offset;
+        Color = color;
+    }
+
+    /// <summary>Gets the corner radii of the border box, which the outline follows.</summary>
+    public CornerRadii Radii { get; }
+
+    public BorderLineStyle Style { get; }
+
+    /// <summary>Gets how thick the stroke is.</summary>
+    public Double Width { get; }
+
+    /// <summary>Gets how far outside the border box the stroke begins.</summary>
+    public Double Offset { get; }
+
+    public UInt32 Color { get; }
+}
+
+/// <summary>
 /// Draws an image into its box. <c>object-fit</c> decides how the content is fitted and the radii
 /// how it is clipped; both are drawing concerns, which is why the box geometry is already resolved
 /// by the time this command is produced.

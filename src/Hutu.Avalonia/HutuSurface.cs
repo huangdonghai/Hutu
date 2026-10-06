@@ -2,8 +2,11 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Hutu.Rendering;
+using Hutu.Rendering.Interaction;
 using Hutu.Skia;
 using System;
+using System.Collections.Generic;
 using Offset = Hutu.Rendering.Layout.Offset;
 
 namespace Hutu.Avalonia;
@@ -27,19 +30,35 @@ namespace Hutu.Avalonia;
 /// </remarks>
 public sealed class HutuSurface : Control
 {
+    /// <summary>How far the pointer may stray between press and release and still be the same click.</summary>
+    private const Double ClickSlop = 4;
+
     private readonly HutuViewInternal _view;
     private readonly SkiaPaintExecutor _executor;
+    private readonly Action<LinkTarget>? _follow;
     private Offset _scroll;
     private Boolean _dragging;
+    private LinkTarget? _pressed;
+    private Point _pressedAt;
 
     // One instance rather than one per assignment, so a move over text does not allocate and the
     // cursor a test reads back is the same object every time.
     private static readonly Cursor TextCursor = new(StandardCursorType.Ibeam);
 
-    public HutuSurface(HutuViewInternal view, SkiaPaintExecutor executor)
+    // The rest of the shapes are built on first use rather than up front: building one asks the
+    // platform for its cursor factory, and a document no pointer has moved over has no reason to.
+    private static Dictionary<CursorKind, Cursor>? _cursors;
+
+    /// <param name="follow">
+    /// What to do about a link the reader clicks. It is handed in rather than decided here because
+    /// following one is not always the same thing: an anchor is a scroll, and the scrolling belongs to
+    /// the host that owns it.
+    /// </param>
+    public HutuSurface(HutuViewInternal view, SkiaPaintExecutor executor, Action<LinkTarget>? follow = null)
     {
         _view = view;
         _executor = executor;
+        _follow = follow;
         ClipToBounds = true;
 
         // The surface takes focus so the keys that act on a selection - Ctrl+C - reach the view once
@@ -71,8 +90,9 @@ public sealed class HutuSurface : Control
     }
 
     /// <summary>
-    /// Starts a selection gesture: a drag from the point, unless the click count says the reader
-    /// meant a word or a whole line.
+    /// Presses at the point: the document is told what the button went down on, so anything answering
+    /// to <c>:active</c> shows it, and a selection gesture starts unless the click count says the
+    /// reader meant a word or a whole line.
     /// </summary>
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
@@ -84,6 +104,10 @@ public sealed class HutuSurface : Control
         }
 
         var point = ToDocument(e.GetPosition(this));
+
+        // Marked before the gesture starts, because what the press changes - a rule answering to
+        // `:active` - moves the very boxes the gesture is about to be placed against.
+        Repaint(_view.PointerPressed(point.X, point.Y));
 
         // A double click takes the word and a triple click the line; a longer run of clicks repeats
         // the line, which is what a reader leaning on the button expects to keep seeing.
@@ -99,6 +123,12 @@ public sealed class HutuSurface : Control
         {
             _view.BeginSelection(point.X, point.Y);
             _dragging = true;
+
+            // Remembered rather than acted on: whether this was a click on a link is only known once
+            // the button comes up again, without the gesture having turned into a selection.
+            _pressed = _view.LinkAt(point.X, point.Y);
+            _pressedAt = e.GetPosition(this);
+
             e.Pointer.Capture(this);
         }
 
@@ -111,68 +141,166 @@ public sealed class HutuSurface : Control
     }
 
     /// <summary>
-    /// Extends a drag to the point the pointer has reached, and shapes the cursor for what lies
-    /// under the pointer.
+    /// Reports where the pointer is: a drag extends the selection it is making, and a pointer that is
+    /// only hovering tells the document what it is over.
     /// </summary>
+    /// <remarks>
+    /// A hover is what turns a state into a repaint - the colour a link takes, the hint it raises, the
+    /// shape of the pointer - so every move reports one and the document decides whether anything about
+    /// it actually changed.
+    /// </remarks>
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
 
         var point = ToDocument(e.GetPosition(this));
 
-        // Before the drag check, because the cursor is shaped on every move - a reader who is only
-        // hovering is the case this feedback exists for.
-        UpdateCursor(point);
-
-        if (!_dragging)
+        if (_dragging)
         {
+            // A drag is still a selection, so the pointer keeps the text shape for its whole length and
+            // the document underneath is left alone: a hover that repainted in the middle of a gesture
+            // would fight the selection being made.
+            SetCursor(TextCursor);
+            _view.ExtendSelection(point.X, point.Y);
+            InvalidateVisual();
             return;
         }
 
-        _view.ExtendSelection(point.X, point.Y);
-        InvalidateVisual();
+        var moved = _view.PointerMoved(point.X, point.Y);
+
+        SetCursor(CursorFor(moved.Cursor));
+        SetHint(moved.Hint);
+
+        Repaint(moved.Changed);
     }
 
     /// <summary>
-    /// Restores the default cursor once the pointer leaves, so nothing about the surface lingers over
-    /// the control the reader moved to. A drag is left alone: the pointer is still captured, so an
-    /// exit is not really a departure.
+    /// Takes the hover, the hint and the pointer away once the pointer leaves, so nothing about the
+    /// surface lingers over the control the reader moved to. A drag is left alone: the pointer is still
+    /// captured, so an exit is not really a departure.
     /// </summary>
     protected override void OnPointerExited(PointerEventArgs e)
     {
         base.OnPointerExited(e);
 
-        if (!_dragging)
+        if (_dragging)
         {
-            Cursor = null;
+            return;
         }
+
+        Repaint(_view.PointerExited());
+
+        SetCursor(null);
+        SetHint(null);
     }
 
     /// <summary>
-    /// Points the cursor at what lies under the pointer: the text cursor over selectable text, the
-    /// default one everywhere else.
+    /// Points the cursor at the shape the document asked for, or at the platform's own when it asked
+    /// for nothing in particular.
     /// </summary>
     /// <remarks>
-    /// A drag keeps the text cursor even after the pointer has left the text. The gesture is still a
-    /// text selection at that point, and a cursor that flickered back to the default would say
-    /// otherwise - which is also what a reader sees in a browser.
+    /// Setting the property raises a change notification, so a move that changes nothing pays nothing -
+    /// which matters, because a move reports far more often than the answer changes.
     /// </remarks>
-    private void UpdateCursor(Point point)
+    private void SetCursor(Cursor? wanted)
     {
-        var wanted = _dragging || _view.HasTextAt(point.X, point.Y) ? TextCursor : null;
-
-        // Setting the property raises a change notification, so a move that changes nothing pays
-        // nothing - which matters, because a move reports far more often than the answer changes.
         if (!ReferenceEquals(Cursor, wanted))
         {
             Cursor = wanted;
         }
     }
 
+    /// <summary>
+    /// Gets the cursor for what lies under the pointer. Null leaves the pointer to the platform, which
+    /// is what an element that declares nothing and holds no text asks for.
+    /// </summary>
+    private static Cursor? CursorFor(CursorKind kind)
+    {
+        if (kind is CursorKind.Auto or CursorKind.Default)
+        {
+            return null;
+        }
+
+        _cursors ??= CreateCursors();
+
+        return _cursors.TryGetValue(kind, out var cursor) ? cursor : null;
+    }
+
+    /// <summary>Builds the shapes once, on the first move that asks for one.</summary>
+    private static Dictionary<CursorKind, Cursor> CreateCursors() => new()
+    {
+        [CursorKind.Text] = TextCursor,
+        [CursorKind.Pointer] = new Cursor(StandardCursorType.Hand),
+        [CursorKind.Move] = new Cursor(StandardCursorType.SizeAll),
+        [CursorKind.Wait] = new Cursor(StandardCursorType.Wait),
+        [CursorKind.Help] = new Cursor(StandardCursorType.Help),
+        [CursorKind.NotAllowed] = new Cursor(StandardCursorType.No),
+        [CursorKind.Crosshair] = new Cursor(StandardCursorType.Cross),
+        [CursorKind.None] = new Cursor(StandardCursorType.None),
+
+        // The turned I-beam is the one shape no platform carries, so it is drawn - and a backend that
+        // cannot take a drawn cursor keeps the upright one rather than none at all.
+        [CursorKind.VerticalText] = VerticalTextCursor.Current ?? TextCursor,
+    };
+
+    /// <summary>
+    /// Raises the hint for what lies under the pointer, which the platform shows in its own time. A
+    /// hint belongs to what it describes, so it changes with the pointer and goes away with it.
+    /// </summary>
+    private void SetHint(String? hint)
+    {
+        if (!String.Equals(ToolTip.GetTip(this) as String, hint, StringComparison.Ordinal))
+        {
+            ToolTip.SetTip(this, hint);
+        }
+    }
+
+    /// <summary>
+    /// Re-measures and repaints when the document changed. Re-measuring comes with it because a state
+    /// can change the size of what it is drawn on, and the surrounding scroller is told how far it may
+    /// scroll by the size this control reports.
+    /// </summary>
+    private void Repaint(Boolean changed)
+    {
+        if (!changed)
+        {
+            return;
+        }
+
+        InvalidateMeasure();
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Follows the link the button went down on, when the gesture turns out to be a click on it.
+    /// </summary>
+    /// <remarks>
+    /// A press that was dragged somewhere else, or that selected something on the way, is a selection
+    /// rather than a click - which is what stops a reader selecting a link's text from following the
+    /// link instead. The link comes from the press rather than the release, because the press is the
+    /// one the reader aimed at.
+    /// </remarks>
+    private void Follow(LinkTarget? link, Point released)
+    {
+        if (link is not { } target || _follow is null || _view.HasSelection || Strayed(released))
+        {
+            return;
+        }
+
+        _follow(target);
+    }
+
+    /// <summary>Gets whether the pointer wandered far enough from the press to have been a drag.</summary>
+    private Boolean Strayed(Point released) =>
+        Math.Abs(released.X - _pressedAt.X) > ClickSlop || Math.Abs(released.Y - _pressedAt.Y) > ClickSlop;
+
     /// <summary>Ends a drag at the point the button was released on.</summary>
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
+
+        // The press is over, so whatever was marked as being pressed is let go of again.
+        Repaint(_view.PointerReleased());
 
         if (!_dragging)
         {
@@ -180,6 +308,12 @@ public sealed class HutuSurface : Control
         }
 
         _dragging = false;
+
+        // Taken before the capture is let go of: releasing the pointer raises the capture-lost
+        // handler, which forgets the press - and the press is what remembers which link was clicked.
+        var pressed = _pressed;
+        _pressed = null;
+
         e.Pointer.Capture(null);
 
         // The release can land somewhere the last move never reported, so the final position comes
@@ -188,22 +322,33 @@ public sealed class HutuSurface : Control
 
         _view.ExtendSelection(point.X, point.Y);
 
-        // The gesture is over, so the cursor answers for the point again rather than staying the text
-        // one it was kept as for the length of the drag.
-        UpdateCursor(point);
+        // The gesture is over, so the pointer answers for the point again rather than staying the text
+        // one it was kept as for the length of the drag - and the hover it now describes is the one the
+        // document should be showing.
+        var landed = _view.PointerMoved(point.X, point.Y);
+
+        SetCursor(CursorFor(landed.Cursor));
+        SetHint(landed.Hint);
+        Repaint(landed.Changed);
+
+        Follow(pressed, e.GetPosition(this));
 
         InvalidateVisual();
         e.Handled = true;
     }
 
     /// <summary>
-    /// Forgets a drag whose pointer was taken away - a window losing the capture, say. The selection
-    /// it produced stays, because that is still what the reader asked for.
+    /// Forgets a drag whose pointer was taken away - a window losing the capture, say. The selection it
+    /// produced stays, because that is still what the reader asked for.
     /// </summary>
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         base.OnPointerCaptureLost(e);
         _dragging = false;
+        _pressed = null;
+
+        // Whatever was being pressed is let go of as well: the button is not coming back to this.
+        Repaint(_view.PointerReleased());
     }
 
     /// <summary>

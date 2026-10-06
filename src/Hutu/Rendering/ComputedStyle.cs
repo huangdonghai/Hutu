@@ -2,6 +2,7 @@ using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Values;
 using AngleSharp.Dom;
+using AngleSharp.Html.Dom;
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
@@ -36,6 +37,7 @@ public readonly struct ComputedStyle
     private readonly IRenderDimensions _dimensions;
     private readonly IElement? _element;
     private readonly Double _parentFontSize;
+    private readonly CssColorValue? _parentColor;
 
     /// <param name="specified">
     /// The cascaded declaration, when it is available. It is preferred for backgrounds: the computed
@@ -52,18 +54,25 @@ public readonly struct ComputedStyle
     /// box builder hands the real reference down and it is applied here. Zero means it is unknown and
     /// the device's own font size stands in.
     /// </param>
+    /// <param name="parentColor">
+    /// The colour the parent box resolved to, which is not always the colour the parent's computed
+    /// declaration holds: a link is painted in the engine's own link colour without that colour ever
+    /// reaching the declaration, so the words inside the link take it from here.
+    /// </param>
     public ComputedStyle(
         ICssStyleDeclaration style,
         IRenderDimensions dimensions,
         ICssStyleDeclaration? specified = null,
         IElement? element = null,
-        Double parentFontSize = 0)
+        Double parentFontSize = 0,
+        CssColorValue? parentColor = null)
     {
         _style = style ?? throw new ArgumentNullException(nameof(style));
         _dimensions = dimensions ?? throw new ArgumentNullException(nameof(dimensions));
         _specified = specified;
         _element = element;
         _parentFontSize = parentFontSize;
+        _parentColor = parentColor;
     }
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
@@ -254,7 +263,37 @@ public readonly struct ComputedStyle
     /// </summary>
     public Boolean HasRubyUnder => RubyPosition == RubyPosition.Under;
 
-    public CssColorValue Color => ColorValue("color") ?? CssColorValue.Black;
+    /// <summary>
+    /// Gets the colour text is painted in.
+    /// </summary>
+    /// <remarks>
+    /// A link the page never coloured is painted in the engine's own link colour: blue, purple once it
+    /// has been read, red while it is being followed. That default cannot be left to a rule in the
+    /// engine's sheet. Naming a link takes a pseudo-class, a pseudo-class outranks the plain element
+    /// selector an author writes, and this engine cascades its own sheet in the same origin as the
+    /// page's - so the default would beat the page. It is resolved here instead, where the declaration
+    /// the page wrote on the element is still told apart from the one the element merely took over from
+    /// its parent: a link that inherits the page's text colour is still drawn as a link.
+    /// </remarks>
+    public CssColorValue Color
+    {
+        get
+        {
+            var declared = ColorValue("color") ?? CssColorValue.Black;
+
+            if (IsFollowable)
+            {
+                return Declares("color") ? declared : LinkColor;
+            }
+
+            // Anything but a link is drawn in what was declared for it. Only an element no one declared
+            // a colour for falls back to the colour its parent resolved to, and that is how the words
+            // inside a link take its colour. The declared value is asked for its value rather than for
+            // its presence: the cascaded declaration answers with a placeholder of its own invention
+            // when it holds nothing, so a null property would never be seen.
+            return _specified?.GetProperty("color")?.RawValue is null ? _parentColor ?? declared : declared;
+        }
+    }
 
     public CssColorValue? BackgroundColor => ColorValue("background-color");
 
@@ -294,6 +333,99 @@ public readonly struct ComputedStyle
     public Boolean HasUnderline => HasDecoration("underline");
 
     public Boolean HasLineThrough => HasDecoration("line-through");
+
+    // --- Pointer --------------------------------------------------------
+
+    /// <summary>
+    /// Gets the pointer the element asks for, i.e. what <c>cursor</c> resolves to.
+    /// </summary>
+    /// <remarks>
+    /// A list of values is read from its last entry, which is the one that stands in when the shapes
+    /// before it cannot be used - this engine draws none of them, so the keyword at the end is what
+    /// is left. An element that says nothing asks for <see cref="CursorKind.Auto"/>, which leaves the
+    /// choice to whatever the pointer is over.
+    /// </remarks>
+    public CursorKind Cursor
+    {
+        get
+        {
+            var value = ReadKeyword("cursor");
+            var kind = CursorKind.Auto;
+
+            if (!String.IsNullOrWhiteSpace(value))
+            {
+                var comma = value.LastIndexOf(',');
+                var keyword = (comma < 0 ? value : value[(comma + 1)..]).Trim();
+
+                kind = keyword.ToLowerInvariant() switch
+                {
+                    "pointer" or "hand" => CursorKind.Pointer,
+                    "text" => CursorKind.Text,
+                    "vertical-text" => CursorKind.VerticalText,
+                    "move" => CursorKind.Move,
+                    "wait" => CursorKind.Wait,
+                    "help" => CursorKind.Help,
+                    "not-allowed" => CursorKind.NotAllowed,
+                    "crosshair" => CursorKind.Crosshair,
+                    "none" => CursorKind.None,
+                    "default" => CursorKind.Default,
+                    _ => CursorKind.Auto,
+                };
+            }
+
+            // A link asks for the hand even though it names no cursor: `auto` is not a preference but a
+            // question - it leaves the choice to the engine - and the engine's answer for a link is the
+            // pointer. A cursor the page did write stands, which is why this is not a rule in the
+            // engine's sheet: that one would outrank an author's plain `a { cursor: ... }`.
+            return kind == CursorKind.Auto && IsFollowable ? CursorKind.Pointer : kind;
+        }
+    }
+
+    /// <summary>
+    /// Gets whether the element is a link, i.e. an anchor with somewhere to go. The words inside a link
+    /// are not themselves links, so only the anchor carries the engine's own link colours.
+    /// </summary>
+    private Boolean IsFollowable => _element is IHtmlAnchorElement anchor && anchor.HasAttribute("href");
+
+    /// <summary>
+    /// Gets the colour the engine paints a link in: blue for one that has not been followed, purple for
+    /// one that has, red for the one being followed right now.
+    /// </summary>
+    private CssColorValue LinkColor =>
+        _element?.GetPseudoClass(PseudoClassNames.Active) == true
+            ? CssColorValue.FromRgb(0xee, 0x00, 0x00)
+            : _element?.GetPseudoClass(PseudoClassNames.Visited) == true
+                ? CssColorValue.FromRgb(0x55, 0x1a, 0x8b)
+                : CssColorValue.FromRgb(0x00, 0x00, 0xee);
+
+    /// <summary>
+    /// Gets whether the page wrote a declaration for the property on the element itself, as opposed to
+    /// the element merely taking one over from a parent.
+    /// </summary>
+    /// <remarks>
+    /// The declaration the element was cascaded from does not say which of the two a value is: the
+    /// inherited ones are folded into it, and the property that was inherited is the very object the
+    /// parent holds. So the declarations are computed once more, from the rules that match the element
+    /// and nothing else. That is a second selector match, which is why it is only asked about a link.
+    /// Not being able to tell counts as "the page wrote nothing", so a link is drawn as a link.
+    /// <para>
+    /// The property is asked for its value and not merely for its presence: a declaration the element
+    /// does not carry still answers with a property, one the declaration factory invents to stand for
+    /// the name that was asked about, and that placeholder holds no value at all.
+    /// </para>
+    /// </remarks>
+    private Boolean Declares(String name)
+    {
+        if (_element?.Owner is not { } document || document.DefaultView is not { } window)
+        {
+            return false;
+        }
+
+        var device = _dimensions as IRenderDevice ?? document.Context.GetService<IRenderDevice>();
+
+        return device is not null &&
+               window.GetStyleCollection(device).ComputeExplicitStyle(_element).GetProperty(name)?.RawValue is not null;
+    }
 
     // --- Box model ------------------------------------------------------
 
@@ -489,6 +621,67 @@ public readonly struct ComputedStyle
 
     public String BorderLeftStyle => Keyword("border-left-style", "none");
 
+    // --- Outline --------------------------------------------------------
+
+    /// <summary>
+    /// Gets the stroke the outline is drawn with. As with a border, a keyword Hutu cannot draw is drawn
+    /// as a solid stroke rather than dropped, since dropping it would lose the outline altogether.
+    /// </summary>
+    public BorderLineStyle OutlineStyle => ToLineStyle(Keyword("outline-style", "none"));
+
+    /// <summary>
+    /// Gets how thick the outline is, or zero when there is nothing to draw.
+    /// </summary>
+    /// <remarks>
+    /// An outline is only drawn once it has been given a stroke, and its width is initialised to
+    /// <c>medium</c> rather than to nothing, so a page that names a style and no width is given the
+    /// three pixels the spec pins that keyword to instead of an outline that silently disappears. The
+    /// number is taken from the keyword AngleSharp holds rather than written out here, so that a
+    /// declared <c>thin</c> or <c>thick</c> is read the same way.
+    /// </remarks>
+    public Double OutlineWidth => OutlineStyle == BorderLineStyle.None
+        ? 0
+        : Length("outline-width", RenderMode.Horizontal, CssLengthValue.Medium.Value);
+
+    /// <summary>
+    /// Gets how far outside the border edge the outline begins. It shifts the outline without taking
+    /// any room in the layout, which is what distinguishes it from a margin.
+    /// </summary>
+    public Double OutlineOffset => Length("outline-offset", RenderMode.Horizontal, 0);
+
+    /// <summary>
+    /// Gets the colour the outline is drawn in.
+    /// </summary>
+    /// <remarks>
+    /// The initial keyword is <c>invert</c>, which asks the platform to turn whatever lies beneath the
+    /// stroke inside out - a system colour Hutu has no way to resolve, and one it deliberately does not
+    /// pretend to draw. The element's own colour stands in, so an outline given no colour of its own
+    /// still shows up rather than vanishing.
+    /// </remarks>
+    public CssColorValue OutlineColor
+    {
+        get
+        {
+            if (OutlineColorValue is { } value && value != CssColorValue.InvertedColor)
+            {
+                return value;
+            }
+
+            return Color;
+        }
+    }
+
+    /// <summary>
+    /// Reads the outline colour as it was computed. The declaration can hold it either as a colour or
+    /// as a named constant standing for one, which is how <c>invert</c> survives the cascade.
+    /// </summary>
+    private CssColorValue? OutlineColorValue => _style.GetProperty("outline-color")?.RawValue switch
+    {
+        CssColorValue color => color,
+        CssConstantValue<CssColorValue> constant => constant.Value,
+        _ => null,
+    };
+
     // --- Helpers --------------------------------------------------------
 
     /// <summary>
@@ -651,6 +844,15 @@ public readonly struct ComputedStyle
 
     private Double? Resolve(ICssValue value, RenderMode mode)
     {
+        // A keyword standing for a length - `medium`, which is what `border-width` and `outline-width`
+        // start out as, and `thin` and `thick` beside it - is carried as a named constant wrapping the
+        // length it stands for, and only the length it wraps can be converted. Left wrapped the
+        // conversion fails, which silently read every border and outline that named no width as zero.
+        if (value is CssConstantValue<CssLengthValue> keyword)
+        {
+            value = keyword.Value;
+        }
+
         try
         {
             var pixels = value.AsPx(_dimensions, mode);

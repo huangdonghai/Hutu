@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Hutu.Rendering.Interaction;
 using Sample.Common;
 using System;
 using System.Collections.Generic;
@@ -25,7 +26,37 @@ public partial class MainView : ContentPage
 
         // Init some controls
         MyHutuView.AddEmbeddedResourceSource(SampleUtils.GetSampleAssembly(), "Samples");
+
+        // A link the reader follows loads in place, the way a typed address does, and joins the same
+        // history - so the back button walks back out of it.
+        MyHutuView.NavigationRequested += Follow;
+
         UpdateNavigation();
+    }
+
+    /// <summary>
+    /// Loads a link the reader followed.
+    /// </summary>
+    /// <remarks>
+    /// The address arrives absolute, so the reader is shown where they went rather than the relative
+    /// href that took them there. A link that points into the document it is in never reaches this: it
+    /// is a scroll, and the view has already made it.
+    /// </remarks>
+    private async void Follow(LinkTarget link)
+    {
+        if (link.IsDownload)
+        {
+            // There is nowhere to put a saved file yet, so the request is reported rather than acted on.
+            Debug.WriteLine($"Download requested: {link.Url} ({link.Target ?? "this view"})");
+            return;
+        }
+
+        // One view is all there is, so a link asking for another context - a new window, a named frame
+        // - is opened in this one. The request still carries what it asked for.
+        if (link.Target is not null)
+            Debug.WriteLine($"Link targeted '{link.Target}' opened in this view: {link.Url}");
+
+        await GoAsync(-1, link.Url);
     }
 
     private void AddressBar_KeyDown(object? sender, KeyEventArgs e)
@@ -98,7 +129,14 @@ public partial class MainView : ContentPage
     {
         try
         {
-            await MyHutuView.LoadUrlAsync(url);
+            var document = await MyHutuView.LoadUrlAsync(url);
+
+            // Where the reader has been is recorded against the address the document ended up with,
+            // not the one that was asked for: that is the address its own links resolve against, and so
+            // the only one a link back here could be recognised by.
+            if (document.Url is { Length: > 0 } address)
+                MyHutuView.MarkVisited(address);
+
             return true;
         }
         catch (Exception ex)

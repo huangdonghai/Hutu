@@ -76,6 +76,10 @@ public sealed class SkiaPaintExecutor
                     DrawBorder(canvas, border);
                     break;
 
+                case OutlineCommand outline:
+                    DrawOutline(canvas, outline);
+                    break;
+
                 case ImageCommand image:
                     _images?.Draw(canvas, image.Url, ToRect(image.Bounds), image.Fit, image.Radii);
                     break;
@@ -243,6 +247,95 @@ public sealed class SkiaPaintExecutor
         path.AddRoundRect(SkiaRounded.RoundRect(Deflate(ToRect(command.Bounds), half), command.Radii.Shrink(half)));
         return path;
     }
+
+    /// <summary>
+    /// Draws the outline of a box, which is a band that begins <c>outline-offset</c> outside the border
+    /// box and reaches <c>outline-width</c> further out.
+    /// </summary>
+    /// <remarks>
+    /// An outline is drawn around the box rather than in it - that is the whole point of it - so there
+    /// is nothing for it to sit against: the offset shifts it outwards instead of insetting it, and a
+    /// solid one is the band between two rounded rectangles rather than a stroke laid on an edge. A
+    /// pattern cannot be filled and has to be stroked, so to land in the same place it is stroked along
+    /// the middle of that band. A rounded box's outline follows its corner radii, grown by the distance
+    /// it stands away, which is what makes it run parallel to the border it surrounds.
+    /// </remarks>
+    private static void DrawOutline(SKCanvas canvas, OutlineCommand command)
+    {
+        var box = ToRect(command.Bounds);
+
+        if (command.Style == BorderLineStyle.Solid)
+        {
+            using var fill = new SKPaint { Color = new SKColor(command.Color), IsAntialias = true };
+            using var ring = OutlineRing(box, command);
+            canvas.DrawPath(ring, fill);
+            return;
+        }
+
+        using var paint = new SKPaint
+        {
+            Color = new SKColor(command.Color),
+            IsAntialias = true,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = (Single)command.Width,
+        };
+
+        if (command.Style == BorderLineStyle.Dotted)
+        {
+            paint.StrokeCap = SKStrokeCap.Round;
+        }
+
+        using var dashes = Dashes(command.Width, command.Style);
+        paint.PathEffect = dashes;
+        using var middle = OutlineMiddle(box, command);
+        canvas.DrawPath(middle, paint);
+    }
+
+    /// <summary>
+    /// Gets the outline as the band between its inner and outer edges, the inner one wound the other
+    /// way so that an even-odd fill leaves the band between them.
+    /// </summary>
+    private static SKPath OutlineRing(SKRect box, OutlineCommand command)
+    {
+        var outer = Inflate(box, command.Offset + command.Width);
+        var inner = Inflate(box, command.Offset);
+
+        var path = new SKPath { FillType = SKPathFillType.EvenOdd };
+        path.AddRoundRect(SkiaRounded.RoundRect(outer, Grow(command.Radii, command.Offset + command.Width)));
+
+        // A negative offset can pull the inner edge past the middle of a small box, and an inside-out
+        // rectangle would make the even-odd fill cover the band instead of leaving it out.
+        if (inner.Width > 0 && inner.Height > 0)
+        {
+            path.AddRoundRect(SkiaRounded.RoundRect(inner, Grow(command.Radii, command.Offset)));
+        }
+
+        return path;
+    }
+
+    /// <summary>Gets the line through the middle of the outline, which a pattern is stroked along.</summary>
+    private static SKPath OutlineMiddle(SKRect box, OutlineCommand command)
+    {
+        var distance = command.Offset + (command.Width / 2);
+
+        var path = new SKPath();
+        path.AddRoundRect(SkiaRounded.RoundRect(Inflate(box, distance), Grow(command.Radii, distance)));
+        return path;
+    }
+
+    /// <summary>
+    /// Gets the corner radii of an outline standing <paramref name="distance"/> out from the border box,
+    /// so that a rounded outline runs parallel to the border it surrounds. The radii grow by being
+    /// shrunk with a negative inset; a corner that is square has nothing to grow and stays square.
+    /// </summary>
+    private static CornerRadii Grow(CornerRadii radii, Double distance) =>
+        radii.Shrink(new Thickness(-distance, -distance, -distance, -distance));
+
+    private static SKRect Inflate(SKRect box, Double distance) => new(
+        box.Left - (Single)distance,
+        box.Top - (Single)distance,
+        box.Right + (Single)distance,
+        box.Bottom + (Single)distance);
 
     /// <summary>
     /// Gets the quarter of the border a side owns, bounded by the diagonals the two corners either end

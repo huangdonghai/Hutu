@@ -1,5 +1,6 @@
 using AngleSharp.Css;
 using AngleSharp.Css.RenderTree;
+using AngleSharp.Css.Values;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
 using Hutu.Rendering.Layout;
@@ -44,9 +45,10 @@ public static class BoxBuilder
         IRenderDimensions dimensions,
         IImageProvider? images,
         WritingModeInfo inherited,
-        Double parentFontSize = 0)
+        Double parentFontSize = 0,
+        CssColorValue? parentColor = null)
     {
-        var style = new ComputedStyle(node.ComputedStyle, dimensions, node.SpecifiedStyle, node.Ref, parentFontSize);
+        var style = new ComputedStyle(node.ComputedStyle, dimensions, node.SpecifiedStyle, node.Ref, parentFontSize, parentColor);
 
         if (style.IsDisplayNone)
         {
@@ -69,12 +71,16 @@ public static class BoxBuilder
 
         var children = new List<Box>(node.Children is ICollection<IRenderNode> collection ? collection.Count : 0);
 
+        // Resolved once: working out the colour of a link costs a second selector match, and every one
+        // of the link's children asks its parent box for the same answer.
+        var color = style.Color;
+
         foreach (var child in node.Children)
         {
             switch (child)
             {
                 case ElementRenderNode elementChild:
-                    var childBox = BuildElement(elementChild, dimensions, images, flow, style.FontSize);
+                    var childBox = BuildElement(elementChild, dimensions, images, flow, style.FontSize, color);
 
                     if (childBox is not null)
                     {
