@@ -645,10 +645,20 @@ public sealed class SkiaPaintExecutor
     /// and the run is drawn as one positioned blob, so the text still costs a single draw rather than
     /// one per character, and the font's own advances between glyphs are left as they are.
     /// </param>
-    private static void DrawRuns(SKCanvas canvas, IReadOnlyList<SkiaTextRun> runs, Single x, Single baseline, SKPaint paint, Double letterSpacing = 0)
+    private void DrawRuns(SKCanvas canvas, IReadOnlyList<SkiaTextRun> runs, Single x, Single baseline, SKPaint paint, Double letterSpacing = 0)
     {
         foreach (var run in runs)
         {
+            // A script whose glyphs join or reorder is drawn from the glyphs the shaper named, at the
+            // very places it put them, so what is drawn is what was measured. Everything else keeps the
+            // font's own direct mapping, which is a single draw and the whole of the common case.
+            if (_measurer.TryShape(run.Font, run.Text, out var shaped))
+            {
+                DrawShapedRun(canvas, run.Font, shaped, x, baseline, paint, letterSpacing);
+                x += shaped.Width + (Single)(letterSpacing * shaped.Glyphs.Length);
+                continue;
+            }
+
             if (letterSpacing == 0 || run.Text.Length == 0)
             {
                 canvas.DrawText(run.Text, x, baseline, run.Font, paint);
@@ -677,6 +687,48 @@ public sealed class SkiaPaintExecutor
             }
 
             x += run.Font.MeasureText(run.Text) + (Single)(letterSpacing * run.Text.Length);
+        }
+    }
+
+    /// <summary>
+    /// Draws a shaped run: the glyphs the font set the text in, each at the place the shaper gave it
+    /// along the baseline. The places are relative to where the run starts, so the pen is added to
+    /// each, which is also what lets the drawing agree with the width the run was measured to.
+    /// </summary>
+    private static void DrawShapedRun(
+        SKCanvas canvas,
+        SKFont font,
+        ShapedRun run,
+        Single x,
+        Single baseline,
+        SKPaint paint,
+        Double letterSpacing)
+    {
+        var count = run.Glyphs.Length;
+
+        if (count == 0 || run.Points.Length < count)
+        {
+            return;
+        }
+
+        var positions = new SKPoint[count];
+
+        for (var index = 0; index < count; index++)
+        {
+            positions[index] = new SKPoint(
+                x + run.Points[index].X + (Single)(letterSpacing * index),
+                baseline + run.Points[index].Y);
+        }
+
+        using var builder = new SKTextBlobBuilder();
+        var placed = builder.AllocatePositionedRun(font, count);
+        placed.SetGlyphs(run.Glyphs);
+        placed.SetPositions(positions);
+        using var blob = builder.Build();
+
+        if (blob is not null)
+        {
+            canvas.DrawText(blob, 0, 0, paint);
         }
     }
 

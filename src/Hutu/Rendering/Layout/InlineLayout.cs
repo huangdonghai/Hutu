@@ -861,7 +861,7 @@ public sealed class InlineLayout
 
             // The line is aligned on the extent it ends up with, which may have shrunk by the edge an
             // element that stops here no longer draws twice.
-            line.Offset = AlignmentOffset(line.Fragments[0].Style.TextAlign, maxInline, line.Used);
+            line.Offset = AlignmentOffset(line.Fragments[0].Style.TextAlign, maxInline, line.Used, line.Fragments[0].Flow);
             lines[index + 1].ContinuesFromPrevious = pending;
         }
     }
@@ -1173,7 +1173,7 @@ public sealed class InlineLayout
     private static (Double Start, Double End) InlineMargins(Thickness margin, WritingModeInfo flow) =>
         flow.IsVertical
             ? flow.InlineSign > 0 ? (margin.Top, margin.Bottom) : (margin.Bottom, margin.Top)
-            : (margin.Left, margin.Right);
+            : flow.InlineSign > 0 ? (margin.Left, margin.Right) : (margin.Right, margin.Left);
 
     /// <summary>Gets the margins a box takes across the line, as the distance before it and after it.</summary>
     /// <remarks>
@@ -1374,7 +1374,8 @@ public sealed class InlineLayout
             : new WritingModeInfo(
                 flow.Mode,
                 run.IsUpright ? TextOrientation.Upright : TextOrientation.Sideways,
-                false);
+                false,
+                flow.Direction);
     }
 
     /// <summary>
@@ -1398,19 +1399,43 @@ public sealed class InlineLayout
         return flow;
     }
 
-    private static Double AlignmentOffset(String textAlign, Double maxInline, Double used)
+    /// <summary>
+    /// Gets where the line's content starts along the inline axis, which is what <c>text-align</c>
+    /// asks for and which end the line reads from when it asks for nothing.
+    /// </summary>
+    /// <remarks>
+    /// <c>start</c> and <c>end</c> are logical and follow the direction the line reads in, while
+    /// <c>left</c> and <c>right</c> are physical and do not; the initial value is <c>start</c>, so an
+    /// unaligned right-to-left line sits against its right edge.
+    /// </remarks>
+    private static Double AlignmentOffset(String textAlign, Double maxInline, Double used, WritingModeInfo flow)
     {
         if (maxInline <= used)
         {
             return 0;
         }
 
-        return textAlign.Equals("center", StringComparison.OrdinalIgnoreCase)
-            ? (maxInline - used) / 2
-            : textAlign.Equals("right", StringComparison.OrdinalIgnoreCase) ||
-              textAlign.Equals("end", StringComparison.OrdinalIgnoreCase)
-                ? maxInline - used
-                : 0;
+        var free = maxInline - used;
+
+        if (textAlign.Equals("center", StringComparison.OrdinalIgnoreCase))
+        {
+            return free / 2;
+        }
+
+        // The offset is measured from the edge the line begins at, which `Map` then turns into a
+        // physical place; only the two physical keywords have to look at which edge that is.
+        if (textAlign.Equals("left", StringComparison.OrdinalIgnoreCase))
+        {
+            return flow.InlineSign > 0 ? 0 : free;
+        }
+
+        if (textAlign.Equals("right", StringComparison.OrdinalIgnoreCase))
+        {
+            return flow.InlineSign > 0 ? free : 0;
+        }
+
+        // `start`, `justify` and the initial value begin at the start; `end` moves over to the far end.
+        return textAlign.Equals("end", StringComparison.OrdinalIgnoreCase) ? free : 0;
     }
 
     /// <summary>A piece of a text node that shares one orientation and is measured and drawn as one.</summary>
@@ -1899,12 +1924,13 @@ public sealed class InlineLayout
             : thickness;
 
         /// <summary>
-        /// Gets the physical side the inline axis starts on: the left edge of a row, the top edge of a
-        /// column - and the bottom edge under <c>sideways-lr</c>, the one mode that runs up the page.
+        /// Gets the physical side the inline axis starts on: the left edge of a left-to-right row, the
+        /// right edge of a right-to-left one, the top edge of a column - and the bottom edge under
+        /// <c>sideways-lr</c>, the one mode that runs up the page.
         /// </summary>
         private static Int32 InlineSide(WritingModeInfo flow, Boolean start) => flow.IsVertical
             ? start == (flow.InlineSign > 0) ? Top : Bottom
-            : start ? Left : Right;
+            : start == (flow.InlineSign > 0) ? Left : Right;
 
         /// <summary>
         /// Gets the physical side the block axis starts on: the top edge of a row, and of a column the
@@ -2179,7 +2205,7 @@ public sealed class InlineLayout
             line.Height = ascent + descent;
             line.Used = used;
             line.Offset = line.Fragments.Count > 0
-                ? AlignmentOffset(line.Fragments[0].Style.TextAlign, maxInline, used)
+                ? AlignmentOffset(line.Fragments[0].Style.TextAlign, maxInline, used, line.Fragments[0].Flow)
                 : 0;
 
             return line;

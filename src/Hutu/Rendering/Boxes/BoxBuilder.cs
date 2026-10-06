@@ -234,16 +234,20 @@ public static class BoxBuilder
     private static WritingModeInfo ResolveFlow(ComputedStyle style, WritingModeInfo inherited)
     {
         var mode = style.WritingMode;
+        var direction = style.Direction;
 
         if (mode == Layout.WritingMode.HorizontalTb)
         {
-            return WritingModeInfo.Horizontal;
+            return direction == TextDirection.LeftToRight
+                ? WritingModeInfo.Horizontal
+                : new WritingModeInfo(Layout.WritingMode.HorizontalTb, TextOrientation.Mixed, false, direction);
         }
 
         return new WritingModeInfo(
             mode,
             style.DeclaredTextOrientation ?? inherited.Orientation,
-            style.DeclaredTextCombineUpright ?? inherited.CombinesUpright);
+            style.DeclaredTextCombineUpright ?? inherited.CombinesUpright,
+            direction);
     }
 
     private static BoxKind ResolveKind(IElement element, ComputedStyle style)

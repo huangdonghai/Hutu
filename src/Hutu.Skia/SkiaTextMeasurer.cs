@@ -14,9 +14,10 @@ namespace Hutu.Skia;
 /// layout engine asks for both per text fragment and the underlying calls cross into native code.
 /// The fonts are also shared with the paint executor, so a run is measured and drawn with the very
 /// same font. A character the family has no glyph for is handed to a system font that does, which is
-/// what lets a Latin family carry CJK text without a box per character. The one place shaping is asked
-/// for is a column, which needs the glyph a font sets a character in when it stands upright; plain
-/// advance widths are accurate for the Latin and CJK samples this stage targets.
+/// what lets a Latin family carry CJK text without a box per character. Shaping is asked for where a
+/// character's picture depends on its neighbours - the joining scripts, and every script whose marks
+/// reorder or combine - and the advance measured is the advance of the glyphs that will be drawn;
+/// everything else maps straight from character to glyph.
 /// </remarks>
 public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 {
@@ -70,17 +71,56 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         // The common case is a run the family covers whole, which needs no split and no allocation.
         if (!NeedsFallback(text, primary))
         {
-            return primary.MeasureText(text);
+            return Width(primary, text);
         }
 
         var width = 0.0;
 
         foreach (var run in Runs(text, style, primary))
         {
-            width += run.Font.MeasureText(run.Text);
+            width += Width(run.Font, run.Text);
         }
 
         return width;
+    }
+
+    /// <summary>
+    /// Gets the distance a stretch of text advances: the shaper's answer for a script whose glyphs
+    /// depend on their neighbours, and the font's own advance for one that maps a character to a
+    /// glyph.
+    /// </summary>
+    private Double Width(SKFont font, String text)
+    {
+        if (SkiaTextShaper.NeedsShaping(text))
+        {
+            var shaped = _shaper.Shape(font, text);
+
+            if (shaped.Succeeded)
+            {
+                return shaped.Width;
+            }
+        }
+
+        return font.MeasureText(text);
+    }
+
+    /// <summary>
+    /// Shapes a stretch of text for the paint executor, which draws it as the glyphs the font sets it
+    /// in rather than one glyph per character. A stretch no shaper is needed for - or one the shaper
+    /// could not handle - answers false and is drawn the way it always was, which is what keeps this
+    /// path off the Latin and CJK text the engine has always mapped straight through.
+    /// </summary>
+    public Boolean TryShape(SKFont font, String text, out ShapedRun run)
+    {
+        run = ShapedRun.None;
+
+        if (!SkiaTextShaper.NeedsShaping(text))
+        {
+            return false;
+        }
+
+        run = _shaper.Shape(font, text);
+        return run.Succeeded;
     }
 
     /// <summary>

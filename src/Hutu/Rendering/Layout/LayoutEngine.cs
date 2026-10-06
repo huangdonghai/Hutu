@@ -132,9 +132,10 @@ public sealed class LayoutEngine
         }
 
         // The inline axis of a row runs across the box, so a row is cut down its left and right edges
-        // and a column across its top and bottom ones. Every mode but `sideways-lr` starts at the edge
-        // the text begins reading from, which is the left one of a row and the top one of a column.
-        var startAtBeginning = !box.Vertical || box.Flow.InlineSign > 0;
+        // and a column across its top and bottom ones. The cut begins at the edge the text begins
+        // reading from - the near edge of a left-to-right row, the far one of a right-to-left row, and
+        // the top one of a column unless the mode reads up the page.
+        var startAtBeginning = box.Flow.InlineSign > 0;
 
         var top = box.Vertical &&
             ((box.SlicesInlineStart && startAtBeginning) || (box.SlicesInlineEnd && !startAtBeginning));

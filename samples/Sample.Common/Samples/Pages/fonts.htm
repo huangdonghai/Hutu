@@ -7,12 +7,22 @@
     <link rel="stylesheet" href="../Css/demo.css">
     <style>
         .font-sample { margin: 12px 0; padding: 14px; border: 1px solid #dce5ef; border-radius: 8px; }
+        .script-sample { margin: 12px 0; padding: 14px; border: 1px solid #dce5ef; border-radius: 8px; }
+        .script-text { font-size: 22px; line-height: 2; }
+        .script-meta { margin-top: 6px; color: #5a687a; font-size: 13px; }
         .sans { font-family: Arial, "Microsoft YaHei", sans-serif; }
         .serif { font-family: Georgia, "Songti SC", serif; }
         .mono { font-family: Consolas, "Courier New", monospace; }
         .weight { font-size: 21px; font-weight: 700; }
         .spacing { letter-spacing: .16em; }
         .line-height { max-width: 620px; line-height: 2; }
+        .arabic { font-family: Tahoma, "Segoe UI", Arial, sans-serif; }
+        .hebrew { font-family: "Segoe UI", Arial, David, sans-serif; }
+        .devanagari { font-family: "Nirmala UI", Mangal, sans-serif; }
+        .bengali { font-family: "Nirmala UI", Vrinda, sans-serif; }
+        .tamil { font-family: "Nirmala UI", Latha, sans-serif; }
+        .thai { font-family: "Leelawadee UI", Tahoma, sans-serif; }
+        .hangul { font-family: "Malgun Gothic", "Microsoft YaHei", sans-serif; }
     </style>
 </head>
 <body>
@@ -26,7 +36,61 @@
         <p class="weight">Bold Weight / 700</p>
         <p class="spacing">Letter Spacing Test</p>
         <p class="line-height">Line-height test: This paragraph uses increased line height to demonstrate the readability of multi-line text. Resize the viewport to see the paragraph wrap naturally while maintaining comfortable spacing.</p>
-        <p class="note">This demo uses generic system font families and does not depend on web fonts. Add a redistributable font file to the Fonts directory and declare it with @font-face in a stylesheet.</p>
+
+        <h2>Complex Scripts</h2>
+        <p class="lead">These samples set text in scripts whose letters join, reorder, or combine, so they put font shaping and bidirectional layout to the test rather than the Latin alphabet alone.</p>
+
+        <div class="script-sample" lang="ar" dir="rtl">
+            <div class="script-text arabic">السلام عليكم — هذه فقرة قصيرة بالخط العربي.</div>
+            <div class="script-meta">Arabic · written right to left, with letters that join</div>
+        </div>
+
+        <div class="script-sample" lang="ar" dir="rtl">
+            <div class="script-text arabic">الشَّمْسُ تُشْرِقُ كُلَّ صَبَاحٍ.</div>
+            <div class="script-meta">Arabic · short vowels and other marks placed over and under the letters</div>
+        </div>
+
+        <div class="script-sample" lang="he" dir="rtl">
+            <div class="script-text hebrew">שלום עולם — זהו משפט בעברית.</div>
+            <div class="script-meta">Hebrew · written right to left</div>
+        </div>
+
+        <div class="script-sample" lang="hi">
+            <div class="script-text devanagari">नमस्ते दुनिया — यह हिंदी में लिखा एक वाक्य है।</div>
+            <div class="script-meta">Devanagari (Hindi)</div>
+        </div>
+
+        <div class="script-sample" lang="hi">
+            <div class="script-text devanagari">क्षेत्र और ज्ञान — संयुक्त अक्षर, मात्राएँ और अनुस्वार।</div>
+            <div class="script-meta">Devanagari · consonant clusters, dependent vowels and a nasal mark</div>
+        </div>
+
+        <div class="script-sample" lang="bn">
+            <div class="script-text bengali">নমস্কার বিশ্ব — এটি বাংলা ভাষায় লেখা।</div>
+            <div class="script-meta">Bengali</div>
+        </div>
+
+        <div class="script-sample" lang="ta">
+            <div class="script-text tamil">வணக்கம் உலகம் — இது தமிழில் எழுதப்பட்டது.</div>
+            <div class="script-meta">Tamil · including the ஸ்ரீ ligature: ஸ்ரீ</div>
+        </div>
+
+        <div class="script-sample" lang="th">
+            <div class="script-text thai">สวัสดีชาวโลก — นี่คือข้อความภาษาไทย</div>
+            <div class="script-meta">Thai · vowels and tone marks written above and below the consonants</div>
+        </div>
+
+        <div class="script-sample" lang="ko">
+            <div class="script-text hangul">안녕하세요, 세계 — 이것은 한국어입니다.</div>
+            <div class="script-meta">Hangul · syllables that combine consonants and vowels into one block</div>
+        </div>
+
+        <div class="script-sample">
+            <div class="script-text">A Latin line with an Arabic phrase inside it: <span class="arabic" lang="ar" dir="rtl">مرحبا بالعالم</span>, and then Latin again.</div>
+            <div class="script-meta">Mixed direction · a right-to-left run embedded in left-to-right text</div>
+        </div>
+
+        <p class="note">This demo uses the fonts the system provides and does not depend on web fonts. Add a redistributable font file to the Fonts directory and declare it with @font-face in a stylesheet.</p>
     </main>
 </body>
 </html>

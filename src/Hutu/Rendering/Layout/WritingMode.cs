@@ -30,6 +30,23 @@ public enum WritingMode
     SidewaysLr,
 }
 
+/// <summary>
+/// The direction a line reads in, as the <c>direction</c> property and the <c>dir</c> attribute ask.
+/// </summary>
+/// <remarks>
+/// It is separate from <see cref="WritingMode"/> on purpose: the writing mode decides which physical
+/// axis the line runs along, and the direction decides which way along that axis it reads. A row of
+/// Arabic and a row of English share a writing mode and differ only here.
+/// </remarks>
+public enum TextDirection
+{
+    /// <summary>The line reads from the start of the inline axis to its end.</summary>
+    LeftToRight,
+
+    /// <summary>The line reads from the end of the inline axis back to its start.</summary>
+    RightToLeft,
+}
+
 /// <summary>How the glyphs of vertical text are turned, as <c>text-orientation</c> asks.</summary>
 public enum TextOrientation
 {
@@ -44,23 +61,29 @@ public enum TextOrientation
 }
 
 /// <summary>
-/// A writing mode together with the text orientation, and the mapping between the logical axes and the
-/// physical ones. It is a value type built and discarded freely, so nothing in the layout path pays an
-/// allocation for asking where a box goes.
+/// A writing mode together with the text orientation and the direction, and the mapping between the
+/// logical axes and the physical ones. It is a value type built and discarded freely, so nothing in
+/// the layout path pays an allocation for asking where a box goes.
 /// </summary>
 /// <remarks>
 /// The logical frame is measured from the containing block's content box: an <em>inline</em> offset and
 /// size along the axis the text runs, and a <em>block</em> offset and size along the axis the lines
-/// advance. Both are signed by the mode, so an offset always grows in the reading direction and the
-/// caller never has to know whether that is rightward, leftward, downward or upward.
+/// advance. Both are signed, so an offset always grows in the reading direction and the caller never
+/// has to know whether that is rightward, leftward, downward or upward. A row's sign comes from the
+/// direction the text reads in, and a column's from the writing mode.
 /// </remarks>
 public readonly struct WritingModeInfo
 {
-    public WritingModeInfo(WritingMode mode, TextOrientation orientation = TextOrientation.Mixed, Boolean combinesUpright = false)
+    public WritingModeInfo(
+        WritingMode mode,
+        TextOrientation orientation = TextOrientation.Mixed,
+        Boolean combinesUpright = false,
+        TextDirection direction = TextDirection.LeftToRight)
     {
         Mode = mode;
         Orientation = orientation;
         CombinesUpright = combinesUpright;
+        Direction = direction;
     }
 
     /// <summary>The writing mode plain horizontal text uses, which is what every existing box gets.</summary>
@@ -74,6 +97,15 @@ public readonly struct WritingModeInfo
     /// <summary>Gets whether <c>text-combine-upright: all</c> asks short runs to be set as one upright box.</summary>
     public Boolean CombinesUpright { get; }
 
+    /// <summary>
+    /// Gets the direction the line reads in. It is the <c>direction</c> property, which the
+    /// <c>dir</c> attribute stands in for when the page wrote no rule.
+    /// </summary>
+    public TextDirection Direction { get; }
+
+    /// <summary>Gets whether the line reads from the end of the inline axis back to its start.</summary>
+    public Boolean IsRightToLeft => Direction == TextDirection.RightToLeft;
+
     /// <summary>Gets whether the inline axis runs down the page rather than along it.</summary>
     public Boolean IsVertical => Mode != WritingMode.HorizontalTb;
 
@@ -83,8 +115,12 @@ public readonly struct WritingModeInfo
     /// </summary>
     public Boolean IsSidewaysMode => Mode is WritingMode.SidewaysRl or WritingMode.SidewaysLr;
 
-    /// <summary>Gets the sign an inline offset grows by: text always reads downward, but <c>sideways-lr</c> reads upward.</summary>
-    public Int32 InlineSign => Mode == WritingMode.SidewaysLr ? -1 : 1;
+    /// <summary>Gets the sign an inline offset grows by: text always reads downward in a column, but a
+    /// row reads leftward under <c>direction: rtl</c>, and a column reads upward under
+    /// <c>sideways-lr</c>.</summary>
+    public Int32 InlineSign => IsVertical
+        ? Mode == WritingMode.SidewaysLr ? -1 : 1
+        : IsRightToLeft ? -1 : 1;
 
     /// <summary>Gets the sign a block offset grows by: only the two right-to-left modes grow leftward.</summary>
     public Int32 BlockSign => Mode is WritingMode.VerticalRl or WritingMode.SidewaysRl ? -1 : 1;
@@ -110,7 +146,7 @@ public readonly struct WritingModeInfo
     /// <summary>Gets the coordinate the inline axis starts at on the physical axis.</summary>
     public Double InlineStart(Rect contentBox) => IsVertical
         ? InlineSign < 0 ? contentBox.Bottom : contentBox.Y
-        : contentBox.X;
+        : InlineSign < 0 ? contentBox.Right : contentBox.X;
 
     /// <summary>
     /// Maps a logical frame - an offset and a size along each axis, measured from the containing
@@ -120,14 +156,16 @@ public readonly struct WritingModeInfo
     {
         if (!IsVertical)
         {
-            return new Rect(
-                contentBox.X + inlineOffset,
-                contentBox.Y + blockOffset,
-                inlineSize,
-                blockSize);
+            // A right-to-left row measures its inline offset from the right edge, so the first run of
+            // the line lands against that edge and the runs after it march back toward the start.
+            var x = InlineSign < 0
+                ? contentBox.Right - inlineOffset - inlineSize
+                : contentBox.X + inlineOffset;
+
+            return new Rect(x, contentBox.Y + blockOffset, inlineSize, blockSize);
         }
 
-        var x = BlockSign < 0
+        var columnX = BlockSign < 0
             ? contentBox.Right - blockOffset - blockSize
             : contentBox.X + blockOffset;
 
@@ -135,7 +173,7 @@ public readonly struct WritingModeInfo
             ? contentBox.Bottom - inlineOffset - inlineSize
             : contentBox.Y + inlineOffset;
 
-        return new Rect(x, y, blockSize, inlineSize);
+        return new Rect(columnX, y, blockSize, inlineSize);
     }
 
     /// <summary>

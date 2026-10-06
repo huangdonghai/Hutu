@@ -247,6 +247,52 @@ public readonly struct ComputedStyle
     };
 
     /// <summary>
+    /// Gets the direction the element's lines read in. The <c>direction</c> property is inherited, so
+    /// the cascade already carries what an ancestor asked for; the <c>dir</c> attribute is a
+    /// presentational hint that stands in when no rule declares the property, and it is read from the
+    /// nearest ancestor that carries one because HTML inherits it the same way.
+    /// </summary>
+    public TextDirection Direction
+    {
+        get
+        {
+            if (DirectionAttribute() is { } attribute && !Declares("direction"))
+            {
+                return attribute;
+            }
+
+            return String.Equals(ReadKeyword("direction"), "rtl", StringComparison.OrdinalIgnoreCase)
+                ? TextDirection.RightToLeft
+                : TextDirection.LeftToRight;
+        }
+    }
+
+    /// <summary>
+    /// Gets the direction the nearest <c>dir</c> attribute asks for, or null when the element and its
+    /// ancestors carry none. <c>dir="auto"</c> is not modelled and is passed over, which leaves the
+    /// <c>direction</c> property to answer.
+    /// </summary>
+    private TextDirection? DirectionAttribute()
+    {
+        for (var element = _element; element is not null; element = element.ParentElement)
+        {
+            var dir = element.GetAttribute("dir")?.Trim();
+
+            if (String.Equals(dir, "rtl", StringComparison.OrdinalIgnoreCase))
+            {
+                return TextDirection.RightToLeft;
+            }
+
+            if (String.Equals(dir, "ltr", StringComparison.OrdinalIgnoreCase))
+            {
+                return TextDirection.LeftToRight;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Gets the orientation the element runs its characters in. <c>text-orientation</c> is inherited,
     /// so the cascade already carries what an ancestor asked for; the box builder still walks it down
     /// the tree because an inline box may set it apart from the block it sits in.
@@ -279,16 +325,20 @@ public readonly struct ComputedStyle
         get
         {
             var mode = WritingMode;
+            var direction = Direction;
 
             if (mode == Layout.WritingMode.HorizontalTb)
             {
-                return WritingModeInfo.Horizontal;
+                return direction == TextDirection.LeftToRight
+                    ? WritingModeInfo.Horizontal
+                    : new WritingModeInfo(Layout.WritingMode.HorizontalTb, TextOrientation.Mixed, false, direction);
             }
 
             return new WritingModeInfo(
                 mode,
                 DeclaredTextOrientation ?? TextOrientation.Mixed,
-                DeclaredTextCombineUpright ?? false);
+                DeclaredTextCombineUpright ?? false,
+                direction);
         }
     }
 

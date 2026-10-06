@@ -99,13 +99,14 @@ public sealed class Box
     public ComputedStyle Style { get; internal set; }
 
     /// <summary>
-    /// Gets the writing mode, text orientation and upright combining the box lays its content out in.
+    /// Gets the writing mode, text orientation, direction and upright combining the box lays its
+    /// content out in.
     /// </summary>
     /// <remarks>
-    /// <c>writing-mode</c> reaches a box through the cascade, but <c>text-orientation</c> and
-    /// <c>text-combine-upright</c> are not registered with the parser and so are not inherited there.
-    /// The builder therefore resolves the three once, while it walks the tree, and every descendant
-    /// takes what its ancestor ran in unless it declares otherwise.
+    /// <c>writing-mode</c> and <c>direction</c> reach a box through the cascade, but
+    /// <c>text-orientation</c> and <c>text-combine-upright</c> are not registered with the parser and
+    /// so are not inherited there. The builder therefore resolves them once, while it walks the tree,
+    /// and every descendant takes what its ancestor ran in unless it declares otherwise.
     /// </remarks>
     public WritingModeInfo Flow { get; init; } = WritingModeInfo.Horizontal;
 
