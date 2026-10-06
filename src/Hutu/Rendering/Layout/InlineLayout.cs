@@ -220,11 +220,20 @@ public sealed class InlineLayout
                 }
                 else if (fragment.Ruby is { } annotation)
                 {
-                    // The annotation takes one end of the line's block extent and the base keeps the
-                    // rest, so the two lie beside each other rather than over one another. Along the
-                    // inline axis they share the room the wider of them asked for, each centred in it,
-                    // which is what stops a long reading from hanging off one side.
+                    // The annotation takes a strip at one end of the line's block extent and the base
+                    // keeps the rest, which is the end away from the reading. Along the inline axis the
+                    // two share the room the wider of them asked for, each centred in it, which is what
+                    // stops a long reading from hanging off one side.
                     var baseBlock = line.Height - annotation.Block;
+
+                    // An upright character in a column is drawn centred in its box, so a base drawn
+                    // that way has to be boxed centred on the band as well - boxed against the far end
+                    // it would sit half a reading off the column line its neighbours stand on. A base
+                    // that is turned, or set in a line, is drawn from the line's shared baseline
+                    // instead, and the end away from the reading is where that baseline puts it.
+                    var baseOffset = fragment.Flow.IsVertical && fragment.Flow.Orientation == TextOrientation.Upright
+                        ? cursor + (annotation.Block / 2)
+                        : cursor + (annotation.Under ? 0 : annotation.Block);
 
                     child.Text = fragment.Text;
                     child.Baseline = flow.BlockOffsetFromLeft(
@@ -235,7 +244,7 @@ public sealed class InlineLayout
                         contentBox,
                         origin + ((fragment.Width - fragment.BaseWidth) / 2),
                         fragment.BaseWidth,
-                        cursor + (annotation.Under ? 0 : annotation.Block),
+                        baseOffset,
                         baseBlock);
 
                     lineBox.Children.Add(child);
@@ -475,8 +484,11 @@ public sealed class InlineLayout
             if (item.IsRuby)
             {
                 // The pair's own flow is what its two halves are oriented by, so an inline element
-                // that asks for a different orientation keeps it inside the line it sits in.
+                // that asks for a different orientation keeps it inside the line it sits in. The base
+                // is then drawn in the orientation its own characters resolve to - a CJK base stands
+                // upright under `mixed`, exactly as the same character would outside a ruby.
                 var rubyFlow = item.Box.Flow;
+                var baseFlow = ResolveOrientation(item.Text!, rubyFlow);
                 var annotation = MeasureAnnotation(item);
                 var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
                 var extent = Math.Max(baseWidth, annotation.Width);
@@ -487,7 +499,7 @@ public sealed class InlineLayout
                     builder = new LineBuilder(item.Style);
                 }
 
-                builder.AddRuby(item.Text!, extent, item.Style, item.Box, rubyFlow, annotation, baseWidth);
+                builder.AddRuby(item.Text!, extent, item.Style, item.Box, baseFlow, annotation, baseWidth);
                 continue;
             }
 
@@ -656,23 +668,59 @@ public sealed class InlineLayout
 
         foreach (var run in Orient(chunk, flow))
         {
-            // A combined run is drawn as one upright box, so it keeps the mode's own orientation; the
-            // rest are pinned to the orientation they were split on.
-            var oriented = run.IsCombined
-                ? flow
-                : new WritingModeInfo(
-                    flow.Mode,
-                    run.IsUpright ? TextOrientation.Upright : TextOrientation.Sideways,
-                    false);
-
             runs.Add(new MeasuredRun(
                 run.Text,
                 run.Advance(font, _measurer, style.FontSize, flow),
-                oriented,
+                PinOrientation(flow, run),
                 TextChunker.IsWhiteSpace(run.Text)));
         }
 
         return runs;
+    }
+
+    /// <summary>
+    /// Gets the flow a piece of text is drawn in: the orientation the piece was split on, so that what
+    /// the measurer treats as upright is also what the painter draws upright.
+    /// </summary>
+    /// <remarks>
+    /// A combined run is drawn as one upright box and keeps the mode's own orientation; the rest are
+    /// pinned to the orientation they were split on. Text that is not vertical is handed back as it
+    /// is, because orientation means nothing along a line.
+    /// </remarks>
+    private static WritingModeInfo PinOrientation(WritingModeInfo flow, OrientedRun run)
+    {
+        if (!flow.IsVertical)
+        {
+            return flow;
+        }
+
+        return run.IsCombined
+            ? flow
+            : new WritingModeInfo(
+                flow.Mode,
+                run.IsUpright ? TextOrientation.Upright : TextOrientation.Sideways,
+                false);
+    }
+
+    /// <summary>
+    /// Gets the flow a piece of text that is set as a whole - a ruby base, say - is drawn in, which is
+    /// the orientation of its first piece. That is the whole of it whenever the base is the single
+    /// character a base usually is; a base that genuinely mixes orientations takes the first, the same
+    /// approximation the reading beside it already makes.
+    /// </summary>
+    private static WritingModeInfo ResolveOrientation(String text, WritingModeInfo flow)
+    {
+        if (!flow.IsVertical)
+        {
+            return flow;
+        }
+
+        foreach (var run in Orient(text, flow))
+        {
+            return PinOrientation(flow, run);
+        }
+
+        return flow;
     }
 
     private static Double AlignmentOffset(String textAlign, Double maxInline, Double used)

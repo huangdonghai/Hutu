@@ -164,10 +164,54 @@ public sealed class VerticalLayoutTests
         var annotation = Text(view, "はる");
 
         Assert.That(annotation.BorderBox.X, Is.EqualTo(70), "the reading is set against the edge the column started at");
-        Assert.That(baseText.BorderBox.X, Is.EqualTo(60));
-        Assert.That(annotation.BorderBox.Right, Is.EqualTo(baseText.BorderBox.Right + 10));
+        Assert.That(annotation.BorderBox.Right, Is.EqualTo(80));
+        Assert.That(annotation.BorderBox.X, Is.GreaterThan(baseText.BorderBox.X), "the reading is on the block-start side of the base");
         Assert.That(annotation.Font.Size, Is.LessThan(baseText.Font.Size), "a reading is set smaller than what it annotates");
         Assert.That(Lines(view).First().BorderBox.Width, Is.EqualTo(20), "the line grew by the room the reading needed");
+
+        // The base stands in the orientation its own character resolves to, so an ideograph under a
+        // reading is drawn upright exactly as one without it would be.
+        Assert.That(baseText.Flow.Orientation, Is.EqualTo(TextOrientation.Upright));
+        Assert.That(annotation.Flow.Orientation, Is.EqualTo(TextOrientation.Upright));
+    }
+
+    [Test]
+    public async Task RubyBaseSharesTheColumnLineOfTheCharactersAroundIt()
+    {
+        // The reading adds a strip at the block-start end of the line, and the base keeps the rest -
+        // but the rest is centred on the band, so the base is drawn on the very line its neighbours
+        // stand on rather than half a reading off it.
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:80px;height:60px;margin:0;font-size:10px;line-height:1'>" +
+            "<p style='margin:0'>春<ruby>夏<rt>なつ</rt></ruby>秋</p>" +
+            "</div></body></html>");
+
+        var before = Text(view, "春");
+        var baseText = Text(view, "夏");
+        var after = Text(view, "秋");
+        var annotation = Text(view, "なつ");
+
+        Assert.That(Centre(baseText), Is.EqualTo(Centre(before)).Within(0.01), "the base is on the line the character before it stands on");
+        Assert.That(Centre(baseText), Is.EqualTo(Centre(after)).Within(0.01), "and on the one the character after it stands on");
+        Assert.That(Centre(annotation), Is.GreaterThan(Centre(baseText)), "the reading is set on the block-start side of the base");
+    }
+
+
+    [Test]
+    public async Task RubyBaseIsTurnedWhenItsOwnCharactersAreLatin()
+    {
+        // The base is oriented by its own text rather than by the fact that it carries a reading, so
+        // a Latin base is still turned.
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:80px;height:60px;margin:0;font-size:10px;line-height:1'>" +
+            "<p style='margin:0'><ruby>Ab<rt>えー</rt></ruby></p>" +
+            "</div></body></html>");
+
+        Assert.That(Text(view, "Ab").Flow.Orientation, Is.EqualTo(TextOrientation.Sideways));
     }
 
     [Test]
@@ -265,6 +309,12 @@ public sealed class VerticalLayoutTests
         return Walk(root).FirstOrDefault(node => node.Kind == LayoutKind.Text && node.Text == text)
             ?? throw new AssertionException($"The layout holds no text box for '{text}'.");
     }
+
+    /// <summary>
+    /// Gets the block-axis centre of a box, which is the column line its glyph is drawn on: an upright
+    /// character is centred across the box it was given, so two characters on one line share a centre.
+    /// </summary>
+    private static Double Centre(LayoutBox box) => box.BorderBox.X + (box.BorderBox.Width / 2);
 
     private static IEnumerable<LayoutBox> Walk(LayoutBox node)
     {

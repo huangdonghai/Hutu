@@ -670,10 +670,14 @@ public sealed class SkiaRenderingTests
 
         Assert.That(baseText.Flow.IsVertical, Is.True);
         Assert.That(annotation.Flow.IsVertical, Is.True);
+        Assert.That(
+            baseText.Flow.Orientation,
+            Is.EqualTo(TextOrientation.Upright),
+            "the kanji stands upright under its reading, as it does without one");
         Assert.That(annotation.Font.Size, Is.LessThan(baseText.Font.Size), "a reading is set smaller than its base");
         Assert.That(
-            annotation.BorderBox.X,
-            Is.GreaterThanOrEqualTo(baseText.BorderBox.Right - 0.5),
+            annotation.BorderBox.X + (annotation.BorderBox.Width / 2),
+            Is.GreaterThan(baseText.BorderBox.X + (baseText.BorderBox.Width / 2)),
             "the reading sits on the far side of the column from the text it annotates");
 
         var digits = TextsIn(panel).FirstOrDefault(text => text.Text == "2026");
