@@ -77,6 +77,24 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task ScriptAndStyleContentIsNotLaidOut()
+    {
+        // Neither element has a box, so their source - which the HTML allows in the body, and where
+        // Wikipedia puts its scripts - must not reach a line.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<script>var answer = 42;</script>" +
+            "<style>.note { color: red }</style>" +
+            "<div>visible</div>" +
+            "</body></html>");
+
+        var text = String.Concat(Lines(view).Select(LineText));
+
+        Assert.That(text, Is.EqualTo("visible"));
+    }
+
+    [Test]
     public async Task TextWrapsAtWhitespaceWithoutSplittingWords()
     {
         // Each character is 5px wide, so "aaaa bbbb" cannot fit into 25px on one line.
