@@ -104,6 +104,20 @@ public sealed class InlineBlockTests
     }
 
     [Test]
+    public async Task ABoxNeverShrinksBelowWhatItsContentCannotGoUnder()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<span style='display:inline-block'>あいう</span>", width: 2));
+
+        var block = Box(view, "span");
+
+        // A CJK character may be broken away from its neighbours, so the narrowest the content can go
+        // is one character, which is what the box keeps however little room the line has left.
+        Assert.That(block.BorderBox.Width, Is.EqualTo(5), "one character, not the two pixels of room");
+    }
+
+    [Test]
     public async Task TwoBoxesOnALineEachTakeTheirOwnWidth()
     {
         using var view = CreateView();

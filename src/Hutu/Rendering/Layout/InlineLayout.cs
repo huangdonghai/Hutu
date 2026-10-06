@@ -213,6 +213,14 @@ public sealed class InlineLayout
                     minContent = Math.Max(minContent, unbreakable);
                     unbreakable = 0;
                 }
+                else if (TextChunker.IsCjk(chunk[0]))
+                {
+                    // A line may break on either side of a CJK character, so the character stands
+                    // alone rather than joining the run around it, and it is the run beside it - the
+                    // Latin word, say - that decides how narrow the content can go.
+                    minContent = Math.Max(minContent, Math.Max(unbreakable, width));
+                    unbreakable = 0;
+                }
                 else
                 {
                     unbreakable += width;

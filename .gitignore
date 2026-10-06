@@ -431,6 +431,9 @@ FodyWeavers.xsd
 # CodeBuddy IDE data (local plans, teams and automations)
 .codebuddy/
 
+# JetBrains Rider/IntelliJ project data
+.idea/
+
 # Probe reports HoverCostProbeTests writes beside the repository root
 /hover-probe.txt
 /hover-segments.txt
