@@ -37,12 +37,16 @@ public readonly struct InlineContentSize
 /// <c>box-decoration-break: slice</c> asks for. An element is given a node whether or not it draws
 /// anything, because whether it draws anything is a question for the painter: a change that only adds
 /// a background is a change the layout is deliberately reused through, so the node has to be there
-/// for the background to have somewhere to land.
+/// for the background to have somewhere to land. An <c>inline-block</c> is the one inline-level box
+/// that does not enter the stream at all: it is placed whole, at the size its own content asks for,
+/// through the engine that lays that content out.
 /// <para>
 /// Line height is the tallest run on the line, expanded by half-leading when the element sets an
 /// explicit leading, and the baseline is shared by the whole line. An inline element's own band is
 /// the exception: it is the font's content area, and it neither grows the line nor is grown by it -
-/// inline padding and borders overflow the line rather than widen it.
+/// inline padding and borders overflow the line rather than widen it. An inline-block is the other
+/// exception the other way round: it is as tall as its own content and does grow the line, which is
+/// what puts its text on the line's baseline with the text around it.
 /// </para>
 /// <para>
 /// Everything is written in terms of the two logical axes rather than x and y, so the same code lays
@@ -63,21 +67,21 @@ public sealed class InlineLayout
     /// without producing any geometry. This is what the measuring phase of a block asks for before it
     /// knows where the lines will sit.
     /// </summary>
-    public Double MeasureHeight(Box container, Double contentWidth) =>
-        Measure(container, contentWidth, container.Flow).Block;
+    public Double MeasureHeight(Box container, Double contentWidth, InlineContext context) =>
+        Measure(container, contentWidth, container.Flow, context).Block;
 
     /// <summary>
     /// Measures the extents the inline children need when they are given <paramref name="maxInline"/>
     /// to run along. The block extent is what the lines of a row stack into, or the width of the band
     /// of columns a column stacks into.
     /// </summary>
-    public InlineContentSize Measure(Box container, Double maxInline, WritingModeInfo flow)
+    public InlineContentSize Measure(Box container, Double maxInline, WritingModeInfo flow, InlineContext context)
     {
         LayoutProbe.EnterInline();
 
         try
         {
-            return MeasureCore(container, maxInline, flow);
+            return MeasureCore(container, maxInline, flow, context);
         }
         finally
         {
@@ -85,7 +89,7 @@ public sealed class InlineLayout
         }
     }
 
-    private InlineContentSize MeasureCore(Box container, Double maxInline, WritingModeInfo flow)
+    private InlineContentSize MeasureCore(Box container, Double maxInline, WritingModeInfo flow, InlineContext context)
     {
         var items = new List<InlineItem>();
         Collect(container, items, flow, null, maxInline);
@@ -98,7 +102,7 @@ public sealed class InlineLayout
         var block = 0.0;
         var inline = 0.0;
 
-        foreach (var line in BuildLines(items, maxInline, flow))
+        foreach (var line in BuildLines(items, maxInline, flow, context))
         {
             if (line.Height > 0)
             {
@@ -119,13 +123,13 @@ public sealed class InlineLayout
     /// The inline extent a percentage among a replaced box's constraints resolves against; there is no
     /// definite line to use, so the containing block's inline extent stands in.
     /// </param>
-    public IntrinsicSize MeasureIntrinsic(Box container, Double basis, WritingModeInfo flow)
+    public IntrinsicSize MeasureIntrinsic(Box container, Double basis, WritingModeInfo flow, InlineContext context)
     {
         LayoutProbe.EnterInline();
 
         try
         {
-            return MeasureIntrinsicCore(container, basis, flow);
+            return MeasureIntrinsicCore(container, basis, flow, context);
         }
         finally
         {
@@ -133,7 +137,7 @@ public sealed class InlineLayout
         }
     }
 
-    private IntrinsicSize MeasureIntrinsicCore(Box container, Double basis, WritingModeInfo flow)
+    private IntrinsicSize MeasureIntrinsicCore(Box container, Double basis, WritingModeInfo flow, InlineContext context)
     {
         var items = new List<InlineItem>();
         Collect(container, items, flow, null, basis);
@@ -168,6 +172,20 @@ public sealed class InlineLayout
                 minContent = Math.Max(minContent, extent);
                 maxContent += extent;
                 unbreakable += extent;
+                continue;
+            }
+
+            // An inline-block is atomic too: it takes the extent its own content asks for and offers no
+            // break inside itself, however its content would have been broken had it stood on its own.
+            if (item.IsAtomic)
+            {
+                var intrinsic = context.Engine.MeasureIntrinsic(item.Box, context.Containing);
+                var (start, end) = InlineMargins(item.Box.Style.Margin.Resolve(basis), flow);
+                var extent = intrinsic.MaxContent + start + end;
+
+                maxContent += extent;
+                unbreakable += extent;
+                minContent = Math.Max(minContent, intrinsic.MinContent + start + end);
                 continue;
             }
 
@@ -217,13 +235,13 @@ public sealed class InlineLayout
     /// Lays out the inline children of the container inside the given content box, appending line
     /// boxes to it, and returns the extent they occupied along the block axis.
     /// </summary>
-    public Double Layout(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow)
+    public Double Layout(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow, InlineContext context)
     {
         LayoutProbe.EnterInline();
 
         try
         {
-            return LayoutCore(container, parent, contentBox, flow);
+            return LayoutCore(container, parent, contentBox, flow, context);
         }
         finally
         {
@@ -231,7 +249,7 @@ public sealed class InlineLayout
         }
     }
 
-    private Double LayoutCore(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow)
+    private Double LayoutCore(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow, InlineContext context)
     {
         var maxInline = flow.InlineExtent(contentBox.Width, contentBox.Height);
         var items = new List<InlineItem>();
@@ -242,7 +260,7 @@ public sealed class InlineLayout
             return 0;
         }
 
-        var lines = BuildLines(items, maxInline, flow);
+        var lines = BuildLines(items, maxInline, flow, context);
         var cursor = 0.0;
         var step = new InlineStep();
 
@@ -290,7 +308,7 @@ public sealed class InlineLayout
                     origin += entered.Inset;
                 }
 
-                Place(fragment, open, lineBox, contentBox, flow, line, origin, cursor);
+                Place(fragment, open, lineBox, contentBox, flow, line, origin, cursor, context);
                 origin += fragment.Width;
             }
 
@@ -369,8 +387,28 @@ public sealed class InlineLayout
         WritingModeInfo flow,
         Line line,
         Double origin,
-        Double cursor)
+        Double cursor,
+        InlineContext context)
     {
+        if (fragment.Atomic is { } atomic)
+        {
+            // The box is arranged as the block container it is - it brings its own geometry, radii and
+            // children with it - and the line only decides where it goes: the margins along the line
+            // are taken out of the room the line reserved, and the box's own baseline is put on the
+            // line's, which is what makes its text sit with the text around it.
+            Attach(open, lineBox, context.Engine.Arrange(
+                fragment.Box,
+                flow.Map(
+                    contentBox,
+                    origin + atomic.StartMargin,
+                    atomic.InlineSize - atomic.StartMargin - atomic.EndMargin,
+                    cursor + line.Ascent - atomic.Ascent,
+                    atomic.BlockSize),
+                context.Containing));
+
+            return;
+        }
+
         if (fragment.IsReplaced)
         {
             // The bottom margin edge of a replaced inline rests on the baseline, so its box is lifted
@@ -512,6 +550,13 @@ public sealed class InlineLayout
                     items.Add(InlineItem.CreateReplaced(child, chain));
                     break;
 
+                // An inline-block is atomic: it takes part in the line as one piece of the size its own
+                // content asks for, and is laid out as the block container it is rather than being
+                // broken into the runs that would otherwise carry the line.
+                case BoxKind.InlineBlock:
+                    items.Add(InlineItem.CreateAtomic(child, chain));
+                    break;
+
                 // A ruby pairs its base text with the annotation that goes over it, so the two are
                 // gathered into one item instead of being run together as ordinary text.
                 case BoxKind.Ruby:
@@ -643,7 +688,7 @@ public sealed class InlineLayout
         }
     }
 
-    private List<Line> BuildLines(List<InlineItem> items, Double maxInline, WritingModeInfo flow)
+    private List<Line> BuildLines(List<InlineItem> items, Double maxInline, WritingModeInfo flow, InlineContext context)
     {
         var lines = new List<Line>();
 
@@ -679,6 +724,28 @@ public sealed class InlineLayout
                 }
 
                 builder.AddReplaced(item.Box, inlineSize, blockSize, item.Inline);
+                continue;
+            }
+
+            // An inline-block is placed as one piece on the same terms as a replaced box, but its size
+            // is the layout's own to work out, which is why it is measured here rather than resolved
+            // from the box's intrinsic one.
+            if (item.IsAtomic)
+            {
+                var room = flow.IsVertical || maxInline <= 0
+                    ? Double.PositiveInfinity
+                    : maxInline - builder.Width;
+
+                var atomic = MeasureInlineBlock(item.Box, maxInline, room, flow, context);
+
+                if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > maxInline)
+                {
+                    lines.Add(builder.Build(_measurer, maxInline, carried));
+                    carried = lines[^1].ContinuesToNext;
+                    builder = new LineBuilder(item.Style, carried);
+                }
+
+                builder.AddAtomic(item.Box, atomic, item.Inline);
                 continue;
             }
 
@@ -960,6 +1027,132 @@ public sealed class InlineLayout
             Opened.Clear();
         }
     }
+
+    /// <summary>
+    /// Measures an inline-block: how much room it takes along the line, how far it reaches along the
+    /// block axis, and where its baseline falls inside that.
+    /// </summary>
+    /// <param name="basis">
+    /// The inline extent of the containing block, which is what a percentage among the box's margins,
+    /// padding and border resolves against.
+    /// </param>
+    /// <param name="room">
+    /// The room the line has left for the box's margin box - negative when there is less than none -
+    /// or positive infinity when the line's inline axis is not a physical width the box could be
+    /// measured against.
+    /// </param>
+    /// <remarks>
+    /// The engine is handed the extent the box should come out at as the basis it is measured against,
+    /// not as a size imposed on it: an <c>auto</c> width fills the extent it is measured against, so a
+    /// box measured against the extent it should come out at comes out at that extent. Its own margins
+    /// are part of that arithmetic, because they are already inside the extent the line reserved.
+    /// </remarks>
+    private AtomicInline MeasureInlineBlock(Box box, Double basis, Double room, WritingModeInfo flow, InlineContext context)
+    {
+        var intrinsic = context.Engine.MeasureIntrinsic(box, context.Containing);
+
+        // Only the margins along the line are modelled. The ones across it would have to be stacked
+        // into the extent the line measures for itself, which is a gap: a margin above or below an
+        // inline-block is ignored rather than pushing the lines apart.
+        var (start, end) = InlineMargins(box.Style.Margin.Resolve(basis), flow);
+        var margins = start + end;
+
+        // CSS2.1 §10.3.9: shrink-to-fit is the width the content prefers, brought down to what is
+        // available and never taken below the width the content cannot go under. All three extents are
+        // margin boxes, since that is what has to fit on the line.
+        var shrink = Math.Min(intrinsic.MaxContent + margins, Math.Max(intrinsic.MinContent + margins, room));
+
+        // A box set in a column has no physical width for any of that to bound - its inline axis is its
+        // height - so it is measured unconstrained and takes the size its content asks for.
+        var size = context.Engine.Measure(
+            box,
+            box.Flow.IsVertical ? MeasureConstraints.Unconstrained : MeasureConstraints.FitWidth(shrink),
+            context.Containing);
+
+        return new AtomicInline(
+            flow.InlineExtent(size.Width, size.Height) + margins,
+            flow.BlockExtent(size.Width, size.Height),
+            InlineBlockBaseline(box, size, shrink, flow, context),
+            start,
+            end);
+    }
+
+    /// <summary>
+    /// Gets where an inline-block's baseline falls, as a distance from the block-start edge of its
+    /// border box.
+    /// </summary>
+    /// <remarks>
+    /// CSS2.1 §10.8.1 makes the baseline that of the last line box in the box's normal flow, and the
+    /// box's bottom margin edge when it has none - which is what a box holding block-level content has,
+    /// since it never forms a line of its own to stand on. The lines are built here, from the same
+    /// content and the same extent the arrangement will use, rather than read back off the arranged
+    /// box, because the line the box sits on has to know how tall it is before anything is arranged.
+    /// <para>
+    /// A box set in a column, or standing in one, falls back to the bottom edge: the baseline of a line
+    /// in that frame is measured from a different edge than the one the line here places the box
+    /// against.
+    /// </para>
+    /// </remarks>
+    private Double InlineBlockBaseline(Box box, Size size, Double basis, WritingModeInfo flow, InlineContext context)
+    {
+        if (flow.IsVertical || box.Flow.IsVertical || HasBlockChildren(box) || box.Children.Count == 0)
+        {
+            return flow.BlockExtent(size.Width, size.Height);
+        }
+
+        var style = box.Style;
+        var padding = style.Padding.Resolve(basis);
+        var border = BlockLayout.BorderOf(box);
+
+        var start = padding.Top + border.Top;
+        var contentWidth = Math.Max(0, size.Width - padding.Horizontal - border.Horizontal);
+
+        var items = new List<InlineItem>();
+        Collect(box, items, box.Flow, null, contentWidth);
+
+        var lines = BuildLines(items, contentWidth, box.Flow, context);
+
+        if (lines.Count == 0)
+        {
+            // A box with nothing to set has no line of its own, so its baseline is the one its font
+            // would have given it.
+            return start + _measurer.GetMetrics(style.GetFont()).Ascent;
+        }
+
+        var baseline = start;
+
+        for (var index = 0; index < lines.Count - 1; index++)
+        {
+            baseline += lines[index].Height;
+        }
+
+        return baseline + lines[^1].Ascent;
+    }
+
+    /// <summary>Gets whether a box's children include any that stack rather than forming lines.</summary>
+    private static Boolean HasBlockChildren(Box box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.IsBlockLevel)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Gets the margins a box takes along the inline axis, as the distance before it and after it.</summary>
+    /// <remarks>
+    /// Which physical pair that is follows the same rule the insets of an inline element follow: a row
+    /// runs left to right and takes the horizontal pair, a column runs down the page or, under
+    /// <c>sideways-lr</c>, up it, and takes the vertical pair either way round.
+    /// </remarks>
+    private static (Double Start, Double End) InlineMargins(Thickness margin, WritingModeInfo flow) =>
+        flow.IsVertical
+            ? flow.InlineSign > 0 ? (margin.Top, margin.Bottom) : (margin.Bottom, margin.Top)
+            : (margin.Left, margin.Right);
 
     /// <summary>Measures a chunk of text the way the writing mode advances it.</summary>
     private Double Measure(ComputedStyle style, String chunk, WritingModeInfo flow) =>
@@ -1245,7 +1438,8 @@ public sealed class InlineLayout
             Boolean isReplaced,
             String? annotationText = null,
             ComputedStyle annotationStyle = default,
-            Box? annotationBox = null)
+            Box? annotationBox = null,
+            Boolean atomic = false)
         {
             Text = text;
             Style = style;
@@ -1256,6 +1450,7 @@ public sealed class InlineLayout
             AnnotationText = annotationText;
             AnnotationStyle = annotationStyle;
             AnnotationBox = annotationBox;
+            IsAtomic = atomic;
         }
 
         public String? Text { get; }
@@ -1273,6 +1468,12 @@ public sealed class InlineLayout
         public Boolean IsBreak { get; }
 
         public Boolean IsReplaced { get; }
+
+        /// <summary>
+        /// Gets whether the item is an inline-block: an atomic box the line places whole, whose size is
+        /// the layout's own to work out rather than something the box resolves by itself.
+        /// </summary>
+        public Boolean IsAtomic { get; }
 
         /// <summary>Gets the annotation of a ruby item, or null when the item carries none.</summary>
         public String? AnnotationText { get; }
@@ -1294,6 +1495,9 @@ public sealed class InlineLayout
 
         public static InlineItem CreateReplaced(Box box, InlineAncestor? inline) =>
             new(null, box.Style, box, inline, false, true);
+
+        public static InlineItem CreateAtomic(Box box, InlineAncestor? inline) =>
+            new(null, box.Style, box, inline, false, false, atomic: true);
 
         public static InlineItem CreateRuby(
             String text,
@@ -1318,7 +1522,8 @@ public sealed class InlineLayout
             Boolean isReplaced = false,
             Double contentHeight = 0,
             RubyAnnotation? ruby = null,
-            Double baseWidth = 0)
+            Double baseWidth = 0,
+            AtomicInline? atomic = null)
         {
             Text = text;
             Width = width;
@@ -1331,6 +1536,7 @@ public sealed class InlineLayout
             ContentHeight = contentHeight;
             Ruby = ruby;
             BaseWidth = baseWidth;
+            Atomic = atomic;
         }
 
         /// <summary>
@@ -1367,6 +1573,13 @@ public sealed class InlineLayout
         /// <summary>Gets whether this fragment is an atomic replaced box rather than text.</summary>
         public Boolean IsReplaced { get; }
 
+        /// <summary>
+        /// Gets the measurements of an inline-block, or null when the fragment is not one. The width of
+        /// such a fragment is what the box's own margins add to the size it was measured to, so the size
+        /// the line reserved and the size the box is drawn at are not the same number.
+        /// </summary>
+        public AtomicInline? Atomic { get; }
+
         /// <summary>Gets the extent of the replaced content along the block axis, which sits on the baseline.</summary>
         public Double ContentHeight { get; }
 
@@ -1394,6 +1607,41 @@ public sealed class InlineLayout
         return alignment.Equals("sub", StringComparison.OrdinalIgnoreCase)
             ? 0.2 * style.FontSize
             : 0;
+    }
+
+    /// <summary>
+    /// The measurements of an inline-block, taken once on the line that places it.
+    /// </summary>
+    /// <remarks>
+    /// The size along the line is the size the box is drawn at with its own margins added, since the
+    /// line reserves the room for those too; the size across it is the box's alone, and the ascent says
+    /// where inside that the box's baseline falls.
+    /// </remarks>
+    private readonly struct AtomicInline
+    {
+        public AtomicInline(Double inlineSize, Double blockSize, Double ascent, Double startMargin, Double endMargin)
+        {
+            InlineSize = inlineSize;
+            BlockSize = blockSize;
+            Ascent = ascent;
+            StartMargin = startMargin;
+            EndMargin = endMargin;
+        }
+
+        /// <summary>Gets the extent the box takes along the line, its own margins included.</summary>
+        public Double InlineSize { get; }
+
+        /// <summary>Gets the extent the box takes along the block axis, its own margins aside.</summary>
+        public Double BlockSize { get; }
+
+        /// <summary>Gets the distance from the block-start edge of the border box to the box's baseline.</summary>
+        public Double Ascent { get; }
+
+        /// <summary>Gets the margin taken before the box along the line.</summary>
+        public Double StartMargin { get; }
+
+        /// <summary>Gets the margin taken after the box along the line.</summary>
+        public Double EndMargin { get; }
     }
 
     /// <summary>
@@ -1666,6 +1914,26 @@ public sealed class InlineLayout
             Width += width;
         }
 
+        /// <summary>
+        /// Adds an inline-block, which the line places whole. The width it takes along the line is the
+        /// one it was measured to together with its own margins, which the box is then drawn inside of.
+        /// </summary>
+        public void AddAtomic(Box box, AtomicInline atomic, InlineAncestor? inline)
+        {
+            Enter(inline);
+
+            _fragments.Add(new TextFragment(
+                String.Empty,
+                atomic.InlineSize,
+                box.Style,
+                box,
+                box.Flow,
+                inline,
+                atomic: atomic));
+
+            Width += atomic.InlineSize;
+        }
+
         public void Add(
             String text,
             Double width,
@@ -1764,6 +2032,15 @@ public sealed class InlineLayout
                 if (fragment.IsReplaced)
                 {
                     ascent = Math.Max(ascent, fragment.ContentHeight);
+                    continue;
+                }
+
+                // An inline-block is as tall as its own content and stands on its own baseline, so the
+                // line grows by whatever the box reaches above and below that either way.
+                if (fragment.Atomic is { } atomic)
+                {
+                    ascent = Math.Max(ascent, atomic.Ascent);
+                    descent = Math.Max(descent, atomic.BlockSize - atomic.Ascent);
                     continue;
                 }
 

@@ -430,3 +430,9 @@ FodyWeavers.xsd
 /.github
 # CodeBuddy IDE data (local plans, teams and automations)
 .codebuddy/
+
+# Probe reports HoverCostProbeTests writes beside the repository root
+/hover-probe.txt
+/hover-segments.txt
+/layout-breakdown.txt
+/layout-cost.txt

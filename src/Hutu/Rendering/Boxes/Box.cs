@@ -15,6 +15,12 @@ public enum BoxKind
     /// <summary>An inline-level box: it participates in a line box.</summary>
     Inline,
 
+    /// <summary>
+    /// A <c>display: inline-block</c> box. Inline-level in its parent's context, so it takes part in a
+    /// line box, but it lays its own content out as a block container and is placed as one unit.
+    /// </summary>
+    InlineBlock,
+
     /// <summary>A run of text belonging to its containing inline formatting context.</summary>
     Text,
 

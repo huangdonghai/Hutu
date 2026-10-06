@@ -1,4 +1,4 @@
-using Hutu.Rendering.Boxes;
+﻿using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
 
@@ -74,7 +74,7 @@ internal sealed class BlockLayout
         }
         else
         {
-            contentHeight = _inline.MeasureHeight(box, contentWidth);
+            contentHeight = _inline.MeasureHeight(box, contentWidth, new InlineContext(_engine, context));
         }
 
         var height = BoxModel.ClampHeight(style, declaredHeight ?? contentHeight, basisHeight, insets.Vertical);
@@ -127,7 +127,7 @@ internal sealed class BlockLayout
         }
         else
         {
-            var measured = _inline.Measure(box, childInline, flow);
+            var measured = _inline.Measure(box, childInline, flow, new InlineContext(_engine, context));
             contentInline = declaredInline ?? measured.Inline;
             contentBlock = measured.Block;
         }
@@ -261,7 +261,7 @@ internal sealed class BlockLayout
             // The extents a column's content asks for are measured along the line it runs down, and
             // turning them into the block-axis size a flex or grid context would want out of them is
             // left to the phase that gives those contexts an axis of their own.
-            var intrinsic = _inline.MeasureIntrinsic(box, basis, box.Flow);
+            var intrinsic = _inline.MeasureIntrinsic(box, basis, box.Flow, new InlineContext(_engine, context));
             min = intrinsic.MinContent;
             max = intrinsic.MaxContent;
         }
@@ -351,7 +351,7 @@ internal sealed class BlockLayout
         }
         else
         {
-            _inline.Layout(box, layout, content, flow);
+            _inline.Layout(box, layout, content, flow, new InlineContext(_engine, context));
         }
 
         return layout;
@@ -530,6 +530,9 @@ internal sealed class BlockLayout
     /// </summary>
     private static LayoutKind KindOf(Box box) => box.Kind switch
     {
+        // An inline-block is arranged here like any other block container: it is the line that placed
+        // it, and not the box, that makes it inline-level in the first place.
+        BoxKind.InlineBlock => LayoutKind.Block,
         BoxKind.HorizontalRule => LayoutKind.HorizontalRule,
         BoxKind.Table => LayoutKind.Table,
         BoxKind.TableRowGroup => LayoutKind.TableRowGroup,

@@ -289,10 +289,44 @@ public sealed class SkiaRenderingTests
 
         var fills = view.Paint!.Commands.OfType<FillCommand>().Select(fill => fill.Color).ToList();
 
-        // The chip's own colour, from the demo sheet's `code` rule. Nothing else on the page asks for
-        // it, so a fill of that colour means the element's background was carried all the way through
-        // to the paint list rather than being flattened away with the element.
+        // Each colour is the one the demo sheet gives that element and nothing else on the page asks
+        // for, so a fill of it means the element's background was carried all the way through to the
+        // paint list rather than being flattened away with the element.
         Assert.That(fills, Does.Contain(0xFFEAF0F6u), "the `code` chip has to be filled");
+        Assert.That(fills, Does.Contain(0xFFE0F2FEu), "and the `badge`, which is an inline-block");
+    }
+
+    [Test]
+    public async Task AnInlineBlockIsPaintedAsThePillItDeclares()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(400, 120);
+
+        // The same declaration the sample page's `.badge` carries, whose radius is larger than the box
+        // and so is clamped to the ends of it.
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0'><span style='display:inline-block;padding:6px 10px;" +
+            "border-radius:999px;background:#e0f2fe;font-size:12px'>Badge</span></p>" +
+            "</body></html>");
+
+        var badge = Boxes(view, "span").Single();
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+
+        var middle = bitmap.GetPixel(
+            (Int32)badge.BorderBox.X + 2,
+            (Int32)(badge.BorderBox.Y + (badge.BorderBox.Height / 2)));
+
+        Assert.That(middle.Red, Is.EqualTo(0xE0).Within(2), "the strip of padding inside the pill is filled");
+        Assert.That(middle.Green, Is.EqualTo(0xF2).Within(2));
+        Assert.That(middle.Blue, Is.EqualTo(0xFE).Within(2));
+
+        var corner = bitmap.GetPixel(
+            (Int32)badge.BorderBox.X + 1,
+            (Int32)badge.BorderBox.Y + 1);
+
+        Assert.That(corner, Is.EqualTo(SKColors.White), "the corner the radius rounded off is not painted");
     }
 
     [Test]
@@ -1107,6 +1141,10 @@ public sealed class SkiaRenderingTests
     /// </summary>
     private static System.Collections.Generic.List<LayoutBox> Inlines(HutuViewInternal view, String tag) =>
         LayoutOf(view).Where(box => box.Kind == LayoutKind.Inline && box.Source.Element?.LocalName == tag).ToList();
+
+    /// <summary>Finds the boxes the inline-blocks of a given name were given, which are block containers.</summary>
+    private static System.Collections.Generic.List<LayoutBox> Boxes(HutuViewInternal view, String tag) =>
+        LayoutOf(view).Where(box => box.Kind == LayoutKind.Block && box.Source.Element?.LocalName == tag).ToList();
 
     private static Int32 CountNonWhitePixels(PaintList paint, SkiaTextMeasurer measurer)
     {

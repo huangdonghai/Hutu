@@ -114,7 +114,10 @@ public static class BoxBuilder
         switch (kind)
         {
             // A cell is an ordinary block container; only the table context above it is different.
+            // So is an inline-block, which is a block container that the surrounding line places as
+            // one unit - it is the outer role, not the inner one, that the line box sees.
             case BoxKind.Block:
+            case BoxKind.InlineBlock:
             case BoxKind.TableCell:
                 GroupChildren(box, children);
                 break;
@@ -294,8 +297,18 @@ public static class BoxBuilder
             return BoxKind.Grid;
         }
 
-        // Everything that starts with "inline" (inline, inline-block, inline-flex, ...) takes part
-        // in the surrounding line box; the rest is treated as block-level for now.
+        // An inline-block is the one inline-level box that is a block container in its own right, so
+        // it has to be picked out before the catch-all below, which would otherwise let it fall in
+        // with the elements that are laid out as runs on the line.
+        if (display.Equals("inline-block", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.InlineBlock;
+        }
+
+        // Everything else that starts with "inline" (inline, inline-flex, inline-grid, inline-table)
+        // takes part in the surrounding line box as a run; of those, the container forms are still
+        // laid out as the block-level containers they are named after, which is a known gap. The rest
+        // is treated as block-level for now.
         return display.StartsWith("inline", StringComparison.OrdinalIgnoreCase)
             ? BoxKind.Inline
             : BoxKind.Block;
