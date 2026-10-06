@@ -48,14 +48,39 @@ public class HutuView : ScrollViewer
         _internalView.AddEmbeddedResourceSource(assembly, folder);
     }
 
-    public async void LoadUrlAsync(
+    /// <summary>Loads a document from a URL and repaints once it is in place.</summary>
+    /// <remarks>
+    /// The task is handed back rather than discarded: a load can fail, and an <c>async void</c> would
+    /// put that failure on the dispatcher - where nothing can catch it - instead of on the caller.
+    /// Awaiting it is also what lets a caller act on the loaded document, which is impossible while
+    /// there is no completion signal to wait for.
+    /// <para>
+    /// The await deliberately keeps the default <c>ConfigureAwait</c>. The continuation below touches
+    /// the surface, so it has to come back to the caller's context - the UI thread - rather than
+    /// resume on the pool; adding <c>ConfigureAwait(false)</c> here would hand the invalidation to a
+    /// thread that does not own the control.
+    /// </para>
+    /// </remarks>
+    public async Task<IDocument> LoadUrlAsync(
         string url,
         CancellationToken cancellationToken = default)
     {
-        await _internalView.LoadUrlAsync(url, cancellationToken);
+        var document = await _internalView.LoadUrlAsync(url, cancellationToken);
         _surface.Refresh();
+        return document;
     }
 
+    /// <summary>Loads a document from a string of HTML and repaints once it is in place.</summary>
+    /// <remarks>
+    /// The markup is parsed as it is given: <paramref name="url"/> is never requested, it only sets
+    /// the document's base address, which is what relative style sheets and images are resolved
+    /// against. A document that refers to neither can be loaded without one.
+    /// <para>
+    /// As with <see cref="LoadUrlAsync"/>, the await deliberately keeps the default
+    /// <c>ConfigureAwait</c>: the continuation below touches the surface, so it has to come back to
+    /// the caller's context - the UI thread - rather than resume on the pool.
+    /// </para>
+    /// </remarks>
     public async Task<IDocument> SetHtml(string html, string url = "")
     {
         var document = await _internalView.SetHtml(html, url);
