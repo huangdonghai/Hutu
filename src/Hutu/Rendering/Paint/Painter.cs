@@ -72,6 +72,14 @@ public sealed class Painter
                 PaintImage(box, target);
                 break;
 
+            case LayoutKind.Inline:
+                // An inline element draws what any block draws - background, border, then children -
+                // over the band its own runs take rather than over a whole line. It is given a box
+                // whether or not it has anything to draw, and most of them have nothing: the guards
+                // inside PaintBackground and AddBorder are what turn those away.
+                PaintBlock(box, list, target);
+                break;
+
             case LayoutKind.Line:
                 // A line box has no decorations of its own; only its runs are painted.
                 foreach (var child in box.Children)
@@ -90,7 +98,9 @@ public sealed class Painter
         // puts it after the clip the children were wrapped in: the box's own overflow must not cut it
         // off, while the clip of the nearest ancestor that hides its overflow still holds it in.
         // A line box and a run of text are not elements of their own - both borrow the style of what
-        // they sit in - so an outline must not be emitted for them, or a block would grow one per line.
+        // they sit in - so an outline must not be emitted for them, or a block would grow one per line
+        // and a paragraph one per word. An inline element is an element, and draws its outline around
+        // each of the fragments it was broken into, one per line.
         if (box.Kind is not (LayoutKind.Line or LayoutKind.Text))
         {
             AddOutline(box, box.Source.Style, target);

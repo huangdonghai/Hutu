@@ -29,10 +29,21 @@ public readonly struct InlineContentSize
 /// breaks them into line boxes and positions every run.
 /// </summary>
 /// <remarks>
-/// Inline elements do not nest geometrically here - their contribution is the style their text
-/// inherits - so the tree is flattened into a single stream of runs plus explicit breaks. Line
-/// height is the tallest run on the line, expanded by half-leading when the element sets an
-/// explicit leading, and the baseline is shared by the whole line.
+/// The tree is flattened into a single stream of runs plus explicit breaks, but the inline elements
+/// the runs came from are not forgotten: every run carries the chain of boxes it sits inside, and
+/// every such element is given a <see cref="LayoutKind.Inline"/> node on every line it reaches. Those
+/// nodes nest, so an outer element's background lands under an inner one's, and an element broken over
+/// several lines leaves one fragment per line with the cut edges left bare, which is what
+/// <c>box-decoration-break: slice</c> asks for. An element is given a node whether or not it draws
+/// anything, because whether it draws anything is a question for the painter: a change that only adds
+/// a background is a change the layout is deliberately reused through, so the node has to be there
+/// for the background to have somewhere to land.
+/// <para>
+/// Line height is the tallest run on the line, expanded by half-leading when the element sets an
+/// explicit leading, and the baseline is shared by the whole line. An inline element's own band is
+/// the exception: it is the font's content area, and it neither grows the line nor is grown by it -
+/// inline padding and borders overflow the line rather than widen it.
+/// </para>
 /// <para>
 /// Everything is written in terms of the two logical axes rather than x and y, so the same code lays
 /// out a row of lines and a column of them: <em>inline</em> is the extent a line runs along and where
@@ -77,7 +88,7 @@ public sealed class InlineLayout
     private InlineContentSize MeasureCore(Box container, Double maxInline, WritingModeInfo flow)
     {
         var items = new List<InlineItem>();
-        Collect(container, items, flow);
+        Collect(container, items, flow, null, maxInline);
 
         if (items.Count == 0)
         {
@@ -125,11 +136,15 @@ public sealed class InlineLayout
     private IntrinsicSize MeasureIntrinsicCore(Box container, Double basis, WritingModeInfo flow)
     {
         var items = new List<InlineItem>();
-        Collect(container, items, flow);
+        Collect(container, items, flow, null, basis);
 
         var minContent = 0.0;
         var maxContent = 0.0;
         var unbreakable = 0.0;
+
+        // Nothing here is broken into lines, so an element is opened once and stays open: the padding
+        // it brings with it is charged to the run that enters it, wherever in the stream that is.
+        var open = new List<OpenInline>();
 
         foreach (var item in items)
         {
@@ -139,6 +154,12 @@ public sealed class InlineLayout
                 unbreakable = 0;
                 continue;
             }
+
+            // Padding and border are part of what an element asks for, so they count towards both the
+            // extent the content needs on one line and the extent the narrowest break can leave it.
+            var insets = Advance(open, item.Inline, carried: null, origin: 0, apply: true, step: null);
+            maxContent += insets;
+            unbreakable += insets;
 
             if (item.IsReplaced)
             {
@@ -181,6 +202,13 @@ public sealed class InlineLayout
             }
         }
 
+        // An element the stream ends inside still draws its closing edge, so it is charged for it here.
+        foreach (var item in open)
+        {
+            maxContent += item.Ancestor.InlineEndInset;
+            unbreakable += item.Ancestor.InlineEndInset;
+        }
+
         minContent = Math.Max(minContent, unbreakable);
         return new IntrinsicSize(minContent, Math.Max(maxContent, minContent));
     }
@@ -205,17 +233,18 @@ public sealed class InlineLayout
 
     private Double LayoutCore(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow)
     {
+        var maxInline = flow.InlineExtent(contentBox.Width, contentBox.Height);
         var items = new List<InlineItem>();
-        Collect(container, items, flow);
+        Collect(container, items, flow, null, maxInline);
 
         if (items.Count == 0)
         {
             return 0;
         }
 
-        var maxInline = flow.InlineExtent(contentBox.Width, contentBox.Height);
         var lines = BuildLines(items, maxInline, flow);
         var cursor = 0.0;
+        var step = new InlineStep();
 
         foreach (var line in lines)
         {
@@ -234,81 +263,46 @@ public sealed class InlineLayout
                 Flow = flow,
             };
 
+            var open = new List<OpenInline>();
             var origin = line.Offset;
 
             foreach (var fragment in line.Fragments)
             {
-                var child = new LayoutBox(
-                    fragment.Box,
-                    fragment.IsReplaced ? LayoutKind.Image : LayoutKind.Text)
+                // The inline elements the run sits inside are opened and closed around it, each taking
+                // a box that begins and ends where the run reaches its edges. The step charges the same
+                // padding and border the line was measured with, applied here one edge at a time so
+                // that every box lands where the extent says it should.
+                step.Clear();
+                Advance(open, fragment.Inline, line.ContinuesFromPrevious, origin, apply: true, step);
+
+                // An element the run leaves is never cut: a cut is what carrying on to the next line
+                // is, and an element that ends in the middle of one ends for good. Its box runs to the
+                // far side of its own end edge, which is the edge the run it holds stops short of.
+                foreach (var left in step.Closed)
                 {
-                    Font = fragment.Style.GetFont(),
-                    Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
-                    Flow = fragment.Flow,
-                };
-
-                if (fragment.IsReplaced)
-                {
-                    // The bottom margin edge of a replaced inline rests on the baseline, so its box
-                    // is lifted by its own height rather than filling the line box.
-                    child.ImageUrl = fragment.Box.SourceUrl;
-                    child.ImageFit = fragment.Style.ObjectFit;
-                    child.BorderBox = flow.Map(
-                        contentBox,
-                        origin,
-                        fragment.Width,
-                        cursor + line.Ascent - fragment.ContentHeight,
-                        fragment.ContentHeight);
-                }
-                else if (fragment.Ruby is { } annotation)
-                {
-                    // The annotation takes a strip at one end of the line's block extent and the base
-                    // keeps the rest, which is the end away from the reading. Along the inline axis the
-                    // two share the room the wider of them asked for, each centred in it, which is what
-                    // stops a long reading from hanging off one side.
-                    var baseBlock = line.Height - annotation.Block;
-
-                    // An upright character in a column is drawn centred in its box, so a base drawn
-                    // that way has to be boxed centred on the band as well - boxed against the far end
-                    // it would sit half a reading off the column line its neighbours stand on. A base
-                    // that is turned, or set in a line, is drawn from the line's shared baseline
-                    // instead, and the end away from the reading is where that baseline puts it.
-                    var baseOffset = fragment.Flow.IsVertical && fragment.Flow.Orientation == TextOrientation.Upright
-                        ? cursor + (annotation.Block / 2)
-                        : cursor + (annotation.Under ? 0 : annotation.Block);
-
-                    child.Text = fragment.Text;
-                    child.Baseline = flow.BlockOffsetFromLeft(
-                        baseBlock,
-                        line.Ascent + fragment.BaselineShift - (annotation.Under ? 0 : annotation.Block));
-
-                    child.BorderBox = flow.Map(
-                        contentBox,
-                        origin + ((fragment.Width - fragment.BaseWidth) / 2),
-                        fragment.BaseWidth,
-                        baseOffset,
-                        baseBlock);
-
-                    lineBox.Children.Add(child);
-                    lineBox.Children.Add(AnnotationBox(
-                        annotation,
-                        contentBox,
-                        flow,
-                        origin,
-                        fragment.Width,
-                        cursor + (annotation.Under ? line.Height - annotation.Block : 0)));
-
-                    origin += fragment.Width;
-                    continue;
-                }
-                else
-                {
-                    child.Text = fragment.Text;
-                    child.BorderBox = flow.Map(contentBox, origin, fragment.Width, cursor, line.Height);
+                    origin += left.Ancestor.InlineEndInset;
+                    CloseBox(left, origin, contentBox, flow, line, cursor);
                 }
 
-                lineBox.Children.Add(child);
+                foreach (var entered in step.Opened)
+                {
+                    OpenBox(entered, open, lineBox, flow, line);
+                    origin += entered.Inset;
+                }
+
+                Place(fragment, open, lineBox, contentBox, flow, line, origin, cursor);
                 origin += fragment.Width;
+            }
+
+            // The elements the line ends inside carry on to the next line, so each keeps its end edge
+            // only if it does not: where it was cut, that edge belongs to the line the element ends on.
+            for (var index = open.Count - 1; index >= 0; index--)
+            {
+                var left = open[index];
+                var cut = line.ContinuesToNext?.Contains(left.Ancestor) == true;
+
+                origin += cut ? 0 : left.Ancestor.InlineEndInset;
+                CloseBox(left, origin, contentBox, flow, line, cursor);
             }
 
             parent.Children.Add(lineBox);
@@ -317,6 +311,146 @@ public sealed class InlineLayout
 
         return cursor;
     }
+
+    /// <summary>
+    /// Opens the box an inline element draws through on this line.
+    /// </summary>
+    /// <remarks>
+    /// The band is the element's font content area, which is what makes it taller than the glyphs
+    /// without being as tall as the line: inline padding and border overflow the line rather than
+    /// widening it, so nothing here can move the lines below. An element the line is cut through draws
+    /// neither the padding, the border nor the curve of the edge it was cut at.
+    /// </remarks>
+    private static void OpenBox(OpenInline item, List<OpenInline> open, LayoutBox lineBox, WritingModeInfo flow, Line line)
+    {
+        var ancestor = item.Ancestor;
+        var cutStart = line.ContinuesFromPrevious?.Contains(ancestor) == true;
+        var cutEnd = line.ContinuesToNext?.Contains(ancestor) == true;
+
+        item.Node = new LayoutBox(ancestor.Box, LayoutKind.Inline)
+        {
+            Flow = flow,
+            Padding = ancestor.PaddingFor(cutStart, cutEnd),
+            Border = ancestor.BorderFor(cutStart, cutEnd),
+            SlicesInlineStart = cutStart,
+            SlicesInlineEnd = cutEnd,
+        };
+
+        // Everything opened before this one on the line encloses it, so the box just inside it - or the
+        // line itself when this is the outermost - is where its box belongs.
+        var index = open.IndexOf(item);
+        var owner = index > 0 ? open[index - 1].Node! : lineBox;
+        owner.Children.Add(item.Node);
+    }
+
+    /// <summary>
+    /// Closes the box an inline element drew through on this line, spanning it from where the element
+    /// began to where it ends.
+    /// </summary>
+    private static void CloseBox(OpenInline item, Double end, Rect contentBox, WritingModeInfo flow, Line line, Double cursor)
+    {
+        var ancestor = item.Ancestor;
+
+        // The band sits astride the line's shared baseline, offset by the element's own vertical
+        // alignment, so a run that is raised or lowered takes the band around it with it while the
+        // line's baseline stays where the rest of the line put it.
+        var blockOffset = cursor + line.Ascent + ancestor.BaselineShift - ancestor.Ascent - ancestor.BlockStartInset;
+        var blockSize = ancestor.Ascent + ancestor.Descent + ancestor.BlockStartInset + ancestor.BlockEndInset;
+
+        item.Node!.BorderBox = flow.Map(contentBox, item.Start, end - item.Start, blockOffset, blockSize);
+    }
+
+    /// <summary>Builds the node a run is drawn through and puts it in the innermost box open around it.</summary>
+    private static void Place(
+        TextFragment fragment,
+        List<OpenInline> open,
+        LayoutBox lineBox,
+        Rect contentBox,
+        WritingModeInfo flow,
+        Line line,
+        Double origin,
+        Double cursor)
+    {
+        if (fragment.IsReplaced)
+        {
+            // The bottom margin edge of a replaced inline rests on the baseline, so its box is lifted
+            // by its own height rather than filling the line box. The band of the element around it is
+            // still the font's content area, so it does not grow to cover an image taller than its text.
+            Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Image)
+            {
+                Font = fragment.Style.GetFont(),
+                Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
+                Flow = fragment.Flow,
+                ImageUrl = fragment.Box.SourceUrl,
+                ImageFit = fragment.Style.ObjectFit,
+                BorderBox = flow.Map(
+                    contentBox,
+                    origin,
+                    fragment.Width,
+                    cursor + line.Ascent - fragment.ContentHeight,
+                    fragment.ContentHeight),
+            });
+
+            return;
+        }
+
+        if (fragment.Ruby is { } annotation)
+        {
+            // The annotation takes a strip at one end of the line's block extent and the base keeps
+            // the rest, which is the end away from the reading. Along the inline axis the two share the
+            // room the wider of them asked for, each centred in it, which is what stops a long reading
+            // from hanging off one side.
+            var baseBlock = line.Height - annotation.Block;
+
+            // An upright character in a column is drawn centred in its box, so a base drawn that way
+            // has to be boxed centred on the band as well - boxed against the far end it would sit half
+            // a reading off the column line its neighbours stand on. A base that is turned, or set in a
+            // line, is drawn from the line's shared baseline instead, and the end away from the reading
+            // is where that baseline puts it.
+            var baseOffset = fragment.Flow.IsVertical && fragment.Flow.Orientation == TextOrientation.Upright
+                ? cursor + (annotation.Block / 2)
+                : cursor + (annotation.Under ? 0 : annotation.Block);
+
+            Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Text)
+            {
+                Text = fragment.Text,
+                Font = fragment.Style.GetFont(),
+                Baseline = flow.BlockOffsetFromLeft(
+                    baseBlock,
+                    line.Ascent + fragment.BaselineShift - (annotation.Under ? 0 : annotation.Block)),
+                Flow = fragment.Flow,
+                BorderBox = flow.Map(
+                    contentBox,
+                    origin + ((fragment.Width - fragment.BaseWidth) / 2),
+                    fragment.BaseWidth,
+                    baseOffset,
+                    baseBlock),
+            });
+
+            Attach(open, lineBox, AnnotationBox(
+                annotation,
+                contentBox,
+                flow,
+                origin,
+                fragment.Width,
+                cursor + (annotation.Under ? line.Height - annotation.Block : 0)));
+
+            return;
+        }
+
+        Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Text)
+        {
+            Text = fragment.Text,
+            Font = fragment.Style.GetFont(),
+            Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
+            Flow = fragment.Flow,
+            BorderBox = flow.Map(contentBox, origin, fragment.Width, cursor, line.Height),
+        });
+    }
+
+    /// <summary>Adds a node inside the innermost inline element still open, or inside the line itself.</summary>
+    private static void Attach(List<OpenInline> open, LayoutBox lineBox, LayoutBox node) =>
+        (open.Count > 0 ? open[^1].Node! : lineBox).Children.Add(node);
 
     /// <summary>
     /// Builds the box that draws a ruby's annotation beside its base, centred within the room the pair
@@ -345,7 +479,16 @@ public sealed class InlineLayout
         };
     }
 
-    private static void Collect(Box container, List<InlineItem> items, WritingModeInfo flow)
+    /// <summary>
+    /// Flattens the container's inline content into the stream of runs and breaks the lines are built
+    /// from, remembering for each run the chain of inline elements it sits inside.
+    /// </summary>
+    /// <param name="chain">The elements the content is already inside, innermost first.</param>
+    /// <param name="basis">
+    /// The inline extent a percentage among an element's padding and border resolves against. There is
+    /// no definite line yet, so the extent the content is being fitted into stands in for one.
+    /// </param>
+    private void Collect(Box container, List<InlineItem> items, WritingModeInfo flow, InlineAncestor? chain, Double basis)
     {
         foreach (var child in container.Children)
         {
@@ -354,31 +497,42 @@ public sealed class InlineLayout
                 case BoxKind.Text:
                     if (!String.IsNullOrEmpty(child.Text))
                     {
-                        AddText(child.Text, child.Style, child, items);
+                        AddText(child.Text, child.Style, child, items, chain);
                     }
 
                     break;
 
                 case BoxKind.LineBreak:
-                    items.Add(InlineItem.CreateBreak(child.Style, child));
+                    items.Add(InlineItem.CreateBreak(child.Style, child, chain));
                     break;
 
                 // A replaced inline box is atomic: unlike other inline boxes it is not flattened into
                 // its text runs, it occupies its own used size on the line.
                 case BoxKind.Inline when child.IsReplaced:
-                    items.Add(InlineItem.CreateReplaced(child));
+                    items.Add(InlineItem.CreateReplaced(child, chain));
                     break;
 
                 // A ruby pairs its base text with the annotation that goes over it, so the two are
                 // gathered into one item instead of being run together as ordinary text.
                 case BoxKind.Ruby:
-                    AddRuby(child, items);
+                    AddRuby(child, items, chain);
                     break;
 
+                // An ordinary inline element keeps its own box. It is not flattened away: the runs inside
+                // it go on carrying it, so the line can give it back the box that draws it.
                 case BoxKind.Inline:
+                    Collect(
+                        child,
+                        items,
+                        flow,
+                        new InlineAncestor(child, chain, basis, flow, _measurer),
+                        basis);
+                    break;
+
+                // A base or a reading is a run like any other; only the pair around them is set apart.
                 case BoxKind.RubyBase:
                 case BoxKind.RubyText:
-                    Collect(child, items, flow);
+                    Collect(child, items, flow, chain, basis);
                     break;
             }
         }
@@ -392,7 +546,7 @@ public sealed class InlineLayout
     /// other inline content. Several bases under one annotation are read as a single base, which is
     /// what all but the longest ruby passage comes to.
     /// </remarks>
-    private static void AddRuby(Box ruby, List<InlineItem> items)
+    private static void AddRuby(Box ruby, List<InlineItem> items, InlineAncestor? chain)
     {
         var baseText = new System.Text.StringBuilder();
         var annotationText = new System.Text.StringBuilder();
@@ -428,7 +582,7 @@ public sealed class InlineLayout
         if (annotationText.Length == 0 || annotationBox is null)
         {
             // Without an annotation there is nothing to set the base apart from ordinary text.
-            items.Add(InlineItem.CreateText(baseText.ToString(), ruby.Style, ruby));
+            items.Add(InlineItem.CreateText(baseText.ToString(), ruby.Style, ruby, chain));
             return;
         }
 
@@ -438,7 +592,8 @@ public sealed class InlineLayout
             ruby,
             annotationText.ToString(),
             annotationStyle,
-            annotationBox));
+            annotationBox,
+            chain));
     }
 
     /// <summary>Appends every character of text held anywhere under a box, in document order.</summary>
@@ -460,7 +615,7 @@ public sealed class InlineLayout
     /// Splits a text node on its explicit newlines. They survive white-space processing only for
     /// preformatted content, where each one forces a line break rather than being drawn as a glyph.
     /// </summary>
-    private static void AddText(String text, ComputedStyle style, Box box, List<InlineItem> items)
+    private static void AddText(String text, ComputedStyle style, Box box, List<InlineItem> items, InlineAncestor? chain)
     {
         var start = 0;
 
@@ -472,7 +627,7 @@ public sealed class InlineLayout
             {
                 if (start < text.Length)
                 {
-                    items.Add(InlineItem.CreateText(text[start..], style, box));
+                    items.Add(InlineItem.CreateText(text[start..], style, box, chain));
                 }
 
                 return;
@@ -480,10 +635,10 @@ public sealed class InlineLayout
 
             if (index > start)
             {
-                items.Add(InlineItem.CreateText(text[start..index], style, box));
+                items.Add(InlineItem.CreateText(text[start..index], style, box, chain));
             }
 
-            items.Add(InlineItem.CreateBreak(style, box));
+            items.Add(InlineItem.CreateBreak(style, box, chain));
             start = index + 1;
         }
     }
@@ -491,14 +646,19 @@ public sealed class InlineLayout
     private List<Line> BuildLines(List<InlineItem> items, Double maxInline, WritingModeInfo flow)
     {
         var lines = new List<Line>();
+
+        // The elements a line resumes inside, which is what the next builder needs to know so that it
+        // draws no start edge for an element whose start edge is already on the line above.
+        var carried = (HashSet<InlineAncestor>?)null;
         var builder = new LineBuilder();
 
         foreach (var item in items)
         {
             if (item.IsBreak)
             {
-                lines.Add(builder.Build(_measurer, maxInline));
-                builder = new LineBuilder(item.Style);
+                lines.Add(builder.Build(_measurer, maxInline, carried));
+                carried = lines[^1].ContinuesToNext;
+                builder = new LineBuilder(item.Style, carried);
                 continue;
             }
 
@@ -511,13 +671,14 @@ public sealed class InlineLayout
                 var inlineSize = flow.InlineExtent(width, height);
                 var blockSize = flow.BlockExtent(width, height);
 
-                if (builder.HasContent && maxInline > 0 && builder.Width + inlineSize > maxInline)
+                if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + inlineSize > maxInline)
                 {
-                    lines.Add(builder.Build(_measurer, maxInline));
-                    builder = new LineBuilder(item.Style);
+                    lines.Add(builder.Build(_measurer, maxInline, carried));
+                    carried = lines[^1].ContinuesToNext;
+                    builder = new LineBuilder(item.Style, carried);
                 }
 
-                builder.AddReplaced(item.Box, inlineSize, blockSize);
+                builder.AddReplaced(item.Box, inlineSize, blockSize, item.Inline);
                 continue;
             }
 
@@ -535,13 +696,14 @@ public sealed class InlineLayout
                 var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
                 var extent = Math.Max(baseWidth, annotation.Width);
 
-                if (builder.HasContent && maxInline > 0 && builder.Width + extent > maxInline)
+                if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + extent > maxInline)
                 {
-                    lines.Add(builder.Build(_measurer, maxInline));
-                    builder = new LineBuilder(item.Style);
+                    lines.Add(builder.Build(_measurer, maxInline, carried));
+                    carried = lines[^1].ContinuesToNext;
+                    builder = new LineBuilder(item.Style, carried);
                 }
 
-                builder.AddRuby(item.Text!, extent, item.Style, item.Box, baseFlow, annotation, baseWidth);
+                builder.AddRuby(item.Text!, extent, item.Style, item.Box, baseFlow, annotation, baseWidth, item.Inline);
                 continue;
             }
 
@@ -553,10 +715,11 @@ public sealed class InlineLayout
             {
                 foreach (var run in Runs(chunk, item.Style, itemFlow))
                 {
-                    if (builder.HasContent && maxInline > 0 && builder.Width + run.Width > maxInline)
+                    if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + run.Width > maxInline)
                     {
-                        lines.Add(builder.Build(_measurer, maxInline));
-                        builder = new LineBuilder(item.Style);
+                        lines.Add(builder.Build(_measurer, maxInline, carried));
+                        carried = lines[^1].ContinuesToNext;
+                        builder = new LineBuilder(item.Style, carried);
 
                         // The space that triggered the break is consumed by it.
                         if (run.IsWhiteSpace)
@@ -565,17 +728,237 @@ public sealed class InlineLayout
                         }
                     }
 
-                    builder.Add(run.Text, run.Width, item.Style, item.Box, run.Flow);
+                    builder.Add(run.Text, run.Width, item.Style, item.Box, run.Flow, item.Inline);
                 }
             }
         }
 
         if (builder.HasContent)
         {
-            lines.Add(builder.Build(_measurer, maxInline));
+            lines.Add(builder.Build(_measurer, maxInline, carried));
         }
 
+        MarkSlices(lines, maxInline);
         return lines;
+    }
+
+    /// <summary>
+    /// Works out which lines cut an inline element in half. An element a line hands on to the next one
+    /// was cut there, so that line draws none of the element's end edge and the line that resumes it
+    /// draws none of its start edge - those two edges belong where the element began and where it ends.
+    /// </summary>
+    /// <remarks>
+    /// The extent a line takes had to be settled before this could be known, so an element that turns
+    /// out not to carry on has the end edge it was given taken back off the line's extent here.
+    /// </remarks>
+    private static void MarkSlices(List<Line> lines, Double maxInline)
+    {
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+
+            if (line.ContinuesToNext is not { Count: > 0 } pending)
+            {
+                continue;
+            }
+
+            // Nothing carries on past the last line, so an element the content ends inside ends there.
+            var next = index + 1 < lines.Count ? Inlines(lines[index + 1]) : new HashSet<InlineAncestor>();
+            var dropped = 0.0;
+
+            foreach (var ancestor in pending)
+            {
+                if (!next.Contains(ancestor))
+                {
+                    dropped += ancestor.InlineEndInset;
+                }
+            }
+
+            pending.IntersectWith(next);
+            line.Used -= dropped;
+
+            if (pending.Count == 0)
+            {
+                line.ContinuesToNext = null;
+                continue;
+            }
+
+            // The line is aligned on the extent it ends up with, which may have shrunk by the edge an
+            // element that stops here no longer draws twice.
+            line.Offset = AlignmentOffset(line.Fragments[0].Style.TextAlign, maxInline, line.Used);
+            lines[index + 1].ContinuesFromPrevious = pending;
+        }
+    }
+
+    /// <summary>Gets the inline elements a line carries a run of, at any depth.</summary>
+    private static HashSet<InlineAncestor> Inlines(Line line)
+    {
+        var inlines = new HashSet<InlineAncestor>();
+
+        foreach (var fragment in line.Fragments)
+        {
+            for (var ancestor = fragment.Inline; ancestor is not null; ancestor = ancestor.Parent)
+            {
+                inlines.Add(ancestor);
+            }
+        }
+
+        return inlines;
+    }
+
+    /// <summary>
+    /// Settles the padding and border that stepping from one chain of inline elements to another adds
+    /// along the inline axis, and reports what it adds. The two chains are compared from the outside
+    /// in, so the elements they share are left standing; the ones the step leaves behind give up their
+    /// end edge and the ones it enters take up their start edge.
+    /// </summary>
+    /// <param name="open">
+    /// The elements the step starts from, outermost first. The step leaves it holding the ones it ends
+    /// with, which is what keeps the caller's picture of what is open in step with the runs it places.
+    /// </param>
+    /// <param name="chain">The innermost element the run sits inside, or null when it sits in none.</param>
+    /// <param name="carried">
+    /// The elements the line resumed inside. Their start edge was drawn on the line the element began
+    /// on, so nothing is charged for it again here.
+    /// </param>
+    /// <param name="origin">Where the step is taken, which is the offset the elements it enters begin at.</param>
+    /// <param name="apply">
+    /// Whether to move the open elements to the new chain as well as to price the move. The wrap test
+    /// asks for the price alone: a run that does not fit goes on to the next line, and it has entered
+    /// nothing until it is placed.
+    /// </param>
+    /// <param name="step">Receives the elements the step left and the edges it charged for, or null when only the extent is wanted.</param>
+    private static Double Advance(
+        List<OpenInline> open,
+        InlineAncestor? chain,
+        HashSet<InlineAncestor>? carried,
+        Double origin,
+        Boolean apply,
+        InlineStep? step)
+    {
+        // Almost every run in a document sits in no inline element at all, which costs nothing.
+        if (chain is null && open.Count == 0)
+        {
+            return 0;
+        }
+
+        // Outermost first, so that this chain and the open one line up and can be compared from the
+        // outside in. A step only happens where an element begins or ends, so this is rare.
+        var target = new List<InlineAncestor>();
+
+        for (var ancestor = chain; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            target.Add(ancestor);
+        }
+
+        target.Reverse();
+
+        var shared = 0;
+
+        while (shared < open.Count && shared < target.Count &&
+               ReferenceEquals(open[shared].Ancestor, target[shared]))
+        {
+            shared++;
+        }
+
+        var added = 0.0;
+        var position = origin;
+
+        // The elements the run leaves are closed from the inside out, so that the edge of the one
+        // wrapped around the others is drawn outside theirs.
+        for (var index = open.Count - 1; index >= shared; index--)
+        {
+            var item = open[index];
+
+            step?.Closed.Add(item);
+            added += item.Ancestor.InlineEndInset;
+            position += item.Ancestor.InlineEndInset;
+        }
+
+        if (apply)
+        {
+            open.RemoveRange(shared, open.Count - shared);
+        }
+
+        for (var index = shared; index < target.Count; index++)
+        {
+            var ancestor = target[index];
+
+            // An element the line resumed inside was cut at its start edge, which was drawn before the
+            // break; only an element a line begins inside pays nothing for that edge here.
+            var inset = carried?.Contains(ancestor) == true ? 0 : ancestor.InlineStartInset;
+            var item = new OpenInline(ancestor, position, inset);
+
+            step?.Opened.Add(item);
+
+            if (apply)
+            {
+                open.Add(item);
+            }
+
+            added += inset;
+            position += inset;
+        }
+
+        return added;
+    }
+
+    /// <summary>
+    /// An inline element that is open at some point of a line, with the box the line gave it.
+    /// </summary>
+    /// <remarks>
+    /// A context is broken into lines in one pass and its boxes are placed in another, and only the
+    /// chain of elements and the arithmetic of walking it are shared between the two - the measuring
+    /// pass has no boxes to hand and the placing pass has nothing else. Walking the chain in one place
+    /// is what stops the extent a line is measured to from drifting away from the extent its boxes are
+    /// placed at.
+    /// </remarks>
+    private sealed class OpenInline
+    {
+        public OpenInline(InlineAncestor ancestor, Double start, Double inset)
+        {
+            Ancestor = ancestor;
+            Start = start;
+            Inset = inset;
+        }
+
+        /// <summary>Gets the element.</summary>
+        public InlineAncestor Ancestor { get; }
+
+        /// <summary>Gets the offset along the inline axis the element's box begins at.</summary>
+        public Double Start { get; }
+
+        /// <summary>
+        /// Gets the extent the step that entered the element charged for its start edge, which is
+        /// nothing when the element was already open before the line began.
+        /// </summary>
+        public Double Inset { get; }
+
+        /// <summary>Gets or sets the node the element draws through. Only the placing pass makes one.</summary>
+        public LayoutBox? Node { get; set; }
+    }
+
+    /// <summary>What one step between two chains of inline elements did to the elements it left and entered.</summary>
+    /// <remarks>
+    /// An element the step left draws its end edge, which is always the whole of it - a cut is what
+    /// carrying on to the next line is, and nothing left in the middle of a line carries on anywhere.
+    /// An element the step entered draws its start edge only as far as <see cref="OpenInline.Inset"/>
+    /// says, which is nothing for one the line was already inside.
+    /// </remarks>
+    private sealed class InlineStep
+    {
+        /// <summary>Gets the elements the step left, innermost first, in the order their end edges are laid out.</summary>
+        public List<OpenInline> Closed { get; } = new();
+
+        /// <summary>Gets the elements the step entered, outermost first, in the order their start edges are laid out.</summary>
+        public List<OpenInline> Opened { get; } = new();
+
+        /// <summary>Empties the step so that it can be filled again.</summary>
+        public void Clear()
+        {
+            Closed.Clear();
+            Opened.Clear();
+        }
     }
 
     /// <summary>Measures a chunk of text the way the writing mode advances it.</summary>
@@ -857,6 +1240,7 @@ public sealed class InlineLayout
             String? text,
             ComputedStyle style,
             Box box,
+            InlineAncestor? inline,
             Boolean isBreak,
             Boolean isReplaced,
             String? annotationText = null,
@@ -866,6 +1250,7 @@ public sealed class InlineLayout
             Text = text;
             Style = style;
             Box = box;
+            Inline = inline;
             IsBreak = isBreak;
             IsReplaced = isReplaced;
             AnnotationText = annotationText;
@@ -878,6 +1263,12 @@ public sealed class InlineLayout
         public ComputedStyle Style { get; }
 
         public Box Box { get; }
+
+        /// <summary>
+        /// Gets the innermost inline element the item sits inside, or null when it sits in none. The
+        /// rest of the chain is reached through <see cref="InlineAncestor.Parent"/>.
+        /// </summary>
+        public InlineAncestor? Inline { get; }
 
         public Boolean IsBreak { get; }
 
@@ -895,14 +1286,14 @@ public sealed class InlineLayout
         /// <summary>Gets whether the item is a ruby pair: base text with an annotation over it.</summary>
         public Boolean IsRuby => AnnotationText is not null;
 
-        public static InlineItem CreateText(String text, ComputedStyle style, Box box) =>
-            new(text, style, box, false, false);
+        public static InlineItem CreateText(String text, ComputedStyle style, Box box, InlineAncestor? inline) =>
+            new(text, style, box, inline, false, false);
 
-        public static InlineItem CreateBreak(ComputedStyle style, Box box) =>
-            new(null, style, box, true, false);
+        public static InlineItem CreateBreak(ComputedStyle style, Box box, InlineAncestor? inline) =>
+            new(null, style, box, inline, true, false);
 
-        public static InlineItem CreateReplaced(Box box) =>
-            new(null, box.Style, box, false, true);
+        public static InlineItem CreateReplaced(Box box, InlineAncestor? inline) =>
+            new(null, box.Style, box, inline, false, true);
 
         public static InlineItem CreateRuby(
             String text,
@@ -910,8 +1301,9 @@ public sealed class InlineLayout
             Box box,
             String annotationText,
             ComputedStyle annotationStyle,
-            Box annotationBox) =>
-            new(text, style, box, false, false, annotationText, annotationStyle, annotationBox);
+            Box annotationBox,
+            InlineAncestor? inline) =>
+            new(text, style, box, inline, false, false, annotationText, annotationStyle, annotationBox);
     }
 
     private sealed class TextFragment
@@ -922,6 +1314,7 @@ public sealed class InlineLayout
             ComputedStyle style,
             Box box,
             WritingModeInfo flow,
+            InlineAncestor? inline,
             Boolean isReplaced = false,
             Double contentHeight = 0,
             RubyAnnotation? ruby = null,
@@ -932,7 +1325,8 @@ public sealed class InlineLayout
             Style = style;
             Box = box;
             Flow = flow;
-            BaselineShift = ComputeBaselineShift(style);
+            Inline = inline;
+            BaselineShift = Shift(style);
             IsReplaced = isReplaced;
             ContentHeight = contentHeight;
             Ruby = ruby;
@@ -960,6 +1354,12 @@ public sealed class InlineLayout
 
         public Box Box { get; }
 
+        /// <summary>
+        /// Gets the innermost inline element the run sits inside, or null when it sits in none. The
+        /// rest of the chain is reached through <see cref="InlineAncestor.Parent"/>.
+        /// </summary>
+        public InlineAncestor? Inline { get; }
+
         /// <summary>Gets the orientation the fragment's glyphs are drawn in, which in a column may
         /// differ from one run to the next even inside a single element.</summary>
         public WritingModeInfo Flow { get; }
@@ -975,20 +1375,25 @@ public sealed class InlineLayout
         /// <c>&lt;sub&gt;</c> are raised and lowered.
         /// </summary>
         public Double BaselineShift { get; }
+    }
 
-        private static Double ComputeBaselineShift(ComputedStyle style)
+    /// <summary>
+    /// Gets the offset <c>vertical-align</c> applies to a run's baseline: a superscript is raised above
+    /// it and a subscript lowered below, each by a fraction of the font size. Every other alignment is
+    /// the line's business rather than the run's and leaves the baseline where it is.
+    /// </summary>
+    private static Double Shift(ComputedStyle style)
+    {
+        var alignment = style.VerticalAlign;
+
+        if (alignment.Equals("super", StringComparison.OrdinalIgnoreCase))
         {
-            var alignment = style.VerticalAlign;
-
-            if (alignment.Equals("super", StringComparison.OrdinalIgnoreCase))
-            {
-                return -0.4 * style.FontSize;
-            }
-
-            return alignment.Equals("sub", StringComparison.OrdinalIgnoreCase)
-                ? 0.2 * style.FontSize
-                : 0;
+            return -0.4 * style.FontSize;
         }
+
+        return alignment.Equals("sub", StringComparison.OrdinalIgnoreCase)
+            ? 0.2 * style.FontSize
+            : 0;
     }
 
     /// <summary>
@@ -1058,40 +1463,219 @@ public sealed class InlineLayout
 
         /// <summary>Gets where the line's content starts along the inline axis, after alignment.</summary>
         public Double Offset { get; set; }
+
+        /// <summary>
+        /// Gets the inline elements this line carries on from an earlier one, or null when nothing was
+        /// cut. Their start edges belong to the line the element began on, so this line shows neither
+        /// the padding nor the border nor the curve of that side.
+        /// </summary>
+        public HashSet<InlineAncestor>? ContinuesFromPrevious { get; set; }
+
+        /// <summary>
+        /// Gets the inline elements this line hands on to a later one, or null when none were cut. The
+        /// mirror of <see cref="ContinuesFromPrevious"/> at the other end of the line.
+        /// </summary>
+        public HashSet<InlineAncestor>? ContinuesToNext { get; set; }
+    }
+
+    /// <summary>
+    /// One inline element a run sits inside, with its box model already resolved.
+    /// </summary>
+    /// <remarks>
+    /// The box tree has no parent pointer and the flattening above throws the element away, so this
+    /// chain is what remembers where a run came from. One instance is built per inline element each
+    /// time the content is collected, and every run under that element shares it, which is why the
+    /// nodes of a line can be reconstructed by comparing chains by reference.
+    /// <para>
+    /// The padding and border are kept in both forms: physically, so a fragment can hand the painter
+    /// the sides it actually draws, and as the four logical insets, so the layout can talk about the
+    /// edge a line is cut at without asking which way the text runs.
+    /// </para>
+    /// </remarks>
+    private sealed class InlineAncestor
+    {
+        private const Int32 Top = 0;
+        private const Int32 Right = 1;
+        private const Int32 Bottom = 2;
+        private const Int32 Left = 3;
+
+        private readonly Int32 _inlineStartSide;
+        private readonly Int32 _inlineEndSide;
+
+        public InlineAncestor(Box box, InlineAncestor? parent, Double basis, WritingModeInfo flow, ITextMeasurer measurer)
+        {
+            Box = box;
+            Parent = parent;
+
+            Padding = box.Style.Padding.Resolve(basis);
+            Border = BlockLayout.BorderOf(box);
+
+            var metrics = measurer.GetMetrics(box.Style.GetFont());
+            Ascent = metrics.Ascent;
+            Descent = metrics.Descent;
+            BaselineShift = Shift(box.Style);
+
+            // The element's decoration is placed in the frame its line was laid out in, so it is the
+            // container's writing mode - and not the element's own - that decides which physical side
+            // each logical edge falls on.
+            _inlineStartSide = InlineSide(flow, start: true);
+            _inlineEndSide = InlineSide(flow, start: false);
+
+            InlineStartInset = Insets(_inlineStartSide);
+            InlineEndInset = Insets(_inlineEndSide);
+            BlockStartInset = Insets(BlockSide(flow, start: true));
+            BlockEndInset = Insets(BlockSide(flow, start: false));
+        }
+
+        /// <summary>Gets the element this chain entry stands for.</summary>
+        public Box Box { get; }
+
+        /// <summary>Gets the element this one sits inside, or null when it is the outermost.</summary>
+        public InlineAncestor? Parent { get; }
+
+        /// <summary>Gets the padding the element resolved to, all four sides.</summary>
+        public Thickness Padding { get; }
+
+        /// <summary>Gets the border widths the element resolved to, all four sides.</summary>
+        public Thickness Border { get; }
+
+        /// <summary>Gets the extent the element's padding and border add at the start of the inline axis.</summary>
+        public Double InlineStartInset { get; }
+
+        /// <summary>Gets the extent the element's padding and border add at the end of the inline axis.</summary>
+        public Double InlineEndInset { get; }
+
+        /// <summary>Gets the extent the element's padding and border add at the start of the block axis.</summary>
+        public Double BlockStartInset { get; }
+
+        /// <summary>Gets the extent the element's padding and border add at the end of the block axis.</summary>
+        public Double BlockEndInset { get; }
+
+        /// <summary>Gets the distance from the top of the element's font to its baseline.</summary>
+        public Double Ascent { get; }
+
+        /// <summary>Gets the distance from the element's baseline to the bottom of its font.</summary>
+        public Double Descent { get; }
+
+        /// <summary>Gets the offset the element's own <c>vertical-align</c> applies to its band.</summary>
+        public Double BaselineShift { get; }
+
+        /// <summary>
+        /// Gets the padding a fragment of this element draws. An edge the element was cut at carries
+        /// none of it: everything that would have been drawn there was drawn on the line the element
+        /// began or ended on.
+        /// </summary>
+        public Thickness PaddingFor(Boolean cutStart, Boolean cutEnd) =>
+            Sliced(Padding, cutStart, cutEnd);
+
+        /// <summary>Gets the border a fragment of this element draws, cut edges carrying none.</summary>
+        public Thickness BorderFor(Boolean cutStart, Boolean cutEnd) =>
+            Sliced(Border, cutStart, cutEnd);
+
+        private Thickness Sliced(Thickness thickness, Boolean cutStart, Boolean cutEnd) =>
+            cutStart ? Clear(thickness, _inlineStartSide)
+            : cutEnd ? Clear(thickness, _inlineEndSide)
+            : thickness;
+
+        /// <summary>
+        /// Gets the physical side the inline axis starts on: the left edge of a row, the top edge of a
+        /// column - and the bottom edge under <c>sideways-lr</c>, the one mode that runs up the page.
+        /// </summary>
+        private static Int32 InlineSide(WritingModeInfo flow, Boolean start) => flow.IsVertical
+            ? start == (flow.InlineSign > 0) ? Top : Bottom
+            : start ? Left : Right;
+
+        /// <summary>
+        /// Gets the physical side the block axis starts on: the top edge of a row, and of a column the
+        /// left edge unless the mode is a right-to-left one, whose first column is the right-hand one.
+        /// </summary>
+        private static Int32 BlockSide(WritingModeInfo flow, Boolean start) => flow.IsVertical
+            ? start == (flow.BlockSign > 0) ? Left : Right
+            : start ? Top : Bottom;
+
+        /// <summary>Gets the padding and border the element adds along one physical side.</summary>
+        private Double Insets(Int32 side) => Read(Padding, side) + Read(Border, side);
+
+        private static Double Read(Thickness thickness, Int32 side) => side switch
+        {
+            Top => thickness.Top,
+            Bottom => thickness.Bottom,
+            Left => thickness.Left,
+            _ => thickness.Right,
+        };
+
+        private static Thickness Clear(Thickness t, Int32 side) => side switch
+        {
+            Top => new Thickness(0, t.Right, t.Bottom, t.Left),
+            Bottom => new Thickness(t.Top, t.Right, 0, t.Left),
+            Left => new Thickness(t.Top, t.Right, t.Bottom, 0),
+            _ => new Thickness(t.Top, 0, t.Bottom, t.Left),
+        };
     }
 
     private sealed class LineBuilder
     {
         private readonly List<TextFragment> _fragments = new();
+        private readonly List<OpenInline> _open = new();
+        private readonly HashSet<InlineAncestor>? _carried;
         private readonly ComputedStyle? _fallback;
 
         public LineBuilder()
         {
         }
 
-        public LineBuilder(ComputedStyle fallback) => _fallback = fallback;
+        public LineBuilder(ComputedStyle fallback, HashSet<InlineAncestor>? carried)
+        {
+            _fallback = fallback;
+            _carried = carried;
+        }
 
+        /// <summary>
+        /// Gets the extent the line takes as it is being built, which is what the wrap test is made
+        /// against while the line is still growing. It is only an estimate of what the line ends up
+        /// taking - trimming the trailing spaces can still take a run back out - so
+        /// <see cref="Build"/> works the extent it hands back out afresh instead of reusing this.
+        /// </summary>
         public Double Width { get; private set; }
 
         public Boolean HasContent => _fragments.Count > 0;
 
+        /// <summary>
+        /// Gets the extent the line would already take if the next run sat in the given chain. The
+        /// wrap test asks this rather than reading <see cref="Width"/>, so that the padding and border
+        /// a run brings with it are counted before the run itself is measured against what is left.
+        /// </summary>
+        public Double ExtentFor(InlineAncestor? inline) =>
+            Width + Advance(_open, inline, _carried, origin: 0, apply: false, step: null);
+
         /// <summary>Adds an atomic replaced box, which occupies its own used size on the line.</summary>
-        public void AddReplaced(Box box, Double width, Double height)
+        public void AddReplaced(Box box, Double width, Double height, InlineAncestor? inline)
         {
+            Enter(inline);
+
             _fragments.Add(new TextFragment(
                 String.Empty,
                 width,
                 box.Style,
                 box,
                 box.Flow,
+                inline,
                 isReplaced: true,
                 contentHeight: height));
 
             Width += width;
         }
 
-        public void Add(String text, Double width, ComputedStyle style, Box box, WritingModeInfo flow)
+        public void Add(
+            String text,
+            Double width,
+            ComputedStyle style,
+            Box box,
+            WritingModeInfo flow,
+            InlineAncestor? inline)
         {
+            Enter(inline);
+
             if (_fragments.Count > 0)
             {
                 var last = _fragments[^1];
@@ -1099,8 +1683,9 @@ public sealed class InlineLayout
                 // Chunks of one text node belong to one run. Keeping them together stops the paint
                 // commands - and the decorations drawn for them - from being split per word. Pieces
                 // that are drawn differently, a turned word among upright text, are not the same run
-                // however they happened to be chunked.
-                if (ReferenceEquals(last.Box, box) && last.Flow.Equals(flow))
+                // however they happened to be chunked, and neither are pieces from either side of an
+                // inline element's edge.
+                if (ReferenceEquals(last.Box, box) && last.Flow.Equals(flow) && ReferenceEquals(last.Inline, inline))
                 {
                     last.Text += text;
                     last.Width += width;
@@ -1109,7 +1694,7 @@ public sealed class InlineLayout
                 }
             }
 
-            _fragments.Add(new TextFragment(text, width, style, box, flow));
+            _fragments.Add(new TextFragment(text, width, style, box, flow, inline));
             Width += width;
         }
 
@@ -1126,33 +1711,52 @@ public sealed class InlineLayout
             Box box,
             WritingModeInfo flow,
             RubyAnnotation ruby,
-            Double baseWidth)
+            Double baseWidth,
+            InlineAncestor? inline)
         {
+            Enter(inline);
+
             _fragments.Add(new TextFragment(
                 text,
                 width,
                 style,
                 box,
                 flow,
+                inline,
                 ruby: ruby,
                 baseWidth: baseWidth));
 
             Width += width;
         }
 
-        public Line Build(ITextMeasurer measurer, Double maxInline)
+        /// <summary>
+        /// Moves the line into the chain of inline elements the next run sits in, taking the padding
+        /// and border the edges of that move are worth along with it.
+        /// </summary>
+        private void Enter(InlineAncestor? inline) =>
+            Width += Advance(_open, inline, _carried, origin: 0, apply: true, step: null);
+
+        /// <summary>
+        /// Closes the line and hands it back, with the extent it takes along the inline axis and the
+        /// report of which elements it ends inside.
+        /// </summary>
+        public Line Build(ITextMeasurer measurer, Double maxInline, HashSet<InlineAncestor>? carried)
         {
             TrimTrailingSpaces(measurer);
 
-            var line = new Line();
+            var line = new Line { ContinuesFromPrevious = carried };
             line.Fragments.AddRange(_fragments);
 
+            // The extent is worked out afresh from the runs the trimming left, because the padding and
+            // border a chain change brings in are part of it and a run taken back out takes them with it.
+            var open = new List<OpenInline>();
             var used = 0.0;
             var ascent = 0.0;
             var descent = 0.0;
 
             foreach (var fragment in line.Fragments)
             {
+                used += Advance(open, fragment.Inline, carried, origin: 0, apply: true, step: null);
                 used += fragment.Width;
 
                 // A replaced inline rests its bottom margin edge on the baseline, so it contributes
@@ -1195,6 +1799,23 @@ public sealed class InlineLayout
                 descent = Math.Max(descent, fragmentDescent);
             }
 
+            // An element the line ends inside may have been cut there, and only the line below can say
+            // whether it was: until that is known the end edge it would draw here is counted, so that
+            // the line is neither aligned nor broken as if the element had none. MarkSlices takes the
+            // edge back off the ones that turn out not to carry on.
+            if (open.Count > 0)
+            {
+                var pending = new HashSet<InlineAncestor>();
+
+                foreach (var item in open)
+                {
+                    pending.Add(item.Ancestor);
+                    used += item.Ancestor.InlineEndInset;
+                }
+
+                line.ContinuesToNext = pending;
+            }
+
             if (line.Fragments.Count == 0 && _fallback is { } fallback)
             {
                 // An empty line still occupies a line box, so an explicit break has height.
@@ -1213,6 +1834,10 @@ public sealed class InlineLayout
             return line;
         }
 
+        /// <summary>
+        /// Takes the line's trailing spaces off, which a line never draws at its end. Only the runs
+        /// themselves are touched: the extent is worked out from what is left when the line is built.
+        /// </summary>
         private void TrimTrailingSpaces(ITextMeasurer measurer)
         {
             while (_fragments.Count > 0)
@@ -1228,7 +1853,6 @@ public sealed class InlineLayout
 
                 if (TextChunker.IsWhiteSpace(last.Text))
                 {
-                    Width -= last.Width;
                     _fragments.RemoveAt(_fragments.Count - 1);
                     continue;
                 }
@@ -1240,8 +1864,6 @@ public sealed class InlineLayout
                     break;
                 }
 
-                Width -= last.Width;
-
                 if (trimmed.Length == 0)
                 {
                     _fragments.RemoveAt(_fragments.Count - 1);
@@ -1252,7 +1874,6 @@ public sealed class InlineLayout
                 last.Width = last.Flow.IsVertical
                     ? MeasureColumn(trimmed, last.Style.GetFont(), last.Style.FontSize, last.Flow, measurer)
                     : measurer.MeasureWidth(trimmed, last.Style.GetFont());
-                Width += last.Width;
                 break;
             }
         }

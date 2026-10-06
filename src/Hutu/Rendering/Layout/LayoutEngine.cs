@@ -102,12 +102,57 @@ public sealed class LayoutEngine
 
         box.Radii = CornerRadii.Resolve(style.BorderRadius, box.BorderBox.Width, box.BorderBox.Height);
         box.BackgroundClip = style.BackgroundClip;
-        box.ClipsOverflow = style.ClipsOverflow;
+
+        // An inline element has no box of its own to clip anything to, and CSS says `overflow` has no
+        // effect on one: honouring it would start cutting off the element's own runs.
+        box.ClipsOverflow = box.Kind != LayoutKind.Inline && style.ClipsOverflow;
+
+        if (box.Kind == LayoutKind.Inline)
+        {
+            box.Radii = Sliced(box.Radii, box);
+        }
 
         foreach (var child in box.Children)
         {
             ResolveDecorations(child);
         }
+    }
+
+    /// <summary>
+    /// Squares off the pair of corners on the edge an inline fragment was cut at. Everything that
+    /// would have curved along that edge was drawn on the line the element began or ended on, which is
+    /// what <c>box-decoration-break: slice</c> asks for; without this every line of a broken element
+    /// would grow a rounded end of its own.
+    /// </summary>
+    private static CornerRadii Sliced(CornerRadii radii, LayoutBox box)
+    {
+        if (!box.SlicesInlineStart && !box.SlicesInlineEnd)
+        {
+            return radii;
+        }
+
+        // The inline axis of a row runs across the box, so a row is cut down its left and right edges
+        // and a column across its top and bottom ones. Every mode but `sideways-lr` starts at the edge
+        // the text begins reading from, which is the left one of a row and the top one of a column.
+        var startAtBeginning = !box.Vertical || box.Flow.InlineSign > 0;
+
+        var top = box.Vertical &&
+            ((box.SlicesInlineStart && startAtBeginning) || (box.SlicesInlineEnd && !startAtBeginning));
+
+        var bottom = box.Vertical &&
+            ((box.SlicesInlineStart && !startAtBeginning) || (box.SlicesInlineEnd && startAtBeginning));
+
+        var left = !box.Vertical &&
+            ((box.SlicesInlineStart && startAtBeginning) || (box.SlicesInlineEnd && !startAtBeginning));
+
+        var right = !box.Vertical &&
+            ((box.SlicesInlineStart && !startAtBeginning) || (box.SlicesInlineEnd && startAtBeginning));
+
+        return new CornerRadii(
+            top || left ? CornerRadius.Zero : radii.TopLeft,
+            top || right ? CornerRadius.Zero : radii.TopRight,
+            bottom || right ? CornerRadius.Zero : radii.BottomRight,
+            bottom || left ? CornerRadius.Zero : radii.BottomLeft);
     }
 
     /// <summary>

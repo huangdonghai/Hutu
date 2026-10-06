@@ -190,6 +190,11 @@ public sealed class LayoutEngineTests
         }
     }
 
+    /// <summary>
+    /// Gets the text a line box was set from. The runs are looked for through the whole subtree rather
+    /// than among the line's own children, because an inline element stands between the two: its runs
+    /// hang off its own node, one node per line the element reaches.
+    /// </summary>
     private static String LineText(LayoutBox line) =>
-        String.Concat(line.Children.Select(child => child.Text));
+        String.Concat(Walk(line).Where(node => node.Kind == LayoutKind.Text).Select(node => node.Text));
 }

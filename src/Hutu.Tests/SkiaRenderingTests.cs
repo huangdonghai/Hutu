@@ -215,6 +215,87 @@ public sealed class SkiaRenderingTests
     }
 
     [Test]
+    public async Task AMarkedRunIsPaintedOnItsOwnBackground()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(400, 120);
+
+        // The padding gives the band a strip on either side of the glyphs that is the band's colour and
+        // nothing else, which is what makes the fill checkable without having to know where the ink of
+        // a particular letter falls.
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0;font-size:32px'><mark style='padding:0 8px'>highlighted</mark></p>" +
+            "</body></html>");
+
+        var mark = Inlines(view, "mark").Single();
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+
+        var band = bitmap.GetPixel(
+            (Int32)mark.BorderBox.X + 2,
+            (Int32)mark.BorderBox.Y + 4);
+
+        Assert.That(band.Red, Is.GreaterThan(200), "the band should be filled with the yellow the UA sheet asks of `mark`");
+        Assert.That(band.Green, Is.GreaterThan(200));
+        Assert.That(band.Blue, Is.LessThan(100));
+
+        var beyond = bitmap.GetPixel(
+            (Int32)mark.BorderBox.Right + 4,
+            (Int32)mark.BorderBox.Y + 4);
+
+        Assert.That(beyond, Is.EqualTo(SKColors.White), "the fill has to stop at the band's edge");
+    }
+
+    [Test]
+    public async Task AnInlineElementNestedInAnotherIsPaintedOverIt()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(400, 120);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0;font-size:32px'>" +
+            "<mark style='padding:0 8px;background:#ffff00'><span style='padding:0 6px;background:#3366ff'>ab</span></mark>" +
+            "</p></body></html>");
+
+        var mark = Inlines(view, "mark").Single();
+        var inner = Inlines(view, "span").Single();
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+
+        var outer = bitmap.GetPixel(
+            (Int32)mark.BorderBox.X + 2,
+            (Int32)mark.BorderBox.Y + 4);
+
+        var overlap = bitmap.GetPixel(
+            (Int32)inner.BorderBox.X + 2,
+            (Int32)inner.BorderBox.Y + 4);
+
+        Assert.That(outer.Blue, Is.LessThan(100), "the outer element's own strip keeps its colour");
+        Assert.That(overlap.Blue, Is.GreaterThan(200), "where the two bands meet, the inner one is on top");
+        Assert.That(overlap.Red, Is.LessThan(100));
+    }
+
+    [Test]
+    public async Task TheInlineDecorationsOfTheTypographyPageReachTheCanvas()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.AddEmbeddedResourceSource(typeof(Sample.Common.SampleUtils).Assembly, "Samples");
+        view.SetViewportSize(900, 600);
+
+        await view.LoadUrlAsync("Pages/typography.htm");
+
+        var fills = view.Paint!.Commands.OfType<FillCommand>().Select(fill => fill.Color).ToList();
+
+        // The chip's own colour, from the demo sheet's `code` rule. Nothing else on the page asks for
+        // it, so a fill of that colour means the element's background was carried all the way through
+        // to the paint list rather than being flattened away with the element.
+        Assert.That(fills, Does.Contain(0xFFEAF0F6u), "the `code` chip has to be filled");
+    }
+
+    [Test]
     public async Task ImagesSamplePageRendersItsImagesAndBackgroundPanel()
     {
         using var measurer = new SkiaTextMeasurer();
@@ -1002,6 +1083,30 @@ public sealed class SkiaRenderingTests
         rendered.Cell.Right - rendered.Ink.Right,
         rendered.Cell.Bottom - rendered.Ink.Bottom,
         rendered.Ink.Left - rendered.Cell.Left);
+
+    /// <summary>
+    /// Renders the paint list onto a page that was cleared to white, so that a pixel the document never
+    /// painted reads as white and can be told apart from one it did.
+    /// </summary>
+    private static SKBitmap RenderToBitmap(PaintList paint, SkiaTextMeasurer measurer)
+    {
+        var width = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Width));
+        var height = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Height));
+
+        using var surface = SKSurface.Create(new SKImageInfo(width, height));
+        surface.Canvas.Clear(SKColors.White);
+        new SkiaPaintExecutor(measurer).Execute(paint, surface.Canvas);
+
+        using var image = surface.Snapshot();
+        return SKBitmap.FromImage(image);
+    }
+
+    /// <summary>
+    /// Finds the boxes the inline elements of a given name were given. An element broken over lines is
+    /// given one per line, so this is a list and not a single box.
+    /// </summary>
+    private static System.Collections.Generic.List<LayoutBox> Inlines(HutuViewInternal view, String tag) =>
+        LayoutOf(view).Where(box => box.Kind == LayoutKind.Inline && box.Source.Element?.LocalName == tag).ToList();
 
     private static Int32 CountNonWhitePixels(PaintList paint, SkiaTextMeasurer measurer)
     {

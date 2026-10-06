@@ -2,10 +2,12 @@ using AngleSharp.Dom;
 using Hutu.Rendering;
 using Hutu.Rendering.Interaction;
 using Hutu.Rendering.Layout;
+using Hutu.Rendering.Paint;
 using Hutu.Skia;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Hutu.Tests;
 
@@ -29,13 +31,27 @@ public sealed class LayoutReuseTests
         var layout = session.View.Layout;
         var paint = session.View.Paint;
 
+        Assert.That(Backgrounds(session), Is.Empty, "the link has no background until it is hovered");
+
         var moved = session.Hover(anchor);
 
         Assert.That(moved.Changed, Is.True, "the pointer should have entered the link");
         Assert.That(session.View.Layout, Is.SameAs(layout), "nothing moved, so the layout should be reused");
         Assert.That(session.View.Paint, Is.Not.SameAs(paint), "the new colours still need a repaint");
         Assert.That(session.Color(anchor), Is.Not.EqualTo(color), "the hover style should have applied");
+
+        // The layout was reused, so the box the background lands on is one the reused layout already
+        // held: an inline element has to be given a box whether or not it was drawing anything at the
+        // time, or a background declared by a later style would have nowhere to go.
+        Assert.That(
+            Backgrounds(session),
+            Is.EqualTo(new[] { 0xFFFFEEEEu }),
+            "the background the hover added has to reach the paint list");
     }
+
+    /// <summary>Gets the colours of the background fills the paint list was built with.</summary>
+    private static IEnumerable<UInt32> Backgrounds(Session session) =>
+        session.View.Paint!.Commands.OfType<FillCommand>().Select(fill => fill.Color);
 
     [Test]
     public void HoverThatChangesGeometryLaysOutAgain()

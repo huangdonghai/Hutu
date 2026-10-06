@@ -27,10 +27,11 @@ namespace Hutu.Rendering.Interaction;
 /// has to a stacking order: a descendant is seen after its ancestor and covers it, and a box placed
 /// over another is seen later still.
 /// <para>
-/// The elements are then read from the document rather than from the boxes that were walked. An
-/// inline element is flattened into the runs it holds and leaves no box of its own, so a link around
-/// a word exists only as the text and can be asked for nowhere else; the document knows which element
-/// that text is in, and knows the elements it is in in turn.
+/// The elements are then read from the document rather than from the boxes that were walked. A run of
+/// text stands for no element of its own, so a link around a word exists only as the text: the
+/// document knows which element that text is in, and knows the elements it is in in turn. An inline
+/// element is boxed around the runs it holds, so pointing at its padding resolves to the element
+/// itself rather than to the word it wraps.
 /// </para>
 /// </remarks>
 public sealed class ElementHitTester

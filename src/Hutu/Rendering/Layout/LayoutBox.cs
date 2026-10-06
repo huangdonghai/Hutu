@@ -11,6 +11,13 @@ public enum LayoutKind
     /// <summary>A block box with a margin, border and padding.</summary>
     Block,
 
+    /// <summary>
+    /// One line's fragment of an inline element's box. An inline element that is broken over several
+    /// lines leaves one of these per line, which is what lets its background, border and padding be
+    /// painted per fragment the way <c>box-decoration-break: slice</c> asks for.
+    /// </summary>
+    Inline,
+
     /// <summary>A line box inside an inline formatting context.</summary>
     Line,
 
@@ -152,6 +159,21 @@ public sealed class LayoutBox
 
     /// <summary>Gets or sets the box the background is painted into.</summary>
     public BackgroundClip BackgroundClip { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether this fragment was cut from the rest of its inline element at the start
+    /// edge, i.e. the element began on an earlier line. A cut edge carries no padding, no border and
+    /// no corner curve, because everything on it was drawn on the line the element started on.
+    /// </summary>
+    /// <remarks>Only meaningful for an <see cref="LayoutKind.Inline"/> box.</remarks>
+    public Boolean SlicesInlineStart { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether this fragment was cut at the end edge, i.e. the element carries on onto a
+    /// later line. The mirror of <see cref="SlicesInlineStart"/>.
+    /// </summary>
+    /// <remarks>Only meaningful for an <see cref="LayoutKind.Inline"/> box.</remarks>
+    public Boolean SlicesInlineEnd { get; set; }
 
     /// <summary>
     /// Gets or sets whether the descendants are clipped to the padding box, which is what an

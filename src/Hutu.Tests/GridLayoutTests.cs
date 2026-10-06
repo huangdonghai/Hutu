@@ -2,6 +2,7 @@ using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Hutu.Tests;
@@ -375,12 +376,11 @@ public sealed class GridLayoutTests
                 continue;
             }
 
-            foreach (var child in node.Children)
+            // Through the whole subtree: text wrapped in an inline element hangs off that element's own
+            // node rather than off the line, one node per line the element reaches.
+            if (Descend(node).Any(child => child.Kind == LayoutKind.Text && child.Text == text))
             {
-                if (child.Kind == LayoutKind.Text && child.Text == text)
-                {
-                    return node;
-                }
+                return node;
             }
         }
 
