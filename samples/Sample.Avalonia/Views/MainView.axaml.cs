@@ -1,4 +1,5 @@
 ﻿
+using AngleSharp.Dom;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -73,23 +74,45 @@ public partial class MainView : ContentPage
             _ = NavigateAsync(AddressBar.Text);
     }
 
-    private async void Back_Click(object? sender, RoutedEventArgs e)
-    {
-        if (_position > 0)
-            await GoAsync(_position - 1);
-    }
+    private async void Back_Click(object? sender, RoutedEventArgs e) => await GoBackAsync();
 
-    private async void Forward_Click(object? sender, RoutedEventArgs e)
-    {
-        if (_position < _history.Count - 1)
-            await GoAsync(_position + 1);
-    }
+    private async void Forward_Click(object? sender, RoutedEventArgs e) => await GoForwardAsync();
 
     private async void Refresh_Click(object? sender, RoutedEventArgs e)
     {
         if (_position >= 0)
-            await LoadAsync(_history[_position]);
+            await GoAsync(_position);
     }
+
+    /// <summary>
+    /// Answers the fourth and fifth mouse buttons, which are the browser's back and forward. The press
+    /// is taken here, above the view, so it works wherever on the page the pointer happens to be - and
+    /// only an unhandled press reaches this far, so a click the page itself consumed is left alone.
+    /// </summary>
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+
+        if (e.Handled)
+            return;
+
+        switch (e.GetCurrentPoint(this).Properties.PointerUpdateKind)
+        {
+            case PointerUpdateKind.XButton1Pressed:
+                e.Handled = true;
+                _ = GoBackAsync();
+                break;
+
+            case PointerUpdateKind.XButton2Pressed:
+                e.Handled = true;
+                _ = GoForwardAsync();
+                break;
+        }
+    }
+
+    private Task GoBackAsync() => _position > 0 ? GoAsync(_position - 1) : Task.CompletedTask;
+
+    private Task GoForwardAsync() => _position < _history.Count - 1 ? GoAsync(_position + 1) : Task.CompletedTask;
 
     /// <summary>Loads an address the reader entered and records it once it has a document.</summary>
     private async Task NavigateAsync(string? address)
@@ -105,13 +128,28 @@ public partial class MainView : ContentPage
     /// <summary>
     /// Opens the page the reader last had open, or the home page when there is none to open - or when
     /// the one remembered will not open, which is what an address left over from an older build does.
+    /// The rest of the remembered history is restored with it, so the back and forward buttons still
+    /// have somewhere to go.
     /// </summary>
     private async Task RestoreAsync()
     {
-        var remembered = StartPageStore.Load();
+        var remembered = BrowsingHistoryStore.Load();
 
-        if (remembered is not null && await GoAsync(-1, remembered))
-            return;
+        if (remembered is { Addresses.Count: > 0 } history)
+        {
+            var position = Math.Clamp(history.Position, 0, history.Addresses.Count - 1);
+            var address = history.Addresses[position];
+
+            if (await LoadAsync(address) is not null)
+            {
+                _history.Clear();
+                _history.AddRange(history.Addresses);
+                _position = position;
+                AddressBar.Text = address;
+                UpdateNavigation();
+                return;
+            }
+        }
 
         // Nothing was remembered, or what was remembered is no longer there to open. Either way the
         // reader starts at the home page rather than at an empty view with nothing to read.
@@ -126,10 +164,16 @@ public partial class MainView : ContentPage
     /// </summary>
     private async Task<bool> GoAsync(int target, string? url = null)
     {
-        var address = url ?? _history[target];
+        var requested = url ?? _history[target];
 
-        if (!await LoadAsync(address))
+        if (await LoadAsync(requested) is not { } document)
             return false;
+
+        // The reader is remembered against the address the document ended up with, not the one that was
+        // asked for: that is the address its own links resolve against, and so the only one a link back
+        // here could be recognised by - and it is the page the reader is looking at, which is the one to
+        // open again next time. It is also what a stored history needs in order to be reloaded.
+        var address = document.Url is { Length: > 0 } resolved ? resolved : requested;
 
         if (url is not null)
         {
@@ -137,46 +181,52 @@ public partial class MainView : ContentPage
             if (_position < _history.Count - 1)
                 _history.RemoveRange(_position + 1, _history.Count - _position - 1);
 
-            _history.Add(url);
+            _history.Add(address);
             target = _history.Count - 1;
+        }
+        else
+        {
+            _history[target] = address;
         }
 
         _position = target;
         AddressBar.Text = address;
         UpdateNavigation();
+        SaveHistory();
 
         return true;
     }
 
     /// <summary>
-    /// Loads a URL, records the page it turned out to be as the one to come back to, and reports
-    /// whether it produced a document. A failure is logged rather than left to reach the dispatcher,
-    /// where an exception from a load would take the whole process down.
+    /// Loads a URL and reports the document it produced, or null when it could not be loaded. A failure
+    /// is logged rather than left to reach the dispatcher, where an exception from a load would take the
+    /// whole process down.
     /// </summary>
-    private async Task<bool> LoadAsync(string url)
+    private async Task<IDocument?> LoadAsync(string url)
     {
         try
         {
             var document = await MyHutuView.LoadUrlAsync(url);
 
-            // Where the reader has been is recorded against the address the document ended up with,
-            // not the one that was asked for: that is the address its own links resolve against, and so
-            // the only one a link back here could be recognised by - and it is the page the reader is
-            // looking at, which is the one to open again next time.
             if (document.Url is { Length: > 0 } address)
             {
                 MyHutuView.MarkVisited(address);
-                StartPageStore.Save(address);
             }
 
-            return true;
+            return document;
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"Loading '{url}' failed: {ex}");
-            return false;
+            return null;
         }
     }
+
+    /// <summary>
+    /// Records the history, so the next run opens where this one left off and can still walk it back
+    /// and forward.
+    /// </summary>
+    private void SaveHistory() => BrowsingHistoryStore.Save(new BrowsingHistory(_history, _position));
 
     /// <summary>Enables each button exactly when the history has somewhere for it to go.</summary>
     private void UpdateNavigation()
