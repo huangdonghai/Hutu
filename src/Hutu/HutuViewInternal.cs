@@ -133,6 +133,18 @@ public sealed class HutuViewInternal : IDisposable
     /// <summary>Clears the selection, so nothing is highlighted and a copy has nothing to take.</summary>
     public void ClearSelection() => Apply(null);
 
+    /// <summary>
+    /// Gets whether a point in document coordinates lands on text a reader could select. A host asks
+    /// this to shape its pointer - the text cursor over text, the default one everywhere else.
+    /// </summary>
+    /// <remarks>
+    /// It is deliberately not the question <see cref="BeginSelection"/> asks: that one snaps a point
+    /// outside the text onto the nearest line so a gesture is never lost, whereas a pointer resting
+    /// there has nothing to select. The two would otherwise disagree, and a reader would see a text
+    /// cursor over a stretch of page a click could not select.
+    /// </remarks>
+    public bool HasTextAt(double x, double y) => _selector?.IsTextAt(x, y) ?? false;
+
     public void AddEpubResourceSource(string epubFileName)
     {
         _resourceRequesters.Add(new EpubRequester(epubFileName));

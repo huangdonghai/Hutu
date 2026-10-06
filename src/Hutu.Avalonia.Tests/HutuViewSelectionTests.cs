@@ -5,9 +5,11 @@ using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Hutu.Avalonia;
 using NUnit.Framework;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Hutu.Avalonia.Tests;
@@ -37,6 +39,17 @@ public sealed class HutuViewSelectionTests
 
     /// <summary>A point past the end of the text, so a drag that reaches it covers all of it.</summary>
     private static readonly Point End = new(700, 10);
+
+    /// <summary>
+    /// The same text with empty space under it, so a point below the text is still inside the surface
+    /// the pointer reports to - which is what lets a hover be aimed at nothing.
+    /// </summary>
+    private const string DocumentWithEmptySpace =
+        "<html><body style='margin:0'><div style='font-size:40px'>hello world</div>" +
+        "<div style='height:400px'></div></body></html>";
+
+    /// <summary>A point below the text, where there is nothing to select.</summary>
+    private static readonly Point Blank = new(5, 300);
 
     [AvaloniaTest]
     public async Task DraggingOverTextSelectsIt()
@@ -175,6 +188,97 @@ public sealed class HutuViewSelectionTests
         }
     }
 
+    [AvaloniaTest]
+    public async Task MovingOverTextShowsTheTextCursor()
+    {
+        var window = new Window { Width = WindowWidth, Height = WindowHeight };
+
+        try
+        {
+            await ShowDocumentAsync(window, DocumentWithEmptySpace);
+            var surface = Surface(window);
+
+            Hover(window, Blank);
+            Assert.That(surface.Cursor, Is.Null, "empty space is the default cursor");
+
+            Hover(window, Start);
+            Assert.That(
+                surface.Cursor?.ToString(),
+                Is.EqualTo(nameof(StandardCursorType.Ibeam)),
+                "text under the pointer has to show the text cursor");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task MovingOffTheTextRestoresTheDefaultCursor()
+    {
+        var window = new Window { Width = WindowWidth, Height = WindowHeight };
+
+        try
+        {
+            await ShowDocumentAsync(window, DocumentWithEmptySpace);
+            var surface = Surface(window);
+
+            Hover(window, Start);
+            Assert.That(surface.Cursor, Is.Not.Null);
+
+            Hover(window, Blank);
+            Assert.That(surface.Cursor, Is.Null, "the cursor has to go back once there is nothing to select");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task ADragKeepsTheTextCursorPastTheEndOfTheText()
+    {
+        var window = new Window { Width = WindowWidth, Height = WindowHeight };
+
+        try
+        {
+            await ShowDocumentAsync(window, DocumentWithEmptySpace);
+            var surface = Surface(window);
+
+            window.MouseDown(Start, MouseButton.Left, RawInputModifiers.LeftMouseButton);
+            window.MouseMove(Blank, RawInputModifiers.LeftMouseButton);
+
+            // The gesture is still a text selection with the pointer well past the text, so the cursor
+            // stays the text one rather than flickering back on the way.
+            Assert.That(
+                surface.Cursor?.ToString(),
+                Is.EqualTo(nameof(StandardCursorType.Ibeam)),
+                "a drag is a selection wherever the pointer wanders");
+
+            window.MouseUp(Blank, MouseButton.Left, RawInputModifiers.None);
+            Dispatcher.UIThread.RunJobs();
+
+            // With the button up the gesture is over, so the cursor answers for the point again - which
+            // is empty space here.
+            Assert.That(surface.Cursor, Is.Null, "the release ends the drag, so the cursor stops being kept");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>Moves the pointer with no button held, which is what a reader hovering does.</summary>
+    private static void Hover(Window window, Point point)
+    {
+        window.MouseMove(point, RawInputModifiers.None);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    /// <summary>The surface the view hosts, which is the element the pointer reports to.</summary>
+    private static HutuSurface Surface(Window window) =>
+        ((HutuView)window.Content!).GetVisualDescendants().OfType<HutuSurface>().First();
+
     /// <summary>Presses at the start of the text, drags past its end and releases.</summary>
     private static void Drag(Window window)
     {
@@ -191,7 +295,10 @@ public sealed class HutuViewSelectionTests
     }
 
     /// <summary>Hosts the view the way the sample does - as the whole content - and loads the text.</summary>
-    private static async Task<HutuView> ShowDocumentAsync(Window window)
+    private static Task<HutuView> ShowDocumentAsync(Window window) => ShowDocumentAsync(window, Document);
+
+    /// <summary>Hosts the view and loads the supplied markup.</summary>
+    private static async Task<HutuView> ShowDocumentAsync(Window window, string html)
     {
         var view = new HutuView();
         window.Content = view;
@@ -201,7 +308,7 @@ public sealed class HutuViewSelectionTests
         // rather than against nothing.
         Settle(window);
 
-        await view.SetHtml(Document);
+        await view.SetHtml(html);
         Settle(window);
 
         return view;

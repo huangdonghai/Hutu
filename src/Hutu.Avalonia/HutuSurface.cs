@@ -32,6 +32,10 @@ public sealed class HutuSurface : Control
     private Offset _scroll;
     private Boolean _dragging;
 
+    // One instance rather than one per assignment, so a move over text does not allocate and the
+    // cursor a test reads back is the same object every time.
+    private static readonly Cursor TextCursor = new(StandardCursorType.Ibeam);
+
     public HutuSurface(HutuViewInternal view, SkiaPaintExecutor executor)
     {
         _view = view;
@@ -106,20 +110,63 @@ public sealed class HutuSurface : Control
         e.Handled = true;
     }
 
-    /// <summary>Extends a drag to the point the pointer has reached.</summary>
+    /// <summary>
+    /// Extends a drag to the point the pointer has reached, and shapes the cursor for what lies
+    /// under the pointer.
+    /// </summary>
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
+
+        var point = ToDocument(e.GetPosition(this));
+
+        // Before the drag check, because the cursor is shaped on every move - a reader who is only
+        // hovering is the case this feedback exists for.
+        UpdateCursor(point);
 
         if (!_dragging)
         {
             return;
         }
 
-        var point = ToDocument(e.GetPosition(this));
-
         _view.ExtendSelection(point.X, point.Y);
         InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Restores the default cursor once the pointer leaves, so nothing about the surface lingers over
+    /// the control the reader moved to. A drag is left alone: the pointer is still captured, so an
+    /// exit is not really a departure.
+    /// </summary>
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+
+        if (!_dragging)
+        {
+            Cursor = null;
+        }
+    }
+
+    /// <summary>
+    /// Points the cursor at what lies under the pointer: the text cursor over selectable text, the
+    /// default one everywhere else.
+    /// </summary>
+    /// <remarks>
+    /// A drag keeps the text cursor even after the pointer has left the text. The gesture is still a
+    /// text selection at that point, and a cursor that flickered back to the default would say
+    /// otherwise - which is also what a reader sees in a browser.
+    /// </remarks>
+    private void UpdateCursor(Point point)
+    {
+        var wanted = _dragging || _view.HasTextAt(point.X, point.Y) ? TextCursor : null;
+
+        // Setting the property raises a change notification, so a move that changes nothing pays
+        // nothing - which matters, because a move reports far more often than the answer changes.
+        if (!ReferenceEquals(Cursor, wanted))
+        {
+            Cursor = wanted;
+        }
     }
 
     /// <summary>Ends a drag at the point the button was released on.</summary>
@@ -140,6 +187,11 @@ public sealed class HutuSurface : Control
         var point = ToDocument(e.GetPosition(this));
 
         _view.ExtendSelection(point.X, point.Y);
+
+        // The gesture is over, so the cursor answers for the point again rather than staying the text
+        // one it was kept as for the length of the drag.
+        UpdateCursor(point);
+
         InvalidateVisual();
         e.Handled = true;
     }

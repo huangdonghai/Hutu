@@ -284,6 +284,73 @@ public sealed class TextSelectionInteractionTests
         Assert.That(changes, Is.EqualTo(1));
     }
 
+    [Test]
+    public async Task ATextHitCoversTheGlyphsAndNothingElse()
+    {
+        using var view = await LoadAsync(SingleLine);
+
+        var box = Runs(view)[0].BorderBox;
+        var line = box.Y + box.Height / 2;
+
+        // Every point the glyphs cover counts, both edges included: a caret stands at the very start
+        // and the very end of a line, so the pointer there is still over text.
+        Assert.That(view.HasTextAt(box.X, line), Is.True, "the start of the run is text");
+        Assert.That(view.HasTextAt(box.X + box.Width / 2, line), Is.True);
+        Assert.That(view.HasTextAt(box.Right, line), Is.True, "the end of the run is text");
+        Assert.That(view.HasTextAt(box.X + box.Width / 2, box.Y), Is.True, "the top of the line is text");
+        Assert.That(view.HasTextAt(box.X + box.Width / 2, box.Bottom - 1), Is.True);
+    }
+
+    [Test]
+    public async Task PageBesideTheGlyphsIsNotATextHit()
+    {
+        using var view = await LoadAsync(SingleLine);
+
+        var box = Runs(view)[0].BorderBox;
+        var line = box.Y + box.Height / 2;
+
+        // The run's box is only as wide as its glyphs and as tall as its line, so the rest of the line,
+        // the space below it and the margin beside it are page rather than text.
+        Assert.That(view.HasTextAt(box.Right + 1, line), Is.False, "the blank to the right of the run");
+        Assert.That(view.HasTextAt(box.X - 1, line), Is.False, "the margin to the left of the run");
+        Assert.That(view.HasTextAt(box.X + box.Width / 2, box.Bottom), Is.False, "the blank below the line");
+        Assert.That(view.HasTextAt(box.X + box.Width / 2, box.Bottom + 20), Is.False);
+
+        // The hit test still answers for the same point, because a gesture there has to land somewhere
+        // rather than be lost. A cursor is the opposite question, which is why the two disagree.
+        Assert.That(view.Selection, Is.Null);
+        view.BeginSelection(box.Right + 1, line);
+        Assert.That(view.Selection, Is.Not.Null, "a gesture snaps onto the nearest line");
+    }
+
+    [Test]
+    public async Task ViewportAnchoredTextIsNeitherSelectableNorATextHit()
+    {
+        using var anchored = await LoadAsync(
+            "<html><body style='margin:0'><div style='position:fixed;top:0;left:0'>abc</div></body></html>");
+
+        // Text inside a fixed box is left out of the runs the selector answers about, since its
+        // geometry is viewport-relative; it can therefore neither be selected nor turn the cursor into
+        // a text one.
+        Assert.That(Runs(anchored), Is.Empty);
+        Assert.That(anchored.HasTextAt(5, 5), Is.False);
+
+        // The very same text in normal flow is both, which shows the difference is the anchoring
+        // rather than the box having been dropped on the floor.
+        using var flowing = await LoadAsync("<html><body style='margin:0'><div>abc</div></body></html>");
+
+        Assert.That(flowing.HasTextAt(5, 5), Is.True);
+    }
+
+    [Test]
+    public async Task ADocumentWithoutTextHasNoTextHit()
+    {
+        using var view = await LoadAsync("<html><body style='margin:0'></body></html>");
+
+        Assert.That(view.HasTextAt(10, 10), Is.False);
+        Assert.That(view.HasTextAt(0, 0), Is.False);
+    }
+
     /// <summary>Finds the selection highlight, or -1 when nothing is highlighted.</summary>
     private static Int32 HighlightIndex(IReadOnlyList<PaintCommand> commands)
     {

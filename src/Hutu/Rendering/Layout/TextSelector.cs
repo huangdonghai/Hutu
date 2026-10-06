@@ -56,24 +56,23 @@ public sealed class TextSelector
     /// </remarks>
     public TextPosition? HitTest(Double x, Double y)
     {
-        LayoutBox? hit = null;
-
-        foreach (var run in _runs)
-        {
-            var box = run.BorderBox;
-
-            // The last run that contains the point wins: document order is the closest thing the
-            // layout tree has to a stacking order, and an overlapping positioned box comes later.
-            if (y >= box.Y && y < box.Bottom && x >= box.X && x <= box.Right)
-            {
-                hit = run;
-            }
-        }
-
-        hit ??= Nearest(x, y);
+        var hit = TryHit(x, y, out var run) ? run : Nearest(x, y);
 
         return hit is null ? null : new TextPosition(hit, IndexAtX(hit, x));
     }
+
+    /// <summary>
+    /// Gets whether a point lands on a run - on text a reader could select - without falling back to
+    /// the nearest one.
+    /// </summary>
+    /// <remarks>
+    /// This is the strict half of <see cref="HitTest"/>, and the difference is the whole point: a hit
+    /// test answers "what would a gesture here select", so it snaps a point in the margin onto the
+    /// closest line rather than losing a drag that wanders outside the text; a pointer resting in that
+    /// same margin can select nothing, so its cursor has to stay the default. Nothing here measures
+    /// text, so it is cheap enough to ask on every pointer move.
+    /// </remarks>
+    public Boolean IsTextAt(Double x, Double y) => TryHit(x, y, out _);
 
     /// <summary>
     /// Gets the rectangles a selection covers, in document coordinates: one per line fragment, so a
@@ -340,6 +339,28 @@ public sealed class TextSelector
         position.Box is null
             ? position
             : new TextPosition(position.Box, Math.Clamp(position.Index, 0, position.Box.Text?.Length ?? 0));
+
+    /// <summary>
+    /// Finds the run a point lands on, or reports false when it lands on none. The last hit wins:
+    /// document order is the closest thing the layout tree has to a stacking order, so an overlapping
+    /// positioned box comes later and covers what it overlaps.
+    /// </summary>
+    private Boolean TryHit(Double x, Double y, out LayoutBox? run)
+    {
+        run = null;
+
+        foreach (var candidate in _runs)
+        {
+            var box = candidate.BorderBox;
+
+            if (y >= box.Y && y < box.Bottom && x >= box.X && x <= box.Right)
+            {
+                run = candidate;
+            }
+        }
+
+        return run is not null;
+    }
 
     /// <summary>
     /// Gets the run nearest a point, comparing distance down the page first and along the line
