@@ -81,29 +81,36 @@ public sealed class TextSelector
     /// </summary>
     public IReadOnlyList<Rect> Rects(TextSelection? selection)
     {
-        var rects = new List<Rect>();
+        var fragments = Fragments(selection);
+        var rects = new List<Rect>(fragments.Count);
 
-        if (!TryNormalize(selection, out var first, out var last, out var start, out var end))
+        foreach (var (_, rect) in fragments)
         {
-            return rects;
-        }
-
-        for (var order = first; order <= last; order++)
-        {
-            var run = _runs[order];
-            var box = run.BorderBox;
-            var from = order == first ? XAt(run, start.Index) : box.X;
-            var to = order == last ? XAt(run, end.Index) : box.Right;
-
-            // A range that only touches a run covers nothing of it; an empty one produces no
-            // rectangle at all, which is what makes a plain click leave no highlight behind.
-            if (to > from)
-            {
-                rects.Add(new Rect(from, box.Y, to - from, box.Height));
-            }
+            rects.Add(rect);
         }
 
         return rects;
+    }
+
+    /// <summary>
+    /// Gets the rectangle each covered run has to highlight, keyed by the run itself.
+    /// </summary>
+    /// <remarks>
+    /// Keyed by run rather than returned as a list because the painter meets a run while walking the
+    /// layout tree and has to ask, in constant time, whether that run is covered. A run the range
+    /// merely touches is left out, so a plain click highlights nothing at all.
+    /// </remarks>
+    public IReadOnlyDictionary<LayoutBox, Rect> Highlights(TextSelection? selection)
+    {
+        var fragments = Fragments(selection);
+        var highlights = new Dictionary<LayoutBox, Rect>(fragments.Count);
+
+        foreach (var (run, rect) in fragments)
+        {
+            highlights[run] = rect;
+        }
+
+        return highlights;
     }
 
     /// <summary>Gets the text a selection covers, with one line break per line it spans.</summary>
@@ -250,6 +257,38 @@ public sealed class TextSelector
         {
             Collect(child, line, viewportAnchored);
         }
+    }
+
+    /// <summary>
+    /// Splits a selection into the piece of a run each line fragment covers, in document order. Both
+    /// the highlight and the copy are built from these, so the geometry a reader sees and the
+    /// characters a copy takes cannot disagree about where a line begins and ends.
+    /// </summary>
+    private List<(LayoutBox Run, Rect Rect)> Fragments(TextSelection? selection)
+    {
+        var fragments = new List<(LayoutBox, Rect)>();
+
+        if (!TryNormalize(selection, out var first, out var last, out var start, out var end))
+        {
+            return fragments;
+        }
+
+        for (var order = first; order <= last; order++)
+        {
+            var run = _runs[order];
+            var box = run.BorderBox;
+            var from = order == first ? XAt(run, start.Index) : box.X;
+            var to = order == last ? XAt(run, end.Index) : box.Right;
+
+            // A range that only touches a run covers nothing of it; an empty one produces no
+            // rectangle at all, which is what makes a plain click leave no highlight behind.
+            if (to > from)
+            {
+                fragments.Add((run, new Rect(from, box.Y, to - from, box.Height)));
+            }
+        }
+
+        return fragments;
     }
 
     /// <summary>

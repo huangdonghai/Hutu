@@ -65,6 +65,25 @@ public sealed class RenderingPipeline
         BoxTree = null;
         Layout = null;
         Paint = null;
+        _painter.Highlight = null;
+    }
+
+    /// <summary>
+    /// Sets the rectangles to highlight and rebuilds the paint list from the layout already held.
+    /// </summary>
+    /// <remarks>
+    /// A highlight describes the selection, which changes far more often than the document does: a
+    /// drag reports a new one on every pointer move. Repainting from the layout in hand is what keeps
+    /// that from laying out again on each move.
+    /// </remarks>
+    public void SetHighlight(IReadOnlyDictionary<LayoutBox, Rect>? highlight)
+    {
+        _painter.Highlight = highlight;
+
+        if (Layout is not null)
+        {
+            Paint = _painter.Paint(Layout);
+        }
     }
 
     /// <summary>
@@ -76,6 +95,11 @@ public sealed class RenderingPipeline
         var window = document.DefaultView;
         RenderTree = window?.Render(_device);
         BoxTree = BoxBuilder.Build(RenderTree, _device, _images);
+
+        // A highlight names boxes of the layout it was measured against, so a new layout always
+        // drops it: keeping it would leave the painter looking up runs that no longer exist.
+        _painter.Highlight = null;
+
         // The viewport is the initial containing block, so both of its dimensions matter: the height
         // is what a percentage height on the root - and on everything it makes definite - resolves
         // against.

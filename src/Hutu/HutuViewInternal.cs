@@ -24,7 +24,10 @@ public sealed class HutuViewInternal : IDisposable
     private readonly HutuRenderDevice _renderDevice = new();
     private readonly RenderingPipeline _pipeline;
     private readonly IImageLoader? _imageLoader;
+    private readonly ITextMeasurer? _textMeasurer;
     private IBrowsingContext? _context;
+    private TextSelector? _selector;
+    private TextSelection? _selection;
 
     /// <summary>
     /// Creates the renderer. The text measurer and the image loader are supplied by the platform
@@ -35,6 +38,9 @@ public sealed class HutuViewInternal : IDisposable
     {
         _pipeline = new RenderingPipeline(_renderDevice, textMeasurer, imageLoader);
         _imageLoader = imageLoader;
+        // Kept rather than only handed on: the selector that answers selection questions has to
+        // measure against the same fonts the layout was placed with.
+        _textMeasurer = textMeasurer;
     }
 
     public IDocument? Document { get; private set; }
@@ -62,6 +68,70 @@ public sealed class HutuViewInternal : IDisposable
 
     /// <summary>Gets the height the styles were last computed against.</summary>
     public int ViewportHeight => _renderDevice.ViewPortHeight;
+
+    /// <summary>Gets the current selection, or null when nothing is selected.</summary>
+    public TextSelection? Selection => _selection;
+
+    /// <summary>Gets whether a stretch of text is currently selected.</summary>
+    public bool HasSelection => _selection is { IsEmpty: false };
+
+    /// <summary>
+    /// Gets the selected text, with one line break for each line the selection spans. Empty when
+    /// nothing is selected, so a copy is a no-op rather than an error.
+    /// </summary>
+    public string SelectedText => _selector?.Text(_selection) ?? string.Empty;
+
+    /// <summary>
+    /// Raised whenever the selection changes, including when a relayout drops it. A host listens to
+    /// repaint; the highlight itself is already part of the paint list.
+    /// </summary>
+    public event Action? SelectionChanged;
+
+    /// <summary>
+    /// Starts a selection at a point in document coordinates, replacing whatever was selected.
+    /// </summary>
+    /// <remarks>
+    /// The point is in document coordinates: a host that scrolls adds its offset before calling, so
+    /// nothing here has to know about scrolling. A point that hits no text clears the selection,
+    /// which is what makes a click in the margin leave nothing behind.
+    /// </remarks>
+    public void BeginSelection(double x, double y)
+    {
+        var position = _selector?.HitTest(x, y);
+
+        Apply(position is null ? null : new TextSelection(position.Value, position.Value));
+    }
+
+    /// <summary>
+    /// Moves the caret of the current selection to a point in document coordinates, keeping the
+    /// anchor where the gesture started. Does nothing when there is no selection to extend.
+    /// </summary>
+    public void ExtendSelection(double x, double y)
+    {
+        if (_selection is null)
+        {
+            return;
+        }
+
+        if (_selector?.HitTest(x, y) is { } position)
+        {
+            Apply(new TextSelection(_selection.Anchor, position));
+        }
+    }
+
+    /// <summary>Selects the word under a point in document coordinates, as a double click does.</summary>
+    public void SelectWord(double x, double y) =>
+        Select(x, y, static (selector, position) => selector.Word(position));
+
+    /// <summary>Selects every run of the line under a point, as a triple click does.</summary>
+    public void SelectLine(double x, double y) =>
+        Select(x, y, static (selector, position) => selector.Line(position));
+
+    /// <summary>Selects everything the document can select. Does nothing when there is no text.</summary>
+    public void SelectAll() => Apply(_selector?.All());
+
+    /// <summary>Clears the selection, so nothing is highlighted and a copy has nothing to take.</summary>
+    public void ClearSelection() => Apply(null);
 
     public void AddEpubResourceSource(string epubFileName)
     {
@@ -239,6 +309,8 @@ public sealed class HutuViewInternal : IDisposable
     public void Dispose()
     {
         Document = null;
+        _selector = null;
+        _selection = null;
         _pipeline.Invalidate();
         _context?.Dispose();
         _context = null;
@@ -311,6 +383,50 @@ public sealed class HutuViewInternal : IDisposable
             return;
 
         _pipeline.Build(Document);
+
+        // The selector answers against the boxes of the layout it was built from, so it is rebuilt
+        // with the new one - and the selection it described goes with it, because a position naming
+        // a box that no longer exists means nothing. The pipeline has already dropped the highlight
+        // along with the layout, so nothing needs repainting here.
+        _selector = _pipeline.Layout is { } layout && _textMeasurer is not null
+            ? new TextSelector(layout, _textMeasurer)
+            : null;
+
+        if (_selection is not null)
+        {
+            _selection = null;
+            SelectionChanged?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Publishes a selection: records it, turns it into the highlight the painter draws, and tells
+    /// the host. An unchanged selection is skipped, so a drag that stays on one character - or a
+    /// click that clears an already empty selection - costs nothing.
+    /// </summary>
+    private void Apply(TextSelection? selection)
+    {
+        if (Object.Equals(_selection, selection))
+        {
+            return;
+        }
+
+        _selection = selection;
+        _pipeline.SetHighlight(_selector?.Highlights(selection));
+        SelectionChanged?.Invoke();
+    }
+
+    /// <summary>Applies the selection a gesture makes at a point, or clears it when nothing is hit.</summary>
+    private void Select(double x, double y, Func<TextSelector, TextPosition, TextSelection> make)
+    {
+        if (_selector is { } selector && selector.HitTest(x, y) is { } position)
+        {
+            Apply(make(selector, position));
+        }
+        else
+        {
+            Apply(null);
+        }
     }
 
     /// <summary>

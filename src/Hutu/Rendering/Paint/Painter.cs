@@ -19,6 +19,26 @@ namespace Hutu.Rendering.Paint;
 /// </remarks>
 public sealed class Painter
 {
+    /// <summary>The colour a selection is highlighted with when the host chooses none.</summary>
+    /// <remarks>
+    /// Translucent, so the glyphs stay readable through it: a highlight marks the text rather than
+    /// replacing it.
+    /// </remarks>
+    public const UInt32 DefaultHighlightColor = 0x5599CCFF;
+
+    /// <summary>
+    /// Gets or sets the highlight rectangle of each selected run, keyed by the run. A run that is
+    /// absent is painted as if nothing were selected.
+    /// </summary>
+    /// <remarks>
+    /// The rectangles name boxes of the layout they were computed from, so a highlight left over
+    /// from an earlier layout is simply never matched and degrades to no highlight at all.
+    /// </remarks>
+    public IReadOnlyDictionary<LayoutBox, Rect>? Highlight { get; set; }
+
+    /// <summary>Gets or sets the colour a selection is highlighted with, as packed ARGB.</summary>
+    public UInt32 HighlightColor { get; set; } = DefaultHighlightColor;
+
     public PaintList Paint(LayoutResult layout)
     {
         var list = new PaintList
@@ -30,7 +50,7 @@ public sealed class Painter
         return list;
     }
 
-    private static void PaintBox(LayoutBox box, PaintList list, List<PaintCommand> target)
+    private void PaintBox(LayoutBox box, PaintList list, List<PaintCommand> target)
     {
         switch (box.Kind)
         {
@@ -65,7 +85,7 @@ public sealed class Painter
         }
     }
 
-    private static void PaintBlock(LayoutBox box, PaintList list, List<PaintCommand> target)
+    private void PaintBlock(LayoutBox box, PaintList list, List<PaintCommand> target)
     {
         var style = box.Source.Style;
 
@@ -88,7 +108,7 @@ public sealed class Painter
     /// Paints a box's children in stacking order. With no positioned child the document order is
     /// already the paint order, so the fast path avoids the four passes the layering needs.
     /// </summary>
-    private static void PaintChildren(LayoutBox box, PaintList list, List<PaintCommand> target)
+    private void PaintChildren(LayoutBox box, PaintList list, List<PaintCommand> target)
     {
         if (!HasPositionedChild(box))
         {
@@ -152,7 +172,7 @@ public sealed class Painter
     /// Paints one child into the layer its position asks for: a fixed box goes to the viewport layer,
     /// a sticky box to a pinned layer of its own, and everything else into the current one.
     /// </summary>
-    private static void PaintChild(LayoutBox child, PaintList list, List<PaintCommand> target)
+    private void PaintChild(LayoutBox child, PaintList list, List<PaintCommand> target)
     {
         switch (child.Position)
         {
@@ -225,11 +245,18 @@ public sealed class Painter
         target.Add(new ImageCommand(box.ContentBox, box.ImageUrl, box.ImageFit, box.CornerRadius));
     }
 
-    private static void PaintText(LayoutBox box, List<PaintCommand> target)
+    private void PaintText(LayoutBox box, List<PaintCommand> target)
     {
         if (String.IsNullOrEmpty(box.Text))
         {
             return;
+        }
+
+        // The highlight is added before the run it covers, which is what puts it over the background
+        // and under the glyphs - the only order that leaves the text readable.
+        if (Highlight?.TryGetValue(box, out var highlight) == true)
+        {
+            target.Add(new FillCommand(highlight, HighlightColor));
         }
 
         var style = box.Source.Style;

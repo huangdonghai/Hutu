@@ -1,6 +1,8 @@
 ﻿using AngleSharp.Dom;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Hutu.Skia;
 using System;
 using System.Reflection;
@@ -8,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Offset = Hutu.Rendering.Layout.Offset;
 using ScrollAlignment = Hutu.Rendering.Layout.ScrollAlignment;
+using TextSelection = Hutu.Rendering.Layout.TextSelection;
 
 namespace Hutu.Avalonia;
 
@@ -36,6 +39,11 @@ public class HutuView : ScrollViewer
         _internalView = new HutuViewInternal(_measurer, _images);
         _surface = new HutuSurface(_internalView, new SkiaPaintExecutor(_measurer, _images));
         Content = _surface;
+
+        // The core owns the selection and the highlight is already part of the paint list, so a
+        // change leaves the host nothing to do but draw again - which also covers a selection made
+        // through the API rather than by pointing at the text.
+        _internalView.SelectionChanged += _surface.InvalidateVisual;
     }
 
     public void AddEpubResourceSource(string epubFileName)
@@ -91,6 +99,59 @@ public class HutuView : ScrollViewer
     public string GetHtml()
     {
         return _internalView.GetHtml();
+    }
+
+    /// <summary>Gets the selected text, with one line break for each line the selection spans.</summary>
+    public string SelectedText => _internalView.SelectedText;
+
+    /// <summary>Gets whether a stretch of text is currently selected.</summary>
+    public bool HasSelection => _internalView.HasSelection;
+
+    /// <summary>
+    /// Gets the selection as the two positions it was made of, or null when nothing is selected. The
+    /// positions belong to the current layout and are dropped when it is replaced.
+    /// </summary>
+    public TextSelection? Selection => _internalView.Selection;
+
+    /// <summary>Raised whenever the selection changes, including when a relayout drops it.</summary>
+    public event Action? SelectionChanged
+    {
+        add => _internalView.SelectionChanged += value;
+        remove => _internalView.SelectionChanged -= value;
+    }
+
+    /// <summary>Clears the selection, so nothing is highlighted and a copy has nothing to take.</summary>
+    public void ClearSelection()
+    {
+        _internalView.ClearSelection();
+    }
+
+    /// <summary>Selects everything the document can select.</summary>
+    public void SelectAll()
+    {
+        _internalView.SelectAll();
+    }
+
+    /// <summary>
+    /// Copies the selected text to the system clipboard, reporting whether there was anything to
+    /// copy.
+    /// </summary>
+    /// <remarks>
+    /// The clipboard is reached through the top level, which is what knows the platform's own. A view
+    /// that is not attached to one has none, and reporting that as "nothing was copied" is friendlier
+    /// than throwing out of a key handler.
+    /// </remarks>
+    public async Task<bool> CopyAsync()
+    {
+        var text = _internalView.SelectedText;
+
+        if (text.Length == 0 || TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard)
+        {
+            return false;
+        }
+
+        await clipboard.SetTextAsync(text);
+        return true;
     }
 
     /// <summary>
@@ -224,5 +285,24 @@ public class HutuView : ScrollViewer
         {
             _surface.SetScrollOffset(new Offset(Offset.X, Offset.Y));
         }
+    }
+
+    /// <summary>
+    /// Answers the one shortcut a selection has: Ctrl+C.
+    /// </summary>
+    /// <remarks>
+    /// It is handled here rather than as a key binding because copying is asynchronous and a binding
+    /// has nowhere to report whether it succeeded. The event bubbles up from the focused surface, so
+    /// no key handling is needed down there.
+    /// </remarks>
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (!e.Handled && e.Key == Key.C && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            _ = CopyAsync();
+            e.Handled = true;
+        }
+
+        base.OnKeyDown(e);
     }
 }
