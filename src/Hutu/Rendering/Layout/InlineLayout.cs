@@ -4,6 +4,26 @@ using System.Collections.Generic;
 
 namespace Hutu.Rendering.Layout;
 
+/// <summary>The extent inline content occupies along each of the two axes it is laid out in.</summary>
+/// <remarks>
+/// Which physical axis either one lands on is the writing mode's business, not the content's: a block
+/// asks for the pair and then decides what to do with it.
+/// </remarks>
+public readonly struct InlineContentSize
+{
+    public InlineContentSize(Double inline, Double block)
+    {
+        Inline = inline;
+        Block = block;
+    }
+
+    /// <summary>Gets the extent along the axis the text runs, which fills the content box's inline size.</summary>
+    public Double Inline { get; }
+
+    /// <summary>Gets the extent along the axis the lines advance, which is what the content needs to stack.</summary>
+    public Double Block { get; }
+}
+
 /// <summary>
 /// Lays out an inline formatting context: it flattens the inline content of a block into text runs,
 /// breaks them into line boxes and positions every run.
@@ -13,6 +33,13 @@ namespace Hutu.Rendering.Layout;
 /// inherits - so the tree is flattened into a single stream of runs plus explicit breaks. Line
 /// height is the tallest run on the line, expanded by half-leading when the element sets an
 /// explicit leading, and the baseline is shared by the whole line.
+/// <para>
+/// Everything is written in terms of the two logical axes rather than x and y, so the same code lays
+/// out a row of lines and a column of them: <em>inline</em> is the extent a line runs along and where
+/// a run sits within it, <em>block</em> is the extent a line occupies and where the next one starts.
+/// Horizontal writing puts inline on x and block on y, vertical writing swaps the two, and
+/// <see cref="WritingModeInfo"/> is the only thing that knows which is which.
+/// </para>
 /// </remarks>
 public sealed class InlineLayout
 {
@@ -21,45 +48,56 @@ public sealed class InlineLayout
     public InlineLayout(ITextMeasurer measurer) => _measurer = measurer;
 
     /// <summary>
-    /// Measures the height the inline children need at the given content width, without producing
-    /// any geometry. This is what the measuring phase of a block asks for before it knows where the
-    /// lines will sit.
+    /// Measures the extent the inline children need along the block axis at the given inline extent,
+    /// without producing any geometry. This is what the measuring phase of a block asks for before it
+    /// knows where the lines will sit.
     /// </summary>
-    public Double MeasureHeight(Box container, Double contentWidth)
+    public Double MeasureHeight(Box container, Double contentWidth) =>
+        Measure(container, contentWidth, container.Flow).Block;
+
+    /// <summary>
+    /// Measures the extents the inline children need when they are given <paramref name="maxInline"/>
+    /// to run along. The block extent is what the lines of a row stack into, or the width of the band
+    /// of columns a column stacks into.
+    /// </summary>
+    public InlineContentSize Measure(Box container, Double maxInline, WritingModeInfo flow)
     {
         var items = new List<InlineItem>();
-        Collect(container, items);
+        Collect(container, items, flow);
 
         if (items.Count == 0)
         {
-            return 0;
+            return default;
         }
 
-        var height = 0.0;
+        var block = 0.0;
+        var inline = 0.0;
 
-        foreach (var line in BuildLines(items, contentWidth))
+        foreach (var line in BuildLines(items, maxInline, flow))
         {
             if (line.Height > 0)
             {
-                height += line.Height;
+                block += line.Height;
             }
+
+            inline = Math.Max(inline, line.Used);
         }
 
-        return height;
+        return new InlineContentSize(inline, block);
     }
 
     /// <summary>
-    /// Measures the intrinsic inline widths of the container's content: the widest thing that cannot
-    /// be broken - <c>min-content</c> - and the width on a single line - <c>max-content</c>.
+    /// Measures the intrinsic inline extents of the container's content: the largest thing that cannot
+    /// be broken - <c>min-content</c> - and the extent on a single line - <c>max-content</c>.
     /// </summary>
     /// <param name="basis">
-    /// The width a percentage among a replaced box's constraints resolves against; there is no
-    /// definite line to use, so the containing block's width stands in.
+    /// The inline extent a percentage among a replaced box's constraints resolves against; there is no
+    /// definite line to use, so the containing block's inline extent stands in.
     /// </param>
-    public IntrinsicSize MeasureIntrinsic(Box container, Double basis)
+    public IntrinsicSize MeasureIntrinsic(Box container, Double basis, WritingModeInfo flow)
     {
         var items = new List<InlineItem>();
-        Collect(container, items);
+        Collect(container, items, flow);
 
         var minContent = 0.0;
         var maxContent = 0.0;
@@ -76,16 +114,30 @@ public sealed class InlineLayout
 
             if (item.IsReplaced)
             {
-                var (width, _) = ReplacedSizing.Resolve(item.Box, basis, 0);
-                minContent = Math.Max(minContent, width);
-                maxContent += width;
-                unbreakable += width;
+                var (width, height) = ReplacedSizing.Resolve(item.Box, basis, 0);
+                var extent = flow.InlineExtent(width, height);
+                minContent = Math.Max(minContent, extent);
+                maxContent += extent;
+                unbreakable += extent;
+                continue;
+            }
+
+            // A ruby pair cannot be broken between its two parts, so it asks for the room the wider of
+            // them needs and offers no break opportunity inside itself.
+            if (item.IsRuby)
+            {
+                var extent = Math.Max(
+                    Measure(item.Style, item.Text!, flow),
+                    Measure(item.AnnotationStyle, item.AnnotationText!, flow));
+
+                maxContent += extent;
+                unbreakable += extent;
                 continue;
             }
 
             foreach (var chunk in TextChunker.Chunks(item.Text!))
             {
-                var width = _measurer.MeasureWidth(chunk, item.Style.GetFont());
+                var width = Measure(item.Style, chunk, flow);
                 maxContent += width;
 
                 if (TextChunker.IsWhiteSpace(chunk))
@@ -106,21 +158,22 @@ public sealed class InlineLayout
     }
 
     /// <summary>
-    /// Lays out the inline children of the container, appending line boxes to it, and returns the
-    /// used height.
+    /// Lays out the inline children of the container inside the given content box, appending line
+    /// boxes to it, and returns the extent they occupied along the block axis.
     /// </summary>
-    public Double Layout(Box container, LayoutBox parent, Double contentX, Double contentY, Double contentWidth)
+    public Double Layout(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow)
     {
         var items = new List<InlineItem>();
-        Collect(container, items);
+        Collect(container, items, flow);
 
         if (items.Count == 0)
         {
             return 0;
         }
 
-        var lines = BuildLines(items, contentWidth);
-        var cursorY = contentY;
+        var maxInline = flow.InlineExtent(contentBox.Width, contentBox.Height);
+        var lines = BuildLines(items, maxInline, flow);
+        var cursor = 0.0;
 
         foreach (var line in lines)
         {
@@ -129,13 +182,17 @@ public sealed class InlineLayout
                 continue;
             }
 
+            // The line box spans the whole inline extent of the content box and only as much of the
+            // block one as it needs, so in a row it is the content width and the line's own height,
+            // and in a column the content height and the band the text runs down.
             var lineBox = new LayoutBox(container, LayoutKind.Line)
             {
-                BorderBox = new Rect(contentX, cursorY, contentWidth, line.Height),
-                Baseline = line.Ascent,
+                BorderBox = flow.Map(contentBox, 0, maxInline, cursor, line.Height),
+                Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent),
+                Flow = flow,
             };
 
-            var originX = contentX + line.Offset;
+            var origin = line.Offset;
 
             foreach (var fragment in line.Fragments)
             {
@@ -144,7 +201,8 @@ public sealed class InlineLayout
                     fragment.IsReplaced ? LayoutKind.Image : LayoutKind.Text)
                 {
                     Font = fragment.Style.GetFont(),
-                    Baseline = line.Ascent + fragment.BaselineShift,
+                    Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
+                    Flow = fragment.Flow,
                 };
 
                 if (fragment.IsReplaced)
@@ -153,30 +211,90 @@ public sealed class InlineLayout
                     // is lifted by its own height rather than filling the line box.
                     child.ImageUrl = fragment.Box.SourceUrl;
                     child.ImageFit = fragment.Style.ObjectFit;
-                    child.BorderBox = new Rect(
-                        originX,
-                        cursorY + line.Ascent - fragment.ContentHeight,
+                    child.BorderBox = flow.Map(
+                        contentBox,
+                        origin,
                         fragment.Width,
+                        cursor + line.Ascent - fragment.ContentHeight,
                         fragment.ContentHeight);
+                }
+                else if (fragment.Ruby is { } annotation)
+                {
+                    // The annotation takes one end of the line's block extent and the base keeps the
+                    // rest, so the two lie beside each other rather than over one another. Along the
+                    // inline axis they share the room the wider of them asked for, each centred in it,
+                    // which is what stops a long reading from hanging off one side.
+                    var baseBlock = line.Height - annotation.Block;
+
+                    child.Text = fragment.Text;
+                    child.Baseline = flow.BlockOffsetFromLeft(
+                        baseBlock,
+                        line.Ascent + fragment.BaselineShift - (annotation.Under ? 0 : annotation.Block));
+
+                    child.BorderBox = flow.Map(
+                        contentBox,
+                        origin + ((fragment.Width - fragment.BaseWidth) / 2),
+                        fragment.BaseWidth,
+                        cursor + (annotation.Under ? 0 : annotation.Block),
+                        baseBlock);
+
+                    lineBox.Children.Add(child);
+                    lineBox.Children.Add(AnnotationBox(
+                        annotation,
+                        contentBox,
+                        flow,
+                        origin,
+                        fragment.Width,
+                        cursor + (annotation.Under ? line.Height - annotation.Block : 0)));
+
+                    origin += fragment.Width;
+                    continue;
                 }
                 else
                 {
                     child.Text = fragment.Text;
-                    child.BorderBox = new Rect(originX, cursorY, fragment.Width, line.Height);
+                    child.BorderBox = flow.Map(contentBox, origin, fragment.Width, cursor, line.Height);
                 }
 
                 lineBox.Children.Add(child);
-                originX += fragment.Width;
+                origin += fragment.Width;
             }
 
             parent.Children.Add(lineBox);
-            cursorY += line.Height;
+            cursor += line.Height;
         }
 
-        return cursorY - contentY;
+        return cursor;
     }
 
-    private static void Collect(Box container, List<InlineItem> items)
+    /// <summary>
+    /// Builds the box that draws a ruby's annotation beside its base, centred within the room the pair
+    /// takes along the inline axis and placed against the block-start edge of the line.
+    /// </summary>
+    private static LayoutBox AnnotationBox(
+        RubyAnnotation annotation,
+        Rect contentBox,
+        WritingModeInfo flow,
+        Double origin,
+        Double room,
+        Double cursor)
+    {
+        return new LayoutBox(annotation.Box, LayoutKind.Text)
+        {
+            Text = annotation.Text,
+            Font = annotation.Style.GetFont(),
+            Flow = annotation.Flow,
+            Baseline = flow.BlockOffsetFromLeft(annotation.Block, annotation.Ascent),
+            BorderBox = flow.Map(
+                contentBox,
+                origin + ((room - annotation.Width) / 2),
+                annotation.Width,
+                cursor,
+                annotation.Block),
+        };
+    }
+
+    private static void Collect(Box container, List<InlineItem> items, WritingModeInfo flow)
     {
         foreach (var child in container.Children)
         {
@@ -200,10 +318,90 @@ public sealed class InlineLayout
                     items.Add(InlineItem.CreateReplaced(child));
                     break;
 
+                // A ruby pairs its base text with the annotation that goes over it, so the two are
+                // gathered into one item instead of being run together as ordinary text.
+                case BoxKind.Ruby:
+                    AddRuby(child, items);
+                    break;
+
                 case BoxKind.Inline:
-                    Collect(child, items);
+                case BoxKind.RubyBase:
+                case BoxKind.RubyText:
+                    Collect(child, items, flow);
                     break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Turns a <c>ruby</c> element into one item carrying its base text and the annotation beside it.
+    /// </summary>
+    /// <remarks>
+    /// A base is whatever is not an annotation: an explicit <c>rb</c>, the element's own text, or any
+    /// other inline content. Several bases under one annotation are read as a single base, which is
+    /// what all but the longest ruby passage comes to.
+    /// </remarks>
+    private static void AddRuby(Box ruby, List<InlineItem> items)
+    {
+        var baseText = new System.Text.StringBuilder();
+        var annotationText = new System.Text.StringBuilder();
+        var annotationStyle = ruby.Style;
+        Box? annotationBox = null;
+
+        foreach (var child in ruby.Children)
+        {
+            if (child.Kind == BoxKind.RubyText)
+            {
+                Flatten(child, annotationText);
+
+                // The first annotation is the one the reading is set in; a pair carries one of them,
+                // whatever the markup wrapped it in.
+                if (annotationBox is null)
+                {
+                    annotationStyle = child.Style;
+                    annotationBox = child;
+                }
+            }
+            else
+            {
+                Flatten(child, baseText);
+            }
+        }
+
+        if (baseText.Length == 0)
+        {
+            // A ruby with nothing to annotate has nothing to contribute.
+            return;
+        }
+
+        if (annotationText.Length == 0 || annotationBox is null)
+        {
+            // Without an annotation there is nothing to set the base apart from ordinary text.
+            items.Add(InlineItem.CreateText(baseText.ToString(), ruby.Style, ruby));
+            return;
+        }
+
+        items.Add(InlineItem.CreateRuby(
+            baseText.ToString(),
+            ruby.Style,
+            ruby,
+            annotationText.ToString(),
+            annotationStyle,
+            annotationBox));
+    }
+
+    /// <summary>Appends every character of text held anywhere under a box, in document order.</summary>
+    private static void Flatten(Box box, System.Text.StringBuilder text)
+    {
+        if (box.Kind == BoxKind.Text)
+        {
+            text.Append(box.Text);
+            return;
+        }
+
+        foreach (var child in box.Children)
+        {
+            Flatten(child, text);
         }
     }
 
@@ -239,7 +437,7 @@ public sealed class InlineLayout
         }
     }
 
-    private List<Line> BuildLines(List<InlineItem> items, Double maxWidth)
+    private List<Line> BuildLines(List<InlineItem> items, Double maxInline, WritingModeInfo flow)
     {
         var lines = new List<Line>();
         var builder = new LineBuilder();
@@ -248,80 +446,341 @@ public sealed class InlineLayout
         {
             if (item.IsBreak)
             {
-                lines.Add(builder.Build(_measurer, maxWidth));
+                lines.Add(builder.Build(_measurer, maxInline));
                 builder = new LineBuilder(item.Style);
                 continue;
             }
 
             if (item.IsReplaced)
             {
-                // The container's content width is the containing block of everything on the line,
-                // so that is what a percentage width among the item's constraints resolves against.
-                // A line box has no definite height, so a percentage height behaves as `auto`.
-                var (width, height) = ReplacedSizing.Resolve(item.Box, maxWidth, 0);
+                // The container's inline extent is the containing block of everything on the line, so
+                // that is what a percentage among the item's constraints resolves against. A line box
+                // has no definite extent across itself, so a percentage on the other axis is `auto`.
+                var (width, height) = ReplacedSizing.Resolve(item.Box, flow.IsVertical ? 0 : maxInline, flow.IsVertical ? maxInline : 0);
+                var inlineSize = flow.InlineExtent(width, height);
+                var blockSize = flow.BlockExtent(width, height);
 
-                if (builder.HasContent && maxWidth > 0 && builder.Width + width > maxWidth)
+                if (builder.HasContent && maxInline > 0 && builder.Width + inlineSize > maxInline)
                 {
-                    lines.Add(builder.Build(_measurer, maxWidth));
+                    lines.Add(builder.Build(_measurer, maxInline));
                     builder = new LineBuilder(item.Style);
                 }
 
-                builder.AddReplaced(item.Box, width, height);
+                builder.AddReplaced(item.Box, inlineSize, blockSize);
                 continue;
             }
 
-            foreach (var chunk in TextChunker.Chunks(item.Text!))
+            // A ruby is placed as one piece: breaking between a base and its annotation would leave a
+            // reading stranded without the characters it belongs to.
+            if (item.IsRuby)
             {
-                var width = _measurer.MeasureWidth(chunk, item.Style.GetFont());
+                // The pair's own flow is what its two halves are oriented by, so an inline element
+                // that asks for a different orientation keeps it inside the line it sits in.
+                var rubyFlow = item.Box.Flow;
+                var annotation = MeasureAnnotation(item);
+                var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
+                var extent = Math.Max(baseWidth, annotation.Width);
 
-                if (builder.HasContent && maxWidth > 0 && builder.Width + width > maxWidth)
+                if (builder.HasContent && maxInline > 0 && builder.Width + extent > maxInline)
                 {
-                    lines.Add(builder.Build(_measurer, maxWidth));
+                    lines.Add(builder.Build(_measurer, maxInline));
                     builder = new LineBuilder(item.Style);
-
-                    // The space that triggered the break is consumed by it.
-                    if (TextChunker.IsWhiteSpace(chunk))
-                    {
-                        continue;
-                    }
                 }
 
-                builder.Add(chunk, width, item.Style, item.Box);
+                builder.AddRuby(item.Text!, extent, item.Style, item.Box, rubyFlow, annotation, baseWidth);
+                continue;
+            }
+
+            // An inline element may ask for an orientation of its own, so each run is measured and
+            // drawn in the flow of the box it came from rather than in the container's.
+            var itemFlow = item.Box.Flow;
+
+            foreach (var chunk in TextChunker.Chunks(item.Text!))
+            {
+                foreach (var run in Runs(chunk, item.Style, itemFlow))
+                {
+                    if (builder.HasContent && maxInline > 0 && builder.Width + run.Width > maxInline)
+                    {
+                        lines.Add(builder.Build(_measurer, maxInline));
+                        builder = new LineBuilder(item.Style);
+
+                        // The space that triggered the break is consumed by it.
+                        if (run.IsWhiteSpace)
+                        {
+                            continue;
+                        }
+                    }
+
+                    builder.Add(run.Text, run.Width, item.Style, item.Box, run.Flow);
+                }
             }
         }
 
         if (builder.HasContent)
         {
-            lines.Add(builder.Build(_measurer, maxWidth));
+            lines.Add(builder.Build(_measurer, maxInline));
         }
 
         return lines;
     }
 
-    private static Double AlignmentOffset(String textAlign, Double maxWidth, Double used)
+    /// <summary>Measures a chunk of text the way the writing mode advances it.</summary>
+    private Double Measure(ComputedStyle style, String chunk, WritingModeInfo flow) =>
+        flow.IsVertical
+            ? MeasureColumn(chunk, style.GetFont(), style.FontSize, flow, _measurer)
+            : _measurer.MeasureWidth(chunk, style.GetFont());
+
+    /// <summary>
+    /// Measures the annotation of a ruby item: how far it reaches along the inline axis, how much room
+    /// it needs beside the base, and the orientation its glyphs are drawn in.
+    /// </summary>
+    /// <remarks>
+    /// The annotation is set in a writing mode of its own only in that its characters may orient
+    /// differently from the base's - a reading in Latin is turned where the kanji beside it stay
+    /// upright - so it is measured the same way any other run is and keeps the orientation its first
+    /// run resolved to.
+    /// </remarks>
+    private RubyAnnotation MeasureAnnotation(InlineItem item)
     {
-        if (maxWidth <= used)
+        var style = item.AnnotationStyle;
+        var text = item.AnnotationText!;
+        var flow = item.AnnotationBox!.Flow;
+        var metrics = _measurer.GetMetrics(style.GetFont());
+        var ascent = metrics.Ascent;
+        var descent = metrics.Descent;
+
+        if (style.LineHeight is { } lineHeight)
+        {
+            var halfLeading = Math.Max(0, lineHeight - (ascent + descent)) / 2;
+            ascent += halfLeading;
+            descent += halfLeading;
+        }
+
+        var runs = Runs(text, style, flow);
+
+        return new RubyAnnotation(
+            text,
+            Measure(style, text, flow),
+            ascent + descent,
+            ascent,
+            item.Box.Style.HasRubyUnder,
+            style,
+            item.AnnotationBox!,
+            runs.Count > 0 ? runs[0].Flow : flow);
+    }
+
+    /// <summary>
+    /// Measures a chunk the way a column advances it. Upright text advances by its em box rather than
+    /// by its horizontal width, so a Latin letter that would leave room to spare in a line still takes
+    /// a whole em in a column, and text combined upright is compressed into a single em.
+    /// </summary>
+    private static Double MeasureColumn(String chunk, FontStyle font, Double fontSize, WritingModeInfo flow, ITextMeasurer measurer)
+    {
+        var total = 0.0;
+
+        foreach (var run in Orient(chunk, flow))
+        {
+            total += run.Advance(font, measurer, fontSize, flow);
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// Splits a chunk into the pieces a column has to measure and draw separately, which is wherever
+    /// the orientation changes and wherever <c>text-combine-upright</c> sets a short run as one box.
+    /// </summary>
+    private static List<OrientedRun> Orient(String chunk, WritingModeInfo flow)
+    {
+        var runs = new List<OrientedRun>();
+        var index = 0;
+
+        while (index < chunk.Length)
+        {
+            if (flow.CombinesUpright && TextChunker.IsCombinable(chunk[index]))
+            {
+                var length = 0;
+
+                while (index + length < chunk.Length && TextChunker.IsCombinable(chunk[index + length]))
+                {
+                    length++;
+                }
+
+                // Only a short run reads as one box. A longer one is ordinary text that happens to be
+                // turned, and combining it would squeeze a whole word into a single em.
+                if (length <= 4)
+                {
+                    runs.Add(OrientedRun.Combined(chunk.Substring(index, length)));
+                    index += length;
+                    continue;
+                }
+            }
+
+            var upright = flow.IsUpright(chunk[index]);
+            var start = index;
+
+            while (index < chunk.Length && flow.IsUpright(chunk[index]) == upright)
+            {
+                index++;
+            }
+
+            runs.Add(upright
+                ? OrientedRun.Upright(chunk[start..index])
+                : OrientedRun.Rotated(chunk[start..index]));
+        }
+
+        return runs;
+    }
+
+    /// <summary>
+    /// Turns a chunk into the runs that are measured and drawn separately, carrying the advance and
+    /// the orientation of each. Horizontal text stays one run, measured exactly as it was before, so
+    /// the horizontal path is unchanged down to the numbers.
+    /// </summary>
+    private List<MeasuredRun> Runs(String chunk, ComputedStyle style, WritingModeInfo flow)
+    {
+        var runs = new List<MeasuredRun>();
+
+        if (!flow.IsVertical)
+        {
+            runs.Add(new MeasuredRun(
+                chunk,
+                _measurer.MeasureWidth(chunk, style.GetFont()),
+                flow,
+                TextChunker.IsWhiteSpace(chunk)));
+
+            return runs;
+        }
+
+        var font = style.GetFont();
+
+        foreach (var run in Orient(chunk, flow))
+        {
+            // A combined run is drawn as one upright box, so it keeps the mode's own orientation; the
+            // rest are pinned to the orientation they were split on.
+            var oriented = run.IsCombined
+                ? flow
+                : new WritingModeInfo(
+                    flow.Mode,
+                    run.IsUpright ? TextOrientation.Upright : TextOrientation.Sideways,
+                    false);
+
+            runs.Add(new MeasuredRun(
+                run.Text,
+                run.Advance(font, _measurer, style.FontSize, flow),
+                oriented,
+                TextChunker.IsWhiteSpace(run.Text)));
+        }
+
+        return runs;
+    }
+
+    private static Double AlignmentOffset(String textAlign, Double maxInline, Double used)
+    {
+        if (maxInline <= used)
         {
             return 0;
         }
 
         return textAlign.Equals("center", StringComparison.OrdinalIgnoreCase)
-            ? (maxWidth - used) / 2
+            ? (maxInline - used) / 2
             : textAlign.Equals("right", StringComparison.OrdinalIgnoreCase) ||
               textAlign.Equals("end", StringComparison.OrdinalIgnoreCase)
-                ? maxWidth - used
+                ? maxInline - used
                 : 0;
+    }
+
+    /// <summary>A piece of a text node that shares one orientation and is measured and drawn as one.</summary>
+    private readonly struct OrientedRun
+    {
+        private OrientedRun(String text, Boolean upright, Boolean combined)
+        {
+            Text = text;
+            IsUpright = upright;
+            IsCombined = combined;
+        }
+
+        public String Text { get; }
+
+        public Boolean IsUpright { get; }
+
+        /// <summary>Gets whether the run is set as a single upright box rather than turned.</summary>
+        public Boolean IsCombined { get; }
+
+        public static OrientedRun Upright(String text) => new(text, true, false);
+
+        public static OrientedRun Rotated(String text) => new(text, false, false);
+
+        public static OrientedRun Combined(String text) => new(text, true, true);
+
+        /// <summary>
+        /// Gets the distance the run takes along the inline axis of the column it sits in: an upright
+        /// character takes its em box, a turned run the width it would have had in a line, and a
+        /// combined run the single em it is compressed into.
+        /// </summary>
+        public Double Advance(FontStyle font, ITextMeasurer measurer, Double fontSize, WritingModeInfo flow)
+        {
+            if (IsCombined)
+            {
+                return fontSize;
+            }
+
+            if (!IsUpright)
+            {
+                return measurer.MeasureAdvance(Text, font, flow);
+            }
+
+            var total = 0.0;
+
+            foreach (var character in Text)
+            {
+                total += Math.Max(measurer.MeasureAdvance(character.ToString(), font, flow), fontSize);
+            }
+
+            return total;
+        }
+    }
+
+    /// <summary>An oriented run together with the advance it was measured to, ready for the builder.</summary>
+    private readonly struct MeasuredRun
+    {
+        public MeasuredRun(String text, Double width, WritingModeInfo flow, Boolean isWhiteSpace)
+        {
+            Text = text;
+            Width = width;
+            Flow = flow;
+            IsWhiteSpace = isWhiteSpace;
+        }
+
+        public String Text { get; }
+
+        public Double Width { get; }
+
+        public WritingModeInfo Flow { get; }
+
+        public Boolean IsWhiteSpace { get; }
     }
 
     private readonly struct InlineItem
     {
-        private InlineItem(String? text, ComputedStyle style, Box box, Boolean isBreak, Boolean isReplaced)
+        private InlineItem(
+            String? text,
+            ComputedStyle style,
+            Box box,
+            Boolean isBreak,
+            Boolean isReplaced,
+            String? annotationText = null,
+            ComputedStyle annotationStyle = default,
+            Box? annotationBox = null)
         {
             Text = text;
             Style = style;
             Box = box;
             IsBreak = isBreak;
             IsReplaced = isReplaced;
+            AnnotationText = annotationText;
+            AnnotationStyle = annotationStyle;
+            AnnotationBox = annotationBox;
         }
 
         public String? Text { get; }
@@ -334,6 +793,18 @@ public sealed class InlineLayout
 
         public Boolean IsReplaced { get; }
 
+        /// <summary>Gets the annotation of a ruby item, or null when the item carries none.</summary>
+        public String? AnnotationText { get; }
+
+        /// <summary>Gets the style the annotation is set in, which the <c>rt</c> element shrank for it.</summary>
+        public ComputedStyle AnnotationStyle { get; }
+
+        /// <summary>Gets the box the annotation came from, so its own geometry can be traced back to the tree.</summary>
+        public Box? AnnotationBox { get; }
+
+        /// <summary>Gets whether the item is a ruby pair: base text with an annotation over it.</summary>
+        public Boolean IsRuby => AnnotationText is not null;
+
         public static InlineItem CreateText(String text, ComputedStyle style, Box box) =>
             new(text, style, box, false, false);
 
@@ -342,6 +813,15 @@ public sealed class InlineLayout
 
         public static InlineItem CreateReplaced(Box box) =>
             new(null, box.Style, box, false, true);
+
+        public static InlineItem CreateRuby(
+            String text,
+            ComputedStyle style,
+            Box box,
+            String annotationText,
+            ComputedStyle annotationStyle,
+            Box annotationBox) =>
+            new(text, style, box, false, false, annotationText, annotationStyle, annotationBox);
     }
 
     private sealed class TextFragment
@@ -351,17 +831,36 @@ public sealed class InlineLayout
             Double width,
             ComputedStyle style,
             Box box,
+            WritingModeInfo flow,
             Boolean isReplaced = false,
-            Double contentHeight = 0)
+            Double contentHeight = 0,
+            RubyAnnotation? ruby = null,
+            Double baseWidth = 0)
         {
             Text = text;
             Width = width;
             Style = style;
             Box = box;
+            Flow = flow;
             BaselineShift = ComputeBaselineShift(style);
             IsReplaced = isReplaced;
             ContentHeight = contentHeight;
+            Ruby = ruby;
+            BaseWidth = baseWidth;
         }
+
+        /// <summary>
+        /// Gets the annotation that goes on the block-start side of this fragment's text, or null when
+        /// the fragment is ordinary text.
+        /// </summary>
+        public RubyAnnotation? Ruby { get; }
+
+        /// <summary>
+        /// Gets the extent the base text itself takes along the inline axis. For a ruby fragment the
+        /// fragment is as long as the wider of its two parts, and this is what centres the base inside
+        /// the room the annotation needed.
+        /// </summary>
+        public Double BaseWidth { get; }
 
         public String Text { get; set; }
 
@@ -371,10 +870,14 @@ public sealed class InlineLayout
 
         public Box Box { get; }
 
+        /// <summary>Gets the orientation the fragment's glyphs are drawn in, which in a column may
+        /// differ from one run to the next even inside a single element.</summary>
+        public WritingModeInfo Flow { get; }
+
         /// <summary>Gets whether this fragment is an atomic replaced box rather than text.</summary>
         public Boolean IsReplaced { get; }
 
-        /// <summary>Gets the height of the replaced content, which sits on the baseline.</summary>
+        /// <summary>Gets the extent of the replaced content along the block axis, which sits on the baseline.</summary>
         public Double ContentHeight { get; }
 
         /// <summary>
@@ -398,6 +901,60 @@ public sealed class InlineLayout
         }
     }
 
+    /// <summary>
+    /// The annotation of a ruby fragment, measured and ready to be put beside its base text.
+    /// </summary>
+    /// <remarks>
+    /// It costs the line the extent it takes along the block axis and nothing along the inline one
+    /// beyond what the base already asked for, unless it is longer - a long reading over a short
+    /// character widens the room the pair needs rather than being squeezed.
+    /// </remarks>
+    private sealed class RubyAnnotation
+    {
+        public RubyAnnotation(
+            String text,
+            Double width,
+            Double block,
+            Double ascent,
+            Boolean under,
+            ComputedStyle style,
+            Box box,
+            WritingModeInfo flow)
+        {
+            Text = text;
+            Width = width;
+            Block = block;
+            Ascent = ascent;
+            Under = under;
+            Style = style;
+            Box = box;
+            Flow = flow;
+        }
+
+        /// <summary>
+        /// Gets whether the annotation goes on the block-end side of its base, which is what
+        /// <c>ruby-position: under</c> asks for: a reading placed after the base rather than before it.
+        /// </summary>
+        public Boolean Under { get; }
+
+        public String Text { get; }
+
+        /// <summary>Gets the extent the annotation takes along the inline axis.</summary>
+        public Double Width { get; }
+
+        /// <summary>Gets the extent the annotation takes along the block axis, which the line grows by.</summary>
+        public Double Block { get; }
+
+        /// <summary>Gets the annotation's own ascent, which positions its baseline inside that extent.</summary>
+        public Double Ascent { get; }
+
+        public ComputedStyle Style { get; }
+
+        public Box Box { get; }
+
+        public WritingModeInfo Flow { get; }
+    }
+
     private sealed class Line
     {
         public List<TextFragment> Fragments { get; } = new();
@@ -406,6 +963,10 @@ public sealed class InlineLayout
 
         public Double Height { get; set; }
 
+        /// <summary>Gets the extent the line's fragments take along the inline axis, before alignment.</summary>
+        public Double Used { get; set; }
+
+        /// <summary>Gets where the line's content starts along the inline axis, after alignment.</summary>
         public Double Offset { get; set; }
     }
 
@@ -432,21 +993,24 @@ public sealed class InlineLayout
                 width,
                 box.Style,
                 box,
+                box.Flow,
                 isReplaced: true,
                 contentHeight: height));
 
             Width += width;
         }
 
-        public void Add(String text, Double width, ComputedStyle style, Box box)
+        public void Add(String text, Double width, ComputedStyle style, Box box, WritingModeInfo flow)
         {
             if (_fragments.Count > 0)
             {
                 var last = _fragments[^1];
 
                 // Chunks of one text node belong to one run. Keeping them together stops the paint
-                // commands - and the decorations drawn for them - from being split per word.
-                if (ReferenceEquals(last.Box, box))
+                // commands - and the decorations drawn for them - from being split per word. Pieces
+                // that are drawn differently, a turned word among upright text, are not the same run
+                // however they happened to be chunked.
+                if (ReferenceEquals(last.Box, box) && last.Flow.Equals(flow))
                 {
                     last.Text += text;
                     last.Width += width;
@@ -455,11 +1019,38 @@ public sealed class InlineLayout
                 }
             }
 
-            _fragments.Add(new TextFragment(text, width, style, box));
+            _fragments.Add(new TextFragment(text, width, style, box, flow));
             Width += width;
         }
 
-        public Line Build(ITextMeasurer measurer, Double maxWidth)
+        /// <summary>
+        /// Adds a ruby pair, which never joins the run before it: the base has an annotation of its own
+        /// and the two are drawn as separate pieces whatever they are set in.
+        /// </summary>
+        /// <param name="width">The room the pair needs, which is the wider of the base and the annotation.</param>
+        /// <param name="baseWidth">The extent the base itself takes, which centres it in that room.</param>
+        public void AddRuby(
+            String text,
+            Double width,
+            ComputedStyle style,
+            Box box,
+            WritingModeInfo flow,
+            RubyAnnotation ruby,
+            Double baseWidth)
+        {
+            _fragments.Add(new TextFragment(
+                text,
+                width,
+                style,
+                box,
+                flow,
+                ruby: ruby,
+                baseWidth: baseWidth));
+
+            Width += width;
+        }
+
+        public Line Build(ITextMeasurer measurer, Double maxInline)
         {
             TrimTrailingSpaces(measurer);
 
@@ -494,6 +1085,22 @@ public sealed class InlineLayout
                     fragmentDescent += halfLeading;
                 }
 
+                // An annotation stands over its base, on the block-start side, so it lifts the baseline
+                // the whole line shares by its own extent instead of making the base taller. One asked
+                // for `under` takes its room from the other side of the baseline and leaves it where it
+                // would have been.
+                if (fragment.Ruby is { } annotation)
+                {
+                    if (annotation.Under)
+                    {
+                        fragmentDescent += annotation.Block;
+                    }
+                    else
+                    {
+                        fragmentAscent += annotation.Block;
+                    }
+                }
+
                 ascent = Math.Max(ascent, fragmentAscent);
                 descent = Math.Max(descent, fragmentDescent);
             }
@@ -508,8 +1115,9 @@ public sealed class InlineLayout
 
             line.Ascent = ascent;
             line.Height = ascent + descent;
+            line.Used = used;
             line.Offset = line.Fragments.Count > 0
-                ? AlignmentOffset(line.Fragments[0].Style.TextAlign, maxWidth, used)
+                ? AlignmentOffset(line.Fragments[0].Style.TextAlign, maxInline, used)
                 : 0;
 
             return line;
@@ -520,6 +1128,13 @@ public sealed class InlineLayout
             while (_fragments.Count > 0)
             {
                 var last = _fragments[^1];
+
+                // A pair is not a run of text that can be shortened: its base belongs to the annotation
+                // drawn over it, so trailing space inside one is left where it is.
+                if (last.Ruby is not null)
+                {
+                    break;
+                }
 
                 if (TextChunker.IsWhiteSpace(last.Text))
                 {
@@ -544,7 +1159,9 @@ public sealed class InlineLayout
                 }
 
                 last.Text = trimmed;
-                last.Width = measurer.MeasureWidth(trimmed, last.Style.GetFont());
+                last.Width = last.Flow.IsVertical
+                    ? MeasureColumn(trimmed, last.Style.GetFont(), last.Style.FontSize, last.Flow, measurer)
+                    : measurer.MeasureWidth(trimmed, last.Style.GetFont());
                 Width += last.Width;
                 break;
             }

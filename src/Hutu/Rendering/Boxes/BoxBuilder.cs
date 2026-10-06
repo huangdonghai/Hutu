@@ -36,12 +36,17 @@ public static class BoxBuilder
             return null;
         }
 
-        return BuildElement(root, dimensions, images);
+        return BuildElement(root, dimensions, images, WritingModeInfo.Horizontal);
     }
 
-    private static Box? BuildElement(ElementRenderNode node, IRenderDimensions dimensions, IImageProvider? images)
+    private static Box? BuildElement(
+        ElementRenderNode node,
+        IRenderDimensions dimensions,
+        IImageProvider? images,
+        WritingModeInfo inherited,
+        Double parentFontSize = 0)
     {
-        var style = new ComputedStyle(node.ComputedStyle, dimensions, node.SpecifiedStyle, node.Ref);
+        var style = new ComputedStyle(node.ComputedStyle, dimensions, node.SpecifiedStyle, node.Ref, parentFontSize);
 
         if (style.IsDisplayNone)
         {
@@ -50,15 +55,16 @@ public static class BoxBuilder
 
         var element = node.Ref;
         var kind = ResolveKind(element, style);
+        var flow = ResolveFlow(style, inherited);
 
         if (kind == BoxKind.HorizontalRule)
         {
-            return new Box(kind, style) { Element = element };
+            return new Box(kind, style) { Element = element, Flow = flow };
         }
 
         if (element is IHtmlImageElement image)
         {
-            return BuildReplaced(image, kind, style, images);
+            return BuildReplaced(image, kind, style, flow, images);
         }
 
         var children = new List<Box>(node.Children is ICollection<IRenderNode> collection ? collection.Count : 0);
@@ -68,7 +74,7 @@ public static class BoxBuilder
             switch (child)
             {
                 case ElementRenderNode elementChild:
-                    var childBox = BuildElement(elementChild, dimensions, images);
+                    var childBox = BuildElement(elementChild, dimensions, images, flow, style.FontSize);
 
                     if (childBox is not null)
                     {
@@ -78,7 +84,7 @@ public static class BoxBuilder
                     break;
 
                 case TextRenderNode textChild:
-                    var textBox = BuildText(textChild, style);
+                    var textBox = BuildText(textChild, style, flow);
 
                     if (textBox is not null)
                     {
@@ -97,7 +103,7 @@ public static class BoxBuilder
             kind = BoxKind.Block;
         }
 
-        var box = new Box(kind, style) { Element = element };
+        var box = new Box(kind, style) { Element = element, Flow = flow };
 
         switch (kind)
         {
@@ -160,6 +166,7 @@ public static class BoxBuilder
         IHtmlImageElement image,
         BoxKind kind,
         ComputedStyle style,
+        WritingModeInfo flow,
         IImageProvider? images)
     {
         var url = ImageUrlResolver.Resolve(image, image.Source);
@@ -181,7 +188,28 @@ public static class BoxBuilder
             IsReplaced = true,
             SourceUrl = url,
             IntrinsicSize = intrinsic,
+            Flow = flow,
         };
+    }
+
+    /// <summary>
+    /// Resolves the writing mode a box lays its content out in: the mode the cascade already carried
+    /// down, and the orientation and combining its element declares or, failing that, the ones its
+    /// ancestors run in.
+    /// </summary>
+    private static WritingModeInfo ResolveFlow(ComputedStyle style, WritingModeInfo inherited)
+    {
+        var mode = style.WritingMode;
+
+        if (mode == Layout.WritingMode.HorizontalTb)
+        {
+            return WritingModeInfo.Horizontal;
+        }
+
+        return new WritingModeInfo(
+            mode,
+            style.DeclaredTextOrientation ?? inherited.Orientation,
+            style.DeclaredTextCombineUpright ?? inherited.CombinesUpright);
     }
 
     private static BoxKind ResolveKind(IElement element, ComputedStyle style)
@@ -194,6 +222,23 @@ public static class BoxBuilder
         if (IsTag(element, "hr"))
         {
             return BoxKind.HorizontalRule;
+        }
+
+        // Ruby is matched by tag rather than by display, because the annotation only means anything
+        // as the partner of its base: flattened into the line it would simply read as text after it.
+        if (IsTag(element, "ruby"))
+        {
+            return BoxKind.Ruby;
+        }
+
+        if (IsTag(element, "rt") || IsTag(element, "rtc"))
+        {
+            return BoxKind.RubyText;
+        }
+
+        if (IsTag(element, "rb"))
+        {
+            return BoxKind.RubyBase;
         }
 
         var display = style.Display;
@@ -250,7 +295,7 @@ public static class BoxBuilder
             : BoxKind.Block;
     }
 
-    private static Box? BuildText(TextRenderNode node, ComputedStyle parentStyle)
+    private static Box? BuildText(TextRenderNode node, ComputedStyle parentStyle, WritingModeInfo flow)
     {
         var raw = node.Ref.Data;
 
@@ -266,7 +311,7 @@ public static class BoxBuilder
             return null;
         }
 
-        return new Box(BoxKind.Text, parentStyle) { Source = node.Ref, Text = text };
+        return new Box(BoxKind.Text, parentStyle) { Source = node.Ref, Text = text, Flow = flow };
     }
 
     /// <summary>
@@ -296,7 +341,7 @@ public static class BoxBuilder
         {
             if (wrapInline && children.Count > 0)
             {
-                var item = new Box(BoxKind.Block, parent.Style) { IsAnonymous = true };
+                var item = new Box(BoxKind.Block, parent.Style) { IsAnonymous = true, Flow = parent.Flow };
                 item.Children.AddRange(children);
                 parent.Children.Add(item);
             }
@@ -343,7 +388,7 @@ public static class BoxBuilder
                 continue;
             }
 
-            var anonymous = new Box(BoxKind.Block, parent.Style) { IsAnonymous = true };
+            var anonymous = new Box(BoxKind.Block, parent.Style) { IsAnonymous = true, Flow = parent.Flow };
             anonymous.Children.AddRange(run);
             parent.Children.Add(anonymous);
         }

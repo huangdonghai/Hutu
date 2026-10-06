@@ -263,6 +263,57 @@ public sealed class TextSelectionTests
         Assert.That(document.Selector.Line(default).IsEmpty, Is.True);
     }
 
+    [Test]
+    public async Task APointDownAColumnResolvesToTheNearestCharacter()
+    {
+        using var document = await LoadAsync(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:200px;font-size:10px;line-height:1'>東京都</div></body></html>");
+
+        var run = document.Selector.Runs[0];
+        var x = run.BorderBox.X + run.BorderBox.Width / 2;
+        var top = run.BorderBox.Y;
+
+        Assert.That(run.Flow.IsVertical, Is.True);
+        Assert.That(run.BorderBox.Height, Is.EqualTo(30), "three ideographs take one em each down the column");
+
+        // Each ideograph takes a ten-pixel em box, so its boundaries fall every ten pixels down the column.
+        Assert.That(document.Selector.HitTest(x, top + 4)!.Value.Index, Is.EqualTo(0));
+        Assert.That(document.Selector.HitTest(x, top + 12)!.Value.Index, Is.EqualTo(1));
+        Assert.That(document.Selector.HitTest(x, top + 28)!.Value.Index, Is.EqualTo(3));
+        Assert.That(document.Selector.HitTest(x, top + 1000)!.Value.Index, Is.EqualTo(3));
+    }
+
+    [Test]
+    public async Task ARangeDownAColumnSpansTheWidthOfTheColumn()
+    {
+        using var document = await LoadAsync(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:200px;font-size:10px;line-height:1'>東京都</div></body></html>");
+
+        var run = document.Selector.Runs[0];
+        var rects = document.Selector.Rects(Selection(run, 1, 2));
+
+        Assert.That(rects, Has.Count.EqualTo(1));
+        Assert.That(rects[0].X, Is.EqualTo(run.BorderBox.X), "the highlight is as wide as the column");
+        Assert.That(rects[0].Width, Is.EqualTo(run.BorderBox.Width));
+        Assert.That(rects[0].Y, Is.EqualTo(run.BorderBox.Y + 10), "it starts at the second em down");
+        Assert.That(rects[0].Height, Is.EqualTo(10));
+    }
+
+    [Test]
+    public async Task APointIsResolvedAgainstTheColumnItSitsIn()
+    {
+        using var document = await LoadAsync(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:20px;font-size:10px;line-height:1'>東東東東東</div></body></html>");
+
+        var first = document.Selector.Runs[0];
+        var second = document.Selector.Runs[1];
+
+        Assert.That(second.BorderBox.X, Is.LessThan(first.BorderBox.X), "the next line of the column runs to the left");
+        Assert.That(
+            document.Selector.HitTest(second.BorderBox.X + 1, second.BorderBox.Y + 1)!.Value.Box,
+            Is.SameAs(second));
+    }
+
     private static TextSelection Selection(LayoutBox run, Int32 from, Int32 to) =>
         new(new TextPosition(run, from), new TextPosition(run, to));
 

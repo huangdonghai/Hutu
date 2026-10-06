@@ -50,6 +50,40 @@ internal static class BoxModel
     }
 
     /// <summary>
+    /// Resolves the size of a box along the block axis, which is the physical width of a box whose
+    /// text runs down a column.
+    /// </summary>
+    /// <remarks>
+    /// A block in a row takes the width it is given, and <c>auto</c> means all of it; a column is the
+    /// other way round. There is no definite size to fill, so <c>auto</c> shrinks to the content and
+    /// the box ends up exactly as wide as the columns it needs. The physical <c>width</c> property
+    /// still bounds it, because physical sizes keep their physical meaning whatever the writing mode.
+    /// </remarks>
+    public static Double ResolveBlockExtent(ComputedStyle style, Double contentBlock, Double basis, Double insets)
+    {
+        var isBorderBox = IsBorderBox(style);
+        var content = Math.Max(0, contentBlock);
+
+        if (style.Width.HasValue)
+        {
+            var specified = Math.Max(0, style.Width.Resolve(basis));
+            content = Math.Max(0, isBorderBox ? specified - insets : specified);
+        }
+
+        if (ContentBound(style.MaxWidth, basis, insets, isBorderBox) is { } maximum && content > maximum)
+        {
+            content = maximum;
+        }
+
+        if (ContentBound(style.MinWidth, basis, insets, isBorderBox) is { } minimum && content < minimum)
+        {
+            content = minimum;
+        }
+
+        return content;
+    }
+
+    /// <summary>
     /// Resolves a height declared as a length. Nothing is returned for a percentage against a
     /// containing block with no definite height, nor for <c>auto</c>: both mean the height comes
     /// from the content.
@@ -64,6 +98,24 @@ internal static class BoxModel
         }
 
         var value = Math.Max(0, height.Resolve(containingBlockHeight));
+        return IsBorderBox(style) ? Math.Max(0, value - insets) : value;
+    }
+
+    /// <summary>
+    /// Resolves a width declared as a length. It is the block-axis counterpart of
+    /// <see cref="DeclaredHeight"/>: a column's block extent is its physical width, so that is the
+    /// declared size a percentage of a column's containing block resolves against.
+    /// </summary>
+    public static Double? DeclaredWidth(ComputedStyle style, Double containingBlockWidth, Double insets)
+    {
+        var width = style.Width;
+
+        if (!width.HasValue || (width.Kind == StyleLengthKind.Percent && containingBlockWidth <= 0))
+        {
+            return null;
+        }
+
+        var value = Math.Max(0, width.Resolve(containingBlockWidth));
         return IsBorderBox(style) ? Math.Max(0, value - insets) : value;
     }
 

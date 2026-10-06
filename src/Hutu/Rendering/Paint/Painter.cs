@@ -309,7 +309,8 @@ public sealed class Painter
             box.Font,
             ToArgb(style.Color),
             style.HasUnderline,
-            style.HasLineThrough));
+            style.HasLineThrough,
+            box.Flow));
     }
 
     private static void AddBorder(LayoutBox box, ComputedStyle style, List<PaintCommand> target)

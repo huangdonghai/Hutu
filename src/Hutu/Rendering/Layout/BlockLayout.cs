@@ -5,14 +5,20 @@ using System.Collections.Generic;
 namespace Hutu.Rendering.Layout;
 
 /// <summary>
-/// The block formatting context: a block stacks its block-level children vertically and resolves the
-/// box model around them.
+/// The block formatting context: a block stacks its block-level children and resolves the box model
+/// around them.
 /// </summary>
 /// <remarks>
 /// This is the axis the whole engine is built on. It is split into the two phases the rest of the
 /// engine speaks: <see cref="Measure"/> answers how large the box wants to be at a given available
-/// width, and <see cref="Arrange"/> fixes that size into a rectangle and positions the content. The
-/// split is what lets flex, grid and table ask a child for its size before they know where it goes.
+/// extent along the axis its content runs on, and <see cref="Arrange"/> fixes that size into a
+/// rectangle and positions the content. The split is what lets flex, grid and table ask a child for
+/// its size before they know where it goes.
+/// <para>
+/// A block stacks its children down the page; a block whose text runs down a column stacks them
+/// across it instead, so the two paths exchange the axes and little else. Which one runs is decided
+/// by <see cref="ComputedStyle.Flow"/> alone.
+/// </para>
 /// <para>
 /// Adjacent sibling margins collapse to the larger of the two. Parent/child collapsing is not
 /// modelled yet: deciding whether the margins are adjoining needs the parent's border and padding,
@@ -35,7 +41,12 @@ internal sealed class BlockLayout
     /// Measures a block box, returning the size of its <em>border</em> box. No geometry is produced:
     /// the children are only asked for their sizes, which is why the result can be cached.
     /// </summary>
-    public Size Measure(Box box, MeasureConstraints constraints, LayoutContext context)
+    public Size Measure(Box box, MeasureConstraints constraints, LayoutContext context) =>
+        box.Flow.IsVertical
+            ? MeasureColumn(box, constraints, context, box.Flow)
+            : MeasureRow(box, constraints, context);
+
+    private Size MeasureRow(Box box, MeasureConstraints constraints, LayoutContext context)
     {
         var style = box.Style;
         var basisWidth = constraints.AvailableWidth ?? context.ContainingBlock.Width;
@@ -69,6 +80,104 @@ internal sealed class BlockLayout
         var height = BoxModel.ClampHeight(style, declaredHeight ?? contentHeight, basisHeight, insets.Vertical);
 
         return new Size(borderBoxWidth, height + insets.Vertical);
+    }
+
+    /// <summary>
+    /// Measures a box whose text runs down a column. It is the same box model with the two axes
+    /// exchanged: the declared <c>height</c> is the extent the text has to run along, the padding
+    /// and border above and below bound it, and the <c>width</c> comes out of the content - a column
+    /// is only as wide as the columns it needs, which is the opposite of the <c>auto</c> width of a
+    /// block in a row.
+    /// </summary>
+    private Size MeasureColumn(Box box, MeasureConstraints constraints, LayoutContext context, WritingModeInfo flow)
+    {
+        var style = box.Style;
+        var border = BorderOf(box);
+
+        var basisInline = constraints.AvailableHeight ?? context.ContainingBlock.Height;
+        var basisBlock = constraints.AvailableWidth ?? context.ContainingBlock.Width;
+        var padding = style.Padding.Resolve(basisInline);
+        var insetsInline = padding.Vertical + border.Vertical;
+        var insetsBlock = padding.Horizontal + border.Horizontal;
+
+        var declaredInline = BoxModel.DeclaredHeight(style, basisInline, insetsInline);
+        var declaredBlock = BoxModel.DeclaredWidth(style, basisBlock, insetsBlock);
+
+        // The children's containing block is the box's content box, and both of its extents have to
+        // be settled before they are measured: the inline one is the declared height or the extent
+        // the box was given, the block one the declared width or, when it comes from the content,
+        // the width the box itself was measured against. The arranging pass reconstructs the same
+        // pair, so a child is never measured twice under two different constraints.
+        var childInline = declaredInline ?? basisInline;
+        var childBlock = declaredBlock ?? context.ContainingBlock.Width;
+
+        Double contentInline;
+        Double contentBlock;
+
+        if (box.Children.Count == 0)
+        {
+            contentInline = declaredInline ?? 0;
+            contentBlock = 0;
+        }
+        else if (HasBlockChildren(box))
+        {
+            var children = MeasureColumnChildren(box, childInline, childBlock, context, flow);
+            contentInline = declaredInline ?? children.Inline;
+            contentBlock = children.Block;
+        }
+        else
+        {
+            var measured = _inline.Measure(box, childInline, flow);
+            contentInline = declaredInline ?? measured.Inline;
+            contentBlock = measured.Block;
+        }
+
+        var blockSize = BoxModel.ResolveBlockExtent(style, contentBlock, basisBlock, insetsBlock);
+        var inlineSize = BoxModel.ClampHeight(style, contentInline, basisInline, insetsInline);
+
+        return new Size(blockSize + insetsBlock, inlineSize + insetsInline);
+    }
+
+    /// <summary>
+    /// Measures the block children of a column and returns the extents their stacking occupies: the
+    /// extent along the block axis that the columns need, and the longest column among them.
+    /// </summary>
+    private (Double Inline, Double Block) MeasureColumnChildren(
+        Box box,
+        Double contentInline,
+        Double basisBlock,
+        LayoutContext context,
+        WritingModeInfo flow)
+    {
+        var cursor = 0.0;
+        var previousEndMargin = 0.0;
+        var first = true;
+        var inline = 0.0;
+        var childContext = context.ForContainingBlock(new Size(basisBlock, contentInline));
+        var constraints = MeasureConstraints.FitWidth(basisBlock);
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            // The margins that separate the columns are the physical left and right ones, and which of
+            // the two a box starts with depends on the direction the columns run.
+            var margin = child.Style.Margin.Resolve(contentInline);
+            var startMargin = flow.BlockSign < 0 ? margin.Right : margin.Left;
+            var endMargin = flow.BlockSign < 0 ? margin.Left : margin.Right;
+            var spacing = first ? startMargin : Math.Max(previousEndMargin, startMargin);
+            var size = _engine.Measure(child, constraints, childContext);
+
+            cursor += spacing + flow.BlockExtent(size.Width, size.Height);
+            inline = Math.Max(inline, flow.InlineExtent(size.Width, size.Height));
+            previousEndMargin = endMargin;
+            first = false;
+        }
+
+        return (inline, cursor + previousEndMargin);
     }
 
     /// <summary>
@@ -149,7 +258,10 @@ internal sealed class BlockLayout
         }
         else
         {
-            var intrinsic = _inline.MeasureIntrinsic(box, basis);
+            // The extents a column's content asks for are measured along the line it runs down, and
+            // turning them into the block-axis size a flex or grid context would want out of them is
+            // left to the phase that gives those contexts an axis of their own.
+            var intrinsic = _inline.MeasureIntrinsic(box, basis, box.Flow);
             min = intrinsic.MinContent;
             max = intrinsic.MaxContent;
         }
@@ -173,6 +285,7 @@ internal sealed class BlockLayout
     public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context)
     {
         var style = box.Style;
+        var flow = box.Flow;
         var basis = context.ContainingBlock.Width;
         var border = BorderOf(box);
         var padding = style.Padding.Resolve(basis);
@@ -183,6 +296,7 @@ internal sealed class BlockLayout
             Border = border,
             Padding = padding,
             BorderBox = borderBox,
+            Flow = flow,
         };
 
         if (box.Children.Count == 0)
@@ -193,16 +307,27 @@ internal sealed class BlockLayout
         var contentX = borderBox.X + border.Left + padding.Left;
         var contentY = borderBox.Y + border.Top + padding.Top;
         var contentWidth = Math.Max(0, borderBox.Width - border.Horizontal - padding.Horizontal);
+        var contentHeight = Math.Max(0, borderBox.Height - border.Vertical - padding.Vertical);
 
         // A declared height is known before the children are laid out, so it is also the containing
         // block height they resolve their own percentage heights against. A height that comes from
-        // the content is not, which is why it is passed as zero there.
-        var declaredHeight = BoxModel.DeclaredHeight(
-            style,
-            context.ContainingBlock.Height,
-            padding.Vertical + border.Vertical);
+        // the content is not, which is why it is passed as zero there. A column swaps the two: the
+        // children's containing block is bounded by the declared width, and its inline extent is the
+        // content box's own height, which the box was given rather than derived from the content.
+        var childBox = flow.IsVertical
+            ? new Rect(
+                contentX,
+                contentY,
+                BoxModel.DeclaredWidth(style, context.ContainingBlock.Width, padding.Horizontal + border.Horizontal)
+                    ?? context.ContainingBlock.Width,
+                BoxModel.DeclaredHeight(style, context.ContainingBlock.Height, padding.Vertical + border.Vertical) ?? contentHeight)
+            : new Rect(
+                contentX,
+                contentY,
+                contentWidth,
+                BoxModel.DeclaredHeight(style, context.ContainingBlock.Height, padding.Vertical + border.Vertical) ?? 0);
 
-        var childContext = context.ForContainingBlock(new Rect(contentX, contentY, contentWidth, declaredHeight ?? 0));
+        var childContext = context.ForContainingBlock(childBox);
 
         // A positioned box is what an absolutely positioned descendant anchors to, so its padding
         // box - not its content box - becomes the containing block for the whole subtree.
@@ -211,13 +336,22 @@ internal sealed class BlockLayout
             childContext = childContext.WithAbsoluteContainingBlock(layout.PaddingBox);
         }
 
+        var content = new Rect(contentX, contentY, contentWidth, contentHeight);
+
         if (HasBlockChildren(box))
         {
-            ArrangeBlockChildren(box, layout, contentX, contentY, contentWidth, childContext);
+            if (flow.IsVertical)
+            {
+                ArrangeColumnChildren(box, layout, content, childContext, context.ContainingBlock.Width);
+            }
+            else
+            {
+                ArrangeBlockChildren(box, layout, contentX, contentY, contentWidth, childContext);
+            }
         }
         else
         {
-            _inline.Layout(box, layout, contentX, contentY, contentWidth);
+            _inline.Layout(box, layout, content, flow);
         }
 
         return layout;
@@ -306,6 +440,70 @@ internal sealed class BlockLayout
 
         // The out-of-flow boxes are placed last, against the nearest positioned ancestor that the
         // context already carries, and take no part in the stacking above.
+        foreach (var (child, staticPosition) in outOfFlow)
+        {
+            parent.Children.Add(_engine.ArrangePositioned(child, staticPosition, context));
+        }
+    }
+
+    /// <summary>
+    /// Arranges the block children of a column: they stack along the physical x axis rather than down
+    /// the page, so the cursor walks sideways and the margins that separate them are the left and the
+    /// right one.
+    /// </summary>
+    /// <param name="basisBlock">
+    /// The extent the children were measured against. It has to be the same one the measuring pass
+    /// used, or a child would be measured a second time under a different constraint and its geometry
+    /// would no longer agree with the extent the parent sized itself to.
+    /// </param>
+    private void ArrangeColumnChildren(
+        Box box,
+        LayoutBox parent,
+        Rect content,
+        LayoutContext context,
+        Double basisBlock)
+    {
+        var flow = box.Flow;
+        var contentInline = flow.InlineExtent(content.Width, content.Height);
+        var cursor = 0.0;
+        var previousEndMargin = 0.0;
+        var first = true;
+        var constraints = MeasureConstraints.FitWidth(basisBlock);
+        var outOfFlow = new List<(Box Box, Offset Static)>();
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel)
+            {
+                continue;
+            }
+
+            var margin = child.Style.Margin.Resolve(contentInline);
+            var startMargin = flow.BlockSign < 0 ? margin.Right : margin.Left;
+            var endMargin = flow.BlockSign < 0 ? margin.Left : margin.Right;
+            var spacing = first ? startMargin : Math.Max(previousEndMargin, startMargin);
+
+            if (PositionedLayout.IsOutOfFlow(child))
+            {
+                // Same as in a row: the box takes no space, but the place it would have had is kept
+                // as the static position an unset offset falls back to.
+                var anchor = flow.Map(content, 0, 0, cursor + spacing, 0);
+                outOfFlow.Add((child, new Offset(anchor.X, anchor.Y)));
+                continue;
+            }
+
+            var size = _engine.Measure(child, constraints, context);
+            var blockSize = flow.BlockExtent(size.Width, size.Height);
+            var inlineSize = flow.InlineExtent(size.Width, size.Height);
+            var rect = flow.Map(content, 0, inlineSize, cursor + spacing, blockSize);
+
+            parent.Children.Add(_engine.Arrange(child, rect, context));
+
+            cursor += spacing + blockSize;
+            previousEndMargin = endMargin;
+            first = false;
+        }
+
         foreach (var (child, staticPosition) in outOfFlow)
         {
             parent.Children.Add(_engine.ArrangePositioned(child, staticPosition, context));

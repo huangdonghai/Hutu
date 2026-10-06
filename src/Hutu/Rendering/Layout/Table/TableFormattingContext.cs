@@ -97,6 +97,7 @@ internal sealed partial class TableFormattingContext
             Border = build.Border,
             Padding = build.Padding,
             BorderBox = borderBox,
+            Flow = box.Flow,
         };
 
         var gridX = borderBox.X + build.Border.Left + build.Padding.Left;

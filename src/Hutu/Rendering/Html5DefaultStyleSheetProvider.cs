@@ -25,6 +25,9 @@ public sealed class Html5DefaultStyleSheetProvider : ICssDefaultStyleSheetProvid
 main, article, aside, figure, figcaption, footer, header, hgroup, nav, section, details, dialog, search { display: block }
 summary { display: list-item }
 mark { background-color: yellow; color: black }
+ruby, rb, rt, rtc { display: inline }
+rt { font-size: 50%; line-height: 1 }
+rp { display: none }
 ";
 
     private ICssStyleSheet? _default;

@@ -79,6 +79,7 @@ internal sealed partial class FlexFormattingContext
             Border = border,
             Padding = padding,
             BorderBox = borderBox,
+            Flow = box.Flow,
         };
 
         if (box.Children.Count == 0)

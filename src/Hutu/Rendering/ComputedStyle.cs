@@ -35,6 +35,7 @@ public readonly struct ComputedStyle
     private readonly ICssStyleDeclaration? _specified;
     private readonly IRenderDimensions _dimensions;
     private readonly IElement? _element;
+    private readonly Double _parentFontSize;
 
     /// <param name="specified">
     /// The cascaded declaration, when it is available. It is preferred for backgrounds: the computed
@@ -45,16 +46,24 @@ public readonly struct ComputedStyle
     /// The element the style belongs to. Needed to resolve the relative URLs of background images,
     /// which the image cache is keyed by.
     /// </param>
+    /// <param name="parentFontSize">
+    /// The font size the parent box resolved to. A percentage <c>font-size</c> is relative to it, and
+    /// since AngleSharp computes that percentage against the render device - the viewport - instead, the
+    /// box builder hands the real reference down and it is applied here. Zero means it is unknown and
+    /// the device's own font size stands in.
+    /// </param>
     public ComputedStyle(
         ICssStyleDeclaration style,
         IRenderDimensions dimensions,
         ICssStyleDeclaration? specified = null,
-        IElement? element = null)
+        IElement? element = null,
+        Double parentFontSize = 0)
     {
         _style = style ?? throw new ArgumentNullException(nameof(style));
         _dimensions = dimensions ?? throw new ArgumentNullException(nameof(dimensions));
         _specified = specified;
         _element = element;
+        _parentFontSize = parentFontSize;
     }
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
@@ -83,7 +92,26 @@ public readonly struct ComputedStyle
 
     public String FontFamily => Keyword("font-family", "sans-serif");
 
-    public Double FontSize => Length("font-size", RenderMode.Vertical, _dimensions.FontSize);
+    /// <summary>
+    /// Gets the font size in pixels. A percentage is the one length that resolves against the parent's
+    /// font size rather than the containing block, and the cascade folds it into pixels against the
+    /// render device - the viewport - so a declared percentage is read back here and scaled by the size
+    /// the box builder passed down.
+    /// </summary>
+    public Double FontSize
+    {
+        get
+        {
+            if (_specified?.GetProperty("font-size")?.RawValue is CssLengthValue declared &&
+                declared.Type == CssLengthValue.Unit.Percent)
+            {
+                var reference = _parentFontSize > 0 ? _parentFontSize : _dimensions.FontSize;
+                return declared.Value * 0.01 * reference;
+            }
+
+            return Length("font-size", RenderMode.Vertical, _dimensions.FontSize);
+        }
+    }
 
     public Int32 FontWeight
     {
@@ -146,6 +174,85 @@ public readonly struct ComputedStyle
     public String TextAlign => Keyword("text-align", "start");
 
     public String VerticalAlign => Keyword("vertical-align", "baseline");
+
+    /// <summary>
+    /// Gets the writing mode the element runs its text in. <c>writing-mode</c> is a registered,
+    /// inherited property, so its computed value already carries what an ancestor asked for and this
+    /// answers with the mode the element itself settles on.
+    /// </summary>
+    public WritingMode WritingMode => ReadKeyword("writing-mode")?.ToLowerInvariant() switch
+    {
+        "vertical-rl" => Layout.WritingMode.VerticalRl,
+        "vertical-lr" => Layout.WritingMode.VerticalLr,
+        "sideways-rl" => Layout.WritingMode.SidewaysRl,
+        "sideways-lr" => Layout.WritingMode.SidewaysLr,
+        _ => Layout.WritingMode.HorizontalTb,
+    };
+
+    /// <summary>
+    /// Gets the orientation the element runs its characters in. <c>text-orientation</c> is inherited,
+    /// so the cascade already carries what an ancestor asked for; the box builder still walks it down
+    /// the tree because an inline box may set it apart from the block it sits in.
+    /// </summary>
+    public TextOrientation? DeclaredTextOrientation => ReadKeyword("text-orientation")?.ToLowerInvariant() switch
+    {
+        "mixed" => TextOrientation.Mixed,
+        "upright" => TextOrientation.Upright,
+        "sideways" => TextOrientation.Sideways,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Gets whether short runs stand as one upright box. Like <c>text-orientation</c> it is inherited,
+    /// and null means the declaration said something this reader does not know.
+    /// </summary>
+    public Boolean? DeclaredTextCombineUpright => ReadKeyword("text-combine-upright")?.ToLowerInvariant() switch
+    {
+        "all" => true,
+        "none" => false,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Gets the writing mode, text orientation and upright combining the element itself declares, with
+    /// the values it inherits left out. The box builder folds in what the ancestors run in.
+    /// </summary>
+    public WritingModeInfo Flow
+    {
+        get
+        {
+            var mode = WritingMode;
+
+            if (mode == Layout.WritingMode.HorizontalTb)
+            {
+                return WritingModeInfo.Horizontal;
+            }
+
+            return new WritingModeInfo(
+                mode,
+                DeclaredTextOrientation ?? TextOrientation.Mixed,
+                DeclaredTextCombineUpright ?? false);
+        }
+    }
+
+    /// <summary>
+    /// Gets where the annotation of a <c>ruby</c> element is set relative to its base text. Only
+    /// <c>over</c> - the initial value - is laid out; the other two are read so that a page asking for
+    /// them is not silently mistaken for one asking for <c>over</c>.
+    /// </summary>
+    public RubyPosition RubyPosition =>
+        ReadKeyword("ruby-position")?.ToLowerInvariant() switch
+        {
+            "under" => RubyPosition.Under,
+            "inter-character" => RubyPosition.InterCharacter,
+            _ => RubyPosition.Over,
+        };
+
+    /// <summary>
+    /// Gets whether the annotation is set after its base along the block axis rather than before it,
+    /// which is the one distinction the layout of a pair has to make.
+    /// </summary>
+    public Boolean HasRubyUnder => RubyPosition == RubyPosition.Under;
 
     public CssColorValue Color => ColorValue("color") ?? CssColorValue.Black;
 

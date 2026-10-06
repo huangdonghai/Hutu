@@ -81,4 +81,24 @@ public static class TextChunker
         (character >= '\u2E80' && character <= '\u9FFF') ||
         (character >= '\uF900' && character <= '\uFAFF') ||
         (character >= '\uFF00' && character <= '\uFFEF');
+
+    /// <summary>
+    /// Gets whether a character keeps its own orientation when it is set in a column.
+    /// </summary>
+    /// <remarks>
+    /// The wide characters - CJK, kana, the fullwidth forms, and the vertical presentation forms of
+    /// their punctuation - are already drawn the way a column wants them, so <c>text-orientation:
+    /// mixed</c> leaves them upright. Everything else, Latin and digits above all, is turned a quarter
+    /// turn so that it reads down the column rather than one letter per em.
+    /// </remarks>
+    public static Boolean IsUpright(Char character) =>
+        IsCjk(character) || (character >= '\uFE10' && character <= '\uFE4F');
+
+    /// <summary>
+    /// Gets whether a character may take part in a <c>text-combine-upright</c> run: the narrow
+    /// characters a column would otherwise have to turn one by one. Digits are what the property is
+    /// normally used for, but any non-wide character qualifies.
+    /// </summary>
+    public static Boolean IsCombinable(Char character) =>
+        !Char.IsWhiteSpace(character) && !IsUpright(character);
 }

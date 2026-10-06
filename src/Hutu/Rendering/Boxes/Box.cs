@@ -1,4 +1,5 @@
 using AngleSharp.Dom;
+using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
@@ -51,6 +52,18 @@ public enum BoxKind
 
     /// <summary>A table column group, which is a container for column hints only.</summary>
     TableColumnGroup,
+
+    /// <summary>
+    /// A <c>ruby</c> element, which carries its base text and the annotation that belongs over it.
+    /// Inline-level: the whole annotation behaves as one unit within the line.
+    /// </summary>
+    Ruby,
+
+    /// <summary>The base text of a <c>ruby</c> element, which the annotation is set over.</summary>
+    RubyBase,
+
+    /// <summary>An <c>rt</c> annotation, set in a smaller font over the base text it belongs to.</summary>
+    RubyText,
 }
 
 /// <summary>
@@ -74,6 +87,17 @@ public sealed class Box
 
     /// <summary>Gets the resolved style. For a text box this is the containing element's style.</summary>
     public ComputedStyle Style { get; }
+
+    /// <summary>
+    /// Gets the writing mode, text orientation and upright combining the box lays its content out in.
+    /// </summary>
+    /// <remarks>
+    /// <c>writing-mode</c> reaches a box through the cascade, but <c>text-orientation</c> and
+    /// <c>text-combine-upright</c> are not registered with the parser and so are not inherited there.
+    /// The builder therefore resolves the three once, while it walks the tree, and every descendant
+    /// takes what its ancestor ran in unless it declares otherwise.
+    /// </remarks>
+    public WritingModeInfo Flow { get; init; } = WritingModeInfo.Horizontal;
 
     /// <summary>Gets the source element, or null for a text or anonymous box.</summary>
     public IElement? Element { get; init; }

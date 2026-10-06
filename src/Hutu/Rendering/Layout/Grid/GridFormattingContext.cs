@@ -82,6 +82,7 @@ internal sealed class GridFormattingContext
             Border = border,
             Padding = padding,
             BorderBox = borderBox,
+            Flow = box.Flow,
         };
 
         if (box.Children.Count == 0)

@@ -174,6 +174,10 @@ public sealed class PopClipCommand : PaintCommand
 /// <summary>A run of text drawn on a single baseline.</summary>
 public sealed class TextCommand : PaintCommand
 {
+    /// <summary>
+    /// Creates the command for a run of horizontal text, which is what a page that never asks for a
+    /// writing mode is made of.
+    /// </summary>
     public TextCommand(
         Rect bounds,
         String text,
@@ -182,6 +186,24 @@ public sealed class TextCommand : PaintCommand
         UInt32 color,
         Boolean underline,
         Boolean lineThrough)
+        : this(bounds, text, baseline, font, color, underline, lineThrough, WritingModeInfo.Horizontal)
+    {
+    }
+
+    /// <param name="flow">
+    /// How the run is laid out. A vertical run advances down its bounds rather than across them, and
+    /// which way its glyphs are turned decides whether the backend rotates the whole run or stacks the
+    /// characters upright one under the other.
+    /// </param>
+    public TextCommand(
+        Rect bounds,
+        String text,
+        Double baseline,
+        FontStyle font,
+        UInt32 color,
+        Boolean underline,
+        Boolean lineThrough,
+        WritingModeInfo flow)
         : base(bounds)
     {
         Text = text;
@@ -190,12 +212,19 @@ public sealed class TextCommand : PaintCommand
         Color = color;
         Underline = underline;
         LineThrough = lineThrough;
+        Flow = flow;
     }
 
     public String Text { get; }
 
-    /// <summary>Gets the distance from the top of <see cref="PaintCommand.Bounds"/> to the baseline.</summary>
+    /// <summary>
+    /// Gets the distance from the block-start edge of <see cref="PaintCommand.Bounds"/> to the
+    /// baseline: down from the top edge for horizontal text, across from the left edge for a column.
+    /// </summary>
     public Double Baseline { get; }
+
+    /// <summary>Gets how the run is laid out, which is horizontal for every run that does not ask otherwise.</summary>
+    public WritingModeInfo Flow { get; }
 
     public FontStyle Font { get; }
 

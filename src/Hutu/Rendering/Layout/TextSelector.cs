@@ -11,11 +11,13 @@ namespace Hutu.Rendering.Layout;
 /// </summary>
 /// <remarks>
 /// The runs are collected once, in document order, and a character's place on its line is resolved
-/// through a per-run table of prefix widths built on demand. Prefix widths are what turn an x
-/// coordinate into an index, because the measurer only reports the advance of a string: the width of
-/// everything before a character is what says where that character starts. Keeping the table is also
-/// what stops a drag from re-measuring a paragraph on every pointer move, and it is dropped together
-/// with the selector, i.e. with the layout it was built from.
+/// through a per-run table of prefix widths built on demand. Prefix widths are what turn a point into
+/// an index, because the measurer only reports the advance of a string: the advance of everything
+/// before a character is what says where that character starts. The advance is read along the axis the
+/// run itself travels - x for horizontal text, y for a column - so a hit lands on the same character
+/// whichever way the text is written. Keeping the table is also what stops a drag from re-measuring a
+/// paragraph on every pointer move, and it is dropped together with the selector, i.e. with the layout
+/// it was built from.
 /// <para>
 /// Text inside a <c>fixed</c> or <c>sticky</c> box is left out. Its geometry is viewport-relative -
 /// fixed boxes are laid out against the viewport and sticky ones are shifted at paint time - so
@@ -58,7 +60,7 @@ public sealed class TextSelector
     {
         var hit = TryHit(x, y, out var run) ? run : Nearest(x, y);
 
-        return hit is null ? null : new TextPosition(hit, IndexAtX(hit, x));
+        return hit is null ? null : new TextPosition(hit, IndexAt(hit, InlineCoordinate(hit, x, y)));
     }
 
     /// <summary>
@@ -275,19 +277,33 @@ public sealed class TextSelector
         for (var order = first; order <= last; order++)
         {
             var run = _runs[order];
-            var box = run.BorderBox;
-            var from = order == first ? XAt(run, start.Index) : box.X;
-            var to = order == last ? XAt(run, end.Index) : box.Right;
+            var from = order == first ? OffsetAt(run, start.Index) : InlineBegin(run);
+            var to = order == last ? OffsetAt(run, end.Index) : InlineEnd(run);
 
             // A range that only touches a run covers nothing of it; an empty one produces no
             // rectangle at all, which is what makes a plain click leave no highlight behind.
-            if (to > from)
+            if (to != from)
             {
-                fragments.Add((run, new Rect(from, box.Y, to - from, box.Height)));
+                fragments.Add((run, Fragment(run, from, to)));
             }
         }
 
         return fragments;
+    }
+
+    /// <summary>
+    /// Builds the rectangle a piece of a run covers, spanning the run's whole block extent: the height
+    /// of a horizontal run, or the width of a column.
+    /// </summary>
+    private static Rect Fragment(LayoutBox run, Double from, Double to)
+    {
+        var box = run.BorderBox;
+        var low = Math.Min(from, to);
+        var high = Math.Max(from, to);
+
+        return run.Flow.IsVertical
+            ? new Rect(box.X, low, box.Width, high - low)
+            : new Rect(low, box.Y, high - low, box.Height);
     }
 
     /// <summary>
@@ -363,50 +379,65 @@ public sealed class TextSelector
     }
 
     /// <summary>
-    /// Gets the run nearest a point, comparing distance down the page first and along the line
-    /// second, so a point below a paragraph takes its last line rather than a nearer column.
+    /// Gets the run nearest a point, comparing distance along the block axis first and along the
+    /// inline axis second, so a point past the end of a paragraph takes its last line rather than a
+    /// nearer column. Both axes are the run's own, so the comparison holds whichever way it is written.
     /// </summary>
     private LayoutBox? Nearest(Double x, Double y)
     {
         LayoutBox? best = null;
-        var bestVertical = Double.MaxValue;
-        var bestHorizontal = Double.MaxValue;
+        var bestBlock = Double.MaxValue;
+        var bestInline = Double.MaxValue;
 
         foreach (var run in _runs)
         {
             var box = run.BorderBox;
-            var vertical = y < box.Y ? box.Y - y : y >= box.Bottom ? y - box.Bottom : 0;
-            var horizontal = x < box.X ? box.X - x : x > box.Right ? x - box.Right : 0;
+            var vertical = run.Flow.IsVertical;
 
-            if (vertical < bestVertical || (vertical == bestVertical && horizontal < bestHorizontal))
+            var blockCoordinate = vertical ? x : y;
+            var blockLow = vertical ? box.X : box.Y;
+            var blockHigh = vertical ? box.Right : box.Bottom;
+
+            var inline = InlineCoordinate(run, x, y);
+            var inlineBegin = InlineBegin(run);
+            var inlineEnd = InlineEnd(run);
+            var inlineLow = Math.Min(inlineBegin, inlineEnd);
+            var inlineHigh = Math.Max(inlineBegin, inlineEnd);
+
+            var block = blockCoordinate < blockLow ? blockLow - blockCoordinate
+                : blockCoordinate >= blockHigh ? blockCoordinate - blockHigh
+                : 0;
+            var inlineDistance = inline < inlineLow ? inlineLow - inline
+                : inline > inlineHigh ? inline - inlineHigh
+                : 0;
+
+            if (block < bestBlock || (block == bestBlock && inlineDistance < bestInline))
             {
                 best = run;
-                bestVertical = vertical;
-                bestHorizontal = horizontal;
+                bestBlock = block;
+                bestInline = inlineDistance;
             }
         }
 
         return best;
     }
 
-    /// <summary>Gets which character boundary an x coordinate on the run falls nearest to.</summary>
-    private Int32 IndexAtX(LayoutBox run, Double x)
+    /// <summary>Gets which character boundary a point along the run's inline axis falls nearest to.</summary>
+    private Int32 IndexAt(LayoutBox run, Double inline)
     {
-        var box = run.BorderBox;
+        var distance = (inline - InlineBegin(run)) * run.Flow.InlineSign;
+        var prefix = Prefixes(run);
+        var length = prefix[^1];
 
-        if (x <= box.X)
+        if (distance <= 0)
         {
             return 0;
         }
 
-        var prefix = Prefixes(run);
-
-        if (x >= box.Right)
+        if (distance >= length)
         {
             return prefix.Length - 1;
         }
-
-        var offset = x - box.X;
 
         // The last boundary at or before the point; the binary search is what makes a hit on a long
         // paragraph cost a handful of table reads instead of a scan per character.
@@ -417,7 +448,7 @@ public sealed class TextSelector
         {
             var middle = (low + high + 1) / 2;
 
-            if (prefix[middle] <= offset)
+            if (prefix[middle] <= distance)
             {
                 low = middle;
             }
@@ -434,21 +465,51 @@ public sealed class TextSelector
 
         // The nearer of the two boundaries the point sits between, which is what makes the middle of
         // a character select that character rather than its neighbour.
-        return offset - prefix[low] < prefix[low + 1] - offset ? low : low + 1;
+        return distance - prefix[low] < prefix[low + 1] - distance ? low : low + 1;
     }
 
-    /// <summary>Gets the x coordinate of a character boundary on a run.</summary>
-    private Double XAt(LayoutBox run, Int32 index)
+    /// <summary>Gets the coordinate of a character boundary along the run's inline axis.</summary>
+    private Double OffsetAt(LayoutBox run, Int32 index)
     {
         var prefix = Prefixes(run);
 
-        return run.BorderBox.X + prefix[Math.Clamp(index, 0, prefix.Length - 1)];
+        return InlineBegin(run) + prefix[Math.Clamp(index, 0, prefix.Length - 1)] * run.Flow.InlineSign;
+    }
+
+    /// <summary>Gets how far along its inline axis a point sits: an x for horizontal text, a y for a column.</summary>
+    private static Double InlineCoordinate(LayoutBox run, Double x, Double y) => run.Flow.IsVertical ? y : x;
+
+    /// <summary>Gets the coordinate a run starts at along its inline axis, where its reading starts.</summary>
+    private static Double InlineBegin(LayoutBox run)
+    {
+        var box = run.BorderBox;
+
+        if (run.Flow.InlineSign < 0)
+        {
+            return run.Flow.IsVertical ? box.Bottom : box.Right;
+        }
+
+        return run.Flow.IsVertical ? box.Y : box.X;
+    }
+
+    /// <summary>Gets the coordinate a run ends at along its inline axis.</summary>
+    private static Double InlineEnd(LayoutBox run)
+    {
+        var box = run.BorderBox;
+
+        if (run.Flow.InlineSign < 0)
+        {
+            return run.Flow.IsVertical ? box.Y : box.X;
+        }
+
+        return run.Flow.IsVertical ? box.Bottom : box.Right;
     }
 
     /// <summary>
-    /// Gets the running widths of a run's characters, one entry per boundary. Measured from the start
-    /// of the run each time, because an advance can depend on what precedes it - kerning, at least -
-    /// and the table is what pays for the repeated measuring exactly once.
+    /// Gets the running advances of a run's characters, one entry per boundary, along the axis the run
+    /// travels. Measured from the start of the run each time, because an advance can depend on what
+    /// precedes it - kerning, at least - and the table is what pays for the repeated measuring exactly
+    /// once.
     /// </summary>
     private Double[] Prefixes(LayoutBox run)
     {
@@ -460,12 +521,34 @@ public sealed class TextSelector
         var text = run.Text ?? String.Empty;
         var prefix = new Double[text.Length + 1];
 
+        // A column sets an upright character in its em box rather than at its natural width, so the
+        // boundaries are stepped the way the layout stepped them: the table has to agree with the run
+        // the characters were placed by, or a hit lands on a neighbour.
         for (var index = 1; index <= text.Length; index++)
         {
-            prefix[index] = _measurer.MeasureWidth(text[..index], run.Font);
+            prefix[index] = run.Flow.IsVertical
+                ? prefix[index - 1] + ColumnStep(run, text[index - 1])
+                : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow);
         }
 
         _prefixes[run] = prefix;
         return prefix;
+    }
+
+    /// <summary>
+    /// Gets how far one character of a column advances: a turned run by the width it would have had in
+    /// a line, an upright one by its em box, and a run combined upright is spread across the single em
+    /// the whole of it is squeezed into.
+    /// </summary>
+    private Double ColumnStep(LayoutBox run, Char character)
+    {
+        if (run.Flow.CombinesUpright)
+        {
+            return run.Font.Size / Math.Max(1, run.Text?.Length ?? 1);
+        }
+
+        var advance = _measurer.MeasureAdvance(character.ToString(), run.Font, run.Flow);
+
+        return run.Flow.IsUpright(character) ? Math.Max(advance, run.Font.Size) : advance;
     }
 }

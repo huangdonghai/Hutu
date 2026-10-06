@@ -110,8 +110,27 @@ public sealed class LayoutBox
     /// <summary>Gets the resolved font of a text node.</summary>
     public FontStyle Font { get; set; }
 
-    /// <summary>Gets the distance from the top of the border box to the baseline.</summary>
+    /// <summary>
+    /// Gets the distance from the box's inline start to the baseline, measured on the block axis: the
+    /// distance down from the top of the border box for horizontal text, and the distance right from
+    /// its left edge for vertical text.
+    /// </summary>
+    /// <remarks>
+    /// One field covers both because the two never apply at once - a box is either horizontal or not -
+    /// and the painter resolves which of the two it is holding from <see cref="Flow"/>, which it has
+    /// anyway when it decides how to draw the glyphs.
+    /// </remarks>
     public Double Baseline { get; set; }
+
+    /// <summary>
+    /// Gets or sets the writing mode, text orientation and upright combining the box was laid out
+    /// with. The whole subtree inherits it, so a vertical container makes its text vertical unless an
+    /// inner box asks for horizontal again.
+    /// </summary>
+    public WritingModeInfo Flow { get; set; } = WritingModeInfo.Horizontal;
+
+    /// <summary>Gets whether the box's text runs down a column rather than along a line.</summary>
+    public Boolean Vertical => Flow.IsVertical;
 
     /// <summary>Gets the absolute URL of the image drawn in an <see cref="LayoutKind.Image"/> box.</summary>
     public String? ImageUrl { get; set; }

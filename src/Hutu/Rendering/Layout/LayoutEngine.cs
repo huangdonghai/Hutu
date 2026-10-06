@@ -243,6 +243,7 @@ public sealed class LayoutEngine
             ImageUrl = box.SourceUrl,
             ImageFit = style.ObjectFit,
             BorderBox = borderBox,
+            Flow = box.Flow,
         };
     }
 

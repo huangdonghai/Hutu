@@ -592,6 +592,134 @@ public sealed class SkiaRenderingTests
             "the corner sits outside the 20px curve and stays white");
     }
 
+    [Test]
+    public async Task VerticalChineseSamplePageRunsItsColumnsRightToLeft()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.AddEmbeddedResourceSource(typeof(Sample.Common.SampleUtils).Assembly, "Samples");
+        view.SetViewportSize(900, 700);
+
+        await view.LoadUrlAsync("Pages/vertical-chinese.htm");
+
+        Assert.That(view.Layout, Is.Not.Null, "the embedded resource requester should have served the page");
+        Assert.That(view.Paint, Is.Not.Null);
+
+        var panel = OneOfClass(view, "vertical-panel");
+        Assert.That(panel.Flow.IsVertical, Is.True, "the panel is the column the copy runs down");
+
+        var copy = OneOfClass(view, "vertical-copy");
+        var columns = Columns(copy);
+
+        Assert.That(columns.Count, Is.GreaterThan(1), "the copy is long enough to need more than one column");
+        Assert.That(columns[0].Flow.IsVertical, Is.True);
+        Assert.That(columns[0].BorderBox.Height, Is.GreaterThan(columns[0].BorderBox.Width), "a column is taller than it is wide");
+
+        // vertical-rl grows towards the left, so every column starts to the left of the one before it.
+        for (var i = 1; i < columns.Count; i++)
+        {
+            Assert.That(
+                columns[i].BorderBox.X,
+                Is.LessThan(columns[i - 1].BorderBox.X),
+                "each column is set to the left of the previous one");
+        }
+
+        var digits = TextsIn(copy).Single(text => text.Text == "2026");
+        Assert.That(digits.Flow.CombinesUpright, Is.True, "the tcy span stands as one upright box");
+        Assert.That(digits.Flow.IsVertical, Is.True);
+
+        Assert.That(CountNonWhitePixels(view.Paint!, measurer), Is.GreaterThan(1000));
+    }
+
+    [Test]
+    public async Task VerticalJapaneseSamplePageSetsItsRubyBesideTheColumn()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.AddEmbeddedResourceSource(typeof(Sample.Common.SampleUtils).Assembly, "Samples");
+        view.SetViewportSize(900, 700);
+
+        await view.LoadUrlAsync("Pages/vertical-japanese.htm");
+
+        Assert.That(view.Layout, Is.Not.Null);
+
+        var panel = OneOfClass(view, "vertical-panel");
+        var baseText = TextsIn(panel).Single(text => text.Text == "春");
+        var annotation = TextsIn(panel).Single(text => text.Text == "はる");
+
+        Assert.That(baseText.Flow.IsVertical, Is.True);
+        Assert.That(annotation.Flow.IsVertical, Is.True);
+        Assert.That(annotation.Font.Size, Is.LessThan(baseText.Font.Size), "a reading is set smaller than its base");
+        Assert.That(
+            annotation.BorderBox.X,
+            Is.GreaterThanOrEqualTo(baseText.BorderBox.Right - 0.5),
+            "the reading sits on the far side of the column from the text it annotates");
+
+        var digits = TextsIn(panel).FirstOrDefault(text => text.Text == "2026");
+        Assert.That(digits, Is.Not.Null, "the tcy digits were laid out");
+        Assert.That(digits!.Flow.CombinesUpright, Is.True);
+
+        Assert.That(CountNonWhitePixels(view.Paint!, measurer), Is.GreaterThan(1000));
+    }
+
+    [Test]
+    public async Task VerticalMixedSamplePageTurnsEachBoxItsOwnWay()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.AddEmbeddedResourceSource(typeof(Sample.Common.SampleUtils).Assembly, "Samples");
+        view.SetViewportSize(900, 760);
+
+        await view.LoadUrlAsync("Pages/vertical-mixed.htm");
+
+        Assert.That(view.Layout, Is.Not.Null);
+
+        var mixed = Orientations(OneOfClass(view, "mixed"));
+        var upright = Orientations(OneOfClass(view, "upright"));
+        var sideways = Orientations(OneOfClass(view, "sideways"));
+
+        Assert.That(mixed, Does.Contain(TextOrientation.Upright), "an ideograph stands upright under mixed");
+        Assert.That(mixed, Does.Contain(TextOrientation.Sideways), "a latin run is turned under mixed");
+        Assert.That(upright, Is.EquivalentTo(new[] { TextOrientation.Upright }), "every character stands upright");
+        Assert.That(sideways, Is.EquivalentTo(new[] { TextOrientation.Sideways }), "every character is turned");
+
+        Assert.That(CountNonWhitePixels(view.Paint!, measurer), Is.GreaterThan(1000));
+    }
+
+    /// <summary>Finds the line boxes under a box, in document order.</summary>
+    private static System.Collections.Generic.List<LayoutBox> Columns(LayoutBox root)
+    {
+        return LayoutBoxes(root).Where(node => node.Kind == LayoutKind.Line).ToList();
+    }
+
+    /// <summary>Finds the text boxes under a box, in document order.</summary>
+    private static System.Collections.Generic.List<LayoutBox> TextsIn(LayoutBox root)
+    {
+        return LayoutBoxes(root).Where(node => node.Kind == LayoutKind.Text).ToList();
+    }
+
+    /// <summary>Gets the orientations the text under a box is set in, without repetition.</summary>
+    private static System.Collections.Generic.List<TextOrientation> Orientations(LayoutBox root)
+    {
+        return TextsIn(root)
+            .Select(text => text.Flow.Orientation)
+            .Distinct()
+            .ToList();
+    }
+
+    private static System.Collections.Generic.IEnumerable<LayoutBox> LayoutBoxes(LayoutBox root)
+    {
+        yield return root;
+
+        foreach (var child in root.Children)
+        {
+            foreach (var descendant in LayoutBoxes(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
     /// <summary>Finds the one box an element of a given class produced.</summary>
     private static LayoutBox OneOfClass(HutuViewInternal view, String name)
     {
