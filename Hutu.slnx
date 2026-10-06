@@ -19,6 +19,7 @@
     <File Path="Directory.Packages.props" />
   </Folder>
   <Project Path="src/Hutu.Avalonia/Hutu.Avalonia.csproj" Id="706fcf07-ae08-4319-b163-5e78c3e992bc" />
+  <Project Path="src/Hutu.Avalonia.Tests/Hutu.Avalonia.Tests.csproj" Id="9a7e1d42-5c3b-4f0a-8e21-6b4d7c2f9a10" />
   <Project Path="src/Hutu.Maui/Hutu.Maui.csproj" Id="94cfab19-a968-4430-8824-110fcb8233f6" />
   <Project Path="src/Hutu.MewUi/Hutu.MewUi.csproj" Id="4088c58d-4dd9-4109-9a1c-790ef460de66" />
   <Project Path="src/Hutu.Skia/Hutu.Skia.csproj" Id="1be2f4d9-2c7f-4a2e-9d3b-6c5a8e0f7b41" />

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="NUnit" />
+    <PackageReference Include="NUnit3TestAdapter" />
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.Headless" />
+    <!-- Supplies [AvaloniaTest] and AvaloniaTestApplicationAttribute, so the tests do not have to
+         drive HeadlessUnitTestSession by hand. -->
+    <PackageReference Include="Avalonia.Headless.NUnit" />
+    <!-- UseSkia is a compile time extension method; do not rely on it arriving transitively. -->
+    <PackageReference Include="Avalonia.Skia" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Hutu.Avalonia\Hutu.Avalonia.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Pages\*.htm" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

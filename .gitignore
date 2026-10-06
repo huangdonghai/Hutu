@@ -428,3 +428,5 @@ FodyWeavers.xsd
 *.msm
 *.msp
 /.github
+# CodeBuddy IDE data (local plans, teams and automations)
+.codebuddy/
