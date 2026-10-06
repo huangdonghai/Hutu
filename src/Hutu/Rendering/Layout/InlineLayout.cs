@@ -408,8 +408,8 @@ public sealed class InlineLayout
                 fragment.Box,
                 flow.Map(
                     contentBox,
-                    origin + atomic.StartMargin,
-                    atomic.InlineSize - atomic.StartMargin - atomic.EndMargin,
+                    origin + atomic.InlineStartMargin,
+                    atomic.InlineSize - atomic.InlineStartMargin - atomic.InlineEndMargin,
                     cursor + line.Ascent - atomic.Ascent,
                     atomic.BlockSize),
                 context.Containing));
@@ -740,9 +740,10 @@ public sealed class InlineLayout
             // from the box's intrinsic one.
             if (item.IsAtomic)
             {
-                var room = flow.IsVertical || maxInline <= 0
-                    ? Double.PositiveInfinity
-                    : maxInline - builder.Width;
+                // The room the line has left is measured along the axis the line itself runs along, so
+                // it is a physical width in a row and a height in a column. Nothing is bounded when the
+                // line has no definite extent at all.
+                var room = maxInline <= 0 ? Double.PositiveInfinity : maxInline - builder.Width;
 
                 var atomic = MeasureInlineBlock(item.Box, maxInline, room, flow, context);
 
@@ -1046,43 +1047,55 @@ public sealed class InlineLayout
     /// </param>
     /// <param name="room">
     /// The room the line has left for the box's margin box - negative when there is less than none -
-    /// or positive infinity when the line's inline axis is not a physical width the box could be
-    /// measured against.
+    /// or positive infinity when the line has no definite extent to measure it against.
     /// </param>
     /// <remarks>
     /// The engine is handed the extent the box should come out at as the basis it is measured against,
     /// not as a size imposed on it: an <c>auto</c> width fills the extent it is measured against, so a
     /// box measured against the extent it should come out at comes out at that extent. Its own margins
     /// are part of that arithmetic, because they are already inside the extent the line reserved.
+    /// <para>
+    /// A column does not behave that way: its <c>auto</c> size is what the content asks for rather than
+    /// the extent it is measured against, so handing it the room as a basis would not bound anything.
+    /// The room left for the box's own content is given to it instead, and the box takes whatever its
+    /// content then comes out at.
+    /// </para>
     /// </remarks>
     private AtomicInline MeasureInlineBlock(Box box, Double basis, Double room, WritingModeInfo flow, InlineContext context)
     {
         var intrinsic = context.Engine.MeasureIntrinsic(box, context.Containing);
 
-        // Only the margins along the line are modelled. The ones across it would have to be stacked
-        // into the extent the line measures for itself, which is a gap: a margin above or below an
-        // inline-block is ignored rather than pushing the lines apart.
-        var (start, end) = InlineMargins(box.Style.Margin.Resolve(basis), flow);
+        // The margins are kept in both directions: along the line they are part of what the line
+        // reserves, and across it they are part of what the line grows by.
+        var margin = box.Style.Margin.Resolve(basis);
+        var (start, end) = InlineMargins(margin, flow);
+        var (blockStart, blockEnd) = BlockMargins(margin, flow);
         var margins = start + end;
 
-        // CSS2.1 §10.3.9: shrink-to-fit is the width the content prefers, brought down to what is
-        // available and never taken below the width the content cannot go under. All three extents are
+        // CSS2.1 §10.3.9: shrink-to-fit is the size the content prefers, brought down to what is
+        // available and never taken below the size the content cannot go under. All three extents are
         // margin boxes, since that is what has to fit on the line.
         var shrink = Math.Min(intrinsic.MaxContent + margins, Math.Max(intrinsic.MinContent + margins, room));
 
-        // A box set in a column has no physical width for any of that to bound - its inline axis is its
-        // height - so it is measured unconstrained and takes the size its content asks for.
-        var size = context.Engine.Measure(
-            box,
-            box.Flow.IsVertical ? MeasureConstraints.Unconstrained : MeasureConstraints.FitWidth(shrink),
-            context.Containing);
+        // A row is measured against the extent it should come out at, because an `auto` width fills
+        // whatever it is measured against. A column's `auto` size is its content's rather than what it
+        // is measured against, so the same does not work there: the box is handed the room left for its
+        // content box, and takes the extent that content asks for inside it. The padding and border
+        // along the inline axis come off that room the same way a row's insets do inside the box model.
+        var constraints = box.Flow.IsVertical
+            ? MeasureConstraints.Unconstrained.WithHeight(shrink - margins - InlineInsets(box, shrink))
+            : MeasureConstraints.FitWidth(shrink);
+
+        var size = context.Engine.Measure(box, constraints, context.Containing);
 
         return new AtomicInline(
             flow.InlineExtent(size.Width, size.Height) + margins,
             flow.BlockExtent(size.Width, size.Height),
             InlineBlockBaseline(box, size, shrink, flow, context),
             start,
-            end);
+            end,
+            blockStart,
+            blockEnd);
     }
 
     /// <summary>
@@ -1161,6 +1174,33 @@ public sealed class InlineLayout
         flow.IsVertical
             ? flow.InlineSign > 0 ? (margin.Top, margin.Bottom) : (margin.Bottom, margin.Top)
             : (margin.Left, margin.Right);
+
+    /// <summary>Gets the margins a box takes across the line, as the distance before it and after it.</summary>
+    /// <remarks>
+    /// The block axis is the one the lines advance along: down the page in a row, and sideways in a
+    /// column, where a right-to-left mode has the columns advance leftward.
+    /// </remarks>
+    private static (Double Start, Double End) BlockMargins(Thickness margin, WritingModeInfo flow) =>
+        flow.IsVertical
+            ? flow.BlockSign > 0 ? (margin.Left, margin.Right) : (margin.Right, margin.Left)
+            : (margin.Top, margin.Bottom);
+
+    /// <summary>Gets the padding and border a box adds along its own inline axis.</summary>
+    /// <remarks>
+    /// A box whose text runs down a column borders its content above and below rather than to either
+    /// side, so the insets that count along its line are the vertical pair; a box in a row takes the
+    /// horizontal one. A percentage among them resolves against the extent the box is measured against,
+    /// which is the basis the box model would use for it in a row.
+    /// </remarks>
+    private static Double InlineInsets(Box box, Double basis)
+    {
+        var padding = box.Style.Padding.Resolve(basis);
+        var border = BlockLayout.BorderOf(box);
+
+        return box.Flow.IsVertical
+            ? padding.Vertical + border.Vertical
+            : padding.Horizontal + border.Horizontal;
+    }
 
     /// <summary>Measures a chunk of text the way the writing mode advances it.</summary>
     private Double Measure(ComputedStyle style, String chunk, WritingModeInfo flow) =>
@@ -1623,33 +1663,49 @@ public sealed class InlineLayout
     /// <remarks>
     /// The size along the line is the size the box is drawn at with its own margins added, since the
     /// line reserves the room for those too; the size across it is the box's alone, and the ascent says
-    /// where inside that the box's baseline falls.
+    /// where inside that the box's baseline falls. The margins are what the line reserves and grows by
+    /// on top of those sizes.
     /// </remarks>
     private readonly struct AtomicInline
     {
-        public AtomicInline(Double inlineSize, Double blockSize, Double ascent, Double startMargin, Double endMargin)
+        public AtomicInline(
+            Double inlineSize,
+            Double blockSize,
+            Double ascent,
+            Double inlineStartMargin,
+            Double inlineEndMargin,
+            Double blockStartMargin,
+            Double blockEndMargin)
         {
             InlineSize = inlineSize;
             BlockSize = blockSize;
             Ascent = ascent;
-            StartMargin = startMargin;
-            EndMargin = endMargin;
+            InlineStartMargin = inlineStartMargin;
+            InlineEndMargin = inlineEndMargin;
+            BlockStartMargin = blockStartMargin;
+            BlockEndMargin = blockEndMargin;
         }
 
-        /// <summary>Gets the extent the box takes along the line, its own margins included.</summary>
+        /// <summary>Gets the extent the box takes along the line, its own inline margins included.</summary>
         public Double InlineSize { get; }
 
-        /// <summary>Gets the extent the box takes along the block axis, its own margins aside.</summary>
+        /// <summary>Gets the extent the box takes along the block axis, its own block margins aside.</summary>
         public Double BlockSize { get; }
 
         /// <summary>Gets the distance from the block-start edge of the border box to the box's baseline.</summary>
         public Double Ascent { get; }
 
         /// <summary>Gets the margin taken before the box along the line.</summary>
-        public Double StartMargin { get; }
+        public Double InlineStartMargin { get; }
 
         /// <summary>Gets the margin taken after the box along the line.</summary>
-        public Double EndMargin { get; }
+        public Double InlineEndMargin { get; }
+
+        /// <summary>Gets the margin taken before the box across the line, above its ascent.</summary>
+        public Double BlockStartMargin { get; }
+
+        /// <summary>Gets the margin taken after the box across the line, below its descent.</summary>
+        public Double BlockEndMargin { get; }
     }
 
     /// <summary>
@@ -2044,11 +2100,12 @@ public sealed class InlineLayout
                 }
 
                 // An inline-block is as tall as its own content and stands on its own baseline, so the
-                // line grows by whatever the box reaches above and below that either way.
+                // line grows by whatever the box reaches above and below that either way - its margins
+                // across the line included, since those are part of the room it takes up there.
                 if (fragment.Atomic is { } atomic)
                 {
-                    ascent = Math.Max(ascent, atomic.Ascent);
-                    descent = Math.Max(descent, atomic.BlockSize - atomic.Ascent);
+                    ascent = Math.Max(ascent, atomic.BlockStartMargin + atomic.Ascent);
+                    descent = Math.Max(descent, atomic.BlockEndMargin + (atomic.BlockSize - atomic.Ascent));
                     continue;
                 }
 

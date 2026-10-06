@@ -149,6 +149,46 @@ public sealed class InlineBlockTests
     }
 
     [Test]
+    public async Task TheMarginsAboveAndBelowABoxGrowTheLine()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document(
+            "<span style='display:inline-block;margin:6px 0'>ab</span>"));
+
+        var block = Box(view, "span");
+        var line = Lines(view).Single();
+
+        Assert.That(
+            line.BorderBox.Height,
+            Is.EqualTo(32),
+            "the box's twenty pixels and the six its margins reach above and below it");
+        Assert.That(
+            block.BorderBox.Y - line.BorderBox.Y,
+            Is.EqualTo(6),
+            "which puts the box itself a margin below the top of the line it grew");
+    }
+
+    [Test]
+    public async Task TheMarginsAcrossABoxAreNotAllTheSame()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document(
+            "ab<span style='display:inline-block;margin:6px 0 2px'>cd</span>"));
+
+        var block = Box(view, "span");
+        var line = Lines(view).Single();
+        var run = Text(view, "ab");
+
+        // The taller margin is the one above the box, so it is the ascent that carries it and the
+        // difference between the two margins is what the box sits below the line's own baseline.
+        Assert.That(line.BorderBox.Height, Is.EqualTo(28), "13 + 6 above and 7 + 2 below");
+        Assert.That(block.BorderBox.Y - line.BorderBox.Y, Is.EqualTo(6));
+        Assert.That(run.BorderBox.Y + run.Baseline, Is.EqualTo(line.BorderBox.Y + line.Baseline).Within(0.001));
+    }
+
+    [Test]
     public async Task ABoxMayHoldBlockContentOfItsOwn()
     {
         using var view = CreateView();
@@ -181,23 +221,27 @@ public sealed class InlineBlockTests
     }
 
     /// <summary>
-    /// A column is where the gap is: an inline-block's inline axis is its height there, and the room
-    /// the line has left is measured along that axis, so the shrinking this fixture otherwise covers
-    /// has nothing to bound. The box is placed unconstrained until that is modelled, which is what the
-    /// ignored assertion records.
+    /// A column measures an inline-block along the axis its line runs down, so the room left on the
+    /// line is the height the box has to fit into rather than a physical width. The box wraps its
+    /// content to that room, which is the shrink-to-fit this fixture's other cases cover in a row.
     /// </summary>
     [Test]
-    [Ignore("shrink-to-fit is not modelled along a column's inline axis")]
-    public async Task ABoxInAColumnShrinksToFitTheColumn()
+    public async Task ABoxInAColumnShrinksToFitTheRoomLeftOnTheLine()
     {
         using var view = CreateView();
 
         await view.SetHtml(
             "<html><body style='margin:0'>" +
-            "<p style='margin:0;font-size:10px;line-height:1;writing-mode:vertical-rl;height:40px'>" +
-            "<span style='display:inline-block'>ab</span></p></body></html>");
+            "<p style='margin:0;font-size:10px;line-height:1;writing-mode:vertical-rl;height:20px'>" +
+            "<span style='display:inline-block'>あいう</span></p></body></html>");
 
-        Assert.That(Box(view, "span").BorderBox.Height, Is.EqualTo(10));
+        var block = Box(view, "span");
+
+        Assert.That(
+            block.BorderBox.Height,
+            Is.EqualTo(20),
+            "thirty pixels of upright text wraps to the twenty the column had left");
+        Assert.That(block.BorderBox.Width, Is.EqualTo(20), "and the two columns it took set the box that wide");
     }
 
     /// <summary>
