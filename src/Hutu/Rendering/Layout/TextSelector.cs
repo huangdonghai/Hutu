@@ -521,14 +521,18 @@ public sealed class TextSelector
         var text = run.Text ?? String.Empty;
         var prefix = new Double[text.Length + 1];
 
+        // The letter spacing the layout gave the run is added here too, so a boundary falls where the
+        // layout put it; without it a caret would drift further off with every character.
+        var spacing = run.Source.Style.LetterSpacing;
+
         // A column sets an upright character in its em box rather than at its natural width, so the
         // boundaries are stepped the way the layout stepped them: the table has to agree with the run
         // the characters were placed by, or a hit lands on a neighbour.
         for (var index = 1; index <= text.Length; index++)
         {
             prefix[index] = run.Flow.IsVertical
-                ? prefix[index - 1] + ColumnStep(run, text[index - 1])
-                : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow);
+                ? prefix[index - 1] + ColumnStep(run, text[index - 1]) + spacing
+                : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow) + (spacing * index);
         }
 
         _prefixes[run] = prefix;

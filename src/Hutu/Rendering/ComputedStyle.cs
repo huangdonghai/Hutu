@@ -222,6 +222,14 @@ public readonly struct ComputedStyle
 
     public String TextAlign => Keyword("text-align", "start");
 
+    /// <summary>
+    /// Gets the extra space added to every character's advance, in pixels. <c>normal</c>, the initial
+    /// value, means none; a length is resolved against the element's own font size, so <c>.16em</c> is
+    /// that share of the size the text is set at. The space follows the last character too, as CSS
+    /// asks, which is why a run is that much wider than its glyphs.
+    /// </summary>
+    public Double LetterSpacing => Length("letter-spacing", RenderMode.Horizontal, 0);
+
     public String VerticalAlign => Keyword("vertical-align", "baseline");
 
     /// <summary>

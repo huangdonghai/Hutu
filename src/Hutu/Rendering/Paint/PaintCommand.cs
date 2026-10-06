@@ -228,7 +228,7 @@ public sealed class TextCommand : PaintCommand
         UInt32 color,
         Boolean underline,
         Boolean lineThrough)
-        : this(bounds, text, baseline, font, color, underline, lineThrough, WritingModeInfo.Horizontal)
+        : this(bounds, text, baseline, font, color, underline, lineThrough, WritingModeInfo.Horizontal, 0)
     {
     }
 
@@ -246,6 +246,25 @@ public sealed class TextCommand : PaintCommand
         Boolean underline,
         Boolean lineThrough,
         WritingModeInfo flow)
+        : this(bounds, text, baseline, font, color, underline, lineThrough, flow, 0)
+    {
+    }
+
+    /// <param name="letterSpacing">
+    /// The extra space the run carries after every character, which the backend adds to its advances
+    /// so that what it draws lands where the layout measured it. It is zero for text that asks for
+    /// none.
+    /// </param>
+    public TextCommand(
+        Rect bounds,
+        String text,
+        Double baseline,
+        FontStyle font,
+        UInt32 color,
+        Boolean underline,
+        Boolean lineThrough,
+        WritingModeInfo flow,
+        Double letterSpacing)
         : base(bounds)
     {
         Text = text;
@@ -255,6 +274,7 @@ public sealed class TextCommand : PaintCommand
         Underline = underline;
         LineThrough = lineThrough;
         Flow = flow;
+        LetterSpacing = letterSpacing;
     }
 
     public String Text { get; }
@@ -267,6 +287,9 @@ public sealed class TextCommand : PaintCommand
 
     /// <summary>Gets how the run is laid out, which is horizontal for every run that does not ask otherwise.</summary>
     public WritingModeInfo Flow { get; }
+
+    /// <summary>Gets the extra space added after every character, in pixels; zero when there is none.</summary>
+    public Double LetterSpacing { get; }
 
     public FontStyle Font { get; }
 

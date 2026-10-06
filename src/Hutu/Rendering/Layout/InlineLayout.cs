@@ -1204,9 +1204,17 @@ public sealed class InlineLayout
 
     /// <summary>Measures a chunk of text the way the writing mode advances it.</summary>
     private Double Measure(ComputedStyle style, String chunk, WritingModeInfo flow) =>
-        flow.IsVertical
-            ? MeasureColumn(chunk, style.GetFont(), style.FontSize, flow, _measurer)
-            : _measurer.MeasureWidth(chunk, style.GetFont());
+        MeasureChunk(_measurer, style, chunk, flow);
+
+    /// <summary>
+    /// Measures a chunk against the measurer, adding the letter spacing the style asks for on top of
+    /// every character - the last one included, which is what CSS says a spaced run is worth.
+    /// </summary>
+    private static Double MeasureChunk(ITextMeasurer measurer, ComputedStyle style, String chunk, WritingModeInfo flow) =>
+        (flow.IsVertical
+            ? MeasureColumn(chunk, style.GetFont(), style.FontSize, flow, measurer)
+            : measurer.MeasureWidth(chunk, style.GetFont()))
+        + (style.LetterSpacing * chunk.Length);
 
     /// <summary>
     /// Measures the annotation of a ruby item: how far it reaches along the inline axis, how much room
@@ -1318,12 +1326,13 @@ public sealed class InlineLayout
     private List<MeasuredRun> Runs(String chunk, ComputedStyle style, WritingModeInfo flow)
     {
         var runs = new List<MeasuredRun>();
+        var spacing = style.LetterSpacing;
 
         if (!flow.IsVertical)
         {
             runs.Add(new MeasuredRun(
                 chunk,
-                _measurer.MeasureWidth(chunk, style.GetFont()),
+                _measurer.MeasureWidth(chunk, style.GetFont()) + (spacing * chunk.Length),
                 flow,
                 TextChunker.IsWhiteSpace(chunk)));
 
@@ -1336,7 +1345,7 @@ public sealed class InlineLayout
         {
             runs.Add(new MeasuredRun(
                 run.Text,
-                run.Advance(font, _measurer, style.FontSize, flow),
+                run.Advance(font, _measurer, style.FontSize, flow) + (spacing * run.Text.Length),
                 PinOrientation(flow, run),
                 TextChunker.IsWhiteSpace(run.Text)));
         }
@@ -2213,9 +2222,7 @@ public sealed class InlineLayout
                 }
 
                 last.Text = trimmed;
-                last.Width = last.Flow.IsVertical
-                    ? MeasureColumn(trimmed, last.Style.GetFont(), last.Style.FontSize, last.Flow, measurer)
-                    : measurer.MeasureWidth(trimmed, last.Style.GetFont());
+                last.Width = MeasureChunk(measurer, last.Style, trimmed, last.Flow);
                 break;
             }
         }

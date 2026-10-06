@@ -419,7 +419,7 @@ public sealed class SkiaPaintExecutor
         if (!command.Flow.IsVertical)
         {
             var baseline = (Single)(command.Bounds.Y + command.Baseline);
-            DrawRuns(canvas, _measurer.GetRuns(command.Text, command.Font), (Single)command.Bounds.X, baseline, paint);
+            DrawRuns(canvas, _measurer.GetRuns(command.Text, command.Font), (Single)command.Bounds.X, baseline, paint, command.LetterSpacing);
 
             if (command.Underline)
             {
@@ -492,7 +492,7 @@ public sealed class SkiaPaintExecutor
 
         canvas.Save();
         canvas.RotateDegrees(upward ? -90 : 90, baselineX, start);
-        DrawRuns(canvas, _measurer.GetRuns(command.Text, command.Font), baselineX, start, paint);
+        DrawRuns(canvas, _measurer.GetRuns(command.Text, command.Font), baselineX, start, paint, command.LetterSpacing);
         canvas.Restore();
     }
 
@@ -513,7 +513,7 @@ public sealed class SkiaPaintExecutor
         {
             var step = Math.Max(
                 measurer.MeasureAdvance(character.ToString(), command.Font, command.Flow),
-                command.Font.Size);
+                command.Font.Size) + command.LetterSpacing;
 
             // The step is the character's cell and it starts where the layout put it. Where the
             // baseline goes inside that cell is the font's to say - see DrawUprightCharacter - so the
@@ -640,12 +640,43 @@ public sealed class SkiaPaintExecutor
     /// width it was measured with. A run changes font where the family had no glyph, which is how the
     /// characters a family cannot set are kept without a box in the middle of the text.
     /// </summary>
-    private static void DrawRuns(SKCanvas canvas, IReadOnlyList<SkiaTextRun> runs, Single x, Single baseline, SKPaint paint)
+    /// <param name="letterSpacing">
+    /// The extra space the run carries after every character. It is folded into each glyph's position
+    /// and the run is drawn as one positioned blob, so the text still costs a single draw rather than
+    /// one per character, and the font's own advances between glyphs are left as they are.
+    /// </param>
+    private static void DrawRuns(SKCanvas canvas, IReadOnlyList<SkiaTextRun> runs, Single x, Single baseline, SKPaint paint, Double letterSpacing = 0)
     {
         foreach (var run in runs)
         {
-            canvas.DrawText(run.Text, x, baseline, run.Font, paint);
-            x += run.Font.MeasureText(run.Text);
+            if (letterSpacing == 0 || run.Text.Length == 0)
+            {
+                canvas.DrawText(run.Text, x, baseline, run.Font, paint);
+                x += run.Font.MeasureText(run.Text);
+                continue;
+            }
+
+            var glyphs = run.Font.GetGlyphs(run.Text);
+            var positions = run.Font.GetGlyphPositions(run.Text, new SKPoint(x, baseline));
+
+            for (var index = 0; index < positions.Length; index++)
+            {
+                positions[index].X += (Single)(letterSpacing * index);
+            }
+
+            using var builder = new SKTextBlobBuilder();
+            var placed = builder.AllocatePositionedRun(run.Font, glyphs.Length);
+            placed.SetGlyphs(glyphs);
+            placed.SetPositions(positions);
+            using var blob = builder.Build();
+
+            if (blob is not null)
+            {
+                // The run carries absolute positions, so the blob itself is drawn at the origin.
+                canvas.DrawText(blob, 0, 0, paint);
+            }
+
+            x += run.Font.MeasureText(run.Text) + (Single)(letterSpacing * run.Text.Length);
         }
     }
 

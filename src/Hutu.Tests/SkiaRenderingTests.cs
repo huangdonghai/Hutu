@@ -330,6 +330,69 @@ public sealed class SkiaRenderingTests
     }
 
     [Test]
+    public async Task ALetterSpacedRunPaintsItsGlyphsApart()
+    {
+        using var measurer = new SkiaTextMeasurer();
+
+        // The same three characters, once packed and once spread: the ink has to reach further to the
+        // right by the space the second and third characters were pushed along. A run drawn as a whole
+        // string would paint exactly as the packed one, so this is what proves the spacing reached the
+        // glyph positions and not merely the measured width.
+        var packed = await RightmostInk(measurer, "letter-spacing:0");
+        var spaced = await RightmostInk(measurer, "letter-spacing:16px");
+
+        Assert.That(spaced, Is.GreaterThan(packed + 20), $"spaced ink ends at {spaced}, packed at {packed}");
+    }
+
+    [Test]
+    public async Task TheFontsPagePaintsItsLetterSpacingParagraph()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.AddEmbeddedResourceSource(typeof(Sample.Common.SampleUtils).Assembly, "Samples");
+        view.SetViewportSize(900, 600);
+
+        await view.LoadUrlAsync("Pages/fonts.htm");
+
+        var run = view.Paint!.Commands
+            .OfType<TextCommand>()
+            .Single(command => command.Text == "Letter Spacing Test");
+
+        Assert.That(run.LetterSpacing, Is.GreaterThan(0), "the `.spacing` rule has to reach the run");
+    }
+
+    /// <summary>
+    /// Renders three characters under the given extra declarations and returns the column of the
+    /// rightmost ink, which is how far along the run the glyphs actually reached.
+    /// </summary>
+    private static async Task<Int32> RightmostInk(SkiaTextMeasurer measurer, String declarations)
+    {
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(400, 120);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0;font-size:32px;" + declarations + "'>iii</p>" +
+            "</body></html>");
+
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+        var rightmost = 0;
+
+        for (var x = 0; x < bitmap.Width; x++)
+        {
+            for (var y = 0; y < bitmap.Height; y++)
+            {
+                if (bitmap.GetPixel(x, y) != SKColors.White)
+                {
+                    rightmost = Math.Max(rightmost, x);
+                }
+            }
+        }
+
+        return rightmost;
+    }
+
+    [Test]
     public async Task ImagesSamplePageRendersItsImagesAndBackgroundPanel()
     {
         using var measurer = new SkiaTextMeasurer();
