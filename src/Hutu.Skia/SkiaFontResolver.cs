@@ -18,9 +18,25 @@ namespace Hutu.Skia;
 public sealed class SkiaFontResolver : IDisposable
 {
     private readonly ConcurrentDictionary<FaceKey, SKTypeface> _typefaces = new();
+    private readonly ConcurrentDictionary<FallbackKey, Fallback> _fallbacks = new();
 
     public SKTypeface Resolve(FontStyle style) =>
         _typefaces.GetOrAdd(new FaceKey(style.Family, style.Weight, style.IsItalic), CreateTypeface);
+
+    /// <summary>
+    /// Gets a typeface the system offers for a single character, which is what a family is asked for
+    /// when it has no glyph of its own - a Latin family meeting CJK text, say.
+    /// </summary>
+    /// <remarks>
+    /// The styles are searched with the weight and slant of the request so a bold face stays bold
+    /// where the system has one. The answer is cached per character and style, misses included, so a
+    /// page that repeats an unusual glyph asks the platform only once. <c>null</c> means the platform
+    /// has nothing better than the resolved family, whose own .notdef stands.
+    /// </remarks>
+    public SKTypeface? ResolveFallback(FontStyle style, Int32 codepoint) =>
+        _fallbacks.GetOrAdd(
+            new FallbackKey(codepoint, style.Weight, style.IsItalic),
+            _ => FindFallback(codepoint, style)).Typeface;
 
     /// <summary>
     /// Splits a CSS family list into individual names, stripping the quotes a family containing
@@ -66,6 +82,17 @@ public sealed class SkiaFontResolver : IDisposable
     private static SKFontStyle CreateStyle(Int32 weight, Boolean italic) =>
         new(weight, (Int32)SKFontStyleWidth.Normal, italic ? SKFontStyleSlant.Italic : SKFontStyleSlant.Upright);
 
+    private static Fallback FindFallback(Int32 codepoint, FontStyle style)
+    {
+        // The family is left unset so the platform searches its whole system for the character rather
+        // than the one family that failed to have it.
+        var match = SKFontManager.Default.MatchCharacter(null, CreateStyle(style.Weight, style.IsItalic), null, codepoint);
+
+        // The manager is documented to answer with the character's font, but a face that merely
+        // belongs to the same script is no improvement, so only one that carries the glyph is kept.
+        return match is not null && match.GetGlyph(codepoint) != 0 ? new Fallback(match) : default;
+    }
+
     public void Dispose()
     {
         foreach (var typeface in _typefaces.Values)
@@ -74,6 +101,13 @@ public sealed class SkiaFontResolver : IDisposable
         }
 
         _typefaces.Clear();
+
+        foreach (var fallback in _fallbacks.Values)
+        {
+            fallback.Typeface?.Dispose();
+        }
+
+        _fallbacks.Clear();
     }
 
     private readonly struct FaceKey : IEquatable<FaceKey>
@@ -110,5 +144,49 @@ public sealed class SkiaFontResolver : IDisposable
                 return hash;
             }
         }
+    }
+
+    private readonly struct FallbackKey : IEquatable<FallbackKey>
+    {
+        public FallbackKey(Int32 codepoint, Int32 weight, Boolean italic)
+        {
+            Codepoint = codepoint;
+            Weight = weight;
+            Italic = italic;
+        }
+
+        public Int32 Codepoint { get; }
+
+        public Int32 Weight { get; }
+
+        public Boolean Italic { get; }
+
+        public Boolean Equals(FallbackKey other) =>
+            Codepoint == other.Codepoint && Weight == other.Weight && Italic == other.Italic;
+
+        public override Boolean Equals(Object? obj) => obj is FallbackKey other && Equals(other);
+
+        public override Int32 GetHashCode()
+        {
+            unchecked
+            {
+                var hash = Codepoint;
+                hash = (hash * 397) ^ Weight;
+                hash = (hash * 397) ^ (Italic ? 1 : 0);
+                return hash;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The cached answer for a character: the system typeface that carries it, or the default value
+    /// when there is none. A value type is what lets a miss be cached, since the dictionary refuses a
+    /// null entry.
+    /// </summary>
+    private readonly struct Fallback
+    {
+        public Fallback(SKTypeface typeface) => Typeface = typeface;
+
+        public SKTypeface? Typeface { get; }
     }
 }

@@ -43,6 +43,27 @@ public sealed class SkiaRenderingTests
     }
 
     [Test]
+    public void CharactersAFamilyCannotSetFallBackToASystemFontThatCan()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        var style = new FontStyle("Arial", 16);
+
+        // Arial carries no CJK glyph, so the run has to leave it for a system font that does. This
+        // only means anything on a machine that offers one, so a system without is left inconclusive.
+        var runs = measurer.GetRuns("中文", style);
+        var carrier = runs.FirstOrDefault(run => run.Font.Typeface?.GetGlyph('中') != 0);
+
+        Assume.That(carrier, Is.Not.Null, "no system font carries CJK on this machine");
+
+        Assert.That(measurer.MeasureWidth("中文", style), Is.GreaterThan(0));
+        Assert.That(carrier!.Text, Is.EqualTo("中文"), "the ideographs are one stretch of the fallback font");
+        Assert.That(
+            runs.Any(run => run.Font.Typeface?.GetGlyph('中') == 0),
+            Is.False,
+            "no run is left to draw a box for the ideographs");
+    }
+
+    [Test]
     public async Task HeadingsAreLaidOutLargerThanBodyText()
     {
         using var measurer = new SkiaTextMeasurer();

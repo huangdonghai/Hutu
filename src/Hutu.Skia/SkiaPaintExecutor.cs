@@ -319,7 +319,6 @@ public sealed class SkiaPaintExecutor
 
     private void DrawText(SKCanvas canvas, TextCommand command)
     {
-        var font = _measurer.GetFont(command.Font);
         var metrics = _measurer.GetMetrics(command.Font);
 
         using var paint = new SKPaint { Color = new SKColor(command.Color), IsAntialias = true };
@@ -327,7 +326,7 @@ public sealed class SkiaPaintExecutor
         if (!command.Flow.IsVertical)
         {
             var baseline = (Single)(command.Bounds.Y + command.Baseline);
-            canvas.DrawText(command.Text, (Single)command.Bounds.X, baseline, font, paint);
+            DrawRuns(canvas, _measurer.GetRuns(command.Text, command.Font), (Single)command.Bounds.X, baseline, paint);
 
             if (command.Underline)
             {
@@ -344,15 +343,15 @@ public sealed class SkiaPaintExecutor
 
         if (command.Flow.CombinesUpright)
         {
-            DrawCombined(canvas, command, font, metrics, paint);
+            DrawCombined(canvas, command, metrics, paint);
         }
         else if (command.Flow.Orientation == TextOrientation.Upright)
         {
-            DrawUpright(canvas, command, font, metrics, paint);
+            DrawUpright(canvas, command, metrics, paint);
         }
         else
         {
-            DrawTurned(canvas, command, font, paint);
+            DrawTurned(canvas, command, paint);
         }
 
         // In a column a decoration runs beside the text rather than under it, so it becomes a line
@@ -392,7 +391,7 @@ public sealed class SkiaPaintExecutor
     /// other way and put it on the left, and the baseline the layout handed over is already on that
     /// side of the box.
     /// </remarks>
-    private static void DrawTurned(SKCanvas canvas, TextCommand command, SKFont font, SKPaint paint)
+    private void DrawTurned(SKCanvas canvas, TextCommand command, SKPaint paint)
     {
         var baselineX = (Single)(command.Bounds.X + command.Baseline);
         var upward = command.Flow.InlineSign < 0;
@@ -400,7 +399,7 @@ public sealed class SkiaPaintExecutor
 
         canvas.Save();
         canvas.RotateDegrees(upward ? -90 : 90, baselineX, start);
-        canvas.DrawText(command.Text, baselineX, start, font, paint);
+        DrawRuns(canvas, _measurer.GetRuns(command.Text, command.Font), baselineX, start, paint);
         canvas.Restore();
     }
 
@@ -408,7 +407,7 @@ public sealed class SkiaPaintExecutor
     /// Draws a run of characters that stay upright, one under the other, each owning the step the
     /// layout gave it and centred across the column.
     /// </summary>
-    private void DrawUpright(SKCanvas canvas, TextCommand command, SKFont font, FontMetrics metrics, SKPaint paint)
+    private void DrawUpright(SKCanvas canvas, TextCommand command, FontMetrics metrics, SKPaint paint)
     {
         var emBox = metrics.Ascent + metrics.Descent;
         var inline = 0.0;
@@ -420,6 +419,7 @@ public sealed class SkiaPaintExecutor
         foreach (var character in command.Text)
         {
             var text = character.ToString();
+            var font = _measurer.GetFont(command.Font, character);
             var step = Math.Max(measurer.MeasureAdvance(text, command.Font, command.Flow), command.Font.Size);
             var width = _measurer.MeasureWidth(text, command.Font);
 
@@ -437,7 +437,7 @@ public sealed class SkiaPaintExecutor
     /// Draws a run <c>text-combine-upright: all</c> welded into the single em it stands for, which it
     /// occupies however wide the characters would be along a line.
     /// </summary>
-    private void DrawCombined(SKCanvas canvas, TextCommand command, SKFont font, FontMetrics metrics, SKPaint paint)
+    private void DrawCombined(SKCanvas canvas, TextCommand command, FontMetrics metrics, SKPaint paint)
     {
         var natural = _measurer.MeasureWidth(command.Text, command.Font);
 
@@ -445,6 +445,8 @@ public sealed class SkiaPaintExecutor
         {
             return;
         }
+
+        var runs = _measurer.GetRuns(command.Text, command.Font);
 
         // The run was measured as one em, so squeezing the glyphs along the axis they are set on until
         // they are that long is what makes them line up with the characters around them.
@@ -462,7 +464,7 @@ public sealed class SkiaPaintExecutor
             var x = (Single)(command.Bounds.X + ((command.Bounds.Width - natural) / 2));
 
             canvas.Scale(squeeze, 1, x, (Single)command.Bounds.Y);
-            canvas.DrawText(command.Text, x, y, font, paint);
+            DrawRuns(canvas, runs, x, y, paint);
         }
         else
         {
@@ -470,10 +472,24 @@ public sealed class SkiaPaintExecutor
 
             canvas.RotateDegrees(90, baselineX, start);
             canvas.Scale(squeeze, 1, baselineX, start);
-            canvas.DrawText(command.Text, baselineX, start, font, paint);
+            DrawRuns(canvas, runs, baselineX, start, paint);
         }
 
         canvas.Restore();
+    }
+
+    /// <summary>
+    /// Draws the runs of a text command one after another along its baseline, each advancing by the
+    /// width it was measured with. A run changes font where the family had no glyph, which is how the
+    /// characters a family cannot set are kept without a box in the middle of the text.
+    /// </summary>
+    private static void DrawRuns(SKCanvas canvas, IReadOnlyList<SkiaTextRun> runs, Single x, Single baseline, SKPaint paint)
+    {
+        foreach (var run in runs)
+        {
+            canvas.DrawText(run.Text, x, baseline, run.Font, paint);
+            x += run.Font.MeasureText(run.Text);
+        }
     }
 
     private static void DrawGradient(SKCanvas canvas, LinearGradientCommand command)
