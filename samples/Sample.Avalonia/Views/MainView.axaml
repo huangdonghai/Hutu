@@ -15,9 +15,9 @@
 
     <Grid RowDefinitions="Auto,*" RowSpacing="8">
         <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="6">
-            <Button Grid.Column="0" Content="←" ToolTip.Tip="后退" />
-            <Button Grid.Column="1" Content="→" ToolTip.Tip="前进" />
-            <Button Grid.Column="2" Content="⟳" ToolTip.Tip="刷新" />
+            <Button Grid.Column="0" x:Name="BackButton" Content="←" ToolTip.Tip="后退" Click="Back_Click" IsEnabled="False" />
+            <Button Grid.Column="1" x:Name="ForwardButton" Content="→" ToolTip.Tip="前进" Click="Forward_Click" IsEnabled="False" />
+            <Button Grid.Column="2" x:Name="RefreshButton" Content="⟳" ToolTip.Tip="刷新" Click="Refresh_Click" IsEnabled="False" />
             <TextBox Grid.Column="3" x:Name="AddressBar" PlaceholderText="输入网址..." KeyDown="AddressBar_KeyDown" />
         </Grid>
 
