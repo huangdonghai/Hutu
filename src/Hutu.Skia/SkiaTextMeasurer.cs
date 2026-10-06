@@ -14,13 +14,14 @@ namespace Hutu.Skia;
 /// layout engine asks for both per text fragment and the underlying calls cross into native code.
 /// The fonts are also shared with the paint executor, so a run is measured and drawn with the very
 /// same font. A character the family has no glyph for is handed to a system font that does, which is
-/// what lets a Latin family carry CJK text without a box per character. Shaping through HarfBuzz is
-/// layered on when complex scripts and vertical writing are implemented; plain advance widths are
-/// accurate for the Latin and CJK samples this stage targets.
+/// what lets a Latin family carry CJK text without a box per character. The one place shaping is asked
+/// for is a column, which needs the glyph a font sets a character in when it stands upright; plain
+/// advance widths are accurate for the Latin and CJK samples this stage targets.
 /// </remarks>
 public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 {
     private readonly SkiaFontResolver _resolver;
+    private readonly SkiaTextShaper _shaper = new();
     private readonly ConcurrentDictionary<FontStyle, SKFont> _fonts = new();
     private readonly ConcurrentDictionary<FallbackFontKey, SKFont> _fallbackFonts = new();
     private readonly ConcurrentDictionary<FontStyle, FontMetrics> _metrics = new();
@@ -29,6 +30,9 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 
     /// <summary>Gets the resolver this measurer shares its typefaces with.</summary>
     public SkiaFontResolver Fonts => _resolver;
+
+    /// <summary>Gets the shaper that answers what glyph a column sets a character in.</summary>
+    public SkiaTextShaper Shaper => _shaper;
 
     /// <summary>Gets the cached font for the style; the paint executor draws with the same instance.</summary>
     public SKFont GetFont(FontStyle style) => _fonts.GetOrAdd(style, CreateFont);
@@ -43,6 +47,14 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         var primary = GetFont(style);
         return RunFont(style, primary, codepoint) ?? primary;
     }
+
+    /// <summary>
+    /// Gets whether any font the style can reach carries the glyph for a code point, the family's own
+    /// or a system fallback. A caller asks before substituting one character for another, because a
+    /// substitution into a glyph nothing has would draw the box it was meant to avoid.
+    /// </summary>
+    public Boolean HasGlyph(FontStyle style, Int32 codepoint) =>
+        GetFont(style, codepoint).Typeface?.GetGlyph(codepoint) != 0;
 
     public FontMetrics GetMetrics(FontStyle style) => _metrics.GetOrAdd(style, Measure);
 
@@ -100,6 +112,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         _fonts.Clear();
         _fallbackFonts.Clear();
         _metrics.Clear();
+        _shaper.Dispose();
         _resolver.Dispose();
     }
 

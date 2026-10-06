@@ -418,20 +418,84 @@ public sealed class SkiaPaintExecutor
 
         foreach (var character in command.Text)
         {
-            var text = character.ToString();
-            var font = _measurer.GetFont(command.Font, character);
-            var step = Math.Max(measurer.MeasureAdvance(text, command.Font, command.Flow), command.Font.Size);
-            var width = _measurer.MeasureWidth(text, command.Font);
+            var step = Math.Max(
+                measurer.MeasureAdvance(character.ToString(), command.Font, command.Flow),
+                command.Font.Size);
 
-            // The character sits in the middle of the step it owns, with its own baseline inside the
-            // em box rather than on the edge of the column.
-            var y = command.Bounds.Y + inline + ((step - emBox) / 2) + metrics.Ascent;
-            var x = command.Bounds.X + ((command.Bounds.Width - width) / 2);
+            // The step is the character's cell and it starts where the layout put it. Where the
+            // baseline goes inside that cell is the font's to say - see DrawUprightCharacter - so the
+            // middle of the em box stands in only for a font that will not.
+            var cellTop = command.Bounds.Y + inline;
+            var fallback = (Single)(cellTop + ((step - emBox) / 2) + metrics.Ascent);
 
-            canvas.DrawText(text, (Single)x, (Single)y, font, paint);
+            DrawUprightCharacter(canvas, command, character, cellTop, fallback, paint);
             inline += step;
         }
     }
+
+    /// <summary>
+    /// Draws one character of a column in the form a column sets it in, on the baseline the font puts
+    /// it on.
+    /// </summary>
+    /// <remarks>
+    /// A font declares where each glyph's baseline goes down a column, and it moves that place for the
+    /// characters - the 句读 above all - that would otherwise sit in the corner of their cell: asking
+    /// for the form alone leaves those marks half a character out of place. The form itself is either
+    /// the glyph the font substitutes for a vertical run, drawn as it is because it need not stand for
+    /// a character a document could name, or the vertical presentation form Unicode reserved for the
+    /// character. Neither is allowed to cost the run anything: the forms are as wide as the characters
+    /// they replace, so the step the layout measured still lands every character after them where it
+    /// always did. A character with no form at all is drawn exactly as it was before.
+    /// </remarks>
+    private void DrawUprightCharacter(
+        SKCanvas canvas,
+        TextCommand command,
+        Char character,
+        Double cellTop,
+        Single fallbackBaseline,
+        SKPaint paint)
+    {
+        var font = _measurer.GetFont(command.Font, character);
+        var vertical = _measurer.Shaper.GetVerticalForm(font, character);
+        var text = character.ToString();
+        var centre = ColumnCentre(command, text);
+        var baseline = Baseline(command, vertical, cellTop, fallbackBaseline);
+
+        if (vertical.IsSubstituted)
+        {
+            _measurer.Shaper.DrawVerticalGlyph(canvas, font, vertical.Glyph, centre, baseline, paint);
+            return;
+        }
+
+        if (VerticalForms.TryGet(character, out var replacement) && _measurer.HasGlyph(command.Font, replacement))
+        {
+            text = replacement.ToString();
+            font = _measurer.GetFont(command.Font, replacement);
+            centre = ColumnCentre(command, text);
+
+            // The form the author could have written is a glyph of the same font, drawn where the
+            // font puts that glyph - so writing `。` and writing `︒` are one and the same picture.
+            baseline = Baseline(command, _measurer.Shaper.GetVerticalForm(font, replacement), cellTop, fallbackBaseline);
+        }
+
+        canvas.DrawText(text, centre, baseline, font, paint);
+    }
+
+    /// <summary>
+    /// Gets the baseline a column puts the glyph on: the place the font declares, or the stand-in the
+    /// caller worked out for a font that will not declare one.
+    /// </summary>
+    private static Single Baseline(TextCommand command, VerticalForm vertical, Double cellTop, Single fallback) =>
+        vertical.HasOrigin
+            ? (Single)(cellTop + (vertical.Origin * command.Font.Size))
+            : fallback;
+
+    /// <summary>
+    /// Gets the position across the column a character is centred at, which is asked of the text that
+    /// ends up drawn rather than of the character the layout was given.
+    /// </summary>
+    private Single ColumnCentre(TextCommand command, String text) =>
+        (Single)(command.Bounds.X + ((command.Bounds.Width - _measurer.MeasureWidth(text, command.Font)) / 2));
 
     /// <summary>
     /// Draws a run <c>text-combine-upright: all</c> welded into the single em it stands for, which it

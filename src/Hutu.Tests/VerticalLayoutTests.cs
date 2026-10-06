@@ -135,6 +135,25 @@ public sealed class VerticalLayoutTests
     }
 
     [Test]
+    public async Task PunctuationTakesTheEmTheLayoutMeasuredForIt()
+    {
+        // The form a column draws its punctuation in is picked at paint time, so the step the layout
+        // measured has to stay the one em a wide character takes: that is what keeps every character
+        // after a mark exactly where the layout put it.
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:200px;height:200px;margin:0;font-size:10px;line-height:1'>" +
+            "<p style='margin:0'>あ、い。う</p>" +
+            "</div></body></html>");
+
+        var run = Text(view, "あ、い。う");
+
+        Assert.That(run.Flow.Orientation, Is.EqualTo(TextOrientation.Upright));
+        Assert.That(run.BorderBox.Height, Is.EqualTo(50), "five upright characters, the marks among them, take five ems");
+    }
+
+    [Test]
     public async Task CombiningUprightSetsShortRunsAsASingleEm()
     {
         using var view = CreateView(400);

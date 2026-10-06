@@ -64,6 +64,106 @@ public sealed class SkiaRenderingTests
     }
 
     [Test]
+    public void AColumnIsToldTheVerticalFormOfItsPunctuation()
+    {
+        const String punctuation = "、。「」『』（）";
+
+        using var measurer = new SkiaTextMeasurer();
+        var style = new FontStyle("Arial", 18);
+
+        Assume.That(
+            punctuation.Any(character => measurer.GetFont(style, character).Typeface?.GetGlyph(character) != 0),
+            Is.True,
+            "no system font carries CJK punctuation on this machine");
+
+        // The very decision a column makes: the glyph the font declares for a vertical run, or else
+        // the presentation form Unicode reserved for the character. Which of the two answers is the
+        // font's business, so the test takes either and only insists that one of them is there.
+        foreach (var character in punctuation)
+        {
+            var font = measurer.GetFont(style, character);
+
+            // A machine with no glyph for the character has nothing to say about its form.
+            if (font.Typeface?.GetGlyph(character) == 0)
+            {
+                continue;
+            }
+
+            var vertical = measurer.Shaper.GetVerticalForm(font, character);
+
+            if (vertical.IsSubstituted)
+            {
+                Assert.That(vertical.Glyph, Is.Not.Zero, $"U+{(Int32)character:X4} was answered with the null glyph");
+                continue;
+            }
+
+            Assert.That(VerticalForms.TryGet(character, out var form), Is.True, $"U+{(Int32)character:X4} has no form to fall back on");
+            Assert.That(
+                measurer.HasGlyph(style, form),
+                Is.True,
+                $"U+{(Int32)character:X4} has neither a form the font declares nor one the column can name");
+        }
+    }
+
+    [Test]
+    public void TheProlongedSoundMarkStandsOnEndInAColumn()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        var style = new FontStyle("Arial", 18);
+        var font = measurer.GetFont(style, 'ー');
+
+        Assume.That(font.Typeface?.GetGlyph('ー') != 0, Is.True, "no system font carries the mark on this machine");
+
+        // The mark has no presentation form of its own, so the form the font declares is the only way
+        // a column has of standing it on end instead of ruling a line across the column.
+        var vertical = measurer.Shaper.GetVerticalForm(font, 'ー');
+
+        Assert.That(
+            vertical.IsSubstituted,
+            Is.True,
+            "the mark stays a line across the column unless the font has a form that stands it up");
+        Assert.That(vertical.Glyph, Is.Not.Zero);
+    }
+
+    [Test]
+    public async Task AColumnDrawsItsFullStopWhereTheFontPutsIt()
+    {
+        using var measurer = new SkiaTextMeasurer();
+
+        // The mark a character stands for, and the mark written out as its own presentation form, have
+        // to come out as one picture: the column picks the form, the font places it, and nothing in
+        // between may shift it.
+        var substituted = await RenderCharacter(measurer, '。');
+        var written = await RenderCharacter(measurer, '\uFE12');
+
+        Assert.That(substituted.Pixels, Is.EqualTo(written.Pixels), "writing 。 and writing ︒ are one picture");
+
+        // A CJK font moves the vertical origin of the 句读 so the mark clears the corner of its cell;
+        // a column that ignores the origin leaves the mark against the top edge, which is what a
+        // reader notices about it.
+        Assert.That(
+            Insets(substituted).Top,
+            Is.GreaterThan(0.2 * ColumnFontSize),
+            "the mark is set inside its cell rather than pressed against the corner");
+    }
+
+    [Test]
+    public async Task AColumnCentresAnUprightCharacterOnTheBaselineItsFontDeclares()
+    {
+        using var measurer = new SkiaTextMeasurer();
+
+        // A kana fills its em box evenly, so its ink is the yardstick for where a column puts an
+        // upright character: a margin of the same size above and below means the font's own baseline
+        // was used rather than one worked out from the em box.
+        var insets = Insets(await RenderCharacter(measurer, 'あ'));
+
+        Assert.That(
+            insets.Top,
+            Is.EqualTo(insets.Bottom).Within(1.5),
+            $"the character sits in the middle of its cell rather than {(insets.Top - insets.Bottom):F1}px off it");
+    }
+
+    [Test]
     public async Task HeadingsAreLaidOutLargerThanBodyText()
     {
         using var measurer = new SkiaTextMeasurer();
@@ -836,6 +936,76 @@ public sealed class SkiaRenderingTests
             }
         }
     }
+
+    /// <summary>The size the column placement tests set their character at.</summary>
+    private const Single ColumnFontSize = 48;
+
+    /// <summary>What one character set alone in a column painted: the mark it left, and the cell it was given.</summary>
+    private sealed record Rendered(Byte[] Pixels, SKRect Cell, SKRect Ink);
+
+    /// <summary>
+    /// Sets one character on its own in a column and paints it, which is how a glyph's placement is
+    /// read back: the layout gives the character a cell, and the ink says where in that cell it went.
+    /// </summary>
+    private static async Task<Rendered> RenderCharacter(SkiaTextMeasurer measurer, Char character)
+    {
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(200, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:100px;margin:0;" +
+            $"font-size:{ColumnFontSize}px;line-height:1'>{character}</div></body></html>");
+
+        var paint = view.Paint!;
+        var width = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Width));
+        var height = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Height));
+
+        using var surface = SKSurface.Create(new SKImageInfo(width, height));
+        new SkiaPaintExecutor(measurer).Execute(paint, surface.Canvas);
+
+        using var image = surface.Snapshot();
+        using var bitmap = SKBitmap.FromImage(image);
+
+        var pixels = new Byte[width * height];
+        var left = width;
+        var top = height;
+        var right = -1;
+        var bottom = -1;
+
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                // The page is painted on white, so anything darker than near-white is the glyph.
+                if (bitmap.GetPixel(x, y).Red > 200)
+                {
+                    continue;
+                }
+
+                pixels[(y * width) + x] = 1;
+                left = Math.Min(left, x);
+                top = Math.Min(top, y);
+                right = Math.Max(right, x);
+                bottom = Math.Max(bottom, y);
+            }
+        }
+
+        Assert.That(right, Is.GreaterThanOrEqualTo(0), "the character painted nothing");
+
+        var box = TextsIn(view.Layout!.Root).Single().BorderBox;
+
+        return new Rendered(
+            pixels,
+            new SKRect((Single)box.X, (Single)box.Y, (Single)box.Right, (Single)box.Bottom),
+            new SKRect(left, top, right + 1, bottom + 1));
+    }
+
+    /// <summary>Gets how far the ink stands in from each edge of the cell the character was given.</summary>
+    private static (Single Top, Single Right, Single Bottom, Single Left) Insets(Rendered rendered) => (
+        rendered.Ink.Top - rendered.Cell.Top,
+        rendered.Cell.Right - rendered.Ink.Right,
+        rendered.Cell.Bottom - rendered.Ink.Bottom,
+        rendered.Ink.Left - rendered.Cell.Left);
 
     private static Int32 CountNonWhitePixels(PaintList paint, SkiaTextMeasurer measurer)
     {
