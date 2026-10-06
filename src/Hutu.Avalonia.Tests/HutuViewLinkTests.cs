@@ -39,10 +39,23 @@ public sealed class HutuViewLinkTests
         "<div style='height:400px'></div>" +
         "</body></html>";
 
+    /// <summary>A link that asks for nothing and wraps its words in another element.</summary>
+    private const string WrappedLinkDocument =
+        "<html><body style='margin:0'>" +
+        "<div style='font-size:40px'><a href='next.htm'><span>hello world</span></a></div>" +
+        "<div style='height:400px'></div>" +
+        "</body></html>";
+
     /// <summary>A column of text, which is read with a pointer turned on its side.</summary>
     private const string VerticalDocument =
         "<html><body style='margin:0'>" +
         "<div style='writing-mode:vertical-rl;width:60px;height:100px;font-size:40px'>中</div>" +
+        "</body></html>";
+
+    /// <summary>That same column with enough text in it for a drag to stay inside it.</summary>
+    private const string LongColumnDocument =
+        "<html><body style='margin:0'>" +
+        "<div style='writing-mode:vertical-rl;width:60px;height:200px;font-size:40px'>中中中</div>" +
         "</body></html>";
 
     /// <summary>A point inside the first line, near its left edge.</summary>
@@ -50,6 +63,9 @@ public sealed class HutuViewLinkTests
 
     /// <summary>A point past the end of the text, so a drag that reaches it covers all of it.</summary>
     private static readonly Point End = new(700, 10);
+
+    /// <summary>Another point inside the link's own text, which a drag can pass through.</summary>
+    private static readonly Point AlongLink = new(100, 10);
 
     /// <summary>A point below the text, where there is nothing to point at.</summary>
     private static readonly Point Blank = new(5, 300);
@@ -103,6 +119,73 @@ public sealed class HutuViewLinkTests
                 surface.Cursor!.ToString(),
                 Is.Not.EqualTo(nameof(StandardCursorType.Ibeam)),
                 "a column is not read with the upright I-beam");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task DraggingOverALinkKeepsTheHand()
+    {
+        var window = new Window { Width = WindowWidth, Height = WindowHeight };
+
+        try
+        {
+            await ShowDocumentAsync(window, WrappedLinkDocument);
+            var surface = Surface(window);
+
+            window.MouseDown(Start, MouseButton.Left, RawInputModifiers.LeftMouseButton);
+            window.MouseMove(AlongLink, RawInputModifiers.LeftMouseButton);
+            Dispatcher.UIThread.RunJobs();
+
+            // A gesture that starts and stays on a link is still a gesture, and the shape belongs to
+            // the point rather than to the gesture: the words a link wraps are the link, so the hand is
+            // what stands over them while the drag runs. Nor does anything here hinge on a declaration,
+            // a page that says nothing about its cursor being the usual one.
+            Assert.That(
+                surface.Cursor?.ToString(),
+                Is.EqualTo(nameof(StandardCursorType.Hand)),
+                "a drag over a link is still answered for with the hand");
+
+            window.MouseUp(AlongLink, MouseButton.Left, RawInputModifiers.None);
+            Dispatcher.UIThread.RunJobs();
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task DraggingOverAColumnKeepsThePointerTurned()
+    {
+        var window = new Window { Width = WindowWidth, Height = WindowHeight };
+
+        try
+        {
+            await ShowDocumentAsync(window, LongColumnDocument);
+            var surface = Surface(window);
+
+            // Down at the top of the column and along it, which is a selection being made over text
+            // that runs down rather than across.
+            window.MouseDown(InColumn, MouseButton.Left, RawInputModifiers.LeftMouseButton);
+            window.MouseMove(new Point(40, 100), RawInputModifiers.LeftMouseButton);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.That(surface.Cursor, Is.Not.Null, "a drag is still made with a text pointer");
+
+            // The direction is asked of the text under the pointer as the gesture goes, so the I-beam
+            // keeps turning with the column it is taking - which the upright one a drag used to be
+            // given does not.
+            Assert.That(
+                surface.Cursor!.ToString(),
+                Is.Not.EqualTo(nameof(StandardCursorType.Ibeam)),
+                "and it turns with the column as the drag goes down it");
+
+            window.MouseUp(new Point(40, 100), MouseButton.Left, RawInputModifiers.None);
+            Dispatcher.UIThread.RunJobs();
         }
         finally
         {

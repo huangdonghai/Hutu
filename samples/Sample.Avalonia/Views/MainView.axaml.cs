@@ -14,6 +14,10 @@ namespace Sample.Avalonia.Views;
 
 public partial class MainView : ContentPage
 {
+    // Where a reader is put when there is no page remembered to put them on. A path with no scheme is
+    // taken as an embedded resource, which is how the sample pages are addressed everywhere else.
+    private const string HomeAddress = "index.htm";
+
     // The addresses that have been loaded, and where in them the reader stands. A fresh address cuts
     // off whatever lay ahead of the current one, which is what makes the forward button go away after
     // navigating somewhere new.
@@ -32,6 +36,10 @@ public partial class MainView : ContentPage
         MyHutuView.NavigationRequested += Follow;
 
         UpdateNavigation();
+
+        // The page the reader last had open is opened again, so the app comes back where it was left
+        // rather than at nothing.
+        _ = RestoreAsync();
     }
 
     /// <summary>
@@ -95,16 +103,33 @@ public partial class MainView : ContentPage
     }
 
     /// <summary>
+    /// Opens the page the reader last had open, or the home page when there is none to open - or when
+    /// the one remembered will not open, which is what an address left over from an older build does.
+    /// </summary>
+    private async Task RestoreAsync()
+    {
+        var remembered = StartPageStore.Load();
+
+        if (remembered is not null && await GoAsync(-1, remembered))
+            return;
+
+        // Nothing was remembered, or what was remembered is no longer there to open. Either way the
+        // reader starts at the home page rather than at an empty view with nothing to read.
+        await GoAsync(-1, HomeAddress);
+    }
+
+    /// <summary>
     /// Moves to a position in the history, or to <paramref name="url"/> when it is given - a new
     /// address is appended and the position lands on it. The position only moves once the load has
-    /// produced a document, so a failed address leaves the reader where they were.
+    /// produced a document, so a failed address leaves the reader where they were; the result says
+    /// which of the two it was, for the start-up that has somewhere to fall back on.
     /// </summary>
-    private async Task GoAsync(int target, string? url = null)
+    private async Task<bool> GoAsync(int target, string? url = null)
     {
         var address = url ?? _history[target];
 
         if (!await LoadAsync(address))
-            return;
+            return false;
 
         if (url is not null)
         {
@@ -119,11 +144,14 @@ public partial class MainView : ContentPage
         _position = target;
         AddressBar.Text = address;
         UpdateNavigation();
+
+        return true;
     }
 
     /// <summary>
-    /// Loads a URL and reports whether it produced a document. A failure is logged rather than left to
-    /// reach the dispatcher, where an exception from a load would take the whole process down.
+    /// Loads a URL, records the page it turned out to be as the one to come back to, and reports
+    /// whether it produced a document. A failure is logged rather than left to reach the dispatcher,
+    /// where an exception from a load would take the whole process down.
     /// </summary>
     private async Task<bool> LoadAsync(string url)
     {
@@ -133,9 +161,13 @@ public partial class MainView : ContentPage
 
             // Where the reader has been is recorded against the address the document ended up with,
             // not the one that was asked for: that is the address its own links resolve against, and so
-            // the only one a link back here could be recognised by.
+            // the only one a link back here could be recognised by - and it is the page the reader is
+            // looking at, which is the one to open again next time.
             if (document.Url is { Length: > 0 } address)
+            {
                 MyHutuView.MarkVisited(address);
+                StartPageStore.Save(address);
+            }
 
             return true;
         }

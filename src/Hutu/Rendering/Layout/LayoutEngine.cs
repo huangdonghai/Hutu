@@ -23,7 +23,9 @@ namespace Hutu.Rendering.Layout;
 /// <para>
 /// Measurements are cached for the duration of a pass, keyed by the box and the basis the size was
 /// resolved from. A viewport-sized layout therefore measures each box at most once per distinct
-/// available width, however many times a formatting context negotiates around it.
+/// available width, however many times a formatting context negotiates around it. The intrinsic
+/// sizes a flex or grid container asks its items for are cached the same way, which matters because
+/// track sizing asks for them again on every pass of its negotiation.
 /// </para>
 /// </remarks>
 public sealed class LayoutEngine
@@ -36,6 +38,8 @@ public sealed class LayoutEngine
     private readonly PositionedLayout _positioned;
     private readonly ITextMeasurer _measurer;
     private readonly Dictionary<MeasureKey, Size> _cache = new();
+    private readonly Dictionary<MeasureKey, IntrinsicSize> _intrinsic = new();
+    private readonly Dictionary<MeasureKey, IntrinsicSize> _contentIntrinsic = new();
 
     public LayoutEngine(ITextMeasurer measurer)
     {
@@ -69,6 +73,8 @@ public sealed class LayoutEngine
         var context = new LayoutContext(viewport, viewport, scroll, _measurer);
 
         _cache.Clear();
+        _intrinsic.Clear();
+        _contentIntrinsic.Clear();
 
         var size = Measure(root, MeasureConstraints.FitWidth(width), context);
         var margin = BoxModel.UsedMargin(root.Style, width, size.Width);
@@ -110,6 +116,8 @@ public sealed class LayoutEngine
     /// </summary>
     internal Size Measure(Box box, MeasureConstraints constraints, LayoutContext context)
     {
+        LayoutProbe.MeasureCalls++;
+
         var key = new MeasureKey(
             box,
             constraints.AvailableWidth ?? context.ContainingBlock.Width,
@@ -117,10 +125,14 @@ public sealed class LayoutEngine
 
         if (_cache.TryGetValue(key, out var cached))
         {
+            LayoutProbe.MeasureHits++;
             return cached;
         }
 
+        LayoutProbe.EnterMeasure();
         var size = MeasureCore(box, constraints, context);
+        LayoutProbe.LeaveMeasure();
+
         _cache[key] = size;
         return size;
     }
@@ -131,15 +143,19 @@ public sealed class LayoutEngine
     /// </summary>
     internal LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context)
     {
-        var layout = ArrangeCore(box, borderBox, context);
+        LayoutProbe.ArrangeCalls++;
 
         // An anonymous box borrows its parent's style; honouring the positioning it inherits would
         // displace the wrapper a second time, because the parent's own displacement already took it
         // along.
         if (box.IsAnonymous)
         {
-            return layout;
+            return ArrangeCore(box, borderBox, context);
         }
+
+        LayoutProbe.EnterArrange();
+        var layout = ArrangeCore(box, borderBox, context);
+        LayoutProbe.LeaveArrange();
 
         var position = PositionStyle.Read(box.Style);
 
@@ -175,7 +191,33 @@ public sealed class LayoutEngine
     /// and <c>max-content</c> inline sizes. A flex or grid container answers for its items, so an
     /// item with an automatic basis can ask its own intrinsic width before anything is decided.
     /// </summary>
-    internal IntrinsicSize MeasureIntrinsic(Box box, LayoutContext context) =>
+    internal IntrinsicSize MeasureIntrinsic(Box box, LayoutContext context)
+    {
+        LayoutProbe.IntrinsicCalls++;
+
+        var key = new MeasureKey(box, context.ContainingBlock.Width, context.ContainingBlock.Height);
+
+        if (_intrinsic.TryGetValue(key, out var cached))
+        {
+            LayoutProbe.IntrinsicHits++;
+            return cached;
+        }
+
+        LayoutProbe.EnterIntrinsic(box);
+
+        try
+        {
+            var size = MeasureIntrinsicCore(box, context);
+            _intrinsic[key] = size;
+            return size;
+        }
+        finally
+        {
+            LayoutProbe.LeaveIntrinsic();
+        }
+    }
+
+    private IntrinsicSize MeasureIntrinsicCore(Box box, LayoutContext context) =>
         box.Kind switch
         {
             BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
@@ -189,14 +231,38 @@ public sealed class LayoutEngine
     /// automatic minimum size of a flex item is built from, which is why the declared width must not
     /// be consulted here.
     /// </summary>
-    internal IntrinsicSize MeasureContentIntrinsic(Box box, LayoutContext context) =>
-        box.Kind switch
+    internal IntrinsicSize MeasureContentIntrinsic(Box box, LayoutContext context)
+    {
+        LayoutProbe.ContentIntrinsicCalls++;
+
+        var key = new MeasureKey(box, context.ContainingBlock.Width, context.ContainingBlock.Height);
+
+        if (_contentIntrinsic.TryGetValue(key, out var cached))
         {
-            BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
-            BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
-            BoxKind.Table => _table.MeasureIntrinsic(box, context),
-            _ => _block.MeasureContentIntrinsic(box, context),
-        };
+            LayoutProbe.IntrinsicHits++;
+            return cached;
+        }
+
+        LayoutProbe.EnterIntrinsic(box);
+
+        try
+        {
+            var size = box.Kind switch
+            {
+                BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
+                BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
+                BoxKind.Table => _table.MeasureIntrinsic(box, context),
+                _ => _block.MeasureContentIntrinsic(box, context),
+            };
+
+            _contentIntrinsic[key] = size;
+            return size;
+        }
+        finally
+        {
+            LayoutProbe.LeaveIntrinsic();
+        }
+    }
 
     private Size MeasureCore(Box box, MeasureConstraints constraints, LayoutContext context) =>
         box.Kind switch

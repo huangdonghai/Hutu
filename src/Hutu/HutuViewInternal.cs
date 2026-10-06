@@ -223,6 +223,19 @@ public sealed class HutuViewInternal : IDisposable
     public LinkTarget? LinkAt(double x, double y) => Hit(x, y).Link;
 
     /// <summary>
+    /// Gets the pointer a point in document coordinates asks for: what the box under it declares, and
+    /// otherwise what lies under it - a link the hand wherever on it the point is, text set down a
+    /// column read with an I-beam turned on its side, text along a line with an upright one, and
+    /// everything else with the ordinary arrow.
+    /// </summary>
+    /// <remarks>
+    /// This is what a move reports, asked as a question about a point rather than as a move to it:
+    /// nothing is marked and nothing is painted, so a host can ask in the middle of a gesture, where a
+    /// hover that repainted would fight the selection being made.
+    /// </remarks>
+    public CursorKind CursorAt(double x, double y) => CursorFor(Hit(x, y));
+
+    /// <summary>
     /// Follows a link a reader clicked.
     /// </summary>
     /// <returns>
@@ -685,8 +698,8 @@ public sealed class HutuViewInternal : IDisposable
 
     /// <summary>
     /// Gets the pointer a hit asks for: what the element declares, and otherwise what lies under the
-    /// point - text set down a column is read with a turned I-beam, text along a line with an upright
-    /// one, and everything else with the ordinary arrow.
+    /// point - a link the hand wherever on it the point is, text set down a column read with a turned
+    /// I-beam, text along a line with an upright one, and everything else with the ordinary arrow.
     /// </summary>
     private static CursorKind CursorFor(HitResult hit)
     {
@@ -695,6 +708,17 @@ public sealed class HutuViewInternal : IDisposable
         if (declared != CursorKind.Auto)
         {
             return declared;
+        }
+
+        // A link answers for all of itself, not only for the anchor box: every point in it is the
+        // link, and a selection cannot be started from one - dragging across the words a link wraps
+        // selects them, but a press there is a press on the link. So the shapes that say "text here"
+        // are not asked for over one. It cannot be said by the element's own style, which only ever
+        // sees one element at a time - the box under the point is often a span inside the link, which
+        // is not itself a link and so cannot know that one of its ancestors is.
+        if (hit.Link is not null)
+        {
+            return CursorKind.Pointer;
         }
 
         if (!hit.IsText)

@@ -29,9 +29,12 @@ public static class CursorImages
 
         canvas.Clear(SKColors.Transparent);
 
+        // A platform I-beam reaches nearly from edge to edge and carries a serif about a quarter of
+        // that at each end. The turned one is drawn to the same proportions, so that the two read as
+        // one pointer in two directions rather than as a drawn one shrunk beside a platform one.
         var centre = size / 2f;
-        var reach = size * 0.28f;
-        var serif = size * 0.13f;
+        var reach = size * 0.42f;
+        var serif = size * 0.14f;
 
         using var stroke = new SKPaint
         {

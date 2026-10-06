@@ -85,8 +85,12 @@ public sealed class Box
 
     public BoxKind Kind { get; }
 
-    /// <summary>Gets the resolved style. For a text box this is the containing element's style.</summary>
-    public ComputedStyle Style { get; }
+    /// <summary>
+    /// Gets the resolved style. For a text box this is the containing element's style. The setter
+    /// lets a rebuild that only changes how the document is painted hand the previous tree the new
+    /// styles, so its geometry - which nothing in the paints touches - can be kept.
+    /// </summary>
+    public ComputedStyle Style { get; internal set; }
 
     /// <summary>
     /// Gets the writing mode, text orientation and upright combining the box lays its content out in.

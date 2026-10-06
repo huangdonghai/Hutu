@@ -151,6 +151,30 @@ public sealed class ElementStateTests
     }
 
     [Test]
+    public async Task ALinkAsksForTheHandOverAllOfItself()
+    {
+        using var view = CreateView();
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='font-size:20px'><a href='next.htm'>plain link</a></div>" +
+            "<div style='font-size:20px'><a href='next.htm'><span>wrapped</span></a></div>" +
+            "</body></html>");
+
+        var plain = TextRun(view, "plain link");
+        var wrapped = TextRun(view, "wrapped");
+
+        Assert.That(
+            view.PointerMoved(plain.BorderBox.X + 1, plain.BorderBox.Y + 1).Cursor,
+            Is.EqualTo(CursorKind.Pointer),
+            "a link the point is on itself asks for the hand");
+
+        Assert.That(
+            view.PointerMoved(wrapped.BorderBox.X + 1, wrapped.BorderBox.Y + 1).Cursor,
+            Is.EqualTo(CursorKind.Pointer),
+            "and so do the words it wraps, which are as much the link as the anchor box is");
+    }
+
+    [Test]
     public async Task TextSetDownAColumnAsksForATurnedPointer()
     {
         using var view = CreateView();
@@ -172,6 +196,47 @@ public sealed class ElementStateTests
             view.PointerMoved(line.BorderBox.X + 1, line.BorderBox.Y + 1).Cursor,
             Is.EqualTo(CursorKind.Text),
             "while a line keeps the upright one");
+    }
+
+    [Test]
+    public async Task AskingWhatAPointAsksForIsNotMovingToIt()
+    {
+        using var view = CreateView();
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='writing-mode:vertical-rl;width:40px;height:40px;font-size:10px;line-height:1'>中</div>" +
+            "<div style='cursor:pointer'>line</div>" +
+            "</body></html>");
+
+        var column = TextRun(view, "中");
+        var line = TextRun(view, "line");
+
+        Assert.That(
+            view.CursorAt(column.BorderBox.X + 1, column.BorderBox.Y + 1),
+            Is.EqualTo(CursorKind.VerticalText),
+            "a column asks for the I-beam turned on its side");
+
+        Assert.That(
+            view.CursorAt(line.BorderBox.X + 1, line.BorderBox.Y + 1),
+            Is.EqualTo(CursorKind.Pointer),
+            "a box that declares a pointer is answered for with it, whatever lies under the point");
+
+        Assert.That(
+            view.CursorAt(1, line.BorderBox.Bottom + 30),
+            Is.EqualTo(CursorKind.Default),
+            "and a point with nothing under it asks for the ordinary arrow");
+
+        Assert.That(
+            view.PointerMoved(column.BorderBox.X + 1, column.BorderBox.Y + 1).Changed,
+            Is.True,
+            "the pointer is moved over the column");
+
+        _ = view.CursorAt(line.BorderBox.X + 1, line.BorderBox.Y + 1);
+
+        Assert.That(
+            view.PointerMoved(column.BorderBox.X + 1, column.BorderBox.Y + 1).Changed,
+            Is.False,
+            "and asking about a point elsewhere did not move it");
     }
 
     [Test]

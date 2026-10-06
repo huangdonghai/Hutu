@@ -28,6 +28,11 @@ public sealed class RenderingPipeline
     private readonly IImageProvider? _images;
     private readonly Painter _painter = new();
 
+    // The viewport the current layout was measured against. Percentages and viewport units resolve
+    // against it, so it has to match before the layout can be reused.
+    private Double _layoutWidth = Double.NaN;
+    private Double _layoutHeight = Double.NaN;
+
     public RenderingPipeline(IRenderDevice device, ITextMeasurer? textMeasurer = null, IImageProvider? images = null)
     {
         _device = device;
@@ -65,6 +70,8 @@ public sealed class RenderingPipeline
         BoxTree = null;
         Layout = null;
         Paint = null;
+        _layoutWidth = Double.NaN;
+        _layoutHeight = Double.NaN;
         _painter.Highlight = null;
     }
 
@@ -75,15 +82,53 @@ public sealed class RenderingPipeline
     /// A highlight describes the selection, which changes far more often than the document does: a
     /// drag reports a new one on every pointer move. Repainting from the layout in hand is what keeps
     /// that from laying out again on each move.
+    /// <para>
+    /// A highlight equal to the one already painted is left alone. A state change that only moves the
+    /// pointer rebuilds the document and repaints it before restoring an unchanged selection, and the
+    /// second repaint of the very same layout would be pure waste - the common case where nothing is
+    /// selected is exactly this.
+    /// </para>
     /// </remarks>
     public void SetHighlight(IReadOnlyDictionary<LayoutBox, Rect>? highlight)
     {
+        var painted = _painter.Highlight;
         _painter.Highlight = highlight;
 
-        if (Layout is not null)
+        if (Layout is not null && !SameHighlight(painted, highlight))
         {
             Paint = _painter.Paint(Layout);
         }
+    }
+
+    /// <summary>
+    /// Gets whether two highlights name the same runs. An absent highlight and an empty one are the
+    /// same directive - draw nothing - and the painter treats them interchangeably.
+    /// </summary>
+    private static Boolean SameHighlight(
+        IReadOnlyDictionary<LayoutBox, Rect>? a,
+        IReadOnlyDictionary<LayoutBox, Rect>? b)
+    {
+        var count = a?.Count ?? 0;
+
+        if (count != (b?.Count ?? 0))
+        {
+            return false;
+        }
+
+        if (count == 0)
+        {
+            return true;
+        }
+
+        foreach (var (box, rect) in a!)
+        {
+            if (!b!.TryGetValue(box, out var other) || !other.Equals(rect))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -93,16 +138,33 @@ public sealed class RenderingPipeline
     public IRenderNode? Build(IDocument document)
     {
         var window = document.DefaultView;
+        var previousBoxTree = BoxTree;
+        var previousLayout = Layout;
+
         RenderTree = window?.Render(_device);
-        BoxTree = BoxBuilder.Build(RenderTree, _device, _images);
+        var boxTree = BoxBuilder.Build(RenderTree, _device, _images);
 
         // A highlight names boxes of the layout it was measured against, so a new layout always
-        // drops it: keeping it would leave the painter looking up runs that no longer exist.
+        // drops it: keeping it would leave the painter looking up runs that no longer exist. When the
+        // layout is kept below, the highlight names the same boxes and stays valid.
+        if (previousLayout is not null &&
+            _layoutWidth == _device.RenderWidth && _layoutHeight == _device.RenderHeight &&
+            LayoutReuse.TryRefresh(previousBoxTree, boxTree))
+        {
+            BoxTree = previousBoxTree;
+            Layout = previousLayout;
+            Paint = _painter.Paint(Layout);
+            return RenderTree;
+        }
+
+        BoxTree = boxTree;
         _painter.Highlight = null;
 
         // The viewport is the initial containing block, so both of its dimensions matter: the height
         // is what a percentage height on the root - and on everything it makes definite - resolves
         // against.
+        _layoutWidth = _device.RenderWidth;
+        _layoutHeight = _device.RenderHeight;
         Layout = _layout?.Layout(BoxTree, _device.RenderWidth, _device.RenderHeight);
         Paint = Layout is null ? null : _painter.Paint(Layout);
         return RenderTree;

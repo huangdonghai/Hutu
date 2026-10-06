@@ -116,6 +116,29 @@ public sealed class UrlLoadingTests
     }
 
     /// <summary>
+    /// The address a document reports is one the view can be opened on again, which is what lets a
+    /// shell come back to the page the reader left: it stores that address, and stores it unchanged.
+    /// </summary>
+    [Test]
+    public async Task ADocumentAddressReopensThatDocument()
+    {
+        using var first = CreateView();
+        first.AddEmbeddedResourceSource(typeof(Sample.Common.SampleUtils).Assembly, "Samples");
+
+        var address = (await first.LoadUrlAsync("index.htm")).Url;
+
+        Assert.That(address, Does.Contain("index.htm"), "the address names the document it came from");
+
+        using var second = CreateView();
+        second.AddEmbeddedResourceSource(typeof(Sample.Common.SampleUtils).Assembly, "Samples");
+
+        var reopened = await second.LoadUrlAsync(address);
+
+        Assert.That(reopened.Url, Is.EqualTo(address));
+        Assert.That(second.GetHtml(), Does.Contain("<html"), "the stored address serves the page");
+    }
+
+    /// <summary>
     /// The line height of the font shorthand is a bare number, and a bare number is a factor of the
     /// font size rather than a length. Treating it as a length used to throw while computing styles,
     /// which took the whole render tree down with it.

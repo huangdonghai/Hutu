@@ -157,10 +157,17 @@ public sealed class HutuSurface : Control
 
         if (_dragging)
         {
-            // A drag is still a selection, so the pointer keeps the text shape for its whole length and
-            // the document underneath is left alone: a hover that repainted in the middle of a gesture
-            // would fight the selection being made.
-            SetCursor(TextCursor);
+            // The document underneath is left alone while the gesture runs, because a hover that
+            // repainted in the middle of it would fight the selection being made - but the shape the
+            // point asks for is still asked of it, which marks nothing and paints nothing.
+            var asked = _view.CursorAt(point.X, point.Y);
+
+            // A drag is a selection wherever the pointer wanders, so a point that asks for nothing in
+            // particular - past the end of the text, say - is kept as text, turning with the text where
+            // the gesture crosses from a line into a column. A point that names a shape of its own is
+            // answered for with that instead: a link is a link for the whole of a gesture, rather than
+            // being read as text the moment the button goes down.
+            SetCursor(CursorFor(asked is CursorKind.Default ? CursorKind.Text : asked));
             _view.ExtendSelection(point.X, point.Y);
             InvalidateVisual();
             return;
@@ -214,11 +221,20 @@ public sealed class HutuSurface : Control
     /// Gets the cursor for what lies under the pointer. Null leaves the pointer to the platform, which
     /// is what an element that declares nothing and holds no text asks for.
     /// </summary>
-    private static Cursor? CursorFor(CursorKind kind)
+    private Cursor? CursorFor(CursorKind kind)
     {
         if (kind is CursorKind.Auto or CursorKind.Default)
         {
             return null;
+        }
+
+        // The turned I-beam is the one shape no platform carries, so it is drawn - and a drawn cursor
+        // is taken at the size it was drawn, which is why it is asked for here rather than looked up
+        // in the table: what size is right depends on the display this control is standing on. A
+        // backend that cannot take a drawn cursor keeps the upright one rather than none at all.
+        if (kind is CursorKind.VerticalText)
+        {
+            return VerticalTextCursor.For(Scaling) ?? TextCursor;
         }
 
         _cursors ??= CreateCursors();
@@ -226,7 +242,7 @@ public sealed class HutuSurface : Control
         return _cursors.TryGetValue(kind, out var cursor) ? cursor : null;
     }
 
-    /// <summary>Builds the shapes once, on the first move that asks for one.</summary>
+    /// <summary>Builds the shapes the platform carries once, on the first move that asks for one.</summary>
     private static Dictionary<CursorKind, Cursor> CreateCursors() => new()
     {
         [CursorKind.Text] = TextCursor,
@@ -237,11 +253,10 @@ public sealed class HutuSurface : Control
         [CursorKind.NotAllowed] = new Cursor(StandardCursorType.No),
         [CursorKind.Crosshair] = new Cursor(StandardCursorType.Cross),
         [CursorKind.None] = new Cursor(StandardCursorType.None),
-
-        // The turned I-beam is the one shape no platform carries, so it is drawn - and a backend that
-        // cannot take a drawn cursor keeps the upright one rather than none at all.
-        [CursorKind.VerticalText] = VerticalTextCursor.Current ?? TextCursor,
     };
+
+    /// <summary>Gets how many pixels the display this control is on spends on a point.</summary>
+    private Double Scaling => TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
 
     /// <summary>
     /// Raises the hint for what lies under the pointer, which the platform shows in its own time. A

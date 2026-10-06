@@ -62,6 +62,20 @@ public sealed class InlineLayout
     /// </summary>
     public InlineContentSize Measure(Box container, Double maxInline, WritingModeInfo flow)
     {
+        LayoutProbe.EnterInline();
+
+        try
+        {
+            return MeasureCore(container, maxInline, flow);
+        }
+        finally
+        {
+            LayoutProbe.LeaveInline();
+        }
+    }
+
+    private InlineContentSize MeasureCore(Box container, Double maxInline, WritingModeInfo flow)
+    {
         var items = new List<InlineItem>();
         Collect(container, items, flow);
 
@@ -95,6 +109,20 @@ public sealed class InlineLayout
     /// definite line to use, so the containing block's inline extent stands in.
     /// </param>
     public IntrinsicSize MeasureIntrinsic(Box container, Double basis, WritingModeInfo flow)
+    {
+        LayoutProbe.EnterInline();
+
+        try
+        {
+            return MeasureIntrinsicCore(container, basis, flow);
+        }
+        finally
+        {
+            LayoutProbe.LeaveInline();
+        }
+    }
+
+    private IntrinsicSize MeasureIntrinsicCore(Box container, Double basis, WritingModeInfo flow)
     {
         var items = new List<InlineItem>();
         Collect(container, items, flow);
@@ -162,6 +190,20 @@ public sealed class InlineLayout
     /// boxes to it, and returns the extent they occupied along the block axis.
     /// </summary>
     public Double Layout(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow)
+    {
+        LayoutProbe.EnterInline();
+
+        try
+        {
+            return LayoutCore(container, parent, contentBox, flow);
+        }
+        finally
+        {
+            LayoutProbe.LeaveInline();
+        }
+    }
+
+    private Double LayoutCore(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow)
     {
         var items = new List<InlineItem>();
         Collect(container, items, flow);
