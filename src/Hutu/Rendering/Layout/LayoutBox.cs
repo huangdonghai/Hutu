@@ -119,8 +119,26 @@ public sealed class LayoutBox
     /// <summary>Gets how the image content is fitted into its box.</summary>
     public ObjectFit ImageFit { get; set; }
 
-    /// <summary>Gets the radius painted content is clipped to.</summary>
-    public Double CornerRadius { get; set; }
+    /// <summary>
+    /// Gets or sets the resolved corner radii of the border box. They are filled in once, after the
+    /// box has been sized, because a percentage radius is relative to that size.
+    /// </summary>
+    public CornerRadii Radii { get; set; }
+
+    /// <summary>
+    /// Gets the corner radii of the padding box, which is where the background stops once the border
+    /// has eaten into the curve and where descendants are clipped.
+    /// </summary>
+    public CornerRadii PaddingRadii => Radii.Shrink(Border);
+
+    /// <summary>Gets or sets the box the background is painted into.</summary>
+    public BackgroundClip BackgroundClip { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether the descendants are clipped to the padding box, which is what an
+    /// <c>overflow</c> other than <c>visible</c> asks for.
+    /// </summary>
+    public Boolean ClipsOverflow { get; set; }
 
     /// <summary>Gets or sets whether the background is skipped, as on a cell under
     /// <c>empty-cells: hide</c>.</summary>

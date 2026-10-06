@@ -75,7 +75,33 @@ public sealed class LayoutEngine
         var rootBox = Arrange(root, new Rect(margin.Left, 0, size.Width, size.Height), context);
         var height = rootBox.BorderBox.Bottom + rootBox.Margin.Bottom;
 
+        ResolveDecorations(rootBox);
+
         return new LayoutResult(rootBox, width, height);
+    }
+
+    /// <summary>
+    /// Resolves the corner radii of every box, together with the two keywords that decide what those
+    /// radii clip.
+    /// </summary>
+    /// <remarks>
+    /// A radius is relative to the size of the box it belongs to - a percentage by definition, and the
+    /// rule that shrinks radii which would overlap by necessity - so it cannot be resolved while a box
+    /// is being arranged, only once the whole tree has been placed. Keeping it out of the painter
+    /// matters: painting runs again on every invalidation, layout only when the document changes.
+    /// </remarks>
+    private static void ResolveDecorations(LayoutBox box)
+    {
+        var style = box.Source.Style;
+
+        box.Radii = CornerRadii.Resolve(style.BorderRadius, box.BorderBox.Width, box.BorderBox.Height);
+        box.BackgroundClip = style.BackgroundClip;
+        box.ClipsOverflow = style.ClipsOverflow;
+
+        foreach (var child in box.Children)
+        {
+            ResolveDecorations(child);
+        }
     }
 
     /// <summary>
@@ -216,7 +242,6 @@ public sealed class LayoutEngine
                 style.BorderLeftWidth),
             ImageUrl = box.SourceUrl,
             ImageFit = style.ObjectFit,
-            CornerRadius = style.CornerRadius,
             BorderBox = borderBox,
         };
     }

@@ -11,11 +11,13 @@ namespace Hutu.Rendering.Paint;
 /// Walks the layout tree and produces the platform-neutral drawing instructions.
 /// </summary>
 /// <remarks>
-/// Borders and text are painted on the border box, backgrounds on the padding box, which is where a
-/// background is painted by default. The walk order is the paint order: a block's own decorations
+/// Borders and text are painted on the border box, and so is a background, which reaches under a
+/// transparent border by default unless <c>background-clip</c> moves it inwards. Everything a rounded
+/// box paints follows its corner radii. The walk order is the paint order: a block's own decorations
 /// come before its children, and among the children the stacking levels are honoured - the negative
 /// <c>z-index</c> layer, the in-flow content, the positioned boxes with an automatic level, then the
-/// positive layer. Boxes fixed to the viewport are diverted to their own layer instead.
+/// positive layer. Boxes fixed to the viewport are diverted to their own layer instead, and a box
+/// that hides its overflow wraps its children in a clipping pair.
 /// </remarks>
 public sealed class Painter
 {
@@ -105,21 +107,41 @@ public sealed class Painter
     }
 
     /// <summary>
-    /// Paints a box's children in stacking order. With no positioned child the document order is
-    /// already the paint order, so the fast path avoids the four passes the layering needs.
+    /// Paints a box's children in stacking order, clipped to the box when it hides its overflow. With
+    /// no positioned child the document order is already the paint order, so the fast path avoids the
+    /// four passes the layering needs.
     /// </summary>
     private void PaintChildren(LayoutBox box, PaintList list, List<PaintCommand> target)
     {
-        if (!HasPositionedChild(box))
+        // The clip covers the children only: the box's own background and border were painted before
+        // it, which is what keeps a border from being cut off by the radius it draws.
+        var clipped = box.ClipsOverflow && box.Children.Count > 0;
+
+        if (clipped)
+        {
+            target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
+        }
+
+        if (HasPositionedChild(box))
+        {
+            PaintStackedChildren(box, list, target);
+        }
+        else
         {
             foreach (var child in box.Children)
             {
                 PaintChild(child, list, target);
             }
-
-            return;
         }
 
+        if (clipped)
+        {
+            target.Add(new PopClipCommand(box.PaddingBox));
+        }
+    }
+
+    private void PaintStackedChildren(LayoutBox box, PaintList list, List<PaintCommand> target)
+    {
         // 1. A negative z-index paints below the in-flow content.
         foreach (var child in box.Children)
         {
@@ -193,17 +215,34 @@ public sealed class Painter
     }
 
     /// <summary>
-    /// Paints the background colour and then the layers, both across the padding box - which is
-    /// where they are positioned by default. CSS paints the first declared layer on top, so the
-    /// layers are emitted last-first and the colour always ends up underneath all of them.
+    /// Paints the background colour and then the layers, both across the box the background is clipped
+    /// to - the border box by default, so that the background reaches under a transparent border. CSS
+    /// paints the first declared layer on top, so the layers are emitted last-first and the colour
+    /// always ends up underneath all of them.
     /// </summary>
     private static void PaintBackground(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
     {
-        var area = box.PaddingBox;
+        // The radii follow the area: the border box rounds off along the outer curve, the padding box
+        // along the one the border leaves behind, and the content box along the one the padding adds.
+        var area = box.BorderBox;
+        var radii = box.Radii;
+
+        switch (box.BackgroundClip)
+        {
+            case BackgroundClip.PaddingBox:
+                area = box.PaddingBox;
+                radii = box.PaddingRadii;
+                break;
+
+            case BackgroundClip.ContentBox:
+                area = box.ContentBox;
+                radii = box.PaddingRadii.Shrink(box.Padding);
+                break;
+        }
 
         if (style.BackgroundColor is { } background && background.A != 0)
         {
-            target.Add(new FillCommand(area, ToArgb(background)));
+            target.Add(new FillCommand(area, ToArgb(background), radii));
         }
 
         var layers = style.Backgrounds;
@@ -213,19 +252,17 @@ public sealed class Painter
             return;
         }
 
-        var radius = style.CornerRadius;
-
         for (var index = layers.Count - 1; index >= 0; index--)
         {
             var layer = layers[index];
 
             if (layer.Gradient is { } gradient)
             {
-                target.Add(new LinearGradientCommand(area, gradient.AngleDegrees, gradient.Stops, radius));
+                target.Add(new LinearGradientCommand(area, gradient.AngleDegrees, gradient.Stops, radii));
             }
             else if (layer.Url is { Length: > 0 })
             {
-                target.Add(new BackgroundImageCommand(area, layer, radius));
+                target.Add(new BackgroundImageCommand(area, layer, radii));
             }
         }
     }
@@ -233,7 +270,7 @@ public sealed class Painter
     /// <summary>
     /// Emits the image, clipped to its content box. The box is the content box because that is where
     /// a replaced element's content goes; for the common case of an image with no padding or border
-    /// it is the same rectangle as the border box.
+    /// it is the same rectangle as the border box, and so are the radii.
     /// </summary>
     private static void PaintImage(LayoutBox box, List<PaintCommand> target)
     {
@@ -242,7 +279,11 @@ public sealed class Painter
             return;
         }
 
-        target.Add(new ImageCommand(box.ContentBox, box.ImageUrl, box.ImageFit, box.CornerRadius));
+        target.Add(new ImageCommand(
+            box.ContentBox,
+            box.ImageUrl,
+            box.ImageFit,
+            box.PaddingRadii.Shrink(box.Padding)));
     }
 
     private void PaintText(LayoutBox box, List<PaintCommand> target)
@@ -256,7 +297,7 @@ public sealed class Painter
         // and under the glyphs - the only order that leaves the text readable.
         if (Highlight?.TryGetValue(box, out var highlight) == true)
         {
-            target.Add(new FillCommand(highlight, HighlightColor));
+            target.Add(new FillCommand(highlight, HighlightColor, CornerRadii.None));
         }
 
         var style = box.Source.Style;
@@ -287,6 +328,8 @@ public sealed class Painter
         target.Add(new BorderCommand(
             box.BorderBox,
             border,
+            style.BorderStyles,
+            box.Radii,
             colors?.Top ?? ToArgb(style.BorderTopColor ?? style.Color),
             colors?.Right ?? ToArgb(style.BorderRightColor ?? style.Color),
             colors?.Bottom ?? ToArgb(style.BorderBottomColor ?? style.Color),

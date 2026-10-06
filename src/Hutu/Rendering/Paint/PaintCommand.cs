@@ -20,22 +20,39 @@ public abstract class PaintCommand
 /// <summary>Fills a rectangle with a solid colour, given as packed ARGB.</summary>
 public sealed class FillCommand : PaintCommand
 {
-    public FillCommand(Rect bounds, UInt32 color)
-        : base(bounds) => Color = color;
+    public FillCommand(Rect bounds, UInt32 color, CornerRadii radii)
+        : base(bounds)
+    {
+        Color = color;
+        Radii = radii;
+    }
 
     public UInt32 Color { get; }
+
+    /// <summary>Gets the corner radii of the filled area, which are square when there are none.</summary>
+    public CornerRadii Radii { get; }
 }
 
 /// <summary>
-/// Draws the four borders of a box. Each side carries its own colour and width, so a side with a
-/// zero width is simply not drawn.
+/// Draws the four borders of a box. Each side carries its own colour, width and stroke, so a side
+/// with a zero width is simply not drawn.
 /// </summary>
 public sealed class BorderCommand : PaintCommand
 {
-    public BorderCommand(Rect bounds, Thickness widths, UInt32 top, UInt32 right, UInt32 bottom, UInt32 left)
+    public BorderCommand(
+        Rect bounds,
+        Thickness widths,
+        BorderStyles styles,
+        CornerRadii radii,
+        UInt32 top,
+        UInt32 right,
+        UInt32 bottom,
+        UInt32 left)
         : base(bounds)
     {
         Widths = widths;
+        Styles = styles;
+        Radii = radii;
         TopColor = top;
         RightColor = right;
         BottomColor = bottom;
@@ -43,6 +60,12 @@ public sealed class BorderCommand : PaintCommand
     }
 
     public Thickness Widths { get; }
+
+    /// <summary>Gets the stroke each side is drawn with.</summary>
+    public BorderStyles Styles { get; }
+
+    /// <summary>Gets the corner radii of the border box, which the border follows.</summary>
+    public CornerRadii Radii { get; }
 
     public UInt32 TopColor { get; }
 
@@ -54,18 +77,18 @@ public sealed class BorderCommand : PaintCommand
 }
 
 /// <summary>
-/// Draws an image into its box. <c>object-fit</c> decides how the content is fitted and the radius
+/// Draws an image into its box. <c>object-fit</c> decides how the content is fitted and the radii
 /// how it is clipped; both are drawing concerns, which is why the box geometry is already resolved
 /// by the time this command is produced.
 /// </summary>
 public sealed class ImageCommand : PaintCommand
 {
-    public ImageCommand(Rect bounds, String url, ObjectFit fit, Double cornerRadius)
+    public ImageCommand(Rect bounds, String url, ObjectFit fit, CornerRadii radii)
         : base(bounds)
     {
         Url = url;
         Fit = fit;
-        CornerRadius = cornerRadius;
+        Radii = radii;
     }
 
     /// <summary>Gets the absolute URL of the image; the backend resolves it from its own cache.</summary>
@@ -73,7 +96,8 @@ public sealed class ImageCommand : PaintCommand
 
     public ObjectFit Fit { get; }
 
-    public Double CornerRadius { get; }
+    /// <summary>Gets the corner radii the image is clipped to.</summary>
+    public CornerRadii Radii { get; }
 }
 
 /// <summary>
@@ -82,27 +106,28 @@ public sealed class ImageCommand : PaintCommand
 /// </summary>
 public sealed class BackgroundImageCommand : PaintCommand
 {
-    public BackgroundImageCommand(Rect bounds, BackgroundLayer layer, Double cornerRadius)
+    public BackgroundImageCommand(Rect bounds, BackgroundLayer layer, CornerRadii radii)
         : base(bounds)
     {
         Layer = layer;
-        CornerRadius = cornerRadius;
+        Radii = radii;
     }
 
     public BackgroundLayer Layer { get; }
 
-    public Double CornerRadius { get; }
+    /// <summary>Gets the corner radii of the painted area.</summary>
+    public CornerRadii Radii { get; }
 }
 
 /// <summary>Draws one linear gradient layer across the background positioning area.</summary>
 public sealed class LinearGradientCommand : PaintCommand
 {
-    public LinearGradientCommand(Rect bounds, Double angleDegrees, IReadOnlyList<GradientStop> stops, Double cornerRadius)
+    public LinearGradientCommand(Rect bounds, Double angleDegrees, IReadOnlyList<GradientStop> stops, CornerRadii radii)
         : base(bounds)
     {
         AngleDegrees = angleDegrees;
         Stops = stops;
-        CornerRadius = cornerRadius;
+        Radii = radii;
     }
 
     /// <summary>Gets the direction, in degrees clockwise from "to top".</summary>
@@ -110,7 +135,40 @@ public sealed class LinearGradientCommand : PaintCommand
 
     public IReadOnlyList<GradientStop> Stops { get; }
 
-    public Double CornerRadius { get; }
+    /// <summary>Gets the corner radii of the painted area.</summary>
+    public CornerRadii Radii { get; }
+}
+
+/// <summary>
+/// Clips everything that follows to a rounded rectangle, until the matching
+/// <see cref="PopClipCommand"/>: what a box with an <c>overflow</c> other than <c>visible</c> asks for.
+/// </summary>
+/// <remarks>
+/// The two commands are always a pair inside one list, which is what lets a backend map them straight
+/// onto its own save and restore without having to balance them at the end of a walk. Clipping a
+/// descendant that is diverted to another layer - a fixed box, say - is deliberately not part of this:
+/// a fixed box is positioned against the viewport rather than the clipping box.
+/// </remarks>
+public sealed class PushClipCommand : PaintCommand
+{
+    public PushClipCommand(Rect bounds, CornerRadii radii)
+        : base(bounds) => Radii = radii;
+
+    /// <summary>Gets the corner radii of the clip, relative to <see cref="PaintCommand.Bounds"/>.</summary>
+    public CornerRadii Radii { get; }
+}
+
+/// <summary>Ends the clip the nearest preceding <see cref="PushClipCommand"/> opened.</summary>
+public sealed class PopClipCommand : PaintCommand
+{
+    /// <summary>
+    /// Creates the command that closes a clip. The area is carried along so that the command still
+    /// describes where it applies, even though undoing a clip needs no geometry.
+    /// </summary>
+    public PopClipCommand(Rect bounds)
+        : base(bounds)
+    {
+    }
 }
 
 /// <summary>A run of text drawn on a single baseline.</summary>

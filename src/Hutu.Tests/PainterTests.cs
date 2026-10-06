@@ -1,3 +1,4 @@
+using Hutu.Rendering;
 using Hutu.Rendering.Paint;
 using NUnit.Framework;
 using System.Linq;
@@ -40,6 +41,36 @@ public sealed class PainterTests
         Assert.That(border.Widths.Top, Is.EqualTo(3).Within(0.01));
         Assert.That(border.Widths.Left, Is.EqualTo(3).Within(0.01));
         Assert.That(border.TopColor, Is.EqualTo(0xFF00FF00));
+    }
+
+    [Test]
+    public async Task BackgroundFillCarriesTheResolvedRadii()
+    {
+        using var view = CreateView();
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:100px;height:100px;background-color:#ff0000;border-radius:20px'></div>" +
+            "</body></html>");
+
+        var fill = view.Paint!.Commands.OfType<FillCommand>().Single(command => command.Color == 0xFFFF0000);
+
+        Assert.That(fill.Radii.TopLeft.Horizontal, Is.EqualTo(20).Within(0.01), "the background follows the corner");
+    }
+
+    [Test]
+    public async Task BorderCommandCarriesTheResolvedRadiiAndStrokeStyles()
+    {
+        using var view = CreateView();
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:100px;height:100px;border:3px dashed #00ff00;border-radius:10px'></div>" +
+            "</body></html>");
+
+        var border = view.Paint!.Commands.OfType<BorderCommand>().Single();
+
+        Assert.That(border.Radii.TopLeft.Horizontal, Is.EqualTo(10).Within(0.01), "the border follows the corner");
+        Assert.That(border.Styles.Top, Is.EqualTo(BorderLineStyle.Dashed), "the stroke reaches the backend");
+        Assert.That(border.Styles.IsUniform, Is.True);
     }
 
     [Test]

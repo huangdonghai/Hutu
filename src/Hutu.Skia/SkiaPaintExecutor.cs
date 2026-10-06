@@ -1,3 +1,4 @@
+using Hutu.Rendering;
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Paint;
 using SkiaSharp;
@@ -76,15 +77,24 @@ public sealed class SkiaPaintExecutor
                     break;
 
                 case ImageCommand image:
-                    _images?.Draw(canvas, image.Url, ToRect(image.Bounds), image.Fit, image.CornerRadius);
+                    _images?.Draw(canvas, image.Url, ToRect(image.Bounds), image.Fit, image.Radii);
                     break;
 
                 case BackgroundImageCommand background:
-                    _images?.DrawBackground(canvas, background.Layer, ToRect(background.Bounds), background.CornerRadius);
+                    _images?.DrawBackground(canvas, background.Layer, ToRect(background.Bounds), background.Radii);
                     break;
 
                 case LinearGradientCommand gradient:
                     DrawGradient(canvas, gradient);
+                    break;
+
+                case PushClipCommand clip:
+                    canvas.Save();
+                    SkiaRounded.Clip(canvas, ToRect(clip.Bounds), clip.Radii);
+                    break;
+
+                case PopClipCommand:
+                    canvas.Restore();
                     break;
 
                 case TextCommand text:
@@ -97,10 +107,52 @@ public sealed class SkiaPaintExecutor
     private static void Fill(SKCanvas canvas, FillCommand command)
     {
         using var paint = new SKPaint { Color = new SKColor(command.Color), IsAntialias = true };
-        canvas.DrawRect(ToRect(command.Bounds), paint);
+        SkiaRounded.Fill(canvas, ToRect(command.Bounds), command.Radii, paint);
     }
 
+    /// <summary>
+    /// Draws the border of a box.
+    /// </summary>
+    /// <remarks>
+    /// A border follows the corner radii of the box, so it is the area between two rounded rectangles -
+    /// the border box outside and the padding box inside - rather than four rectangles that overlap at
+    /// the corners. Sides that are all alike are drawn in one pass; when they differ, each side is
+    /// confined to its own quarter by the diagonals the corner would miter along. A side that is dashed
+    /// or dotted is stroked along the middle of the border instead of filled, which is what lets the
+    /// pattern run around the curve; on a corner whose radius is smaller than half the border width
+    /// that middle line degenerates and the pattern straightens out, which is the one visible
+    /// approximation of the two.
+    /// </remarks>
     private static void DrawBorder(SKCanvas canvas, BorderCommand command)
+    {
+        // The plain case - square corners and four unbroken strokes - is by far the most common one on
+        // a page, and four rectangles are a good deal cheaper than two rounded paths.
+        if (command.Radii.IsZero && command.Styles.IsSolid)
+        {
+            DrawSquareBorder(canvas, command);
+            return;
+        }
+
+        using var ring = BorderRing(command);
+        using var middle = BorderMiddle(command);
+
+        if (command.HasUniformColor() && command.Styles.IsUniform && command.Widths.IsUniform())
+        {
+            DrawBorderStroke(canvas, command.Widths.Top, command.TopColor, command.Styles.Top, ring, middle);
+            return;
+        }
+
+        foreach (var side in BorderSides.All)
+        {
+            canvas.Save();
+            canvas.ClipPath(SideQuad(command.Bounds, command.Widths, side), SKClipOperation.Intersect, antialias: true);
+            DrawBorderStroke(canvas, command.Widths.Side(side), command.ColorOf(side), command.Styles.Side(side), ring, middle);
+            canvas.Restore();
+        }
+    }
+
+    /// <summary>Draws the four sides as overlapping rectangles, which is right only when nothing rounds.</summary>
+    private static void DrawSquareBorder(SKCanvas canvas, BorderCommand command)
     {
         var box = command.Bounds;
         var widths = command.Widths;
@@ -122,6 +174,137 @@ public sealed class SkiaPaintExecutor
             DrawSide(canvas, new Rect(box.Right - widths.Right, box.Y, widths.Right, box.Height), command.RightColor);
         }
     }
+
+    private static void DrawBorderStroke(
+        SKCanvas canvas,
+        Double width,
+        UInt32 color,
+        BorderLineStyle style,
+        SKPath ring,
+        SKPath middle)
+    {
+        if (width <= 0 || style == BorderLineStyle.None)
+        {
+            return;
+        }
+
+        if (style == BorderLineStyle.Solid)
+        {
+            using var fill = new SKPaint { Color = new SKColor(color), IsAntialias = true };
+            canvas.DrawPath(ring, fill);
+            return;
+        }
+
+        using var paint = new SKPaint
+        {
+            Color = new SKColor(color),
+            IsAntialias = true,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = (Single)width,
+        };
+
+        if (style == BorderLineStyle.Dotted)
+        {
+            paint.StrokeCap = SKStrokeCap.Round;
+        }
+
+        using var dashes = Dashes(width, style);
+        paint.PathEffect = dashes;
+        canvas.DrawPath(middle, paint);
+    }
+
+    /// <summary>
+    /// Gets the border area as two rounded rectangles, the outer one wound the other way so that an
+    /// even-odd fill leaves the band between them.
+    /// </summary>
+    private static SKPath BorderRing(BorderCommand command)
+    {
+        var outer = ToRect(command.Bounds);
+        var padding = Deflate(outer, command.Widths);
+
+        var path = new SKPath { FillType = SKPathFillType.EvenOdd };
+        path.AddRoundRect(SkiaRounded.RoundRect(outer, command.Radii));
+
+        if (padding.Width > 0 && padding.Height > 0)
+        {
+            path.AddRoundRect(SkiaRounded.RoundRect(padding, command.Radii.Shrink(command.Widths)));
+        }
+
+        return path;
+    }
+
+    /// <summary>Gets the line through the middle of the border, which a pattern is stroked along.</summary>
+    private static SKPath BorderMiddle(BorderCommand command)
+    {
+        var widths = command.Widths;
+        var half = new Thickness(widths.Top / 2, widths.Right / 2, widths.Bottom / 2, widths.Left / 2);
+
+        var path = new SKPath();
+        path.AddRoundRect(SkiaRounded.RoundRect(Deflate(ToRect(command.Bounds), half), command.Radii.Shrink(half)));
+        return path;
+    }
+
+    /// <summary>
+    /// Gets the quarter of the border a side owns, bounded by the diagonals the two corners either end
+    /// of it would miter along - which is what keeps two sides from painting over each other.
+    /// </summary>
+    private static SKPath SideQuad(Rect box, Thickness widths, BorderSide side)
+    {
+        var path = new SKPath();
+
+        switch (side)
+        {
+            case BorderSide.Top:
+                path.MoveTo((Single)box.X, (Single)box.Y);
+                path.LineTo((Single)box.Right, (Single)box.Y);
+                path.LineTo((Single)(box.Right - widths.Right), (Single)(box.Y + widths.Top));
+                path.LineTo((Single)(box.X + widths.Left), (Single)(box.Y + widths.Top));
+                break;
+
+            case BorderSide.Bottom:
+                path.MoveTo((Single)box.X, (Single)box.Bottom);
+                path.LineTo((Single)(box.X + widths.Left), (Single)(box.Bottom - widths.Bottom));
+                path.LineTo((Single)(box.Right - widths.Right), (Single)(box.Bottom - widths.Bottom));
+                path.LineTo((Single)box.Right, (Single)box.Bottom);
+                break;
+
+            case BorderSide.Left:
+                path.MoveTo((Single)box.X, (Single)box.Y);
+                path.LineTo((Single)(box.X + widths.Left), (Single)(box.Y + widths.Top));
+                path.LineTo((Single)(box.X + widths.Left), (Single)(box.Bottom - widths.Bottom));
+                path.LineTo((Single)box.X, (Single)box.Bottom);
+                break;
+
+            default:
+                path.MoveTo((Single)box.Right, (Single)box.Y);
+                path.LineTo((Single)box.Right, (Single)box.Bottom);
+                path.LineTo((Single)(box.Right - widths.Right), (Single)(box.Bottom - widths.Bottom));
+                path.LineTo((Single)(box.Right - widths.Right), (Single)(box.Y + widths.Top));
+                break;
+        }
+
+        path.Close();
+        return path;
+    }
+
+    /// <summary>
+    /// Gets the dash pattern a side is stroked with. The intervals follow the border width, which the
+    /// spec leaves to the implementation; a dot is a dash of no length drawn with a round cap, so it
+    /// comes out as a circle the width of the border.
+    /// </summary>
+    private static SKPathEffect? Dashes(Double width, BorderLineStyle style)
+    {
+        var gap = (Single)Math.Max(1, width * 2);
+        var interval = style == BorderLineStyle.Dotted ? (Single)0.1 : gap;
+
+        return SKPathEffect.CreateDash(new[] { interval, gap }, 0);
+    }
+
+    private static SKRect Deflate(SKRect box, Thickness insets) => new(
+        box.Left + (Single)insets.Left,
+        box.Top + (Single)insets.Top,
+        box.Right - (Single)insets.Right,
+        box.Bottom - (Single)insets.Bottom);
 
     private static void DrawSide(SKCanvas canvas, Rect side, UInt32 color)
     {
@@ -186,7 +369,7 @@ public sealed class SkiaPaintExecutor
         using var paint = new SKPaint { Shader = shader, IsAntialias = true };
 
         canvas.Save();
-        canvas.ClipRoundRect(new SKRoundRect(box, (Single)Math.Max(0, command.CornerRadius)), antialias: true);
+        SkiaRounded.Clip(canvas, box, command.Radii);
         canvas.DrawRect(box, paint);
         canvas.Restore();
     }

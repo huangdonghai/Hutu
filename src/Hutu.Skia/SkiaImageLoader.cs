@@ -56,7 +56,7 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
     /// Draws a loaded image into the given rectangle, fitted and clipped as requested. Does nothing
     /// when the image is not available, so a broken reference simply leaves the page background.
     /// </summary>
-    public void Draw(SKCanvas canvas, String url, SKRect destination, ObjectFit fit, Double cornerRadius)
+    public void Draw(SKCanvas canvas, String url, SKRect destination, ObjectFit fit, CornerRadii radii)
     {
         if (!_entries.TryGetValue(url, out var entry) || entry.Size is not { IsValid: true } intrinsic)
         {
@@ -71,9 +71,9 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
         var placed = Placement(intrinsic, destination, fit);
 
         // Clipping to the destination is what crops the overflow that cover/none/scale-down let the
-        // content have; a zero radius makes it a plain rectangular clip.
+        // content have; radii that are all zero make it a plain rectangular clip.
         canvas.Save();
-        canvas.ClipRoundRect(new SKRoundRect(destination, (Single)Math.Max(0, cornerRadius)), antialias: true);
+        SkiaRounded.Clip(canvas, destination, radii);
 
         if (entry.Image is not null)
         {
@@ -93,7 +93,7 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
     /// position and repeat - which is a different model from <c>object-fit</c>, so this does not go
     /// through <see cref="Draw"/>.
     /// </summary>
-    public void DrawBackground(SKCanvas canvas, BackgroundLayer layer, SKRect area, Double cornerRadius)
+    public void DrawBackground(SKCanvas canvas, BackgroundLayer layer, SKRect area, CornerRadii radii)
     {
         if (layer.Url is not { Length: > 0 } url)
         {
@@ -121,7 +121,7 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
         var top = area.Top + (Single)layer.PositionY.Resolve(area.Height - tile.Height);
 
         canvas.Save();
-        canvas.ClipRoundRect(new SKRoundRect(area, (Single)Math.Max(0, cornerRadius)), antialias: true);
+        SkiaRounded.Clip(canvas, area, radii);
 
         if (layer.Repeat)
         {

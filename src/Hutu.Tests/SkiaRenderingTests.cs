@@ -502,6 +502,96 @@ public sealed class SkiaRenderingTests
         Assert.That(CountNonWhitePixels(view.Paint!, measurer), Is.GreaterThan(1000));
     }
 
+    [Test]
+    public async Task BorderRadiusSamplePageRendersRoundedCornersAndClipsToTheCurve()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.AddEmbeddedResourceSource(typeof(Sample.Common.SampleUtils).Assembly, "Samples");
+        view.SetViewportSize(900, 800);
+
+        await view.LoadUrlAsync("Pages/border-radius.htm");
+
+        Assert.That(view.Document, Is.Not.Null, "the embedded resource requester should have served the page");
+
+        var paint = view.Paint!;
+        var boxes = OfClass(view, "rbox");
+
+        // Sections 1-6 each show four swatches, so the page declares twenty-four of them.
+        Assert.That(boxes, Has.Count.EqualTo(24), "six sections of four swatches");
+
+        // Section 1: a single value rounds every corner the same way.
+        Assert.That(boxes[0].Radii.TopLeft.Horizontal, Is.EqualTo(20).Within(0.5));
+        Assert.That(boxes[0].Radii.IsUniform, Is.True);
+
+        // Section 2: the trailing `border-radius: 0` resets the longhands written before it.
+        foreach (var box in boxes.Skip(4).Take(4))
+        {
+            Assert.That(box.Radii.IsZero, Is.True, "a later shorthand overrides the earlier longhands");
+        }
+
+        // Section 3: the slash syntax flattens the corner, so the two axes differ.
+        Assert.That(boxes[8].Radii.TopLeft.Horizontal, Is.EqualTo(40).Within(0.5));
+        Assert.That(boxes[8].Radii.TopLeft.Vertical, Is.EqualTo(10).Within(0.5));
+
+        // Section 5: a radius too long for the box is scaled down to what it can hold. The swatch is
+        // 80px wide but 60px tall with a 2px border, so the border box is 84x64: the height is the
+        // tighter side, and both the 60px and the 100px declaration shrink to fit it - 60 * 64/120 = 32.
+        Assert.That(boxes[16].Radii.TopLeft.Horizontal, Is.EqualTo(32).Within(0.5));
+        Assert.That(boxes[17].Radii.TopLeft.Horizontal, Is.EqualTo(32).Within(0.5));
+        Assert.That(boxes[19].Radii.TopLeft.Horizontal, Is.EqualTo(20).Within(0.5), "a radius that fits is untouched");
+
+        // Sections 7 and 8: every `overflow: hidden` box opens a clip before its children and closes
+        // it after them, so the stack is balanced.
+        var pushes = paint.Commands.OfType<PushClipCommand>().ToList();
+        var pops = paint.Commands.OfType<PopClipCommand>().ToList();
+
+        Assert.That(pushes, Is.Not.Empty, "the page hides the overflow of several boxes");
+        Assert.That(pops, Has.Count.EqualTo(pushes.Count), "clips are opened and closed in pairs");
+
+        // Section 8: a 6px border around a 14px corner leaves an 8px curve on the inner edge, and the
+        // `background-clip: padding-box` gradient is painted against that inner rectangle.
+        var thick = LayoutOf(view)
+            .Where(box => box.Border.Top >= 5.9 && box.Border.Horizontal >= 11.8)
+            .DistinctBy(box => box.Source.Element)
+            .ToList();
+
+        Assert.That(thick, Has.Count.EqualTo(2), "section 8 shows two thick-border boxes");
+
+        foreach (var box in thick)
+        {
+            Assert.That(box.Radii.TopLeft.Horizontal, Is.EqualTo(14).Within(0.5), "the outer curve");
+            Assert.That(box.PaddingRadii.TopLeft.Horizontal, Is.EqualTo(8).Within(0.5), "14 - 6 on the inner edge");
+        }
+
+        Assert.That(
+            paint.Commands.OfType<LinearGradientCommand>().Any(gradient =>
+                Math.Abs(gradient.Bounds.X - thick[0].PaddingBox.X) < 0.5 &&
+                Math.Abs(gradient.Bounds.Width - thick[0].PaddingBox.Width) < 0.5),
+            Is.True,
+            "the padding-box clip pulls the gradient in to the border's inner edge");
+
+        // Pixel level: the middle of the first (20px radius) swatch is filled and its square corner is
+        // cut away, which is the whole point of a rounded box.
+        var width = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Width));
+        var height = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Height));
+
+        using var surface = SKSurface.Create(new SKImageInfo(width, height));
+        new SkiaPaintExecutor(measurer).Execute(paint, surface.Canvas);
+
+        using var bitmap = SKBitmap.FromImage(surface.Snapshot());
+        var swatch = boxes[0].BorderBox;
+        var centre = bitmap.GetPixel((Int32)(swatch.X + (swatch.Width / 2)), (Int32)(swatch.Y + (swatch.Height / 2)));
+        var corner = bitmap.GetPixel((Int32)swatch.X + 1, (Int32)swatch.Y + 1);
+
+        Assert.That(centre.Blue, Is.GreaterThan(140), "steelblue fills the middle of the swatch");
+        Assert.That(centre.Green, Is.GreaterThan(90));
+        Assert.That(
+            Math.Min(corner.Red, Math.Min(corner.Green, corner.Blue)),
+            Is.GreaterThan(230),
+            "the corner sits outside the 20px curve and stays white");
+    }
+
     /// <summary>Finds the one box an element of a given class produced.</summary>
     private static LayoutBox OneOfClass(HutuViewInternal view, String name)
     {

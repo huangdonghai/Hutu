@@ -278,21 +278,51 @@ public readonly struct ComputedStyle
     }
 
     /// <summary>
-    /// Gets the radius painted content is clipped to. Only one radius is modelled - the largest of
-    /// the four corners - which is exactly what a uniform <c>border-radius</c> produces.
+    /// Gets the four corner radii as they were written, so that the layout pass can resolve a
+    /// percentage against the size of the box itself - which is what a percentage radius is relative
+    /// to - and shrink radii that would overlap.
     /// </summary>
-    public Double CornerRadius
+    public StyleCornerRadii BorderRadius => new(
+        LengthReader.TryReadCorner(_specified, _style, "border-top-left-radius", _dimensions) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-top-right-radius", _dimensions) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-bottom-right-radius", _dimensions) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-bottom-left-radius", _dimensions) ?? StyleCornerRadius.Zero);
+
+    /// <summary>
+    /// Gets the box the background is painted into: <c>border-box</c> (the initial value) reaches
+    /// under a transparent border, <c>padding-box</c> stops at the inner edge of the border, and
+    /// <c>content-box</c> at the padding.
+    /// </summary>
+    public BackgroundClip BackgroundClip
     {
         get
         {
-            var topLeft = Length("border-top-left-radius", RenderMode.Horizontal);
-            var topRight = Length("border-top-right-radius", RenderMode.Horizontal);
-            var bottomRight = Length("border-bottom-right-radius", RenderMode.Horizontal);
-            var bottomLeft = Length("border-bottom-left-radius", RenderMode.Horizontal);
+            // One keyword per background layer, and a box that paints a single background layer can
+            // only be told apart by the first one.
+            var value = ReadKeyword("background-clip") ?? String.Empty;
+            var comma = value.IndexOf(',');
+            var keyword = (comma < 0 ? value : value[..comma]).Trim();
 
-            return Math.Max(Math.Max(topLeft, topRight), Math.Max(bottomRight, bottomLeft));
+            return keyword.ToLowerInvariant() switch
+            {
+                "padding-box" => BackgroundClip.PaddingBox,
+                "content-box" => BackgroundClip.ContentBox,
+                _ => BackgroundClip.BorderBox,
+            };
         }
     }
+
+    /// <summary>
+    /// Gets whether descendants are clipped to the box, which is what every <c>overflow</c> value
+    /// other than <c>visible</c> asks for, and with the rounded corners if there are any.
+    /// </summary>
+    /// <remarks>
+    /// Hutu scrolls the document rather than a box, so <c>scroll</c>, <c>auto</c> and <c>clip</c> have
+    /// nothing to do beyond hiding the overflow, and they are treated as one. Either axis clipping is
+    /// enough: with one axis <c>visible</c> and the other not, CSS makes the visible one <c>auto</c>.
+    /// </remarks>
+    public Boolean ClipsOverflow =>
+        !IsOverflowVisible("overflow-x") || !IsOverflowVisible("overflow-y");
 
     /// <summary>
     /// Gets the four margins, with their units intact: <c>auto</c> survives, which is what makes
@@ -327,6 +357,17 @@ public readonly struct ComputedStyle
     public Boolean BorderBottomVisible => HasBorder("border-bottom-style");
 
     public Boolean BorderLeftVisible => HasBorder("border-left-style");
+
+    /// <summary>
+    /// Gets the stroke each side of the border is drawn with. A keyword Hutu cannot draw - <c>double</c>,
+    /// <c>groove</c>, <c>ridge</c>, <c>inset</c> and <c>outset</c> - is drawn as a solid stroke rather
+    /// than dropped, since a side with a width but no stroke would leave a hole in the outline.
+    /// </summary>
+    public BorderStyles BorderStyles => new(
+        ToLineStyle(BorderTopStyle),
+        ToLineStyle(BorderRightStyle),
+        ToLineStyle(BorderBottomStyle),
+        ToLineStyle(BorderLeftStyle));
 
     /// <summary>
     /// Gets the four border style keywords. The collapsing border model breaks a tie between two
@@ -424,6 +465,14 @@ public readonly struct ComputedStyle
                !style.Equals("hidden", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static BorderLineStyle ToLineStyle(String keyword) => keyword.ToLowerInvariant() switch
+    {
+        "none" or "hidden" => BorderLineStyle.None,
+        "dashed" => BorderLineStyle.Dashed,
+        "dotted" => BorderLineStyle.Dotted,
+        _ => BorderLineStyle.Solid,
+    };
+
     private Boolean HasDecoration(String kind)
     {
         var text = _style.GetPropertyValue("text-decoration-line");
@@ -463,6 +512,28 @@ public readonly struct ComputedStyle
     {
         var text = _style.GetPropertyValue(name);
         return String.IsNullOrWhiteSpace(text) ? fallback : text.Trim();
+    }
+
+    /// <summary>
+    /// Reads a keyword, preferring the cascaded declaration: computing a style rebuilds a shorthand's
+    /// longhands lossily, so the value as it was written is the more faithful of the two.
+    /// </summary>
+    private String? ReadKeyword(String name)
+    {
+        var text = _specified?.GetPropertyValue(name);
+
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            text = _style.GetPropertyValue(name);
+        }
+
+        return String.IsNullOrWhiteSpace(text) ? null : text.Trim();
+    }
+
+    private Boolean IsOverflowVisible(String name)
+    {
+        var value = ReadKeyword(name);
+        return value is null || value.Equals("visible", StringComparison.OrdinalIgnoreCase);
     }
 
     private Boolean Is(String name, String keyword)

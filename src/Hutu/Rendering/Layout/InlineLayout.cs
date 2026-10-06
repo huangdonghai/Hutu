@@ -153,7 +153,6 @@ public sealed class InlineLayout
                     // is lifted by its own height rather than filling the line box.
                     child.ImageUrl = fragment.Box.SourceUrl;
                     child.ImageFit = fragment.Style.ObjectFit;
-                    child.CornerRadius = fragment.Style.CornerRadius;
                     child.BorderBox = new Rect(
                         originX,
                         cursorY + line.Ascent - fragment.ContentHeight,

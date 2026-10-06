@@ -101,6 +101,41 @@ internal static class LengthReader
     }
 
     /// <summary>
+    /// Reads a corner radius: the pair of axes a <c>border-*-radius</c> declaration carries, with any
+    /// percentage left to the layout pass.
+    /// </summary>
+    /// <remarks>
+    /// A radius holds two values - the horizontal axis first, the vertical one second - and a single
+    /// value stands for both, which is what makes <c>border-radius: 20px</c> a circle rather than a
+    /// flat line. The value arrives as an instance of the generic <c>CssRadiusValue</c>, so it has to
+    /// be taken apart through <see cref="ICssMultipleValue"/>.
+    /// </remarks>
+    public static StyleCornerRadius? TryReadCorner(
+        ICssStyleDeclaration? specified,
+        ICssStyleDeclaration? computed,
+        String name,
+        IRenderDimensions dimensions)
+    {
+        return TryReadCorner(specified, name, dimensions) ?? TryReadCorner(computed, name, dimensions);
+    }
+
+    private static StyleCornerRadius? TryReadCorner(ICssStyleDeclaration? declaration, String name, IRenderDimensions dimensions)
+    {
+        if (declaration?.GetProperty(name)?.RawValue is not ICssMultipleValue radius || radius.Count == 0)
+        {
+            return null;
+        }
+
+        var horizontal = TryReadAxis(radius[0], RenderMode.Horizontal, dimensions);
+        var vertical = radius.Count > 1 ? TryReadAxis(radius[1], RenderMode.Vertical, dimensions) ?? horizontal : horizontal;
+
+        return new StyleCornerRadius(horizontal ?? StyleLength.Zero, vertical ?? StyleLength.Zero);
+    }
+
+    private static StyleLength? TryReadAxis(ICssValue? value, RenderMode mode, IRenderDimensions dimensions) =>
+        value is not null && TryReadValue(value, mode, dimensions, out var length) && length.HasValue ? length : null;
+
+    /// <summary>
     /// Gets the individual values of a shorthand that carries more than one, or null when the value is
     /// a single one. AngleSharp declares a non-generic <c>CssTupleValue</c> deriving from the generic
     /// one, but the values a shorthand actually produces are instantiations of the generic type;
