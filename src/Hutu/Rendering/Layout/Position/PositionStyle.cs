@@ -100,7 +100,7 @@ public readonly struct PositionStyle
     }
 
     private static StyleLength Inset(ComputedStyle style, String name) =>
-        LengthReader.TryRead(style.Specified, style.Declaration, name, RenderMode.Horizontal, style.Dimensions, out var length) &&
+        LengthReader.TryRead(style.Specified, style.Declaration, name, RenderMode.Horizontal, style.Dimensions, style.FontSize, out var length) &&
         length.HasValue
             ? length
             : StyleLength.Auto;

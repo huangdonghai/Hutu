@@ -105,7 +105,7 @@ public readonly struct TableStyle
             }
         }
 
-        if (LengthReader.TryRead(style.Specified, style.Declaration, "border-spacing", RenderMode.Horizontal, style.Dimensions, out var single) &&
+        if (LengthReader.TryRead(style.Specified, style.Declaration, "border-spacing", RenderMode.Horizontal, style.Dimensions, style.FontSize, out var single) &&
             single.HasValue)
         {
             var value = Math.Max(0, single.Resolve(0));
@@ -116,7 +116,7 @@ public readonly struct TableStyle
     }
 
     private static Double? SpacingOf(ComputedStyle style, ICssValue item) =>
-        LengthReader.TryReadValue(item, RenderMode.Horizontal, style.Dimensions, out var length) && length.HasValue
+        LengthReader.TryReadValue(item, RenderMode.Horizontal, style.Dimensions, style.FontSize, out var length) && length.HasValue
             ? Math.Max(0, length.Resolve(0))
             : null;
 

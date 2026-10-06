@@ -554,7 +554,7 @@ internal readonly struct GridStyle
     };
 
     private static GridBreadth LengthBreadth(ComputedStyle style, CssLengthValue length) =>
-        LengthReader.TryReadValue(length, RenderMode.Horizontal, style.Dimensions, out var parsed) && parsed.HasValue
+        LengthReader.TryReadValue(length, RenderMode.Horizontal, style.Dimensions, style.FontSize, out var parsed) && parsed.HasValue
             ? parsed.Kind == StyleLengthKind.Percent
                 ? new GridBreadth(GridBreadthKind.Percent, parsed.Value)
                 : new GridBreadth(GridBreadthKind.Length, Math.Max(0, parsed.Value))
@@ -568,7 +568,7 @@ internal readonly struct GridStyle
     private static Double Length(ComputedStyle style, ICssValue? value)
     {
         if (value is CssLengthValue length &&
-            LengthReader.TryReadValue(length, RenderMode.Horizontal, style.Dimensions, out var parsed) &&
+            LengthReader.TryReadValue(length, RenderMode.Horizontal, style.Dimensions, style.FontSize, out var parsed) &&
             parsed.HasValue &&
             parsed.Kind != StyleLengthKind.Percent)
         {

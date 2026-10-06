@@ -32,6 +32,7 @@ public static class BackgroundLayerParser
         String? sizes,
         String? repeats,
         IRenderDimensions dimensions,
+        Double fontSize,
         Func<String, String?>? resolveUrl = null)
     {
         var imageList = CssValueList.SplitTopLevel(images);
@@ -64,8 +65,8 @@ public static class BackgroundLayerParser
                 continue;
             }
 
-            var position = ParsePosition(At(positionList, index), dimensions);
-            var size = ParseSize(At(sizeList, index), dimensions);
+            var position = ParsePosition(At(positionList, index), dimensions, fontSize);
+            var size = ParseSize(At(sizeList, index), dimensions, fontSize);
 
             layers.Add(new BackgroundLayer
             {
@@ -88,7 +89,7 @@ public static class BackgroundLayerParser
 
     // --- position -------------------------------------------------------
 
-    private static (BackgroundOffset X, BackgroundOffset Y) ParsePosition(String value, IRenderDimensions dimensions)
+    private static (BackgroundOffset X, BackgroundOffset Y) ParsePosition(String value, IRenderDimensions dimensions, Double fontSize)
     {
         var parts = CssValueList.SplitWhitespace(value);
 
@@ -99,7 +100,7 @@ public static class BackgroundLayerParser
 
         if (parts.Count == 1)
         {
-            var single = Component(parts[0], dimensions);
+            var single = Component(parts[0], dimensions, fontSize);
 
             // A lone vertical keyword leaves the horizontal axis centred, and vice versa.
             return IsVertical(parts[0])
@@ -107,14 +108,14 @@ public static class BackgroundLayerParser
                 : (single, new BackgroundOffset(0.5, true));
         }
 
-        var first = Component(parts[0], dimensions);
-        var second = Component(parts[1], dimensions);
+        var first = Component(parts[0], dimensions, fontSize);
+        var second = Component(parts[1], dimensions, fontSize);
 
         // `top left` is as valid as `left top`; normalise so the horizontal component comes first.
         return IsVertical(parts[0]) ? (second, first) : (first, second);
     }
 
-    private static BackgroundOffset Component(String part, IRenderDimensions dimensions)
+    private static BackgroundOffset Component(String part, IRenderDimensions dimensions, Double fontSize)
     {
         if (part.Equals("left", StringComparison.OrdinalIgnoreCase) ||
             part.Equals("top", StringComparison.OrdinalIgnoreCase))
@@ -133,7 +134,7 @@ public static class BackgroundLayerParser
             return new BackgroundOffset(0.5, true);
         }
 
-        return ParseOffset(part, dimensions) ?? default;
+        return ParseOffset(part, dimensions, fontSize) ?? default;
     }
 
     private static Boolean IsVertical(String part) =>
@@ -144,7 +145,8 @@ public static class BackgroundLayerParser
 
     private static (BackgroundLayerSizeKind Kind, BackgroundOffset Width, BackgroundOffset Height) ParseSize(
         String value,
-        IRenderDimensions dimensions)
+        IRenderDimensions dimensions,
+        Double fontSize)
     {
         if (String.IsNullOrWhiteSpace(value))
         {
@@ -170,7 +172,7 @@ public static class BackgroundLayerParser
             return (BackgroundLayerSizeKind.Auto, default, default);
         }
 
-        var width = ParseOffset(parts[0], dimensions);
+        var width = ParseOffset(parts[0], dimensions, fontSize);
 
         if (width is null)
         {
@@ -178,7 +180,7 @@ public static class BackgroundLayerParser
         }
 
         var height = parts.Count > 1 && !parts[1].Equals("auto", StringComparison.OrdinalIgnoreCase)
-            ? ParseOffset(parts[1], dimensions)
+            ? ParseOffset(parts[1], dimensions, fontSize)
             : null;
 
         return (BackgroundLayerSizeKind.Explicit, width.Value, height ?? default);
@@ -188,7 +190,7 @@ public static class BackgroundLayerParser
     /// Converts one component to an offset. A percentage is kept as a fraction because it is
     /// relative to the positioning area, which is only known when the box is painted.
     /// </summary>
-    private static BackgroundOffset? ParseOffset(String text, IRenderDimensions dimensions)
+    private static BackgroundOffset? ParseOffset(String text, IRenderDimensions dimensions, Double fontSize)
     {
         if (!CssLengthValue.TryParse(text, out var length))
         {
@@ -202,7 +204,7 @@ public static class BackgroundLayerParser
 
         try
         {
-            return new BackgroundOffset(length.ToPixel(dimensions, RenderMode.Horizontal), false);
+            return new BackgroundOffset(LengthReader.ToPixel(length, RenderMode.Horizontal, dimensions, fontSize), false);
         }
         catch (Exception)
         {

@@ -1,4 +1,5 @@
 using AngleSharp.Css;
+using AngleSharp.Css.Dom;
 using AngleSharp.Css.RenderTree;
 using AngleSharp.Css.Values;
 using AngleSharp.Dom;
@@ -48,7 +49,14 @@ public static class BoxBuilder
         Double parentFontSize = 0,
         CssColorValue? parentColor = null)
     {
-        var style = new ComputedStyle(node.ComputedStyle, dimensions, node.SpecifiedStyle, node.Ref, parentFontSize, parentColor);
+        var style = new ComputedStyle(
+            node.ComputedStyle,
+            dimensions,
+            node.SpecifiedStyle,
+            node.Ref,
+            parentFontSize,
+            parentColor,
+            DeclaresRelativeFontSize(node.Ref, node.SpecifiedStyle, dimensions));
 
         if (style.IsDisplayNone)
         {
@@ -152,6 +160,23 @@ public static class BoxBuilder
 
         return box;
     }
+
+    /// <summary>
+    /// Gets whether the element declares a font-relative <c>font-size</c> of its own rather than taking
+    /// one over from a parent.
+    /// </summary>
+    /// <remarks>
+    /// A relative font size the element declares is measured against its parent, while an inherited one
+    /// is already resolved. Telling the two apart costs a second cascade, so it is only paid where the
+    /// answer changes anything: a size in pixels or an absolute unit means the same thing either way.
+    /// </remarks>
+    private static Boolean DeclaresRelativeFontSize(
+        IElement element,
+        ICssStyleDeclaration specified,
+        IRenderDimensions dimensions) =>
+        specified.GetProperty("font-size")?.RawValue is CssLengthValue size &&
+        ComputedStyle.IsFontRelative(size.Type) &&
+        ComputedStyle.Declares(element, dimensions, "font-size");
 
     private static Boolean HasBlockLevel(List<Box> children)
     {

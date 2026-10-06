@@ -18,6 +18,11 @@ namespace Hutu.Rendering;
 /// declaration still holds the percentage, so it is asked first and the computed one only serves as
 /// a fallback for properties that were never declared - and those can only hold an initial value,
 /// which is never a percentage.
+/// <para>
+/// The same device also stands in for the font size, so a length in <c>em</c> would be resolved
+/// against the root font size rather than the element's own. <see cref="ToPixel"/> takes the font
+/// size the length is really relative to, and every read here is handed the element's.
+/// </para>
 /// </remarks>
 internal static class LengthReader
 {
@@ -27,10 +32,11 @@ internal static class LengthReader
         String name,
         RenderMode mode,
         IRenderDimensions dimensions,
+        Double fontSize,
         out StyleLength length)
     {
-        return TryRead(specified, name, mode, dimensions, out length) ||
-               TryRead(computed, name, mode, dimensions, out length);
+        return TryRead(specified, name, mode, dimensions, fontSize, out length) ||
+               TryRead(computed, name, mode, dimensions, fontSize, out length);
     }
 
     public static Boolean TryRead(
@@ -38,6 +44,7 @@ internal static class LengthReader
         String name,
         RenderMode mode,
         IRenderDimensions dimensions,
+        Double fontSize,
         out StyleLength length)
     {
         length = default;
@@ -47,20 +54,20 @@ internal static class LengthReader
             return false;
         }
 
-        if (CssMathLengths.Evaluate(declaration.GetPropertyValue(name), text => FromText(text, mode, dimensions)) is { } math)
+        if (CssMathLengths.Evaluate(declaration.GetPropertyValue(name), text => FromText(text, mode, dimensions, fontSize)) is { } math)
         {
             length = math;
             return true;
         }
 
-        return TryReadValue(declaration.GetProperty(name)?.RawValue, mode, dimensions, out length);
+        return TryReadValue(declaration.GetProperty(name)?.RawValue, mode, dimensions, fontSize, out length);
     }
 
     /// <summary>
     /// Reads a value that has already been fetched from a declaration. Track lists, <c>minmax</c> and
     /// the items of a shorthand tuple all arrive as loose values rather than as named properties.
     /// </summary>
-    public static Boolean TryReadValue(ICssValue? value, RenderMode mode, IRenderDimensions dimensions, out StyleLength length)
+    public static Boolean TryReadValue(ICssValue? value, RenderMode mode, IRenderDimensions dimensions, Double fontSize, out StyleLength length)
     {
         length = default;
 
@@ -77,7 +84,7 @@ internal static class LengthReader
                     return true;
                 }
 
-                if (FromCssLength(css, mode, dimensions) is not { } resolved)
+                if (FromCssLength(css, mode, dimensions, fontSize) is not { } resolved)
                 {
                     return false;
                 }
@@ -114,26 +121,27 @@ internal static class LengthReader
         ICssStyleDeclaration? specified,
         ICssStyleDeclaration? computed,
         String name,
-        IRenderDimensions dimensions)
+        IRenderDimensions dimensions,
+        Double fontSize)
     {
-        return TryReadCorner(specified, name, dimensions) ?? TryReadCorner(computed, name, dimensions);
+        return TryReadCorner(specified, name, dimensions, fontSize) ?? TryReadCorner(computed, name, dimensions, fontSize);
     }
 
-    private static StyleCornerRadius? TryReadCorner(ICssStyleDeclaration? declaration, String name, IRenderDimensions dimensions)
+    private static StyleCornerRadius? TryReadCorner(ICssStyleDeclaration? declaration, String name, IRenderDimensions dimensions, Double fontSize)
     {
         if (declaration?.GetProperty(name)?.RawValue is not ICssMultipleValue radius || radius.Count == 0)
         {
             return null;
         }
 
-        var horizontal = TryReadAxis(radius[0], RenderMode.Horizontal, dimensions);
-        var vertical = radius.Count > 1 ? TryReadAxis(radius[1], RenderMode.Vertical, dimensions) ?? horizontal : horizontal;
+        var horizontal = TryReadAxis(radius[0], RenderMode.Horizontal, dimensions, fontSize);
+        var vertical = radius.Count > 1 ? TryReadAxis(radius[1], RenderMode.Vertical, dimensions, fontSize) ?? horizontal : horizontal;
 
         return new StyleCornerRadius(horizontal ?? StyleLength.Zero, vertical ?? StyleLength.Zero);
     }
 
-    private static StyleLength? TryReadAxis(ICssValue? value, RenderMode mode, IRenderDimensions dimensions) =>
-        value is not null && TryReadValue(value, mode, dimensions, out var length) && length.HasValue ? length : null;
+    private static StyleLength? TryReadAxis(ICssValue? value, RenderMode mode, IRenderDimensions dimensions, Double fontSize) =>
+        value is not null && TryReadValue(value, mode, dimensions, fontSize, out var length) && length.HasValue ? length : null;
 
     /// <summary>
     /// Gets the individual values of a shorthand that carries more than one, or null when the value is
@@ -158,8 +166,28 @@ internal static class LengthReader
         return items;
     }
 
+    /// <summary>
+    /// Converts a length to pixels, resolving the font-relative units the way CSS asks: <c>em</c> is
+    /// the font size passed in - the element's own, or its parent's when the length being read is
+    /// <c>font-size</c> itself - and <c>ex</c> and <c>ch</c> the half of it this engine uses for both,
+    /// because the x-height and the width of a zero are font metrics the render device does not
+    /// expose. <c>rem</c> and every other unit are left to AngleSharp, which resolves the former
+    /// against the device - the root - as it should.
+    /// </summary>
+    public static Double ToPixel(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, Double fontSize)
+    {
+        var reference = fontSize > 0 ? fontSize : dimensions.FontSize;
+
+        return value.Type switch
+        {
+            CssLengthValue.Unit.Em => value.Value * reference,
+            CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch => value.Value * reference * 0.5,
+            _ => value.ToPixel(dimensions, mode),
+        };
+    }
+
     /// <summary>Reads a single argument of a length function, which is always plain text.</summary>
-    private static StyleLength? FromText(String text, RenderMode mode, IRenderDimensions dimensions)
+    private static StyleLength? FromText(String text, RenderMode mode, IRenderDimensions dimensions, Double fontSize)
     {
         var trimmed = text.Trim();
 
@@ -183,10 +211,10 @@ internal static class LengthReader
             return null;
         }
 
-        return FromCssLength(parsed, mode, dimensions);
+        return FromCssLength(parsed, mode, dimensions, fontSize);
     }
 
-    private static StyleLength? FromCssLength(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions)
+    private static StyleLength? FromCssLength(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, Double fontSize)
     {
         if (value.Type == CssLengthValue.Unit.Percent)
         {
@@ -195,7 +223,7 @@ internal static class LengthReader
 
         try
         {
-            var pixels = value.ToPixel(dimensions, mode);
+            var pixels = ToPixel(value, mode, dimensions, fontSize);
             return Double.IsNaN(pixels) || Double.IsInfinity(pixels) ? null : StyleLength.FromPixels(pixels);
         }
         catch (InvalidOperationException)

@@ -38,6 +38,7 @@ public readonly struct ComputedStyle
     private readonly IElement? _element;
     private readonly Double _parentFontSize;
     private readonly CssColorValue? _parentColor;
+    private readonly Boolean _declaresFontSize;
 
     /// <param name="specified">
     /// The cascaded declaration, when it is available. It is preferred for backgrounds: the computed
@@ -59,13 +60,19 @@ public readonly struct ComputedStyle
     /// declaration holds: a link is painted in the engine's own link colour without that colour ever
     /// reaching the declaration, so the words inside the link take it from here.
     /// </param>
+    /// <param name="declaresFontSize">
+    /// Whether the element declares its own <c>font-size</c> rather than taking one over from a
+    /// parent. Only a declared relative size is measured against the parent; working that out means a
+    /// second cascade, so the box builder settles it once and the answer is carried here.
+    /// </param>
     public ComputedStyle(
         ICssStyleDeclaration style,
         IRenderDimensions dimensions,
         ICssStyleDeclaration? specified = null,
         IElement? element = null,
         Double parentFontSize = 0,
-        CssColorValue? parentColor = null)
+        CssColorValue? parentColor = null,
+        Boolean declaresFontSize = false)
     {
         _style = style ?? throw new ArgumentNullException(nameof(style));
         _dimensions = dimensions ?? throw new ArgumentNullException(nameof(dimensions));
@@ -73,6 +80,7 @@ public readonly struct ComputedStyle
         _element = element;
         _parentFontSize = parentFontSize;
         _parentColor = parentColor;
+        _declaresFontSize = declaresFontSize;
     }
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
@@ -111,15 +119,47 @@ public readonly struct ComputedStyle
     {
         get
         {
-            if (_specified?.GetProperty("font-size")?.RawValue is CssLengthValue declared &&
-                declared.Type == CssLengthValue.Unit.Percent)
+            // A relative font-size is relative to the parent, and the cascade resolves it against the
+            // device - the root font size - instead. It is resolved here, because the element's own
+            // font size is the reference every other length of this style resolves its em against.
+            if (_specified?.GetProperty("font-size")?.RawValue is CssLengthValue declared && IsFontRelative(declared.Type))
             {
-                var reference = _parentFontSize > 0 ? _parentFontSize : _dimensions.FontSize;
-                return declared.Value * 0.01 * reference;
+                // An inherited value is not the element's own declaration; the parent already
+                // resolved it, and taking that size over as it is stops nested em font sizes from
+                // stacking. Only a value the element declares is measured against the parent.
+                if (_declaresFontSize)
+                {
+                    return ResolveFontRelative(declared);
+                }
+
+                return _parentFontSize > 0 ? _parentFontSize : _dimensions.FontSize;
             }
 
-            return Length("font-size", RenderMode.Vertical, _dimensions.FontSize);
+            return TryLengthAgainst("font-size", RenderMode.Vertical, _dimensions.FontSize, out var pixels)
+                ? pixels
+                : _dimensions.FontSize;
         }
+    }
+
+    /// <summary>Gets whether a length is relative to the font size, which the cascade cannot resolve.</summary>
+    internal static Boolean IsFontRelative(CssLengthValue.Unit unit) =>
+        unit is CssLengthValue.Unit.Em or CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch or CssLengthValue.Unit.Percent;
+
+    /// <summary>
+    /// Resolves a relative <c>font-size</c> against the parent's font size. A percentage is a share of
+    /// it; an <c>em</c> is a multiple of it; <c>ex</c> and <c>ch</c> keep the half-em approximation the
+    /// rest of the engine uses for them.
+    /// </summary>
+    private Double ResolveFontRelative(CssLengthValue value)
+    {
+        var reference = _parentFontSize > 0 ? _parentFontSize : _dimensions.FontSize;
+
+        return value.Type switch
+        {
+            CssLengthValue.Unit.Em => value.Value * reference,
+            CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch => value.Value * reference * 0.5,
+            _ => value.Value * 0.01 * reference,
+        };
     }
 
     public Int32 FontWeight
@@ -327,6 +367,7 @@ public readonly struct ComputedStyle
             declaration.GetPropertyValue("background-size"),
             declaration.GetPropertyValue("background-repeat"),
             _dimensions,
+            FontSize,
             element is null ? null : url => ImageUrlResolver.Resolve(element, url));
     }
 
@@ -414,17 +455,35 @@ public readonly struct ComputedStyle
     /// the name that was asked about, and that placeholder holds no value at all.
     /// </para>
     /// </remarks>
-    private Boolean Declares(String name)
+    private Boolean Declares(String name) => Declares(_element, _dimensions, name);
+
+    /// <summary>
+    /// Gets whether the page declared the property on the given element itself, rather than the element
+    /// merely taking it over from a parent.
+    /// </summary>
+    /// <remarks>
+    /// The declaration the element was cascaded from does not say which of the two a value is: the
+    /// inherited ones are folded into it, and the property that was inherited is the very object the
+    /// parent holds. So the declarations are computed once more, from the rules that match the element
+    /// and nothing else. That is a second selector match, which is why a caller settles it once and
+    /// only for the elements it matters to.
+    /// <para>
+    /// The property is asked for its value and not merely for its presence: a declaration the element
+    /// does not carry still answers with a property, one the declaration factory invents to stand for
+    /// the name that was asked about, and that placeholder holds no value at all.
+    /// </para>
+    /// </remarks>
+    internal static Boolean Declares(IElement? element, IRenderDimensions dimensions, String name)
     {
-        if (_element?.Owner is not { } document || document.DefaultView is not { } window)
+        if (element?.Owner is not { } document || document.DefaultView is not { } window)
         {
             return false;
         }
 
-        var device = _dimensions as IRenderDevice ?? document.Context.GetService<IRenderDevice>();
+        var device = dimensions as IRenderDevice ?? document.Context.GetService<IRenderDevice>();
 
         return device is not null &&
-               window.GetStyleCollection(device).ComputeExplicitStyle(_element).GetProperty(name)?.RawValue is not null;
+               window.GetStyleCollection(device).ComputeExplicitStyle(element).GetProperty(name)?.RawValue is not null;
     }
 
     // --- Box model ------------------------------------------------------
@@ -522,10 +581,10 @@ public readonly struct ComputedStyle
     /// to - and shrink radii that would overlap.
     /// </summary>
     public StyleCornerRadii BorderRadius => new(
-        LengthReader.TryReadCorner(_specified, _style, "border-top-left-radius", _dimensions) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCorner(_specified, _style, "border-top-right-radius", _dimensions) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCorner(_specified, _style, "border-bottom-right-radius", _dimensions) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCorner(_specified, _style, "border-bottom-left-radius", _dimensions) ?? StyleCornerRadius.Zero);
+        LengthReader.TryReadCorner(_specified, _style, "border-top-left-radius", _dimensions, FontSize) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-top-right-radius", _dimensions, FontSize) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-bottom-right-radius", _dimensions, FontSize) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-bottom-left-radius", _dimensions, FontSize) ?? StyleCornerRadius.Zero);
 
     /// <summary>
     /// Gets the box the background is painted into: <c>border-box</c> (the initial value) reaches
@@ -685,17 +744,37 @@ public readonly struct ComputedStyle
     // --- Helpers --------------------------------------------------------
 
     /// <summary>
-    /// Reads a length, or returns false when the property is absent or a keyword such as
-    /// <c>auto</c>. Use this for the properties where "not set" differs from zero (width, height).
+    /// Reads a length against the element's own font size, or returns false when the property is
+    /// absent or a keyword such as <c>auto</c>. Use this for the properties where "not set" differs
+    /// from zero (width, height).
     /// </summary>
-    public Boolean TryLength(String name, RenderMode mode, out Double pixels)
+    public Boolean TryLength(String name, RenderMode mode, out Double pixels) =>
+        TryLengthAgainst(name, mode, FontSize, out pixels);
+
+    /// <summary>
+    /// Reads a length against the given font size. <c>font-size</c> itself is read this way: the size
+    /// being worked out is the parent's, not the one this style will resolve other lengths against.
+    /// </summary>
+    private Boolean TryLengthAgainst(String name, RenderMode mode, Double fontSize, out Double pixels) =>
+        TryReadLength(_specified, name, mode, fontSize, out pixels) ||
+        TryReadLength(_style, name, mode, fontSize, out pixels);
+
+    private Boolean TryReadLength(ICssStyleDeclaration? declaration, String name, RenderMode mode, Double fontSize, out Double pixels)
     {
         pixels = 0;
 
+        if (declaration is null)
+        {
+            return false;
+        }
+
+        // The cascaded declaration is preferred because computing the style has already folded
+        // font-relative units into pixels against the device; only a property that was never declared
+        // falls back to it, and an initial value never needs the element's font size.
         // min()/max()/clamp() are resolved here: AngleSharp.Css models them as a math expression
         // rather than a length, so reading one as pixels yields zero and `width: min(100%, 640px)`
         // would collapse instead of picking an argument.
-        var text = _style.GetPropertyValue(name);
+        var text = declaration.GetPropertyValue(name);
 
         if (!String.IsNullOrWhiteSpace(text))
         {
@@ -704,7 +783,7 @@ public readonly struct ComputedStyle
             var math = CssMathLengths.Evaluate(
                 text,
                 argument => CssLengthValue.TryParse(argument.Trim(), out var length)
-                    ? Resolve(length, mode, dimensions)
+                    ? Resolve(length, mode, dimensions, fontSize)
                     : null);
 
             if (math is not null)
@@ -714,14 +793,14 @@ public readonly struct ComputedStyle
             }
         }
 
-        var value = _style.GetProperty(name)?.RawValue;
+        var value = declaration.GetProperty(name)?.RawValue;
 
         if (value is null || value.Is("auto") || value.Is("normal") || value.Is("none"))
         {
             return false;
         }
 
-        var resolved = Resolve(value, mode);
+        var resolved = Resolve(value, mode, fontSize);
 
         if (resolved is null)
         {
@@ -740,7 +819,7 @@ public readonly struct ComputedStyle
     /// declaration is asked first because computing the style folds percentages into pixels.
     /// </summary>
     private StyleLength ReadLength(String name, RenderMode mode, StyleLength fallback) =>
-        LengthReader.TryRead(_specified, _style, name, mode, _dimensions, out var length) ? length : fallback;
+        LengthReader.TryRead(_specified, _style, name, mode, _dimensions, FontSize, out var length) ? length : fallback;
 
     private StyleThickness ReadThickness(String prefix, StyleLength fallback) => new(
         ReadLength(prefix + "-top", RenderMode.Horizontal, fallback),
@@ -842,7 +921,7 @@ public readonly struct ComputedStyle
         return text is not null && text.Trim().Equals(keyword, StringComparison.OrdinalIgnoreCase);
     }
 
-    private Double? Resolve(ICssValue value, RenderMode mode)
+    private Double? Resolve(ICssValue value, RenderMode mode, Double fontSize)
     {
         // A keyword standing for a length - `medium`, which is what `border-width` and `outline-width`
         // start out as, and `thin` and `thick` beside it - is carried as a named constant wrapping the
@@ -851,6 +930,13 @@ public readonly struct ComputedStyle
         if (value is CssConstantValue<CssLengthValue> keyword)
         {
             value = keyword.Value;
+        }
+
+        // A length is resolved through the reader so that its font-relative units land on the
+        // element's own font size; anything else is left to AngleSharp.
+        if (value is CssLengthValue length)
+        {
+            return Resolve(length, mode, _dimensions, fontSize);
         }
 
         try
@@ -867,11 +953,11 @@ public readonly struct ComputedStyle
         }
     }
 
-    private static Double? Resolve(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions)
+    private static Double? Resolve(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, Double fontSize)
     {
         try
         {
-            var pixels = value.ToPixel(dimensions, mode);
+            var pixels = LengthReader.ToPixel(value, mode, dimensions, fontSize);
             return Double.IsNaN(pixels) || Double.IsInfinity(pixels) ? null : pixels;
         }
         catch (Exception)

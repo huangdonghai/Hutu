@@ -159,13 +159,13 @@ public readonly struct FlexStyle
     }
 
     private static Double? ReadGap(ComputedStyle style, String name) =>
-        LengthReader.TryRead(style.Specified, style.Declaration, name, RenderMode.Horizontal, style.Dimensions, out var gap) &&
+        LengthReader.TryRead(style.Specified, style.Declaration, name, RenderMode.Horizontal, style.Dimensions, style.FontSize, out var gap) &&
         gap.HasValue
             ? Math.Max(0, gap.Resolve(0))
             : null;
 
     private static Double? GapOf(ComputedStyle style, ICssValue item) =>
-        LengthReader.TryReadValue(item, RenderMode.Horizontal, style.Dimensions, out var gap) && gap.HasValue
+        LengthReader.TryReadValue(item, RenderMode.Horizontal, style.Dimensions, style.FontSize, out var gap) && gap.HasValue
             ? Math.Max(0, gap.Resolve(0))
             : null;
 
@@ -255,7 +255,7 @@ public readonly struct FlexStyle
     };
 
     private static StyleLength ReadBasis(ComputedStyle style) =>
-        LengthReader.TryRead(style.Specified, style.Declaration, "flex-basis", RenderMode.Horizontal, style.Dimensions, out var basis) &&
+        LengthReader.TryRead(style.Specified, style.Declaration, "flex-basis", RenderMode.Horizontal, style.Dimensions, style.FontSize, out var basis) &&
         basis.HasValue
             ? basis
             : StyleLength.Auto;
