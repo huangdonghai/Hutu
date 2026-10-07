@@ -234,7 +234,7 @@ public sealed class LayoutEngine
         var layout = ArrangeCore(box, borderBox, context);
         LayoutProbe.LeaveArrange();
 
-        var position = PositionStyle.Read(box.Style);
+        var position = box.Style.Position;
 
         layout.Position = position.Position;
         layout.ZIndex = position.HasZIndex ? position.ZIndex : 0;

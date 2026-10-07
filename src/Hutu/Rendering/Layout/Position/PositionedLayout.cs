@@ -1,4 +1,4 @@
-using AngleSharp.Css.Dom;
+﻿using AngleSharp.Css.Dom;
 using Hutu.Rendering.Boxes;
 using System;
 
@@ -26,10 +26,10 @@ internal sealed class PositionedLayout
     /// anonymous box never is: it borrows its parent's style, and taking that style literally would
     /// move a wrapper the parent itself already moved.
     /// </summary>
-    public static Boolean IsOutOfFlow(Box box) => !box.IsAnonymous && PositionStyle.Read(box.Style).IsOutOfFlow;
+    public static Boolean IsOutOfFlow(Box box) => !box.IsAnonymous && box.Style.Position.IsOutOfFlow;
 
     /// <summary>Gets whether the box takes part in the stacking order, i.e. is anything but static.</summary>
-    public static Boolean IsPositioned(Box box) => !box.IsAnonymous && PositionStyle.Read(box.Style).IsPositioned;
+    public static Boolean IsPositioned(Box box) => !box.IsAnonymous && box.Style.Position.IsPositioned;
 
     /// <summary>
     /// Applies the displacement a box's <c>position</c> asks for once it has been arranged in flow.
@@ -56,7 +56,7 @@ internal sealed class PositionedLayout
     /// </summary>
     public LayoutBox Arrange(Box box, Offset staticPosition, LayoutContext context)
     {
-        var position = PositionStyle.Read(box.Style);
+        var position = box.Style.Position;
 
         // `fixed` always resolves against the viewport; `absolute` against the nearest positioned
         // ancestor, which the context already carries as its padding box.

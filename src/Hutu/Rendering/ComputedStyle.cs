@@ -540,7 +540,24 @@ public readonly struct ComputedStyle
         internal FontArea Font = new();
 
         internal TextArea Text = new();
+
+        // Null until something asks. See ComputedStyle.Position and .Flex for why these four wait
+        // while the areas above do not.
+        internal FlexStyle? Flex;
+
+        internal GridStyle? Grid;
+
+        internal TableStyle? Table;
+
+        internal PositionStyle? Position;
     }
+
+    /// <summary>
+    /// Gets the out-of-flow mode, the offsets and the stacking order as one value. The layout asks for
+    /// these together and repeatedly - once per child to decide whether a box is in flow, then again to
+    /// place it - and reading them as one keeps that from costing twenty declaration reads a time.
+    /// </summary>
+    public PositionStyle Position => _values.Position ??= PositionStyle.Read(this);
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
     public ICssStyleDeclaration Declaration => _style;
@@ -943,7 +960,17 @@ public readonly struct ComputedStyle
     /// Gets the flex longhands, both the container's and the item's. They are read together because
     /// the same declaration serves both roles depending on the parent.
     /// </summary>
-    public FlexStyle Flex => FlexStyle.Read(this);
+    /// <summary>
+    /// Gets the flex longhands as one value.
+    /// </summary>
+    /// <remarks>
+    /// Resolved on the first ask and kept, rather than resolved with the areas. A reader that decides
+    /// "is this a flex property" is what the other areas are gated on, and it cannot answer here:
+    /// <c>align-items</c>, <c>justify-content</c> and <c>gap</c> belong to grid as much as to flex, so
+    /// a gate would resolve this one for every grid item on the page and never use it. Waiting until
+    /// something asks costs an element that is not a flex container one null check.
+    /// </remarks>
+    public FlexStyle Flex => _values.Flex ??= FlexStyle.Read(this);
 
     /// <summary>
     /// Gets the grid longhands: the track lists, the automatic track sizes, the automatic flow, the
@@ -955,13 +982,13 @@ public readonly struct ComputedStyle
     /// and lines - is a richer shape than the other contexts need and there is no reason to publish
     /// it. The layout engine is the only consumer.
     /// </remarks>
-    internal GridStyle Grid => GridStyle.Read(this);
+    internal GridStyle Grid => _values.Grid ??= GridStyle.Read(this);
 
     /// <summary>
     /// Gets the table longhands. <c>border-collapse</c>, <c>border-spacing</c> and friends only
     /// matter on a table box; <c>vertical-align</c> is meaningful on a cell.
     /// </summary>
-    public TableStyle Table => TableStyle.Read(this);
+    public TableStyle Table => _values.Table ??= TableStyle.Read(this);
 
     /// <summary>
     /// Gets the cascaded declaration. It is the one that still carries a percentage, because
