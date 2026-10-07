@@ -59,7 +59,7 @@ internal sealed class GridFormattingContext
         var (_, contentWidth) = BoxModel.ResolveWidth(style, basisWidth, insetH);
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insetV);
 
-        var plan = Compute(box, contentWidth, declaredHeight, context, true);
+        var plan = Compute(box, contentWidth, declaredHeight, context, definiteWidth: true, sizeRows: true);
         var contentHeight = declaredHeight ?? plan.ContentHeight;
 
         return new Size(
@@ -95,7 +95,7 @@ internal sealed class GridFormattingContext
         var contentX = borderBox.X + border.Left + padding.Left;
         var contentY = borderBox.Y + border.Top + padding.Top;
 
-        var plan = Compute(box, contentWidth, contentHeight, context, true);
+        var plan = Compute(box, contentWidth, contentHeight, context, definiteWidth: true, sizeRows: true);
         var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
         // A positioned grid container is what an absolutely positioned child anchors to.
@@ -146,19 +146,33 @@ internal sealed class GridFormattingContext
         var border = BlockLayout.BorderOf(box);
         var insets = padding.Horizontal + border.Horizontal;
 
-        var plan = Compute(box, 0, null, context, false);
+        var plan = Compute(box, 0, null, context, definiteWidth: false, sizeRows: false);
         var width = plan.ContentWidth + insets;
 
         return new IntrinsicSize(width, width);
     }
 
     /// <summary>Runs the whole algorithm and returns the content sizes plus the placed items.</summary>
+    /// <param name="definiteWidth">Whether the width the tracks are sized against is settled.</param>
+    /// <param name="sizeRows">
+    /// Whether the caller needs the rows and the item positions, which is everyone but the intrinsic
+    /// size. A row is sized from the widths the columns ended up with and a position is a place within
+    /// them, so neither can change what the columns come to - and sizing the rows is the expensive
+    /// half, because a row's height is whatever its items need at the width they were handed, which
+    /// measures every one of them.
+    /// <para>
+    /// The rows cannot be dropped from the collection and placement above it, though: automatic
+    /// placement walks the grid row by row, so which row an item lands in decides which column one
+    /// that spans comes to rest at.
+    /// </para>
+    /// </param>
     private GridPlan Compute(
         Box box,
         Double contentWidth,
         Double? contentHeight,
         LayoutContext context,
-        Boolean definiteWidth)
+        Boolean definiteWidth,
+        Boolean sizeRows)
     {
         var grid = box.Style.Grid;
         var items = new List<GridCell>();
@@ -194,22 +208,30 @@ internal sealed class GridFormattingContext
 
         // How far the items reach, which is what collapses an `auto-fit` repetition.
         var usedColumns = Used(items, true);
-        var usedRows = Used(items, false);
 
         // Columns first. A row can only be sized once its items' final widths are known, because the
         // row's own size is whatever height the content needs at that width.
         var columnTracks = SizeColumns(grid, items, usedColumns, columnBasis, gapX, definiteWidth, itemContext);
+
+        var totalWidth = Total(columnTracks, gapX);
+        var resolvedWidth = definiteWidth ? contentWidth : totalWidth;
+
+        if (!sizeRows)
+        {
+            // The inline size is the width the columns come to, and nothing below this point can
+            // change it. The items are not carried out either: the caller asking for this is asking
+            // for the width.
+            return new GridPlan { ContentWidth = resolvedWidth };
+        }
 
         foreach (var item in items)
         {
             item.AreaWidth = Span(columnTracks, item.Column, item.ColumnSpan, gapX);
         }
 
-        var rowTracks = SizeRows(grid, items, usedRows, rowBasis, gapY, contentHeight is not null, itemContext);
+        var rowTracks = SizeRows(grid, items, Used(items, false), rowBasis, gapY, contentHeight is not null, itemContext);
 
-        var totalWidth = Total(columnTracks, gapX);
         var totalHeight = Total(rowTracks, gapY);
-        var resolvedWidth = definiteWidth ? contentWidth : totalWidth;
         var resolvedHeight = definiteWidth ? contentHeight ?? totalHeight : totalHeight;
 
         var (offsetX, extraX) = ContentOffset(grid.JustifyContent, resolvedWidth - totalWidth, columnTracks.Count);
