@@ -401,7 +401,7 @@ public readonly struct ComputedStyle
                 return _parentFontSize > 0 ? _parentFontSize : _dimensions.FontSize;
             }
 
-            return TryLengthAgainst("font-size", RenderMode.Vertical, _dimensions.FontSize, out var pixels)
+            return TryLengthAgainst("font-size", RenderMode.Vertical, new LengthReader.FontSource(_dimensions.FontSize), out var pixels)
                 ? pixels
                 : _dimensions.FontSize;
         }
@@ -1045,21 +1045,27 @@ public readonly struct ComputedStyle
     /// from zero (width, height).
     /// </summary>
     public Boolean TryLength(String name, RenderMode mode, out Double pixels) =>
-        TryLengthAgainst(name, mode, FontSize, out pixels);
+        TryLengthAgainst(name, mode, new LengthReader.FontSource(this), out pixels);
 
     /// <summary>
     /// Reads a length against the given font size. <c>font-size</c> itself is read this way: the size
     /// being worked out is the parent's, not the one this style will resolve other lengths against.
     /// </summary>
-    private Boolean TryLengthAgainst(String name, RenderMode mode, Double fontSize, out Double pixels)
+    /// <remarks>
+    /// The size arrives as a <see cref="LengthReader.FontSource"/> rather than as a number so that a
+    /// length in pixels or a percentage never asks for one - which is most of them, and which used to
+    /// cost a resolution of <c>font-size</c> per read. A caller that already has the size, as the
+    /// resolver for the font area does, hands the number over instead.
+    /// </remarks>
+    private Boolean TryLengthAgainst(String name, RenderMode mode, LengthReader.FontSource font, out Double pixels)
     {
         StyleProbe.NoteLengthRead(name);
 
-        return TryReadLength(_specified, name, mode, fontSize, out pixels) ||
-               TryReadLength(_style, name, mode, fontSize, out pixels);
+        return TryReadLength(_specified, name, mode, font, out pixels) ||
+               TryReadLength(_style, name, mode, font, out pixels);
     }
 
-    private Boolean TryReadLength(ICssStyleDeclaration? declaration, String name, RenderMode mode, Double fontSize, out Double pixels)
+    private Boolean TryReadLength(ICssStyleDeclaration? declaration, String name, RenderMode mode, LengthReader.FontSource font, out Double pixels)
     {
         pixels = 0;
 
@@ -1083,7 +1089,7 @@ public readonly struct ComputedStyle
             var math = CssMathLengths.Evaluate(
                 text,
                 argument => CssLengthValue.TryParse(argument.Trim(), out var length)
-                    ? Resolve(length, mode, dimensions, fontSize)
+                    ? Resolve(length, mode, dimensions, font)
                     : null);
 
             if (math is not null)
@@ -1100,7 +1106,7 @@ public readonly struct ComputedStyle
             return false;
         }
 
-        var resolved = Resolve(value, mode, fontSize);
+        var resolved = Resolve(value, mode, font);
 
         if (resolved is null)
         {
@@ -1229,7 +1235,7 @@ public readonly struct ComputedStyle
         return text is not null && text.Trim().Equals(keyword, StringComparison.OrdinalIgnoreCase);
     }
 
-    private Double? Resolve(ICssValue value, RenderMode mode, Double fontSize)
+    private Double? Resolve(ICssValue value, RenderMode mode, LengthReader.FontSource font)
     {
         // A keyword standing for a length - `medium`, which is what `border-width` and `outline-width`
         // start out as, and `thin` and `thick` beside it - is carried as a named constant wrapping the
@@ -1244,7 +1250,7 @@ public readonly struct ComputedStyle
         // element's own font size; anything else is left to AngleSharp.
         if (value is CssLengthValue length)
         {
-            return Resolve(length, mode, _dimensions, fontSize);
+            return Resolve(length, mode, _dimensions, font);
         }
 
         try
@@ -1261,11 +1267,11 @@ public readonly struct ComputedStyle
         }
     }
 
-    private static Double? Resolve(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, Double fontSize)
+    private static Double? Resolve(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, LengthReader.FontSource font)
     {
         try
         {
-            var pixels = LengthReader.ToPixel(value, mode, dimensions, fontSize);
+            var pixels = LengthReader.ToPixel(value, mode, dimensions, font);
             return Double.IsNaN(pixels) || Double.IsInfinity(pixels) ? null : pixels;
         }
         catch (Exception)
