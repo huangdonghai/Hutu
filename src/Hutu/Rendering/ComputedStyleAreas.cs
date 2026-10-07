@@ -136,6 +136,53 @@ internal sealed record BoxModelArea
 }
 
 /// <summary>
+/// How a box takes part in its container's flow, how it fits replaced content, and whether it clips
+/// what overflows. The position offsets deliberately are not here - they are lengths, and
+/// <c>PositionStyle</c> reads them with the mode and the stacking order as one value.
+/// </summary>
+internal sealed record DisplayPositioningArea
+{
+    internal static readonly DisplayPositioningArea Default = new();
+
+    internal String Display { get; init; } = CssInitialValues.Display;
+
+    /// <summary>
+    /// Gets how a replaced box fits its content, resolved here rather than left as a keyword: the
+    /// reader lowercases the declaration's text to answer, which allocates on a path the painter
+    /// walks for every image.
+    /// </summary>
+    internal Layout.ObjectFit ObjectFit { get; init; } = Layout.ObjectFit.Fill;
+
+    /// <summary>Gets whether either axis clips its overflow, which is all this engine does with
+    /// <c>overflow</c>: it scrolls the document rather than the box.</summary>
+    internal Boolean ClipsOverflow { get; init; }
+}
+
+/// <summary>
+/// The outline's stroke, its width and its offset.
+/// </summary>
+/// <remarks>
+/// Its colour is not here, for the reason the border colours are not in theirs: <c>outline-color</c>
+/// begins as <c>invert</c> and falls back to the element's own colour, which depends on live state.
+/// </remarks>
+internal sealed record VisualEffectsArea
+{
+    internal static readonly VisualEffectsArea Default = new();
+
+    internal BorderLineStyle OutlineStyle { get; init; } = BorderLineStyle.None;
+
+    /// <summary>
+    /// Gets how thick the outline is, which is zero when there is no stroke. An outline is given no
+    /// width until it has a style, and its width is initialised to <c>medium</c> rather than to
+    /// nothing - so a page naming a style alone gets the three pixels the specification pins that
+    /// keyword to, rather than an outline that silently disappears.
+    /// </summary>
+    internal Double OutlineWidth { get; init; }
+
+    internal Double OutlineOffset { get; init; }
+}
+
+/// <summary>
 /// One intern table per area, alive for one box tree.
 /// </summary>
 /// <remarks>
@@ -158,6 +205,42 @@ internal sealed class StyleIntern
     private readonly Dictionary<BorderArea, BorderArea> _border = new();
 
     private readonly Dictionary<BoxModelArea, BoxModelArea> _boxModel = new();
+
+    private readonly Dictionary<DisplayPositioningArea, DisplayPositioningArea> _display = new();
+
+    private readonly Dictionary<VisualEffectsArea, VisualEffectsArea> _visualEffects = new();
+
+    /// <summary>Gets the instance standing for a display and positioning area.</summary>
+    internal DisplayPositioningArea DisplayPositioning(DisplayPositioningArea area)
+    {
+        if (_display.TryGetValue(area, out var existing))
+        {
+            StyleProbe.NoteInternHit();
+
+            return existing;
+        }
+
+        StyleProbe.NoteAreaBuilt();
+        _display[area] = area;
+
+        return area;
+    }
+
+    /// <summary>Gets the instance standing for a visual effects area.</summary>
+    internal VisualEffectsArea VisualEffects(VisualEffectsArea area)
+    {
+        if (_visualEffects.TryGetValue(area, out var existing))
+        {
+            StyleProbe.NoteInternHit();
+
+            return existing;
+        }
+
+        StyleProbe.NoteAreaBuilt();
+        _visualEffects[area] = area;
+
+        return area;
+    }
 
     /// <summary>Gets the instance standing for a box model, building it only if the value is new.</summary>
     internal BoxModelArea BoxModel(BoxModelArea area)

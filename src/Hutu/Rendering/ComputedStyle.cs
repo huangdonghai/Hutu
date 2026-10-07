@@ -131,6 +131,66 @@ public readonly struct ComputedStyle
     {
         ResolveBorder(pool);
         ResolveBoxModel(pool);
+        ResolveDisplayPositioning(pool);
+        ResolveVisualEffects(pool);
+    }
+
+    /// <summary>The names a display or a clipping property can begin with.</summary>
+    private static readonly String[] DisplayNames = { "display", "object-fit", "overflow" };
+
+    /// <summary>The name an outline property begins with. The colour matches too, and resolving the
+    /// area for it alone is harmless - it reads the three that are here and finds nothing.</summary>
+    private static readonly String[] OutlineNames = { "outline" };
+
+    private void ResolveDisplayPositioning(StyleIntern? pool)
+    {
+        if (!DeclaresAny(DisplayNames))
+        {
+            StyleProbe.NoteAreaUntouched();
+
+            return;
+        }
+
+        var value = Keyword("object-fit", CssInitialValues.ObjectFit);
+
+        var area = new DisplayPositioningArea
+        {
+            Display = Keyword("display", CssInitialValues.Display),
+            ClipsOverflow = !IsOverflowVisible("overflow-x") || !IsOverflowVisible("overflow-y"),
+            ObjectFit = value.ToLowerInvariant() switch
+            {
+                "contain" => Layout.ObjectFit.Contain,
+                "cover" => Layout.ObjectFit.Cover,
+                "none" => Layout.ObjectFit.None,
+                "scale-down" => Layout.ObjectFit.ScaleDown,
+                _ => Layout.ObjectFit.Fill,
+            },
+        };
+
+        _values.DisplayPositioning = pool is null ? area : pool.DisplayPositioning(area);
+    }
+
+    private void ResolveVisualEffects(StyleIntern? pool)
+    {
+        if (!DeclaresAny(OutlineNames))
+        {
+            StyleProbe.NoteAreaUntouched();
+
+            return;
+        }
+
+        var style = ToLineStyle(Keyword("outline-style", CssInitialValues.OutlineStyle));
+
+        var area = new VisualEffectsArea
+        {
+            OutlineStyle = style,
+            OutlineWidth = style == BorderLineStyle.None
+                ? 0
+                : Length("outline-width", RenderMode.Horizontal, CssLengthValue.Medium.Value),
+            OutlineOffset = Length("outline-offset", RenderMode.Horizontal, CssInitialValues.OutlineOffset),
+        };
+
+        _values.VisualEffects = pool is null ? area : pool.VisualEffects(area);
     }
 
     /// <summary>The names a border property can begin with, shorthands included.</summary>
@@ -282,6 +342,10 @@ public readonly struct ComputedStyle
         internal BorderArea Border = BorderArea.Default;
 
         internal BoxModelArea BoxModel = BoxModelArea.Default;
+
+        internal DisplayPositioningArea DisplayPositioning = DisplayPositioningArea.Default;
+
+        internal VisualEffectsArea VisualEffects = VisualEffectsArea.Default;
     }
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
@@ -289,9 +353,10 @@ public readonly struct ComputedStyle
 
     // --- Box generation -------------------------------------------------
 
-    public String Display => Keyword("display", CssInitialValues.Display);
+    public String Display => _values.DisplayPositioning.Display;
 
-    public Boolean IsDisplayNone => Is("display", "none");
+    public Boolean IsDisplayNone =>
+        _values.DisplayPositioning.Display.Equals("none", StringComparison.OrdinalIgnoreCase);
 
     public String WhiteSpace => Keyword("white-space", CssInitialValues.WhiteSpace);
 
@@ -815,22 +880,7 @@ public readonly struct ComputedStyle
     /// Gets how replaced content (an image) is fitted into its box. Geometry is decided elsewhere;
     /// this only tells the painter how to fill what layout resolved.
     /// </summary>
-    public Layout.ObjectFit ObjectFit
-    {
-        get
-        {
-            var value = Keyword("object-fit", CssInitialValues.ObjectFit);
-
-            return value.ToLowerInvariant() switch
-            {
-                "contain" => Layout.ObjectFit.Contain,
-                "cover" => Layout.ObjectFit.Cover,
-                "none" => Layout.ObjectFit.None,
-                "scale-down" => Layout.ObjectFit.ScaleDown,
-                _ => Layout.ObjectFit.Fill,
-            };
-        }
-    }
+    public Layout.ObjectFit ObjectFit => _values.DisplayPositioning.ObjectFit;
 
     /// <summary>
     /// Gets the four corner radii as they were written, so that the layout pass can resolve a
@@ -872,8 +922,7 @@ public readonly struct ComputedStyle
     /// nothing to do beyond hiding the overflow, and they are treated as one. Either axis clipping is
     /// enough: with one axis <c>visible</c> and the other not, CSS makes the visible one <c>auto</c>.
     /// </remarks>
-    public Boolean ClipsOverflow =>
-        !IsOverflowVisible("overflow-x") || !IsOverflowVisible("overflow-y");
+    public Boolean ClipsOverflow => _values.DisplayPositioning.ClipsOverflow;
 
     /// <summary>
     /// Gets the four margins, with their units intact: <c>auto</c> survives, which is what makes
@@ -935,7 +984,7 @@ public readonly struct ComputedStyle
     /// Gets the stroke the outline is drawn with. As with a border, a keyword Hutu cannot draw is drawn
     /// as a solid stroke rather than dropped, since dropping it would lose the outline altogether.
     /// </summary>
-    public BorderLineStyle OutlineStyle => ToLineStyle(Keyword("outline-style", CssInitialValues.OutlineStyle));
+    public BorderLineStyle OutlineStyle => _values.VisualEffects.OutlineStyle;
 
     /// <summary>
     /// Gets how thick the outline is, or zero when there is nothing to draw.
@@ -947,15 +996,13 @@ public readonly struct ComputedStyle
     /// number is taken from the keyword AngleSharp holds rather than written out here, so that a
     /// declared <c>thin</c> or <c>thick</c> is read the same way.
     /// </remarks>
-    public Double OutlineWidth => OutlineStyle == BorderLineStyle.None
-        ? 0
-        : Length("outline-width", RenderMode.Horizontal, CssLengthValue.Medium.Value);
+    public Double OutlineWidth => _values.VisualEffects.OutlineWidth;
 
     /// <summary>
     /// Gets how far outside the border edge the outline begins. It shifts the outline without taking
     /// any room in the layout, which is what distinguishes it from a margin.
     /// </summary>
-    public Double OutlineOffset => Length("outline-offset", RenderMode.Horizontal, CssInitialValues.OutlineOffset);
+    public Double OutlineOffset => _values.VisualEffects.OutlineOffset;
 
     /// <summary>
     /// Gets the colour the outline is drawn in.
