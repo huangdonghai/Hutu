@@ -1,4 +1,4 @@
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using AngleSharp.Css.RenderTree;
 using AngleSharp.Dom;
 using Hutu.Rendering.Boxes;
@@ -62,6 +62,13 @@ public sealed class RenderingPipeline
     /// measurer is available.
     /// </summary>
     public PaintList? Paint { get; private set; }
+
+    /// <summary>
+    /// Temporary: whether a build may keep the previous layout instead of laying out again. A probe
+    /// turns it off to see what a rebuild really costs, because the reuse otherwise hides it - on a
+    /// pointer move the layout stage is the cost of deciding to reuse, not of laying anything out.
+    /// </summary>
+    public static Boolean DisableReuse;
 
     /// <summary>Drops the derived trees so the next run recomputes styles from the document.</summary>
     public void Invalidate()
@@ -152,7 +159,8 @@ public sealed class RenderingPipeline
         // A highlight names boxes of the layout it was measured against, so a new layout always
         // drops it: keeping it would leave the painter looking up runs that no longer exist. When the
         // layout is kept below, the highlight names the same boxes and stays valid.
-        if (previousLayout is not null &&
+        if (!DisableReuse &&
+            previousLayout is not null &&
             _layoutWidth == _device.RenderWidth && _layoutHeight == _device.RenderHeight &&
             LayoutReuse.TryRefresh(previousBoxTree, boxTree))
         {

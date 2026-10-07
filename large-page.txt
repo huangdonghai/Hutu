@@ -1,9 +1,9 @@
 a generated page of repeated rows at 900x600.
 wall clock throughout, so a number means something only next to another from the same build.
 
-rows=50   boxes=252    build=   47.6ms/   7.6MB reads=2796    11.1/box   layout=   12.1ms/   3.5MB reads=666      2.6/box
+rows=50   boxes=252    build=   47.6ms/   7.6MB reads=2796    11.1/box   layout=   12.2ms/   3.5MB reads=666      2.6/box
       areas: untouched=408 built=10 interned=247 fromParent=406
-rows=200  boxes=1002   build=  210.9ms/  30.8MB reads=11046   11.0/box   layout=   44.4ms/  14.0MB reads=2616     2.6/box
+rows=200  boxes=1002   build=  202.1ms/  30.8MB reads=11046   11.0/box   layout=   41.5ms/  14.0MB reads=2616     2.6/box
       areas: untouched=1608 built=10 interned=997 fromParent=1606
-rows=700  boxes=3502   build=  841.3ms/ 115.9MB reads=38546   11.0/box   layout=  173.4ms/  48.9MB reads=9116     2.6/box
+rows=700  boxes=3502   build=  771.8ms/ 115.9MB reads=38546   11.0/box   layout=  148.9ms/  48.9MB reads=9116     2.6/box
       areas: untouched=5608 built=10 interned=3497 fromParent=5606

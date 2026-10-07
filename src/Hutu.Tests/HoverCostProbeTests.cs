@@ -41,6 +41,7 @@ public sealed class HoverCostProbeTests
         LayoutProbe.Off = false;
         StyleProbe.Off = false;
         RenderProbe.Off = false;
+        RenderingPipeline.DisableReuse = false;
     }
 
     [Test]
@@ -722,8 +723,30 @@ public sealed class HoverCostProbeTests
         }
 
         watch.Stop();
+        var reused = watch.Elapsed.TotalMilliseconds / (runs * 2);
 
-        report.AppendLine($"  end to end             {watch.Elapsed.TotalMilliseconds / (runs * 2),8:F1}ms");
+        report.AppendLine($"  end to end             {reused,8:F1}ms   (layout kept)");
+        report.AppendLine($"  one crossing           {PipelineLine()}");
+
+        // The same move with the reuse turned off, which is the only way to see what laying out again
+        // would cost: with it on, the layout stage is the comparison that decided to keep the old one.
+        RenderingPipeline.DisableReuse = true;
+        view.PointerMoved(4, 4);
+        view.PointerMoved(x, y);
+
+        watch.Restart();
+
+        for (var index = 0; index < runs; index++)
+        {
+            view.PointerMoved(4, 4);
+            view.PointerMoved(x, y);
+        }
+
+        watch.Stop();
+        RenderingPipeline.DisableReuse = false;
+
+        report.AppendLine(
+            $"  end to end             {watch.Elapsed.TotalMilliseconds / (runs * 2),8:F1}ms   (laid out again)");
         report.AppendLine($"  one crossing           {PipelineLine()}");
         report.AppendLine(
             "  a pointer move does not draw - the host draws from the paint list it is handed - so the " +
