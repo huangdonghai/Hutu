@@ -110,6 +110,25 @@ public sealed class Box
     /// </remarks>
     public WritingModeInfo Flow { get; init; } = WritingModeInfo.Horizontal;
 
+    /// <summary>
+    /// Gets whether the box wants the same intrinsic size at every containing block: nothing in the
+    /// subtree it holds reads a fraction of one.
+    /// </summary>
+    /// <remarks>
+    /// Only a percentage makes an intrinsic size depend on the basis it was measured against. Every
+    /// other length has already been folded into pixels when the style was read, so a box whose
+    /// subtree carries none answers the same however wide the containing block is - and can be
+    /// measured once per pass instead of once per basis the layout happens to ask it about, which is
+    /// what <see cref="Layout.LayoutEngine"/> keys its intrinsic cache on.
+    /// <para>
+    /// Settled by the builder, once, the way <see cref="Flow"/> is: it is a fact about the whole
+    /// subtree, so it can only be answered on the way back up, and the tree does not change after
+    /// that. A rebuild that changes which lengths a box resolves gets a new tree, so this cannot go
+    /// stale.
+    /// </para>
+    /// </remarks>
+    public Boolean IntrinsicIgnoresBasis { get; internal set; }
+
     /// <summary>Gets the source element, or null for a text or anonymous box.</summary>
     public IElement? Element { get; init; }
 

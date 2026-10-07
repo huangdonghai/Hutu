@@ -95,6 +95,19 @@ public readonly struct StyleLength
     public Boolean HasValue => _kind is StyleLengthKind.Pixels or StyleLengthKind.Percent or StyleLengthKind.Math;
 
     /// <summary>
+    /// Gets the arguments of a <see cref="StyleLengthKind.Math"/> length, or null for every other
+    /// kind.
+    /// </summary>
+    /// <remarks>
+    /// Exposed because whether a length is a fraction of the containing block decides whether the
+    /// intrinsic size of the box holding it can be cached without the basis, and a
+    /// <c>min()</c>, <c>max()</c> or <c>clamp()</c> hides that answer one level down: a length whose
+    /// own kind says <see cref="StyleLengthKind.Math"/> still reads the containing block when one of
+    /// its arguments does.
+    /// </remarks>
+    internal IReadOnlyList<StyleLength>? Operands => _operands;
+
+    /// <summary>
     /// Gets the number: pixels for <see cref="StyleLengthKind.Pixels"/>, a fraction for
     /// <see cref="StyleLengthKind.Percent"/>.
     /// </summary>

@@ -11,6 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -116,6 +117,148 @@ public sealed class HoverCostProbeTests
         File.WriteAllText(@"d:\_git4\Hutu\layout-breakdown.txt", report.ToString());
     }
 
+    [Test]
+    public async Task IntrinsicKeys()
+    {
+        var report = new StringBuilder();
+
+        using var skia = new SkiaTextMeasurer();
+        var counting = new CountingMeasurer(skia);
+        using var view = new HutuViewInternal(skia);
+        view.AddEmbeddedResourceSource(typeof(Sample.Common.SampleUtils).Assembly, "Samples");
+        view.SetViewportSize(900, 600);
+        await view.LoadUrlAsync("index.htm");
+
+        var device = new HutuRenderDevice(900, 600);
+        var engine = new LayoutEngine(counting);
+        var window = view.Document!.DefaultView!;
+
+        var boxTree = BoxBuilder.Build(window.Render(device), device, (IImageProvider?)null);
+
+        LayoutProbe.RecordAsks = true;
+        LayoutProbe.Reset();
+        _ = engine.Layout(boxTree, device.RenderWidth, device.RenderHeight);
+        LayoutProbe.RecordAsks = false;
+
+        var asks = LayoutProbe.IntrinsicAsks;
+
+        report.AppendLine($"total asks={asks.Count} boxes={asks.Select(a => a.Box).Distinct().Count()}");
+
+        report.AppendLine();
+        report.AppendLine("--- who asks ---");
+        foreach (var group in asks.GroupBy(a => a.Site).OrderByDescending(g => g.Count()))
+        {
+            report.AppendLine(
+                $"    {group.Key,-40} asks={group.Count(),-4} " +
+                $"boxes={group.Select(a => a.Box).Distinct().Count(),-3} " +
+                $"content={group.Count(a => a.Content)}");
+        }
+
+        report.AppendLine();
+        report.AppendLine("--- worst boxes ---");
+        var perBox = asks
+            .GroupBy(a => (a.Box, a.Content))
+            .OrderByDescending(g => g.Select(a => (a.Width, a.Height)).Distinct().Count())
+            .Take(10);
+
+        foreach (var group in perBox)
+        {
+            var keys = group.Select(a => (a.Width, a.Height)).Distinct().Count();
+            var widths = group.Select(a => a.Width).Distinct().Count();
+
+            report.AppendLine();
+            report.AppendLine(
+                $"  {group.Key.Box.Kind} <{Preview(group.Key.Box)}> content={group.Key.Content} " +
+                $"calls={group.Count()} missKeys={keys} widths={widths}");
+
+            foreach (var ask in group.Take(14))
+            {
+                report.AppendLine($"      w={ask.Width,-8:F1} h={ask.Height,-8:F1} {ask.Site}");
+            }
+
+            if (group.Count() > 14)
+            {
+                report.AppendLine($"      ... {group.Count() - 14} more");
+            }
+        }
+
+        report.AppendLine();
+        report.AppendLine("--- cache policies (misses = real computations) ---");
+        Simulate(report, asks);
+
+        report.AppendLine();
+        report.AppendLine("--- basis dependence in the tree ---");
+        var all = new List<Box>();
+        Collect(boxTree!, all);
+        var percent = all.Count(UsesPercent);
+        var subtree = all.Count(box => SubtreeUsesPercent(box));
+        report.AppendLine($"boxes={all.Count} own percentage length={percent} subtree carries one={subtree}");
+
+        foreach (var box in all.Where(UsesPercent))
+        {
+            report.AppendLine($"    {box.Kind} <{Preview(box)}> w={box.Style.Width.Kind} h={box.Style.Height.Kind} " +
+                $"pad={box.Style.Padding.Left.Kind} margin={box.Style.Margin.Left.Kind}");
+        }
+
+        File.WriteAllText(@"d:\_git4\Hutu\intrinsic-keys.txt", report.ToString());
+    }
+
+    /// <summary>Replays the ask sequence against alternative cache keys and counts the misses.</summary>
+    private static void Simulate(StringBuilder report, List<IntrinsicAsk> asks)
+    {
+        Count(report, "current (box, w, h, cache)", asks, a => (a.Box, a.Width, a.Height, a.Content));
+        Count(report, "shared  (box, w, h)      ", asks, a => (a.Box, a.Width, a.Height, false));
+        Count(report, "width   (box, w)         ", asks, a => (a.Box, a.Width, false, false));
+        Count(report, "box     (box)            ", asks, a => (a.Box, 0.0, 0.0, false));
+
+        static void Count(StringBuilder report, String label, List<IntrinsicAsk> asks, Func<IntrinsicAsk, Object> key)
+        {
+            var seen = new HashSet<Object>();
+
+            foreach (var ask in asks)
+            {
+                seen.Add(key(ask));
+            }
+
+            report.AppendLine($"    {label} distinct keys={seen.Count,-4} of {asks.Count} asks");
+        }
+    }
+
+    /// <summary>Gets whether a style carries a length whose value depends on the containing block.</summary>
+    private static Boolean UsesPercent(Box box)
+    {
+        var style = box.Style;
+
+        return Percent(style.Width) || Percent(style.Height) ||
+               Percent(style.MinWidth) || Percent(style.MaxWidth) ||
+               Percent(style.MinHeight) || Percent(style.MaxHeight) ||
+               Percent(style.Margin.Top) || Percent(style.Margin.Right) ||
+               Percent(style.Margin.Bottom) || Percent(style.Margin.Left) ||
+               Percent(style.Padding.Top) || Percent(style.Padding.Right) ||
+               Percent(style.Padding.Bottom) || Percent(style.Padding.Left);
+    }
+
+    private static Boolean Percent(StyleLength length) => length.Kind == StyleLengthKind.Percent;
+
+    private static Boolean SubtreeUsesPercent(Box box) =>
+        UsesPercent(box) || box.Children.Any(SubtreeUsesPercent);
+
+    private static void Collect(Box box, List<Box> into)
+    {
+        into.Add(box);
+
+        foreach (var child in box.Children)
+        {
+            Collect(child, into);
+        }
+    }
+
+    private static String Preview(Box box)
+    {
+        var text = box.Text ?? box.Element?.LocalName ?? box.Kind.ToString();
+        return text.Length > 24 ? text[..24] : text;
+    }
+
     // Temporary: counts the calls the layout engine makes into the text backend.
     private sealed class CountingMeasurer : ITextMeasurer
     {
@@ -147,8 +290,25 @@ public sealed class HoverCostProbeTests
         }
     }
 
-    private static async Task<String> Compare(String label, Action<IDocument>? tweak)
+    [Test]
+    public async Task BasisFree()
     {
+        var report = new StringBuilder();
+
+        // Interleaved and repeated, so a drift over the run shows up as a pattern rather than being
+        // read as the effect.
+        report.AppendLine(await Compare("baseline  ", null, basisFree: false));
+        report.AppendLine(await Compare("basis-free", null, basisFree: true));
+        report.AppendLine(await Compare("basis-free", null, basisFree: true));
+        report.AppendLine(await Compare("baseline  ", null, basisFree: false));
+
+        File.WriteAllText(@"d:\_git4\Hutu\basis-free-ab.txt", report.ToString());
+    }
+
+    private static async Task<String> Compare(String label, Action<IDocument>? tweak, Boolean basisFree = true)
+    {
+        LayoutEngine.DisableBasisFreeCache = !basisFree;
+
         using var measurer = new SkiaTextMeasurer();
         using var view = new HutuViewInternal(measurer);
         view.AddEmbeddedResourceSource(typeof(Sample.Common.SampleUtils).Assembly, "Samples");
@@ -193,7 +353,16 @@ public sealed class HoverCostProbeTests
             }
         }
 
-        return $"{label}: style={style / runs:F1}ms boxes={boxes / runs:F1}ms layout={layout / runs:F1}ms";
+        // One more pass with the counters cleared, so the row says what the layout asks for as well as
+        // what it costs.
+        var counted = BoxBuilder.Build(window.Render(device), device, (IImageProvider?)null);
+        LayoutProbe.Reset();
+        _ = engine.Layout(counted, device.RenderWidth, device.RenderHeight);
+
+        return $"{label}: style={style / runs:F1}ms boxes={boxes / runs:F1}ms layout={layout / runs:F1}ms " +
+            $"intrinsic={LayoutProbe.IntrinsicMs:F1}ms " +
+            $"{LayoutProbe.IntrinsicCalls}+{LayoutProbe.ContentIntrinsicCalls}calls " +
+            $"hits={LayoutProbe.IntrinsicHits}";
     }
 
     private static async Task Measure(String page, StringBuilder report)

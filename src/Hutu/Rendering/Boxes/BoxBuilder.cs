@@ -38,7 +38,90 @@ public static class BoxBuilder
             return null;
         }
 
-        return BuildElement(root, dimensions, images, WritingModeInfo.Horizontal);
+        var box = BuildElement(root, dimensions, images, WritingModeInfo.Horizontal);
+
+        if (box is not null)
+        {
+            MarkBasisUse(box);
+        }
+
+        return box;
+    }
+
+    /// <summary>
+    /// Marks every box whose intrinsic size is the same whatever containing block it is measured
+    /// against.
+    /// </summary>
+    /// <remarks>
+    /// A percentage is the only length that reads the containing block; every other one has already
+    /// been folded into pixels by the time the style is read. So a box is free of the basis when
+    /// neither it nor any descendant resolves one - a fact about the whole subtree, and therefore
+    /// only knowable on the way back up it. The layout engine keys its intrinsic cache on the answer,
+    /// which is why being wrong in the safe direction - calling a box dependent when it is not -
+    /// costs nothing but time, while being wrong the other way serves a size the box never wanted.
+    /// </remarks>
+    private static void MarkBasisUse(Box box)
+    {
+        var free = !ReadsContainingBlock(box.Style);
+
+        foreach (var child in box.Children)
+        {
+            MarkBasisUse(child);
+            free &= child.IntrinsicIgnoresBasis;
+        }
+
+        box.IntrinsicIgnoresBasis = free;
+    }
+
+    /// <summary>Gets whether any length of the style is a fraction of the containing block.</summary>
+    private static Boolean ReadsContainingBlock(ComputedStyle style) =>
+        ReadsContainingBlock(style.Width) ||
+        ReadsContainingBlock(style.Height) ||
+        ReadsContainingBlock(style.MinWidth) ||
+        ReadsContainingBlock(style.MaxWidth) ||
+        ReadsContainingBlock(style.MinHeight) ||
+        ReadsContainingBlock(style.MaxHeight) ||
+        ReadsContainingBlock(style.Margin) ||
+        ReadsContainingBlock(style.Padding);
+
+    private static Boolean ReadsContainingBlock(StyleThickness thickness) =>
+        ReadsContainingBlock(thickness.Top) ||
+        ReadsContainingBlock(thickness.Right) ||
+        ReadsContainingBlock(thickness.Bottom) ||
+        ReadsContainingBlock(thickness.Left);
+
+    private static Boolean ReadsContainingBlock(StyleLength length) => length.Kind switch
+    {
+        StyleLengthKind.Percent => true,
+
+        // A math function is only as free of the basis as its arguments are: `min(100%, 640px)` reads
+        // the containing block through one of them, `min(20em, 640px)` through none.
+        StyleLengthKind.Math => ReadsContainingBlock(length.Operands),
+
+        _ => false,
+    };
+
+    /// <summary>
+    /// Gets whether any argument of a <c>min()</c>, <c>max()</c> or <c>clamp()</c> reads the
+    /// containing block. Arguments that cannot be read at all count as dependent, which errs towards
+    /// measuring the box again rather than towards reusing a size it may never have asked for.
+    /// </summary>
+    private static Boolean ReadsContainingBlock(IReadOnlyList<StyleLength>? operands)
+    {
+        if (operands is null)
+        {
+            return true;
+        }
+
+        foreach (var operand in operands)
+        {
+            if (ReadsContainingBlock(operand))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static Box? BuildElement(

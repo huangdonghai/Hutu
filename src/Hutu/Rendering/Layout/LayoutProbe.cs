@@ -5,6 +5,14 @@ using System.Diagnostics;
 
 namespace Hutu.Rendering.Layout;
 
+/// <summary>Temporary: one intrinsic measurement the engine was asked for.</summary>
+public readonly record struct IntrinsicAsk(
+    Box Box,
+    Double Width,
+    Double Height,
+    Boolean Content,
+    String Site);
+
 // Temporary: counts what a layout pass asks for, so a probe can see where its time goes.
 public static class LayoutProbe
 {
@@ -32,6 +40,11 @@ public static class LayoutProbe
 
     public static Int64 IntrinsicUnique;
 
+    /// <summary>Temporary: every intrinsic measurement asked for, in call order, with the basis it was
+    /// asked at and the call site that asked - so a probe can see which dimension of the cache key is
+    /// splitting one box's work into several entries, and who is varying it.</summary>
+    public static readonly List<IntrinsicAsk> IntrinsicAsks = new();
+
     private static readonly Stopwatch MeasureWatch = new();
     private static readonly Stopwatch ArrangeWatch = new();
     private static readonly Stopwatch InlineWatch = new();
@@ -57,10 +70,43 @@ public static class LayoutProbe
         IntrinsicHits = 0;
         IntrinsicUnique = 0;
         IntrinsicSeen.Clear();
+        IntrinsicAsks.Clear();
         _measureDepth = 0;
         _arrangeDepth = 0;
         _inlineDepth = 0;
         _intrinsicDepth = 0;
+    }
+
+    /// <summary>Temporary: whether the ask log is being kept. Reading the call site costs a stack
+    /// walk, so this stays off unless a probe is looking at it.</summary>
+    public static Boolean RecordAsks;
+
+    /// <summary>Temporary: records one intrinsic measurement the engine was asked for.</summary>
+    public static void NoteIntrinsicKey(Box box, Double width, Double height, Boolean content)
+    {
+        if (RecordAsks)
+        {
+            IntrinsicAsks.Add(new IntrinsicAsk(box, width, height, content, Site()));
+        }
+    }
+
+    /// <summary>The first frame past the engine's own entry points, i.e. the context that asked.</summary>
+    private static String Site()
+    {
+        foreach (var frame in new StackTrace(2, false).GetFrames())
+        {
+            var method = frame.GetMethod();
+            var name = method?.DeclaringType?.Name;
+
+            if (name is null or nameof(LayoutEngine) or nameof(LayoutProbe))
+            {
+                continue;
+            }
+
+            return $"{name}.{method!.Name}";
+        }
+
+        return "?";
     }
 
     public static void EnterIntrinsic(Box box)

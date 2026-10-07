@@ -41,6 +41,35 @@ public sealed class LayoutEngine
     private readonly Dictionary<MeasureKey, IntrinsicSize> _intrinsic = new();
     private readonly Dictionary<MeasureKey, IntrinsicSize> _contentIntrinsic = new();
 
+    /// <summary>
+    /// The intrinsic sizes of the boxes that answer the same at every containing block. Keyed by the
+    /// box alone, because the basis is the one thing the answer does not depend on - see
+    /// <see cref="Box.IntrinsicIgnoresBasis"/>.
+    /// </summary>
+    private readonly Dictionary<Box, IntrinsicSize> _intrinsicFree = new();
+
+    /// <summary>The same, for the content-intrinsic cache.</summary>
+    private readonly Dictionary<Box, IntrinsicSize> _contentIntrinsicFree = new();
+
+    /// <summary>The engine the assertion measures against, made on first use.</summary>
+    private LayoutEngine? _reference;
+
+    /// <summary>
+    /// Gets or sets whether a cached intrinsic size is checked against an honest measurement at the
+    /// containing block in hand before it is handed back.
+    /// </summary>
+    /// <remarks>
+    /// Leaving the basis out of the key is only safe while the size really does not depend on it, and
+    /// the one place that can be caught being false is where a size measured at one basis is about to
+    /// be returned at another. This is a verification switch rather than a feature: it multiplies the
+    /// intrinsic work, so it stays off unless a probe turns it on.
+    /// </remarks>
+    public static Boolean AssertBasisFree { get; set; }
+
+    /// <summary>Temporary: forces every box onto the basis-keyed cache, so a probe can measure what
+    /// leaving the basis out is worth without a second build.</summary>
+    public static Boolean DisableBasisFreeCache { get; set; }
+
     public LayoutEngine(ITextMeasurer measurer)
     {
         _measurer = measurer ?? throw new ArgumentNullException(nameof(measurer));
@@ -75,6 +104,8 @@ public sealed class LayoutEngine
         _cache.Clear();
         _intrinsic.Clear();
         _contentIntrinsic.Clear();
+        _intrinsicFree.Clear();
+        _contentIntrinsicFree.Clear();
 
         var size = Measure(root, MeasureConstraints.FitWidth(width), context);
         var margin = BoxModel.UsedMargin(root.Style, width, size.Width);
@@ -240,6 +271,25 @@ public sealed class LayoutEngine
     internal IntrinsicSize MeasureIntrinsic(Box box, LayoutContext context)
     {
         LayoutProbe.IntrinsicCalls++;
+        LayoutProbe.NoteIntrinsicKey(box, context.ContainingBlock.Width, context.ContainingBlock.Height, content: false);
+
+        // A box that answers the same at every containing block is cached without the basis. The walk
+        // that asks about it - a table sizing its tracks, a flex container negotiating its items -
+        // asks under several, and every one of them used to be paid for separately even though the
+        // answer could not differ.
+        if (box.IntrinsicIgnoresBasis && !DisableBasisFreeCache)
+        {
+            if (_intrinsicFree.TryGetValue(box, out var free))
+            {
+                LayoutProbe.IntrinsicHits++;
+                VerifyBasisFree(box, context, free, content: false);
+                return free;
+            }
+
+            var settled = MeasureIntrinsicUncached(box, context, content: false);
+            _intrinsicFree[box] = settled;
+            return settled;
+        }
 
         var key = new MeasureKey(box, context.ContainingBlock.Width, context.ContainingBlock.Height);
 
@@ -249,17 +299,59 @@ public sealed class LayoutEngine
             return cached;
         }
 
+        var size = MeasureIntrinsicUncached(box, context, content: false);
+        _intrinsic[key] = size;
+        return size;
+    }
+
+    /// <summary>
+    /// Measures a size no cache held, under the probe's timer.
+    /// </summary>
+    private IntrinsicSize MeasureIntrinsicUncached(Box box, LayoutContext context, Boolean content)
+    {
         LayoutProbe.EnterIntrinsic(box);
 
         try
         {
-            var size = MeasureIntrinsicCore(box, context);
-            _intrinsic[key] = size;
-            return size;
+            return content
+                ? MeasureContentIntrinsicCore(box, context)
+                : MeasureIntrinsicCore(box, context);
         }
         finally
         {
             LayoutProbe.LeaveIntrinsic();
+        }
+    }
+
+    /// <summary>
+    /// Checks a cached basis-free size against an honest measurement at the containing block in hand.
+    /// </summary>
+    /// <remarks>
+    /// A box wrongly marked as wanting the same size everywhere can only be found out where its size
+    /// is about to be reused, so this runs on the hit and not on the measurement - the first
+    /// measurement is taken at the basis in hand anyway and cannot disagree with itself. The second
+    /// engine is what keeps the honest measurement from polluting this one's caches, and it keeps the
+    /// basis in its own keys all the way down, so a wrong flag deep in the subtree surfaces as a
+    /// difference here rather than being papered over by the same mistake twice.
+    /// </remarks>
+    private void VerifyBasisFree(Box box, LayoutContext context, IntrinsicSize cached, Boolean content)
+    {
+        if (!AssertBasisFree)
+        {
+            return;
+        }
+
+        var reference = _reference ??= new LayoutEngine(_measurer);
+        var honest = content
+            ? reference.MeasureContentIntrinsic(box, context)
+            : reference.MeasureIntrinsic(box, context);
+
+        if (honest.MinContent != cached.MinContent || honest.MaxContent != cached.MaxContent)
+        {
+            throw new InvalidOperationException(
+                $"A {box.Kind} box is marked as wanting the same intrinsic size at every containing " +
+                $"block, but it was cached as {cached.MinContent}/{cached.MaxContent} and wants " +
+                $"{honest.MinContent}/{honest.MaxContent} at {context.ContainingBlock.Width}.");
         }
     }
 
@@ -272,6 +364,15 @@ public sealed class LayoutEngine
             _ => _block.MeasureIntrinsic(box, context),
         };
 
+    private IntrinsicSize MeasureContentIntrinsicCore(Box box, LayoutContext context) =>
+        box.Kind switch
+        {
+            BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
+            BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
+            BoxKind.Table => _table.MeasureIntrinsic(box, context),
+            _ => _block.MeasureContentIntrinsic(box, context),
+        };
+
     /// <summary>
     /// The sizes a box's content wants once its own declared width is set aside. It is what the
     /// automatic minimum size of a flex item is built from, which is why the declared width must not
@@ -280,6 +381,21 @@ public sealed class LayoutEngine
     internal IntrinsicSize MeasureContentIntrinsic(Box box, LayoutContext context)
     {
         LayoutProbe.ContentIntrinsicCalls++;
+        LayoutProbe.NoteIntrinsicKey(box, context.ContainingBlock.Width, context.ContainingBlock.Height, content: true);
+
+        if (box.IntrinsicIgnoresBasis && !DisableBasisFreeCache)
+        {
+            if (_contentIntrinsicFree.TryGetValue(box, out var free))
+            {
+                LayoutProbe.IntrinsicHits++;
+                VerifyBasisFree(box, context, free, content: true);
+                return free;
+            }
+
+            var settled = MeasureIntrinsicUncached(box, context, content: true);
+            _contentIntrinsicFree[box] = settled;
+            return settled;
+        }
 
         var key = new MeasureKey(box, context.ContainingBlock.Width, context.ContainingBlock.Height);
 
@@ -289,25 +405,9 @@ public sealed class LayoutEngine
             return cached;
         }
 
-        LayoutProbe.EnterIntrinsic(box);
-
-        try
-        {
-            var size = box.Kind switch
-            {
-                BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
-                BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
-                BoxKind.Table => _table.MeasureIntrinsic(box, context),
-                _ => _block.MeasureContentIntrinsic(box, context),
-            };
-
-            _contentIntrinsic[key] = size;
-            return size;
-        }
-        finally
-        {
-            LayoutProbe.LeaveIntrinsic();
-        }
+        var size = MeasureIntrinsicUncached(box, context, content: true);
+        _contentIntrinsic[key] = size;
+        return size;
     }
 
     private Size MeasureCore(Box box, MeasureConstraints constraints, LayoutContext context) =>
