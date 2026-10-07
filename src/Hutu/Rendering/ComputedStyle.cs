@@ -129,7 +129,25 @@ public readonly struct ComputedStyle
     /// </remarks>
     private void ResolveAreas(StyleIntern? pool)
     {
-        if (!DeclaresAny("border"))
+        ResolveBorder(pool);
+        ResolveBoxModel(pool);
+    }
+
+    /// <summary>The names a border property can begin with, shorthands included.</summary>
+    private static readonly String[] BorderNames = { "border" };
+
+    /// <summary>
+    /// The names a box model property can begin with. <c>min-</c> and <c>max-</c> catch the height
+    /// constraints; nothing else the engine reads starts with those, and a name that merely ends in
+    /// <c>width</c> - a border's, an outline's - does not match <c>width</c> here, because this asks
+    /// what a name begins with.
+    /// </summary>
+    private static readonly String[] BoxModelNames =
+        { "margin", "padding", "width", "height", "min-", "max-", "box-sizing" };
+
+    private void ResolveBorder(StyleIntern? pool)
+    {
+        if (!DeclaresAny(BorderNames))
         {
             StyleProbe.NoteAreaUntouched();
 
@@ -162,15 +180,68 @@ public readonly struct ComputedStyle
         _values.Border = pool is null ? border : pool.Border(border);
     }
 
-    /// <summary>
-    /// Gets whether either declaration carries a property whose name begins with the prefix. Every
-    /// border property begins with <c>border</c>, shorthands included, and a declaration enumerates
-    /// only the names that were set - so one pass over those answers for the whole area.
-    /// </summary>
-    private Boolean DeclaresAny(String prefix) =>
-        HasDeclarationNamed(_specified, prefix) || HasDeclarationNamed(_style, prefix);
+    private void ResolveBoxModel(StyleIntern? pool)
+    {
+        if (!DeclaresAny(BoxModelNames))
+        {
+            StyleProbe.NoteAreaUntouched();
 
-    private static Boolean HasDeclarationNamed(ICssStyleDeclaration? declaration, String prefix)
+            return;
+        }
+
+        var model = new BoxModelArea
+        {
+            BoxSizing = ResolveBoxSizing(),
+            Width = ReadLength("width", RenderMode.Horizontal, StyleLength.Auto),
+            Height = ReadLength("height", RenderMode.Vertical, StyleLength.Auto),
+            MinWidth = ReadLength("min-width", RenderMode.Horizontal, StyleLength.None),
+            MaxWidth = ReadLength("max-width", RenderMode.Horizontal, StyleLength.None),
+            MinHeight = ReadLength("min-height", RenderMode.Vertical, StyleLength.None),
+            MaxHeight = ReadLength("max-height", RenderMode.Vertical, StyleLength.None),
+            Margin = ReadThickness("margin", StyleLength.Zero),
+            Padding = ReadThickness("padding", StyleLength.Zero),
+        };
+
+        _values.BoxModel = pool is null ? model : pool.BoxModel(model);
+    }
+
+    /// <summary>
+    /// Gets which box a declared width and height describe. The typed value is asked first because the
+    /// serialised one costs a string to build, and the string is only a fallback for a declaration the
+    /// typed read cannot make sense of.
+    /// </summary>
+    private BoxSizing ResolveBoxSizing()
+    {
+        // The type is named for the Css module because the layout namespace has a BoxModel too.
+        StyleProbe.NoteTextRead("box-sizing");
+
+        if (_style.GetProperty("box-sizing")?.RawValue is CssConstantValue<AngleSharp.Css.Dom.BoxModel> constant &&
+            constant.Value == AngleSharp.Css.Dom.BoxModel.BorderBox)
+        {
+            return BoxSizing.BorderBox;
+        }
+
+        StyleProbe.NoteTextRead("box-sizing");
+
+        return _style.GetPropertyValue("box-sizing").Trim()
+            .Equals("border-box", StringComparison.OrdinalIgnoreCase)
+                ? BoxSizing.BorderBox
+                : BoxSizing.ContentBox;
+    }
+
+    /// <summary>
+    /// Gets whether either declaration carries a property whose name begins with one of the prefixes.
+    /// A declaration enumerates only the names that were set, so one pass over those answers for a
+    /// whole area - and the answer is what decides whether the area needs resolving at all.
+    /// </summary>
+    /// <remarks>
+    /// A prefix rather than the exact names because a shorthand has to be caught too: <c>margin</c>
+    /// declares four sides, and none of them would match if the test were for <c>margin-top</c>.
+    /// </remarks>
+    private Boolean DeclaresAny(String[] prefixes) =>
+        DeclaresAny(_specified, prefixes) || DeclaresAny(_style, prefixes);
+
+    private static Boolean DeclaresAny(ICssStyleDeclaration? declaration, String[] prefixes)
     {
         if (declaration is null)
         {
@@ -179,9 +250,12 @@ public readonly struct ComputedStyle
 
         foreach (var property in declaration)
         {
-            if (property.Name.StartsWith(prefix, StringComparison.Ordinal))
+            foreach (var prefix in prefixes)
             {
-                return true;
+                if (property.Name.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    return true;
+                }
             }
         }
 
@@ -206,6 +280,8 @@ public readonly struct ComputedStyle
     private sealed class StyleValues
     {
         internal BorderArea Border = BorderArea.Default;
+
+        internal BoxModelArea BoxModel = BoxModelArea.Default;
     }
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
@@ -676,27 +752,7 @@ public readonly struct ComputedStyle
     /// <summary>
     /// Gets which box a declared width and height describe.
     /// </summary>
-    public BoxSizing BoxSizing
-    {
-        get
-        {
-            // The type is named for the Css module because the layout namespace has a BoxModel too.
-            StyleProbe.NoteTextRead("box-sizing");
-
-            if (_style.GetProperty("box-sizing")?.RawValue is CssConstantValue<AngleSharp.Css.Dom.BoxModel> constant &&
-                constant.Value == AngleSharp.Css.Dom.BoxModel.BorderBox)
-            {
-                return BoxSizing.BorderBox;
-            }
-
-            StyleProbe.NoteTextRead("box-sizing");
-
-            return _style.GetPropertyValue("box-sizing").Trim()
-                .Equals("border-box", StringComparison.OrdinalIgnoreCase)
-                    ? BoxSizing.BorderBox
-                    : BoxSizing.ContentBox;
-        }
-    }
+    public BoxSizing BoxSizing => _values.BoxModel.BoxSizing;
 
     /// <summary>
     /// Gets the flex longhands, both the container's and the item's. They are read together because
@@ -743,17 +799,17 @@ public readonly struct ComputedStyle
 
     internal IRenderDimensions Dimensions => _dimensions;
 
-    public StyleLength Width => ReadLength("width", RenderMode.Horizontal, StyleLength.Auto);
+    public StyleLength Width => _values.BoxModel.Width;
 
-    public StyleLength Height => ReadLength("height", RenderMode.Vertical, StyleLength.Auto);
+    public StyleLength Height => _values.BoxModel.Height;
 
-    public StyleLength MinWidth => ReadLength("min-width", RenderMode.Horizontal, StyleLength.None);
+    public StyleLength MinWidth => _values.BoxModel.MinWidth;
 
-    public StyleLength MaxWidth => ReadLength("max-width", RenderMode.Horizontal, StyleLength.None);
+    public StyleLength MaxWidth => _values.BoxModel.MaxWidth;
 
-    public StyleLength MinHeight => ReadLength("min-height", RenderMode.Vertical, StyleLength.None);
+    public StyleLength MinHeight => _values.BoxModel.MinHeight;
 
-    public StyleLength MaxHeight => ReadLength("max-height", RenderMode.Vertical, StyleLength.None);
+    public StyleLength MaxHeight => _values.BoxModel.MaxHeight;
 
     /// <summary>
     /// Gets how replaced content (an image) is fitted into its box. Geometry is decided elsewhere;
@@ -824,10 +880,10 @@ public readonly struct ComputedStyle
     /// <c>margin: 0 auto</c> able to centre a box. A percentage margin resolves against the
     /// containing block's width on all four sides.
     /// </summary>
-    public StyleThickness Margin => ReadThickness("margin", StyleLength.Zero);
+    public StyleThickness Margin => _values.BoxModel.Margin;
 
     /// <summary>Gets the four paddings. As with margins, every side resolves against the width.</summary>
-    public StyleThickness Padding => ReadThickness("padding", StyleLength.Zero);
+    public StyleThickness Padding => _values.BoxModel.Padding;
 
     public Double BorderTopWidth => _values.Border.TopWidth;
 

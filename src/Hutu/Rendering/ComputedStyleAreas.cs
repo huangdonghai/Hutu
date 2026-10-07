@@ -99,6 +99,43 @@ internal sealed record BorderArea
 }
 
 /// <summary>
+/// The box a declared width and height describe, and the lengths that place and fill it.
+/// </summary>
+/// <remarks>
+/// Every length here keeps its unit: a percentage is relative to the containing block, which only the
+/// layout pass knows, so resolving one here would be wrong rather than early. What is saved is the
+/// parse - the declaration is read once instead of on every access - not the resolution.
+/// <para>
+/// The initialisers are not decoration: the resolver is skipped entirely for an element that declares
+/// none of these properties, and what it would have produced for such an element is exactly this.
+/// A default that disagreed with the reader's own fallback would make skipping it wrong.
+/// </para>
+/// </remarks>
+internal sealed record BoxModelArea
+{
+    /// <summary>What a box that declares no width, height, margin or padding shares.</summary>
+    internal static readonly BoxModelArea Default = new();
+
+    internal BoxSizing BoxSizing { get; init; } = BoxSizing.ContentBox;
+
+    internal StyleLength Width { get; init; } = StyleLength.Auto;
+
+    internal StyleLength Height { get; init; } = StyleLength.Auto;
+
+    internal StyleLength MinWidth { get; init; } = StyleLength.None;
+
+    internal StyleLength MaxWidth { get; init; } = StyleLength.None;
+
+    internal StyleLength MinHeight { get; init; } = StyleLength.None;
+
+    internal StyleLength MaxHeight { get; init; } = StyleLength.None;
+
+    internal StyleThickness Margin { get; init; } = new(StyleLength.Zero, StyleLength.Zero, StyleLength.Zero, StyleLength.Zero);
+
+    internal StyleThickness Padding { get; init; } = new(StyleLength.Zero, StyleLength.Zero, StyleLength.Zero, StyleLength.Zero);
+}
+
+/// <summary>
 /// One intern table per area, alive for one box tree.
 /// </summary>
 /// <remarks>
@@ -119,6 +156,24 @@ internal sealed record BorderArea
 internal sealed class StyleIntern
 {
     private readonly Dictionary<BorderArea, BorderArea> _border = new();
+
+    private readonly Dictionary<BoxModelArea, BoxModelArea> _boxModel = new();
+
+    /// <summary>Gets the instance standing for a box model, building it only if the value is new.</summary>
+    internal BoxModelArea BoxModel(BoxModelArea area)
+    {
+        if (_boxModel.TryGetValue(area, out var existing))
+        {
+            StyleProbe.NoteInternHit();
+
+            return existing;
+        }
+
+        StyleProbe.NoteAreaBuilt();
+        _boxModel[area] = area;
+
+        return area;
+    }
 
     /// <summary>
     /// Gets the instance standing for <paramref name="area"/>, which is <paramref name="area"/> itself
