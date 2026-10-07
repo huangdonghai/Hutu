@@ -1,4 +1,4 @@
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using AngleSharp.Dom;
 using Hutu.Rendering;
 using Hutu.Rendering.Boxes;
@@ -23,13 +23,26 @@ namespace Hutu.Tests;
 /// built to answer. This page repeats one row, so the number of elements grows while the number of
 /// distinct declarations does not, and the two costs separate.
 /// <para>
-/// Deliberately written against the public surface only, with no probes: it has to compile and run on
-/// the code from before the areas as well, to say what they were worth.
+/// The declaration reads are counted, because that number is what the design is about: a page four
+/// times as long should not cost four times as many reads per box. Before the style areas the sample's
+/// index page paid 186 reads a box - 15104 for 81 of them - and that figure does not depend on the
+/// document, so it stands in for what this page would have paid without them.
 /// </para>
 /// </remarks>
 [TestFixture]
 public sealed class LargePageProbeTests
 {
+    /// <summary>
+    /// The probes are off by default, so a layout nobody watches pays one static read per call. This
+    /// is where they are turned on for this fixture, the way HoverCostProbeTests does for its own.
+    /// </summary>
+    [SetUp]
+    public void WatchTheProbes()
+    {
+        StyleProbe.Off = false;
+        LayoutProbe.Off = false;
+    }
+
     [Test]
     public async Task LargePage()
     {
@@ -67,26 +80,43 @@ public sealed class LargePageProbeTests
         GC.Collect();
         GC.WaitForPendingFinalizers();
 
+        StyleProbe.Reset();
         var before = GC.GetTotalAllocatedBytes(true);
         var watch = Stopwatch.StartNew();
         var tree = BoxBuilder.Build(window.Render(device), device);
         watch.Stop();
         var built = watch.Elapsed.TotalMilliseconds;
         var builtMb = (GC.GetTotalAllocatedBytes(true) - before) / 1024.0 / 1024.0;
+        var builtReads = Reads();
+
+        // Read out before the layout, because the reset below would zero them and the areas are
+        // resolved while the tree is built - not while it is laid out.
+        var untouched = StyleProbe.AreasUntouched;
+        var areas = StyleProbe.AreasBuilt;
+        var interned = StyleProbe.InternHits;
+        var fromParent = StyleProbe.ParentsAdopted;
 
         var boxes = Count(tree!);
 
+        StyleProbe.Reset();
         before = GC.GetTotalAllocatedBytes(true);
         watch.Restart();
         _ = engine.Layout(tree, device.RenderWidth, device.RenderHeight);
         watch.Stop();
         var laid = watch.Elapsed.TotalMilliseconds;
         var laidMb = (GC.GetTotalAllocatedBytes(true) - before) / 1024.0 / 1024.0;
+        var laidReads = Reads();
 
         report.AppendLine(
             $"rows={rows,-4} boxes={boxes,-6} " +
-            $"build={built,8:F1}ms/{builtMb,7:F1}MB  layout={laid,8:F1}ms/{laidMb,7:F1}MB");
+            $"build={built,7:F1}ms/{builtMb,6:F1}MB reads={builtReads,-7}{builtReads / (Double)boxes,5:F1}/box   " +
+            $"layout={laid,7:F1}ms/{laidMb,6:F1}MB reads={laidReads,-7}{laidReads / (Double)boxes,5:F1}/box");
+        report.AppendLine(
+            $"      areas: untouched={untouched} built={areas} interned={interned} fromParent={fromParent}");
     }
+
+    private static Int64 Reads() =>
+        StyleProbe.LengthReads + StyleProbe.TextReads + StyleProbe.ValueReads;
 
     /// <summary>
     /// Repeated rows, each an anchor and a run of text inside a bordered box with a padding, which is
