@@ -1,4 +1,4 @@
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Values;
 using AngleSharp.Dom;
@@ -197,6 +197,8 @@ public readonly struct ComputedStyle
     {
         get
         {
+            StyleProbe.NoteTextRead("line-height");
+
             var text = _style.GetPropertyValue("line-height");
 
             if (String.IsNullOrWhiteSpace(text))
@@ -554,11 +556,15 @@ public readonly struct ComputedStyle
         get
         {
             // The type is named for the Css module because the layout namespace has a BoxModel too.
+            StyleProbe.NoteTextRead("box-sizing");
+
             if (_style.GetProperty("box-sizing")?.RawValue is CssConstantValue<AngleSharp.Css.Dom.BoxModel> constant &&
                 constant.Value == AngleSharp.Css.Dom.BoxModel.BorderBox)
             {
                 return BoxSizing.BorderBox;
             }
+
+            StyleProbe.NoteTextRead("box-sizing");
 
             return _style.GetPropertyValue("box-sizing").Trim()
                 .Equals("border-box", StringComparison.OrdinalIgnoreCase)
@@ -597,6 +603,18 @@ public readonly struct ComputedStyle
     /// and the layout engine has to resolve it against the containing block instead.
     /// </summary>
     internal ICssStyleDeclaration? Specified => _specified;
+
+    /// <summary>
+    /// Gets a declaration's value with its type intact, which is where every reader that wants more
+    /// than the text starts. Counted like the string readers, because the lookup is the same and only
+    /// the materialisation differs.
+    /// </summary>
+    internal ICssValue? RawValue(String name)
+    {
+        StyleProbe.NoteValueRead(name);
+
+        return _style.GetProperty(name)?.RawValue;
+    }
 
     internal IRenderDimensions Dimensions => _dimensions;
 
@@ -639,10 +657,10 @@ public readonly struct ComputedStyle
     /// to - and shrink radii that would overlap.
     /// </summary>
     public StyleCornerRadii BorderRadius => new(
-        LengthReader.TryReadCorner(_specified, _style, "border-top-left-radius", _dimensions, FontSize) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCorner(_specified, _style, "border-top-right-radius", _dimensions, FontSize) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCorner(_specified, _style, "border-bottom-right-radius", _dimensions, FontSize) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCorner(_specified, _style, "border-bottom-left-radius", _dimensions, FontSize) ?? StyleCornerRadius.Zero);
+        LengthReader.TryReadCorner(_specified, _style, "border-top-left-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-top-right-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-bottom-right-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-bottom-left-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero);
 
     /// <summary>
     /// Gets the box the background is painted into: <c>border-box</c> (the initial value) reaches
@@ -813,9 +831,13 @@ public readonly struct ComputedStyle
     /// Reads a length against the given font size. <c>font-size</c> itself is read this way: the size
     /// being worked out is the parent's, not the one this style will resolve other lengths against.
     /// </summary>
-    private Boolean TryLengthAgainst(String name, RenderMode mode, Double fontSize, out Double pixels) =>
-        TryReadLength(_specified, name, mode, fontSize, out pixels) ||
-        TryReadLength(_style, name, mode, fontSize, out pixels);
+    private Boolean TryLengthAgainst(String name, RenderMode mode, Double fontSize, out Double pixels)
+    {
+        StyleProbe.NoteLengthRead(name);
+
+        return TryReadLength(_specified, name, mode, fontSize, out pixels) ||
+               TryReadLength(_style, name, mode, fontSize, out pixels);
+    }
 
     private Boolean TryReadLength(ICssStyleDeclaration? declaration, String name, RenderMode mode, Double fontSize, out Double pixels)
     {
@@ -877,7 +899,15 @@ public readonly struct ComputedStyle
     /// declaration is asked first because computing the style folds percentages into pixels.
     /// </summary>
     private StyleLength ReadLength(String name, RenderMode mode, StyleLength fallback) =>
-        LengthReader.TryRead(_specified, _style, name, mode, _dimensions, FontSize, out var length) ? length : fallback;
+        LengthReader.TryRead(_specified, _style, name, mode, _dimensions, FontSourceOf(), out var length) ? length : fallback;
+
+    /// <summary>
+    /// Gets the font size a length read resolves against - the element's own, which the reader asks for
+    /// only if the length it is reading turns out to need one. Handing over the style rather than the
+    /// size is what makes that possible, and it is worth about a quarter of a layout pass: a length in
+    /// pixels or a percentage has no use for a font size, and resolving one walks the declarations.
+    /// </summary>
+    private LengthReader.FontSource FontSourceOf() => new(this);
 
     private StyleThickness ReadThickness(String prefix, StyleLength fallback) => new(
         ReadLength(prefix + "-top", RenderMode.Horizontal, fallback),
@@ -912,6 +942,8 @@ public readonly struct ComputedStyle
 
     private Boolean HasDecoration(String kind)
     {
+        StyleProbe.NoteTextRead("text-decoration-line");
+
         var text = _style.GetPropertyValue("text-decoration-line");
 
         if (String.IsNullOrWhiteSpace(text))
@@ -925,6 +957,8 @@ public readonly struct ComputedStyle
 
     private CssColorValue? ColorValue(String name)
     {
+        StyleProbe.NoteTextRead(name);
+
         var value = _style.GetProperty(name)?.RawValue;
 
         return value is CssColorValue color ? color : null;
@@ -947,6 +981,8 @@ public readonly struct ComputedStyle
 
     private String Keyword(String name, String fallback)
     {
+        StyleProbe.NoteTextRead(name);
+
         var text = _style.GetPropertyValue(name);
         return String.IsNullOrWhiteSpace(text) ? fallback : text.Trim();
     }
@@ -957,6 +993,8 @@ public readonly struct ComputedStyle
     /// </summary>
     private String? ReadKeyword(String name)
     {
+        StyleProbe.NoteTextRead(name);
+
         var text = _specified?.GetPropertyValue(name);
 
         if (String.IsNullOrWhiteSpace(text))
@@ -975,6 +1013,8 @@ public readonly struct ComputedStyle
 
     private Boolean Is(String name, String keyword)
     {
+        StyleProbe.NoteTextRead(name);
+
         var text = _style.GetPropertyValue(name);
         return text is not null && text.Trim().Equals(keyword, StringComparison.OrdinalIgnoreCase);
     }

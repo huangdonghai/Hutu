@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
@@ -26,25 +26,75 @@ namespace Hutu.Rendering;
 /// </remarks>
 internal static class LengthReader
 {
+    /// <summary>
+    /// Supplies the font size a font-relative length resolves against, but only if a length turns out
+    /// to need one.
+    /// </summary>
+    /// <remarks>
+    /// Most lengths are pixels or percentages and never consult it, yet every caller used to resolve
+    /// the size up front because this reader's signature demanded a number - and resolving it walks
+    /// the declarations again, at several times the cost of the read that wanted it. Measured on the
+    /// sample's index page, that was one wasted resolution per length read, 5,340 of them in a pass.
+    /// <para>
+    /// A plain number stands for a size the caller already has: <c>font-size</c> itself is read
+    /// against the parent's, so that caller must not be handed the element's own.
+    /// </para>
+    /// </remarks>
+    internal readonly struct FontSource
+    {
+        private readonly ComputedStyle _style;
+        private readonly Double _size;
+        private readonly Boolean _fromStyle;
+
+        public FontSource(ComputedStyle style)
+        {
+            _style = style;
+            _size = 0;
+            _fromStyle = true;
+        }
+
+        public FontSource(Double size)
+        {
+            _style = default;
+            _size = size;
+            _fromStyle = false;
+        }
+
+        /// <summary>Lets a caller that already has the number go on passing it.</summary>
+        public static implicit operator FontSource(Double size) => new(size);
+
+        /// <summary>Gets the size, asking the style for it only now. Zero means unknown.</summary>
+        public Double Value => _fromStyle ? _style.FontSize : _size;
+    }
+
     public static Boolean TryRead(
         ICssStyleDeclaration? specified,
         ICssStyleDeclaration? computed,
         String name,
         RenderMode mode,
         IRenderDimensions dimensions,
-        Double fontSize,
+        FontSource font,
         out StyleLength length)
     {
-        return TryRead(specified, name, mode, dimensions, fontSize, out length) ||
-               TryRead(computed, name, mode, dimensions, fontSize, out length);
+        StyleProbe.NoteLengthRead(name);
+
+        return TryRead(specified, name, mode, dimensions, font, out length) ||
+               TryRead(computed, name, mode, dimensions, font, out length);
     }
+
+    /// <summary>
+    /// Reads a length for a style, asking for its font size only if the length needs one. This is the
+    /// entry point the box model uses, where most reads never touch the font at all.
+    /// </summary>
+    public static Boolean TryRead(ComputedStyle style, String name, RenderMode mode, out StyleLength length) =>
+        TryRead(style.Specified, style.Declaration, name, mode, style.Dimensions, new FontSource(style), out length);
 
     public static Boolean TryRead(
         ICssStyleDeclaration? declaration,
         String name,
         RenderMode mode,
         IRenderDimensions dimensions,
-        Double fontSize,
+        FontSource font,
         out StyleLength length)
     {
         length = default;
@@ -54,20 +104,31 @@ internal static class LengthReader
             return false;
         }
 
-        if (CssMathLengths.Evaluate(declaration.GetPropertyValue(name), text => FromText(text, mode, dimensions, fontSize)) is { } math)
+        if (CssMathLengths.Evaluate(declaration.GetPropertyValue(name), text => FromText(text, mode, dimensions, font)) is { } math)
         {
             length = math;
+            StyleProbe.NoteLengthHit();
             return true;
         }
 
-        return TryReadValue(declaration.GetProperty(name)?.RawValue, mode, dimensions, fontSize, out length);
+        if (TryReadValue(declaration.GetProperty(name)?.RawValue, mode, dimensions, font, out length))
+        {
+            StyleProbe.NoteLengthHit();
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
     /// Reads a value that has already been fetched from a declaration. Track lists, <c>minmax</c> and
     /// the items of a shorthand tuple all arrive as loose values rather than as named properties.
     /// </summary>
-    public static Boolean TryReadValue(ICssValue? value, RenderMode mode, IRenderDimensions dimensions, Double fontSize, out StyleLength length)
+    /// <summary>The same, for a value already fetched from a style the caller holds.</summary>
+    public static Boolean TryReadValue(ICssValue? value, RenderMode mode, ComputedStyle style, out StyleLength length) =>
+        TryReadValue(value, mode, style.Dimensions, new FontSource(style), out length);
+
+    public static Boolean TryReadValue(ICssValue? value, RenderMode mode, IRenderDimensions dimensions, FontSource font, out StyleLength length)
     {
         length = default;
 
@@ -84,7 +145,7 @@ internal static class LengthReader
                     return true;
                 }
 
-                if (FromCssLength(css, mode, dimensions, fontSize) is not { } resolved)
+                if (FromCssLength(css, mode, dimensions, font) is not { } resolved)
                 {
                     return false;
                 }
@@ -122,26 +183,26 @@ internal static class LengthReader
         ICssStyleDeclaration? computed,
         String name,
         IRenderDimensions dimensions,
-        Double fontSize)
+        FontSource font)
     {
-        return TryReadCorner(specified, name, dimensions, fontSize) ?? TryReadCorner(computed, name, dimensions, fontSize);
+        return TryReadCorner(specified, name, dimensions, font) ?? TryReadCorner(computed, name, dimensions, font);
     }
 
-    private static StyleCornerRadius? TryReadCorner(ICssStyleDeclaration? declaration, String name, IRenderDimensions dimensions, Double fontSize)
+    private static StyleCornerRadius? TryReadCorner(ICssStyleDeclaration? declaration, String name, IRenderDimensions dimensions, FontSource font)
     {
         if (declaration?.GetProperty(name)?.RawValue is not ICssMultipleValue radius || radius.Count == 0)
         {
             return null;
         }
 
-        var horizontal = TryReadAxis(radius[0], RenderMode.Horizontal, dimensions, fontSize);
-        var vertical = radius.Count > 1 ? TryReadAxis(radius[1], RenderMode.Vertical, dimensions, fontSize) ?? horizontal : horizontal;
+        var horizontal = TryReadAxis(radius[0], RenderMode.Horizontal, dimensions, font);
+        var vertical = radius.Count > 1 ? TryReadAxis(radius[1], RenderMode.Vertical, dimensions, font) ?? horizontal : horizontal;
 
         return new StyleCornerRadius(horizontal ?? StyleLength.Zero, vertical ?? StyleLength.Zero);
     }
 
-    private static StyleLength? TryReadAxis(ICssValue? value, RenderMode mode, IRenderDimensions dimensions, Double fontSize) =>
-        value is not null && TryReadValue(value, mode, dimensions, fontSize, out var length) && length.HasValue ? length : null;
+    private static StyleLength? TryReadAxis(ICssValue? value, RenderMode mode, IRenderDimensions dimensions, FontSource font) =>
+        value is not null && TryReadValue(value, mode, dimensions, font, out var length) && length.HasValue ? length : null;
 
     /// <summary>
     /// Gets the individual values of a shorthand that carries more than one, or null when the value is
@@ -174,20 +235,28 @@ internal static class LengthReader
     /// expose. <c>rem</c> and every other unit are left to AngleSharp, which resolves the former
     /// against the device - the root - as it should.
     /// </summary>
-    public static Double ToPixel(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, Double fontSize)
-    {
-        var reference = fontSize > 0 ? fontSize : dimensions.FontSize;
-
-        return value.Type switch
+    /// <remarks>
+    /// The reference is resolved inside the two arms that need it rather than ahead of the switch, so
+    /// a pixel length never asks the style for a font size it has no use for. That is the whole point
+    /// of <see cref="FontSource"/> being handed around instead of a number.
+    /// </remarks>
+    public static Double ToPixel(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, FontSource font) =>
+        value.Type switch
         {
-            CssLengthValue.Unit.Em => value.Value * reference,
-            CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch => value.Value * reference * 0.5,
+            CssLengthValue.Unit.Em => value.Value * Reference(font, dimensions),
+            CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch => value.Value * Reference(font, dimensions) * 0.5,
             _ => value.ToPixel(dimensions, mode),
         };
+
+    private static Double Reference(FontSource font, IRenderDimensions dimensions)
+    {
+        var size = font.Value;
+
+        return size > 0 ? size : dimensions.FontSize;
     }
 
     /// <summary>Reads a single argument of a length function, which is always plain text.</summary>
-    private static StyleLength? FromText(String text, RenderMode mode, IRenderDimensions dimensions, Double fontSize)
+    private static StyleLength? FromText(String text, RenderMode mode, IRenderDimensions dimensions, FontSource font)
     {
         var trimmed = text.Trim();
 
@@ -211,10 +280,10 @@ internal static class LengthReader
             return null;
         }
 
-        return FromCssLength(parsed, mode, dimensions, fontSize);
+        return FromCssLength(parsed, mode, dimensions, font);
     }
 
-    private static StyleLength? FromCssLength(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, Double fontSize)
+    private static StyleLength? FromCssLength(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, FontSource font)
     {
         if (value.Type == CssLengthValue.Unit.Percent)
         {
@@ -223,7 +292,7 @@ internal static class LengthReader
 
         try
         {
-            var pixels = ToPixel(value, mode, dimensions, fontSize);
+            var pixels = ToPixel(value, mode, dimensions, font);
             return Double.IsNaN(pixels) || Double.IsInfinity(pixels) ? null : StyleLength.FromPixels(pixels);
         }
         catch (InvalidOperationException)

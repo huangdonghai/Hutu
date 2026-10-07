@@ -1,4 +1,4 @@
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Values;
 using System;
@@ -77,10 +77,12 @@ public readonly struct PositionStyle
     /// </summary>
     private static PositionMode ReadPosition(ComputedStyle style)
     {
-        if (style.Declaration.GetProperty("position")?.RawValue is CssConstantValue<PositionMode> constant)
+        if (style.RawValue("position") is CssConstantValue<PositionMode> constant)
         {
             return constant.Value;
         }
+
+        StyleProbe.NoteTextRead("position");
 
         var text = style.Specified?.GetPropertyValue("position");
 
@@ -107,7 +109,7 @@ public readonly struct PositionStyle
 
     private static Int32 ReadZIndex(ComputedStyle style, out Boolean hasValue)
     {
-        switch (style.Declaration.GetProperty("z-index")?.RawValue)
+        switch (style.RawValue("z-index"))
         {
             case CssIntegerValue integer:
                 hasValue = true;

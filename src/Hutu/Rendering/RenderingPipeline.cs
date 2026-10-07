@@ -141,8 +141,13 @@ public sealed class RenderingPipeline
         var previousBoxTree = BoxTree;
         var previousLayout = Layout;
 
+        RenderProbe.Begin();
+
         RenderTree = window?.Render(_device);
+        RenderProbe.Style();
+
         var boxTree = BoxBuilder.Build(RenderTree, _device, _images);
+        RenderProbe.Boxes();
 
         // A highlight names boxes of the layout it was measured against, so a new layout always
         // drops it: keeping it would leave the painter looking up runs that no longer exist. When the
@@ -153,7 +158,11 @@ public sealed class RenderingPipeline
         {
             BoxTree = previousBoxTree;
             Layout = previousLayout;
+            RenderProbe.ReusedLayout = true;
+            RenderProbe.Layout();
+
             Paint = _painter.Paint(Layout);
+            RenderProbe.Paint();
             return RenderTree;
         }
 
@@ -166,7 +175,10 @@ public sealed class RenderingPipeline
         _layoutWidth = _device.RenderWidth;
         _layoutHeight = _device.RenderHeight;
         Layout = _layout?.Layout(BoxTree, _device.RenderWidth, _device.RenderHeight);
+        RenderProbe.Layout();
+
         Paint = Layout is null ? null : _painter.Paint(Layout);
+        RenderProbe.Paint();
         return RenderTree;
     }
 }

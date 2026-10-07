@@ -1,4 +1,4 @@
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Values;
 using System;
@@ -146,7 +146,7 @@ public readonly struct FlexStyle
 
         // The shorthand is read through the multiple-value interface, not the tuple class: AngleSharp
         // produces a generic instantiation that the tuple class alone does not match.
-        if (LengthReader.Items(style.Declaration.GetProperty("gap")?.RawValue) is { Count: > 0 } items)
+        if (LengthReader.Items(style.RawValue("gap")) is { Count: > 0 } items)
         {
             first = GapOf(style, items[0]);
             second = items.Count > 1 ? GapOf(style, items[1]) : first;
@@ -171,7 +171,7 @@ public readonly struct FlexStyle
 
     private static FlexDirection ReadDirection(ComputedStyle style)
     {
-        if (style.Declaration.GetProperty("flex-direction")?.RawValue is CssConstantValue<FlexDirection> constant)
+        if (style.RawValue("flex-direction") is CssConstantValue<FlexDirection> constant)
         {
             return constant.Value;
         }
@@ -187,7 +187,7 @@ public readonly struct FlexStyle
 
     private static FlexWrapMode ReadWrap(ComputedStyle style)
     {
-        if (style.Declaration.GetProperty("flex-wrap")?.RawValue is CssConstantValue<FlexWrapMode> constant)
+        if (style.RawValue("flex-wrap") is CssConstantValue<FlexWrapMode> constant)
         {
             return constant.Value;
         }
@@ -209,7 +209,7 @@ public readonly struct FlexStyle
     /// </summary>
     internal static FlexAlignment ReadAlignment(ComputedStyle style, String name, FlexAlignment fallback)
     {
-        if (style.Declaration.GetProperty(name)?.RawValue is CssConstantValue<FlexContentMode> constant)
+        if (style.RawValue(name) is CssConstantValue<FlexContentMode> constant)
         {
             var mapped = Map(constant.Value);
 
@@ -266,7 +266,7 @@ public readonly struct FlexStyle
     /// </summary>
     private static Double ReadNumber(ComputedStyle style, String name, Double fallback)
     {
-        switch (style.Declaration.GetProperty(name)?.RawValue)
+        switch (style.RawValue(name))
         {
             case CssNumberValue number:
                 return number.Value;
@@ -285,6 +285,8 @@ public readonly struct FlexStyle
     /// <summary>Gets a keyword, preferring the cascaded declaration, lowered and trimmed.</summary>
     internal static String Text(ComputedStyle style, String name)
     {
+        StyleProbe.NoteTextRead(name);
+
         var text = style.Specified?.GetPropertyValue(name);
 
         if (String.IsNullOrWhiteSpace(text))

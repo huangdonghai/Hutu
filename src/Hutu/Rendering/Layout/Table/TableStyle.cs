@@ -1,4 +1,4 @@
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Values;
 using System;
@@ -95,7 +95,7 @@ public readonly struct TableStyle
     {
         // The two lengths are read through the multiple-value interface rather than the tuple class:
         // AngleSharp produces a generic instantiation the tuple class alone does not match.
-        if (LengthReader.Items(style.Declaration.GetProperty("border-spacing")?.RawValue) is { Count: > 0 } items)
+        if (LengthReader.Items(style.RawValue("border-spacing")) is { Count: > 0 } items)
         {
             var horizontal = SpacingOf(style, items[0]);
 
@@ -131,6 +131,8 @@ public readonly struct TableStyle
     /// <summary>Gets a keyword, preferring the cascaded declaration, lowered and trimmed.</summary>
     private static String Text(ComputedStyle style, String name)
     {
+        StyleProbe.NoteTextRead(name);
+
         var text = style.Specified?.GetPropertyValue(name);
 
         if (String.IsNullOrWhiteSpace(text))

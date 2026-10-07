@@ -31,6 +31,19 @@ public sealed class LengthUnitTests
     }
 
     [Test]
+    public async Task EmWidthIsRelativeToTheElementFontSize()
+    {
+        using var view = CreateView();
+
+        // The box model reads `width` through the reader that hands over the style rather than a font
+        // size, so the size it wants has to be fetched while the length is being resolved. Two em of
+        // the element's own twenty, not of the root's sixteen.
+        await view.SetHtml(Document("<div style='width:2em;font-size:20px'></div>"));
+
+        Assert.That(Box(view, "div").BorderBox.Width, Is.EqualTo(40).Within(0.01));
+    }
+
+    [Test]
     public async Task EmMarginIsRelativeToTheElementFontSize()
     {
         using var view = CreateView();

@@ -1,4 +1,4 @@
-using Hutu.Rendering.Boxes;
+﻿using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
 
@@ -193,7 +193,7 @@ public sealed class LayoutEngine
     /// </summary>
     internal Size Measure(Box box, MeasureConstraints constraints, LayoutContext context)
     {
-        LayoutProbe.MeasureCalls++;
+        LayoutProbe.CountMeasure();
 
         var key = new MeasureKey(
             box,
@@ -202,7 +202,7 @@ public sealed class LayoutEngine
 
         if (_cache.TryGetValue(key, out var cached))
         {
-            LayoutProbe.MeasureHits++;
+            LayoutProbe.CountMeasureHit();
             return cached;
         }
 
@@ -220,7 +220,7 @@ public sealed class LayoutEngine
     /// </summary>
     internal LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context)
     {
-        LayoutProbe.ArrangeCalls++;
+        LayoutProbe.CountArrange();
 
         // An anonymous box borrows its parent's style; honouring the positioning it inherits would
         // displace the wrapper a second time, because the parent's own displacement already took it
@@ -252,16 +252,27 @@ public sealed class LayoutEngine
         _positioned.Arrange(box, staticPosition, context);
 
     /// <summary>Produces the geometry of a measured box inside the given border box.</summary>
-    private LayoutBox ArrangeCore(Box box, Rect borderBox, LayoutContext context) =>
-        box.Kind switch
+    private LayoutBox ArrangeCore(Box box, Rect borderBox, LayoutContext context)
+    {
+        LayoutProbe.EnterContext(ContextOf(box));
+
+        try
         {
-            BoxKind.Flex => _flex.Arrange(box, borderBox, context),
-            BoxKind.Grid => _grid.Arrange(box, borderBox, context),
-            BoxKind.Table => _table.Arrange(box, borderBox, context),
-            _ => box.IsReplaced
-                ? ArrangeReplaced(box, borderBox, context)
-                : _block.Arrange(box, borderBox, context),
-        };
+            return box.Kind switch
+            {
+                BoxKind.Flex => _flex.Arrange(box, borderBox, context),
+                BoxKind.Grid => _grid.Arrange(box, borderBox, context),
+                BoxKind.Table => _table.Arrange(box, borderBox, context),
+                _ => box.IsReplaced
+                    ? ArrangeReplaced(box, borderBox, context)
+                    : _block.Arrange(box, borderBox, context),
+            };
+        }
+        finally
+        {
+            LayoutProbe.LeaveContext();
+        }
+    }
 
     /// <summary>
     /// Measures the sizes a box's content wants when nothing constrains it: its <c>min-content</c>
@@ -270,7 +281,7 @@ public sealed class LayoutEngine
     /// </summary>
     internal IntrinsicSize MeasureIntrinsic(Box box, LayoutContext context)
     {
-        LayoutProbe.IntrinsicCalls++;
+        LayoutProbe.CountIntrinsic();
         LayoutProbe.NoteIntrinsicKey(box, context.ContainingBlock.Width, context.ContainingBlock.Height, content: false);
 
         // A box that answers the same at every containing block is cached without the basis. The walk
@@ -281,7 +292,7 @@ public sealed class LayoutEngine
         {
             if (_intrinsicFree.TryGetValue(box, out var free))
             {
-                LayoutProbe.IntrinsicHits++;
+                LayoutProbe.CountIntrinsicHit();
                 VerifyBasisFree(box, context, free, content: false);
                 return free;
             }
@@ -295,7 +306,7 @@ public sealed class LayoutEngine
 
         if (_intrinsic.TryGetValue(key, out var cached))
         {
-            LayoutProbe.IntrinsicHits++;
+            LayoutProbe.CountIntrinsicHit();
             return cached;
         }
 
@@ -310,6 +321,7 @@ public sealed class LayoutEngine
     private IntrinsicSize MeasureIntrinsicUncached(Box box, LayoutContext context, Boolean content)
     {
         LayoutProbe.EnterIntrinsic(box);
+        LayoutProbe.EnterContext(ContextOf(box));
 
         try
         {
@@ -319,6 +331,7 @@ public sealed class LayoutEngine
         }
         finally
         {
+            LayoutProbe.LeaveContext();
             LayoutProbe.LeaveIntrinsic();
         }
     }
@@ -380,14 +393,14 @@ public sealed class LayoutEngine
     /// </summary>
     internal IntrinsicSize MeasureContentIntrinsic(Box box, LayoutContext context)
     {
-        LayoutProbe.ContentIntrinsicCalls++;
+        LayoutProbe.CountContentIntrinsic();
         LayoutProbe.NoteIntrinsicKey(box, context.ContainingBlock.Width, context.ContainingBlock.Height, content: true);
 
         if (box.IntrinsicIgnoresBasis && !DisableBasisFreeCache)
         {
             if (_contentIntrinsicFree.TryGetValue(box, out var free))
             {
-                LayoutProbe.IntrinsicHits++;
+                LayoutProbe.CountIntrinsicHit();
                 VerifyBasisFree(box, context, free, content: true);
                 return free;
             }
@@ -401,7 +414,7 @@ public sealed class LayoutEngine
 
         if (_contentIntrinsic.TryGetValue(key, out var cached))
         {
-            LayoutProbe.IntrinsicHits++;
+            LayoutProbe.CountIntrinsicHit();
             return cached;
         }
 
@@ -410,16 +423,40 @@ public sealed class LayoutEngine
         return size;
     }
 
-    private Size MeasureCore(Box box, MeasureConstraints constraints, LayoutContext context) =>
-        box.Kind switch
+    private Size MeasureCore(Box box, MeasureConstraints constraints, LayoutContext context)
+    {
+        LayoutProbe.EnterContext(ContextOf(box));
+
+        try
         {
-            BoxKind.Flex => _flex.Measure(box, constraints, context),
-            BoxKind.Grid => _grid.Measure(box, constraints, context),
-            BoxKind.Table => _table.Measure(box, constraints, context),
-            _ => box.IsReplaced
-                ? MeasureReplaced(box, constraints, context)
-                : _block.Measure(box, constraints, context),
-        };
+            return box.Kind switch
+            {
+                BoxKind.Flex => _flex.Measure(box, constraints, context),
+                BoxKind.Grid => _grid.Measure(box, constraints, context),
+                BoxKind.Table => _table.Measure(box, constraints, context),
+                _ => box.IsReplaced
+                    ? MeasureReplaced(box, constraints, context)
+                    : _block.Measure(box, constraints, context),
+            };
+        }
+        finally
+        {
+            LayoutProbe.LeaveContext();
+        }
+    }
+
+    /// <summary>
+    /// Gets the formatting context a box is dispatched to, which is what <see cref="MeasureCore"/>,
+    /// <see cref="ArrangeCore"/> and the intrinsic walk all switch on. The probe charges its timers by
+    /// this, so a change to the dispatch has to be made here too.
+    /// </summary>
+    private static ProbeContext ContextOf(Box box) => box.Kind switch
+    {
+        BoxKind.Flex => ProbeContext.Flex,
+        BoxKind.Grid => ProbeContext.Grid,
+        BoxKind.Table => ProbeContext.Table,
+        _ => box.IsReplaced ? ProbeContext.Replaced : ProbeContext.Block,
+    };
 
     /// <summary>
     /// Measures a replaced box - an image. Its used size comes from the intrinsic size and the CSS
