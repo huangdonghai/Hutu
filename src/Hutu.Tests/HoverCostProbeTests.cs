@@ -284,15 +284,34 @@ public sealed class HoverCostProbeTests
         report.AppendLine($"  {"sum",-12}{(styleMb + boxesMb + layoutMb + paintMb + drawMb) / allocRuns,8:F1}MB");
         report.AppendLine();
 
-        // One counted run, so the internals describe a single pass rather than a sum of fifteen.
-        LayoutProbe.Reset();
+        // The tree is built and laid out under the counters separately, because the areas are resolved
+        // while the tree is built and everything else while it is laid out - and this design moves work
+        // from the second to the first. One total would hide exactly the thing being judged.
         StyleProbe.Reset();
-        _ = engine.Layout(tree, device.RenderWidth, device.RenderHeight);
+        LayoutProbe.Reset();
+
+        var counted = BoxBuilder.Build(window.Render(device), device, (IImageProvider?)null);
+        var builtReads = StyleProbe.LengthReads + StyleProbe.TextReads + StyleProbe.ValueReads;
+        var untouched = StyleProbe.AreasUntouched;
+        var areas = StyleProbe.AreasBuilt;
+        var interned = StyleProbe.InternHits;
+
+        StyleProbe.Reset();
+        LayoutProbe.Reset();
+
+        _ = engine.Layout(counted!, device.RenderWidth, device.RenderHeight);
+        var laidReads = StyleProbe.LengthReads + StyleProbe.TextReads + StyleProbe.ValueReads;
 
         report.AppendLine($"--- layout internals, one pass ---");
         report.AppendLine($"  {InternalsLine()}");
         report.AppendLine($"  {ContextLine()}");
         report.AppendLine("  (inline is a subset of block: InlineLayout opens no context of its own)");
+        report.AppendLine();
+        report.AppendLine($"--- areas, and where the reads went ---");
+        report.AppendLine($"  building the tree: reads={builtReads}");
+        report.AppendLine(
+            $"    areas untouched={untouched} built={areas} interned={interned}");
+        report.AppendLine($"  laying it out:     reads={laidReads}");
         report.AppendLine();
 
         StyleReads(report, tree!);
@@ -401,6 +420,9 @@ public sealed class HoverCostProbeTests
 
         report.AppendLine($"--- style reads, one counted pass ---");
         report.AppendLine($"  length={lengthReads} found={lengthHits} text={textReads} value={valueReads}");
+        report.AppendLine(
+            $"  areas: untouched={StyleProbe.AreasUntouched} built={StyleProbe.AreasBuilt} " +
+            $"interned={StyleProbe.InternHits}");
         report.AppendLine($"  by context, length/text/value:");
         report.AppendLine($"    {byContext}");
         report.AppendLine(

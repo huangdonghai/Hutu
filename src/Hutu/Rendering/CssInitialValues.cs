@@ -56,13 +56,11 @@ internal static class CssInitialValues
     internal const Double LetterSpacing = 0;
 
     // --- Border and outline ------------------------------------------------------------------
-    internal const String BorderTopStyle = "none";
-
-    internal const String BorderRightStyle = "none";
-
-    internal const String BorderBottomStyle = "none";
-
-    internal const String BorderLeftStyle = "none";
+    //
+    // One entry for all four sides: the specification gives every one of them `none`, and a reader
+    // that takes the style by name - HasBorder does - needs a single value rather than four that
+    // could only ever disagree with each other.
+    internal const String BorderStyle = "none";
 
     internal const String OutlineStyle = "none";
 

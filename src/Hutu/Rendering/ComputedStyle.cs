@@ -40,6 +40,12 @@ public readonly struct ComputedStyle
     private readonly CssColorValue? _parentColor;
     private readonly Boolean _declaresFontSize;
 
+    /// <summary>
+    /// The resolved areas, shared with every box whose style agrees. Filled once during construction
+    /// and never written again; the areas it holds are not written at all.
+    /// </summary>
+    private readonly StyleValues _values;
+
     /// <param name="specified">
     /// The cascaded declaration, when it is available. It is preferred for backgrounds: the computed
     /// declaration loses the position, size and repeat of a layered background, because AngleSharp
@@ -73,6 +79,25 @@ public readonly struct ComputedStyle
         Double parentFontSize = 0,
         CssColorValue? parentColor = null,
         Boolean declaresFontSize = false)
+        : this(style, dimensions, specified, element, parentFontSize, parentColor, declaresFontSize, null)
+    {
+    }
+
+    /// <param name="pool">
+    /// The intern table the box builder fills in for the tree it is building, so that two boxes whose
+    /// areas agree share one instance. Null leaves each style with its own copies, which costs memory
+    /// and changes nothing else - which is why a caller that has no table, a test building a style by
+    /// hand, can simply pass none.
+    /// </param>
+    internal ComputedStyle(
+        ICssStyleDeclaration style,
+        IRenderDimensions dimensions,
+        ICssStyleDeclaration? specified,
+        IElement? element,
+        Double parentFontSize,
+        CssColorValue? parentColor,
+        Boolean declaresFontSize,
+        StyleIntern? pool)
     {
         _style = style ?? throw new ArgumentNullException(nameof(style));
         _dimensions = dimensions ?? throw new ArgumentNullException(nameof(dimensions));
@@ -81,6 +106,106 @@ public readonly struct ComputedStyle
         _parentFontSize = parentFontSize;
         _parentColor = parentColor;
         _declaresFontSize = declaresFontSize;
+
+        // Assigned before it is filled because a struct cannot call its own methods until every field
+        // has a value, and the resolver is one of those methods. Anything it read through this object
+        // before the fill would therefore see the shared default rather than fail loudly, so the
+        // resolver reads declarations and nothing else - which keeps a mistake here to the shape of a
+        // border that quietly stops being drawn, the one a border test cannot miss.
+        _values = new StyleValues();
+        ResolveAreas(pool);
+    }
+
+    /// <summary>
+    /// Resolves the areas whose properties cannot be inherited, and interns what it builds.
+    /// </summary>
+    /// <remarks>
+    /// A property that cannot be inherited is in the element's declaration if and only if the element
+    /// itself declared it, because AngleSharp merges only inheritable properties down from the parent.
+    /// The names being absent from both declarations is therefore proof that every value in the area
+    /// would come out at its initial value, and the area is left at the shared default: no reads, no
+    /// allocation, no table lookup. That is the path the whole design rests on - it is what makes the
+    /// cost depend on what a document declares rather than on how many properties the engine knows.
+    /// </remarks>
+    private void ResolveAreas(StyleIntern? pool)
+    {
+        if (!DeclaresAny("border"))
+        {
+            StyleProbe.NoteAreaUntouched();
+
+            return;
+        }
+
+        var topStyle = Keyword("border-top-style", CssInitialValues.BorderStyle);
+        var rightStyle = Keyword("border-right-style", CssInitialValues.BorderStyle);
+        var bottomStyle = Keyword("border-bottom-style", CssInitialValues.BorderStyle);
+        var leftStyle = Keyword("border-left-style", CssInitialValues.BorderStyle);
+
+        var border = new BorderArea
+        {
+            TopStyle = topStyle,
+            RightStyle = rightStyle,
+            BottomStyle = bottomStyle,
+            LeftStyle = leftStyle,
+            TopWidth = BorderWidth(topStyle, "border-top-width"),
+            RightWidth = BorderWidth(rightStyle, "border-right-width"),
+            BottomWidth = BorderWidth(bottomStyle, "border-bottom-width"),
+            LeftWidth = BorderWidth(leftStyle, "border-left-width"),
+            Lines = new BorderStyles(
+                ToLineStyle(topStyle),
+                ToLineStyle(rightStyle),
+                ToLineStyle(bottomStyle),
+                ToLineStyle(leftStyle)),
+            Radius = ResolveBorderRadius(),
+        };
+
+        _values.Border = pool is null ? border : pool.Border(border);
+    }
+
+    /// <summary>
+    /// Gets whether either declaration carries a property whose name begins with the prefix. Every
+    /// border property begins with <c>border</c>, shorthands included, and a declaration enumerates
+    /// only the names that were set - so one pass over those answers for the whole area.
+    /// </summary>
+    private Boolean DeclaresAny(String prefix) =>
+        HasDeclarationNamed(_specified, prefix) || HasDeclarationNamed(_style, prefix);
+
+    private static Boolean HasDeclarationNamed(ICssStyleDeclaration? declaration, String prefix)
+    {
+        if (declaration is null)
+        {
+            return false;
+        }
+
+        foreach (var property in declaration)
+        {
+            if (property.Name.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The corner radii as declared, with any percentage still unresolved.</summary>
+    private StyleCornerRadii ResolveBorderRadius() => new(
+        LengthReader.TryReadCorner(_specified, _style, "border-top-left-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-top-right-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-bottom-right-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCorner(_specified, _style, "border-bottom-left-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero);
+
+    /// <summary>
+    /// The resolved areas of one element's style.
+    /// </summary>
+    /// <remarks>
+    /// A reference type so the struct holds one field instead of sixteen. <c>Box.Style</c> hands out a
+    /// copy of the struct on every read, and a copy carrying the areas itself would memcpy every one of
+    /// them - fifteen thousand times a pass on the sample, before anything is even resolved.
+    /// </remarks>
+    private sealed class StyleValues
+    {
+        internal BorderArea Border = BorderArea.Default;
     }
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
@@ -656,11 +781,7 @@ public readonly struct ComputedStyle
     /// percentage against the size of the box itself - which is what a percentage radius is relative
     /// to - and shrink radii that would overlap.
     /// </summary>
-    public StyleCornerRadii BorderRadius => new(
-        LengthReader.TryReadCorner(_specified, _style, "border-top-left-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCorner(_specified, _style, "border-top-right-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCorner(_specified, _style, "border-bottom-right-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCorner(_specified, _style, "border-bottom-left-radius", _dimensions, FontSourceOf()) ?? StyleCornerRadius.Zero);
+    public StyleCornerRadii BorderRadius => _values.Border.Radius;
 
     /// <summary>
     /// Gets the box the background is painted into: <c>border-box</c> (the initial value) reaches
@@ -708,13 +829,13 @@ public readonly struct ComputedStyle
     /// <summary>Gets the four paddings. As with margins, every side resolves against the width.</summary>
     public StyleThickness Padding => ReadThickness("padding", StyleLength.Zero);
 
-    public Double BorderTopWidth => BorderWidth("border-top-width", "border-top-style");
+    public Double BorderTopWidth => _values.Border.TopWidth;
 
-    public Double BorderRightWidth => BorderWidth("border-right-width", "border-right-style");
+    public Double BorderRightWidth => _values.Border.RightWidth;
 
-    public Double BorderBottomWidth => BorderWidth("border-bottom-width", "border-bottom-style");
+    public Double BorderBottomWidth => _values.Border.BottomWidth;
 
-    public Double BorderLeftWidth => BorderWidth("border-left-width", "border-left-style");
+    public Double BorderLeftWidth => _values.Border.LeftWidth;
 
     public CssColorValue? BorderTopColor => ResolveBorderColor(ColorValue("border-top-color"));
 
@@ -724,37 +845,33 @@ public readonly struct ComputedStyle
 
     public CssColorValue? BorderLeftColor => ResolveBorderColor(ColorValue("border-left-color"));
 
-    public Boolean BorderTopVisible => HasBorder("border-top-style");
+    public Boolean BorderTopVisible => BorderArea.Draws(_values.Border.TopStyle);
 
-    public Boolean BorderRightVisible => HasBorder("border-right-style");
+    public Boolean BorderRightVisible => BorderArea.Draws(_values.Border.RightStyle);
 
-    public Boolean BorderBottomVisible => HasBorder("border-bottom-style");
+    public Boolean BorderBottomVisible => BorderArea.Draws(_values.Border.BottomStyle);
 
-    public Boolean BorderLeftVisible => HasBorder("border-left-style");
+    public Boolean BorderLeftVisible => BorderArea.Draws(_values.Border.LeftStyle);
 
     /// <summary>
     /// Gets the stroke each side of the border is drawn with. A keyword Hutu cannot draw - <c>double</c>,
     /// <c>groove</c>, <c>ridge</c>, <c>inset</c> and <c>outset</c> - is drawn as a solid stroke rather
     /// than dropped, since a side with a width but no stroke would leave a hole in the outline.
     /// </summary>
-    public BorderStyles BorderStyles => new(
-        ToLineStyle(BorderTopStyle),
-        ToLineStyle(BorderRightStyle),
-        ToLineStyle(BorderBottomStyle),
-        ToLineStyle(BorderLeftStyle));
+    public BorderStyles BorderStyles => _values.Border.Lines;
 
     /// <summary>
     /// Gets the four border style keywords. The collapsing border model breaks a tie between two
     /// borders of equal width by their styles, so the keyword itself has to survive, not just the
     /// question of whether the border is drawn.
     /// </summary>
-    public String BorderTopStyle => Keyword("border-top-style", CssInitialValues.BorderTopStyle);
+    public String BorderTopStyle => _values.Border.TopStyle;
 
-    public String BorderRightStyle => Keyword("border-right-style", CssInitialValues.BorderRightStyle);
+    public String BorderRightStyle => _values.Border.RightStyle;
 
-    public String BorderBottomStyle => Keyword("border-bottom-style", CssInitialValues.BorderBottomStyle);
+    public String BorderBottomStyle => _values.Border.BottomStyle;
 
-    public String BorderLeftStyle => Keyword("border-left-style", CssInitialValues.BorderLeftStyle);
+    public String BorderLeftStyle => _values.Border.LeftStyle;
 
     // --- Outline --------------------------------------------------------
 
@@ -915,22 +1032,12 @@ public readonly struct ComputedStyle
         ReadLength(prefix + "-bottom", RenderMode.Horizontal, fallback),
         ReadLength(prefix + "-left", RenderMode.Horizontal, fallback));
 
-    private Double BorderWidth(String widthName, String styleName)
-    {
-        if (!HasBorder(styleName))
-        {
-            return 0;
-        }
-
-        return Length(widthName, RenderMode.Horizontal, 0);
-    }
-
-    private Boolean HasBorder(String styleName)
-    {
-        var style = Keyword(styleName, "none");
-        return !style.Equals("none", StringComparison.OrdinalIgnoreCase) &&
-               !style.Equals("hidden", StringComparison.OrdinalIgnoreCase);
-    }
+    /// <summary>
+    /// Reads how thick a side is. The caller has already resolved the side's style, so this does not
+    /// ask for it again - which is what used to make four sides cost eight reads.
+    /// </summary>
+    private Double BorderWidth(String style, String widthName) =>
+        BorderArea.Draws(style) ? Length(widthName, RenderMode.Horizontal, 0) : 0;
 
     private static BorderLineStyle ToLineStyle(String keyword) => keyword.ToLowerInvariant() switch
     {

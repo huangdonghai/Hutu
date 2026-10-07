@@ -43,6 +43,23 @@ public static class StyleProbe
 
     public static readonly Dictionary<String, Int64> ValueByName = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Temporary: areas left at their shared default because the declaration proved the element
+    /// declared nothing in them. This is the cheap path the whole design rests on - it is what makes
+    /// the cost depend on what a document declares rather than on how many properties the engine
+    /// knows - so a run that never takes it is a run that never got the point.
+    /// </summary>
+    public static Int64 AreasUntouched;
+
+    /// <summary>Temporary: areas that had to be built before the intern table could be consulted.</summary>
+    public static Int64 AreasBuilt;
+
+    /// <summary>
+    /// Temporary: areas where the table already held an equal value, so the built one was dropped.
+    /// These are the values two unrelated boxes agreed on - the case sharing by parent could not catch.
+    /// </summary>
+    public static Int64 InternHits;
+
     /// <summary>Temporary: the same counts charged to the innermost formatting context that asked.</summary>
     public static readonly Int64[] ContextLengthReads = new Int64[5];
 
@@ -50,8 +67,38 @@ public static class StyleProbe
 
     public static readonly Int64[] ContextValueReads = new Int64[5];
 
+    /// <summary>Temporary: records an area left at the shared default.</summary>
+    public static void NoteAreaUntouched()
+    {
+        if (!Off)
+        {
+            AreasUntouched++;
+        }
+    }
+
+    /// <summary>Temporary: records an area built.</summary>
+    public static void NoteAreaBuilt()
+    {
+        if (!Off)
+        {
+            AreasBuilt++;
+        }
+    }
+
+    /// <summary>Temporary: records an area the intern table already held.</summary>
+    public static void NoteInternHit()
+    {
+        if (!Off)
+        {
+            InternHits++;
+        }
+    }
+
     public static void Reset()
     {
+        AreasUntouched = 0;
+        AreasBuilt = 0;
+        InternHits = 0;
         LengthReads = 0;
         LengthHits = 0;
         TextReads = 0;

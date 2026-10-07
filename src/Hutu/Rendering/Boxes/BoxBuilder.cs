@@ -1,4 +1,4 @@
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.RenderTree;
 using AngleSharp.Css.Values;
@@ -38,7 +38,12 @@ public static class BoxBuilder
             return null;
         }
 
-        var box = BuildElement(root, dimensions, images, WritingModeInfo.Horizontal);
+        // One table for the tree. Areas are interned by value, so two boxes that resolve the same
+        // values end up sharing one instance whether or not they are related - which is something a
+        // reference to the parent's area could not catch, since sibling list items agree as much as
+        // an inheriting child does.
+        var pool = new StyleIntern();
+        var box = BuildElement(root, dimensions, images, WritingModeInfo.Horizontal, pool);
 
         if (box is not null)
         {
@@ -129,6 +134,7 @@ public static class BoxBuilder
         IRenderDimensions dimensions,
         IImageProvider? images,
         WritingModeInfo inherited,
+        StyleIntern pool,
         Double parentFontSize = 0,
         CssColorValue? parentColor = null)
     {
@@ -139,7 +145,8 @@ public static class BoxBuilder
             node.Ref,
             parentFontSize,
             parentColor,
-            DeclaresRelativeFontSize(node.Ref, node.SpecifiedStyle, dimensions));
+            DeclaresRelativeFontSize(node.Ref, node.SpecifiedStyle, dimensions),
+            pool);
 
         if (style.IsDisplayNone)
         {
@@ -171,7 +178,7 @@ public static class BoxBuilder
             switch (child)
             {
                 case ElementRenderNode elementChild:
-                    var childBox = BuildElement(elementChild, dimensions, images, flow, style.FontSize, color);
+                    var childBox = BuildElement(elementChild, dimensions, images, flow, pool, style.FontSize, color);
 
                     if (childBox is not null)
                     {
