@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 
 namespace Hutu.Rendering;
@@ -26,13 +26,6 @@ public static class RenderProbe
     public static Double TotalMs;
 
     /// <summary>
-    /// Gets whether this build kept the previous layout instead of laying out again. When it did,
-    /// <see cref="LayoutMs"/> is the cost of the decision to reuse - building the fresh tree and
-    /// comparing the two - and not the cost of a layout.
-    /// </summary>
-    public static Boolean ReusedLayout;
-
-    /// <summary>
     /// Temporary: whether a build is being watched. Off by default, so the switch is the only thing a
     /// build pays for. A probe test turns it on.
     /// </summary>
@@ -48,7 +41,6 @@ public static class RenderProbe
         LayoutMs = 0;
         PaintMs = 0;
         TotalMs = 0;
-        ReusedLayout = false;
 
         if (Off)
         {

@@ -28,11 +28,6 @@ public sealed class RenderingPipeline
     private readonly IImageProvider? _images;
     private readonly Painter _painter = new();
 
-    // The viewport the current layout was measured against. Percentages and viewport units resolve
-    // against it, so it has to match before the layout can be reused.
-    private Double _layoutWidth = Double.NaN;
-    private Double _layoutHeight = Double.NaN;
-
     public RenderingPipeline(IRenderDevice device, ITextMeasurer? textMeasurer = null, IImageProvider? images = null)
     {
         _device = device;
@@ -63,13 +58,6 @@ public sealed class RenderingPipeline
     /// </summary>
     public PaintList? Paint { get; private set; }
 
-    /// <summary>
-    /// Temporary: whether a build may keep the previous layout instead of laying out again. A probe
-    /// turns it off to see what a rebuild really costs, because the reuse otherwise hides it - on a
-    /// pointer move the layout stage is the cost of deciding to reuse, not of laying anything out.
-    /// </summary>
-    public static Boolean DisableReuse;
-
     /// <summary>Drops the derived trees so the next run recomputes styles from the document.</summary>
     public void Invalidate()
     {
@@ -77,8 +65,6 @@ public sealed class RenderingPipeline
         BoxTree = null;
         Layout = null;
         Paint = null;
-        _layoutWidth = Double.NaN;
-        _layoutHeight = Double.NaN;
         _painter.Highlight = null;
     }
 
@@ -145,43 +131,23 @@ public sealed class RenderingPipeline
     public IRenderNode? Build(IDocument document)
     {
         var window = document.DefaultView;
-        var previousBoxTree = BoxTree;
-        var previousLayout = Layout;
 
         RenderProbe.Begin();
 
         RenderTree = window?.Render(_device);
         RenderProbe.Style();
 
-        var boxTree = BoxBuilder.Build(RenderTree, _device, _images);
+        BoxTree = BoxBuilder.Build(RenderTree, _device, _images);
         RenderProbe.Boxes();
 
-        // A highlight names boxes of the layout it was measured against, so a new layout always
-        // drops it: keeping it would leave the painter looking up runs that no longer exist. When the
-        // layout is kept below, the highlight names the same boxes and stays valid.
-        if (!DisableReuse &&
-            previousLayout is not null &&
-            _layoutWidth == _device.RenderWidth && _layoutHeight == _device.RenderHeight &&
-            LayoutReuse.TryRefresh(previousBoxTree, boxTree))
-        {
-            BoxTree = previousBoxTree;
-            Layout = previousLayout;
-            RenderProbe.ReusedLayout = true;
-            RenderProbe.Layout();
-
-            Paint = _painter.Paint(Layout);
-            RenderProbe.Paint();
-            return RenderTree;
-        }
-
-        BoxTree = boxTree;
+        // A highlight names boxes of the layout it was measured against, so a new layout always drops
+        // it: keeping it would leave the painter looking up runs that no longer exist. The host points
+        // the selection at the new boxes after the build, which is what carries it across.
         _painter.Highlight = null;
 
         // The viewport is the initial containing block, so both of its dimensions matter: the height
         // is what a percentage height on the root - and on everything it makes definite - resolves
         // against.
-        _layoutWidth = _device.RenderWidth;
-        _layoutHeight = _device.RenderHeight;
         Layout = _layout?.Layout(BoxTree, _device.RenderWidth, _device.RenderHeight);
         RenderProbe.Layout();
 
