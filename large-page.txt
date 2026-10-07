@@ -1,0 +1,6 @@
+a generated page of repeated rows at 900x600.
+wall clock throughout, so a number means something only next to another from the same build.
+
+rows=50   boxes=252    build=    51.9ms/    7.6MB  layout=    12.6ms/    3.5MB
+rows=200  boxes=1002   build=   221.9ms/   30.8MB  layout=    48.3ms/   14.0MB
+rows=700  boxes=3502   build=   836.2ms/  115.9MB  layout=   155.7ms/   48.9MB

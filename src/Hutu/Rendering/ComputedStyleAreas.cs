@@ -233,6 +233,20 @@ internal sealed record TextArea
 }
 
 /// <summary>
+/// The two decorations the painter draws.
+/// </summary>
+/// <remarks>
+/// Inherited. What is saved is not the resolution of a value - the reader asks whether the declaration's
+/// text contains a word - but doing it twice per box, once per kind, over the same two properties.
+/// </remarks>
+internal sealed record TextDecorationArea
+{
+    internal Boolean Underline { get; init; }
+
+    internal Boolean LineThrough { get; init; }
+}
+
+/// <summary>
 /// One intern table per area, alive for one box tree.
 /// </summary>
 /// <remarks>
@@ -263,6 +277,24 @@ internal sealed class StyleIntern
     private readonly Dictionary<FontArea, FontArea> _font = new();
 
     private readonly Dictionary<TextArea, TextArea> _text = new();
+
+    private readonly Dictionary<TextDecorationArea, TextDecorationArea> _decoration = new();
+
+    /// <summary>Gets the instance standing for a text decoration area.</summary>
+    internal TextDecorationArea Decoration(TextDecorationArea area)
+    {
+        if (_decoration.TryGetValue(area, out var existing))
+        {
+            StyleProbe.NoteInternHit();
+
+            return existing;
+        }
+
+        StyleProbe.NoteAreaBuilt();
+        _decoration[area] = area;
+
+        return area;
+    }
 
     /// <summary>Gets the instance standing for a text area.</summary>
     internal TextArea Text(TextArea area)

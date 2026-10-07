@@ -136,6 +136,7 @@ public readonly struct ComputedStyle
         // back to the device's. There is no dependency the other way: the font resolves against the
         // parent's size, which the constructor is handed.
         ResolveFont(pool, parent);
+        ResolveTextDecoration(pool, parent);
 
         ResolveBorder(pool);
         ResolveBoxModel(pool);
@@ -150,6 +151,9 @@ public readonly struct ComputedStyle
 
     /// <summary>The names a text property can begin with.</summary>
     private static readonly String[] TextNames = { "white-space", "text-align", "vertical-align" };
+
+    /// <summary>The name a decoration property begins with, both longhands included.</summary>
+    private static readonly String[] DecorationNames = { "text-decoration" };
 
     /// <summary>
     /// Resolves the font, taking the parent's where the element authored none of its own.
@@ -206,6 +210,25 @@ public readonly struct ComputedStyle
         };
 
         _values.Text = pool is null ? text : pool.Text(text);
+    }
+
+    private void ResolveTextDecoration(StyleIntern? pool, ComputedStyle? parent)
+    {
+        if (parent is { } inherited && Inherits(inherited, DecorationNames))
+        {
+            StyleProbe.NoteParentAdopted();
+            _values.Decoration = inherited._values.Decoration;
+
+            return;
+        }
+
+        var decoration = new TextDecorationArea
+        {
+            Underline = HasDecoration("underline"),
+            LineThrough = HasDecoration("line-through"),
+        };
+
+        _values.Decoration = pool is null ? decoration : pool.Decoration(decoration);
     }
 
     /// <summary>
@@ -541,6 +564,8 @@ public readonly struct ComputedStyle
 
         internal TextArea Text = new();
 
+        internal TextDecorationArea Decoration = new();
+
         // Null until something asks. See ComputedStyle.Position and .Flex for why these four wait
         // while the areas above do not.
         internal FlexStyle? Flex;
@@ -834,9 +859,9 @@ public readonly struct ComputedStyle
             element is null ? null : url => ImageUrlResolver.Resolve(element, url));
     }
 
-    public Boolean HasUnderline => HasDecoration("underline");
+    public Boolean HasUnderline => _values.Decoration.Underline;
 
-    public Boolean HasLineThrough => HasDecoration("line-through");
+    public Boolean HasLineThrough => _values.Decoration.LineThrough;
 
     // --- Pointer --------------------------------------------------------
 
