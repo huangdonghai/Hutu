@@ -1,4 +1,4 @@
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using AngleSharp.Dom;
 using Hutu.Rendering;
 using Hutu.Rendering.Boxes;
@@ -295,6 +295,7 @@ public sealed class HoverCostProbeTests
         var untouched = StyleProbe.AreasUntouched;
         var areas = StyleProbe.AreasBuilt;
         var interned = StyleProbe.InternHits;
+        var fromParent = StyleProbe.ParentsAdopted;
 
         StyleProbe.Reset();
         LayoutProbe.Reset();
@@ -310,7 +311,7 @@ public sealed class HoverCostProbeTests
         report.AppendLine($"--- areas, and where the reads went ---");
         report.AppendLine($"  building the tree: reads={builtReads}");
         report.AppendLine(
-            $"    areas untouched={untouched} built={areas} interned={interned}");
+            $"    areas untouched={untouched} built={areas} interned={interned} fromParent={fromParent}");
         report.AppendLine($"  laying it out:     reads={laidReads}");
         report.AppendLine();
 
@@ -422,7 +423,7 @@ public sealed class HoverCostProbeTests
         report.AppendLine($"  length={lengthReads} found={lengthHits} text={textReads} value={valueReads}");
         report.AppendLine(
             $"  areas: untouched={StyleProbe.AreasUntouched} built={StyleProbe.AreasBuilt} " +
-            $"interned={StyleProbe.InternHits}");
+            $"interned={StyleProbe.InternHits} fromParent={StyleProbe.ParentsAdopted}");
         report.AppendLine($"  by context, length/text/value:");
         report.AppendLine($"    {byContext}");
         report.AppendLine(

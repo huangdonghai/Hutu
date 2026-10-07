@@ -79,7 +79,7 @@ public readonly struct ComputedStyle
         Double parentFontSize = 0,
         CssColorValue? parentColor = null,
         Boolean declaresFontSize = false)
-        : this(style, dimensions, specified, element, parentFontSize, parentColor, declaresFontSize, null)
+        : this(style, dimensions, specified, element, parentFontSize, parentColor, declaresFontSize, null, null)
     {
     }
 
@@ -97,7 +97,8 @@ public readonly struct ComputedStyle
         Double parentFontSize,
         CssColorValue? parentColor,
         Boolean declaresFontSize,
-        StyleIntern? pool)
+        StyleIntern? pool,
+        ComputedStyle? parent)
     {
         _style = style ?? throw new ArgumentNullException(nameof(style));
         _dimensions = dimensions ?? throw new ArgumentNullException(nameof(dimensions));
@@ -113,7 +114,7 @@ public readonly struct ComputedStyle
         // resolver reads declarations and nothing else - which keeps a mistake here to the shape of a
         // border that quietly stops being drawn, the one a border test cannot miss.
         _values = new StyleValues();
-        ResolveAreas(pool);
+        ResolveAreas(pool, parent);
     }
 
     /// <summary>
@@ -127,12 +128,201 @@ public readonly struct ComputedStyle
     /// allocation, no table lookup. That is the path the whole design rests on - it is what makes the
     /// cost depend on what a document declares rather than on how many properties the engine knows.
     /// </remarks>
-    private void ResolveAreas(StyleIntern? pool)
+    private void ResolveAreas(StyleIntern? pool, ComputedStyle? parent)
     {
+        // The font first, and not by preference. Every other area reads lengths, a length in em, ex or
+        // ch resolves against the element's own font size, and the reader asks this style for that size
+        // - so an area resolved before the font would measure against a size of zero and quietly fall
+        // back to the device's. There is no dependency the other way: the font resolves against the
+        // parent's size, which the constructor is handed.
+        ResolveFont(pool, parent);
+
         ResolveBorder(pool);
         ResolveBoxModel(pool);
         ResolveDisplayPositioning(pool);
         ResolveVisualEffects(pool);
+        ResolveText(pool, parent);
+    }
+
+    /// <summary>The names a font property can begin with, the <c>font</c> shorthand included.</summary>
+    private static readonly String[] FontNames =
+        { "font-size", "font-family", "font-weight", "font-style", "letter-spacing", "line-height" };
+
+    /// <summary>The names a text property can begin with.</summary>
+    private static readonly String[] TextNames = { "white-space", "text-align", "vertical-align" };
+
+    /// <summary>
+    /// Resolves the font, taking the parent's where the element authored none of its own.
+    /// </summary>
+    /// <remarks>
+    /// Every property here is inherited, so the declaration cannot say whether a value was authored or
+    /// handed down - which is what makes the areas that cannot be inherited cheap and this one not.
+    /// What it can say is whether the value is the parent's: the cascade leaves a property the element
+    /// never authored as the very object the parent resolved from.
+    /// </remarks>
+    private void ResolveFont(StyleIntern? pool, ComputedStyle? parent)
+    {
+        if (parent is { } inherited && Inherits(inherited, FontNames))
+        {
+            StyleProbe.NoteParentAdopted();
+            _values.Font = inherited._values.Font;
+
+            return;
+        }
+
+        // Resolved before anything that measures against it, and passed on by value: letter spacing
+        // and line height resolve their em against this size, and reading the property instead would
+        // read the area being built.
+        var size = ResolveFontSize();
+
+        var font = new FontArea
+        {
+            Size = size,
+            Family = Keyword("font-family", CssInitialValues.FontFamily),
+            Weight = ResolveFontWeight(),
+            Italic = Is("font-style", "italic") || Is("font-style", "oblique"),
+            LetterSpacing = Length("letter-spacing", RenderMode.Horizontal, new LengthReader.FontSource(size), CssInitialValues.LetterSpacing),
+            LineHeight = ResolveLineHeight(size),
+        };
+
+        _values.Font = pool is null ? font : pool.Font(font);
+    }
+
+    private void ResolveText(StyleIntern? pool, ComputedStyle? parent)
+    {
+        if (parent is { } inherited && Inherits(inherited, TextNames))
+        {
+            StyleProbe.NoteParentAdopted();
+            _values.Text = inherited._values.Text;
+
+            return;
+        }
+
+        var text = new TextArea
+        {
+            WhiteSpace = Keyword("white-space", CssInitialValues.WhiteSpace),
+            Align = Keyword("text-align", CssInitialValues.TextAlign),
+            VerticalAlign = Keyword("vertical-align", CssInitialValues.VerticalAlign),
+        };
+
+        _values.Text = pool is null ? text : pool.Text(text);
+    }
+
+    /// <summary>
+    /// Gets whether every named property this element holds is the very instance its parent holds.
+    /// </summary>
+    /// <remarks>
+    /// That is what the cascade leaves behind for a property the element never authored: a parent's
+    /// declarations are merged down by reference, so an inherited value is literally the parent's
+    /// property object. Two absences match as well - a property neither declares is one neither
+    /// resolved, and the parent's area already holds what that means.
+    /// <para>
+    /// Deliberately not <c>ICssProperty.IsInherited</c>, which reads as though it answered this and
+    /// does not: it is true when a property can be inherited and is still at its initial value. A
+    /// parent that authored a font family hands the child a property carrying the parent's value and
+    /// a false flag, so that test would call the value the child's own.
+    /// </para>
+    /// </remarks>
+    private Boolean Inherits(ComputedStyle parent, String[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!Same(_specified?.GetProperty(name), parent._specified?.GetProperty(name)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Gets whether two declarations answer a name the same way: with the same property, or with
+    /// nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// The second case is not a formality. A declaration answers a name it does not carry with a
+    /// property the factory invents for the occasion, so two declarations that both hold nothing
+    /// return two different objects that both hold nothing - and a name nobody declared is the common
+    /// case for the properties an area's check covers. Comparing what they hold rather than which
+    /// object they are is what tells the two apart, and the typed value answers that without building
+    /// the string that <c>Value</c> would.
+    /// </remarks>
+    private static Boolean Same(ICssProperty? mine, ICssProperty? theirs) =>
+        ReferenceEquals(mine, theirs) || (mine?.RawValue is null && theirs?.RawValue is null);
+
+    /// <summary>The font size, resolved before anything that measures against it.</summary>
+    private Double ResolveFontSize()
+    {
+        // A relative font-size is relative to the parent, and the cascade resolves it against the
+        // device - the root font size - instead. It is resolved here, because the element's own font
+        // size is the reference every other length of this style resolves its em against.
+        if (_specified?.GetProperty("font-size")?.RawValue is CssLengthValue declared && IsFontRelative(declared.Type))
+        {
+            // An inherited value is not the element's own declaration; the parent already resolved it,
+            // and taking that size over as it is stops nested em font sizes from stacking. Only a
+            // value the element declares is measured against the parent.
+            if (_declaresFontSize)
+            {
+                return ResolveFontRelative(declared);
+            }
+
+            return _parentFontSize > 0 ? _parentFontSize : _dimensions.FontSize;
+        }
+
+        return TryLengthAgainst("font-size", RenderMode.Vertical, new LengthReader.FontSource(_dimensions.FontSize), out var pixels)
+            ? pixels
+            : _dimensions.FontSize;
+    }
+
+    private Int32 ResolveFontWeight()
+    {
+        var text = Keyword("font-weight", CssInitialValues.FontWeight);
+
+        if (text.Equals("bold", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("bolder", StringComparison.OrdinalIgnoreCase))
+        {
+            return 700;
+        }
+
+        if (text.Equals("normal", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("lighter", StringComparison.OrdinalIgnoreCase))
+        {
+            return 400;
+        }
+
+        return Int32.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var weight)
+            ? weight
+            : 400;
+    }
+
+    /// <summary>The line height, measured against the size the font area is being built with.</summary>
+    private Double? ResolveLineHeight(Double size)
+    {
+        StyleProbe.NoteTextRead("line-height");
+
+        var text = _style.GetPropertyValue("line-height");
+
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        text = text.Trim();
+
+        if (text.Equals("normal", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
+        {
+            return factor * size;
+        }
+
+        return TryLengthAgainst("line-height", RenderMode.Vertical, new LengthReader.FontSource(size), out var pixels)
+            ? pixels
+            : null;
     }
 
     /// <summary>The names a display or a clipping property can begin with.</summary>
@@ -346,6 +536,10 @@ public readonly struct ComputedStyle
         internal DisplayPositioningArea DisplayPositioning = DisplayPositioningArea.Default;
 
         internal VisualEffectsArea VisualEffects = VisualEffectsArea.Default;
+
+        internal FontArea Font = new();
+
+        internal TextArea Text = new();
     }
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
@@ -358,7 +552,7 @@ public readonly struct ComputedStyle
     public Boolean IsDisplayNone =>
         _values.DisplayPositioning.Display.Equals("none", StringComparison.OrdinalIgnoreCase);
 
-    public String WhiteSpace => Keyword("white-space", CssInitialValues.WhiteSpace);
+    public String WhiteSpace => _values.Text.WhiteSpace;
 
     /// <summary>
     /// Gets whether runs of white space collapse to a single space, which is the case for every
@@ -373,7 +567,7 @@ public readonly struct ComputedStyle
 
     // --- Text -----------------------------------------------------------
 
-    public String FontFamily => Keyword("font-family", CssInitialValues.FontFamily);
+    public String FontFamily => _values.Font.Family;
 
     /// <summary>
     /// Gets the font size in pixels. A percentage is the one length that resolves against the parent's
@@ -381,31 +575,7 @@ public readonly struct ComputedStyle
     /// render device - the viewport - so a declared percentage is read back here and scaled by the size
     /// the box builder passed down.
     /// </summary>
-    public Double FontSize
-    {
-        get
-        {
-            // A relative font-size is relative to the parent, and the cascade resolves it against the
-            // device - the root font size - instead. It is resolved here, because the element's own
-            // font size is the reference every other length of this style resolves its em against.
-            if (_specified?.GetProperty("font-size")?.RawValue is CssLengthValue declared && IsFontRelative(declared.Type))
-            {
-                // An inherited value is not the element's own declaration; the parent already
-                // resolved it, and taking that size over as it is stops nested em font sizes from
-                // stacking. Only a value the element declares is measured against the parent.
-                if (_declaresFontSize)
-                {
-                    return ResolveFontRelative(declared);
-                }
-
-                return _parentFontSize > 0 ? _parentFontSize : _dimensions.FontSize;
-            }
-
-            return TryLengthAgainst("font-size", RenderMode.Vertical, new LengthReader.FontSource(_dimensions.FontSize), out var pixels)
-                ? pixels
-                : _dimensions.FontSize;
-        }
-    }
+    public Double FontSize => _values.Font.Size;
 
     /// <summary>Gets whether a length is relative to the font size, which the cascade cannot resolve.</summary>
     internal static Boolean IsFontRelative(CssLengthValue.Unit unit) =>
@@ -428,67 +598,17 @@ public readonly struct ComputedStyle
         };
     }
 
-    public Int32 FontWeight
-    {
-        get
-        {
-            var text = Keyword("font-weight", CssInitialValues.FontWeight);
+    public Int32 FontWeight => _values.Font.Weight;
 
-            if (text.Equals("bold", StringComparison.OrdinalIgnoreCase) ||
-                text.Equals("bolder", StringComparison.OrdinalIgnoreCase))
-            {
-                return 700;
-            }
-
-            if (text.Equals("normal", StringComparison.OrdinalIgnoreCase) ||
-                text.Equals("lighter", StringComparison.OrdinalIgnoreCase))
-            {
-                return 400;
-            }
-
-            return Int32.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var weight)
-                ? weight
-                : 400;
-        }
-    }
-
-    public Boolean IsItalic =>
-        Is("font-style", "italic") || Is("font-style", "oblique");
+    public Boolean IsItalic => _values.Font.Italic;
 
     /// <summary>
     /// Gets the line height in pixels, or null for <c>normal</c> (which defers to the font metrics).
     /// A unitless value is a factor of the font size.
     /// </summary>
-    public Double? LineHeight
-    {
-        get
-        {
-            StyleProbe.NoteTextRead("line-height");
+    public Double? LineHeight => _values.Font.LineHeight;
 
-            var text = _style.GetPropertyValue("line-height");
-
-            if (String.IsNullOrWhiteSpace(text))
-            {
-                return null;
-            }
-
-            text = text.Trim();
-
-            if (text.Equals("normal", StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
-
-            if (Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
-            {
-                return factor * FontSize;
-            }
-
-            return TryLength("line-height", RenderMode.Vertical, out var pixels) ? pixels : null;
-        }
-    }
-
-    public String TextAlign => Keyword("text-align", CssInitialValues.TextAlign);
+    public String TextAlign => _values.Text.Align;
 
     /// <summary>
     /// Gets the extra space added to every character's advance, in pixels. <c>normal</c>, the initial
@@ -496,9 +616,9 @@ public readonly struct ComputedStyle
     /// that share of the size the text is set at. The space follows the last character too, as CSS
     /// asks, which is why a run is that much wider than its glyphs.
     /// </summary>
-    public Double LetterSpacing => Length("letter-spacing", RenderMode.Horizontal, CssInitialValues.LetterSpacing);
+    public Double LetterSpacing => _values.Font.LetterSpacing;
 
-    public String VerticalAlign => Keyword("vertical-align", CssInitialValues.VerticalAlign);
+    public String VerticalAlign => _values.Text.VerticalAlign;
 
     /// <summary>
     /// Gets the writing mode the element runs its text in. <c>writing-mode</c> is a registered,
@@ -1119,6 +1239,13 @@ public readonly struct ComputedStyle
 
     public Double Length(String name, RenderMode mode, Double fallback = 0) =>
         TryLength(name, mode, out var pixels) ? pixels : fallback;
+
+    /// <summary>
+    /// The same, against a font size the caller already has. Used while an area is being resolved,
+    /// where reading the element's own size would read the area that is not filled yet.
+    /// </summary>
+    private Double Length(String name, RenderMode mode, LengthReader.FontSource font, Double fallback) =>
+        TryLengthAgainst(name, mode, font, out var pixels) ? pixels : fallback;
 
     /// <summary>
     /// Reads a box-model length, deferring its percentage to the layout pass. The cascaded

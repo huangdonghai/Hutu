@@ -183,6 +183,56 @@ internal sealed record VisualEffectsArea
 }
 
 /// <summary>
+/// The font the element's text is set in: its size, family, weight, slant, letter spacing and line
+/// height. Every one of these is inherited, so what a box has is usually what its parent had.
+/// </summary>
+/// <remarks>
+/// Unlike the areas whose properties cannot be inherited, this one has no meaningful default to fall
+/// back to: a font size that nobody declared is the render device's, not a constant, and the
+/// inheriting element's answer is its parent's rather than the initial value. The resolver therefore
+/// always assigns this area - either by adopting the parent's instance or by resolving - and the
+/// initialisers below are only what an unfilled holder would read, never a real answer.
+/// </remarks>
+internal sealed record FontArea
+{
+    internal Double Size { get; init; }
+
+    internal String Family { get; init; } = CssInitialValues.FontFamily;
+
+    internal Int32 Weight { get; init; } = 400;
+
+    internal Boolean Italic { get; init; }
+
+    internal Double LetterSpacing { get; init; } = CssInitialValues.LetterSpacing;
+
+    /// <summary>Gets the line height in pixels, or null for <c>normal</c>, which defers to the
+    /// font's own metrics.</summary>
+    /// <remarks>
+    /// Null means <c>normal</c> here rather than "not resolved", because this area is resolved in
+    /// full before anything reads it - the ambiguity a lazily filled field would have does not arise.
+    /// </remarks>
+    internal Double? LineHeight { get; init; }
+}
+
+/// <summary>
+/// How the element's text is broken up and where it sits: whether white space collapses, how a line
+/// is aligned, and how an inline box stands against its line.
+/// </summary>
+/// <remarks>
+/// Inherited, like the font area, and resolved the same way - from the parent's instance where nothing
+/// was authored, and from the declarations otherwise. The initialisers are what an unfilled holder
+/// would read rather than a real answer, for the same reason.
+/// </remarks>
+internal sealed record TextArea
+{
+    internal String WhiteSpace { get; init; } = CssInitialValues.WhiteSpace;
+
+    internal String Align { get; init; } = CssInitialValues.TextAlign;
+
+    internal String VerticalAlign { get; init; } = CssInitialValues.VerticalAlign;
+}
+
+/// <summary>
 /// One intern table per area, alive for one box tree.
 /// </summary>
 /// <remarks>
@@ -209,6 +259,42 @@ internal sealed class StyleIntern
     private readonly Dictionary<DisplayPositioningArea, DisplayPositioningArea> _display = new();
 
     private readonly Dictionary<VisualEffectsArea, VisualEffectsArea> _visualEffects = new();
+
+    private readonly Dictionary<FontArea, FontArea> _font = new();
+
+    private readonly Dictionary<TextArea, TextArea> _text = new();
+
+    /// <summary>Gets the instance standing for a text area.</summary>
+    internal TextArea Text(TextArea area)
+    {
+        if (_text.TryGetValue(area, out var existing))
+        {
+            StyleProbe.NoteInternHit();
+
+            return existing;
+        }
+
+        StyleProbe.NoteAreaBuilt();
+        _text[area] = area;
+
+        return area;
+    }
+
+    /// <summary>Gets the instance standing for a font area.</summary>
+    internal FontArea Font(FontArea area)
+    {
+        if (_font.TryGetValue(area, out var existing))
+        {
+            StyleProbe.NoteInternHit();
+
+            return existing;
+        }
+
+        StyleProbe.NoteAreaBuilt();
+        _font[area] = area;
+
+        return area;
+    }
 
     /// <summary>Gets the instance standing for a display and positioning area.</summary>
     internal DisplayPositioningArea DisplayPositioning(DisplayPositioningArea area)

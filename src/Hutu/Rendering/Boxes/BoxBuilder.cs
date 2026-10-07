@@ -43,7 +43,7 @@ public static class BoxBuilder
         // reference to the parent's area could not catch, since sibling list items agree as much as
         // an inheriting child does.
         var pool = new StyleIntern();
-        var box = BuildElement(root, dimensions, images, WritingModeInfo.Horizontal, pool);
+        var box = BuildElement(root, dimensions, images, WritingModeInfo.Horizontal, pool, null);
 
         if (box is not null)
         {
@@ -135,6 +135,7 @@ public static class BoxBuilder
         IImageProvider? images,
         WritingModeInfo inherited,
         StyleIntern pool,
+        ComputedStyle? parent,
         Double parentFontSize = 0,
         CssColorValue? parentColor = null)
     {
@@ -146,7 +147,8 @@ public static class BoxBuilder
             parentFontSize,
             parentColor,
             DeclaresRelativeFontSize(node.Ref, node.SpecifiedStyle, dimensions),
-            pool);
+            pool,
+            parent);
 
         if (style.IsDisplayNone)
         {
@@ -178,7 +180,7 @@ public static class BoxBuilder
             switch (child)
             {
                 case ElementRenderNode elementChild:
-                    var childBox = BuildElement(elementChild, dimensions, images, flow, pool, style.FontSize, color);
+                    var childBox = BuildElement(elementChild, dimensions, images, flow, pool, style, style.FontSize, color);
 
                     if (childBox is not null)
                     {

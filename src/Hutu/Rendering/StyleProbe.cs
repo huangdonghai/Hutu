@@ -1,4 +1,4 @@
-using Hutu.Rendering.Layout;
+﻿using Hutu.Rendering.Layout;
 using System.Collections.Generic;
 using System;
 
@@ -55,6 +55,13 @@ public static class StyleProbe
     public static Int64 AreasBuilt;
 
     /// <summary>
+    /// Temporary: areas taken over from the parent by reference, because the element authored none of
+    /// the properties in them. This is what an inherited area costs when it is not overridden -
+    /// a handful of property-reference comparisons rather than a resolution.
+    /// </summary>
+    public static Int64 ParentsAdopted;
+
+    /// <summary>
     /// Temporary: areas where the table already held an equal value, so the built one was dropped.
     /// These are the values two unrelated boxes agreed on - the case sharing by parent could not catch.
     /// </summary>
@@ -94,11 +101,21 @@ public static class StyleProbe
         }
     }
 
+    /// <summary>Temporary: records an area taken over from the parent by reference.</summary>
+    public static void NoteParentAdopted()
+    {
+        if (!Off)
+        {
+            ParentsAdopted++;
+        }
+    }
+
     public static void Reset()
     {
         AreasUntouched = 0;
         AreasBuilt = 0;
         InternHits = 0;
+        ParentsAdopted = 0;
         LengthReads = 0;
         LengthHits = 0;
         TextReads = 0;
