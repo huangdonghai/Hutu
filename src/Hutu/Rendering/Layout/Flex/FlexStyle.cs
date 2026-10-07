@@ -120,16 +120,16 @@ public readonly struct FlexStyle
         return new FlexStyle(
             ReadDirection(style),
             ReadWrap(style),
-            ReadAlignment(style, "justify-content", FlexAlignment.Start),
-            ReadAlignment(style, "align-items", FlexAlignment.Stretch),
-            ReadAlignment(style, "align-content", FlexAlignment.Stretch),
+            ReadAlignment(style, "justify-content", CssInitialValues.JustifyContent),
+            ReadAlignment(style, "align-items", CssInitialValues.AlignItems),
+            ReadAlignment(style, "align-content", CssInitialValues.AlignContent),
             rowGap,
             columnGap,
             ReadNumber(style, "flex-grow", 0),
             ReadNumber(style, "flex-shrink", 1),
             ReadBasis(style),
             (Int32)ReadNumber(style, "order", 0),
-            ReadAlignment(style, "align-self", FlexAlignment.Auto));
+            ReadAlignment(style, "align-self", CssInitialValues.AlignSelf));
     }
 
     /// <summary>
@@ -181,7 +181,7 @@ public readonly struct FlexStyle
             "row-reverse" => FlexDirection.RowReverse,
             "column" => FlexDirection.Column,
             "column-reverse" => FlexDirection.ColumnReverse,
-            _ => FlexDirection.Row,
+            _ => CssInitialValues.FlexDirection,
         };
     }
 
@@ -196,7 +196,7 @@ public readonly struct FlexStyle
         {
             "wrap" => FlexWrapMode.Wrap,
             "wrap-reverse" => FlexWrapMode.WrapReverse,
-            _ => FlexWrapMode.NoWrap,
+            _ => CssInitialValues.FlexWrap,
         };
     }
 
@@ -232,7 +232,7 @@ public readonly struct FlexStyle
         FlexContentMode.SpaceAround => FlexAlignment.SpaceAround,
         FlexContentMode.Stretch => FlexAlignment.Stretch,
         FlexContentMode.Baseline => FlexAlignment.Baseline,
-        _ => FlexAlignment.Auto,
+        _ => CssInitialValues.UnmappableAlignment,
     };
 
     /// <summary>

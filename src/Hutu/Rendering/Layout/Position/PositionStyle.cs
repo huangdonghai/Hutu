@@ -97,7 +97,7 @@ public readonly struct PositionStyle
             "absolute" => PositionMode.Absolute,
             "fixed" => PositionMode.Fixed,
             "sticky" => PositionMode.Sticky,
-            _ => PositionMode.Static,
+            _ => CssInitialValues.Position,
         };
     }
 

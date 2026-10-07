@@ -1,4 +1,4 @@
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Values;
 using System;
@@ -360,8 +360,8 @@ internal readonly struct GridStyle
         var place = ReadPlaceItems(style);
         var gaps = style.Flex;
 
-        var alignItems = FlexStyle.ReadAlignment(style, "align-items", FlexAlignment.Auto);
-        var justifyItems = FlexStyle.ReadAlignment(style, "justify-items", FlexAlignment.Auto);
+        var alignItems = FlexStyle.ReadAlignment(style, "align-items", CssInitialValues.AlignItemsGrid);
+        var justifyItems = FlexStyle.ReadAlignment(style, "justify-items", CssInitialValues.JustifyItemsGrid);
 
         return new GridStyle(
             ReadTracks(style, "grid-template-columns"),
@@ -370,8 +370,8 @@ internal readonly struct GridStyle
             ReadAutoTrack(style, "grid-auto-rows"),
             autoFlow.Column,
             autoFlow.Dense,
-            FlexStyle.ReadAlignment(style, "justify-content", FlexAlignment.Stretch),
-            FlexStyle.ReadAlignment(style, "align-content", FlexAlignment.Stretch),
+            FlexStyle.ReadAlignment(style, "justify-content", CssInitialValues.JustifyContentGrid),
+            FlexStyle.ReadAlignment(style, "align-content", CssInitialValues.AlignContent),
             justifyItems == FlexAlignment.Auto
                 ? (place.Justify == FlexAlignment.Auto ? FlexAlignment.Stretch : place.Justify)
                 : justifyItems,

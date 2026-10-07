@@ -88,11 +88,11 @@ public readonly struct ComputedStyle
 
     // --- Box generation -------------------------------------------------
 
-    public String Display => Keyword("display", "inline");
+    public String Display => Keyword("display", CssInitialValues.Display);
 
     public Boolean IsDisplayNone => Is("display", "none");
 
-    public String WhiteSpace => Keyword("white-space", "normal");
+    public String WhiteSpace => Keyword("white-space", CssInitialValues.WhiteSpace);
 
     /// <summary>
     /// Gets whether runs of white space collapse to a single space, which is the case for every
@@ -107,7 +107,7 @@ public readonly struct ComputedStyle
 
     // --- Text -----------------------------------------------------------
 
-    public String FontFamily => Keyword("font-family", "sans-serif");
+    public String FontFamily => Keyword("font-family", CssInitialValues.FontFamily);
 
     /// <summary>
     /// Gets the font size in pixels. A percentage is the one length that resolves against the parent's
@@ -166,7 +166,7 @@ public readonly struct ComputedStyle
     {
         get
         {
-            var text = Keyword("font-weight", "400");
+            var text = Keyword("font-weight", CssInitialValues.FontWeight);
 
             if (text.Equals("bold", StringComparison.OrdinalIgnoreCase) ||
                 text.Equals("bolder", StringComparison.OrdinalIgnoreCase))
@@ -222,7 +222,7 @@ public readonly struct ComputedStyle
         }
     }
 
-    public String TextAlign => Keyword("text-align", "start");
+    public String TextAlign => Keyword("text-align", CssInitialValues.TextAlign);
 
     /// <summary>
     /// Gets the extra space added to every character's advance, in pixels. <c>normal</c>, the initial
@@ -230,9 +230,9 @@ public readonly struct ComputedStyle
     /// that share of the size the text is set at. The space follows the last character too, as CSS
     /// asks, which is why a run is that much wider than its glyphs.
     /// </summary>
-    public Double LetterSpacing => Length("letter-spacing", RenderMode.Horizontal, 0);
+    public Double LetterSpacing => Length("letter-spacing", RenderMode.Horizontal, CssInitialValues.LetterSpacing);
 
-    public String VerticalAlign => Keyword("vertical-align", "baseline");
+    public String VerticalAlign => Keyword("vertical-align", CssInitialValues.VerticalAlign);
 
     /// <summary>
     /// Gets the writing mode the element runs its text in. <c>writing-mode</c> is a registered,
@@ -638,7 +638,7 @@ public readonly struct ComputedStyle
     {
         get
         {
-            var value = Keyword("object-fit", "fill");
+            var value = Keyword("object-fit", CssInitialValues.ObjectFit);
 
             return value.ToLowerInvariant() switch
             {
@@ -748,13 +748,13 @@ public readonly struct ComputedStyle
     /// borders of equal width by their styles, so the keyword itself has to survive, not just the
     /// question of whether the border is drawn.
     /// </summary>
-    public String BorderTopStyle => Keyword("border-top-style", "none");
+    public String BorderTopStyle => Keyword("border-top-style", CssInitialValues.BorderTopStyle);
 
-    public String BorderRightStyle => Keyword("border-right-style", "none");
+    public String BorderRightStyle => Keyword("border-right-style", CssInitialValues.BorderRightStyle);
 
-    public String BorderBottomStyle => Keyword("border-bottom-style", "none");
+    public String BorderBottomStyle => Keyword("border-bottom-style", CssInitialValues.BorderBottomStyle);
 
-    public String BorderLeftStyle => Keyword("border-left-style", "none");
+    public String BorderLeftStyle => Keyword("border-left-style", CssInitialValues.BorderLeftStyle);
 
     // --- Outline --------------------------------------------------------
 
@@ -762,7 +762,7 @@ public readonly struct ComputedStyle
     /// Gets the stroke the outline is drawn with. As with a border, a keyword Hutu cannot draw is drawn
     /// as a solid stroke rather than dropped, since dropping it would lose the outline altogether.
     /// </summary>
-    public BorderLineStyle OutlineStyle => ToLineStyle(Keyword("outline-style", "none"));
+    public BorderLineStyle OutlineStyle => ToLineStyle(Keyword("outline-style", CssInitialValues.OutlineStyle));
 
     /// <summary>
     /// Gets how thick the outline is, or zero when there is nothing to draw.
@@ -782,7 +782,7 @@ public readonly struct ComputedStyle
     /// Gets how far outside the border edge the outline begins. It shifts the outline without taking
     /// any room in the layout, which is what distinguishes it from a margin.
     /// </summary>
-    public Double OutlineOffset => Length("outline-offset", RenderMode.Horizontal, 0);
+    public Double OutlineOffset => Length("outline-offset", RenderMode.Horizontal, CssInitialValues.OutlineOffset);
 
     /// <summary>
     /// Gets the colour the outline is drawn in.

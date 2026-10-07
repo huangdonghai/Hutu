@@ -1,4 +1,4 @@
-using Hutu.Rendering.Boxes;
+﻿using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
 
@@ -288,8 +288,8 @@ internal sealed class GridFormattingContext
             ColumnEnd = GridStyle.Placement(style, "grid-column-end"),
             RowStart = GridStyle.Placement(style, "grid-row-start"),
             RowEnd = GridStyle.Placement(style, "grid-row-end"),
-            JustifySelf = FlexStyle.ReadAlignment(style, "justify-self", FlexAlignment.Auto),
-            AlignSelf = FlexStyle.ReadAlignment(style, "align-self", FlexAlignment.Auto),
+            JustifySelf = FlexStyle.ReadAlignment(style, "justify-self", CssInitialValues.JustifySelfGrid),
+            AlignSelf = FlexStyle.ReadAlignment(style, "align-self", CssInitialValues.AlignSelf),
         };
     }
 
