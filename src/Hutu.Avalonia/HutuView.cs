@@ -125,18 +125,60 @@ public class HutuView : ScrollViewer
     /// Puts the viewport on the corner the document begins at.
     /// </summary>
     /// <remarks>
-    /// A document reads from its top left corner unless its block axis runs the other way, which is
-    /// what a vertical page is: the columns march leftward from the right edge, so a view left at the
-    /// origin opens on the end of the chapter rather than its beginning. The offset that shows the
-    /// beginning is the document's width less the viewport's, which is the far end of the range
-    /// <see cref="ScrollTo"/> clamps to.
+    /// Every offset a reader moves in is counted from that corner, so it is the origin whichever way
+    /// the document reads - a vertical page's beginning is at the far end of the layout's x, which is
+    /// what <see cref="InTheFrame"/> turns zero into. Loading a document therefore has to say where it
+    /// is rather than leave it where the last one was scrolled to, since the scroller keeps its offset
+    /// across a change of extent.
     /// </remarks>
     private void OpenAtTheStart()
     {
-        if (_internalView.Layout is { StartsAtRight: true } layout)
+        ScrollTo(0, 0);
+
+        // A scroller already at the beginning has nothing to report, and the surface has to be told
+        // anyway: where the beginning falls in the layout's frame is a fact about the document that
+        // has just been replaced, not about the offset.
+        ApplyScrollOffset();
+    }
+
+    /// <summary>
+    /// Tells the surface where in the document it is drawing.
+    /// </summary>
+    /// <remarks>
+    /// It has to be said whenever the answer can change, which is not only when the reader scrolls: a
+    /// document laid out again at another size moves the frame under a reader who has not moved, and
+    /// a scroller whose own offset is unchanged reports nothing.
+    /// </remarks>
+    private void ApplyScrollOffset() => _surface.SetScrollOffset(InTheFrame(new Offset(Offset.X, Offset.Y)));
+
+    /// <summary>
+    /// Gets the offset the layout is drawn at for a reader who is at the given place in the document.
+    /// </summary>
+    /// <remarks>
+    /// The two frames differ on any axis the page reads against, and which those are is a fact about
+    /// the writing mode, so the core works it out. Everything below the surface - what the painter is
+    /// handed, what a pointer is measured against - is in the layout's frame, so this is where the
+    /// one crosses to the other.
+    /// </remarks>
+    private Offset InTheFrame(Offset scroll)
+    {
+        var layout = _internalView.Layout;
+
+        if (layout is null)
         {
-            ScrollTo(layout.Width, 0);
+            return scroll;
         }
+
+        // The place a reader is at is somewhere in the document, and one the scroller has not caught
+        // up with yet is still nearer one end of it than past it: a document that has just been laid
+        // out at another size has another range, and the scrollbar catches up a pass later. What the
+        // surface is handed has to be a point of the document either way.
+        var range = ScrollableRange();
+        var place = new Offset(
+            Math.Clamp(scroll.X, 0, range.X),
+            Math.Clamp(scroll.Y, 0, range.Y));
+
+        return layout.FrameOffset(place, _internalView.ViewportWidth, _internalView.ViewportHeight);
     }
 
     public string GetHtml()
@@ -243,10 +285,15 @@ public class HutuView : ScrollViewer
     /// document height or an out-of-range delta is safe to pass in.
     /// </summary>
     /// <remarks>
+    /// The offset is where the reader is in the document: zero is the corner it begins at and the far
+    /// end of the range is the end of it, whichever way it reads. That is <see cref="Offset"/>'s
+    /// frame, and the one the layout is drawn in is <see cref="InTheFrame"/>'s.
+    /// <para>
     /// The range comes from the geometry Hutu produced rather than from
     /// <see cref="ScrollViewer.Extent"/>, which is only ever as fresh as the last layout pass. A
     /// scroll issued straight after a load would otherwise be clamped against the extent of the
     /// previous document - or, on the first load, against nothing at all - and quietly be lost.
+    /// </para>
     /// </remarks>
     public void ScrollTo(double x, double y)
     {
@@ -294,14 +341,23 @@ public class HutuView : ScrollViewer
     {
         ArgumentNullException.ThrowIfNull(element);
 
-        var target = _internalView.GetVerticalScrollOffset(element, alignment, Offset.Y);
+        // Asked in the layout's frame, because an element's box is a rectangle of the layout, and
+        // answered in it too; the view scrolls in the reader's, so the answer is turned round before
+        // it is assigned.
+        var frame = InTheFrame(new Offset(Offset.X, Offset.Y));
+        var target = _internalView.GetVerticalFrameOffset(element, alignment, frame.Y);
 
         if (target is null)
         {
             return false;
         }
 
-        ScrollTo(Offset.X, target.Value);
+        var place = _internalView.Layout!.ScrollPosition(
+            new Offset(frame.X, target.Value),
+            _internalView.ViewportWidth,
+            _internalView.ViewportHeight);
+
+        ScrollTo(place.X, place.Y);
         return true;
     }
 
@@ -338,8 +394,8 @@ public class HutuView : ScrollViewer
     }
 
     /// <summary>
-    /// Gets how far through the document the viewport has moved, from 0 at the top to 1 at the end.
-    /// A document that fits is reported as fully scrolled.
+    /// Gets how far through the document the viewport has moved, from 0 at the beginning to 1 at the
+    /// end. A document that fits is reported as fully scrolled.
     /// </summary>
     public double VerticalScrollProgress
     {
@@ -373,6 +429,10 @@ public class HutuView : ScrollViewer
                 Math.Max(1, (int)Math.Floor(finalSize.Height))))
         {
             _surface.Refresh();
+
+            // A resize lays the document out again - a column is as long as the window is tall, so
+            // the page is another size - which moves the frame under a reader who has not scrolled.
+            ApplyScrollOffset();
         }
 
         return arranged;
@@ -385,7 +445,7 @@ public class HutuView : ScrollViewer
         // Scrolling only moves the viewport-anchored content, so it repaints rather than relayouts.
         if (change.Property == OffsetProperty)
         {
-            _surface.SetScrollOffset(new Offset(Offset.X, Offset.Y));
+            ApplyScrollOffset();
         }
     }
 

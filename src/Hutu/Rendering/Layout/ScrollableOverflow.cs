@@ -10,12 +10,18 @@ namespace Hutu.Rendering.Layout;
 /// A document is not the root's box. Text that runs past the root's edge is still read by scrolling
 /// to it, and that is what a vertical page is made of: there the root's block axis is the horizontal
 /// one, so a chapter longer than the viewport is wider than the box holding it. The rectangle is the
-/// union of the root's box with every descendant's, less the sides the page reads from - nothing
-/// scrolls back past where the document begins, so a box hanging off that edge is cut off rather
-/// than made reachable.
+/// union of the initial containing block with every descendant's box, less the sides the page reads
+/// from - nothing scrolls back past where the document begins, so a box hanging off that edge is cut
+/// off rather than made reachable.
 /// <para>
-/// The frame it is measured in has the root's box at the origin, as the layout produced it. A
-/// scroller wants the rectangle itself at the origin instead, which is what
+/// The initial containing block belongs in that union even when nothing reaches past it. It is the
+/// viewport the page was laid out in, so a page that fits inside it is still as big as the viewport:
+/// leaving it out would let a short document's frame shrink to the box holding it, and moving that
+/// frame to the origin would carry the page off to the left of the window it is read in.
+/// </para>
+/// <para>
+/// The frame it is measured in has the initial containing block at the origin, as the layout produced
+/// it. A scroller wants the rectangle itself at the origin instead, which is what
 /// <see cref="MoveToOrigin"/> settles.
 /// </para>
 /// </remarks>
@@ -25,20 +31,26 @@ internal static class ScrollableOverflow
     /// Measures the rectangle the document can be scrolled over, in the coordinates the layout was
     /// produced in.
     /// </summary>
-    public static Rect Of(LayoutBox root)
+    /// <param name="initial">
+    /// The initial containing block: the viewport at the origin, which is the frame the root was
+    /// placed in.
+    /// </param>
+    public static Rect Of(LayoutBox root, Rect initial)
     {
-        var region = Union(root, root.BorderBox, anchored: false);
+        // The viewport first, then the root's own box - the page begins at the viewport's start edge
+        // even when the box holding it does not reach there - and then everything the root holds.
+        var region = Union(root, Merge(initial, root.BorderBox), anchored: false);
 
-        // The root's own box is as far as either side the page reads from goes. The other two grow
-        // with whatever reaches past them: below a row and beside a column is where a document
-        // continues, and it cannot continue behind itself.
-        var border = root.BorderBox;
+        // The edges the page reads from are as far as it goes: the root's box cannot reach past
+        // them, and neither can anything else. The other two grow with whatever reaches past them:
+        // below a row and beside a column is where a document continues, and it cannot continue
+        // behind itself.
         var flow = root.Flow;
 
-        var left = flow.BlockSign >= 0 ? Math.Max(region.X, border.X) : region.X;
-        var right = flow.BlockSign < 0 ? Math.Min(region.Right, border.Right) : region.Right;
-        var top = flow.InlineSign >= 0 ? Math.Max(region.Y, border.Y) : region.Y;
-        var bottom = flow.InlineSign < 0 ? Math.Min(region.Bottom, border.Bottom) : region.Bottom;
+        var left = flow.BlockSign >= 0 ? Math.Max(region.X, initial.X) : region.X;
+        var right = flow.BlockSign < 0 ? Math.Min(region.Right, initial.Right) : region.Right;
+        var top = flow.InlineSign >= 0 ? Math.Max(region.Y, initial.Y) : region.Y;
+        var bottom = flow.InlineSign < 0 ? Math.Min(region.Bottom, initial.Bottom) : region.Bottom;
 
         return new Rect(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
     }

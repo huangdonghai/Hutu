@@ -116,12 +116,15 @@ public sealed class PainterTests
     public async Task PaintListReportsTheScrollableDocumentSize()
     {
         using var view = CreateView();
+
+        // Taller than the six-hundred-pixel viewport, so what is reported is the document's own size
+        // rather than the viewport the document happens to fit in.
         await view.SetHtml(
             "<html><body style='margin:0'>" +
-            "<div style='height:123px'></div>" +
+            "<div style='height:700px'></div>" +
             "</body></html>");
 
-        Assert.That(view.Paint!.Bounds.Height, Is.EqualTo(123).Within(0.5));
+        Assert.That(view.Paint!.Bounds.Height, Is.EqualTo(700).Within(0.5));
     }
 
     private static HutuViewInternal CreateView()

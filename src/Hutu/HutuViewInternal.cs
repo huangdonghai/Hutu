@@ -396,11 +396,17 @@ public sealed class HutuViewInternal : IDisposable
     }
 
     /// <summary>
-    /// Gets the vertical offset that brings an element into view, or null when it generated no box.
-    /// The viewport the styles were last computed for is what the element is placed against, since
-    /// that is the width the document was laid out at.
+    /// Gets the vertical frame offset that brings an element into view, or null when it generated no
+    /// box. The viewport the styles were last computed for is what the element is placed against,
+    /// since that is the width the document was laid out at.
     /// </summary>
-    public double? GetVerticalScrollOffset(
+    /// <remarks>
+    /// It answers in the frame the boxes are in rather than in the reader's, because both what it is
+    /// asked and what it answers with are about a rectangle of the layout. A host that keeps its
+    /// scrollbar in the reader's frame turns the answer round with
+    /// <see cref="LayoutResult.ScrollPosition"/>.
+    /// </remarks>
+    public double? GetVerticalFrameOffset(
         IElement element,
         ScrollAlignment alignment,
         double currentOffset = 0)
@@ -418,7 +424,7 @@ public sealed class HutuViewInternal : IDisposable
 
         return bounds is null
             ? null
-            : layout.VerticalScrollOffsetFor(bounds.Value, ViewportHeight, alignment, currentOffset);
+            : layout.VerticalFrameOffsetFor(bounds.Value, ViewportHeight, alignment, currentOffset);
     }
 
     /// <summary>

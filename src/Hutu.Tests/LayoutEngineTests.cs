@@ -16,6 +16,20 @@ namespace Hutu.Tests;
 public sealed class LayoutEngineTests
 {
     [Test]
+    public async Task ThePageIsPlacedInsideTheMarginsItIsGiven()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html style='margin:20px 0 0 30px'><body style='margin:0'><div style='height:10px'></div></body></html>");
+
+        var root = view.Layout!.Root;
+
+        Assert.That(root.BorderBox.X, Is.EqualTo(30).Within(0.5), "the page's left margin sets it in from the left");
+        Assert.That(root.BorderBox.Y, Is.EqualTo(20).Within(0.5), "and its top margin from the top, as the initial containing block's first box");
+    }
+
+    [Test]
     public async Task BlockBoxModelResolvesPaddingBorderAndMargin()
     {
         using var view = CreateView(400);

@@ -82,8 +82,8 @@ public sealed class LayoutEngine
     }
 
     /// <summary>
-    /// Lays the box tree out in the given viewport. The root is placed at the origin; null means
-    /// there is nothing to lay out.
+    /// Lays the box tree out in the given viewport. The root is placed at the viewport's own start
+    /// corner; null means there is nothing to lay out.
     /// </summary>
     /// <param name="viewportHeight">
     /// The viewport's height, which is the initial containing block's. A percentage height only
@@ -109,15 +109,38 @@ public sealed class LayoutEngine
 
         var size = Measure(root, MeasureConstraints.FitWidth(width), context);
         var margin = BoxModel.UsedMargin(root.Style, width, size.Width);
-        var rootBox = Arrange(root, new Rect(margin.Left, 0, size.Width, size.Height), context);
+
+        // The root is the one box whose containing block is the initial containing block, and that
+        // block begins where the page reads from - the top left corner of the viewport in horizontal
+        // writing, and its top right corner in a right-to-left vertical mode. So the root is placed
+        // against those edges rather than at the physical origin, and a root narrower than the
+        // viewport - which is what a page whose columns are sized to its content comes to - stands
+        // against the edge it reads from rather than against the opposite one. The margin on each
+        // start side is honoured and the end side takes whatever is left over, which is the ordinary
+        // over-constrained rule.
+        var initial = new Rect(0, 0, width, viewport.Height);
+        var flow = root.Flow;
+        var (inlineStart, _) = flow.InlineMargins(margin);
+        var (blockStart, _) = flow.BlockMargins(margin);
+
+        var rootBox = Arrange(
+            root,
+            flow.Map(
+                initial,
+                inlineStart,
+                flow.InlineExtent(size.Width, size.Height),
+                blockStart,
+                flow.BlockExtent(size.Width, size.Height)),
+            context);
 
         ResolveDecorations(rootBox);
 
         // What the document occupies is what a viewport has to be able to reach, which is not the
         // root's box: a page whose columns run sideways, or a box placed off an edge, reaches past
-        // it. Measuring it settles the frame as well, because a scroll offset is a distance from
-        // where the document begins.
-        var content = ScrollableOverflow.Of(rootBox);
+        // it. It is never less than the viewport itself either, because the viewport is what the
+        // page was laid out in. Measuring it settles the frame as well, because a scroll offset is a
+        // distance from where the document begins.
+        var content = ScrollableOverflow.Of(rootBox, initial);
         ScrollableOverflow.MoveToOrigin(rootBox, content);
 
         return new LayoutResult(rootBox, content.Width, content.Height);

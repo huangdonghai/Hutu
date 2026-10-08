@@ -390,6 +390,42 @@ public sealed class VerticalLayoutTests
     }
 
     [Test]
+    public async Task AShortColumnPageStandsAgainstTheSideItReadsFrom()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0;writing-mode:vertical-rl'>" +
+            "<p style='margin:0;font-size:10px;line-height:1'>あ</p>" +
+            "</body></html>");
+
+        Assert.That(
+            Blocks(view, "body").Single().BorderBox.Right,
+            Is.EqualTo(400).Within(0.5),
+            "a page begins at the edge it reads from, so one that does not fill the viewport stands against the right one");
+        Assert.That(
+            view.Layout!.Width,
+            Is.EqualTo(400).Within(0.5),
+            "and the document is a viewport wide however little it holds, as a row's is a viewport tall");
+    }
+
+    [Test]
+    public async Task AColumnPageKeepsTheMarginItIsGivenOnTheSideItReadsFrom()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html style='margin:0 30px 0 0'><body style='margin:0;writing-mode:vertical-rl'>" +
+            "<p style='margin:0;font-size:10px;line-height:1'>あ</p>" +
+            "</body></html>");
+
+        Assert.That(
+            view.Layout!.Root.BorderBox.Right,
+            Is.EqualTo(370).Within(0.5),
+            "the page's right margin is the one on the side it reads from, so it is what sets the page in from that edge");
+    }
+
+    [Test]
     public async Task AColumnPageKeepsTheMarginThePageIsGiven()
     {
         using var view = CreateView(400);

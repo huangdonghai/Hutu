@@ -373,6 +373,16 @@ public sealed class HutuSurface : Control
     /// </summary>
     private Point ToDocument(Point point) => new(point.X + _scroll.X, point.Y + _scroll.Y);
 
+    /// <summary>
+    /// Gets the point of the document the top left corner of this control stands at, which is what
+    /// the paint list is drawn from.
+    /// </summary>
+    /// <remarks>
+    /// It is the layout's frame rather than the reader's, so it is not what the surrounding scroller
+    /// reports: on an axis the page reads against the two are counted from opposite ends.
+    /// </remarks>
+    public Offset ScrollOffset => _scroll;
+
     /// <summary>Reports how far the surrounding scroller has moved, so viewport-anchored content can follow.</summary>
     public void SetScrollOffset(Offset offset)
     {

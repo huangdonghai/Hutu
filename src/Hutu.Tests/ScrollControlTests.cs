@@ -130,10 +130,10 @@ public sealed class ScrollControlTests
         var target = view.Document!.GetElementById("target")!;
 
         // Just past the fold, so the smallest move puts its bottom edge at the bottom of the view.
-        Assert.That(view.GetVerticalScrollOffset(target, ScrollAlignment.Nearest, 0), Is.EqualTo(200));
+        Assert.That(view.GetVerticalFrameOffset(target, ScrollAlignment.Nearest, 0), Is.EqualTo(200));
 
         // Already on screen, so nothing moves.
-        Assert.That(view.GetVerticalScrollOffset(target, ScrollAlignment.Nearest, 400), Is.EqualTo(400));
+        Assert.That(view.GetVerticalFrameOffset(target, ScrollAlignment.Nearest, 400), Is.EqualTo(400));
     }
 
     private static double OffsetFor(
@@ -143,7 +143,7 @@ public sealed class ScrollControlTests
         ScrollAlignment alignment,
         double current = 0)
     {
-        return view.Layout!.VerticalScrollOffsetFor(
+        return view.Layout!.VerticalFrameOffsetFor(
             new Rect(0, y, 100, height),
             view.ViewportHeight,
             alignment,

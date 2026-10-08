@@ -125,6 +125,23 @@ public readonly struct WritingModeInfo
     /// <summary>Gets the sign a block offset grows by: only the two right-to-left modes grow leftward.</summary>
     public Int32 BlockSign => Mode is WritingMode.VerticalRl or WritingMode.SidewaysRl ? -1 : 1;
 
+    /// <summary>
+    /// Gets whether the page begins at the right edge of the document, so that how far along a reader
+    /// is counts from there rather than from the left.
+    /// </summary>
+    /// <remarks>
+    /// Two quite different things put the beginning on the right: a vertical page's columns march
+    /// leftward from it, and a line of a right-to-left row reads from it. What they share is the only
+    /// thing a scroller asks about - which edge x is measured from.
+    /// </remarks>
+    public Boolean StartsAtTheRight => IsVertical ? BlockSign < 0 : IsRightToLeft;
+
+    /// <summary>
+    /// Gets whether the page begins at the bottom edge of the document, which is what a vertical mode
+    /// that reads up the page asks for. Every other mode begins at the top.
+    /// </summary>
+    public Boolean StartsAtTheBottom => IsVertical && InlineSign < 0;
+
     /// <summary>Gets the size a physical box has along the axis the text runs.</summary>
     public Double InlineExtent(Double width, Double height) => IsVertical ? height : width;
 
