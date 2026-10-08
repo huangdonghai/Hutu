@@ -89,6 +89,54 @@ public sealed class UserAgentStyleSheetTests
         Assert.That(p.Margin.Top, Is.EqualTo(0).Within(0.01), "and the side it said nothing about keeps the sheet's answer");
     }
 
+    [Test]
+    public async Task RevertHandsASideBackToTheReader()
+    {
+        using var view = CreateView();
+
+        // The shape a book written for a reader that speaks the flow-relative names has: a margin for
+        // the readers that do not, and then the statement of which side it really meant - here, that
+        // the block end is the reader's to decide after all.
+        await view.SetHtml(
+            "<html><body style='margin:0;writing-mode:vertical-rl'>" +
+            "<p style='margin-left:30px;margin-block-end:revert'>text</p></body></html>");
+
+        var p = Block(view, "p");
+
+        Assert.That(p.Margin.Left, Is.EqualTo(16 * 1.12).Within(0.01), "the block end is what the reader gives a paragraph");
+        Assert.That(p.Margin.Right, Is.EqualTo(16 * 1.12).Within(0.01), "and so is the other end of the block axis");
+        Assert.That(p.Margin.Top, Is.EqualTo(0).Within(0.01), "while the line the text runs down is untouched");
+    }
+
+    [Test]
+    public async Task RevertWhereTheReaderHasNothingToSupplyLeavesNothing()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0;writing-mode:vertical-rl'>" +
+            "<div style='margin-left:30px;margin-block-end:revert'></div></body></html>");
+
+        Assert.That(
+            Block(view, "div").Margin.Left,
+            Is.EqualTo(0).Within(0.01),
+            "a division is given no margins of its own, so reverting to them leaves the side with none");
+    }
+
+    [Test]
+    public async Task InitialTakesASideToNothing()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin-top:20px;margin-block-start:initial'>text</p></body></html>");
+
+        var p = Block(view, "p");
+
+        Assert.That(p.Margin.Top, Is.EqualTo(0).Within(0.01), "a side taken back to its initial value has none");
+        Assert.That(p.Margin.Bottom, Is.EqualTo(16 * 1.12).Within(0.01), "and the other side is the reader's as before");
+    }
+
     private static HutuViewInternal CreateView()
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

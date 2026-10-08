@@ -1406,9 +1406,24 @@ public readonly struct ComputedStyle
         var blockStart = ReadDeclared(prefix + "-block-start", RenderMode.Horizontal);
         var blockEnd = ReadDeclared(prefix + "-block-end", RenderMode.Horizontal);
 
+        // A keyword that stands for a value rather than naming one is a statement about the side it
+        // names, so it stands where that side is otherwise stated too - which is the whole point of
+        // writing one: `margin-block-end: revert` is a page taking back a margin it gave that side in a
+        // declaration earlier in the same rule.
+        var topKeyword = KeywordOf(prefix + "-top");
+        var rightKeyword = KeywordOf(prefix + "-right");
+        var bottomKeyword = KeywordOf(prefix + "-bottom");
+        var leftKeyword = KeywordOf(prefix + "-left");
+        var inlineStartKeyword = KeywordOf(prefix + "-inline-start");
+        var inlineEndKeyword = KeywordOf(prefix + "-inline-end");
+        var blockStartKeyword = KeywordOf(prefix + "-block-start");
+        var blockEndKeyword = KeywordOf(prefix + "-block-end");
+
         var (defaultBlockStart, defaultBlockEnd, defaultInlineStart, defaultInlineEnd) = Defaults(prefix);
 
         if (inlineStart is null && inlineEnd is null && blockStart is null && blockEnd is null &&
+            inlineStartKeyword is null && inlineEndKeyword is null &&
+            blockStartKeyword is null && blockEndKeyword is null &&
             defaultBlockStart is null && defaultBlockEnd is null &&
             defaultInlineStart is null && defaultInlineEnd is null)
         {
@@ -1436,6 +1451,14 @@ public readonly struct ComputedStyle
                 ? (blockStart, blockEnd)
                 : (blockEnd, blockStart);
 
+            var (keywordTop, keywordBottom) = flow.InlineSign > 0
+                ? (inlineStartKeyword, inlineEndKeyword)
+                : (inlineEndKeyword, inlineStartKeyword);
+
+            var (keywordRight, keywordLeft) = flow.BlockSign < 0
+                ? (blockStartKeyword, blockEndKeyword)
+                : (blockEndKeyword, blockStartKeyword);
+
             var (defaultTop, defaultBottom) = flow.InlineSign > 0
                 ? (defaultInlineStart, defaultInlineEnd)
                 : (defaultInlineEnd, defaultInlineStart);
@@ -1445,10 +1468,10 @@ public readonly struct ComputedStyle
                 : (defaultBlockEnd, defaultBlockStart);
 
             return new StyleThickness(
-                byInlineStart ?? top ?? defaultTop ?? fallback,
-                byBlockStart ?? right ?? defaultRight ?? fallback,
-                byInlineEnd ?? bottom ?? defaultBottom ?? fallback,
-                byBlockEnd ?? left ?? defaultLeft ?? fallback);
+                Side(top, topKeyword, byInlineStart, keywordTop, defaultTop, fallback),
+                Side(right, rightKeyword, byBlockStart, keywordRight, defaultRight, fallback),
+                Side(bottom, bottomKeyword, byInlineEnd, keywordBottom, defaultBottom, fallback),
+                Side(left, leftKeyword, byBlockEnd, keywordLeft, defaultLeft, fallback));
         }
 
         // A row runs across the page, so the inline axis is the horizontal pair and the block axis the
@@ -1457,12 +1480,71 @@ public readonly struct ComputedStyle
             ? (inlineStart, inlineEnd)
             : (inlineEnd, inlineStart);
 
+        var (keywordStart, keywordEnd) = flow.InlineSign > 0
+            ? (inlineStartKeyword, inlineEndKeyword)
+            : (inlineEndKeyword, inlineStartKeyword);
+
         return new StyleThickness(
-            blockStart ?? top ?? defaultBlockStart ?? fallback,
-            byEnd ?? right ?? defaultInlineEnd ?? fallback,
-            blockEnd ?? bottom ?? defaultBlockEnd ?? fallback,
-            byStart ?? left ?? defaultInlineStart ?? fallback);
+            Side(top, topKeyword, blockStart, blockStartKeyword, defaultBlockStart, fallback),
+            Side(right, rightKeyword, byEnd, keywordEnd, defaultInlineEnd, fallback),
+            Side(bottom, bottomKeyword, blockEnd, blockEndKeyword, defaultBlockEnd, fallback),
+            Side(left, leftKeyword, byStart, keywordStart, defaultInlineStart, fallback));
     }
+
+    /// <summary>
+    /// Gets the value one physical side of a thickness comes to out of everything that named it.
+    /// </summary>
+    /// <param name="named">What the page said about the side under its own name, and
+    /// <paramref name="keyword"/> the keyword it said it with.</param>
+    /// <param name="namedByAxis">What it said under the name of the axis the side lies on, and
+    /// <paramref name="axisKeyword"/> the keyword it said that with.</param>
+    /// <param name="supplied">What the reader gives the side when the page says nothing.</param>
+    /// <remarks>
+    /// A side named both ways by a page that speaks both languages takes the axis name, which is where
+    /// the statement that means something whichever way the page is read is written. A side the page
+    /// said nothing about is the reader's to supply, and a keyword it named the side with is the page
+    /// saying so itself: <c>initial</c> and <c>unset</c> take the side to nothing at all, and
+    /// <c>revert</c> hands it back to the reader - the level that supplies these defaults in the first
+    /// place, which is what it comes to.
+    /// </remarks>
+    private static StyleLength Side(
+        StyleLength? named,
+        CssWideKeyword? keyword,
+        StyleLength? namedByAxis,
+        CssWideKeyword? axisKeyword,
+        StyleLength? supplied,
+        StyleLength fallback)
+    {
+        if (axisKeyword is { } byAxis)
+        {
+            return Stands(byAxis, supplied);
+        }
+
+        if (namedByAxis is { } byAxisValue)
+        {
+            return byAxisValue;
+        }
+
+        if (keyword is { } byName)
+        {
+            return Stands(byName, supplied);
+        }
+
+        return named ?? supplied ?? fallback;
+    }
+
+    /// <summary>Gets what a keyword that stands for a value comes to on the side it named.</summary>
+    private static StyleLength Stands(CssWideKeyword keyword, StyleLength? supplied) =>
+        keyword.CssText.ToLowerInvariant() is "initial" or "unset"
+            ? StyleLength.Zero
+            : supplied ?? StyleLength.Zero;
+
+    /// <summary>Gets the keyword the page named a property with, or null when it named a value.</summary>
+    private CssWideKeyword? KeywordOf(String name) =>
+        KeywordIn(_specified, name) ?? KeywordIn(_style, name);
+
+    private static CssWideKeyword? KeywordIn(ICssStyleDeclaration? declaration, String name) =>
+        declaration?.GetProperty(name)?.RawValue as CssWideKeyword;
 
     /// <summary>
     /// Gets the space HTML leaves around an element whose page says nothing about it, as the four
@@ -1622,7 +1704,7 @@ public readonly struct ComputedStyle
         // its text no height either. A caller reads the absence as "the page said nothing here" and
         // falls back to what the property would have been - which for `inherit` is the value the
         // element was handed anyway.
-        if (value is not CssLengthValue && IsWideKeyword(value.CssText))
+        if (value is CssWideKeyword || (value is not CssLengthValue && CssWideKeyword.Is(value.CssText)))
         {
             return null;
         }
@@ -1656,10 +1738,6 @@ public readonly struct ComputedStyle
             return null;
         }
     }
-
-    /// <summary>Gets whether a keyword stands for one of the values every property can be given.</summary>
-    private static Boolean IsWideKeyword(String? text) => text?.Trim().ToLowerInvariant() is
-        "inherit" or "initial" or "unset" or "revert" or "revert-layer";
 
     private static Double? Resolve(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, LengthReader.FontSource font)
     {

@@ -459,11 +459,13 @@ public sealed class HutuViewInternal : IDisposable
     /// </summary>
     private IBrowsingContext CreateBrowsingContext()
     {
-        // The reader's own sheet is registered before the CSS services, which ship a sheet of their own
-        // only when nothing else has: two sheets at the user-agent level would be two sources to
-        // reconcile, and a property both state would be decided by registration order.
+        // The reader's own sheet and its reading of declarations are registered before the CSS services,
+        // which ship their own only when nothing else has: two sheets at the user-agent level would be
+        // two sources to reconcile, and the declaration factory is asked for by name - whichever is
+        // registered answers, so the one that wraps AngleSharp's has to be the one to hand.
         var configuration = Configuration.Default
             .With(new UserAgentStyleSheetProvider())
+            .With((Object)new WideKeywordDeclarationFactory())
             .WithCss()
             .WithRenderDevice(_renderDevice);
 
