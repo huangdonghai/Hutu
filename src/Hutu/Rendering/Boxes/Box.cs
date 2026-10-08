@@ -107,8 +107,13 @@ public sealed class Box
     /// <c>text-orientation</c> and <c>text-combine-upright</c> are not registered with the parser and
     /// so are not inherited there. The builder therefore resolves them once, while it walks the tree,
     /// and every descendant takes what its ancestor ran in unless it declares otherwise.
+    /// <para>
+    /// The root is the one box the builder comes back to: what the whole page runs in is settled from
+    /// the <c>body</c> once the tree is built, so this is written after construction rather than
+    /// during it.
+    /// </para>
     /// </remarks>
-    public WritingModeInfo Flow { get; init; } = WritingModeInfo.Horizontal;
+    public WritingModeInfo Flow { get; internal set; } = WritingModeInfo.Horizontal;
 
     /// <summary>
     /// Gets whether the box wants the same intrinsic size at every containing block: nothing in the

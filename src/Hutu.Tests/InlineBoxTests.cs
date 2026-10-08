@@ -38,6 +38,60 @@ public sealed class InlineBoxTests
     }
 
     [Test]
+    public async Task ALineIsAsTallAsItsLineHeightHoweverTallTheFontIs()
+    {
+        using var view = CreateView();
+
+        // The measurer gives every font ten pixels of ascent and descent whatever it is set at, so a
+        // line height of five is a font taller than its line - and the line box is still five: a face
+        // that overflows the line it is set on is drawn overflowing it.
+        await view.SetHtml(Document("<p style='margin:0;font-size:5px;line-height:1'>abcd</p>"));
+
+        Assert.That(
+            Lines(view).Single().BorderBox.Height,
+            Is.EqualTo(5),
+            "the line is the line height, not the height of the font set on it");
+    }
+
+    [Test]
+    public async Task TheBandOfAnElementIsStillTheHeightOfItsFont()
+    {
+        using var view = CreateView();
+
+        // The other half of the same rule: an element's own band is its font's content area, which is
+        // taller here than the line the band sits on.
+        await view.SetHtml(Document("<p style='margin:0;font-size:5px;line-height:1'><mark>abcd</mark></p>"));
+
+        Assert.That(Inline(view, "mark").BorderBox.Height, Is.EqualTo(10), "the band is the font's content area");
+        Assert.That(Lines(view).Single().BorderBox.Height, Is.EqualTo(5), "and the line is the line height");
+    }
+
+    [Test]
+    public async Task ALineWithNoHeightStillDrawsWhatIsOnIt()
+    {
+        using var view = CreateView();
+
+        // A run set with no line height at all overflows the line it sits on rather than taking the line
+        // away with it: the line box is nothing tall and the text is still there to be drawn.
+        await view.SetHtml(Document("<p style='margin:0;font-size:10px;line-height:0'>abcd</p>"));
+
+        Assert.That(Lines(view).Single().BorderBox.Height, Is.EqualTo(0), "the line is nothing tall");
+        Assert.That(Text(view, "abcd").BorderBox.Width, Is.EqualTo(20), "and the run it holds is still placed");
+    }
+
+    [Test]
+    public async Task AKeywordThatStandsForNoValueIsNotALength()
+    {
+        using var view = CreateView();
+
+        // `font: inherit` is answered by AngleSharp with zero pixels, which read as a font of no size at
+        // all - a label with a font of nothing is invisible.
+        await view.SetHtml(Document("<p style='margin:0'><span style='font: inherit'>abcd</span></p>"));
+
+        Assert.That(Inline(view, "span").Source.Style.FontSize, Is.GreaterThan(0), "the span is set in some size of type");
+    }
+
+    [Test]
     public async Task AnElementWithNothingToDrawStillGetsABox()
     {
         using var view = CreateView();

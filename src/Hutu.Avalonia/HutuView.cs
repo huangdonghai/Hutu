@@ -1,6 +1,7 @@
 ﻿using AngleSharp.Dom;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Hutu.Rendering.Interaction;
@@ -55,6 +56,13 @@ public class HutuView : ScrollViewer
         _surface = new HutuSurface(_internalView, new SkiaPaintExecutor(_measurer, _images), Follow);
         Content = _surface;
 
+        // A page is as wide as its content, which is not always as wide as the window: a vertical
+        // document's columns march sideways, and a wide table or a picture reaches past the edge
+        // whichever way it reads. A scroller that refuses to move sideways would leave that part of
+        // the document with nowhere to be reached from, so the extent is allowed to be the
+        // document's and the bar appears only when it is wider than the viewport.
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+
         // The core owns the selection and the highlight is already part of the paint list, so a
         // change leaves the host nothing to do but draw again - which also covers a selection made
         // through the API rather than by pointing at the text.
@@ -90,6 +98,7 @@ public class HutuView : ScrollViewer
     {
         var document = await _internalView.LoadUrlAsync(url, cancellationToken);
         _surface.Refresh();
+        OpenAtTheStart();
         return document;
     }
 
@@ -108,7 +117,26 @@ public class HutuView : ScrollViewer
     {
         var document = await _internalView.SetHtml(html, url);
         _surface.Refresh();
+        OpenAtTheStart();
         return document;
+    }
+
+    /// <summary>
+    /// Puts the viewport on the corner the document begins at.
+    /// </summary>
+    /// <remarks>
+    /// A document reads from its top left corner unless its block axis runs the other way, which is
+    /// what a vertical page is: the columns march leftward from the right edge, so a view left at the
+    /// origin opens on the end of the chapter rather than its beginning. The offset that shows the
+    /// beginning is the document's width less the viewport's, which is the far end of the range
+    /// <see cref="ScrollTo"/> clamps to.
+    /// </remarks>
+    private void OpenAtTheStart()
+    {
+        if (_internalView.Layout is { StartsAtRight: true } layout)
+        {
+            ScrollTo(layout.Width, 0);
+        }
     }
 
     public string GetHtml()

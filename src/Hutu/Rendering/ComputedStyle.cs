@@ -39,6 +39,7 @@ public readonly struct ComputedStyle
     private readonly Double _parentFontSize;
     private readonly CssColorValue? _parentColor;
     private readonly Boolean _declaresFontSize;
+    private readonly FontFaceTable? _faces;
 
     /// <summary>
     /// The resolved areas, shared with every box whose style agrees. Filled once during construction
@@ -78,8 +79,9 @@ public readonly struct ComputedStyle
         IElement? element = null,
         Double parentFontSize = 0,
         CssColorValue? parentColor = null,
-        Boolean declaresFontSize = false)
-        : this(style, dimensions, specified, element, parentFontSize, parentColor, declaresFontSize, null, null)
+        Boolean declaresFontSize = false,
+        FontFaceTable? faces = null)
+        : this(style, dimensions, specified, element, parentFontSize, parentColor, declaresFontSize, null, null, faces)
     {
     }
 
@@ -98,7 +100,8 @@ public readonly struct ComputedStyle
         CssColorValue? parentColor,
         Boolean declaresFontSize,
         StyleIntern? pool,
-        ComputedStyle? parent)
+        ComputedStyle? parent,
+        FontFaceTable? faces = null)
     {
         _style = style ?? throw new ArgumentNullException(nameof(style));
         _dimensions = dimensions ?? throw new ArgumentNullException(nameof(dimensions));
@@ -107,6 +110,7 @@ public readonly struct ComputedStyle
         _parentFontSize = parentFontSize;
         _parentColor = parentColor;
         _declaresFontSize = declaresFontSize;
+        _faces = faces;
 
         // Assigned before it is filled because a struct cannot call its own methods until every field
         // has a value, and the resolver is one of those methods. Anything it read through this object
@@ -150,7 +154,7 @@ public readonly struct ComputedStyle
         { "font-size", "font-family", "font-weight", "font-style", "letter-spacing", "line-height" };
 
     /// <summary>The names a text property can begin with.</summary>
-    private static readonly String[] TextNames = { "white-space", "text-align", "vertical-align" };
+    private static readonly String[] TextNames = { "white-space", "text-align", "vertical-align", "text-indent" };
 
     /// <summary>The name a decoration property begins with, both longhands included.</summary>
     private static readonly String[] DecorationNames = { "text-decoration" };
@@ -182,7 +186,7 @@ public readonly struct ComputedStyle
         var font = new FontArea
         {
             Size = size,
-            Family = Keyword("font-family", CssInitialValues.FontFamily),
+            Family = ResolveFontFamily(),
             Weight = ResolveFontWeight(),
             Italic = Is("font-style", "italic") || Is("font-style", "oblique"),
             LetterSpacing = Length("letter-spacing", RenderMode.Horizontal, new LengthReader.FontSource(size), CssInitialValues.LetterSpacing),
@@ -190,6 +194,23 @@ public readonly struct ComputedStyle
         };
 
         _values.Font = pool is null ? font : pool.Font(font);
+    }
+
+    /// <summary>
+    /// Gets the family list the element asks for, with the names the document renamed with
+    /// <c>@font-face</c> standing for the local fonts behind them.
+    /// </summary>
+    /// <remarks>
+    /// A book names its faces once and asks for them by name, so <c>font-family: st</c> means the
+    /// typeface the rule points at - and a platform asked for <c>st</c> answers with its generic
+    /// fallback instead. Reading the list through the document's faces is what turns the name into the
+    /// list of families it stands for; the backend is left to search the names it is handed.
+    /// </remarks>
+    private String ResolveFontFamily()
+    {
+        var family = Keyword("font-family", CssInitialValues.FontFamily);
+
+        return _faces is { } faces ? faces.Expand(family) : family;
     }
 
     private void ResolveText(StyleIntern? pool, ComputedStyle? parent)
@@ -207,6 +228,7 @@ public readonly struct ComputedStyle
             WhiteSpace = Keyword("white-space", CssInitialValues.WhiteSpace),
             Align = Keyword("text-align", CssInitialValues.TextAlign),
             VerticalAlign = Keyword("vertical-align", CssInitialValues.VerticalAlign),
+            Indent = ReadLength("text-indent", RenderMode.Horizontal, StyleLength.Zero),
         };
 
         _values.Text = pool is null ? text : pool.Text(text);
@@ -324,6 +346,15 @@ public readonly struct ComputedStyle
     {
         StyleProbe.NoteTextRead("line-height");
 
+        // A percentage is a share of the element's own font size, the same reference the number below
+        // is measured against. It is taken here rather than left to the length reader, which resolves
+        // a percentage that reaches the device against the page: `line-height: 100%` came back as the
+        // viewport height, and a heading set in a 1200-tall viewport grew a line 1200 tall.
+        if (LineHeightShare() is { } share)
+        {
+            return share * 0.01 * size;
+        }
+
         var text = _style.GetPropertyValue("line-height");
 
         if (String.IsNullOrWhiteSpace(text))
@@ -347,6 +378,24 @@ public readonly struct ComputedStyle
             ? pixels
             : null;
     }
+
+    /// <summary>
+    /// Gets the declared <c>line-height</c> as a percentage, or null when it was declared as a number,
+    /// a length or a keyword.
+    /// </summary>
+    /// <remarks>
+    /// Both declarations are asked, in the order the length reader asks them, because a declared
+    /// percentage is the one thing here the computed declaration does not necessarily carry: computing
+    /// a style leaves a length in pixels, so the element's own declaration is the only place a share is
+    /// still recognisable as one.
+    /// </remarks>
+    private Double? LineHeightShare() =>
+        ShareOf(_specified) ?? ShareOf(_style);
+
+    private static Double? ShareOf(ICssStyleDeclaration? declaration) =>
+        declaration?.GetProperty("line-height")?.RawValue is CssLengthValue { Type: CssLengthValue.Unit.Percent } share
+            ? share.Value
+            : null;
 
     /// <summary>The names a display or a clipping property can begin with.</summary>
     private static readonly String[] DisplayNames = { "display", "object-fit", "overflow" };
@@ -455,7 +504,9 @@ public readonly struct ComputedStyle
 
     private void ResolveBoxModel(StyleIntern? pool)
     {
-        if (!DeclaresAny(BoxModelNames))
+        // An element that declares nothing still has a box model to resolve where the reader gives it
+        // margins of its own - which is every heading and paragraph of a page that states none.
+        if (!DeclaresAny(BoxModelNames) && Defaults("margin") is (null, null, null, null))
         {
             StyleProbe.NoteAreaUntouched();
 
@@ -651,6 +702,12 @@ public readonly struct ComputedStyle
     public Double? LineHeight => _values.Font.LineHeight;
 
     public String TextAlign => _values.Text.Align;
+
+    /// <summary>
+    /// Gets the distance the first line of the box is set in from the edge it begins at. A negative
+    /// one hangs the first line out of the box, which is how a note's marker is set beside its text.
+    /// </summary>
+    public StyleLength TextIndent => _values.Text.Indent;
 
     /// <summary>
     /// Gets the extra space added to every character's advance, in pixels. <c>normal</c>, the initial
@@ -1304,7 +1361,11 @@ public readonly struct ComputedStyle
     /// declaration is asked first because computing the style folds percentages into pixels.
     /// </summary>
     private StyleLength ReadLength(String name, RenderMode mode, StyleLength fallback) =>
-        LengthReader.TryRead(_specified, _style, name, mode, _dimensions, FontSourceOf(), out var length) ? length : fallback;
+        ReadDeclared(name, mode) ?? fallback;
+
+    /// <summary>Reads a length the page declared, or null when it declared none.</summary>
+    private StyleLength? ReadDeclared(String name, RenderMode mode) =>
+        LengthReader.TryRead(_specified, _style, name, mode, _dimensions, FontSourceOf(), out var length) ? length : null;
 
     /// <summary>
     /// Gets the font size a length read resolves against - the element's own, which the reader asks for
@@ -1314,11 +1375,150 @@ public readonly struct ComputedStyle
     /// </summary>
     private LengthReader.FontSource FontSourceOf() => new(this);
 
-    private StyleThickness ReadThickness(String prefix, StyleLength fallback) => new(
-        ReadLength(prefix + "-top", RenderMode.Horizontal, fallback),
-        ReadLength(prefix + "-right", RenderMode.Horizontal, fallback),
-        ReadLength(prefix + "-bottom", RenderMode.Horizontal, fallback),
-        ReadLength(prefix + "-left", RenderMode.Horizontal, fallback));
+    /// <summary>
+    /// Reads a box-model thickness: the four sides a page names by name, the four it names by the axis
+    /// they lie on, and the four the reader supplies for an element the page says nothing about.
+    /// </summary>
+    /// <remarks>
+    /// A sheet written for a vertical book states its insets the flow-relative way - the block axis is
+    /// the space beside the column and the inline axis the space along it - because that is the naming
+    /// that keeps meaning something once the text is set the other way. Nothing in AngleSharp resolves
+    /// one onto a physical side: it parses the properties and keeps them apart, so a page that named
+    /// them alone would lay out as if it had declared no margin at all.
+    /// <para>
+    /// The three are read in order of what they mean. A side the page states by name and by axis both
+    /// is the statement it meant, so the axis wins: a book that resets its margins with <c>margin: 0</c>
+    /// and then says which one it wants with <c>-webkit-margin-start</c> is asking for that one. Where
+    /// the page states a side by name alone, that is what it says. Where it says nothing, the defaults
+    /// below stand - which is the only way a reader's own default can be made to yield to the page, the
+    /// cascade being unable to tell a reader's declaration from a page's.
+    /// </para>
+    /// </remarks>
+    private StyleThickness ReadThickness(String prefix, StyleLength fallback)
+    {
+        var top = ReadDeclared(prefix + "-top", RenderMode.Horizontal);
+        var right = ReadDeclared(prefix + "-right", RenderMode.Horizontal);
+        var bottom = ReadDeclared(prefix + "-bottom", RenderMode.Horizontal);
+        var left = ReadDeclared(prefix + "-left", RenderMode.Horizontal);
+
+        var inlineStart = ReadDeclared(prefix + "-inline-start", RenderMode.Horizontal);
+        var inlineEnd = ReadDeclared(prefix + "-inline-end", RenderMode.Horizontal);
+        var blockStart = ReadDeclared(prefix + "-block-start", RenderMode.Horizontal);
+        var blockEnd = ReadDeclared(prefix + "-block-end", RenderMode.Horizontal);
+
+        var (defaultBlockStart, defaultBlockEnd, defaultInlineStart, defaultInlineEnd) = Defaults(prefix);
+
+        if (inlineStart is null && inlineEnd is null && blockStart is null && blockEnd is null &&
+            defaultBlockStart is null && defaultBlockEnd is null &&
+            defaultInlineStart is null && defaultInlineEnd is null)
+        {
+            // Nothing was named by axis and nothing is left unsupplied, which is every box of a page
+            // that was set the usual way and every padding in the world.
+            return new StyleThickness(
+                top ?? fallback,
+                right ?? fallback,
+                bottom ?? fallback,
+                left ?? fallback);
+        }
+
+        var flow = Flow;
+
+        if (flow.IsVertical)
+        {
+            // The line runs down the page, so the inline axis lands on the top and the bottom and the
+            // block axis on the right and the left - beginning at the right where the columns run
+            // leftward, which is what a right-to-left mode does.
+            var (byInlineStart, byInlineEnd) = flow.InlineSign > 0
+                ? (inlineStart, inlineEnd)
+                : (inlineEnd, inlineStart);
+
+            var (byBlockStart, byBlockEnd) = flow.BlockSign < 0
+                ? (blockStart, blockEnd)
+                : (blockEnd, blockStart);
+
+            var (defaultTop, defaultBottom) = flow.InlineSign > 0
+                ? (defaultInlineStart, defaultInlineEnd)
+                : (defaultInlineEnd, defaultInlineStart);
+
+            var (defaultRight, defaultLeft) = flow.BlockSign < 0
+                ? (defaultBlockStart, defaultBlockEnd)
+                : (defaultBlockEnd, defaultBlockStart);
+
+            return new StyleThickness(
+                byInlineStart ?? top ?? defaultTop ?? fallback,
+                byBlockStart ?? right ?? defaultRight ?? fallback,
+                byInlineEnd ?? bottom ?? defaultBottom ?? fallback,
+                byBlockEnd ?? left ?? defaultLeft ?? fallback);
+        }
+
+        // A row runs across the page, so the inline axis is the horizontal pair and the block axis the
+        // vertical one, which begins at the top whichever way the line itself reads.
+        var (byStart, byEnd) = flow.InlineSign > 0
+            ? (inlineStart, inlineEnd)
+            : (inlineEnd, inlineStart);
+
+        return new StyleThickness(
+            blockStart ?? top ?? defaultBlockStart ?? fallback,
+            byEnd ?? right ?? defaultInlineEnd ?? fallback,
+            blockEnd ?? bottom ?? defaultBlockEnd ?? fallback,
+            byStart ?? left ?? defaultInlineStart ?? fallback);
+    }
+
+    /// <summary>
+    /// Gets the space HTML leaves around an element whose page says nothing about it, as the four
+    /// flow-relative distances the reader supplies: the block axis is the space between blocks, and
+    /// the inline axis the space along the line.
+    /// </summary>
+    /// <remarks>
+    /// These are the values the CSS 2.2 sample stylesheet states, which is where a browser's defaults
+    /// come from as well - stated to the flow rather than to the page, so that a column reads the
+    /// space between blocks beside itself instead of down it. Nothing is returned for a padding, for
+    /// an element HTML gives no margins to, or for a list inside a list, which the sample leaves to its
+    /// outer one.
+    /// </remarks>
+    /// <summary>Gets whether a list sits inside another one, whose own margins the sample leaves it to.</summary>
+    private static Boolean IsNested(IElement element) =>
+        element.ParentElement?.LocalName is "ul" or "ol";
+
+    private (StyleLength? BlockStart, StyleLength? BlockEnd, StyleLength? InlineStart, StyleLength? InlineEnd) Defaults(String prefix)
+    {
+        if (!String.Equals(prefix, "margin", StringComparison.Ordinal) || _element is not { } element)
+        {
+            return default;
+        }
+
+        var tag = element.LocalName.ToLowerInvariant();
+
+        // The space between blocks, as a multiple of the element's own font size - which the font area
+        // has already settled, this being read from the box model.
+        var block = tag switch
+        {
+            "h1" => 0.67,
+            "h2" => 0.75,
+            "h3" => 0.83,
+            "h4" => 1.12,
+            "h5" => 1.5,
+            "h6" => 1.67,
+            "p" or "blockquote" or "dl" or "dir" or "menu" or "fieldset" or "form" => 1.12,
+            "ul" or "ol" => IsNested(element) ? (Double?)null : 1.12,
+            _ => null,
+        };
+
+        // The distance a list or a quotation is set in from the edge its lines begin at, which is the
+        // one the sample states in pixels.
+        var indent = tag is "ul" or "ol" or "dir" or "menu" or "dd" or "blockquote" ? 40.0 : (Double?)null;
+        var indentEnd = tag == "blockquote" ? indent : null;
+        var space = block is { } size ? size * _values.Font.Size : (Double?)null;
+
+        return (
+            Pixels(space),
+            Pixels(space),
+            Pixels(indent),
+            Pixels(indentEnd));
+
+        static StyleLength? Pixels(Double? value) =>
+            value is { } pixels ? StyleLength.FromPixels(pixels) : null;
+    }
 
     /// <summary>
     /// Reads how thick a side is. The caller has already resolved the side's style, so this does not
@@ -1416,6 +1616,17 @@ public readonly struct ComputedStyle
 
     private Double? Resolve(ICssValue value, RenderMode mode, LengthReader.FontSource font)
     {
+        // A keyword that stands for no particular value - `inherit`, `initial`, `unset`, `revert` - is
+        // not a length, and AngleSharp answers every one of them with zero when asked for pixels. Read
+        // that way a `font: inherit` gave an element a font size of nothing at all, and every line of
+        // its text no height either. A caller reads the absence as "the page said nothing here" and
+        // falls back to what the property would have been - which for `inherit` is the value the
+        // element was handed anyway.
+        if (value is not CssLengthValue && IsWideKeyword(value.CssText))
+        {
+            return null;
+        }
+
         // A keyword standing for a length - `medium`, which is what `border-width` and `outline-width`
         // start out as, and `thin` and `thick` beside it - is carried as a named constant wrapping the
         // length it stands for, and only the length it wraps can be converted. Left wrapped the
@@ -1445,6 +1656,10 @@ public readonly struct ComputedStyle
             return null;
         }
     }
+
+    /// <summary>Gets whether a keyword stands for one of the values every property can be given.</summary>
+    private static Boolean IsWideKeyword(String? text) => text?.Trim().ToLowerInvariant() is
+        "inherit" or "initial" or "unset" or "revert" or "revert-layer";
 
     private static Double? Resolve(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, LengthReader.FontSource font)
     {

@@ -137,7 +137,10 @@ public sealed class RenderingPipeline
         RenderTree = window?.Render(_device);
         RenderProbe.Style();
 
-        BoxTree = BoxBuilder.Build(RenderTree, _device, _images);
+        // The faces the document declares are read once for the build rather than per box: they are a
+        // property of the sheets, and every element that asks for one of those names gets the same
+        // answer however deep in the tree it sits.
+        BoxTree = BoxBuilder.Build(RenderTree, _device, _images, FontFaceTable.From(document));
         RenderProbe.Boxes();
 
         // A highlight names boxes of the layout it was measured against, so a new layout always drops

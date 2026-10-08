@@ -17,8 +17,16 @@ namespace Hutu.Skia;
 /// </remarks>
 public sealed class SkiaFontResolver : IDisposable
 {
+    /// <summary>How many files a name is opened against before the search is given up.</summary>
+    /// <remarks>
+    /// A name that resembles a great many files is a name that names none of them, so the search is
+    /// bounded rather than exhaustive: the closest names are tried and the rest are left alone.
+    /// </remarks>
+    private const Int32 Candidates = 12;
+
     private readonly ConcurrentDictionary<FaceKey, SKTypeface> _typefaces = new();
     private readonly ConcurrentDictionary<FallbackKey, Fallback> _fallbacks = new();
+    private readonly List<(String Name, String Path)> _files = new(FontFiles.All());
 
     public SKTypeface Resolve(FontStyle style) =>
         _typefaces.GetOrAdd(new FaceKey(style.Family, style.Weight, style.IsItalic), CreateTypeface);
@@ -38,33 +46,11 @@ public sealed class SkiaFontResolver : IDisposable
             new FallbackKey(codepoint, style.Weight, style.IsItalic),
             _ => FindFallback(codepoint, style)).Typeface;
 
-    /// <summary>
-    /// Splits a CSS family list into individual names, stripping the quotes a family containing
-    /// spaces is required to carry.
-    /// </summary>
-    public static IEnumerable<String> SplitFamilies(String familyList)
-    {
-        if (String.IsNullOrWhiteSpace(familyList))
-        {
-            yield break;
-        }
-
-        foreach (var part in familyList.Split(','))
-        {
-            var name = part.Trim().Trim('"', '\'');
-
-            if (name.Length > 0)
-            {
-                yield return name;
-            }
-        }
-    }
-
-    private static SKTypeface CreateTypeface(FaceKey key)
+    private SKTypeface CreateTypeface(FaceKey key)
     {
         var style = CreateStyle(key.Weight, key.Italic);
 
-        foreach (var family in SplitFamilies(key.Family))
+        foreach (var family in FontStyle.Split(key.Family))
         {
             var match = SKFontManager.Default.MatchFamily(family, style);
 
@@ -72,12 +58,128 @@ public sealed class SkiaFontResolver : IDisposable
             {
                 return match;
             }
+
+            if (Named(family) is { } named)
+            {
+                return named;
+            }
         }
 
         // "sans-serif" is the CSS generic; platforms that do not know the name fall through to the
         // process default, which is what the initial value of font-family resolves to anyway.
         return SKFontManager.Default.MatchFamily("sans-serif", style) ?? SKTypeface.Default;
     }
+
+    /// <summary>
+    /// Gets the font a name stands for when the name is the one the font carries rather than the one
+    /// its family is called by.
+    /// </summary>
+    /// <remarks>
+    /// <c>local()</c> in an <c>@font-face</c> source names a font by its full or PostScript name -
+    /// <c>TsukuMinPr6-M</c>, say, where the family is called <c>FOT-TsukuMin Pr6</c> - and the font
+    /// manager matches families, so the name has to be looked for among the files. A name that is also
+    /// a family never gets here, and a name that resembles no file name is not found this way at all,
+    /// which is the same answer the platform gives: the next source is tried instead.
+    /// </remarks>
+    private SKTypeface? Named(String name)
+    {
+        var wanted = FontFiles.Normalize(name);
+
+        if (wanted.Length < 3)
+        {
+            return null;
+        }
+
+        foreach (var (file, path) in Nearest(wanted))
+        {
+            // A collection holds several faces under one name, so a file that carries the name is
+            // asked for each of them until one answers to it.
+            for (var index = 0; index < 8; index++)
+            {
+                var face = SKTypeface.FromFile(path, index);
+
+                if (face is null)
+                {
+                    break;
+                }
+
+                if (Holds(face, wanted))
+                {
+                    return face;
+                }
+
+                face.Dispose();
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the files whose names are most like the name asked for, beginning with the likeliest.
+    /// </summary>
+    private IEnumerable<(String Name, String Path)> Nearest(String wanted)
+    {
+        var ranked = new List<(Int32 Alike, String Name, String Path)>();
+
+        foreach (var file in _files)
+        {
+            var alike = Alike(file.Name, wanted);
+
+            if (alike > 0)
+            {
+                ranked.Add((alike, file.Name, file.Path));
+            }
+        }
+
+        ranked.Sort((a, b) => b.Alike - a.Alike);
+
+        var taken = 0;
+
+        foreach (var (_, name, path) in ranked)
+        {
+            if (taken++ == Candidates)
+            {
+                yield break;
+            }
+
+            yield return (name, path);
+        }
+    }
+
+    /// <summary>
+    /// Gets how much of a name a file name is made of, as the share of the pairs of letters next to
+    /// each other in it that appear in the file name as well.
+    /// </summary>
+    /// <remarks>
+    /// Adjacent pairs rather than letters, because a name written in a different order - a style put
+    /// before a family, a decoration wrapped around it - keeps its pairs and loses its spelling. The
+    /// count is a share of the name asked for rather than of both, so a short name matching a long
+    /// file name does not score as well as the file name it is really written in.
+    /// </remarks>
+    private static Int32 Alike(String file, String wanted)
+    {
+        var alike = 0;
+
+        for (var index = 0; index + 1 < wanted.Length; index++)
+        {
+            if (file.AsSpan().IndexOf(wanted.AsSpan(index, 2), StringComparison.Ordinal) >= 0)
+            {
+                alike++;
+            }
+        }
+
+        return alike;
+    }
+
+    /// <summary>
+    /// Gets whether a font answers to a name - by the name its family is called, or by the name it
+    /// carries itself, which is what CSS asks a font by. The full name is not read: Skia offers the
+    /// family and the PostScript name, and a full name that is neither is one this reader cannot see.
+    /// </summary>
+    private static Boolean Holds(SKTypeface face, String wanted) =>
+        FontFiles.Normalize(face.FamilyName) == wanted ||
+        (face.PostScriptName is { Length: > 0 } postscript && FontFiles.Normalize(postscript) == wanted);
 
     private static SKFontStyle CreateStyle(Int32 weight, Boolean italic) =>
         new(weight, (Int32)SKFontStyleWidth.Normal, italic ? SKFontStyleSlant.Italic : SKFontStyleSlant.Upright);

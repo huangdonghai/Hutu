@@ -42,6 +42,60 @@ public sealed class SkiaRenderingTests
         Assert.That(nonWhite, Is.GreaterThan(0), "the document should have painted something");
     }
 
+    /// <summary>
+    /// A font asked for by the name it carries is the font that carries it, which is what
+    /// <c>local()</c> in an <c>@font-face</c> source names - the way a book that ships no font of its
+    /// own says which of the machine's it wants.
+    /// </summary>
+    /// <remarks>
+    /// The face is found on the machine running the test rather than named here, and the name is
+    /// checked to be one no family answers to, so what is measured is the search among the font files
+    /// and not the family match in front of it.
+    /// </remarks>
+    [Test]
+    public void AFontIsFoundByTheNameItCarriesRatherThanByItsFamily()
+    {
+        using var measurer = new SkiaTextMeasurer();
+
+        Assume.That(
+            AFaceWithANameOfItsOwn(),
+            Is.Not.Null,
+            "the machine offers no font whose own name is one no family answers to");
+
+        var (family, postscript) = AFaceWithANameOfItsOwn()!.Value;
+        var resolved = measurer.Fonts.Resolve(new FontStyle(postscript, 16));
+
+        Assert.That(
+            resolved.PostScriptName,
+            Is.EqualTo(postscript),
+            $"'{postscript}' is the name of a face of '{family}', and asking for it has to answer with that face");
+    }
+
+    /// <summary>Finds a font on the machine whose own name is not a family name.</summary>
+    private static (String Family, String PostScript)? AFaceWithANameOfItsOwn()
+    {
+        foreach (var family in SKFontManager.Default.FontFamilies)
+        {
+            using var styles = SKFontManager.Default.GetFontStyles(family);
+
+            if (styles is null || styles.Count == 0)
+            {
+                continue;
+            }
+
+            using var face = styles.CreateTypeface(0);
+
+            if (face?.PostScriptName is { Length: > 0 } postscript &&
+                !postscript.Equals(family, StringComparison.OrdinalIgnoreCase) &&
+                SKFontManager.Default.MatchFamily(postscript) is null)
+            {
+                return (family, postscript);
+            }
+        }
+
+        return null;
+    }
+
     [Test]
     public void CharactersAFamilyCannotSetFallBackToASystemFontThatCan()
     {

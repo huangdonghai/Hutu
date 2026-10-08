@@ -189,6 +189,30 @@ public readonly struct WritingModeInfo
         BlockSign < 0 ? blockSize - fromBlockStart : fromBlockStart;
 
     /// <summary>
+    /// Splits a box's margins into the pair that opens and closes it along the line it sits on.
+    /// </summary>
+    /// <remarks>
+    /// The inline axis is the one a line runs along, so a box in a row is opened by its left margin
+    /// and one down a column by its top - or by the other of each pair where the line reads the other
+    /// way. It is the same mapping that decides which of the two pairs a parent's cursor walks past:
+    /// the margins on this axis belong to the box, and the ones on the
+    /// <see cref="BlockMargins(Thickness)">block axis</see> to whoever stacks it.
+    /// </remarks>
+    public (Double Start, Double End) InlineMargins(Thickness margin) =>
+        IsVertical
+            ? InlineSign > 0 ? (margin.Top, margin.Bottom) : (margin.Bottom, margin.Top)
+            : InlineSign > 0 ? (margin.Left, margin.Right) : (margin.Right, margin.Left);
+
+    /// <summary>
+    /// Splits a box's margins into the pair that opens and closes it across the lines, which is the
+    /// axis the next line advances along.
+    /// </summary>
+    public (Double Start, Double End) BlockMargins(Thickness margin) =>
+        IsVertical
+            ? BlockSign > 0 ? (margin.Left, margin.Right) : (margin.Right, margin.Left)
+            : (margin.Top, margin.Bottom);
+
+    /// <summary>
     /// Gets whether a character stays upright. <c>mixed</c> keeps the wide characters - CJK, kana and
     /// the fullwidth forms - upright and turns the rest, which is what makes Latin read sideways in a
     /// column while the text around it does not.

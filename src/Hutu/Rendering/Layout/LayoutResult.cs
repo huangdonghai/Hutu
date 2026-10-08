@@ -21,6 +21,12 @@ public enum ScrollAlignment
 }
 
 /// <summary>The outcome of a layout pass: the tree plus the size the document occupies.</summary>
+/// <remarks>
+/// The size is what the viewport scrolls over, which is the whole of what the document occupies -
+/// more than the root's box wherever a box reaches past it. The document occupies exactly
+/// <c>0, 0</c> to <c>Width, Height</c>: the offsets a scroll is measured in start where the document
+/// does on the outside, whichever corner the page itself begins reading at.
+/// </remarks>
 public sealed class LayoutResult
 {
     public LayoutResult(LayoutBox root, Double width, Double height)
@@ -32,11 +38,23 @@ public sealed class LayoutResult
 
     public LayoutBox Root { get; }
 
-    /// <summary>Gets the width the layout was computed against.</summary>
+    /// <summary>Gets the width of the laid-out document, i.e. the scrollable content width.</summary>
     public Double Width { get; }
 
     /// <summary>Gets the height of the laid-out document, i.e. the scrollable content height.</summary>
     public Double Height { get; }
+
+    /// <summary>
+    /// Gets whether the document begins at its right edge: the columns of a vertical page march
+    /// leftward from there, and a right-to-left page reads that way along its lines.
+    /// </summary>
+    /// <remarks>
+    /// A host that opens a document at the origin opens at the end of one of these rather than at its
+    /// beginning. Showing the beginning means scrolling to the far end of the range, which is the
+    /// document's width less the viewport's, and no rectangle of the layout says so on its own:
+    /// bringing one into view is a question about an element, and this one is about the page.
+    /// </remarks>
+    public Boolean StartsAtRight => Root.Flow.BlockSign < 0 || Root.Flow.IsRightToLeft;
 
     /// <summary>
     /// Gets the first box an element generated, in document order. An element whose content spans

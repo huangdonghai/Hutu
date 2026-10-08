@@ -112,6 +112,19 @@ public sealed class LengthUnitTests
         Assert.That(Box(view, "div").Radii.TopLeft.Horizontal, Is.EqualTo(10).Within(0.01));
     }
 
+    [Test]
+    public async Task PercentageLineHeightIsRelativeToTheElementFontSize()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<p style='margin:0;font-size:20px;line-height:150%'>a</p>"));
+
+        Assert.That(
+            Walk(view).First(node => node.Kind == LayoutKind.Line).BorderBox.Height,
+            Is.EqualTo(30).Within(0.01),
+            "150% of the paragraph's own twenty pixels, not a share of the viewport it is read through");
+    }
+
     /// <summary>Gets the document under test: a body with no margin and the root font size the em tests assume.</summary>
     private static String Document(String content, Int32 width = 0) =>
         "<html><body style='margin:0;font-size:16px;line-height:1'" +

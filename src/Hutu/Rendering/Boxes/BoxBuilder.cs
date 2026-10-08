@@ -31,7 +31,11 @@ public static class BoxBuilder
     /// Supplies the intrinsic size of images. Optional: without it a replaced box falls back to the
     /// declared attributes and then to the specification's default object size.
     /// </param>
-    public static Box? Build(IRenderNode? renderTree, IRenderDimensions dimensions, IImageProvider? images = null)
+    public static Box? Build(
+        IRenderNode? renderTree,
+        IRenderDimensions dimensions,
+        IImageProvider? images = null,
+        FontFaceTable? faces = null)
     {
         if (renderTree is not ElementRenderNode root)
         {
@@ -43,14 +47,52 @@ public static class BoxBuilder
         // reference to the parent's area could not catch, since sibling list items agree as much as
         // an inheriting child does.
         var pool = new StyleIntern();
-        var box = BuildElement(root, dimensions, images, WritingModeInfo.Horizontal, pool, null);
+        var box = BuildElement(root, dimensions, images, faces, WritingModeInfo.Horizontal, pool, null);
 
         if (box is not null)
         {
+            AdoptBodyFlow(box, dimensions);
             MarkBasisUse(box);
         }
 
         return box;
+    }
+
+    /// <summary>
+    /// Gives the page the writing mode the <c>body</c> runs in, when the root declares none of its own.
+    /// </summary>
+    /// <remarks>
+    /// A vertical book states its direction on the <c>body</c> - that is where the format puts it, and
+    /// where the readers that show vertical Chinese look for it - which leaves the root horizontal and
+    /// the body in an orthogonal flow. An orthogonal box with an automatic inline size has no definite
+    /// extent to fill, so it takes the extent its content asks for instead: every paragraph becomes one
+    /// column as tall as its whole text, and the chapter becomes a band of them tens of thousands of
+    /// pixels wide, of which the viewport shows the last one.
+    /// <para>
+    /// The page box is the one the book asked for. The root runs the way the body does, so a column is
+    /// as long as the viewport is tall and the chapter is as wide as its columns make it.
+    /// </para>
+    /// <para>
+    /// Only the root is touched: every box under the body carries the mode the body asked for already,
+    /// and one that inherits the root's is horizontal in the cascade whatever this settles on.
+    /// </para>
+    /// </remarks>
+    private static void AdoptBodyFlow(Box root, IRenderDimensions dimensions)
+    {
+        if (root.Element is not { } element ||
+            ComputedStyle.Declares(element, dimensions, "writing-mode"))
+        {
+            return;
+        }
+
+        foreach (var child in root.Children)
+        {
+            if (child.Element is { } body && IsTag(body, "body") && child.Flow.IsVertical)
+            {
+                root.Flow = child.Flow;
+                return;
+            }
+        }
     }
 
     /// <summary>
@@ -133,6 +175,7 @@ public static class BoxBuilder
         ElementRenderNode node,
         IRenderDimensions dimensions,
         IImageProvider? images,
+        FontFaceTable? faces,
         WritingModeInfo inherited,
         StyleIntern pool,
         ComputedStyle? parent,
@@ -148,7 +191,8 @@ public static class BoxBuilder
             parentColor,
             DeclaresRelativeFontSize(node.Ref, node.SpecifiedStyle, dimensions),
             pool,
-            parent);
+            parent,
+            faces);
 
         if (style.IsDisplayNone)
         {
@@ -180,7 +224,7 @@ public static class BoxBuilder
             switch (child)
             {
                 case ElementRenderNode elementChild:
-                    var childBox = BuildElement(elementChild, dimensions, images, flow, pool, style, style.FontSize, color);
+                    var childBox = BuildElement(elementChild, dimensions, images, faces, flow, pool, style, style.FontSize, color);
 
                     if (childBox is not null)
                     {

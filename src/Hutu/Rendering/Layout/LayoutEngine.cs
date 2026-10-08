@@ -110,11 +110,17 @@ public sealed class LayoutEngine
         var size = Measure(root, MeasureConstraints.FitWidth(width), context);
         var margin = BoxModel.UsedMargin(root.Style, width, size.Width);
         var rootBox = Arrange(root, new Rect(margin.Left, 0, size.Width, size.Height), context);
-        var height = rootBox.BorderBox.Bottom + rootBox.Margin.Bottom;
 
         ResolveDecorations(rootBox);
 
-        return new LayoutResult(rootBox, width, height);
+        // What the document occupies is what a viewport has to be able to reach, which is not the
+        // root's box: a page whose columns run sideways, or a box placed off an edge, reaches past
+        // it. Measuring it settles the frame as well, because a scroll offset is a distance from
+        // where the document begins.
+        var content = ScrollableOverflow.Of(rootBox);
+        ScrollableOverflow.MoveToOrigin(rootBox, content);
+
+        return new LayoutResult(rootBox, content.Width, content.Height);
     }
 
     /// <summary>

@@ -108,41 +108,50 @@ internal sealed class BlockLayout
         // the box was given, the block one the declared width or, when it comes from the content,
         // the width the box itself was measured against. The arranging pass reconstructs the same
         // pair, so a child is never measured twice under two different constraints.
-        var childInline = declaredInline ?? basisInline;
+        //
+        // The box's own margins along the line come off that extent, exactly as they come off the
+        // width a row resolves: `ResolveWidth` is where a row subtracts them, and this is the same
+        // rule with the axes exchanged. A percentage height still resolves against the whole extent
+        // the box was given rather than against what its margins leave, which is also what a row does.
+        var (inlineBefore, inlineAfter) = flow.InlineMargins(style.Margin.Resolve(basisInline));
+        var childInline = declaredInline ?? Math.Max(0, basisInline - inlineBefore - inlineAfter - insetsInline);
         var childBlock = declaredBlock ?? context.ContainingBlock.Width;
 
-        Double contentInline;
+        // An extent that comes from the content only ever decides the block size. The inline size of a
+        // block-level box is the one the CSS2.1 constraint equation settles: with `height: auto` the
+        // other automatic values become zero and the size follows from the equality, so the box takes
+        // what the containing block has left after its margins and insets - the same arithmetic
+        // `ResolveWidth` runs for a row, which is the rule the writing mode exchanges the axes of.
         Double contentBlock;
 
         if (box.Children.Count == 0)
         {
-            contentInline = declaredInline ?? 0;
             contentBlock = 0;
         }
         else if (HasBlockChildren(box))
         {
-            var children = MeasureColumnChildren(box, childInline, childBlock, context, flow);
-            contentInline = declaredInline ?? children.Inline;
-            contentBlock = children.Block;
+            contentBlock = MeasureColumnChildren(box, childInline, childBlock, context, flow);
         }
         else
         {
-            var measured = _inline.Measure(box, childInline, flow, new InlineContext(_engine, context));
-            contentInline = declaredInline ?? measured.Inline;
-            contentBlock = measured.Block;
+            contentBlock = _inline.Measure(box, childInline, flow, new InlineContext(_engine, context)).Block;
         }
 
         var blockSize = BoxModel.ResolveBlockExtent(style, contentBlock, basisBlock, insetsBlock);
-        var inlineSize = BoxModel.ClampHeight(style, contentInline, basisInline, insetsInline);
+        var inlineSize = BoxModel.ClampHeight(style, childInline, basisInline, insetsInline);
 
         return new Size(blockSize + insetsBlock, inlineSize + insetsInline);
     }
 
     /// <summary>
-    /// Measures the block children of a column and returns the extents their stacking occupies: the
-    /// extent along the block axis that the columns need, and the longest column among them.
+    /// Measures the block children of a column and returns the extent their stacking occupies along
+    /// the block axis, which is how wide the band of columns they make has to be.
     /// </summary>
-    private (Double Inline, Double Block) MeasureColumnChildren(
+    /// <remarks>
+    /// Nothing here answers for the inline axis: a column is as long as the space it was given, not
+    /// as long as the tallest child, so what the children reach down it does not come into the size.
+    /// </remarks>
+    private Double MeasureColumnChildren(
         Box box,
         Double contentInline,
         Double basisBlock,
@@ -152,7 +161,6 @@ internal sealed class BlockLayout
         var cursor = 0.0;
         var previousEndMargin = 0.0;
         var first = true;
-        var inline = 0.0;
         var childContext = context.ForContainingBlock(new Size(basisBlock, contentInline));
         var constraints = MeasureConstraints.FitWidth(basisBlock);
 
@@ -164,26 +172,32 @@ internal sealed class BlockLayout
             }
 
             // The margins that separate the columns are the physical left and right ones, and which of
-            // the two a box starts with depends on the direction the columns run.
+            // the two a box starts with depends on the direction the columns run. The other pair is
+            // across the columns, where it is the child's own room: the child took it off the extent
+            // it was given to run down, which is the extent this one hands it.
             var margin = child.Style.Margin.Resolve(contentInline);
-            var startMargin = flow.BlockSign < 0 ? margin.Right : margin.Left;
-            var endMargin = flow.BlockSign < 0 ? margin.Left : margin.Right;
+            var (startMargin, endMargin) = flow.BlockMargins(margin);
             var spacing = first ? startMargin : Math.Max(previousEndMargin, startMargin);
             var size = _engine.Measure(child, constraints, childContext);
 
             cursor += spacing + flow.BlockExtent(size.Width, size.Height);
-            inline = Math.Max(inline, flow.InlineExtent(size.Width, size.Height));
             previousEndMargin = endMargin;
             first = false;
         }
 
-        return (inline, cursor + previousEndMargin);
+        return cursor + previousEndMargin;
     }
 
     /// <summary>
-    /// Measures the width the box's content wants when nothing constrains it. A flex item with
-    /// <c>flex-basis: auto</c> and a grid track sized as <c>max-content</c> both land here.
+    /// Measures the extent the box's content wants along the line when nothing constrains it. A flex
+    /// item with <c>flex-basis: auto</c> and a grid track sized as <c>max-content</c> both land here.
     /// </summary>
+    /// <remarks>
+    /// The extents are of the box rather than of its content, so they carry the box's own padding and
+    /// border - and, for a column, the ones above and below it, because that is where its line runs.
+    /// They are the inline extents of a box that lays its text out, and the widths of one whose text
+    /// runs down a column and whose block extent is therefore what a caller sizing it wants.
+    /// </remarks>
     public IntrinsicSize MeasureIntrinsic(Box box, LayoutContext context)
     {
         var style = box.Style;
@@ -192,13 +206,16 @@ internal sealed class BlockLayout
 
         if (box.IsReplaced)
         {
-            var (width, _) = ReplacedSizing.Resolve(box, basis, context.ContainingBlock.Height);
-            var outer = width + insets;
+            var (width, height) = ReplacedSizing.Resolve(box, basis, context.ContainingBlock.Height);
+            var outer = box.Flow.InlineExtent(width, height) + insets;
             return new IntrinsicSize(outer, outer);
         }
 
-        // A declared width settles both: the content cannot be narrower or wider than the box.
-        if (style.Width.HasValue && !(style.Width.Kind == StyleLengthKind.Percent && basis <= 0))
+        // A declared width settles both extents of a row: the content cannot be any wider than the box
+        // it is confined to. A column's width is its block extent and says nothing about its line.
+        if (!box.Flow.IsVertical &&
+            style.Width.HasValue &&
+            !(style.Width.Kind == StyleLengthKind.Percent && basis <= 0))
         {
             var specified = Math.Max(0, style.Width.Resolve(basis));
             var borderBox = BoxModel.IsBorderBox(style) ? specified : specified + insets;
@@ -220,8 +237,8 @@ internal sealed class BlockLayout
 
         if (box.IsReplaced)
         {
-            var (width, _) = ReplacedSizing.Resolve(box, basis, context.ContainingBlock.Height);
-            var outer = width + insets;
+            var (width, height) = ReplacedSizing.Resolve(box, basis, context.ContainingBlock.Height);
+            var outer = box.Flow.InlineExtent(width, height) + insets;
             return new IntrinsicSize(outer, outer);
         }
 
@@ -250,10 +267,12 @@ internal sealed class BlockLayout
                     continue;
                 }
 
+                // The children lie beside each other along the same line this box's text would run
+                // down, so it is their margins along it that widen what the box asks for.
                 var childIntrinsic = _engine.MeasureIntrinsic(child, context);
-                var childMargin = child.Style.Margin.Resolve(basis).Horizontal;
-                min = Math.Max(min, childIntrinsic.MinContent + childMargin);
-                max = Math.Max(max, childIntrinsic.MaxContent + childMargin);
+                var (before, after) = child.Flow.InlineMargins(child.Style.Margin.Resolve(basis));
+                min = Math.Max(min, childIntrinsic.MinContent + before + after);
+                max = Math.Max(max, childIntrinsic.MaxContent + before + after);
             }
         }
         else
@@ -269,12 +288,23 @@ internal sealed class BlockLayout
         return new IntrinsicSize(min + insets, max + insets);
     }
 
-    /// <summary>Gets the horizontal padding and border the box adds around its content.</summary>
+    /// <summary>
+    /// Gets the padding and border the box adds around its content along the axis it sets text on.
+    /// </summary>
+    /// <remarks>
+    /// A box whose text runs down a column is bordered above and below rather than to either side, so
+    /// the extents measured along that line have to be widened by the vertical pair instead. Getting
+    /// this wrong takes the insets off a size that never had them - which is a column's content given
+    /// slightly less room than it asked for, so that the last thing on its first line wraps away.
+    /// </remarks>
     private Double InsetsOf(Box box, Double basis)
     {
         var border = BorderOf(box);
         var padding = box.Style.Padding.Resolve(basis);
-        return padding.Horizontal + border.Horizontal;
+
+        return box.Flow.IsVertical
+            ? padding.Vertical + border.Vertical
+            : padding.Horizontal + border.Horizontal;
     }
 
     /// <summary>
@@ -479,15 +509,15 @@ internal sealed class BlockLayout
             }
 
             var margin = child.Style.Margin.Resolve(contentInline);
-            var startMargin = flow.BlockSign < 0 ? margin.Right : margin.Left;
-            var endMargin = flow.BlockSign < 0 ? margin.Left : margin.Right;
+            var (startMargin, endMargin) = flow.BlockMargins(margin);
+            var (beforeIt, afterIt) = flow.InlineMargins(margin);
             var spacing = first ? startMargin : Math.Max(previousEndMargin, startMargin);
 
             if (PositionedLayout.IsOutOfFlow(child))
             {
                 // Same as in a row: the box takes no space, but the place it would have had is kept
                 // as the static position an unset offset falls back to.
-                var anchor = flow.Map(content, 0, 0, cursor + spacing, 0);
+                var anchor = flow.Map(content, beforeIt, 0, cursor + spacing, 0);
                 outOfFlow.Add((child, new Offset(anchor.X, anchor.Y)));
                 continue;
             }
@@ -495,7 +525,10 @@ internal sealed class BlockLayout
             var size = _engine.Measure(child, constraints, context);
             var blockSize = flow.BlockExtent(size.Width, size.Height);
             var inlineSize = flow.InlineExtent(size.Width, size.Height);
-            var rect = flow.Map(content, 0, inlineSize, cursor + spacing, blockSize);
+
+            // The margin that opens the child is where it begins down its column, the way a box in a
+            // row begins after its left margin.
+            var rect = flow.Map(content, beforeIt, inlineSize, cursor + spacing, blockSize);
 
             parent.Children.Add(_engine.Arrange(child, rect, context));
 

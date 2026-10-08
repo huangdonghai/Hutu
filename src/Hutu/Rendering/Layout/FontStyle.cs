@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Hutu.Rendering.Layout;
 
@@ -19,6 +20,37 @@ public readonly struct FontStyle : IEquatable<FontStyle>
 
     /// <summary>Gets the CSS family list, e.g. <c>"Helvetica Neue", Arial, sans-serif</c>.</summary>
     public String Family { get; }
+
+    /// <summary>Gets the names of that list, in the order they are asked for.</summary>
+    public IEnumerable<String> Families => Split(Family);
+
+    /// <summary>
+    /// Takes a CSS family list apart into the names a font has to be looked up by.
+    /// </summary>
+    /// <remarks>
+    /// A name is quoted when it has spaces in it, and the quotes are not part of it: leaving them on
+    /// would ask the platform for a family called <c>"Helvetica Neue"</c>, which nothing is called.
+    /// </remarks>
+    public static IEnumerable<String> Split(String familyList)
+    {
+        if (String.IsNullOrWhiteSpace(familyList))
+        {
+            yield break;
+        }
+
+        foreach (var part in familyList.Split(','))
+        {
+            var name = Unquote(part);
+
+            if (name.Length > 0)
+            {
+                yield return name;
+            }
+        }
+    }
+
+    /// <summary>Gets a family name without the quotes a name with spaces in it is written in.</summary>
+    public static String Unquote(String name) => name.Trim().Trim('"', '\'');
 
     public Double Size { get; }
 

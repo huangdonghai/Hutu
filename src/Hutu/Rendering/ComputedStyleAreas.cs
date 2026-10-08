@@ -230,6 +230,13 @@ internal sealed record TextArea
     internal String Align { get; init; } = CssInitialValues.TextAlign;
 
     internal String VerticalAlign { get; init; } = CssInitialValues.VerticalAlign;
+
+    /// <summary>
+    /// The distance the first line of a box is set in from the edge it begins at, with its units still
+    /// attached: a percentage among them is a share of the containing block, which only the layout
+    /// pass has.
+    /// </summary>
+    internal StyleLength Indent { get; init; } = StyleLength.Zero;
 }
 
 /// <summary>

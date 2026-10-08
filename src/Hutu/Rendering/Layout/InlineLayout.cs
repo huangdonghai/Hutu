@@ -102,14 +102,16 @@ public sealed class InlineLayout
         var block = 0.0;
         var inline = 0.0;
 
-        foreach (var line in BuildLines(items, maxInline, flow, context))
+        foreach (var line in BuildLines(items, maxInline, flow, context, Indentation(container, flow, context)))
         {
             if (line.Height > 0)
             {
                 block += line.Height;
             }
 
-            inline = Math.Max(inline, line.Used);
+            // The room the line takes is what its runs take plus the distance it was set in by, which
+            // only the first line of a box has any of.
+            inline = Math.Max(inline, line.Indent + line.Used);
         }
 
         return new InlineContentSize(inline, block);
@@ -142,9 +144,14 @@ public sealed class InlineLayout
         var items = new List<InlineItem>();
         Collect(container, items, flow, null, basis);
 
+        // The first line carries the box's indentation ahead of anything set on it, so both extents the
+        // content asks for are that much wider: one line is the indent and the line, and the narrowest
+        // break is the indent and the longest thing that cannot be broken.
+        var indent = Indentation(container, flow, context);
+
         var minContent = 0.0;
-        var maxContent = 0.0;
-        var unbreakable = 0.0;
+        var maxContent = indent;
+        var unbreakable = indent;
 
         // Nothing here is broken into lines, so an element is opened once and stays open: the padding
         // it brings with it is charged to the run that enters it, wherever in the stream that is.
@@ -180,7 +187,7 @@ public sealed class InlineLayout
             if (item.IsAtomic)
             {
                 var intrinsic = context.Engine.MeasureIntrinsic(item.Box, context.Containing);
-                var (start, end) = InlineMargins(item.Box.Style.Margin.Resolve(basis), flow);
+                var (start, end) = flow.InlineMargins(item.Box.Style.Margin.Resolve(basis));
                 var extent = intrinsic.MaxContent + start + end;
 
                 maxContent += extent;
@@ -268,14 +275,17 @@ public sealed class InlineLayout
             return 0;
         }
 
-        var lines = BuildLines(items, maxInline, flow, context);
+        var lines = BuildLines(items, maxInline, flow, context, Indentation(container, flow, context));
         var cursor = 0.0;
         var step = new InlineStep();
 
         foreach (var line in lines)
         {
-            if (line.Height <= 0)
+            // A line is placed for what is on it, not for how tall it came out: a run set with no line
+            // height at all still has glyphs, and they are drawn overflowing the line they sit on.
+            if (line.Fragments.Count == 0)
             {
+                cursor += Math.Max(0, line.Height);
                 continue;
             }
 
@@ -696,14 +706,22 @@ public sealed class InlineLayout
         }
     }
 
-    private List<Line> BuildLines(List<InlineItem> items, Double maxInline, WritingModeInfo flow, InlineContext context)
+    private List<Line> BuildLines(
+        List<InlineItem> items,
+        Double maxInline,
+        WritingModeInfo flow,
+        InlineContext context,
+        Double indent = 0)
     {
         var lines = new List<Line>();
 
         // The elements a line resumes inside, which is what the next builder needs to know so that it
         // draws no start edge for an element whose start edge is already on the line above.
         var carried = (HashSet<InlineAncestor>?)null;
-        var builder = new LineBuilder();
+
+        // Only the first line of the content is set in; the line after a forced break begins where any
+        // other line does, which is what leaving the indent behind on the first builder says.
+        var builder = new LineBuilder(indent);
 
         foreach (var item in items)
         {
@@ -861,7 +879,7 @@ public sealed class InlineLayout
 
             // The line is aligned on the extent it ends up with, which may have shrunk by the edge an
             // element that stops here no longer draws twice.
-            line.Offset = AlignmentOffset(line.Fragments[0].Style.TextAlign, maxInline, line.Used, line.Fragments[0].Flow);
+            line.Offset = Aligned(line, maxInline);
             lines[index + 1].ContinuesFromPrevious = pending;
         }
     }
@@ -1068,8 +1086,8 @@ public sealed class InlineLayout
         // The margins are kept in both directions: along the line they are part of what the line
         // reserves, and across it they are part of what the line grows by.
         var margin = box.Style.Margin.Resolve(basis);
-        var (start, end) = InlineMargins(margin, flow);
-        var (blockStart, blockEnd) = BlockMargins(margin, flow);
+        var (start, end) = flow.InlineMargins(margin);
+        var (blockStart, blockEnd) = flow.BlockMargins(margin);
         var margins = start + end;
 
         // CSS2.1 §10.3.9: shrink-to-fit is the size the content prefers, brought down to what is
@@ -1077,13 +1095,12 @@ public sealed class InlineLayout
         // margin boxes, since that is what has to fit on the line.
         var shrink = Math.Min(intrinsic.MaxContent + margins, Math.Max(intrinsic.MinContent + margins, room));
 
-        // A row is measured against the extent it should come out at, because an `auto` width fills
-        // whatever it is measured against. A column's `auto` size is its content's rather than what it
-        // is measured against, so the same does not work there: the box is handed the room left for its
-        // content box, and takes the extent that content asks for inside it. The padding and border
-        // along the inline axis come off that room the same way a row's insets do inside the box model.
+        // Either way the box is measured against the extent it should come out at, because an `auto`
+        // size fills what it is measured against however the line runs - and the box's own margins and
+        // insets come off it inside the box model, which is what leaves a column content the room the
+        // box was given rather than the room plus everything around it.
         var constraints = box.Flow.IsVertical
-            ? MeasureConstraints.Unconstrained.WithHeight(shrink - margins - InlineInsets(box, shrink))
+            ? MeasureConstraints.Unconstrained.WithHeight(shrink)
             : MeasureConstraints.FitWidth(shrink);
 
         var size = context.Engine.Measure(box, constraints, context.Containing);
@@ -1131,7 +1148,7 @@ public sealed class InlineLayout
         var items = new List<InlineItem>();
         Collect(box, items, box.Flow, null, contentWidth);
 
-        var lines = BuildLines(items, contentWidth, box.Flow, context);
+        var lines = BuildLines(items, contentWidth, box.Flow, context, Indentation(box, box.Flow, context));
 
         if (lines.Count == 0)
         {
@@ -1163,27 +1180,6 @@ public sealed class InlineLayout
 
         return false;
     }
-
-    /// <summary>Gets the margins a box takes along the inline axis, as the distance before it and after it.</summary>
-    /// <remarks>
-    /// Which physical pair that is follows the same rule the insets of an inline element follow: a row
-    /// runs left to right and takes the horizontal pair, a column runs down the page or, under
-    /// <c>sideways-lr</c>, up it, and takes the vertical pair either way round.
-    /// </remarks>
-    private static (Double Start, Double End) InlineMargins(Thickness margin, WritingModeInfo flow) =>
-        flow.IsVertical
-            ? flow.InlineSign > 0 ? (margin.Top, margin.Bottom) : (margin.Bottom, margin.Top)
-            : flow.InlineSign > 0 ? (margin.Left, margin.Right) : (margin.Right, margin.Left);
-
-    /// <summary>Gets the margins a box takes across the line, as the distance before it and after it.</summary>
-    /// <remarks>
-    /// The block axis is the one the lines advance along: down the page in a row, and sideways in a
-    /// column, where a right-to-left mode has the columns advance leftward.
-    /// </remarks>
-    private static (Double Start, Double End) BlockMargins(Thickness margin, WritingModeInfo flow) =>
-        flow.IsVertical
-            ? flow.BlockSign > 0 ? (margin.Left, margin.Right) : (margin.Right, margin.Left)
-            : (margin.Top, margin.Bottom);
 
     /// <summary>Gets the padding and border a box adds along its own inline axis.</summary>
     /// <remarks>
@@ -1237,7 +1233,10 @@ public sealed class InlineLayout
 
         if (style.LineHeight is { } lineHeight)
         {
-            var halfLeading = Math.Max(0, lineHeight - (ascent + descent)) / 2;
+            // Half the leading, which is negative when the font is taller than the line it is set on -
+            // a face whose own ascent and descent come to more than the declared line height is drawn
+            // overflowing a line box that is still as tall as the page asked for.
+            var halfLeading = (lineHeight - (ascent + descent)) / 2;
             ascent += halfLeading;
             descent += halfLeading;
         }
@@ -1397,6 +1396,41 @@ public sealed class InlineLayout
         }
 
         return flow;
+    }
+
+    /// <summary>
+    /// Gets where a line's runs start along the inline axis: aligned in what the line's indentation
+    /// leaves of the content box, and then moved along by that indentation.
+    /// </summary>
+    private static Double Aligned(Line line, Double maxInline) =>
+        line.Fragments.Count == 0
+            ? 0
+            : AlignmentOffset(
+                line.Fragments[0].Style.TextAlign,
+                maxInline - line.Indent,
+                line.Used,
+                line.Fragments[0].Flow) + line.Indent;
+
+    /// <summary>
+    /// Gets the distance the first line of a box is set in from the edge it begins at.
+    /// </summary>
+    /// <remarks>
+    /// A percentage among the indentation is a share of the containing block's inline extent, which is
+    /// the block the text sits in rather than the one it makes - the same extent every other length of
+    /// the line resolves against.
+    /// </remarks>
+    private static Double Indentation(Box container, WritingModeInfo flow, InlineContext context)
+    {
+        var indent = container.Style.TextIndent;
+
+        if (!indent.HasValue)
+        {
+            return 0;
+        }
+
+        var containing = context.Containing.ContainingBlock;
+
+        return indent.Resolve(flow.InlineExtent(containing.Width, containing.Height));
     }
 
     /// <summary>
@@ -1807,6 +1841,13 @@ public sealed class InlineLayout
         /// <summary>Gets the extent the line's fragments take along the inline axis, before alignment.</summary>
         public Double Used { get; set; }
 
+        /// <summary>
+        /// Gets the distance the line is set in from the edge it begins at, which is the indentation
+        /// the first line of a box carries. It is not part of <see cref="Used"/>: the runs are aligned
+        /// in what the indentation leaves, and the indent is what they are then all moved by.
+        /// </summary>
+        public Double Indent { get; set; }
+
         /// <summary>Gets where the line's content starts along the inline axis, after alignment.</summary>
         public Double Offset { get; set; }
 
@@ -1966,9 +2007,21 @@ public sealed class InlineLayout
         private readonly List<OpenInline> _open = new();
         private readonly HashSet<InlineAncestor>? _carried;
         private readonly ComputedStyle? _fallback;
+        private readonly Double _indent;
 
         public LineBuilder()
         {
+        }
+
+        /// <param name="indent">
+        /// The distance the line is set in from the edge it begins at. It is the extent the line starts
+        /// out having used, so the run that would not have fitted without it is carried to the next
+        /// line - which is what an indented first line does to the text on it.
+        /// </param>
+        public LineBuilder(Double indent)
+        {
+            _indent = indent;
+            Width = indent;
         }
 
         public LineBuilder(ComputedStyle fallback, HashSet<InlineAncestor>? carried)
@@ -2118,8 +2171,15 @@ public sealed class InlineLayout
             // border a chain change brings in are part of it and a run taken back out takes them with it.
             var open = new List<OpenInline>();
             var used = 0.0;
-            var ascent = 0.0;
-            var descent = 0.0;
+
+            // Gathered from nothing rather than from zero: a face set on a line shorter than itself has a
+            // negative descent as well as a negative ascent, and starting at zero would hold every line
+            // to at least the height of the tallest font on it.
+            // Gathered from nothing rather than from zero: a face set on a line shorter than itself has a
+            // negative descent as well as a negative ascent, and starting at zero would hold every line
+            // to at least the height of the tallest font on it.
+            var ascent = Double.NegativeInfinity;
+            var descent = Double.NegativeInfinity;
 
             foreach (var fragment in line.Fragments)
             {
@@ -2130,7 +2190,11 @@ public sealed class InlineLayout
                 // its whole height as ascent and nothing as descent.
                 if (fragment.IsReplaced)
                 {
+                    // Its bottom margin edge rests on the baseline, so it reaches nothing below it - a
+                    // descent of zero, which is not the same as leaving it out where the line gathers
+                    // descents from nothing because a run of text may hang above the baseline.
                     ascent = Math.Max(ascent, fragment.ContentHeight);
+                    descent = Math.Max(descent, 0);
                     continue;
                 }
 
@@ -2151,7 +2215,9 @@ public sealed class InlineLayout
 
                 if (lineHeight.HasValue)
                 {
-                    var halfLeading = Math.Max(0, lineHeight.Value - (fragmentAscent + fragmentDescent)) / 2;
+                    // Half the leading, negative included: a face taller than the line height the page
+                    // asked for overflows a line box that is that height and no taller.
+                    var halfLeading = (lineHeight.Value - (fragmentAscent + fragmentDescent)) / 2;
                     fragmentAscent += halfLeading;
                     fragmentDescent += halfLeading;
                 }
@@ -2193,20 +2259,19 @@ public sealed class InlineLayout
                 line.ContinuesToNext = pending;
             }
 
-            if (line.Fragments.Count == 0 && _fallback is { } fallback)
+            if (line.Fragments.Count == 0)
             {
                 // An empty line still occupies a line box, so an explicit break has height.
-                var metrics = measurer.GetMetrics(fallback.GetFont());
-                ascent = metrics.Ascent;
-                descent = metrics.Descent;
+                var metrics = _fallback is { } fallback ? measurer.GetMetrics(fallback.GetFont()) : default;
+                ascent = _fallback is null ? 0 : metrics.Ascent;
+                descent = _fallback is null ? 0 : metrics.Descent;
             }
 
             line.Ascent = ascent;
             line.Height = ascent + descent;
             line.Used = used;
-            line.Offset = line.Fragments.Count > 0
-                ? AlignmentOffset(line.Fragments[0].Style.TextAlign, maxInline, used, line.Fragments[0].Flow)
-                : 0;
+            line.Indent = _indent;
+            line.Offset = Aligned(line, maxInline);
 
             return line;
         }

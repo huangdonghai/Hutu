@@ -37,11 +37,15 @@ public sealed class StickyConstraint
     /// <summary>Gets the scrollport, i.e. the viewport rectangle at the origin.</summary>
     public Rect Viewport { get; }
 
-    /// <summary>Gets the containing block the box may not leave.</summary>
-    public Rect ContainingBlock { get; }
+    /// <summary>
+    /// Gets the containing block the box may not leave. Settable because the constraint travels with
+    /// the box: a layout whose document is moved to the frame a scroller measures in moves both the
+    /// box and the block it is bound to, and the shift it works out is the same either way.
+    /// </summary>
+    public Rect ContainingBlock { get; internal set; }
 
     /// <summary>Gets the static rectangle the shift is measured from.</summary>
-    public Rect Box { get; }
+    public Rect Box { get; internal set; }
 
     public Double Top { get; }
 

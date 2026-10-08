@@ -182,11 +182,11 @@ public sealed class VerticalLayoutTests
         var baseText = Text(view, "春");
         var annotation = Text(view, "はる");
 
-        Assert.That(annotation.BorderBox.X, Is.EqualTo(70), "the reading is set against the edge the column started at");
+        Assert.That(annotation.BorderBox.X, Is.EqualTo(75), "the reading is set against the edge the column started at");
         Assert.That(annotation.BorderBox.Right, Is.EqualTo(80));
         Assert.That(annotation.BorderBox.X, Is.GreaterThan(baseText.BorderBox.X), "the reading is on the block-start side of the base");
         Assert.That(annotation.Font.Size, Is.LessThan(baseText.Font.Size), "a reading is set smaller than what it annotates");
-        Assert.That(Lines(view).First().BorderBox.Width, Is.EqualTo(20), "the line grew by the room the reading needed");
+        Assert.That(Lines(view).First().BorderBox.Width, Is.EqualTo(15), "the line grew by the room the reading needed");
 
         // The base stands in the orientation its own character resolves to, so an ideograph under a
         // reading is drawn upright exactly as one without it would be.
@@ -246,7 +246,10 @@ public sealed class VerticalLayoutTests
 
         Assert.That(annotation.BorderBox.Y, Is.EqualTo(0), "the reading takes the top of the line");
         Assert.That(annotation.BorderBox.Bottom, Is.EqualTo(baseText.BorderBox.Y));
-        Assert.That(baseText.BorderBox.Y, Is.EqualTo(10), "the base keeps its own ascent, pushed down by the reading over it");
+        Assert.That(
+            baseText.BorderBox.Y,
+            Is.EqualTo(5),
+            "the room a reading takes is its own line height - half the size and set solid, which is what `rt` asks for - and not the height of the font it is set in");
     }
 
     [Test]
@@ -277,6 +280,132 @@ public sealed class VerticalLayoutTests
         Assert.That(line.Flow.IsVertical, Is.False);
         Assert.That(line.BorderBox.Height, Is.EqualTo(10), "a line is still as tall as one em box");
         Assert.That(Text(view, "あA").BorderBox.Width, Is.EqualTo(10), "and advances by the width of its characters");
+    }
+
+    [Test]
+    public async Task AnInlineBlockInAColumnHugsTheColumnItsContentNeeds()
+    {
+        using var view = CreateView(400);
+
+        // The label a book sets beside a note: two characters and the padding under them, placed as
+        // one piece in the line. Nothing about the line bounds it, so it is one column wide with the
+        // two characters one under the other - and its own padding is part of the height it asks for.
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;height:300px;margin:0;font-size:10px;line-height:1'>" +
+            "<p style='margin:0'><span style='display:inline-block;padding-bottom:0.1em'>あい</span></p>" +
+            "</div></body></html>");
+
+        var label = Blocks(view, "span").Single();
+
+        Assert.That(label.BorderBox.Width, Is.EqualTo(10), "one column, so the two characters are set one under the other");
+        Assert.That(label.BorderBox.Height, Is.EqualTo(21), "and the padding under them is part of what that column holds");
+    }
+
+    [Test]
+    public async Task AColumnKeepsTheMarginsItsChildrenLeaveAlongIt()
+    {
+        using var view = CreateView(400);
+
+        // Twenty glyphs of ten pixels are two hundred of column; ten and twenty of margin leave a
+        // hundred and seventy of it, so the text is cut there and reaches the second column.
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:200px;margin:0;font-size:10px;line-height:1'>" +
+            "<div style='margin:10px 0 20px 0'>" + new String('あ', 20) + "</div>" +
+            "</div></body></html>");
+
+        var kid = Blocks(view, "div").Last();
+
+        Assert.That(
+            kid.BorderBox.Y,
+            Is.EqualTo(10).Within(0.5),
+            "the margin that opens a child is across the column, so it is where the child begins down it");
+        Assert.That(
+            kid.BorderBox.Height,
+            Is.EqualTo(170).Within(0.5),
+            "and the two margins together are what the child has to run down, not the whole column");
+    }
+
+    [Test]
+    public async Task ABlockInAColumnFillsItTheWayOneInARowFillsItsWidth()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;height:600px;margin:0;font-size:10px;line-height:1'>" +
+            "<p style='margin:0'>あ</p>" +
+            "</div></body></html>");
+
+        var paragraph = Blocks(view, "p").Single();
+
+        Assert.That(
+            paragraph.BorderBox.Height,
+            Is.EqualTo(600),
+            "an automatic inline size fills the column, the way an automatic width fills a row");
+        Assert.That(
+            paragraph.BorderBox.Width,
+            Is.EqualTo(10),
+            "while the block size is the one the content asks for, which is one character of column");
+    }
+
+    [Test]
+    public async Task AShortColumnPageIsStillAsTallAsTheViewport()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0;writing-mode:vertical-rl'>" +
+            "<p style='margin:0;font-size:10px;line-height:1'>あ</p>" +
+            "</body></html>");
+
+        Assert.That(
+            view.Layout!.Height,
+            Is.EqualTo(600).Within(0.5),
+            "a page of columns is a page whatever it holds, so one short chapter does not make a short document");
+    }
+
+    [Test]
+    public async Task AColumnPageKeepsTheMarginThePageIsGiven()
+    {
+        using var view = CreateView(400);
+
+        // No margin is declared here: the eight pixels come from the default sheet's `body` rule, which
+        // a column has to read as the inset at the top that a row would read at the left. Sixty glyphs
+        // of ten pixels are the whole six hundred of the viewport, so where the text is cut is what
+        // says whether the margin took the sixteen off it.
+        await view.SetHtml(
+            "<html><body style='writing-mode:vertical-rl'>" +
+            "<p style='margin:0;font-size:10px;line-height:1'>" + new String('あ', 60) + "</p>" +
+            "</body></html>");
+
+        var body = Blocks(view, "body").Single();
+
+        Assert.That(body.BorderBox.Y, Is.EqualTo(8).Within(0.5), "the page is inset from the top by its margin");
+        Assert.That(
+            Lines(view).Count(),
+            Is.EqualTo(2),
+            "and the margins are what the text stops short of, so the last glyphs go to a second column");
+    }
+
+    [Test]
+    public async Task ABodyOfColumnsMakesTheWholePageOne()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0;writing-mode:vertical-rl'>" +
+            "<p style='margin:0;font-size:10px;line-height:1'>" + new String('あ', 70) + "</p>" +
+            "</body></html>");
+
+        var root = view.Layout!.Root;
+        var lines = Lines(view).ToList();
+
+        Assert.That(root.Vertical, Is.True, "the page runs the way its body does");
+        Assert.That(
+            root.BorderBox.Height,
+            Is.EqualTo(600),
+            "the page box is the viewport, so it is as tall as the viewport is and the columns are cut to it");
+        Assert.That(lines.Count, Is.EqualTo(2), "seventy characters do not fit down one 600px column at ten pixels each");
+        Assert.That(lines[0].BorderBox.Height, Is.EqualTo(600), "a line runs the whole height of the page");
     }
 
     private static HutuViewInternal CreateView(int viewportWidth)
