@@ -302,6 +302,32 @@ public sealed class VerticalLayoutTests
     }
 
     [Test]
+    public async Task AnInlineBlockInAColumnStandsOnTheSameColumnLine()
+    {
+        using var view = CreateView(400);
+
+        // A label set smaller than the text around it - which is what a book does with the 索隱 and 集解
+        // marks it sets beside a note. Its baseline is the baseline of the line inside it, so its text
+        // has to land on the same column line as the text it stands among.
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;height:300px;margin:0;font-size:20px;line-height:1'>" +
+            "<p style='margin:0'>あ<span style='display:inline-block;font-size:10px'>い</span>う</p>" +
+            "</div></body></html>");
+
+        var line = Lines(view).First();
+        var label = Blocks(view, "span").Single();
+        var inner = label.Children.Single(child => child.Kind == LayoutKind.Line);
+
+        Assert.That(
+            ColumnLine(inner),
+            Is.EqualTo(ColumnLine(line)).Within(0.01),
+            "the text inside the label stands on the column line of the text beside it");
+    }
+
+    /// <summary>Gets the x a box's column line falls on, which is what a column aligns its text by.</summary>
+    private static Double ColumnLine(LayoutBox box) => box.BorderBox.X + box.Baseline;
+
+    [Test]
     public async Task AColumnKeepsTheMarginsItsChildrenLeaveAlongIt()
     {
         using var view = CreateView(400);

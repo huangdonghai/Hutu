@@ -1,4 +1,4 @@
-using Hutu.Rendering.Boxes;
+﻿using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
 
@@ -1133,7 +1133,11 @@ public sealed class InlineLayout
     /// </remarks>
     private Double InlineBlockBaseline(Box box, Size size, Double basis, WritingModeInfo flow, InlineContext context)
     {
-        if (flow.IsVertical || box.Flow.IsVertical || HasBlockChildren(box) || box.Children.Count == 0)
+        // The box's baseline can only be carried to the line it stands on while the two are set the same
+        // way: a box in a column stands on a line of its own frame, and the line here would be measuring
+        // a baseline from an edge the box does not have one against. A box that holds blocks has no line
+        // of its own to stand on either, and falls back to its end edge.
+        if (flow.IsVertical != box.Flow.IsVertical || HasBlockChildren(box) || box.Children.Count == 0)
         {
             return flow.BlockExtent(size.Width, size.Height);
         }
@@ -1142,13 +1146,18 @@ public sealed class InlineLayout
         var padding = style.Padding.Resolve(basis);
         var border = BlockLayout.BorderOf(box);
 
-        var start = padding.Top + border.Top;
-        var contentWidth = Math.Max(0, size.Width - padding.Horizontal - border.Horizontal);
+        // Its own baseline is measured from the edge its lines begin at - the top of a row, and the right
+        // of a column that runs leftward - and along the extent its text has to run along.
+        var vertical = box.Flow.IsVertical;
+        var start = vertical ? padding.Right + border.Right : padding.Top + border.Top;
+        var contentInline = vertical
+            ? Math.Max(0, size.Height - padding.Vertical - border.Vertical)
+            : Math.Max(0, size.Width - padding.Horizontal - border.Horizontal);
 
         var items = new List<InlineItem>();
-        Collect(box, items, box.Flow, null, contentWidth);
+        Collect(box, items, box.Flow, null, contentInline);
 
-        var lines = BuildLines(items, contentWidth, box.Flow, context, Indentation(box, box.Flow, context));
+        var lines = BuildLines(items, contentInline, box.Flow, context, Indentation(box, box.Flow, context));
 
         if (lines.Count == 0)
         {
