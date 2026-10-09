@@ -57,6 +57,9 @@ public sealed class VerticalLargeProbeTests
 
     private const Int32 AllocRuns = 3;
 
+    /// <summary>How many times the page is repeated to make a longer document.</summary>
+    private static readonly Int32[] Repeats = { 1, 4, 8 };
+
     /// <summary>
     /// Guards the one switch this fixture shares with the engine: the basis-free assertion is a
     /// process-global static, and another fixture may have turned it on. Left on, it measures every
@@ -187,6 +190,48 @@ public sealed class VerticalLargeProbeTests
 
         report.AppendLine();
 
+        // What a scroll costs. The paint list is the whole document's and a repaint is one screenful
+        // of it: the canvas is put where a scroller would have put it, and the area the executor skips
+        // by is read off that canvas' clip. Repeating the page 1, 4 and 8 times over is what shows the
+        // cost does not follow the document - which is all the claim there can be, because a command
+        // that is skipped is invisible by definition and no picture could tell the two apart. What it
+        // saves is worth reading next to the stage table above, where `draw` paints every command into
+        // a surface the size of the document and so has nothing to skip.
+        report.AppendLine($"--- one screen repaint at {Width}x{Height}, by page length (mean of {Runs}) ---");
+
+        using var screen = SKSurface.Create(new SKImageInfo(Width, Height));
+
+        foreach (var repeat in Repeats)
+        {
+            await view.SetHtml(Repeat(source, repeat), Page);
+
+            var painted = painter.Paint(engine.Layout(
+                Boxes(view.Document!.DefaultView!, device)!,
+                device.RenderWidth,
+                device.RenderHeight)!);
+
+            // Scrolled to the middle of the document, on whichever axis it grew along - a book page
+            // set vertically grows sideways, and this one is read that way.
+            var scroll = new Offset(
+                Math.Max(0, (painted.Bounds.Width - Width) / 2),
+                Math.Max(0, (painted.Bounds.Height - Height) / 2));
+
+            var repaint = Timed(_ =>
+            {
+                screen.Canvas.Save();
+                screen.Canvas.Translate((Single)(-scroll.X), (Single)(-scroll.Y));
+                executor.Execute(painted, screen.Canvas, scroll);
+                screen.Canvas.Restore();
+                return null;
+            });
+
+            report.AppendLine(
+                $"  {repeat,3}x  document={painted.Bounds.Width,6:F0}x{painted.Bounds.Height,5:F0}px " +
+                $"commands={painted.Commands.Count,7} repaint={repaint,7:F1}ms");
+        }
+
+        report.AppendLine();
+
         File.WriteAllText(Path.Combine(Root, "vertical-large-profile.txt"), report.ToString());
     }
 
@@ -207,6 +252,31 @@ public sealed class VerticalLargeProbeTests
 
     private static LayoutResult Laid(IWindow window, HutuRenderDevice device, LayoutEngine engine) =>
         engine.Layout(Boxes(window, device), device.RenderWidth, device.RenderHeight)!;
+
+    /// <summary>
+    /// The page with its body repeated, which is how a document long enough to tell the two figures of
+    /// a repaint apart is made without a fixture for every length. What is repeated is the body's own
+    /// markup, so the copy carries the sheets, the styles and the structure the first one has.
+    /// </summary>
+    private static String Repeat(String source, Int32 times)
+    {
+        if (times <= 1)
+        {
+            return source;
+        }
+
+        var open = source.IndexOf('>', source.IndexOf("<body", StringComparison.OrdinalIgnoreCase));
+        var close = source.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+
+        if (open < 0 || close < open)
+        {
+            return source;
+        }
+
+        var body = source[(open + 1)..close];
+
+        return source[..(open + 1)] + String.Concat(Enumerable.Repeat(body, times)) + source[close..];
+    }
 
     private static Object? Draw(SkiaPaintExecutor executor, PaintList? list, SKSurface surface)
     {

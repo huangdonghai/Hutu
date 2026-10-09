@@ -51,6 +51,17 @@ public sealed class HutuViewSelectionTests
     /// <summary>A point below the text, where there is nothing to select.</summary>
     private static readonly Point Blank = new(5, 300);
 
+    /// <summary>
+    /// A page with a line at the top and a line a screen further down, so a gesture that lands on the
+    /// lower one has had to be mapped through the scroll to get to it.
+    /// </summary>
+    private const string TwoLinesApart =
+        "<html><body style='margin:0'>" +
+        "<div style='font-size:40px'>BBBB</div>" +
+        "<div style='height:1000px'></div>" +
+        "<div style='font-size:40px'>AAAA</div>" +
+        "</body></html>";
+
     [AvaloniaTest]
     public async Task DraggingOverTextSelectsIt()
     {
@@ -141,6 +152,39 @@ public sealed class HutuViewSelectionTests
             Click(window, new Point(20, 10));
 
             Assert.That(view.SelectedText, Is.EqualTo("hello"));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTest]
+    public async Task AClickLandsOnTheTextUnderItWhereThePageIsScrolled()
+    {
+        var window = new Window { Width = WindowWidth, Height = WindowHeight };
+
+        try
+        {
+            var view = await ShowDocumentAsync(window, TwoLinesApart);
+
+            view.ScrollToBottom();
+            Settle(window);
+
+            // The second line is the bottom of the document, and scrolling to the bottom has put the
+            // bottom of the document at the bottom of the viewport - so the point is in the middle of
+            // that line. A host that took the pointer's position in the control's own coordinates and
+            // added the scroll to it would be asking about a place that is not on the page at all, and
+            // would come back with nothing selected.
+            var line = new Point(20, view.Viewport.Height - 20);
+
+            Click(window, line);
+            Click(window, line);
+
+            Assert.That(
+                view.SelectedText,
+                Is.EqualTo("AAAA"),
+                "the text a pointer is over is the text that is under it, scrolled or not");
         }
         finally
         {

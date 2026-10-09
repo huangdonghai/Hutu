@@ -36,9 +36,15 @@ public sealed class SkiaPaintExecutor
     /// </param>
     public void Execute(PaintList list, SKCanvas canvas, Offset scroll = default)
     {
+        // Read before anything below is drawn. The clip is a fact about this canvas as it stands, and
+        // the translations the sticky and fixed lists are drawn under move it: the same rectangle read
+        // afterwards would be that much further along, and the culling would be out by exactly the
+        // shift it is meant to know nothing about.
+        var area = VisibleArea(canvas);
+
         canvas.Clear(SKColors.White);
 
-        Draw(canvas, list.Commands);
+        Draw(canvas, list.Commands, area, default);
 
         // A sticky box is pinned to an edge of the scrollport, so it is drawn shifted by whatever its
         // constraint asks for at this scroll position.
@@ -48,7 +54,7 @@ public sealed class SkiaPaintExecutor
 
             canvas.Save();
             canvas.Translate((Single)shift.X, (Single)shift.Y);
-            Draw(canvas, layer.Commands);
+            Draw(canvas, layer.Commands, area, shift);
             canvas.Restore();
         }
 
@@ -57,15 +63,54 @@ public sealed class SkiaPaintExecutor
         {
             canvas.Save();
             canvas.Translate((Single)scroll.X, (Single)scroll.Y);
-            Draw(canvas, list.FixedCommands);
+            Draw(canvas, list.FixedCommands, area, scroll);
             canvas.Restore();
         }
     }
 
-    private void Draw(SKCanvas canvas, List<PaintCommand> commands)
+    /// <summary>
+    /// Gets the part of the document the screen can show, which is what the canvas' own clip says, in
+    /// the coordinates the commands are drawn in - the space the clip is kept in.
+    /// </summary>
+    /// <remarks>
+    /// This is the answer a host does not have to work out and cannot get wrong. How the content was
+    /// moved onto the screen is a fact of the moment that lives in the canvas' transform - a scroll
+    /// container moves a control by moving the canvas rather than by arranging it again - and the clip
+    /// is where that movement ended, so it is also where the reader is. A host that clips nothing gets
+    /// the whole surface back, which culls nothing: the direction a wrong answer has to fall in.
+    /// <para>
+    /// It is public for the reason <see cref="IsVisible"/> is: it is the half of the rule worth asking
+    /// about on its own, without a picture to read the answer off.
+    /// </para>
+    /// </remarks>
+    public static Rect VisibleArea(SKCanvas canvas)
+    {
+        var clip = canvas.LocalClipBounds;
+
+        return new Rect(clip.Left, clip.Top, clip.Width, clip.Height);
+    }
+
+    /// <summary>
+    /// Draws the commands, skipping the ones that cannot reach <paramref name="area"/>.
+    /// </summary>
+    /// <param name="area">
+    /// The part of the document the screen can show, in document coordinates - the same one for all
+    /// three lists, because it is a fact about the canvas rather than about what is being drawn on it.
+    /// </param>
+    /// <param name="offset">
+    /// How far these commands are translated as they are drawn, which is what puts a command's own
+    /// rectangle into document coordinates: the three lists of a document are drawn under three
+    /// different translations, and a rectangle means nothing until the one it belongs to is added.
+    /// </param>
+    private void Draw(SKCanvas canvas, List<PaintCommand> commands, Rect area, Offset offset)
     {
         foreach (var command in commands)
         {
+            if (!IsVisible(command, offset, area))
+            {
+                continue;
+            }
+
             switch (command)
             {
                 case FillCommand fill:
@@ -106,6 +151,58 @@ public sealed class SkiaPaintExecutor
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Gets whether a command draws anything inside the given area of the document.
+    /// </summary>
+    /// <remarks>
+    /// The area is in document coordinates and a command's rectangle is in the coordinates of the
+    /// list it came from, so the translation it is drawn under is what brings the two together.
+    /// <para>
+    /// Two commands are never turned away. A clip is a save and a restore around everything that
+    /// follows it, so dropping one would leave the canvas stack unbalanced for every command after it.
+    /// An outline is drawn outside the border box it names - by its offset and then by its width - so
+    /// its rectangle is grown to what it really covers, which is the box itself when the offset draws
+    /// it inward.
+    /// </para>
+    /// <para>
+    /// The test is half open: a command whose edge lies exactly on the edge of the area is out of it,
+    /// because a line of no width at that edge is not something a reader can see.
+    /// </para>
+    /// <para>
+    /// It is public because the three translations are the whole of what this class knows about
+    /// visibility, and they are the part of the rule worth checking on their own.
+    /// </para>
+    /// </remarks>
+    public static Boolean IsVisible(PaintCommand command, Offset offset, Rect visible)
+    {
+        if (command is PushClipCommand or PopClipCommand)
+        {
+            return true;
+        }
+
+        var area = new Rect(
+            command.Bounds.X + offset.X,
+            command.Bounds.Y + offset.Y,
+            command.Bounds.Width,
+            command.Bounds.Height);
+
+        if (command is OutlineCommand outline)
+        {
+            var outset = Math.Max(0, outline.Offset + outline.Width);
+
+            area = new Rect(
+                area.X - outset,
+                area.Y - outset,
+                area.Width + outset * 2,
+                area.Height + outset * 2);
+        }
+
+        return area.X < visible.Right &&
+               visible.X < area.Right &&
+               area.Y < visible.Bottom &&
+               visible.Y < area.Bottom;
     }
 
     private static void Fill(SKCanvas canvas, FillCommand command)
