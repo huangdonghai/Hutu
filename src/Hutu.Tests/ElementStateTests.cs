@@ -228,8 +228,8 @@ public sealed class ElementStateTests
 
         Assert.That(
             view.PointerMoved(column.BorderBox.X + 1, column.BorderBox.Y + 1).Changed,
-            Is.True,
-            "the pointer is moved over the column");
+            Is.False,
+            "no :hover rule mentions the pointer, so marking it rebuilds nothing");
 
         _ = view.CursorAt(line.BorderBox.X + 1, line.BorderBox.Y + 1);
 

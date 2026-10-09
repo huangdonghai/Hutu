@@ -40,6 +40,12 @@ internal sealed class InteractionState
     public Boolean Release() => Apply(PseudoClassNames.Active, _pressed, Array.Empty<IElement>());
 
     /// <summary>
+    /// Gets what carries the press mark now. A snapshot: the caller asks before releasing, and the
+    /// release takes the marks back.
+    /// </summary>
+    public IReadOnlyList<IElement> Pressed => _pressed.ToArray();
+
+    /// <summary>
     /// Marks the anchor a link was followed to, which is what <c>:target</c> answers to. Following
     /// another link moves the mark, so the one before it stops being the target.
     /// </summary>

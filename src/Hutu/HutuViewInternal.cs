@@ -3,6 +3,7 @@ using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
 using AngleSharp.Css.RenderTree;
+using AngleSharp.Html.Dom;
 using AngleSharp.Io;
 using Hutu.Rendering;
 using Hutu.Rendering.Interaction;
@@ -27,6 +28,8 @@ public sealed class HutuViewInternal : IDisposable
     private readonly IImageLoader? _imageLoader;
     private readonly ITextMeasurer? _textMeasurer;
     private readonly InteractionState _state = new();
+    private readonly StylePseudoIndex _pseudos = new();
+    private UserAgentStyleSheetProvider? _uaProvider;
     private IBrowsingContext? _context;
     private TextSelector? _selector;
     private ElementHitTester? _hitTester;
@@ -179,28 +182,73 @@ public sealed class HutuViewInternal : IDisposable
     public PointerInfo PointerMoved(double x, double y)
     {
         var hit = Hit(x, y);
-        var changed = _state.Hover(hit.Chain);
+        var restyle = HoverRestyles(_state.Hover(hit.Chain));
 
-        if (changed)
+        if (restyle)
         {
-            // The states are what the styles are computed from, so a state that changed means the
-            // document is built again - and the hit is taken again with it, because `:hover` may
-            // have moved the very box the pointer is over.
-            Rebuild(CaptureSelection());
+            // The hit is taken again with the rebuild, because `:hover` may have moved the very
+            // box the pointer is over. A state that changed no style leaves the geometry alone,
+            // so the hit in hand stays valid.
             hit = Hit(x, y);
         }
 
-        return new PointerInfo(changed, CursorFor(hit), HintFor(hit));
+        return new PointerInfo(restyle, CursorFor(hit), HintFor(hit));
     }
 
     /// <summary>
     /// Presses at a point in document coordinates, marking what the button went down on. Returns
     /// whether the document changed and has to be painted again.
     /// </summary>
-    public bool PointerPressed(double x, double y) => Change(_state.Press(Hit(x, y).Chain));
+    public bool PointerPressed(double x, double y)
+    {
+        var chain = Hit(x, y).Chain;
+        return PressRestyles(_state.Press(chain), chain);
+    }
 
     /// <summary>Releases the button, clearing whatever was being pressed.</summary>
-    public bool PointerReleased() => Change(_state.Release());
+    public bool PointerReleased()
+    {
+        // The snapshot is taken first: releasing takes the marks back, and what was pressed is
+        // what decides whether letting go could have changed anything.
+        var pressed = _state.Pressed;
+        return PressRestyles(_state.Release(), pressed);
+    }
+
+    /// <summary>
+    /// Rebuilds the document when a press state changed the styles, carrying the selection across,
+    /// and reports whether it did. A press with no :active rule behind it changes no match - and
+    /// with no followable link under it, not the engine's own link colour either - so the document
+    /// is left alone.
+    /// </summary>
+    private bool PressRestyles(bool changed, IReadOnlyList<IElement> flipped)
+    {
+        var restyle = changed &&
+            (_pseudos.MayAffect(PseudoClassNames.Active) || HasFollowableLink(flipped));
+
+        if (restyle)
+        {
+            Rebuild(CaptureSelection());
+        }
+
+        return restyle;
+    }
+
+    /// <summary>
+    /// Gets whether any element could be coloured by the engine's link colour, which answers the
+    /// active mark. Mirrors <c>ComputedStyle.IsFollowable</c>; keep the two in sync.
+    /// </summary>
+    private static bool HasFollowableLink(IReadOnlyList<IElement> elements)
+    {
+        foreach (var element in elements)
+        {
+            if (element is IHtmlAnchorElement anchor && anchor.HasAttribute("href"))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Re-reads the visited marks against the answer the host now gives, and rebuilds when that
@@ -214,7 +262,7 @@ public sealed class HutuViewInternal : IDisposable
     public bool RefreshVisited() => Change(MarkVisited());
 
     /// <summary>Leaves the document, clearing the hover: a pointer that is gone is over nothing.</summary>
-    public bool PointerExited() => Change(_state.Hover(Array.Empty<IElement>()));
+    public bool PointerExited() => HoverRestyles(_state.Hover(Array.Empty<IElement>()));
 
     /// <summary>
     /// Gets the link a point in document coordinates is on, or null when it is on none. A host asks
@@ -447,6 +495,8 @@ public sealed class HutuViewInternal : IDisposable
         _hitTester = null;
         _selection = null;
         _state.Clear();
+        _pseudos.Clear();
+        _uaProvider = null;
         _pipeline.Invalidate();
         _context?.Dispose();
         _context = null;
@@ -470,7 +520,7 @@ public sealed class HutuViewInternal : IDisposable
         // two sources to reconcile, and the declaration factory is asked for by name - whichever is
         // registered answers, so the one that wraps AngleSharp's has to be the one to hand.
         var configuration = Configuration.Default
-            .With(new UserAgentStyleSheetProvider())
+            .With(_uaProvider = new UserAgentStyleSheetProvider())
             .With((Object)new WideKeywordDeclarationFactory())
             .WithCss()
             .WithRenderDevice(_renderDevice);
@@ -546,6 +596,10 @@ public sealed class HutuViewInternal : IDisposable
     {
         if (Document is null)
             return;
+
+        // The index never grows older than the picture: it is refreshed wherever a full build
+        // runs, so between builds the sheets cannot have taken effect yet.
+        _pseudos.Refresh(Document, _uaProvider?.Default);
 
         _pipeline.Build(Document);
 
@@ -668,6 +722,24 @@ public sealed class HutuViewInternal : IDisposable
     private HitResult Hit(double x, double y) => _hitTester?.Hit(x, y) ?? HitResult.None;
 
     /// <summary>
+    /// Rebuilds the document when a hover state changed the styles, carrying the selection across,
+    /// and reports whether it did. A hover that no selector mentions moves marks but changes no
+    /// style, so the document is left alone - and the answer stays false, because nothing about
+    /// the drawing moved either.
+    /// </summary>
+    private bool HoverRestyles(bool changed)
+    {
+        var restyle = changed && _pseudos.MayAffect(PseudoClassNames.Hover);
+
+        if (restyle)
+        {
+            Rebuild(CaptureSelection());
+        }
+
+        return restyle;
+    }
+
+    /// <summary>
     /// Rebuilds the document when a state changed, carrying the selection across, and reports whether
     /// it did.
     /// </summary>
@@ -687,7 +759,9 @@ public sealed class HutuViewInternal : IDisposable
     /// </summary>
     private void ApplyTarget(IElement anchor)
     {
-        if (_state.Target(anchor))
+        // The mark is a state the styles are computed from, so the document is built again when
+        // it moves - unless no selector mentions :target, in which case nothing could have changed.
+        if (_state.Target(anchor) && _pseudos.MayAffect(PseudoClassNames.Target))
         {
             Rebuild(CaptureSelection());
         }
