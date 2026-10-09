@@ -132,16 +132,12 @@ public sealed class RenderingPipeline
     {
         var window = document.DefaultView;
 
-        RenderProbe.Begin();
-
         RenderTree = window?.Render(_device);
-        RenderProbe.Style();
 
         // The faces the document declares are read once for the build rather than per box: they are a
         // property of the sheets, and every element that asks for one of those names gets the same
         // answer however deep in the tree it sits.
         BoxTree = BoxBuilder.Build(RenderTree, _device, _images, FontFaceTable.From(document));
-        RenderProbe.Boxes();
 
         // A highlight names boxes of the layout it was measured against, so a new layout always drops
         // it: keeping it would leave the painter looking up runs that no longer exist. The host points
@@ -152,10 +148,8 @@ public sealed class RenderingPipeline
         // is what a percentage height on the root - and on everything it makes definite - resolves
         // against.
         Layout = _layout?.Layout(BoxTree, _device.RenderWidth, _device.RenderHeight);
-        RenderProbe.Layout();
 
         Paint = Layout is null ? null : _painter.Paint(Layout);
-        RenderProbe.Paint();
         return RenderTree;
     }
 }

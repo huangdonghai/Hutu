@@ -12,6 +12,23 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
+  <!-- Native AOT: `dotnet publish -c Release -r win-x64 -p:NativeAot=true`. What comes out is the
+       executable and the native libraries the renderer is built on beside it - a native library is
+       loaded by the system from a file, so a publish cannot fold them into the executable, and
+       `PublishSingleFile` does nothing here at all (the SDK skips its bundling target outright when
+       PublishAot is set).
+
+       The switch is declared here rather than passed as `-p:PublishAot=true` on the command line
+       because a command-line property is global and is therefore also handed to every referenced
+       project: the vendored AngleSharp multi-targets netstandard2.0, whose reference resolution
+       refuses to be compiled ahead of time (NETSDK1207), and the restore graph is walked before
+       anything is built - so the publish fails before it starts. Only the published project needs the
+       property; the assemblies it references are compiled by the same ILC run either way. -->
+  <PropertyGroup Condition="'$(NativeAot)' == 'true'">
+    <PublishAot>true</PublishAot>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" />
   </ItemGroup>

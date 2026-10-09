@@ -172,7 +172,6 @@ public readonly struct ComputedStyle
     {
         if (parent is { } inherited && Inherits(inherited, FontNames))
         {
-            StyleProbe.NoteParentAdopted();
             _values.Font = inherited._values.Font;
 
             return;
@@ -217,7 +216,6 @@ public readonly struct ComputedStyle
     {
         if (parent is { } inherited && Inherits(inherited, TextNames))
         {
-            StyleProbe.NoteParentAdopted();
             _values.Text = inherited._values.Text;
 
             return;
@@ -238,7 +236,6 @@ public readonly struct ComputedStyle
     {
         if (parent is { } inherited && Inherits(inherited, DecorationNames))
         {
-            StyleProbe.NoteParentAdopted();
             _values.Decoration = inherited._values.Decoration;
 
             return;
@@ -344,8 +341,6 @@ public readonly struct ComputedStyle
     /// <summary>The line height, measured against the size the font area is being built with.</summary>
     private Double? ResolveLineHeight(Double size)
     {
-        StyleProbe.NoteTextRead("line-height");
-
         // A percentage is a share of the element's own font size, the same reference the number below
         // is measured against. It is taken here rather than left to the length reader, which resolves
         // a percentage that reaches the device against the page: `line-height: 100%` came back as the
@@ -408,8 +403,6 @@ public readonly struct ComputedStyle
     {
         if (!DeclaresAny(DisplayNames))
         {
-            StyleProbe.NoteAreaUntouched();
-
             return;
         }
 
@@ -436,8 +429,6 @@ public readonly struct ComputedStyle
     {
         if (!DeclaresAny(OutlineNames))
         {
-            StyleProbe.NoteAreaUntouched();
-
             return;
         }
 
@@ -471,8 +462,6 @@ public readonly struct ComputedStyle
     {
         if (!DeclaresAny(BorderNames))
         {
-            StyleProbe.NoteAreaUntouched();
-
             return;
         }
 
@@ -508,8 +497,6 @@ public readonly struct ComputedStyle
         // margins of its own - which is every heading and paragraph of a page that states none.
         if (!DeclaresAny(BoxModelNames) && Defaults("margin") is (null, null, null, null))
         {
-            StyleProbe.NoteAreaUntouched();
-
             return;
         }
 
@@ -537,15 +524,11 @@ public readonly struct ComputedStyle
     private BoxSizing ResolveBoxSizing()
     {
         // The type is named for the Css module because the layout namespace has a BoxModel too.
-        StyleProbe.NoteTextRead("box-sizing");
-
         if (_style.GetProperty("box-sizing")?.RawValue is CssConstantValue<AngleSharp.Css.Dom.BoxModel> constant &&
             constant.Value == AngleSharp.Css.Dom.BoxModel.BorderBox)
         {
             return BoxSizing.BorderBox;
         }
-
-        StyleProbe.NoteTextRead("box-sizing");
 
         return _style.GetPropertyValue("box-sizing").Trim()
             .Equals("border-box", StringComparison.OrdinalIgnoreCase)
@@ -1031,6 +1014,36 @@ public readonly struct ComputedStyle
                window.GetStyleCollection(device).ComputeExplicitStyle(element).GetProperty(name)?.RawValue is not null;
     }
 
+    /// <summary>
+    /// Gets whether the element the declaration belongs to declares the property on itself, as opposed
+    /// to taking the parent's value over by inheritance, without running a second cascade.
+    /// </summary>
+    /// <remarks>
+    /// A property the element did not declare itself is the very object the parent holds: the cascade
+    /// merges an inheritable declaration down by reference. So a property that is the parent's own is
+    /// inherited, and a property that is not was declared on the element. This is the same test
+    /// <see cref="Inherits"/> uses, applied to any property rather than to a set of names.
+    /// <para>
+    /// A parent that is not in hand means there is nothing to inherit from, so a property present is
+    /// taken as declared.
+    /// </para>
+    /// </remarks>
+    internal static Boolean DeclaresOwn(
+        ICssStyleDeclaration specified,
+        ComputedStyle? parent,
+        String name)
+    {
+        var mine = specified.TryGetProperty(name);
+
+        if (parent is null)
+        {
+            return mine is not null;
+        }
+
+        var theirs = parent.Value._specified?.TryGetProperty(name);
+        return !Same(mine, theirs);
+    }
+
     // --- Box model ------------------------------------------------------
 
     /// <summary>
@@ -1086,8 +1099,21 @@ public readonly struct ComputedStyle
     /// </summary>
     internal ICssValue? RawValue(String name)
     {
-        StyleProbe.NoteValueRead(name);
+        return _style.GetProperty(name)?.RawValue;
+    }
 
+    /// <summary>
+    /// Gets the same for a name a declaration expands into longhands and so never carries, and which
+    /// can therefore only be answered by rebuilding the shorthand - <c>gap</c> is one, and the reader
+    /// that wants the column gap has nowhere else to find it.
+    /// </summary>
+    /// <remarks>
+    /// This is the expensive one: where the declaration carries nothing,
+    /// the rebuild walks the shorthand's own longhands, converts each and allocates a property to hold
+    /// what they come to - and a caller that reads again pays all of that again.
+    /// </remarks>
+    internal ICssValue? RawShorthand(String name)
+    {
         return _style.GetProperty(name)?.RawValue;
     }
 
@@ -1288,8 +1314,6 @@ public readonly struct ComputedStyle
     /// </remarks>
     private Boolean TryLengthAgainst(String name, RenderMode mode, LengthReader.FontSource font, out Double pixels)
     {
-        StyleProbe.NoteLengthRead(name);
-
         return TryReadLength(_specified, name, mode, font, out pixels) ||
                TryReadLength(_style, name, mode, font, out pixels);
     }
@@ -1619,8 +1643,6 @@ public readonly struct ComputedStyle
 
     private Boolean HasDecoration(String kind)
     {
-        StyleProbe.NoteTextRead("text-decoration-line");
-
         var text = _style.GetPropertyValue("text-decoration-line");
 
         if (String.IsNullOrWhiteSpace(text))
@@ -1634,8 +1656,6 @@ public readonly struct ComputedStyle
 
     private CssColorValue? ColorValue(String name)
     {
-        StyleProbe.NoteTextRead(name);
-
         var value = _style.GetProperty(name)?.RawValue;
 
         return value is CssColorValue color ? color : null;
@@ -1658,8 +1678,6 @@ public readonly struct ComputedStyle
 
     private String Keyword(String name, String fallback)
     {
-        StyleProbe.NoteTextRead(name);
-
         var text = _style.GetPropertyValue(name);
         return String.IsNullOrWhiteSpace(text) ? fallback : text.Trim();
     }
@@ -1670,8 +1688,6 @@ public readonly struct ComputedStyle
     /// </summary>
     private String? ReadKeyword(String name)
     {
-        StyleProbe.NoteTextRead(name);
-
         var text = _specified?.GetPropertyValue(name);
 
         if (String.IsNullOrWhiteSpace(text))
@@ -1690,8 +1706,6 @@ public readonly struct ComputedStyle
 
     private Boolean Is(String name, String keyword)
     {
-        StyleProbe.NoteTextRead(name);
-
         var text = _style.GetPropertyValue(name);
         return text is not null && text.Trim().Equals(keyword, StringComparison.OrdinalIgnoreCase);
     }

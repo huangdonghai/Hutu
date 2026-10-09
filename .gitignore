@@ -434,11 +434,5 @@ FodyWeavers.xsd
 # JetBrains Rider/IntelliJ project data
 .idea/
 
-# Probe reports HoverCostProbeTests writes beside the repository root
-/hover-probe.txt
-/hover-segments.txt
-/layout-breakdown.txt
-/layout-cost.txt
-/basis-free-ab.txt
-/intrinsic-keys.txt
-/render-cost.txt
+# What the vertical-large profiler writes beside the repository root
+/vertical-large-profile.txt

@@ -145,8 +145,11 @@ public readonly struct FlexStyle
         Double? second = null;
 
         // The shorthand is read through the multiple-value interface, not the tuple class: AngleSharp
-        // produces a generic instantiation that the tuple class alone does not match.
-        if (LengthReader.Items(style.RawValue("gap")) is { Count: > 0 } items)
+        // produces a generic instantiation that the tuple class alone does not match. It is asked for
+        // as a shorthand and not as a plain value: a name a page writes as one is carried as its
+        // longhands and never as itself, so the cheap lookup has nothing to answer with. See
+        // ComputedStyle.RawShorthand.
+        if (LengthReader.Items(style.RawShorthand("gap")) is { Count: > 0 } items)
         {
             first = GapOf(style, items[0]);
             second = items.Count > 1 ? GapOf(style, items[1]) : first;
@@ -285,8 +288,6 @@ public readonly struct FlexStyle
     /// <summary>Gets a keyword, preferring the cascaded declaration, lowered and trimmed.</summary>
     internal static String Text(ComputedStyle style, String name)
     {
-        StyleProbe.NoteTextRead(name);
-
         var text = style.Specified?.GetPropertyValue(name);
 
         if (String.IsNullOrWhiteSpace(text))

@@ -292,12 +292,9 @@ internal sealed class StyleIntern
     {
         if (_decoration.TryGetValue(area, out var existing))
         {
-            StyleProbe.NoteInternHit();
-
             return existing;
         }
 
-        StyleProbe.NoteAreaBuilt();
         _decoration[area] = area;
 
         return area;
@@ -308,12 +305,9 @@ internal sealed class StyleIntern
     {
         if (_text.TryGetValue(area, out var existing))
         {
-            StyleProbe.NoteInternHit();
-
             return existing;
         }
 
-        StyleProbe.NoteAreaBuilt();
         _text[area] = area;
 
         return area;
@@ -324,12 +318,9 @@ internal sealed class StyleIntern
     {
         if (_font.TryGetValue(area, out var existing))
         {
-            StyleProbe.NoteInternHit();
-
             return existing;
         }
 
-        StyleProbe.NoteAreaBuilt();
         _font[area] = area;
 
         return area;
@@ -340,12 +331,9 @@ internal sealed class StyleIntern
     {
         if (_display.TryGetValue(area, out var existing))
         {
-            StyleProbe.NoteInternHit();
-
             return existing;
         }
 
-        StyleProbe.NoteAreaBuilt();
         _display[area] = area;
 
         return area;
@@ -356,12 +344,9 @@ internal sealed class StyleIntern
     {
         if (_visualEffects.TryGetValue(area, out var existing))
         {
-            StyleProbe.NoteInternHit();
-
             return existing;
         }
 
-        StyleProbe.NoteAreaBuilt();
         _visualEffects[area] = area;
 
         return area;
@@ -372,12 +357,9 @@ internal sealed class StyleIntern
     {
         if (_boxModel.TryGetValue(area, out var existing))
         {
-            StyleProbe.NoteInternHit();
-
             return existing;
         }
 
-        StyleProbe.NoteAreaBuilt();
         _boxModel[area] = area;
 
         return area;
@@ -391,12 +373,9 @@ internal sealed class StyleIntern
     {
         if (_border.TryGetValue(area, out var existing))
         {
-            StyleProbe.NoteInternHit();
-
             return existing;
         }
 
-        StyleProbe.NoteAreaBuilt();
         _border[area] = area;
 
         return area;

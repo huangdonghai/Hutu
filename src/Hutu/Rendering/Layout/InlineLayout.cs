@@ -77,16 +77,7 @@ public sealed class InlineLayout
     /// </summary>
     public InlineContentSize Measure(Box container, Double maxInline, WritingModeInfo flow, InlineContext context)
     {
-        LayoutProbe.EnterInline();
-
-        try
-        {
-            return MeasureCore(container, maxInline, flow, context);
-        }
-        finally
-        {
-            LayoutProbe.LeaveInline();
-        }
+        return MeasureCore(container, maxInline, flow, context);
     }
 
     private InlineContentSize MeasureCore(Box container, Double maxInline, WritingModeInfo flow, InlineContext context)
@@ -127,16 +118,7 @@ public sealed class InlineLayout
     /// </param>
     public IntrinsicSize MeasureIntrinsic(Box container, Double basis, WritingModeInfo flow, InlineContext context)
     {
-        LayoutProbe.EnterInline();
-
-        try
-        {
-            return MeasureIntrinsicCore(container, basis, flow, context);
-        }
-        finally
-        {
-            LayoutProbe.LeaveInline();
-        }
+        return MeasureIntrinsicCore(container, basis, flow, context);
     }
 
     private IntrinsicSize MeasureIntrinsicCore(Box container, Double basis, WritingModeInfo flow, InlineContext context)
@@ -252,16 +234,7 @@ public sealed class InlineLayout
     /// </summary>
     public Double Layout(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow, InlineContext context)
     {
-        LayoutProbe.EnterInline();
-
-        try
-        {
-            return LayoutCore(container, parent, contentBox, flow, context);
-        }
-        finally
-        {
-            LayoutProbe.LeaveInline();
-        }
+        return LayoutCore(container, parent, contentBox, flow, context);
     }
 
     private Double LayoutCore(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow, InlineContext context)

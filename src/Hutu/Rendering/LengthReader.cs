@@ -76,8 +76,6 @@ internal static class LengthReader
         FontSource font,
         out StyleLength length)
     {
-        StyleProbe.NoteLengthRead(name);
-
         return TryRead(specified, name, mode, dimensions, font, out length) ||
                TryRead(computed, name, mode, dimensions, font, out length);
     }
@@ -104,16 +102,14 @@ internal static class LengthReader
             return false;
         }
 
-        if (CssMathLengths.Evaluate(declaration.GetPropertyValue(name), text => FromText(text, mode, dimensions, font)) is { } math)
+        if (CssMathLengths.Evaluate(declaration.TryGetValue(name), text => FromText(text, mode, dimensions, font)) is { } math)
         {
             length = math;
-            StyleProbe.NoteLengthHit();
             return true;
         }
 
-        if (TryReadValue(declaration.GetProperty(name)?.RawValue, mode, dimensions, font, out length))
+        if (TryReadValue(declaration.TryGetProperty(name)?.RawValue, mode, dimensions, font, out length))
         {
-            StyleProbe.NoteLengthHit();
             return true;
         }
 
@@ -190,7 +186,7 @@ internal static class LengthReader
 
     private static StyleCornerRadius? TryReadCorner(ICssStyleDeclaration? declaration, String name, IRenderDimensions dimensions, FontSource font)
     {
-        if (declaration?.GetProperty(name)?.RawValue is not ICssMultipleValue radius || radius.Count == 0)
+        if (declaration?.TryGetProperty(name)?.RawValue is not ICssMultipleValue radius || radius.Count == 0)
         {
             return null;
         }

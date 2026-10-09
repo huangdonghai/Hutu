@@ -189,7 +189,7 @@ public static class BoxBuilder
             node.Ref,
             parentFontSize,
             parentColor,
-            DeclaresRelativeFontSize(node.Ref, node.SpecifiedStyle, dimensions),
+            DeclaresRelativeFontSize(node.SpecifiedStyle, parent),
             pool,
             parent,
             faces);
@@ -303,16 +303,16 @@ public static class BoxBuilder
     /// </summary>
     /// <remarks>
     /// A relative font size the element declares is measured against its parent, while an inherited one
-    /// is already resolved. Telling the two apart costs a second cascade, so it is only paid where the
-    /// answer changes anything: a size in pixels or an absolute unit means the same thing either way.
+    /// is already resolved. Telling the two apart by reference — the parent's own property object means
+    /// the element took it over — costs nothing, so it is only paid where the answer changes anything:
+    /// a size in pixels or an absolute unit means the same thing either way.
     /// </remarks>
     private static Boolean DeclaresRelativeFontSize(
-        IElement element,
         ICssStyleDeclaration specified,
-        IRenderDimensions dimensions) =>
+        ComputedStyle? parent) =>
         specified.GetProperty("font-size")?.RawValue is CssLengthValue size &&
         ComputedStyle.IsFontRelative(size.Type) &&
-        ComputedStyle.Declares(element, dimensions, "font-size");
+        ComputedStyle.DeclaresOwn(specified, parent, "font-size");
 
     private static Boolean HasBlockLevel(List<Box> children)
     {

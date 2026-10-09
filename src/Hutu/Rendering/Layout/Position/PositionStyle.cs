@@ -82,8 +82,6 @@ public readonly struct PositionStyle
             return constant.Value;
         }
 
-        StyleProbe.NoteTextRead("position");
-
         var text = style.Specified?.GetPropertyValue("position");
 
         if (String.IsNullOrWhiteSpace(text))

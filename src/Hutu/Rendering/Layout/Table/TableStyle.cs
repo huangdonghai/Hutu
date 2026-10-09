@@ -131,8 +131,6 @@ public readonly struct TableStyle
     /// <summary>Gets a keyword, preferring the cascaded declaration, lowered and trimmed.</summary>
     private static String Text(ComputedStyle style, String name)
     {
-        StyleProbe.NoteTextRead(name);
-
         var text = style.Specified?.GetPropertyValue(name);
 
         if (String.IsNullOrWhiteSpace(text))

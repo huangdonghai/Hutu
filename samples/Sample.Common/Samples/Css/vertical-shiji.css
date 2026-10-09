@@ -1,0 +1,151 @@
+
+body {
+  line-height: 1.3333;
+  padding: 0;
+  word-spacing: 0;
+  text-align: justify;
+  writing-mode: vertical-rl;
+  -webkit-writing-mode: vertical-rl;
+  
+  font-family: st;
+}
+
+p {
+  font-family: st;
+}
+
+.origin {
+  font-family: "st";
+  text-indent: 2em;
+  letter-spacing: 0;
+  font-weight: normal;
+}
+
+h1 {
+  font-weight: normal;
+  font-family: st;
+  font-size: 1.1em;
+  text-align: left;
+  text-indent: 0;
+  line-height: 100%;
+  
+  margin-inline-start: 0px;
+  margin-left: 0px;
+  margin-block-end: revert;
+}
+
+.title1 {
+}
+.title2 {
+  letter-spacing: 9px;
+  text-indent: 0;
+  font-family: "ht";
+  font-weight: bold;
+  font-size: 0.9em;
+}
+.title3 {
+  font-family: "h2";
+  font-weight: normal;
+
+  font-size: 1.33em;
+  text-align: left;
+  line-height: 1em;
+  margin: 0;
+  margin-inline-start: 64px;
+  margin-left: 64px;
+  margin-block-end: revert;
+}
+.note {
+  color: #146Eb4;
+  letter-spacing: 0;
+  font-family: "kt";
+  font-weight: normal;
+  font-size: 0.8em;
+  text-indent: -1.0em;
+  duokan-text-indent: -1.0em;
+  margin-left: 3.5em;
+  margin-block-end: revert;
+  margin-inline-start: 3.5em;
+}
+.jjsyzy {
+  color: #146Eb4;
+  letter-spacing: 0;
+  font-family: "kt";
+  font-weight: normal;
+  font-size: 0.8em;
+  text-indent: 0;
+  margin-left: 2.5em;
+  margin-block-end: revert;
+  margin-inline-start: 2.5em;
+}
+.suoyinshuzan {
+  letter-spacing: 0;
+  font-family: "kt";
+  font-weight: normal;
+  font-size: 0.9em;
+  text-indent: 0;
+  margin: 0 0.5em 0 2em;
+  /*margin-inline-start: 2.5em;*/
+}
+.noteid {
+  color: #146Eb4;
+  /*vertical-align: super;*/
+  font-family: "kt";
+  font-size: 0.8em;
+}
+
+.note .noteid {
+  font-size: 1.0em;
+}
+
+.biaohao2 {
+}
+.bk {
+  color: navy;
+  
+  border: 0 #146Eb4 solid;
+  border-radius: 2px;
+  background-color: #146Eb4;
+  color: white;
+  text-indent: 0;
+  duokan-text-indent: 0;
+  line-height: 100%;
+  display: inline-block;
+  
+  margin-top: 0.1em;
+  margin-bottom: 0.0em;
+  padding-bottom: 0.1em;
+  
+  font-size: 0.9em;
+}
+.ytz {
+  height: 1em;
+  width: 1em;
+}
+/***********************/
+/*字体*/
+@font-face {
+  font-family: "st";
+  src: url(../Fonts/st.otf), local("DK-SONGTI"), local("TsukuMinPr6-M");
+}
+@font-face {
+  font-family: "fs";
+  src: url(../Fonts/fs.ttf), local("DK-FANGSONG");
+}
+@font-face {
+  font-family: "kt";
+  src: local("DK-KAITI"), local("LXGW WenKai Light");
+}
+@font-face {
+  font-family: "ht";
+  src: local("DK-HEITI"), local("TsukuMinPr6-HV");
+}
+@font-face {
+  font-family: "h2";
+  src: local("DK-XIHEITI"), local("TsukuMinPr6-HV");
+}
+@font-face {
+  font-family: "h3";
+  src: local("DK-XIAOBIAOSONG");
+}
+/***********************/

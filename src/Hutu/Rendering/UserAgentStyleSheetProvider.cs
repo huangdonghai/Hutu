@@ -88,7 +88,11 @@ menu            { list-style-type: disc; list-style-position: outside }
 ol              { list-style-type: decimal }
 u, ins          { text-decoration: underline }
 br::before      { content: '\A'; white-space: pre-line }
+
+/* this will slow down css matching, so I disable it first, by HDH
 *::before, *::after { display: inline }
+*/
+
 center          { text-align: center }
 :link, :visited { text-decoration: underline }
 :focus          { outline: thin dotted invert }
