@@ -1,8 +1,11 @@
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
+using AngleSharp.Html.Dom;
+using AngleSharp.Svg.Dom;
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
 namespace Hutu.Rendering.Boxes;
 
@@ -237,6 +240,24 @@ public sealed class RuleBucketIndex
     private readonly Dictionary<String, List<Int32>> _tagBuckets;
     private readonly List<Int32> _unkeyed;
 
+    /// <summary>
+    /// The cascades already matched for this document, keyed on the match itself.
+    /// </summary>
+    /// <remarks>
+    /// The key is the rules an element matched, in the order the cascade applied them, together
+    /// with its inline style - which is everything a lookup through the cascade depends on, so two
+    /// elements that share a key cannot disagree about a single answer. It is not a prediction of
+    /// the match: matching is what produces it. That costs the match, which is a fraction of a
+    /// percent of a build, and in exchange no selector can make the key wrong - a descendant
+    /// combinator, an attribute selector, a hover mark and a state the engine reads off the
+    /// element all show up in what matched rather than having to be reasoned about here.
+    /// <para>
+    /// The cache lives as long as the index does, which is one build. Nothing can go stale inside
+    /// that: the rules are fixed for the whole of it.
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<CascadeKey, MatchedCascade> _cascades = new();
+
     private RuleBucketIndex(
         List<ICssStyleRule> rules,
         Dictionary<String, List<Int32>> idBuckets,
@@ -317,6 +338,89 @@ public sealed class RuleBucketIndex
         }
 
         return new RuleBucketIndex(flattened, idBuckets, classBuckets, tagBuckets, unkeyed);
+    }
+
+    /// <summary>
+    /// Gets the cascade of an element: the one already matched for an element that matched the
+    /// same rules with the same inline style, or a match of its own.
+    /// </summary>
+    internal MatchedCascade Cascade(IElement element)
+    {
+        var candidates = CollectCandidates(element);
+        var inline = InlineOf(element);
+        var matched = MatchedCascade.Match(element, _rules, candidates, inline);
+        var key = new CascadeKey(matched.Matched, inline?.CssText);
+
+        if (_cascades.TryGetValue(key, out var known))
+        {
+            return known;
+        }
+
+        _cascades.Add(key, matched);
+        return matched;
+    }
+
+    /// <summary>
+    /// Gets the element's inline style. Only the two element kinds that can carry a style attribute
+    /// have one, which is the same test the cascade made before it was cached.
+    /// </summary>
+    private static ICssStyleDeclaration? InlineOf(IElement element) =>
+        element is IHtmlElement || element is ISvgElement ? element.GetStyle() : null;
+
+    /// <summary>
+    /// What one match is worth to another: the rules it matched, in the order the cascade applied
+    /// them, and the inline style it was matched with.
+    /// </summary>
+    /// <remarks>
+    /// Every answer a cascade gives is decided by those two things, so there is nothing else for a
+    /// key to carry - and nothing a selector can read that would not already have changed which
+    /// rules matched. The hash is only a bucket: equality is decided by comparing the rules one by
+    /// one by identity, so a collision costs a comparison and never a wrong answer.
+    /// </remarks>
+    private readonly struct CascadeKey : IEquatable<CascadeKey>
+    {
+        private readonly IReadOnlyList<ICssStyleRule> _rules;
+        private readonly String? _inline;
+
+        public CascadeKey(IReadOnlyList<ICssStyleRule> rules, String? inline)
+        {
+            _rules = rules;
+            _inline = inline;
+        }
+
+        public Boolean Equals(CascadeKey other)
+        {
+            if (_rules.Count != other._rules.Count ||
+                !String.Equals(_inline, other._inline, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            for (var i = 0; i < _rules.Count; i++)
+            {
+                if (!ReferenceEquals(_rules[i], other._rules[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public override Boolean Equals(Object? value) => value is CascadeKey other && Equals(other);
+
+        public override Int32 GetHashCode()
+        {
+            var hash = new HashCode();
+            hash.Add(_inline);
+
+            for (var i = 0; i < _rules.Count; i++)
+            {
+                hash.Add(RuntimeHelpers.GetHashCode(_rules[i]));
+            }
+
+            return hash.ToHashCode();
+        }
     }
 
     /// <summary>

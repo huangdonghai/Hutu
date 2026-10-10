@@ -24,21 +24,51 @@ public sealed class MatchedCascade
     private readonly List<ICssStyleRule> _rules;
     private readonly ICssStyleDeclaration? _inline;
 
+    /// <summary>
+    /// What this cascade has already answered.
+    /// </summary>
+    /// <remarks>
+    /// A cascade the index shares between elements is asked for the same names by each of them and
+    /// answers the same every time, so the second element's read is a lookup rather than a walk over
+    /// the rules. One that serves a single element still pays for it - and still comes out ahead,
+    /// because a name is asked for more than once even within one element: the box model reads each
+    /// margin and padding longhand twice, and the writing mode three times.
+    /// </remarks>
+    private readonly Dictionary<String, ICssProperty?> _found = new(StringComparer.Ordinal);
+
+    private Boolean? _substitution;
+
     private MatchedCascade(List<ICssStyleRule> rules, ICssStyleDeclaration? inline)
     {
         _rules = rules;
         _inline = inline;
     }
 
+    /// <summary>Gets the rules that matched, in the order the cascade applies them.</summary>
+    internal IReadOnlyList<ICssStyleRule> Matched => _rules;
+
     /// <summary>
-    /// Matches the element against the index: bucket candidates plus matching, ordered the
-    /// way the cascade applies them, with the element's inline style last.
+    /// Gets the cascade an element matches, which the index may already have worked out for an
+    /// element this one cannot differ from.
     /// </summary>
-    public static MatchedCascade ForElement(RuleBucketIndex index, IElement element)
+    public static MatchedCascade ForElement(RuleBucketIndex index, IElement element) =>
+        index.Cascade(element);
+
+    /// <summary>
+    /// Matches an element against the index: the rules that could match it, ordered the way the
+    /// cascade applies them, with its inline style last.
+    /// </summary>
+    /// <param name="candidates">
+    /// The rules that could match it, collected by the caller - the index needs them to key the
+    /// result, and collecting them twice would pay for the bucketing twice.
+    /// </param>
+    internal static MatchedCascade Match(
+        IElement element,
+        List<ICssStyleRule> rules,
+        List<Int32> candidates,
+        ICssStyleDeclaration? inline)
     {
         var scope = element.Owner?.DocumentElement;
-        var rules = index.Rules;
-        var candidates = index.CollectCandidates(element);
 
         // Candidates arrive in ascending document order already. A stable insertion sort by
         // specificity keeps equal-specificity rules in that order, without the allocations a
@@ -64,13 +94,6 @@ public sealed class MatchedCascade
             }
         }
 
-        ICssStyleDeclaration? inline = null;
-
-        if (element is IHtmlElement || element is ISvgElement)
-        {
-            inline = element.GetStyle();
-        }
-
         return new MatchedCascade(matched, inline);
     }
 
@@ -79,6 +102,21 @@ public sealed class MatchedCascade
     /// none is important, the last normal one. Null when nothing declares it.
     /// </summary>
     public ICssProperty? Find(String name)
+    {
+        // A name that was never asked for is walked once and kept, null included: most names are
+        // declared by nothing at all, and "nothing declared it" is the answer worth remembering.
+        if (_found.TryGetValue(name, out var known))
+        {
+            return known;
+        }
+
+        var found = Scan(name);
+        _found.Add(name, found);
+        return found;
+    }
+
+    /// <summary>The walk itself, over the matched rules in the order the cascade applies them.</summary>
+    private ICssProperty? Scan(String name)
     {
         ICssProperty? important = null;
         ICssProperty? normal = null;
@@ -120,6 +158,14 @@ public sealed class MatchedCascade
     /// back to the render-tree path.
     /// </summary>
     public Boolean UsesSubstitution()
+    {
+        // Asked once per element, and it reads every declaration of every matched rule - so on a
+        // shared cascade it is worth the same remembering the answers to Find are.
+        _substitution ??= WalkForSubstitution();
+        return _substitution.Value;
+    }
+
+    private Boolean WalkForSubstitution()
     {
         for (var i = 0; i < _rules.Count; i++)
         {
