@@ -88,6 +88,76 @@ public readonly struct TableStyle
     }
 
     /// <summary>
+    /// Reads the table longhands from the element's own cascaded declarations, for the fused path.
+    /// Nothing here is inherited, so a miss takes the property's initial value.
+    /// </summary>
+    /// <param name="verticalAlign">
+    /// The <c>vertical-align</c> keyword the caller has already resolved for this element. The cell
+    /// alignment is the one longhand that is a text property everywhere else, and asking for it twice
+    /// would mean reading the same declaration twice.
+    /// </param>
+    internal static TableStyle ReadFused(
+        Func<String, ICssProperty?> find,
+        String verticalAlign,
+        Double ownSize,
+        IRenderDimensions dimensions)
+    {
+        var (horizontal, vertical) = ReadSpacingFused(find("border-spacing"), ownSize, dimensions);
+
+        return new TableStyle(
+            Keyword(find("border-collapse")) == "collapse",
+            horizontal,
+            vertical,
+            Keyword(find("table-layout")) == "fixed",
+            Keyword(find("empty-cells")) == "hide",
+            Keyword(find("caption-side")) == "bottom" ? CaptionSide.Bottom : CaptionSide.Top,
+            Align(verticalAlign));
+    }
+
+    /// <summary>
+    /// Reads the two <c>border-spacing</c> lengths from the cascaded declaration. A single value
+    /// applies to both axes; two are the horizontal then the vertical one, in that order.
+    /// </summary>
+    private static (Double Horizontal, Double Vertical) ReadSpacingFused(
+        ICssProperty? declared, Double ownSize, IRenderDimensions dimensions)
+    {
+        if (declared is null)
+        {
+            return (0, 0);
+        }
+
+        // The two lengths are read through the multiple-value interface rather than the tuple class:
+        // AngleSharp produces a generic instantiation the tuple class alone does not match.
+        if (LengthReader.Items(declared.RawValue) is { Count: > 0 } items)
+        {
+            var horizontal = SpacingOf(items[0], ownSize, dimensions);
+
+            if (horizontal is { } first)
+            {
+                return (first, items.Count > 1 ? SpacingOf(items[1], ownSize, dimensions) ?? first : first);
+            }
+        }
+
+        if (LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var single) &&
+            single.HasValue)
+        {
+            var value = Math.Max(0, single.Resolve(0));
+            return (value, value);
+        }
+
+        return (0, 0);
+    }
+
+    private static Double? SpacingOf(ICssValue item, Double ownSize, IRenderDimensions dimensions) =>
+        LengthReader.TryReadValue(item, RenderMode.Horizontal, dimensions, ownSize, out var length) && length.HasValue
+            ? Math.Max(0, length.Resolve(0))
+            : null;
+
+    /// <summary>Gets a keyword as the cascade wrote it, lowered and trimmed.</summary>
+    private static String Keyword(ICssProperty? declared) =>
+        declared?.Value?.Trim().ToLowerInvariant() ?? String.Empty;
+
+    /// <summary>
     /// Reads the two <c>border-spacing</c> lengths. A single value applies to both axes; two are the
     /// horizontal then the vertical one, in that order.
     /// </summary>
@@ -120,7 +190,9 @@ public readonly struct TableStyle
             ? Math.Max(0, length.Resolve(0))
             : null;
 
-    private static CellVerticalAlignment ReadVerticalAlign(ComputedStyle style) => Text(style, "vertical-align") switch
+    private static CellVerticalAlignment ReadVerticalAlign(ComputedStyle style) => Align(Text(style, "vertical-align"));
+
+    private static CellVerticalAlignment Align(String text) => text switch
     {
         "top" or "text-top" => CellVerticalAlignment.Top,
         "middle" => CellVerticalAlignment.Middle,

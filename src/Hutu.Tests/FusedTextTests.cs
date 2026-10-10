@@ -123,7 +123,9 @@ public sealed class FusedTextTests
             var seedWhiteSpace = old.TryGetValue(root, out var rootValues) ? rootValues.WhiteSpace : "normal";
             var seedAlign = old.TryGetValue(root, out var rootAlign) ? rootAlign.Align : "start";
             var seedIndent = old.TryGetValue(root, out var rootIndent) ? rootIndent.Indent : StyleLength.Zero;
-            WalkElements(root, index, new Inherited(0, seedWhiteSpace, seedAlign, seedIndent), device, values);
+            var seedVertical = old.TryGetValue(root, out var rootVertical) ? rootVertical.VerticalAlign : "baseline";
+            WalkElements(
+                root, index, new Inherited(0, seedWhiteSpace, seedAlign, seedVertical, seedIndent), device, values);
         }
 
         return values;
@@ -140,11 +142,11 @@ public sealed class FusedTextTests
         var size = ComputedStyle.ResolveFontSizeFused(cascade.Find("font-size"), parent.Size, device);
         var whiteSpace = ComputedStyle.ResolveWhiteSpaceFused(cascade.Find("white-space"), parent.WhiteSpace);
         var align = ComputedStyle.ResolveTextAlignFused(cascade.Find("text-align"), parent.Align);
-        var verticalAlign = ComputedStyle.ResolveVerticalAlignFused(cascade.Find("vertical-align"));
+        var verticalAlign = ComputedStyle.ResolveVerticalAlignFused(cascade.Find("vertical-align"), parent.VerticalAlign);
         var indent = ComputedStyle.ResolveTextIndentFused(cascade.Find("text-indent"), parent.Indent, size, device);
         values.Add(element, new TextValues(whiteSpace, align, verticalAlign, indent));
 
-        var inherited = new Inherited(size, whiteSpace, align, indent);
+        var inherited = new Inherited(size, whiteSpace, align, verticalAlign, indent);
 
         foreach (var child in element.Children.OfType<IElement>())
         {
@@ -185,5 +187,6 @@ public sealed class FusedTextTests
 
     private sealed record TextValues(String WhiteSpace, String Align, String VerticalAlign, StyleLength Indent);
 
-    private sealed record Inherited(Double Size, String WhiteSpace, String Align, StyleLength Indent);
+    private sealed record Inherited(
+        Double Size, String WhiteSpace, String Align, String VerticalAlign, StyleLength Indent);
 }

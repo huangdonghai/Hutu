@@ -140,7 +140,7 @@ public sealed class FusedPaintTests
 
         if (document.DocumentElement is { } root)
         {
-            WalkElements(root, index, new Inherited(0, null, CursorKind.Auto), device, values);
+            WalkElements(root, index, new Inherited(0, null, CursorKind.Auto, RubyPosition.Over), device, values);
         }
 
         return values;
@@ -160,6 +160,7 @@ public sealed class FusedPaintTests
             element, find("color"), parent.Color, ComputedStyle.ResolveLinkColorFused(element));
         var mode = ComputedStyle.ResolvePositionModeFused(find("position"));
         var cursor = ComputedStyle.ResolveCursorFused(element, find("cursor"), parent.Cursor);
+        var ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position"), parent.Ruby);
         values.Add(element, new PaintValues(
             color,
             ComputedStyle.ResolveBorderColorFused(find("border-top-color"), color),
@@ -170,7 +171,7 @@ public sealed class FusedPaintTests
             ComputedStyle.ResolveDecorationFused(find).Underline,
             ComputedStyle.ResolveDecorationFused(find).LineThrough,
             cursor,
-            ComputedStyle.ResolveRubyPositionFused(find("ruby-position")),
+            ruby,
             mode,
             ComputedStyle.ResolveInsetFused(find("top"), size, device),
             ComputedStyle.ResolveInsetFused(find("right"), size, device),
@@ -179,7 +180,7 @@ public sealed class FusedPaintTests
             ComputedStyle.ResolveZIndexFused(find("z-index")).ZIndex,
             ComputedStyle.ResolveZIndexFused(find("z-index")).HasZIndex));
 
-        var inherited = new Inherited(size, color, cursor);
+        var inherited = new Inherited(size, color, cursor, ruby);
 
         foreach (var child in element.Children.OfType<IElement>())
         {
@@ -227,5 +228,5 @@ public sealed class FusedPaintTests
         PositionMode Position, StyleLength Top, StyleLength Right, StyleLength Bottom, StyleLength Left,
         Int32 ZIndex, Boolean HasZIndex);
 
-    private sealed record Inherited(Double Size, CssColorValue? Color, CursorKind Cursor);
+    private sealed record Inherited(Double Size, CssColorValue? Color, CursorKind Cursor, RubyPosition Ruby);
 }

@@ -38,6 +38,21 @@ namespace Hutu.Tests;
 /// own sheets read back out of it, and the reader's user-agent sheet - parsed again.
 /// </para>
 /// <para>
+/// The one stage that has two implementations - the build, the cascade and the box tree together -
+/// is not put in the table below but compared against itself in a section of its own. The two ways
+/// differ in what they are: the render tree's is the css cascade and then the box builder, the
+/// fused one is <see cref="BoxBuilder.TryBuildFused"/> over the DOM. Putting both in one table and
+/// summing it would charge a render for a build it never did, so the table holds the render-tree
+/// stages alone and the two builds are set side by side, in time and in bytes, underneath.
+/// </para>
+/// <para>
+/// A build that came out cheaper by coming out different is no saving at all, so the comparison
+/// ends by laying out and painting the fused tree and holding the counts it reaches against the
+/// render tree's. The fused path abstains on a document it does not yet reproduce whole, and a null
+/// there would have been timed as though it were the fastest build of the three - so that is
+/// caught too, before any number is written down.
+/// </para>
+/// <para>
 /// Explicit, because it is a measurement and not a check: three timed loops of eight runs each with
 /// three warm-ups apiece take a couple of minutes, and it leaves <c>vertical-large-profile.txt</c>
 /// beside the repository root, which a plain run of the suite has no business doing. A number it
@@ -158,10 +173,6 @@ public sealed class VerticalLargeProbeTests
                 () => window.Render(device),
                 input => BoxBuilder.Build((IRenderNode?)input, device, (IImageProvider?)null)),
             new(
-                "fused cascade+boxes",
-                null,
-                _ => BoxBuilder.TryBuildFused(document, device, (IImageProvider?)null)),
-            new(
                 "layout",
                 () => Boxes(window, device),
                 input => engine.Layout((Box?)input, device.RenderWidth, device.RenderHeight)),
@@ -175,11 +186,19 @@ public sealed class VerticalLargeProbeTests
                 input => Draw(executor, (PaintList?)input, surface)),
         };
 
+        // Where the stages named below sit in the list above.
+        const Int32 CascadeStep = 2;
+        const Int32 BoxStep = 3;
+        const Int32 LayoutStep = 4;
+        const Int32 PaintStep = 5;
+
         var times = new Double[steps.Count];
+        var allocs = new Double[steps.Count];
 
         for (var index = 0; index < steps.Count; index++)
         {
             times[index] = Timed(steps[index].Prepare, steps[index].Run);
+            allocs[index] = Allocated(steps[index]);
         }
 
         var total = times.Sum();
@@ -196,7 +215,8 @@ public sealed class VerticalLargeProbeTests
             $"  {"parse",-14}{times[0] + times[1],8:F1}ms {(times[0] + times[1]) / total * 100,5:F1}%   " +
             $"what a load pays before a single style is computed");
         report.AppendLine(
-            $"  {"render/paint",-14}{times[5] + times[6],8:F1}ms {(times[5] + times[6]) / total * 100,5:F1}%   " +
+            $"  {"render/paint",-14}{times[LayoutStep] + times[PaintStep],8:F1}ms " +
+            $"{(times[LayoutStep] + times[PaintStep]) / total * 100,5:F1}%   " +
             $"the paint list and the drawing of it");
         report.AppendLine();
 
@@ -204,9 +224,70 @@ public sealed class VerticalLargeProbeTests
 
         for (var index = 0; index < steps.Count; index++)
         {
-            report.AppendLine($"  {steps[index].Name,-14}{Allocated(steps[index]),8:F1}MB");
+            report.AppendLine($"  {steps[index].Name,-14}{allocs[index],8:F1}MB");
         }
 
+        report.AppendLine();
+
+        // The build, the one stage with two implementations, set side by side. The render-tree path
+        // is the two stages above it is made of; the fused path is one pass over the DOM. Timed and
+        // measured here rather than in the table, so the table's sum stays what one render costs.
+        var fused = new Step(
+            "fused cascade+boxes",
+            null,
+            _ => BoxBuilder.TryBuildFused(document, device, (IImageProvider?)null));
+
+        var fusedTime = Timed(fused.Run);
+        var fusedAlloc = Allocated(fused);
+        var treeTime = times[CascadeStep] + times[BoxStep];
+        var treeAlloc = allocs[CascadeStep] + allocs[BoxStep];
+
+        report.AppendLine($"--- one build, two ways (mean of {Runs}, {AllocRuns} for the bytes) ---");
+        report.AppendLine(
+            $"  {"render tree",-14}{treeTime,8:F1}ms {treeAlloc,8:F1}MB   " +
+            $"css cascade + box builder");
+        report.AppendLine(
+            $"  {"fused",-14}{fusedTime,8:F1}ms {fusedAlloc,8:F1}MB   " +
+            $"BoxBuilder.TryBuildFused, over the DOM");
+        report.AppendLine(
+            $"  {"saved",-14}{treeTime - fusedTime,8:F1}ms {treeAlloc - fusedAlloc,8:F1}MB   " +
+            $"{(treeTime - fusedTime) / treeTime * 100,5:F1}% time, " +
+            $"{(treeAlloc - fusedAlloc) / treeAlloc * 100,5:F1}% bytes");
+
+        // That the cheaper build is the same work and not less of it: the fused tree is put through
+        // the rest of the pipeline, and what that reaches is held against what the render tree
+        // reaches. Both are built here rather than read off the load, so the two are the same
+        // document through the same code, and nothing but the build differs between them.
+        var fusedBoxes = (Box?)fused.Run(null);
+        var treeLaid = engine.Layout(boxTree, device.RenderWidth, device.RenderHeight)!;
+        var treePaint = painter.Paint(treeLaid);
+        var treeOut = new List<LayoutBox>();
+        Walk(treeLaid.Root, treeOut);
+
+        Assert.That(fusedBoxes, Is.Not.Null, "the page uses nothing the fused path abstains on");
+
+        var fusedLaid = engine.Layout(fusedBoxes, device.RenderWidth, device.RenderHeight)!;
+        var fusedPaint = painter.Paint(fusedLaid);
+        var fusedOut = new List<LayoutBox>();
+        Walk(fusedLaid.Root, fusedOut);
+
+        var alike =
+            Count(fusedBoxes!) == Count(boxTree!) &&
+            fusedOut.Count == treeOut.Count &&
+            fusedPaint.Commands.Count == treePaint.Commands.Count &&
+            Math.Abs(fusedPaint.Bounds.Width - treePaint.Bounds.Width) < 0.5;
+
+        report.AppendLine(
+            alike
+                ? $"  {"alike",-14}{Count(fusedBoxes!),7} boxes, {fusedOut.Count,6} laid out, " +
+                  $"{fusedPaint.Commands.Count,6} commands, " +
+                  $"{fusedPaint.Bounds.Width,6:F0}x{fusedPaint.Bounds.Height,5:F0}px   " +
+                  $"the fused tree; the render tree's is equal"
+                : $"  {"DIFFERS",-14}{Count(fusedBoxes!),7} boxes, {fusedOut.Count,6} laid out, " +
+                  $"{fusedPaint.Commands.Count,6} commands, " +
+                  $"{fusedPaint.Bounds.Width,6:F0}px wide where the render tree's is " +
+                  $"{treePaint.Bounds.Width:F0}px   " +
+                  $"the two builds do not agree, and the figures above are not comparable");
         report.AppendLine();
 
         // What a scroll costs. The paint list is the whole document's and a repaint is one screenful
@@ -252,6 +333,16 @@ public sealed class VerticalLargeProbeTests
         report.AppendLine();
 
         File.WriteAllText(Path.Combine(Root, "vertical-large-profile.txt"), report.ToString());
+
+        // Asserted only after the report is on disk: what the two builds disagree about is the
+        // first thing anyone reading those figures needs to know, and leaving the numbers behind
+        // is worth more to whoever is about to fix it than a test that fails silently would be.
+        Assert.That(
+            alike,
+            "the two builds are interchangeable: the fused tree lays out " +
+            $"{fusedPaint.Bounds.Width:F0}px wide where the render tree's is {treePaint.Bounds.Width:F0}px, " +
+            $"{fusedOut.Count} boxes laid out where the render tree's is {treeOut.Count}, " +
+            $"{fusedPaint.Commands.Count} commands where the render tree's is {treePaint.Commands.Count}");
     }
 
     /// <summary>

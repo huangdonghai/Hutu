@@ -133,6 +133,174 @@ public readonly struct FlexStyle
     }
 
     /// <summary>
+    /// The longhands' initial values: what a style that was never handed a flex context answers
+    /// with. A fused style carries no declaration, so a box that is neither a flex container nor a
+    /// flex item cannot be read at all - and the struct's own default is not this, because
+    /// <see cref="FlexAlignment.Auto"/> is the first member of that enum and an alignment that is
+    /// unset is not the same thing as one that is <c>stretch</c> or <c>flex-start</c>.
+    /// </summary>
+    internal static FlexStyle Initial { get; } = new(
+        CssInitialValues.FlexDirection,
+        CssInitialValues.FlexWrap,
+        CssInitialValues.JustifyContent,
+        CssInitialValues.AlignItems,
+        CssInitialValues.AlignContent,
+        0,
+        0,
+        0,
+        1,
+        StyleLength.Auto,
+        0,
+        CssInitialValues.AlignSelf);
+
+    /// <summary>
+    /// Reads the flex longhands from the element's own cascaded declarations, for the fused path.
+    /// A container reads its direction, wrapping, alignment and gaps; an item reads its grow,
+    /// shrink, basis, order and <c>align-self</c>. Both are read together because asking which one
+    /// a box is would cost as much as the reads, and the ones that do not apply are never asked for.
+    /// </summary>
+    internal static FlexStyle ReadFused(
+        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
+    {
+        var (rowGap, columnGap) = ReadGapsFused(find, ownSize, dimensions);
+
+        return new FlexStyle(
+            ReadDirectionFused(find("flex-direction")),
+            ReadWrapFused(find("flex-wrap")),
+            ReadAlignmentFused(find("justify-content"), CssInitialValues.JustifyContent),
+            ReadAlignmentFused(find("align-items"), CssInitialValues.AlignItems),
+            ReadAlignmentFused(find("align-content"), CssInitialValues.AlignContent),
+            rowGap,
+            columnGap,
+            ReadNumberFused(find("flex-grow"), 0),
+            ReadNumberFused(find("flex-shrink"), 1),
+            ReadBasisFused(find("flex-basis"), ownSize, dimensions),
+            (Int32)ReadNumberFused(find("order"), 0),
+            ReadAlignmentFused(find("align-self"), CssInitialValues.AlignSelf));
+    }
+
+    /// <summary>
+    /// Reads the two gaps from the cascaded declarations: whichever axis carries a number is read,
+    /// and the other takes the same value. A two-value <c>gap</c> is the only case that sets them
+    /// apart, and it is the only case that needs to be.
+    /// </summary>
+    /// <remarks>
+    /// A lone <c>row-gap</c> and a single-value <c>gap</c> are the same thing by the time either
+    /// path can read them. The declaration carries the shorthand as its two longhands and leaves the
+    /// one that was not written empty, so no reader of it can tell which of the two was meant - and
+    /// the render-tree path, which is the incumbent here, reads them as one value on both axes. The
+    /// cascade could tell them apart, but answering differently is a change in what a page looks
+    /// like, and being right about the gap is not worth a page that renders two ways.
+    /// </remarks>
+    private static (Double Row, Double Column) ReadGapsFused(
+        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
+    {
+        return Gaps(find, ownSize, dimensions);
+    }
+
+    /// <summary>
+    /// The same two gaps for a caller that is not a flex container: a grid sets them with the same
+    /// longhands, and the two contexts have to read a page the same way.
+    /// </summary>
+    internal static (Double Row, Double Column) GapsFused(
+        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions) =>
+        Gaps(find, ownSize, dimensions);
+
+    private static (Double Row, Double Column) Gaps(
+        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
+    {
+        var row = ReadGapFused(find("row-gap"), ownSize, dimensions);
+        var column = ReadGapFused(find("column-gap"), ownSize, dimensions);
+
+        return (row ?? column ?? 0, column ?? row ?? 0);
+    }
+
+    private static Double? ReadGapFused(ICssProperty? declared, Double ownSize, IRenderDimensions dimensions) =>
+        declared is not null &&
+        LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var gap) &&
+        gap.HasValue
+            ? Math.Max(0, gap.Resolve(0))
+            : null;
+
+    private static Double? GapOfFused(ICssValue item, Double ownSize, IRenderDimensions dimensions) =>
+        LengthReader.TryReadValue(item, RenderMode.Horizontal, dimensions, ownSize, out var gap) && gap.HasValue
+            ? Math.Max(0, gap.Resolve(0))
+            : null;
+
+    private static FlexDirection ReadDirectionFused(ICssProperty? declared)
+    {
+        if (declared?.RawValue is CssConstantValue<FlexDirection> constant)
+        {
+            return constant.Value;
+        }
+
+        return Text(declared) switch
+        {
+            "row-reverse" => FlexDirection.RowReverse,
+            "column" => FlexDirection.Column,
+            "column-reverse" => FlexDirection.ColumnReverse,
+            _ => CssInitialValues.FlexDirection,
+        };
+    }
+
+    private static FlexWrapMode ReadWrapFused(ICssProperty? declared)
+    {
+        if (declared?.RawValue is CssConstantValue<FlexWrapMode> constant)
+        {
+            return constant.Value;
+        }
+
+        return Text(declared) switch
+        {
+            "wrap" => FlexWrapMode.Wrap,
+            "wrap-reverse" => FlexWrapMode.WrapReverse,
+            _ => CssInitialValues.FlexWrap,
+        };
+    }
+
+    /// <summary>Reads one of the alignment longhands from the element's own cascaded declaration.</summary>
+    internal static FlexAlignment ReadAlignmentFused(ICssProperty? declared, FlexAlignment fallback)
+    {
+        if (declared?.RawValue is CssConstantValue<FlexContentMode> constant && Map(constant.Value) is var mapped &&
+            mapped != FlexAlignment.Auto)
+        {
+            return mapped;
+        }
+
+        var text = Text(declared);
+        return text.Length == 0 ? fallback : Parse(text, fallback);
+    }
+
+    private static StyleLength ReadBasisFused(ICssProperty? declared, Double ownSize, IRenderDimensions dimensions) =>
+        declared is not null &&
+        LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var basis) &&
+        basis.HasValue
+            ? basis
+            : StyleLength.Auto;
+
+    private static Double ReadNumberFused(ICssProperty? declared, Double fallback)
+    {
+        switch (declared?.RawValue)
+        {
+            case CssNumberValue number:
+                return number.Value;
+
+            case CssIntegerValue integer:
+                return integer.Value;
+
+            case CssLengthValue length when !Double.IsNaN(length.Value) && !Double.IsInfinity(length.Value):
+                return length.Value;
+        }
+
+        var text = Text(declared);
+        return Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : fallback;
+    }
+
+    /// <summary>Gets a keyword as the cascade wrote it, lowered and trimmed.</summary>
+    private static String Text(ICssProperty? declared) =>
+        declared?.Value?.Trim().ToLowerInvariant() ?? String.Empty;
+
+    /// <summary>
     /// Reads the two gaps together, because neither source has both. AngleSharp.Css expands the
     /// <c>gap</c> shorthand into <c>row-gap</c> and leaves <c>column-gap</c> in the computed
     /// declaration with no value at all, so the shorthand - a two-item tuple - is the only place the
@@ -141,25 +309,30 @@ public readonly struct FlexStyle
     /// </summary>
     private static (Double Row, Double Column) ReadGaps(ComputedStyle style)
     {
-        Double? first = null;
-        Double? second = null;
+        var row = ReadGap(style, "row-gap");
+        var column = ReadGap(style, "column-gap");
 
-        // The shorthand is read through the multiple-value interface, not the tuple class: AngleSharp
-        // produces a generic instantiation that the tuple class alone does not match. It is asked for
-        // as a shorthand and not as a plain value: a name a page writes as one is carried as its
-        // longhands and never as itself, so the cheap lookup has nothing to answer with. See
-        // ComputedStyle.RawShorthand.
-        if (LengthReader.Items(style.RawShorthand("gap")) is { Count: > 0 } items)
+        // A single-value `gap` is carried as its two longhands, the column one present but carrying
+        // no value; a `row-gap` written on its own leaves the column one out altogether, and the
+        // column gap is then the initial zero. Only the first of those asks for the row's value on
+        // both axes. Rebuilding the shorthand answered the same for both, which gave a lone
+        // `row-gap: 20px` a column gap nobody had asked for.
+        if (row is { } shared && column is null && IsEmpty(style, "column-gap"))
         {
-            first = GapOf(style, items[0]);
-            second = items.Count > 1 ? GapOf(style, items[1]) : first;
+            column = shared;
         }
 
-        var row = ReadGap(style, "row-gap") ?? first ?? 0;
-        var column = ReadGap(style, "column-gap") ?? second ?? first ?? 0;
+        if (column is { } other && row is null && IsEmpty(style, "row-gap"))
+        {
+            row = other;
+        }
 
-        return (row, column);
+        return (row ?? 0, column ?? 0);
     }
+
+    /// <summary>Gets whether the longhand is there but carries no value, rather than not being there.</summary>
+    private static Boolean IsEmpty(ComputedStyle style, String name) =>
+        style.Specified?.GetProperty(name) is { } property && String.IsNullOrWhiteSpace(property.Value);
 
     private static Double? ReadGap(ComputedStyle style, String name) =>
         LengthReader.TryRead(style.Specified, style.Declaration, name, RenderMode.Horizontal, style.Dimensions, style.FontSize, out var gap) &&

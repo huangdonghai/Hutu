@@ -211,7 +211,14 @@ public static partial class BoxBuilder
         var kind = ResolveKind(element, style);
         var flow = ResolveFlow(style, inherited);
 
-        if (kind == BoxKind.HorizontalRule)
+        // A rule and a break are empty: neither takes children. The break needs saying because the
+        // render tree hands it some - it puts a second <br> node inside the one it made for the
+        // element, with a newline under that, and the builder used to turn those into a nested
+        // break carrying a white-space text box. Nothing about it survives layout: the text
+        // collapses and the inner break is a forced break inside a forced break. The DOM, which is
+        // what the fused path reads, has a <br> with no children at all, so the two builders
+        // disagreed about a shape that decides nothing.
+        if (kind is BoxKind.HorizontalRule or BoxKind.LineBreak)
         {
             return new Box(kind, style) { Element = element, Flow = flow };
         }

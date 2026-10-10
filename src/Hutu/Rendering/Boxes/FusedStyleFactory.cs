@@ -27,9 +27,38 @@ public sealed class FusedParent
     public ICssProperty? LineHeightHit { get; init; }
     public String WhiteSpace { get; init; } = "normal";
     public String Align { get; init; } = "start";
+
+    /// <summary>
+    /// The parent's own resolved vertical alignment. The property is not inherited, so this
+    /// travels only to answer an <c>inherit</c> - which the user-agent sheet declares on every
+    /// row and cell of a table.
+    /// </summary>
+    public String VerticalAlign { get; init; } = CssInitialValues.VerticalAlign;
+
+    /// <summary>
+    /// Whether the parent is a flex container, which is what makes this element a flex item - the
+    /// only thing in the cascade that says so, and the only reason <c>flex-grow</c>, <c>flex-shrink</c>,
+    /// <c>flex-basis</c>, <c>order</c> and <c>align-self</c> mean anything on it.
+    /// </summary>
+    public Boolean InFlex { get; init; }
+
+    /// <summary>
+    /// Whether the parent is a grid container, which is what makes this element a grid item - the
+    /// only thing that says so, and the only reason <c>grid-column-start</c> and friends mean
+    /// anything on it.
+    /// </summary>
+    public Boolean InGrid { get; init; }
+
     public StyleLength Indent { get; init; } = StyleLength.Zero;
     public TextDirection Direction { get; init; } = TextDirection.LeftToRight;
     public WritingMode WritingMode { get; init; } = WritingMode.HorizontalTb;
+
+    /// <summary>
+    /// Where an annotation goes, which <c>ruby-position</c> states on an ancestor as often as on
+    /// the pair itself and carries down like any other inherited property.
+    /// </summary>
+    public RubyPosition Ruby { get; init; } = RubyPosition.Over;
+
     public TextOrientation? Orientation { get; init; }
     public Boolean? CombinesUpright { get; init; }
     public CursorKind Cursor { get; init; }
@@ -44,12 +73,23 @@ public sealed class FusedParent
         Weight = style.FontWeight,
         Italic = style.IsItalic,
         LineHeight = style.LineHeight,
-        LineHeightHit = cascade.Find("line-height"),
+
+        // The nearest declaration at or above this element, not merely its own. A number or a
+        // share is re-resolved against every element's own size, so it has to keep travelling
+        // down: taken from the element alone it survived one level and no more, and a grandchild
+        // fell back to the pixels its parent had already resolved - a body's 1.3333 reached a
+        // 12.8px note as 21.3px instead of 17.1px. A length is unaffected: it does not parse
+        // as a number in the resolver, which then takes the resolved value as it always did.
+        LineHeightHit = cascade.Find("line-height") ?? LineHeightHit,
         WhiteSpace = style.WhiteSpace,
         Align = style.TextAlign,
+        VerticalAlign = style.VerticalAlign,
+        InFlex = style.Display.Contains("flex", StringComparison.OrdinalIgnoreCase),
+        InGrid = style.Display.Contains("grid", StringComparison.OrdinalIgnoreCase),
         Indent = style.TextIndent,
         Direction = style.Direction,
         WritingMode = style.WritingMode,
+        Ruby = style.RubyPosition,
         Orientation = style.DeclaredTextOrientation,
         CombinesUpright = style.DeclaredTextCombineUpright,
         Cursor = style.Cursor,
@@ -92,7 +132,7 @@ public static class FusedStyleFactory
         {
             WhiteSpace = ComputedStyle.ResolveWhiteSpaceFused(find("white-space"), parent.WhiteSpace),
             Align = ComputedStyle.ResolveTextAlignFused(find("text-align"), parent.Align),
-            VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align")),
+            VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign),
             Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, size, dimensions),
         };
 
@@ -165,7 +205,7 @@ public static class FusedStyleFactory
             BackgroundColor = ComputedStyle.ResolveBackgroundColorFused(find("background-color")),
             Backgrounds = ComputedStyle.ResolveBackgroundsFused(find, element, dimensions, size),
             Cursor = ComputedStyle.ResolveCursorFused(element, find("cursor"), parent.Cursor),
-            Ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position")),
+            Ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position"), parent.Ruby),
             OutlineColor = ComputedStyle.ResolveOutlineColorFused(find("outline-color"), color),
             BackgroundClip = ComputedStyle.ResolveBackgroundClipFused(find("background-clip")),
             BorderTopColor = ComputedStyle.ResolveBorderColorFused(find("border-top-color"), color),
@@ -183,6 +223,31 @@ public static class FusedStyleFactory
         values.VisualEffects = visual;
         values.Decoration = textDecoration;
         values.Position = PositionStyle.ReadFused(find, size, dimensions);
+
+        // The table longhands are five property lookups no element that is not part of a table has a
+        // use for, so they are only read where the display says the box is one. Every spelling of it
+        // - table, inline-table, table-row, table-cell and the rest - carries the word.
+        values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)
+            ? TableStyle.ReadFused(find, text.VerticalAlign, size, dimensions)
+            : null;
+
+        // The flex longhands are read for a flex container - every spelling carries the word - and
+        // for a flex item, which only the parent's display can tell apart. Nothing else reads them,
+        // and a box that reads one without being either gets the initial values.
+        var flex = display.Display.Contains("flex", StringComparison.OrdinalIgnoreCase);
+
+        values.Flex = flex || parent.InFlex
+            ? FlexStyle.ReadFused(find, size, dimensions)
+            : null;
+
+        // The grid longhands are read for a container - every spelling carries the word - while an
+        // item is recognised by its parent's display and asked only for its own placement.
+        values.Grid = display.Display.Contains("grid", StringComparison.OrdinalIgnoreCase)
+            ? GridStyle.ReadFused(find, size, dimensions)
+            : null;
+
+        values.GridItem = parent.InGrid ? GridItemStyle.ReadFused(find) : null;
+
         values.Fused = keywords;
 
         return new ComputedStyle(dimensions, element, keywords, values, faces);

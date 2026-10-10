@@ -301,17 +301,17 @@ internal sealed class GridFormattingContext
 
     private static GridCell Create(Box box)
     {
-        var style = box.Style;
+        var item = box.Style.GridItem;
 
         return new GridCell
         {
             Box = box,
-            ColumnStart = GridStyle.Placement(style, "grid-column-start"),
-            ColumnEnd = GridStyle.Placement(style, "grid-column-end"),
-            RowStart = GridStyle.Placement(style, "grid-row-start"),
-            RowEnd = GridStyle.Placement(style, "grid-row-end"),
-            JustifySelf = FlexStyle.ReadAlignment(style, "justify-self", CssInitialValues.JustifySelfGrid),
-            AlignSelf = FlexStyle.ReadAlignment(style, "align-self", CssInitialValues.AlignSelf),
+            ColumnStart = item.ColumnStart,
+            ColumnEnd = item.ColumnEnd,
+            RowStart = item.RowStart,
+            RowEnd = item.RowEnd,
+            JustifySelf = item.JustifySelf,
+            AlignSelf = item.AlignSelf,
         };
     }
 

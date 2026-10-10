@@ -354,33 +354,77 @@ internal readonly struct GridStyle
 
     public Double ColumnGap { get; }
 
+    /// <summary>
+    /// The longhands' initial values: what a style that was never handed a grid context answers
+    /// with. A fused style carries no declaration, so a box that is not part of a grid cannot be
+    /// read at all - and the struct's own default is not this, because an unset alignment is
+    /// <see cref="FlexAlignment.Auto"/> and the two axes it applies to read that as
+    /// <see cref="FlexAlignment.Stretch"/>.
+    /// </summary>
+    internal static GridStyle Initial { get; } = new(
+        new GridTrackList(),
+        new GridTrackList(),
+        GridTrackSize.Auto,
+        GridTrackSize.Auto,
+        false,
+        false,
+        CssInitialValues.JustifyContentGrid,
+        CssInitialValues.AlignContent,
+        FlexAlignment.Stretch,
+        FlexAlignment.Stretch,
+        0,
+        0);
+
     internal static GridStyle Read(ComputedStyle style)
     {
-        var autoFlow = ReadAutoFlow(style);
-        var place = ReadPlaceItems(style);
         var gaps = style.Flex;
+        return Read(Source.Of(style), gaps.RowGap, gaps.ColumnGap);
+    }
 
-        var alignItems = FlexStyle.ReadAlignment(style, "align-items", CssInitialValues.AlignItemsGrid);
-        var justifyItems = FlexStyle.ReadAlignment(style, "justify-items", CssInitialValues.JustifyItemsGrid);
+    /// <summary>
+    /// Reads the grid longhands from the element's own cascaded declarations, for the fused path.
+    /// The gaps come from the reader the flex context uses, because <c>gap</c> means the same thing
+    /// in both and the two contexts have to agree about a page that sets it.
+    /// </summary>
+    internal static GridStyle ReadFused(
+        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
+    {
+        var (row, column) = FlexStyle.GapsFused(find, ownSize, dimensions);
+        return Read(Source.Of(find, ownSize, dimensions), row, column);
+    }
+
+    private static GridStyle Read(Source source, Double rowGap, Double columnGap)
+    {
+        var autoFlow = ReadAutoFlow(source);
+        var place = ReadPlaceItems(source);
+
+        var alignItems = Alignment(source, "align-items", CssInitialValues.AlignItemsGrid);
+        var justifyItems = Alignment(source, "justify-items", CssInitialValues.JustifyItemsGrid);
 
         return new GridStyle(
-            ReadTracks(style, "grid-template-columns"),
-            ReadTracks(style, "grid-template-rows"),
-            ReadAutoTrack(style, "grid-auto-columns"),
-            ReadAutoTrack(style, "grid-auto-rows"),
+            ReadTracks(source, "grid-template-columns"),
+            ReadTracks(source, "grid-template-rows"),
+            ReadAutoTrack(source, "grid-auto-columns"),
+            ReadAutoTrack(source, "grid-auto-rows"),
             autoFlow.Column,
             autoFlow.Dense,
-            FlexStyle.ReadAlignment(style, "justify-content", CssInitialValues.JustifyContentGrid),
-            FlexStyle.ReadAlignment(style, "align-content", CssInitialValues.AlignContent),
+            Alignment(source, "justify-content", CssInitialValues.JustifyContentGrid),
+            Alignment(source, "align-content", CssInitialValues.AlignContent),
             justifyItems == FlexAlignment.Auto
                 ? (place.Justify == FlexAlignment.Auto ? FlexAlignment.Stretch : place.Justify)
                 : justifyItems,
             alignItems == FlexAlignment.Auto
                 ? (place.Align == FlexAlignment.Auto ? FlexAlignment.Stretch : place.Align)
                 : alignItems,
-            Math.Max(0, gaps.RowGap),
-            Math.Max(0, gaps.ColumnGap));
+            Math.Max(0, rowGap),
+            Math.Max(0, columnGap));
     }
+
+    /// <summary>Reads one of the alignment longhands, from whichever source the reader was given.</summary>
+    private static FlexAlignment Alignment(Source source, String name, FlexAlignment fallback) =>
+        source.Style is { } style
+            ? FlexStyle.ReadAlignment(style, name, fallback)
+            : FlexStyle.ReadAlignmentFused(source.Property(name), fallback);
 
     /// <summary>Reads one side of an item's placement, as in <c>grid-column-start</c>.</summary>
     public static GridLine Placement(ComputedStyle style, String name) => ReadLine(Fetch(style, name));
@@ -390,33 +434,58 @@ internal readonly struct GridStyle
     /// read from its text because AngleSharp.Css does not register it, so it never reaches the
     /// longhands; one value applies to both axes, two are align then justify.
     /// </summary>
-    private static (FlexAlignment Align, FlexAlignment Justify) ReadPlaceItems(ComputedStyle style)
+    private static (FlexAlignment Align, FlexAlignment Justify) ReadPlaceItems(Source source)
     {
-        var text = FlexStyle.Text(style, "place-items");
-
-        if (text.Length == 0)
+        // The old path reads the shorthand from its text: AngleSharp.Css does not register it, so a
+        // declaration keeps it as itself. The cascade a fused style is built from has no such
+        // luxury - it carries the shorthand as its two longhands, and the one the page did not
+        // write is left present but empty. That empty value is what a single-value `place-items`
+        // looks like from here, and it asks for the other axis's value; a longhand written on its
+        // own leaves the other one out altogether. One value applies to both axes, two are align
+        // then justify.
+        if (source.Style is { } style)
         {
-            return (FlexAlignment.Auto, FlexAlignment.Auto);
+            var text = FlexStyle.Text(style, "place-items");
+
+            if (text.Length == 0)
+            {
+                return (FlexAlignment.Auto, FlexAlignment.Auto);
+            }
+
+            var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var align = FlexStyle.ParseAlignment(parts[0], FlexAlignment.Auto);
+            var justify = parts.Length > 1
+                ? FlexStyle.ParseAlignment(parts[1], FlexAlignment.Auto)
+                : align;
+
+            return (align, justify);
         }
 
-        var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var align = FlexStyle.ParseAlignment(parts[0], FlexAlignment.Auto);
-        var justify = parts.Length > 1
-            ? FlexStyle.ParseAlignment(parts[1], FlexAlignment.Auto)
-            : align;
+        var alignItems = Alignment(source, "align-items", CssInitialValues.AlignItemsGrid);
+        var justifyItems = Alignment(source, "justify-items", CssInitialValues.JustifyItemsGrid);
 
-        return (align, justify);
+        if (alignItems != FlexAlignment.Auto && justifyItems == FlexAlignment.Auto && source.IsEmpty("justify-items"))
+        {
+            justifyItems = alignItems;
+        }
+
+        if (justifyItems != FlexAlignment.Auto && alignItems == FlexAlignment.Auto && source.IsEmpty("align-items"))
+        {
+            alignItems = justifyItems;
+        }
+
+        return (alignItems, justifyItems);
     }
 
     /// <summary>
     /// Reads <c>grid-auto-flow</c>. AngleSharp turns it into a two-slot tuple holding a
     /// <see cref="Boolean"/> for the axis and one for <c>dense</c>, and there is no enum to lean on.
     /// </summary>
-    private static (Boolean Column, Boolean Dense) ReadAutoFlow(ComputedStyle style)
+    private static (Boolean Column, Boolean Dense) ReadAutoFlow(Source source)
     {
         var column = false;
         var dense = false;
-        var items = LengthReader.Items(Fetch(style, "grid-auto-flow"));
+        var items = LengthReader.Items(source.Fetch("grid-auto-flow"));
 
         if (items is { Count: > 0 })
         {
@@ -426,7 +495,7 @@ internal readonly struct GridStyle
 
         // The tuple form is the only one the converter produces, but the serialised keyword is cheap
         // to consult and keeps the reader working if the upstream value ever changes shape.
-        var text = FlexStyle.Text(style, "grid-auto-flow");
+        var text = source.Text("grid-auto-flow");
         column |= text.Contains("column", StringComparison.Ordinal);
         dense |= text.Contains("dense", StringComparison.Ordinal);
 
@@ -436,32 +505,32 @@ internal readonly struct GridStyle
     private static Boolean? Flag(IReadOnlyList<ICssValue> items, Int32 index) =>
         index < items.Count && items[index] is CssConstantValue<Boolean> flag ? flag.Value : null;
 
-    private static GridTrackSize ReadAutoTrack(ComputedStyle style, String name) =>
-        Tracks(style, Fetch(style, name)).Resolve(0, 0, 1) is { Count: > 0 } tracks ? tracks[0] : GridTrackSize.Auto;
+    private static GridTrackSize ReadAutoTrack(Source source, String name) =>
+        Tracks(source, source.Fetch(name)).Resolve(0, 0, 1) is { Count: > 0 } tracks ? tracks[0] : GridTrackSize.Auto;
 
-    private static GridTrackList ReadTracks(ComputedStyle style, String name) =>
-        Tracks(style, Fetch(style, name));
+    private static GridTrackList ReadTracks(Source source, String name) =>
+        Tracks(source, source.Fetch(name));
 
     /// <summary>
     /// Reads a track list. It is normally a multiple value whose entries are line names (which
     /// <see cref="Track"/> declines), single track sizes, or <c>repeat()</c> functions standing for
     /// several tracks at once.
     /// </summary>
-    private static GridTrackList Tracks(ComputedStyle style, ICssValue? value)
+    private static GridTrackList Tracks(Source source, ICssValue? value)
     {
         var tracks = new GridTrackList();
 
-        Expand(style, value, tracks);
+        Expand(source, value, tracks);
         return tracks;
     }
 
-    private static void Expand(ComputedStyle style, ICssValue? value, GridTrackList tracks)
+    private static void Expand(Source source, ICssValue? value, GridTrackList tracks)
     {
         if (LengthReader.Items(value) is not { Count: > 0 } items)
         {
             // A lone `none` is a constant rather than a tuple and means there are no tracks at all;
             // a lone `1fr` is a single track. Both go through the same classifier.
-            if (Track(style, value) is { } single)
+            if (Track(source, value) is { } single)
             {
                 tracks.Add(single);
             }
@@ -478,11 +547,11 @@ internal readonly struct GridStyle
 
             if (item is ICssFunctionValue { Name: "repeat" } function)
             {
-                Repeat(style, function, tracks);
+                Repeat(source, function, tracks);
                 continue;
             }
 
-            if (Track(style, item) is { } track)
+            if (Track(source, item) is { } track)
             {
                 tracks.Add(track);
             }
@@ -494,14 +563,14 @@ internal readonly struct GridStyle
     /// the list directly; an <c>auto-fill</c>/<c>auto-fit</c> count is recorded where it sits, because
     /// only the caller knows the width the repetitions have to fit into.
     /// </summary>
-    private static void Repeat(ComputedStyle style, ICssFunctionValue function, GridTrackList tracks)
+    private static void Repeat(Source source, ICssFunctionValue function, GridTrackList tracks)
     {
         if (function.Arguments.Length < 2)
         {
             return;
         }
 
-        var repeated = Tracks(style, function.Arguments[1]);
+        var repeated = Tracks(source, function.Arguments[1]);
 
         switch (function.Arguments[0])
         {
@@ -523,23 +592,23 @@ internal readonly struct GridStyle
     }
 
     /// <summary>Classifies one track size value, or declines it when it is not one.</summary>
-    private static GridTrackSize? Track(ComputedStyle style, ICssValue? value) => value switch
+    private static GridTrackSize? Track(Source source, ICssValue? value) => value switch
     {
-        CssLengthValue length => GridTrackSize.From(LengthBreadth(style, length)),
+        CssLengthValue length => GridTrackSize.From(LengthBreadth(source, length)),
         CssPercentageValue percentage when !Double.IsNaN(percentage.Value) =>
             GridTrackSize.From(new GridBreadth(GridBreadthKind.Percent, percentage.Value / 100.0)),
         CssFractionValue fraction => GridTrackSize.From(new GridBreadth(GridBreadthKind.Fraction, fraction.Value)),
-        CssMinMaxValue minmax => new GridTrackSize(Breadth(style, minmax.Minimum), Breadth(style, minmax.Maximum)),
+        CssMinMaxValue minmax => new GridTrackSize(Breadth(source, minmax.Minimum), Breadth(source, minmax.Maximum)),
         CssIdentifierValue identifier => GridTrackSize.From(Identifier(identifier.Value)),
         ICssFunctionValue { Name: "fit-content" } fit =>
-            GridTrackSize.From(new GridBreadth(GridBreadthKind.FitContent, Length(style, fit))),
+            GridTrackSize.From(new GridBreadth(GridBreadthKind.FitContent, Length(source, fit))),
         _ => null,
     };
 
-    private static GridBreadth Breadth(ComputedStyle style, ICssValue? value) => value switch
+    private static GridBreadth Breadth(Source source, ICssValue? value) => value switch
     {
         CssIdentifierValue identifier => Identifier(identifier.Value),
-        CssLengthValue length => LengthBreadth(style, length),
+        CssLengthValue length => LengthBreadth(source, length),
         CssFractionValue fraction => new GridBreadth(GridBreadthKind.Fraction, fraction.Value),
         CssPercentageValue percentage when !Double.IsNaN(percentage.Value) =>
             new GridBreadth(GridBreadthKind.Percent, percentage.Value / 100.0),
@@ -553,8 +622,8 @@ internal readonly struct GridStyle
         _ => new GridBreadth(GridBreadthKind.Auto, 0),
     };
 
-    private static GridBreadth LengthBreadth(ComputedStyle style, CssLengthValue length) =>
-        LengthReader.TryReadValue(length, RenderMode.Horizontal, style, out var parsed) && parsed.HasValue
+    private static GridBreadth LengthBreadth(Source source, CssLengthValue length) =>
+        source.TryLength(length, out var parsed) && parsed.HasValue
             ? parsed.Kind == StyleLengthKind.Percent
                 ? new GridBreadth(GridBreadthKind.Percent, parsed.Value)
                 : new GridBreadth(GridBreadthKind.Length, Math.Max(0, parsed.Value))
@@ -565,10 +634,10 @@ internal readonly struct GridStyle
     /// percentage limit is relative to the container, which is not known here, so it degrades to
     /// zero - the track then behaves as if it had no limit rather than as if it were empty.
     /// </summary>
-    private static Double Length(ComputedStyle style, ICssValue? value)
+    private static Double Length(Source source, ICssValue? value)
     {
         if (value is CssLengthValue length &&
-            LengthReader.TryReadValue(length, RenderMode.Horizontal, style, out var parsed) &&
+            source.TryLength(length, out var parsed) &&
             parsed.HasValue &&
             parsed.Kind != StyleLengthKind.Percent)
         {
@@ -628,6 +697,148 @@ internal readonly struct GridStyle
 
     private static ICssValue? Fetch(ComputedStyle style, String name) =>
         style.RawValue(name);
+
+    /// <summary>Reads one side of an item's placement from the element's own cascaded declaration.</summary>
+    public static GridLine PlacementFused(Func<String, ICssProperty?> find, String name) =>
+        ReadLine(find(name)?.RawValue);
+
+    /// <summary>
+    /// Where the reader's values come from: the computed declaration behind a render-tree style, or
+    /// the cascaded declarations behind a fused one. Everything it asks for - a value with its type
+    /// intact, a keyword as written, a length resolved against the element's own font size - is one
+    /// of those three, and the two sources answer them differently.
+    /// </summary>
+    private readonly struct Source
+    {
+        private readonly ComputedStyle? _style;
+        private readonly Func<String, ICssProperty?>? _find;
+        private readonly IRenderDimensions _dimensions;
+        private readonly Double _size;
+
+        private Source(
+            ComputedStyle? style, Func<String, ICssProperty?>? find, IRenderDimensions dimensions, Double size)
+        {
+            _style = style;
+            _find = find;
+            _dimensions = dimensions;
+            _size = size;
+        }
+
+        public static Source Of(ComputedStyle style) => new(style, null, style.Dimensions, 0);
+
+        public static Source Of(
+            Func<String, ICssProperty?> find, Double size, IRenderDimensions dimensions) =>
+            new(null, find, dimensions, size);
+
+        public ComputedStyle? Style => _style;
+
+        public ICssProperty? Property(String name) => _style is null ? _find!(name) : null;
+
+        public ICssValue? Fetch(String name)
+        {
+            if (_style is { } style)
+            {
+                return style.RawValue(name);
+            }
+
+            return _find!(name)?.RawValue;
+        }
+
+        public String Text(String name)
+        {
+            if (_style is { } style)
+            {
+                return FlexStyle.Text(style, name);
+            }
+
+            return _find!(name)?.Value?.Trim().ToLowerInvariant() ?? String.Empty;
+        }
+
+        /// <summary>
+        /// Gets whether the longhand is there but carries no value, rather than not being there: the
+        /// mark a shorthand leaves on the longhand it expanded into but did not fill.
+        /// </summary>
+        public Boolean IsEmpty(String name)
+        {
+            if (_style is not null)
+            {
+                return false;
+            }
+
+            return _find!(name) is { } property && String.IsNullOrWhiteSpace(property.Value);
+        }
+
+        public Boolean TryLength(ICssValue? value, out StyleLength length)
+        {
+            if (_style is { } style)
+            {
+                return LengthReader.TryReadValue(value, RenderMode.Horizontal, style, out length);
+            }
+
+            return LengthReader.TryReadValue(value, RenderMode.Horizontal, _dimensions, _size, out length);
+        }
+    }
+}
+
+/// <summary>
+/// What a grid item carries: where it is placed and how it aligns itself. The four lines are read
+/// together because the placement algorithm wants all of them at once, and the two alignments are
+/// the item's own rather than its container's.
+/// </summary>
+internal readonly struct GridItemStyle
+{
+    private GridItemStyle(
+        GridLine columnStart,
+        GridLine columnEnd,
+        GridLine rowStart,
+        GridLine rowEnd,
+        FlexAlignment justifySelf,
+        FlexAlignment alignSelf)
+    {
+        ColumnStart = columnStart;
+        ColumnEnd = columnEnd;
+        RowStart = rowStart;
+        RowEnd = rowEnd;
+        JustifySelf = justifySelf;
+        AlignSelf = alignSelf;
+    }
+
+    public GridLine ColumnStart { get; }
+
+    public GridLine ColumnEnd { get; }
+
+    public GridLine RowStart { get; }
+
+    public GridLine RowEnd { get; }
+
+    public FlexAlignment JustifySelf { get; }
+
+    public FlexAlignment AlignSelf { get; }
+
+    /// <summary>An item that asked for nothing: placed by the algorithm, aligned by the container.</summary>
+    public static GridItemStyle Auto { get; } = new(
+        GridLine.Auto,
+        GridLine.Auto,
+        GridLine.Auto,
+        GridLine.Auto,
+        CssInitialValues.JustifySelfGrid,
+        CssInitialValues.AlignSelf);
+
+    internal static GridItemStyle Read(ComputedStyle style) => new(
+        GridStyle.Placement(style, "grid-column-start"),
+        GridStyle.Placement(style, "grid-column-end"),
+        GridStyle.Placement(style, "grid-row-start"),
+        GridStyle.Placement(style, "grid-row-end"),
+        FlexStyle.ReadAlignment(style, "justify-self", CssInitialValues.JustifySelfGrid),
+        FlexStyle.ReadAlignment(style, "align-self", CssInitialValues.AlignSelf));
+
+    internal static GridItemStyle ReadFused(Func<String, ICssProperty?> find) => new(
+        GridStyle.PlacementFused(find, "grid-column-start"),
+        GridStyle.PlacementFused(find, "grid-column-end"),
+        GridStyle.PlacementFused(find, "grid-row-start"),
+        GridStyle.PlacementFused(find, "grid-row-end"),
+        FlexStyle.ReadAlignmentFused(find("justify-self"), CssInitialValues.JustifySelfGrid),
+        FlexStyle.ReadAlignmentFused(find("align-self"), CssInitialValues.AlignSelf));
 }
 
 /// <summary>An <c>auto-fill</c>/<c>auto-fit</c> repetition, held back until the width is known.</summary>

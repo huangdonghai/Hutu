@@ -70,10 +70,9 @@ public static partial class BoxBuilder
     {
         var cascade = MatchedCascade.ForElement(index, element);
 
-        // The fused resolvers read cascaded values as written; var()/env() need the cascade's
-        // substitution, and the layout contexts that read the declaration through lazy readers
-        // (flex, grid, table) or the ruby pairing are not yet fused. Any of these abandons the
-        // whole document to the render-tree path.
+        // The fused resolvers read cascaded values as written, so a var() or env() - which only the
+        // cascade's own substitution can resolve - abandons the whole document to the render-tree
+        // path.
         if (cascade.UsesSubstitution())
         {
             supported = false;
@@ -89,14 +88,10 @@ public static partial class BoxBuilder
 
         var kind = ResolveKind(element, style);
 
-        if (kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Table or BoxKind.TableRowGroup
-            or BoxKind.TableRow or BoxKind.TableCell or BoxKind.TableCaption
-            or BoxKind.TableColumn or BoxKind.TableColumnGroup
-            or BoxKind.Ruby or BoxKind.RubyText or BoxKind.RubyBase)
-        {
-            supported = false;
-            return null;
-        }
+        // The substitution above is now the one thing that abandons a document. Every formatting
+        // context has the readers it needs - `PositionStyle`, `TableStyle`, `FlexStyle`, `GridStyle`
+        // - each taking the cascaded declarations instead of a computed one, and ruby needs none of
+        // that: a pair is built here, and only its annotation's side has to be carried down.
 
         var flow = ResolveFlow(style, inheritedFlow);
 
@@ -146,6 +141,33 @@ public static partial class BoxBuilder
 
         switch (kind)
         {
+            // A table is not a block container: what it holds is rows, and a cell that arrives
+            // without one is given an anonymous row to sit in. That is the fixup, and it is what
+            // makes a table of `<div>`s lay out like the table it says it is. It is not part of
+            // assembling boxes, so it is asked for here exactly as the render-tree path asks.
+            case BoxKind.Table:
+                box.Children.AddRange(children);
+                TableFixup.NormalizeTable(box);
+                break;
+
+            case BoxKind.TableRowGroup:
+                box.Children.AddRange(children);
+                TableFixup.NormalizeRowGroup(box);
+                break;
+
+            case BoxKind.TableRow:
+                box.Children.AddRange(children);
+                TableFixup.NormalizeRow(box);
+                break;
+
+            // A flex or grid container's children are all items, so a run of inline content is one
+            // item even when there is nothing else around it - it is wrapped rather than left to
+            // form a line box, which is what makes a bare word inside either container behave.
+            case BoxKind.Flex:
+            case BoxKind.Grid:
+                GroupChildren(box, children, true);
+                break;
+
             case BoxKind.Block:
             case BoxKind.InlineBlock:
             case BoxKind.TableCell:

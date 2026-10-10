@@ -449,6 +449,13 @@ public readonly struct ComputedStyle
             return parentWeight;
         }
 
+        // The `font` shorthand a reset hands every control reaches the cascade as its longhands,
+        // each naming the parent's value rather than one of its own.
+        if (IsInherit(declared))
+        {
+            return parentWeight;
+        }
+
         var text = declared.Value?.Trim() ?? String.Empty;
 
         if (text.Equals("bold", StringComparison.OrdinalIgnoreCase) ||
@@ -479,6 +486,11 @@ public readonly struct ComputedStyle
             return parentItalic;
         }
 
+        if (IsInherit(declared))
+        {
+            return parentItalic;
+        }
+
         var text = declared.Value?.Trim() ?? String.Empty;
         return text.Equals("italic", StringComparison.OrdinalIgnoreCase) ||
                text.Equals("oblique", StringComparison.OrdinalIgnoreCase);
@@ -499,7 +511,9 @@ public readonly struct ComputedStyle
     {
         if (declared is not null)
         {
-            return ResolveLineHeightValue(declared, ownSize, dimensions);
+            // `inherit` is a wide keyword the cascade leaves as written, and it asks for the value
+            // the parent resolved rather than for a number of its own.
+            return IsInherit(declared) ? parentResolved : ResolveLineHeightValue(declared, ownSize, dimensions);
         }
 
         if (parentDeclared?.RawValue is CssLengthValue share &&
@@ -538,8 +552,23 @@ public readonly struct ComputedStyle
     /// Resolves the vertical alignment from the element's own cascaded declaration, for the
     /// fused path. The property is not inherited: a miss takes the initial value.
     /// </summary>
-    public static String ResolveVerticalAlignFused(ICssProperty? declared) =>
-        ResolveKeywordFused(declared, CssInitialValues.VerticalAlign, CssInitialValues.VerticalAlign, inherited: false);
+    /// <param name="parentValue">
+    /// The parent's own resolved alignment, which is what <c>inherit</c> asks for. The property is
+    /// not inherited, so this is the only way it can matter - and it is not rare: the user-agent
+    /// sheet sets <c>vertical-align: inherit</c> on every row and cell, so a table is nothing but
+    /// cells asking for the alignment of the group around them.
+    /// </param>
+    public static String ResolveVerticalAlignFused(ICssProperty? declared, String parentValue)
+    {
+        var text = ResolveKeywordFused(
+            declared, CssInitialValues.VerticalAlign, CssInitialValues.VerticalAlign, inherited: false);
+
+        // Every other keyword stays as written, `initial` and `unset` among them, because that is
+        // what the old path reads and matching it is what keeps the two trees identical. `inherit`
+        // is the exception: the cascade leaves it unresolved but the computed declaration behind the
+        // old path has already folded it in - a `td` under a `tbody` reads `middle`, never `inherit`.
+        return text.Equals("inherit", StringComparison.OrdinalIgnoreCase) ? parentValue : text;
+    }
 
     private static String ResolveKeywordFused(ICssProperty? declared, String parentValue, String initial, Boolean inherited)
     {
@@ -921,10 +950,13 @@ public readonly struct ComputedStyle
 
     /// <summary>
     /// Resolves the ruby position from the element's own cascaded declaration, for the fused path.
+    /// The property is inherited - a page states <c>under</c> on a paragraph as readily as on the
+    /// pair itself - so a miss takes the value the parent resolved rather than the initial one.
     /// </summary>
-    public static RubyPosition ResolveRubyPositionFused(ICssProperty? declared) =>
+    public static RubyPosition ResolveRubyPositionFused(ICssProperty? declared, RubyPosition inherited) =>
         declared?.Value?.Trim().ToLowerInvariant() switch
         {
+            null => inherited,
             "under" => RubyPosition.Under,
             "inter-character" => RubyPosition.InterCharacter,
             _ => RubyPosition.Over,
@@ -987,8 +1019,9 @@ public readonly struct ComputedStyle
     /// </summary>
     public static String ResolveFontFamilyFused(ICssProperty? declared, String? parentFamily, FontFaceTable? faces)
     {
-        // `font-family` is inherited: a miss takes the parent's list, which is already expanded.
-        var family = declared is null
+        // `font-family` is inherited: a miss takes the parent's list, which is already expanded, and
+        // so does an explicit `inherit` - the keyword nearly every reset hands a form control.
+        var family = declared is null || IsInherit(declared)
             ? parentFamily ?? CssInitialValues.FontFamily
             : KeywordText(declared, CssInitialValues.FontFamily);
 
@@ -1003,6 +1036,11 @@ public readonly struct ComputedStyle
         ICssProperty? declared, Double parent, Double ownSize, IRenderDimensions dimensions)
     {
         if (declared is null)
+        {
+            return parent;
+        }
+
+        if (IsInherit(declared))
         {
             return parent;
         }
@@ -1062,6 +1100,15 @@ public readonly struct ComputedStyle
 
         return resolved == CssColorValue.InvertedColor ? ownColor : resolved;
     }
+
+    /// <summary>
+    /// Gets whether the declaration is the wide keyword <c>inherit</c>, which the cascade leaves
+    /// unresolved and which asks for the value its parent computed rather than one of its own.
+    /// </summary>
+    private static Boolean IsInherit(ICssProperty? declared) =>
+        declared is not null &&
+        ((declared.RawValue is { } raw && IsInheritKeyword(raw)) ||
+         declared.Value?.Trim().Equals("inherit", StringComparison.OrdinalIgnoreCase) == true);
 
     private static Double? ResolveLineHeightValue(ICssProperty declared, Double size, IRenderDimensions dimensions)
     {
@@ -1386,6 +1433,7 @@ public readonly struct ComputedStyle
         internal TableStyle? Table;
 
         internal PositionStyle? Position;
+        internal GridItemStyle? GridItem;
 
         // Filled only by the fused box-builder path. The accessors that would otherwise read the
         // declaration answer from here when it is present, so a style assembled from matched
@@ -1905,7 +1953,14 @@ public readonly struct ComputedStyle
     /// a gate would resolve this one for every grid item on the page and never use it. Waiting until
     /// something asks costs an element that is not a flex container one null check.
     /// </remarks>
-    public FlexStyle Flex => _values.Flex ??= FlexStyle.Read(this);
+    /// <remarks>
+    /// A fused style cannot be read, so it is handed the longhands the box builder resolved - and it
+    /// is handed them only for a box that is a flex container or a flex item, which is every box the
+    /// flex context asks about. Anything else gets the initial values rather than a read that would
+    /// find no declaration.
+    /// </remarks>
+    public FlexStyle Flex =>
+        _values.Fused is null ? _values.Flex ??= FlexStyle.Read(this) : _values.Flex ?? FlexStyle.Initial;
 
     /// <summary>
     /// Gets the grid longhands: the track lists, the automatic track sizes, the automatic flow, the
@@ -1917,13 +1972,34 @@ public readonly struct ComputedStyle
     /// and lines - is a richer shape than the other contexts need and there is no reason to publish
     /// it. The layout engine is the only consumer.
     /// </remarks>
-    internal GridStyle Grid => _values.Grid ??= GridStyle.Read(this);
+    /// <remarks>
+    /// A fused style cannot be read, so it is handed the longhands the box builder resolved - and
+    /// only for a grid container, which is the only box that asks. Anything else gets the initial
+    /// values rather than a read that would find no declaration.
+    /// </remarks>
+    internal GridStyle Grid =>
+        _values.Fused is null ? _values.Grid ??= GridStyle.Read(this) : _values.Grid ?? GridStyle.Initial;
+
+    /// <summary>
+    /// Gets where a grid item is placed and how it aligns itself, which the old path reads from the
+    /// declaration and the fused path resolves with the rest of the item's style.
+    /// </summary>
+    internal GridItemStyle GridItem =>
+        _values.Fused is null
+            ? _values.GridItem ??= GridItemStyle.Read(this)
+            : _values.GridItem ?? GridItemStyle.Auto;
 
     /// <summary>
     /// Gets the table longhands. <c>border-collapse</c>, <c>border-spacing</c> and friends only
     /// matter on a table box; <c>vertical-align</c> is meaningful on a cell.
     /// </summary>
-    public TableStyle Table => _values.Table ??= TableStyle.Read(this);
+    /// <remarks>
+    /// A fused style carries no declaration, so the reader below cannot answer for it - it is handed
+    /// the table longhands the box builder resolved instead. One that was not given any is not a
+    /// table box, and the initial values are what every longhand of a box that is not one comes to.
+    /// </remarks>
+    public TableStyle Table =>
+        _values.Fused is null ? _values.Table ??= TableStyle.Read(this) : _values.Table ?? default;
 
     /// <summary>
     /// Gets the cascaded declaration. It is the one that still carries a percentage, because
