@@ -271,7 +271,7 @@ internal sealed record TextDecorationArea
 /// exists, by which point the allocation it saves has already been paid.
 /// </para>
 /// </remarks>
-internal sealed class StyleIntern
+public sealed class StyleIntern
 {
     private readonly Dictionary<BorderArea, BorderArea> _border = new();
 

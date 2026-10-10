@@ -122,6 +122,30 @@ public readonly struct ComputedStyle
     }
 
     /// <summary>
+    /// Builds a style from areas the fused box-builder path already resolved, with no
+    /// declaration behind it: the accessors that would read one answer from the fused
+    /// keywords instead.
+    /// </summary>
+    internal ComputedStyle(
+        IRenderDimensions dimensions,
+        IElement? element,
+        FusedKeywords fused,
+        StyleValues values,
+        FontFaceTable? faces)
+    {
+        _style = null!;
+        _specified = null;
+        _dimensions = dimensions;
+        _element = element;
+        _parentFontSize = 0;
+        _parentColor = null;
+        _declaresFontSize = false;
+        _faces = faces;
+        values.Fused = fused;
+        _values = values;
+    }
+
+    /// <summary>
     /// Resolves the areas whose properties cannot be inherited, and interns what it builds.
     /// </summary>
     /// <remarks>
@@ -315,6 +339,759 @@ public readonly struct ComputedStyle
         return TryLengthAgainst("font-size", RenderMode.Vertical, new LengthReader.FontSource(_dimensions.FontSize), out var pixels)
             ? pixels
             : _dimensions.FontSize;
+    }
+
+    /// <summary>
+    /// Resolves the font size from the element's own cascaded declaration, for the fused
+    /// box-builder path that never merges the parent's declarations down.
+    /// </summary>
+    /// <remarks>
+    /// Without the merge there is no declared-versus-inherited ambiguity to settle: a hit in
+    /// the element's own cascade is declared, a miss is inherited. A relative hit resolves
+    /// against the parent; a miss takes the parent's resolved size outright, which stops
+    /// nested relative sizes from stacking. <c>inherit</c> and <c>unset</c> name the parent's
+    /// size directly; <c>initial</c> is the medium size the device stands in for.
+    /// </remarks>
+    public static Double ResolveFontSizeFused(ICssProperty? declared, Double parentFontSize, IRenderDimensions dimensions)
+    {
+        if (declared?.RawValue is CssLengthValue relative && IsFontRelative(relative.Type))
+        {
+            return ResolveFontRelative(relative, parentFontSize, dimensions);
+        }
+
+        if (declared?.RawValue is { } raw)
+        {
+            if (IsInheritKeyword(raw))
+            {
+                return parentFontSize > 0 ? parentFontSize : dimensions.FontSize;
+            }
+
+            if (TryReadFontSizeValue(declared, dimensions, out var pixels))
+            {
+                return pixels;
+            }
+
+            return dimensions.FontSize;
+        }
+
+        return parentFontSize > 0 ? parentFontSize : dimensions.FontSize;
+    }
+
+    private static Boolean IsInheritKeyword(ICssValue value) =>
+        (value is CssWideKeyword keyword &&
+            IsInheritText(keyword.CssText)) ||
+        (value is not CssLengthValue && IsInheritText(value.CssText));
+
+    private static Boolean IsInheritText(String text)
+    {
+        var keyword = text.Trim();
+        return keyword.Equals("inherit", StringComparison.OrdinalIgnoreCase) ||
+               keyword.Equals("unset", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Boolean TryReadFontSizeValue(ICssProperty declared, IRenderDimensions dimensions, out Double pixels) =>
+        TryReadLengthValue(declared, RenderMode.Vertical, new LengthReader.FontSource(dimensions.FontSize), dimensions, out pixels);
+
+    internal static Boolean TryReadLengthValue(
+        ICssProperty declared,
+        RenderMode mode,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions,
+        out Double pixels)
+    {
+        pixels = 0;
+
+        var text = declared.Value;
+
+        if (!String.IsNullOrWhiteSpace(text))
+        {
+            var math = CssMathLengths.Evaluate(
+                text,
+                argument => CssLengthValue.TryParse(argument.Trim(), out var length)
+                    ? Resolve(length, mode, dimensions, font)
+                    : null);
+
+            if (math is not null)
+            {
+                pixels = math.Value;
+                return true;
+            }
+        }
+
+        var value = declared.RawValue;
+
+        if (value is null || value.Is("auto") || value.Is("normal") || value.Is("none"))
+        {
+            return false;
+        }
+
+        var resolved = ResolveValue(value, mode, dimensions, font);
+
+        if (resolved is null)
+        {
+            return false;
+        }
+
+        pixels = resolved.Value;
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves the font weight from the element's own cascaded declaration, for the fused
+    /// path. A miss takes the parent's resolved weight. The mapping copies
+    /// <see cref="ResolveFontWeight"/> exactly: <c>bolder</c> and <c>lighter</c> are flat
+    /// keywords here because the cascade leaves them unresolved.
+    /// </summary>
+    public static Int32 ResolveFontWeightFused(ICssProperty? declared, Int32 parentWeight)
+    {
+        if (declared is null)
+        {
+            return parentWeight;
+        }
+
+        var text = declared.Value?.Trim() ?? String.Empty;
+
+        if (text.Equals("bold", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("bolder", StringComparison.OrdinalIgnoreCase))
+        {
+            return 700;
+        }
+
+        if (text.Equals("normal", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("lighter", StringComparison.OrdinalIgnoreCase))
+        {
+            return 400;
+        }
+
+        return Int32.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var weight)
+            ? weight
+            : 400;
+    }
+
+    /// <summary>
+    /// Resolves the font style from the element's own cascaded declaration, for the fused
+    /// path. A miss takes the parent's resolved style.
+    /// </summary>
+    public static Boolean ResolveFontStyleFused(ICssProperty? declared, Boolean parentItalic)
+    {
+        if (declared is null)
+        {
+            return parentItalic;
+        }
+
+        var text = declared.Value?.Trim() ?? String.Empty;
+        return text.Equals("italic", StringComparison.OrdinalIgnoreCase) ||
+               text.Equals("oblique", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Resolves the line height from the element's own cascaded declaration, for the fused
+    /// path. A number or percentage re-resolves against each element's own size - including
+    /// an inherited one, which is why the parent's cascaded declaration travels with its
+    /// resolved value. Anything else inherited is taken as resolved.
+    /// </summary>
+    public static Double? ResolveLineHeightFused(
+        ICssProperty? declared,
+        ICssProperty? parentDeclared,
+        Double ownSize,
+        Double? parentResolved,
+        IRenderDimensions dimensions)
+    {
+        if (declared is not null)
+        {
+            return ResolveLineHeightValue(declared, ownSize, dimensions);
+        }
+
+        if (parentDeclared?.RawValue is CssLengthValue share &&
+            share.Type == CssLengthValue.Unit.Percent)
+        {
+            return share.Value * 0.01 * ownSize;
+        }
+
+        var text = parentDeclared?.Value?.Trim();
+
+        if (!String.IsNullOrWhiteSpace(text) &&
+            Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
+        {
+            return factor * ownSize;
+        }
+
+        return parentResolved;
+    }
+
+    /// <summary>
+    /// Resolves the white space handling from the element's own cascaded declaration, for the
+    /// fused path. The property is inherited: a miss takes the parent's resolved value.
+    /// </summary>
+    public static String ResolveWhiteSpaceFused(ICssProperty? declared, String parentValue) =>
+        ResolveKeywordFused(declared, parentValue, CssInitialValues.WhiteSpace, inherited: true);
+
+    /// <summary>
+    /// Resolves the text alignment from the element's own cascaded declaration, for the fused
+    /// path. The cascade treats the property as inherited (CSS 2.1 model): a miss takes the
+    /// parent's resolved value.
+    /// </summary>
+    public static String ResolveTextAlignFused(ICssProperty? declared, String parentValue) =>
+        ResolveKeywordFused(declared, parentValue, CssInitialValues.TextAlign, inherited: true);
+
+    /// <summary>
+    /// Resolves the vertical alignment from the element's own cascaded declaration, for the
+    /// fused path. The property is not inherited: a miss takes the initial value.
+    /// </summary>
+    public static String ResolveVerticalAlignFused(ICssProperty? declared) =>
+        ResolveKeywordFused(declared, CssInitialValues.VerticalAlign, CssInitialValues.VerticalAlign, inherited: false);
+
+    private static String ResolveKeywordFused(ICssProperty? declared, String parentValue, String initial, Boolean inherited)
+    {
+        // Verbatim, wide keywords included: the cascade leaves `inherit` and friends
+        // unresolved on keyword properties, and the old path reads that text as the value.
+        // Matching it exactly is what keeps the box trees identical; reinterpreting the
+        // keywords is a behaviour change with its own tests, not part of this rewrite.
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            return declared is null && inherited ? parentValue : initial;
+        }
+
+        return text!;
+    }
+
+    /// <summary>
+    /// Resolves the first-line indent from the element's own cascaded declaration, for the
+    /// fused path. The cascade treats the property as inherited (CSS 2.1 model): a miss takes
+    /// the parent's resolved length. Percentages stay unresolved for the layout pass, as in
+    /// the box-model read.
+    /// </summary>
+    public static StyleLength ResolveTextIndentFused(
+        ICssProperty? declared, StyleLength parentIndent, Double ownSize, IRenderDimensions dimensions)
+    {
+        if (declared is null)
+        {
+            return parentIndent;
+        }
+
+        // Wide keywords fall through to the read below and resolve to zero there, exactly as
+        // the old path reads them: the cascade leaves them unresolved and the length reader
+        // answers every one of them with nothing.
+        return LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var length)
+            ? length
+            : StyleLength.Zero;
+    }
+
+    /// <summary>
+    /// Resolves the four border styles from the element's own cascaded declarations, for the
+    /// fused path. Borders are not inherited: a miss takes the initial value, verbatim -
+    /// wide keywords included, as the old path reads them.
+    /// </summary>
+    public static (String Top, String Right, String Bottom, String Left) ResolveBorderStylesFused(
+        Func<String, ICssProperty?> find) =>
+    (
+        KeywordText(find("border-top-style"), CssInitialValues.BorderStyle),
+        KeywordText(find("border-right-style"), CssInitialValues.BorderStyle),
+        KeywordText(find("border-bottom-style"), CssInitialValues.BorderStyle),
+        KeywordText(find("border-left-style"), CssInitialValues.BorderStyle)
+    );
+
+    private static String KeywordText(ICssProperty? declared, String initial)
+    {
+        var text = declared?.Value?.Trim();
+        return String.IsNullOrWhiteSpace(text) ? initial : text!;
+    }
+
+    /// <summary>
+    /// Resolves the four border widths from the element's own cascaded declarations, for the
+    /// fused path. A side whose style draws nothing is zero without reading further, as in
+    /// the old path.
+    /// </summary>
+    public static (Double Top, Double Right, Double Bottom, Double Left) ResolveBorderWidthsFused(
+        Func<String, ICssProperty?> find,
+        (String Top, String Right, String Bottom, String Left) styles,
+        Double ownSize,
+        IRenderDimensions dimensions) =>
+    (
+        BorderWidthFused(styles.Top, find("border-top-width"), ownSize, dimensions),
+        BorderWidthFused(styles.Right, find("border-right-width"), ownSize, dimensions),
+        BorderWidthFused(styles.Bottom, find("border-bottom-width"), ownSize, dimensions),
+        BorderWidthFused(styles.Left, find("border-left-width"), ownSize, dimensions)
+    );
+
+    private static Double BorderWidthFused(
+        String style, ICssProperty? declared, Double ownSize, IRenderDimensions dimensions)
+    {
+        if (!BorderArea.Draws(style))
+        {
+            return 0;
+        }
+
+        if (declared is not null &&
+            TryReadLengthValue(declared, RenderMode.Horizontal, ownSize, dimensions, out var pixels))
+        {
+            return pixels;
+        }
+
+        // No width declared: the computed declaration still carries the initial medium width,
+        // which the old path resolves the same way. Pinned by the differential test.
+        return 3;
+    }
+
+    /// <summary>
+    /// Resolves the corner radii from the element's own cascaded declarations, for the fused
+    /// path. Percentages stay unresolved for the layout pass.
+    /// </summary>
+    public static StyleCornerRadii ResolveBorderRadiusFused(
+        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions) => new(
+        LengthReader.TryReadCornerValue(find("border-top-left-radius")?.RawValue, dimensions, ownSize) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCornerValue(find("border-top-right-radius")?.RawValue, dimensions, ownSize) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCornerValue(find("border-bottom-right-radius")?.RawValue, dimensions, ownSize) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCornerValue(find("border-bottom-left-radius")?.RawValue, dimensions, ownSize) ?? StyleCornerRadius.Zero);
+
+    /// <summary>
+    /// Maps the four border style keywords to the strokes the painter draws, for the fused path.
+    /// </summary>
+    public static BorderStyles ResolveBorderLinesFused((String Top, String Right, String Bottom, String Left) styles) => new(
+        ToLineStyle(styles.Top),
+        ToLineStyle(styles.Right),
+        ToLineStyle(styles.Bottom),
+        ToLineStyle(styles.Left));
+
+    /// <summary>
+    /// Resolves the display keyword from the element's own cascaded declaration, for the fused
+    /// path. Display is not inherited: a miss takes the initial value, verbatim.
+    /// </summary>
+    public static String ResolveDisplayFused(ICssProperty? declared) =>
+        KeywordText(declared, CssInitialValues.Display);
+
+    /// <summary>
+    /// Resolves whether either overflow axis clips, from the element's own cascaded
+    /// declarations, for the fused path. A miss takes visible.
+    /// </summary>
+    public static Boolean ResolveClipsOverflowFused(ICssProperty? x, ICssProperty? y) =>
+        !IsOverflowVisibleText(x?.Value) || !IsOverflowVisibleText(y?.Value);
+
+    private static Boolean IsOverflowVisibleText(String? text) =>
+        String.IsNullOrWhiteSpace(text) || text.Trim().Equals("visible", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolves the object fit from the element's own cascaded declaration, for the fused path.
+    /// </summary>
+    public static Layout.ObjectFit ResolveObjectFitFused(ICssProperty? declared) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            "contain" => Layout.ObjectFit.Contain,
+            "cover" => Layout.ObjectFit.Cover,
+            "none" => Layout.ObjectFit.None,
+            "scale-down" => Layout.ObjectFit.ScaleDown,
+            _ => Layout.ObjectFit.Fill,
+        };
+
+    /// <summary>
+    /// Resolves the direction from the element's own cascaded declaration, for the fused path.
+    /// The <c>dir</c> attribute stands in when no rule declares the property; the property is
+    /// inherited, so a miss otherwise takes the parent's resolved direction.
+    /// </summary>
+    public static TextDirection ResolveDirectionFused(IElement? element, ICssProperty? declared, TextDirection parent)
+    {
+        if (DirectionAttribute(element) is { } attribute && declared is null)
+        {
+            return attribute;
+        }
+
+        if (declared is null)
+        {
+            return parent;
+        }
+
+        // Any text but `rtl` reads left to right, as in the old path.
+        return String.Equals(declared.Value?.Trim(), "rtl", StringComparison.OrdinalIgnoreCase)
+            ? TextDirection.RightToLeft
+            : TextDirection.LeftToRight;
+    }
+
+    private static TextDirection? DirectionAttribute(IElement? element)
+    {
+        for (var current = element; current is not null; current = current.ParentElement)
+        {
+            var dir = current.GetAttribute("dir")?.Trim();
+
+            if (String.Equals(dir, "rtl", StringComparison.OrdinalIgnoreCase))
+            {
+                return TextDirection.RightToLeft;
+            }
+
+            if (String.Equals(dir, "ltr", StringComparison.OrdinalIgnoreCase))
+            {
+                return TextDirection.LeftToRight;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves the writing mode from the element's own cascaded declaration, for the fused
+    /// path. The property is inherited: a miss takes the parent's resolved mode.
+    /// </summary>
+    public static Layout.WritingMode ResolveWritingModeFused(ICssProperty? declared, Layout.WritingMode parent) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            "vertical-rl" => Layout.WritingMode.VerticalRl,
+            "vertical-lr" => Layout.WritingMode.VerticalLr,
+            "sideways-rl" => Layout.WritingMode.SidewaysRl,
+            "sideways-lr" => Layout.WritingMode.SidewaysLr,
+            "horizontal-tb" => Layout.WritingMode.HorizontalTb,
+            _ => declared is null ? parent : Layout.WritingMode.HorizontalTb,
+        };
+
+    /// <summary>
+    /// Resolves the declared text orientation, for the fused path. The property is inherited:
+    /// a miss takes the parent's.
+    /// </summary>
+    public static TextOrientation? ResolveTextOrientationFused(ICssProperty? declared, TextOrientation? parent) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            "mixed" => TextOrientation.Mixed,
+            "upright" => TextOrientation.Upright,
+            "sideways" => TextOrientation.Sideways,
+            _ => declared is null ? parent : null,
+        };
+
+    /// <summary>
+    /// Resolves the declared upright combining, for the fused path. The property is
+    /// inherited: a miss takes the parent's.
+    /// </summary>
+    public static Boolean? ResolveTextCombineFused(ICssProperty? declared, Boolean? parent) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            "all" => true,
+            "none" => false,
+            _ => declared is null ? parent : null,
+        };
+
+    /// <summary>
+    /// Resolves the outline style from the element's own cascaded declaration, for the fused path.
+    /// </summary>
+    public static BorderLineStyle ResolveOutlineStyleFused(ICssProperty? declared) =>
+        ToLineStyle(KeywordText(declared, CssInitialValues.OutlineStyle));
+
+    /// <summary>
+    /// Resolves the outline width from the element's own cascaded declaration, for the fused
+    /// path. No stroke means no width; no width declared means medium.
+    /// </summary>
+    public static Double ResolveOutlineWidthFused(
+        BorderLineStyle style, ICssProperty? declared, Double ownSize, IRenderDimensions dimensions)
+    {
+        if (style == BorderLineStyle.None)
+        {
+            return 0;
+        }
+
+        if (declared is not null &&
+            TryReadLengthValue(declared, RenderMode.Horizontal, ownSize, dimensions, out var pixels))
+        {
+            return pixels;
+        }
+
+        return CssLengthValue.Medium.Value;
+    }
+
+    /// <summary>
+    /// Resolves the outline offset from the element's own cascaded declaration, for the fused path.
+    /// </summary>
+    public static Double ResolveOutlineOffsetFused(
+        ICssProperty? declared, Double ownSize, IRenderDimensions dimensions)
+    {
+        if (declared is not null &&
+            TryReadLengthValue(declared, RenderMode.Horizontal, ownSize, dimensions, out var pixels))
+        {
+            return pixels;
+        }
+
+        return CssInitialValues.OutlineOffset;
+    }
+
+    /// <summary>
+    /// Resolves the text colour from the element's own cascaded declaration, for the fused
+    /// path. Links without their own colour take the link colour; anything else without one
+    /// takes the parent's resolved colour.
+    /// </summary>
+    public static CssColorValue ResolveColorFused(
+        IElement? element, ICssProperty? declared, CssColorValue? parentColor, CssColorValue linkColor)
+    {
+        var link = IsFollowableLink(element);
+
+        if (declared is null)
+        {
+            return link ? linkColor : parentColor ?? CssColorValue.Black;
+        }
+
+        // A wide keyword stands for a value: `inherit`/`unset`/`revert` name the parent's
+        // colour, `initial` the initial one. The cascade resolves these; the fused path must
+        // too, since it reads the declaration as written.
+        if (declared.RawValue is { } raw && IsInheritKeyword(raw))
+        {
+            return parentColor ?? CssColorValue.Black;
+        }
+
+        return declared.RawValue is CssColorValue color ? color : CssColorValue.Black;
+    }
+
+    private static Boolean IsFollowableLink(IElement? element) =>
+        element is IHtmlAnchorElement anchor && anchor.HasAttribute("href");
+
+    /// <summary>
+    /// Resolves a border colour from the element's own cascaded declaration, for the fused
+    /// path. A miss takes nothing: null is the signal the painter reads the text colour for.
+    /// An explicit currentcolor takes the element's own resolved colour.
+    /// </summary>
+    public static CssColorValue? ResolveBorderColorFused(
+        ICssProperty? declared, CssColorValue ownColor) =>
+        declared?.RawValue is not CssColorValue color
+            ? null
+            : color == CssColorValue.CurrentColor ? ownColor : color;
+
+    /// <summary>
+    /// Resolves the background colour from the element's own cascaded declaration, for the
+    /// fused path. A miss takes nothing, as in the old path.
+    /// </summary>
+    public static CssColorValue? ResolveBackgroundColorFused(ICssProperty? declared) =>
+        declared?.RawValue is CssColorValue color ? color : null;
+
+    /// <summary>
+    /// Resolves the text decoration flags from the element's own cascaded declarations, for
+    /// the fused path.
+    /// </summary>
+    public static (Boolean Underline, Boolean LineThrough) ResolveDecorationFused(
+        Func<String, ICssProperty?> find) =>
+    (
+        HasDecorationText(find("text-decoration-line")?.Value, find("text-decoration")?.Value, "underline"),
+        HasDecorationText(find("text-decoration-line")?.Value, find("text-decoration")?.Value, "line-through")
+    );
+
+    private static Boolean HasDecorationText(String? line, String? shorthand, String kind)
+    {
+        var text = line;
+
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            text = shorthand;
+        }
+
+        return !String.IsNullOrWhiteSpace(text) &&
+               text.Contains(kind, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Resolves the cursor from the element's own cascaded declaration, for the fused path.
+    /// </summary>
+    public static CursorKind ResolveCursorFused(IElement? element, ICssProperty? declared, CursorKind parent)
+    {
+        // `cursor` is inherited, so a miss takes the parent's resolved kind - which is how a
+        // `cursor: pointer` on a container reaches the text inside it.
+        var kind = declared is null
+            ? parent
+            : LastCursorKeyword(declared.Value) switch
+            {
+                "pointer" or "hand" => CursorKind.Pointer,
+                "text" => CursorKind.Text,
+                "vertical-text" => CursorKind.VerticalText,
+                "move" => CursorKind.Move,
+                "wait" => CursorKind.Wait,
+                "help" => CursorKind.Help,
+                "not-allowed" => CursorKind.NotAllowed,
+                "crosshair" => CursorKind.Crosshair,
+                "none" => CursorKind.None,
+                "default" => CursorKind.Default,
+                _ => CursorKind.Auto,
+            };
+
+        return kind == CursorKind.Auto && IsFollowableLink(element) ? CursorKind.Pointer : kind;
+    }
+
+    private static String LastCursorKeyword(String? value)
+    {
+        if (String.IsNullOrWhiteSpace(value))
+        {
+            return String.Empty;
+        }
+
+        var comma = value!.LastIndexOf(',');
+        return (comma < 0 ? value : value[(comma + 1)..]).Trim();
+    }
+
+    /// <summary>
+    /// Resolves the ruby position from the element's own cascaded declaration, for the fused path.
+    /// </summary>
+    public static RubyPosition ResolveRubyPositionFused(ICssProperty? declared) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            "under" => RubyPosition.Under,
+            "inter-character" => RubyPosition.InterCharacter,
+            _ => RubyPosition.Over,
+        };
+
+    /// <summary>
+    /// Resolves the link colour from the element's interaction state, for the fused path.
+    /// </summary>
+    public static CssColorValue ResolveLinkColorFused(IElement? element) =>
+        element?.GetPseudoClass(PseudoClassNames.Active) == true
+            ? CssColorValue.FromRgb(0xee, 0x00, 0x00)
+            : element?.GetPseudoClass(PseudoClassNames.Visited) == true
+                ? CssColorValue.FromRgb(0x55, 0x1a, 0x8b)
+                : CssColorValue.FromRgb(0x00, 0x00, 0xee);
+
+    /// <summary>
+    /// Resolves the positioning mode from the element's own cascaded declaration, for the
+    /// fused path. The typed value is asked first because the initial value's key is wrong.
+    /// </summary>
+    public static PositionMode ResolvePositionModeFused(ICssProperty? declared)
+    {
+        if (declared?.RawValue is CssConstantValue<PositionMode> constant)
+        {
+            return constant.Value;
+        }
+
+        return declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            "relative" => PositionMode.Relative,
+            "absolute" => PositionMode.Absolute,
+            "fixed" => PositionMode.Fixed,
+            "sticky" => PositionMode.Sticky,
+            _ => CssInitialValues.Position,
+        };
+    }
+
+    /// <summary>
+    /// Resolves one positioning offset from the element's own cascaded declaration, for the
+    /// fused path. Percentages stay unresolved for the layout pass.
+    /// </summary>
+    public static StyleLength ResolveInsetFused(
+        ICssProperty? declared, Double ownSize, IRenderDimensions dimensions) =>
+        declared is not null &&
+        LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var length) &&
+        length.HasValue
+            ? length
+            : StyleLength.Auto;
+
+    /// <summary>
+    /// Resolves the stacking level from the element's own cascaded declaration, for the fused path.
+    /// </summary>
+    public static (Int32 ZIndex, Boolean HasZIndex) ResolveZIndexFused(ICssProperty? declared) =>
+        declared?.RawValue is CssIntegerValue integer
+            ? ((Int32)integer.Value, true)
+            : (0, false);
+
+    /// <summary>
+    /// Resolves the font family list from the element's own cascaded declaration, for the fused
+    /// path. Document-registered faces expand through the table the walk carries.
+    /// </summary>
+    public static String ResolveFontFamilyFused(ICssProperty? declared, String? parentFamily, FontFaceTable? faces)
+    {
+        // `font-family` is inherited: a miss takes the parent's list, which is already expanded.
+        var family = declared is null
+            ? parentFamily ?? CssInitialValues.FontFamily
+            : KeywordText(declared, CssInitialValues.FontFamily);
+
+        return faces is not null ? faces.Expand(family) : family;
+    }
+
+    /// <summary>
+    /// Resolves the letter spacing from the element's own cascaded declaration, for the fused
+    /// path. The property is inherited: a miss takes the parent's resolved spacing.
+    /// </summary>
+    public static Double ResolveLetterSpacingFused(
+        ICssProperty? declared, Double parent, Double ownSize, IRenderDimensions dimensions)
+    {
+        if (declared is null)
+        {
+            return parent;
+        }
+
+        return TryReadLengthValue(declared, RenderMode.Horizontal, ownSize, dimensions, out var pixels)
+            ? pixels
+            : CssInitialValues.LetterSpacing;
+    }
+
+    /// <summary>
+    /// Resolves the background layers from the element's own cascaded declarations, for the
+    /// fused path. A page with no background properties paints none.
+    /// </summary>
+    public static IReadOnlyList<BackgroundLayer> ResolveBackgroundsFused(
+        Func<String, ICssProperty?> find,
+        IElement? element,
+        IRenderDimensions dimensions,
+        Double fontSize) =>
+        BackgroundLayerParser.Parse(
+            find("background-image")?.Value,
+            find("background-position")?.Value,
+            find("background-size")?.Value,
+            find("background-repeat")?.Value,
+            dimensions,
+            fontSize,
+            element is null ? null : url => ImageUrlResolver.Resolve(element, url));
+
+    /// <summary>
+    /// Resolves the background clip from the element's own cascaded declaration, for the fused path.
+    /// </summary>
+    public static BackgroundClip ResolveBackgroundClipFused(ICssProperty? declared)
+    {
+        var value = KeywordText(declared, String.Empty);
+        var comma = value.IndexOf(',');
+        var keyword = (comma < 0 ? value : value[..comma]).Trim();
+
+        return keyword.ToLowerInvariant() switch
+        {
+            "padding-box" => BackgroundClip.PaddingBox,
+            "content-box" => BackgroundClip.ContentBox,
+            _ => BackgroundClip.BorderBox,
+        };
+    }
+
+    /// <summary>
+    /// Resolves the outline colour from the element's own cascaded declaration, for the fused
+    /// path. Invert and a miss both take the element's own resolved colour.
+    /// </summary>
+    public static CssColorValue ResolveOutlineColorFused(ICssProperty? declared, CssColorValue ownColor)
+    {
+        var resolved = declared?.RawValue switch
+        {
+            CssColorValue color => color,
+            CssConstantValue<CssColorValue> constant => constant.Value,
+            _ => ownColor,
+        };
+
+        return resolved == CssColorValue.InvertedColor ? ownColor : resolved;
+    }
+
+    private static Double? ResolveLineHeightValue(ICssProperty declared, Double size, IRenderDimensions dimensions)
+    {
+        if (declared.RawValue is CssLengthValue share && share.Type == CssLengthValue.Unit.Percent)
+        {
+            return share.Value * 0.01 * size;
+        }
+
+        var text = declared.Value;
+
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        text = text.Trim();
+
+        if (text.Equals("normal", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
+        {
+            return factor * size;
+        }
+
+        return TryReadLengthValue(declared, RenderMode.Vertical, new LengthReader.FontSource(size), dimensions, out var pixels)
+            ? pixels
+            : null;
     }
 
     private Int32 ResolveFontWeight()
@@ -584,7 +1361,7 @@ public readonly struct ComputedStyle
     /// copy of the struct on every read, and a copy carrying the areas itself would memcpy every one of
     /// them - fifteen thousand times a pass on the sample, before anything is even resolved.
     /// </remarks>
-    private sealed class StyleValues
+    internal sealed class StyleValues
     {
         internal BorderArea Border = BorderArea.Default;
 
@@ -609,6 +1386,34 @@ public readonly struct ComputedStyle
         internal TableStyle? Table;
 
         internal PositionStyle? Position;
+
+        // Filled only by the fused box-builder path. The accessors that would otherwise read the
+        // declaration answer from here when it is present, so a style assembled from matched
+        // declarations and inheritance carries no declaration at all. Null on the render-tree path.
+        internal FusedKeywords? Fused;
+    }
+
+    /// <summary>
+    /// The values the fused path resolves that are not areas: the keywords, colours and lists
+    /// the render-tree path would otherwise read from the computed declaration.
+    /// </summary>
+    internal sealed class FusedKeywords
+    {
+        internal Layout.WritingMode WritingMode = Layout.WritingMode.HorizontalTb;
+        internal TextDirection Direction = TextDirection.LeftToRight;
+        internal TextOrientation? Orientation;
+        internal Boolean? CombinesUpright;
+        internal CssColorValue Color = CssColorValue.Black;
+        internal CssColorValue? BackgroundColor;
+        internal IReadOnlyList<BackgroundLayer> Backgrounds = Array.Empty<BackgroundLayer>();
+        internal CursorKind Cursor;
+        internal RubyPosition Ruby;
+        internal CssColorValue OutlineColor = CssColorValue.Black;
+        internal BackgroundClip BackgroundClip;
+        internal CssColorValue? BorderTopColor;
+        internal CssColorValue? BorderRightColor;
+        internal CssColorValue? BorderBottomColor;
+        internal CssColorValue? BorderLeftColor;
     }
 
     /// <summary>
@@ -616,7 +1421,10 @@ public readonly struct ComputedStyle
     /// these together and repeatedly - once per child to decide whether a box is in flow, then again to
     /// place it - and reading them as one keeps that from costing twenty declaration reads a time.
     /// </summary>
-    public PositionStyle Position => _values.Position ??= PositionStyle.Read(this);
+    public PositionStyle Position =>
+        _values.Fused is not null
+            ? _values.Position!.Value
+            : _values.Position ??= PositionStyle.Read(this);
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
     public ICssStyleDeclaration Declaration => _style;
@@ -662,9 +1470,12 @@ public readonly struct ComputedStyle
     /// it; an <c>em</c> is a multiple of it; <c>ex</c> and <c>ch</c> keep the half-em approximation the
     /// rest of the engine uses for them.
     /// </summary>
-    private Double ResolveFontRelative(CssLengthValue value)
+    private Double ResolveFontRelative(CssLengthValue value) =>
+        ResolveFontRelative(value, _parentFontSize, _dimensions);
+
+    private static Double ResolveFontRelative(CssLengthValue value, Double parentFontSize, IRenderDimensions dimensions)
     {
-        var reference = _parentFontSize > 0 ? _parentFontSize : _dimensions.FontSize;
+        var reference = parentFontSize > 0 ? parentFontSize : dimensions.FontSize;
 
         return value.Type switch
         {
@@ -707,14 +1518,16 @@ public readonly struct ComputedStyle
     /// inherited property, so its computed value already carries what an ancestor asked for and this
     /// answers with the mode the element itself settles on.
     /// </summary>
-    public WritingMode WritingMode => ReadKeyword("writing-mode")?.ToLowerInvariant() switch
-    {
-        "vertical-rl" => Layout.WritingMode.VerticalRl,
-        "vertical-lr" => Layout.WritingMode.VerticalLr,
-        "sideways-rl" => Layout.WritingMode.SidewaysRl,
-        "sideways-lr" => Layout.WritingMode.SidewaysLr,
-        _ => Layout.WritingMode.HorizontalTb,
-    };
+    public WritingMode WritingMode => _values.Fused is { } fused
+        ? fused.WritingMode
+        : ReadKeyword("writing-mode")?.ToLowerInvariant() switch
+        {
+            "vertical-rl" => Layout.WritingMode.VerticalRl,
+            "vertical-lr" => Layout.WritingMode.VerticalLr,
+            "sideways-rl" => Layout.WritingMode.SidewaysRl,
+            "sideways-lr" => Layout.WritingMode.SidewaysLr,
+            _ => Layout.WritingMode.HorizontalTb,
+        };
 
     /// <summary>
     /// Gets the direction the element's lines read in. The <c>direction</c> property is inherited, so
@@ -726,6 +1539,11 @@ public readonly struct ComputedStyle
     {
         get
         {
+            if (_values.Fused is { } fused)
+            {
+                return fused.Direction;
+            }
+
             if (DirectionAttribute() is { } attribute && !Declares("direction"))
             {
                 return attribute;
@@ -767,24 +1585,28 @@ public readonly struct ComputedStyle
     /// so the cascade already carries what an ancestor asked for; the box builder still walks it down
     /// the tree because an inline box may set it apart from the block it sits in.
     /// </summary>
-    public TextOrientation? DeclaredTextOrientation => ReadKeyword("text-orientation")?.ToLowerInvariant() switch
-    {
-        "mixed" => TextOrientation.Mixed,
-        "upright" => TextOrientation.Upright,
-        "sideways" => TextOrientation.Sideways,
-        _ => null,
-    };
+    public TextOrientation? DeclaredTextOrientation => _values.Fused is { } fused
+        ? fused.Orientation
+        : ReadKeyword("text-orientation")?.ToLowerInvariant() switch
+        {
+            "mixed" => TextOrientation.Mixed,
+            "upright" => TextOrientation.Upright,
+            "sideways" => TextOrientation.Sideways,
+            _ => null,
+        };
 
     /// <summary>
     /// Gets whether short runs stand as one upright box. Like <c>text-orientation</c> it is inherited,
     /// and null means the declaration said something this reader does not know.
     /// </summary>
-    public Boolean? DeclaredTextCombineUpright => ReadKeyword("text-combine-upright")?.ToLowerInvariant() switch
-    {
-        "all" => true,
-        "none" => false,
-        _ => null,
-    };
+    public Boolean? DeclaredTextCombineUpright => _values.Fused is { } fused
+        ? fused.CombinesUpright
+        : ReadKeyword("text-combine-upright")?.ToLowerInvariant() switch
+        {
+            "all" => true,
+            "none" => false,
+            _ => null,
+        };
 
     /// <summary>
     /// Gets the writing mode, text orientation and upright combining the element itself declares, with
@@ -817,8 +1639,9 @@ public readonly struct ComputedStyle
     /// <c>over</c> - the initial value - is laid out; the other two are read so that a page asking for
     /// them is not silently mistaken for one asking for <c>over</c>.
     /// </summary>
-    public RubyPosition RubyPosition =>
-        ReadKeyword("ruby-position")?.ToLowerInvariant() switch
+    public RubyPosition RubyPosition => _values.Fused is { } fused
+        ? fused.Ruby
+        : ReadKeyword("ruby-position")?.ToLowerInvariant() switch
         {
             "under" => RubyPosition.Under,
             "inter-character" => RubyPosition.InterCharacter,
@@ -847,6 +1670,11 @@ public readonly struct ComputedStyle
     {
         get
         {
+            if (_values.Fused is { } fused)
+            {
+                return fused.Color;
+            }
+
             var declared = ColorValue("color") ?? CssColorValue.Black;
 
             if (IsFollowable)
@@ -863,7 +1691,9 @@ public readonly struct ComputedStyle
         }
     }
 
-    public CssColorValue? BackgroundColor => ColorValue("background-color");
+    public CssColorValue? BackgroundColor => _values.Fused is { } fused
+        ? fused.BackgroundColor
+        : ColorValue("background-color");
 
     /// <summary>
     /// Gets the background layers in declaration order. The first layer paints on top of the ones
@@ -873,6 +1703,11 @@ public readonly struct ComputedStyle
     {
         get
         {
+            if (_values.Fused is { } fused)
+            {
+                return fused.Backgrounds;
+            }
+
             var specified = ParseBackgrounds(_specified);
 
             return specified.Count > 0 ? specified : ParseBackgrounds(_style);
@@ -918,6 +1753,11 @@ public readonly struct ComputedStyle
     {
         get
         {
+            if (_values.Fused is { } fused)
+            {
+                return fused.Cursor;
+            }
+
             var value = ReadKeyword("cursor");
             var kind = CursorKind.Auto;
 
@@ -1153,6 +1993,11 @@ public readonly struct ComputedStyle
     {
         get
         {
+            if (_values.Fused is { } fused)
+            {
+                return fused.BackgroundClip;
+            }
+
             // One keyword per background layer, and a box that paints a single background layer can
             // only be told apart by the first one.
             var value = ReadKeyword("background-clip") ?? String.Empty;
@@ -1197,13 +2042,21 @@ public readonly struct ComputedStyle
 
     public Double BorderLeftWidth => _values.Border.LeftWidth;
 
-    public CssColorValue? BorderTopColor => ResolveBorderColor(ColorValue("border-top-color"));
+    public CssColorValue? BorderTopColor => _values.Fused is { } fused
+        ? fused.BorderTopColor
+        : ResolveBorderColor(ColorValue("border-top-color"));
 
-    public CssColorValue? BorderRightColor => ResolveBorderColor(ColorValue("border-right-color"));
+    public CssColorValue? BorderRightColor => _values.Fused is { } fused
+        ? fused.BorderRightColor
+        : ResolveBorderColor(ColorValue("border-right-color"));
 
-    public CssColorValue? BorderBottomColor => ResolveBorderColor(ColorValue("border-bottom-color"));
+    public CssColorValue? BorderBottomColor => _values.Fused is { } fused
+        ? fused.BorderBottomColor
+        : ResolveBorderColor(ColorValue("border-bottom-color"));
 
-    public CssColorValue? BorderLeftColor => ResolveBorderColor(ColorValue("border-left-color"));
+    public CssColorValue? BorderLeftColor => _values.Fused is { } fused
+        ? fused.BorderLeftColor
+        : ResolveBorderColor(ColorValue("border-left-color"));
 
     public Boolean BorderTopVisible => BorderArea.Draws(_values.Border.TopStyle);
 
@@ -1272,6 +2125,11 @@ public readonly struct ComputedStyle
     {
         get
         {
+            if (_values.Fused is { } fused)
+            {
+                return fused.OutlineColor;
+            }
+
             if (OutlineColorValue is { } value && value != CssColorValue.InvertedColor)
             {
                 return value;
@@ -1586,17 +2444,172 @@ public readonly struct ComputedStyle
     private static Boolean IsNested(IElement element) =>
         element.ParentElement?.LocalName is "ul" or "ol";
 
-    private (StyleLength? BlockStart, StyleLength? BlockEnd, StyleLength? InlineStart, StyleLength? InlineEnd) Defaults(String prefix)
+    /// <summary>
+    /// Gets which box a declared width and height describe, from the element's own cascaded
+    /// declaration, for the fused path.
+    /// </summary>
+    public static BoxSizing ResolveBoxSizingFused(ICssProperty? declared)
     {
-        if (!String.Equals(prefix, "margin", StringComparison.Ordinal) || _element is not { } element)
+        if (declared?.RawValue is CssConstantValue<AngleSharp.Css.Dom.BoxModel> constant &&
+            constant.Value == AngleSharp.Css.Dom.BoxModel.BorderBox)
+        {
+            return BoxSizing.BorderBox;
+        }
+
+        return declared?.Value?.Trim().Equals("border-box", StringComparison.OrdinalIgnoreCase) == true
+            ? BoxSizing.BorderBox
+            : BoxSizing.ContentBox;
+    }
+
+    /// <summary>
+    /// Reads a box-model length from the element's own cascaded declaration, for the fused
+    /// path. Percentages stay unresolved for the layout pass.
+    /// </summary>
+    public static StyleLength ResolveBoxLengthFused(
+        ICssProperty? declared, RenderMode mode, Double ownSize, IRenderDimensions dimensions, StyleLength fallback)
+    {
+        if (declared is null)
+        {
+            return fallback;
+        }
+
+        return LengthReader.TryReadProperty(declared, mode, dimensions, ownSize, out var length) && length.HasValue
+            ? length
+            : fallback;
+    }
+
+    /// <summary>
+    /// Reads a box-model thickness from the element's own cascaded declarations, for the
+    /// fused path: physical sides, flow-relative axes, wide keywords, and the reader's own
+    /// defaults for headings and paragraphs, mapped through the flow the caller hands over.
+    /// </summary>
+    public static StyleThickness ResolveThicknessFused(
+        Func<String, ICssProperty?> find,
+        IElement? element,
+        Double ownSize,
+        IRenderDimensions dimensions,
+        WritingModeInfo flow,
+        String prefix,
+        StyleLength fallback)
+    {
+        StyleLength? ReadSide(String name) =>
+            find(prefix + name) is { } declared &&
+            LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var length)
+                ? length
+                : null;
+
+        CssWideKeyword? SideKeyword(String name)
+        {
+            var raw = find(prefix + name)?.RawValue;
+
+            // The inline parser carries `initial` as AngleSharp's own initial value; a rule
+            // carries it as the reader's wide keyword. Both mean the same thing here.
+            if (raw is CssWideKeyword wide)
+            {
+                return wide;
+            }
+
+            var text = raw?.CssText;
+
+            return text is not null && CssWideKeyword.Is(text) ? new CssWideKeyword(text) : null;
+        }
+
+        var top = ReadSide("-top");
+        var right = ReadSide("-right");
+        var bottom = ReadSide("-bottom");
+        var left = ReadSide("-left");
+
+        var inlineStart = ReadSide("-inline-start");
+        var inlineEnd = ReadSide("-inline-end");
+        var blockStart = ReadSide("-block-start");
+        var blockEnd = ReadSide("-block-end");
+
+        var topKeyword = SideKeyword("-top");
+        var rightKeyword = SideKeyword("-right");
+        var bottomKeyword = SideKeyword("-bottom");
+        var leftKeyword = SideKeyword("-left");
+        var inlineStartKeyword = SideKeyword("-inline-start");
+        var inlineEndKeyword = SideKeyword("-inline-end");
+        var blockStartKeyword = SideKeyword("-block-start");
+        var blockEndKeyword = SideKeyword("-block-end");
+
+        var (defaultBlockStart, defaultBlockEnd, defaultInlineStart, defaultInlineEnd) =
+            MarginDefaults(prefix, element, ownSize);
+
+        if (inlineStart is null && inlineEnd is null && blockStart is null && blockEnd is null &&
+            inlineStartKeyword is null && inlineEndKeyword is null &&
+            blockStartKeyword is null && blockEndKeyword is null &&
+            defaultBlockStart is null && defaultBlockEnd is null &&
+            defaultInlineStart is null && defaultInlineEnd is null)
+        {
+            return new StyleThickness(
+                top ?? fallback,
+                right ?? fallback,
+                bottom ?? fallback,
+                left ?? fallback);
+        }
+
+        if (flow.IsVertical)
+        {
+            var (byInlineStart, byInlineEnd) = flow.InlineSign > 0
+                ? (inlineStart, inlineEnd)
+                : (inlineEnd, inlineStart);
+
+            var (byBlockStart, byBlockEnd) = flow.BlockSign < 0
+                ? (blockStart, blockEnd)
+                : (blockEnd, blockStart);
+
+            var (keywordTop, keywordBottom) = flow.InlineSign > 0
+                ? (inlineStartKeyword, inlineEndKeyword)
+                : (inlineEndKeyword, inlineStartKeyword);
+
+            var (keywordRight, keywordLeft) = flow.BlockSign < 0
+                ? (blockStartKeyword, blockEndKeyword)
+                : (blockEndKeyword, blockStartKeyword);
+
+            var (defaultTop, defaultBottom) = flow.InlineSign > 0
+                ? (defaultInlineStart, defaultInlineEnd)
+                : (defaultInlineEnd, defaultInlineStart);
+
+            var (defaultRight, defaultLeft) = flow.BlockSign < 0
+                ? (defaultBlockStart, defaultBlockEnd)
+                : (defaultBlockEnd, defaultBlockStart);
+
+            return new StyleThickness(
+                Side(top, topKeyword, byInlineStart, keywordTop, defaultTop, fallback),
+                Side(right, rightKeyword, byBlockStart, keywordRight, defaultRight, fallback),
+                Side(bottom, bottomKeyword, byInlineEnd, keywordBottom, defaultBottom, fallback),
+                Side(left, leftKeyword, byBlockEnd, keywordLeft, defaultLeft, fallback));
+        }
+
+        var (byStart, byEnd) = flow.InlineSign > 0
+            ? (inlineStart, inlineEnd)
+            : (inlineEnd, inlineStart);
+
+        var (keywordStart, keywordEnd) = flow.InlineSign > 0
+            ? (inlineStartKeyword, inlineEndKeyword)
+            : (inlineEndKeyword, inlineStartKeyword);
+
+        return new StyleThickness(
+            Side(top, topKeyword, blockStart, blockStartKeyword, defaultBlockStart, fallback),
+            Side(right, rightKeyword, byEnd, keywordEnd, defaultInlineEnd, fallback),
+            Side(bottom, bottomKeyword, blockEnd, blockEndKeyword, defaultBlockEnd, fallback),
+            Side(left, leftKeyword, byStart, keywordStart, defaultInlineStart, fallback));
+    }
+
+    private (StyleLength? BlockStart, StyleLength? BlockEnd, StyleLength? InlineStart, StyleLength? InlineEnd) Defaults(String prefix) =>
+        MarginDefaults(prefix, _element, _values.Font.Size);
+
+    private static (StyleLength? BlockStart, StyleLength? BlockEnd, StyleLength? InlineStart, StyleLength? InlineEnd) MarginDefaults(
+        String prefix, IElement? element, Double fontSize)
+    {
+        if (!String.Equals(prefix, "margin", StringComparison.Ordinal) || element is null)
         {
             return default;
         }
 
         var tag = element.LocalName.ToLowerInvariant();
 
-        // The space between blocks, as a multiple of the element's own font size - which the font area
-        // has already settled, this being read from the box model.
         var block = tag switch
         {
             "h1" => 0.67,
@@ -1610,21 +2623,19 @@ public readonly struct ComputedStyle
             _ => null,
         };
 
-        // The distance a list or a quotation is set in from the edge its lines begin at, which is the
-        // one the sample states in pixels.
         var indent = tag is "ul" or "ol" or "dir" or "menu" or "dd" or "blockquote" ? 40.0 : (Double?)null;
         var indentEnd = tag == "blockquote" ? indent : null;
-        var space = block is { } size ? size * _values.Font.Size : (Double?)null;
+        var space = block is { } size ? size * fontSize : (Double?)null;
 
         return (
             Pixels(space),
             Pixels(space),
             Pixels(indent),
             Pixels(indentEnd));
-
-        static StyleLength? Pixels(Double? value) =>
-            value is { } pixels ? StyleLength.FromPixels(pixels) : null;
     }
+
+    private static StyleLength? Pixels(Double? value) =>
+        value is { } pixels ? StyleLength.FromPixels(pixels) : null;
 
     /// <summary>
     /// Reads how thick a side is. The caller has already resolved the side's style, so this does not
@@ -1633,7 +2644,7 @@ public readonly struct ComputedStyle
     private Double BorderWidth(String style, String widthName) =>
         BorderArea.Draws(style) ? Length(widthName, RenderMode.Horizontal, 0) : 0;
 
-    private static BorderLineStyle ToLineStyle(String keyword) => keyword.ToLowerInvariant() switch
+    internal static BorderLineStyle ToLineStyle(String keyword) => keyword.ToLowerInvariant() switch
     {
         "none" or "hidden" => BorderLineStyle.None,
         "dashed" => BorderLineStyle.Dashed,
@@ -1710,7 +2721,10 @@ public readonly struct ComputedStyle
         return text is not null && text.Trim().Equals(keyword, StringComparison.OrdinalIgnoreCase);
     }
 
-    private Double? Resolve(ICssValue value, RenderMode mode, LengthReader.FontSource font)
+    private Double? Resolve(ICssValue value, RenderMode mode, LengthReader.FontSource font) =>
+        ResolveValue(value, mode, _dimensions, font);
+
+    internal static Double? ResolveValue(ICssValue value, RenderMode mode, IRenderDimensions dimensions, LengthReader.FontSource font)
     {
         // A keyword that stands for no particular value - `inherit`, `initial`, `unset`, `revert` - is
         // not a length, and AngleSharp answers every one of them with zero when asked for pixels. Read
@@ -1736,12 +2750,12 @@ public readonly struct ComputedStyle
         // element's own font size; anything else is left to AngleSharp.
         if (value is CssLengthValue length)
         {
-            return Resolve(length, mode, _dimensions, font);
+            return Resolve(length, mode, dimensions, font);
         }
 
         try
         {
-            var pixels = value.AsPx(_dimensions, mode);
+            var pixels = value.AsPx(dimensions, mode);
 
             // "auto" and friends surface as NaN; treat those as "not a length".
             return Double.IsNaN(pixels) || Double.IsInfinity(pixels) ? null : pixels;

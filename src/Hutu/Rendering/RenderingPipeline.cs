@@ -39,7 +39,7 @@ public sealed class RenderingPipeline
     /// Gets the styled render tree produced by the last run, or null when nothing was built yet.
     /// It carries DOM references and computed styles but no geometry.
     /// </summary>
-    public IRenderNode? RenderTree { get; private set; }
+    public IRenderNode? RenderTree { get; internal set; }
 
     /// <summary>
     /// Gets the box tree produced by the last run, or null when there is nothing to render.
@@ -132,12 +132,25 @@ public sealed class RenderingPipeline
     {
         var window = document.DefaultView;
 
-        RenderTree = window?.Render(_device);
+        // The fused path matches, cascades and computes from the DOM directly, with no render
+        // tree and no per-element declaration. A document it cannot yet reproduce whole comes
+        // back null, and the render tree is built for that document instead.
+        var faces = FontFaceTable.From(document);
+        BoxTree = BoxBuilder.TryBuildFused(document, _device, _images, faces);
 
-        // The faces the document declares are read once for the build rather than per box: they are a
-        // property of the sheets, and every element that asks for one of those names gets the same
-        // answer however deep in the tree it sits.
-        BoxTree = BoxBuilder.Build(RenderTree, _device, _images, FontFaceTable.From(document));
+        if (BoxTree is not null)
+        {
+            RenderTree = null;
+        }
+        else
+        {
+            RenderTree = window?.Render(_device);
+
+            // The faces the document declares are read once for the build rather than per box: they are a
+            // property of the sheets, and every element that asks for one of those names gets the same
+            // answer however deep in the tree it sits.
+            BoxTree = BoxBuilder.Build(RenderTree, _device, _images, faces);
+        }
 
         // A highlight names boxes of the layout it was measured against, so a new layout always drops
         // it: keeping it would leave the painter looking up runs that no longer exist. The host points

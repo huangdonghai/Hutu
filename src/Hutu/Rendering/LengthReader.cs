@@ -159,6 +159,19 @@ internal static class LengthReader
                     : StyleLength.None;
                 return true;
 
+            // A keyword standing alone where a length is read: only `auto` and `none` serialise
+            // to exactly themselves, so either one is itself. This catches the constant shapes
+            // (a selected enum rather than a length) that the cases above do not name - `margin:
+            // auto` arrives as one, where the computed declaration the old path falls back to has
+            // already normalised it into the length above.
+            case ICssValue keyword when keyword.CssText.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase):
+                length = StyleLength.Auto;
+                return true;
+
+            case ICssValue keyword when keyword.CssText.Trim().Equals("none", StringComparison.OrdinalIgnoreCase):
+                length = StyleLength.None;
+                return true;
+
             default:
                 return false;
         }
@@ -199,6 +212,24 @@ internal static class LengthReader
 
     private static StyleLength? TryReadAxis(ICssValue? value, RenderMode mode, IRenderDimensions dimensions, FontSource font) =>
         value is not null && TryReadValue(value, mode, dimensions, font, out var length) && length.HasValue ? length : null;
+
+    /// <summary>
+    /// Reads a corner radius from a loose value rather than a named property: the horizontal
+    /// axis first, the vertical second, a single value standing for both. The fused
+    /// box-builder path reads matched declarations this way.
+    /// </summary>
+    internal static StyleCornerRadius? TryReadCornerValue(ICssValue? value, IRenderDimensions dimensions, FontSource font)
+    {
+        if (value is not ICssMultipleValue radius || radius.Count == 0)
+        {
+            return null;
+        }
+
+        var horizontal = TryReadAxis(radius[0], RenderMode.Horizontal, dimensions, font);
+        var vertical = radius.Count > 1 ? TryReadAxis(radius[1], RenderMode.Vertical, dimensions, font) ?? horizontal : horizontal;
+
+        return new StyleCornerRadius(horizontal ?? StyleLength.Zero, vertical ?? StyleLength.Zero);
+    }
 
     /// <summary>
     /// Gets the individual values of a shorthand that carries more than one, or null when the value is
@@ -249,6 +280,29 @@ internal static class LengthReader
         var size = font.Value;
 
         return size > 0 ? size : dimensions.FontSize;
+    }
+
+    /// <summary>
+    /// Reads a length that arrives as a loose value rather than a named property: math
+    /// functions first, then the value itself. The fused box-builder path reads matched
+    /// declarations this way, without the intermediate declaration the box model reads.
+    /// </summary>
+    internal static Boolean TryReadProperty(
+        ICssProperty property,
+        RenderMode mode,
+        IRenderDimensions dimensions,
+        FontSource font,
+        out StyleLength length)
+    {
+        length = default;
+
+        if (CssMathLengths.Evaluate(property.Value, text => FromText(text, mode, dimensions, font)) is { } math)
+        {
+            length = math;
+            return true;
+        }
+
+        return TryReadValue(property.RawValue, mode, dimensions, font, out length);
     }
 
     /// <summary>Reads a single argument of a length function, which is always plain text.</summary>

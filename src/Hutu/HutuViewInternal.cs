@@ -65,7 +65,13 @@ public sealed class HutuViewInternal : IDisposable
     /// Gets the styled render tree for the current document, or null when nothing is loaded. It
     /// carries DOM references and computed styles but no geometry.
     /// </summary>
-    public IRenderNode? RenderTree => _pipeline.RenderTree;
+    /// <remarks>
+    /// The fused pipeline builds no render tree, so asking for one computes it here on demand -
+    /// the property keeps its meaning for a caller that wants it, without the build paying for a
+    /// tree nobody reads.
+    /// </remarks>
+    public IRenderNode? RenderTree =>
+        _pipeline.RenderTree ?? (_pipeline.RenderTree = Document?.DefaultView?.Render(_renderDevice));
 
     /// <summary>
     /// Gets the laid-out tree and the document size, or null when nothing is loaded or no text
@@ -849,7 +855,9 @@ public sealed class HutuViewInternal : IDisposable
             return;
         }
 
-        var urls = ImageUrlCollector.Collect(_pipeline.RenderTree);
+        var urls = _pipeline.RenderTree is { } renderTree
+            ? ImageUrlCollector.Collect(renderTree)
+            : ImageUrlCollector.Collect(Document!, _renderDevice);
 
         if (urls.Count == 0)
         {

@@ -22,7 +22,7 @@ namespace Hutu.Rendering.Boxes;
 /// runs of inline-level content are wrapped in anonymous blocks so the layout engine sees a single
 /// formatting context per container.
 /// </remarks>
-public static class BoxBuilder
+public static partial class BoxBuilder
 {
     /// <summary>
     /// Builds the box tree for the given render tree, or null when there is nothing to render.
@@ -79,8 +79,16 @@ public static class BoxBuilder
     /// </remarks>
     private static void AdoptBodyFlow(Box root, IRenderDimensions dimensions)
     {
-        if (root.Element is not { } element ||
-            ComputedStyle.Declares(element, dimensions, "writing-mode"))
+        AdoptBodyFlow(root, root.Element is { } element && ComputedStyle.Declares(element, dimensions, "writing-mode"));
+    }
+
+    /// <summary>
+    /// The same, with the root's own declaration already settled by the caller - the fused
+    /// path reads it from the cascade it already has.
+    /// </summary>
+    private static void AdoptBodyFlow(Box root, Boolean rootDeclaresWritingMode)
+    {
+        if (root.Element is null || rootDeclaresWritingMode)
         {
             return;
         }
@@ -479,10 +487,17 @@ public static class BoxBuilder
             : BoxKind.Block;
     }
 
-    private static Box? BuildText(TextRenderNode node, ComputedStyle parentStyle, WritingModeInfo flow)
-    {
-        var raw = node.Ref.Data;
+    private static Box? BuildText(TextRenderNode node, ComputedStyle parentStyle, WritingModeInfo flow) =>
+        BuildTextValue(node.Ref.Data, parentStyle, flow) is { } text
+            ? new Box(BoxKind.Text, parentStyle) { Source = node.Ref, Text = text, Flow = flow }
+            : null;
 
+    /// <summary>
+    /// The heart of <see cref="BuildText"/> over the raw text, shared with the fused walk that
+    /// reaches text through the DOM rather than the render tree.
+    /// </summary>
+    private static String? BuildTextValue(String raw, ComputedStyle parentStyle, WritingModeInfo flow)
+    {
         if (String.IsNullOrEmpty(raw))
         {
             return null;
@@ -490,12 +505,7 @@ public static class BoxBuilder
 
         var text = parentStyle.IsPreformatted ? raw : CollapseWhitespace(raw);
 
-        if (text.Length == 0)
-        {
-            return null;
-        }
-
-        return new Box(BoxKind.Text, parentStyle) { Source = node.Ref, Text = text, Flow = flow };
+        return text.Length == 0 ? null : text;
     }
 
     /// <summary>

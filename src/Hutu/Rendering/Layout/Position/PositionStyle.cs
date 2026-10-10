@@ -72,6 +72,27 @@ public readonly struct PositionStyle
         hasZIndex);
 
     /// <summary>
+    /// Reads the positioning longhands from the element's own cascaded declarations, for the
+    /// fused path. Percentages stay unresolved for the layout pass.
+    /// </summary>
+    public static PositionStyle ReadFused(
+        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions) => new(
+        ComputedStyle.ResolvePositionModeFused(find("position")),
+        ComputedStyle.ResolveInsetFused(find("top"), ownSize, dimensions),
+        ComputedStyle.ResolveInsetFused(find("right"), ownSize, dimensions),
+        ComputedStyle.ResolveInsetFused(find("bottom"), ownSize, dimensions),
+        ComputedStyle.ResolveInsetFused(find("left"), ownSize, dimensions),
+        ReadZIndexFused(find("z-index"), out var hasZIndex),
+        hasZIndex);
+
+    private static Int32 ReadZIndexFused(ICssProperty? declared, out Boolean hasValue)
+    {
+        var (index, has) = ComputedStyle.ResolveZIndexFused(declared);
+        hasValue = has;
+        return index;
+    }
+
+    /// <summary>
     /// Reads the <c>position</c> keyword from its typed value. The serialised string is only a
     /// fallback for the cascaded declaration, because the initial value's key is wrong.
     /// </summary>

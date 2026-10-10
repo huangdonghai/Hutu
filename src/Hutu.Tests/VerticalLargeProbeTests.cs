@@ -37,15 +37,30 @@ namespace Hutu.Tests;
 /// before it is ready. What is timed here is the same text the load really parsed - the document's
 /// own sheets read back out of it, and the reader's user-agent sheet - parsed again.
 /// </para>
+/// <para>
+/// Explicit, because it is a measurement and not a check: three timed loops of eight runs each with
+/// three warm-ups apiece take a couple of minutes, and it leaves <c>vertical-large-profile.txt</c>
+/// beside the repository root, which a plain run of the suite has no business doing. A number it
+/// reports means something only next to another from the same build, so it is asked for by name -
+/// <c>dotnet test src/Hutu.Tests/Hutu.Tests.csproj --filter "FullyQualifiedName~VerticalLargeProbeTests"</c>
+/// - and nothing about it belongs in the count the rest of the suite is judged by.
+/// </para>
 /// </remarks>
 [TestFixture]
+[Explicit]
 public sealed class VerticalLargeProbeTests
 {
     private const String Page = "Pages/vertical-large.htm";
 
-    private const String Root = @"d:\_git4\Hutu\";
+    /// <summary>
+    /// The repository root: where the report is left, and what the page is read from. Found by walking
+    /// up from the test's own directory rather than written down, so that the one fixture which writes
+    /// a file writes it where this checkout keeps it, on any machine and at any path.
+    /// </summary>
+    private static readonly String Root = RepositoryRoot();
 
-    private const String SourcePath = @"samples\Sample.Common\Samples\Pages\vertical-large.htm";
+    /// <summary>The page to profile, relative to <see cref="Root"/>.</summary>
+    private const String SourcePath = "samples/Sample.Common/Samples/Pages/vertical-large.htm";
 
     private const Int32 Width = 900;
 
@@ -143,6 +158,10 @@ public sealed class VerticalLargeProbeTests
                 () => window.Render(device),
                 input => BoxBuilder.Build((IRenderNode?)input, device, (IImageProvider?)null)),
             new(
+                "fused cascade+boxes",
+                null,
+                _ => BoxBuilder.TryBuildFused(document, device, (IImageProvider?)null)),
+            new(
                 "layout",
                 () => Boxes(window, device),
                 input => engine.Layout((Box?)input, device.RenderWidth, device.RenderHeight)),
@@ -233,6 +252,25 @@ public sealed class VerticalLargeProbeTests
         report.AppendLine();
 
         File.WriteAllText(Path.Combine(Root, "vertical-large-profile.txt"), report.ToString());
+    }
+
+    /// <summary>
+    /// Walks up from the directory the test assembly was loaded from to the one that holds the
+    /// build-wide settings, which is the repository root. The page below is read from there and the
+    /// report is left there, so this is the one path the fixture has to know and it finds it rather
+    /// than being told: a path written down is right on one machine and wrong on every other.
+    /// </summary>
+    private static String RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null &&
+               !File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName ?? AppContext.BaseDirectory;
     }
 
     private static Object? ParseAll(ICssParser parser, List<String> sheets)
