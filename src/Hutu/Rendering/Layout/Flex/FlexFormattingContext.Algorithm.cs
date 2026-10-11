@@ -111,6 +111,18 @@ internal sealed partial class FlexFormattingContext
 
         if (factorSum > Epsilon)
         {
+            // An item whose factor is zero takes no share of the flexible space and is frozen at its
+            // hypothetical main size. Run through the distribution, its share would be driven to
+            // nothing and it would land on its minimum instead of the size it declared - a
+            // `flex-shrink: 0` item at its basis, a `flex-grow: 0` one at its width.
+            for (var i = 0; i < count; i++)
+            {
+                if (factors[i] <= Epsilon)
+                {
+                    frozen[i] = true;
+                }
+            }
+
             for (var iteration = 0; iteration < MaxFlexIterations; iteration++)
             {
                 var frozenOuter = 0.0;
@@ -216,6 +228,7 @@ internal sealed partial class FlexFormattingContext
             }
 
             line.CrossSize = maximum;
+            ResolveBaselines(line, alignItems, isRow, context);
         }
 
         var gaps = lines.Count > 1 ? crossGap * (lines.Count - 1) : 0;
@@ -252,6 +265,70 @@ internal sealed partial class FlexFormattingContext
         DistributeLines(lines, natural, crossGap, FlexAlignment.Start);
         StretchItems(lines, alignItems);
         return natural + gaps;
+    }
+
+    /// <summary>
+    /// Finds the baseline a line's baseline-aligned items share: the lowest first baseline among
+    /// them, measured from the line's cross start. A line with none of them keeps the zero that
+    /// leaves the alignment a start edge, which is what a column's cross axis asks for anyway.
+    /// </summary>
+    private void ResolveBaselines(FlexLine line, FlexAlignment alignItems, Boolean isRow, LayoutContext context)
+    {
+        if (!isRow)
+        {
+            return;
+        }
+
+        var shares = false;
+        var baseline = 0.0;
+
+        foreach (var item in line.Items)
+        {
+            var align = item.AlignSelf == FlexAlignment.Auto ? alignItems : item.AlignSelf;
+
+            if (align != FlexAlignment.Baseline)
+            {
+                continue;
+            }
+
+            shares = true;
+            item.FirstBaseline = ItemBaseline(item, context);
+            baseline = Math.Max(baseline, item.FirstBaseline);
+        }
+
+        line.Baseline = shares ? baseline : 0;
+    }
+
+    /// <summary>Measures the item's first baseline: a probe arrangement, read for its first text.</summary>
+    private Double ItemBaseline(FlexItem item, LayoutContext context)
+    {
+        var probe = _engine.Arrange(
+            item.Box,
+            new Rect(0, 0, item.BorderBoxMain, item.BorderBoxCross),
+            context);
+        var found = FindBaseline(probe);
+
+        return found >= 0 ? found : 0;
+    }
+
+    private static Double FindBaseline(LayoutBox layout)
+    {
+        if (layout.Baseline > 0)
+        {
+            return layout.BorderBox.Y + layout.Baseline;
+        }
+
+        foreach (var child in layout.Children)
+        {
+            var found = FindBaseline(child);
+
+            if (found >= 0)
+            {
+                return found;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>Measures the item's content-box cross size, before any stretch is applied.</summary>

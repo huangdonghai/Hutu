@@ -29,4 +29,10 @@ internal sealed class FlexLine
 
     /// <summary>Gets the line's cross start, relative to the container's content box.</summary>
     public Double CrossStart { get; set; }
+
+    /// <summary>
+    /// Gets the distance from the line's cross start to the baseline its baseline-aligned items
+    /// share, which is the first baseline of whichever of them sits lowest.
+    /// </summary>
+    public Double Baseline { get; set; }
 }

@@ -59,6 +59,7 @@ public readonly struct FlexStyle
         Double grow,
         Double shrink,
         StyleLength basis,
+        Boolean basisIsContent,
         Int32 order,
         FlexAlignment alignSelf)
     {
@@ -72,6 +73,7 @@ public readonly struct FlexStyle
         Grow = grow;
         Shrink = shrink;
         Basis = basis;
+        BasisIsContent = basisIsContent;
         Order = order;
         AlignSelf = alignSelf;
     }
@@ -97,6 +99,9 @@ public readonly struct FlexStyle
     /// <summary>Gets the flex base size. <c>auto</c> and <c>content</c> both end up without a value.</summary>
     public StyleLength Basis { get; }
 
+    /// <summary>Gets whether the base size is <c>content</c>, which is measured rather than resolved and ignores the main-size property.</summary>
+    public Boolean BasisIsContent { get; }
+
     public Int32 Order { get; }
 
     public FlexAlignment AlignSelf { get; }
@@ -116,20 +121,44 @@ public readonly struct FlexStyle
     internal static FlexStyle Read(ComputedStyle style)
     {
         var (rowGap, columnGap) = ReadGaps(style);
+        var justify = ReadAlignment(style, "justify-content", CssInitialValues.JustifyContent);
+        var (grow, shrink, basis, basisIsContent) = ReadFlexLonghands(style);
 
         return new FlexStyle(
             ReadDirection(style),
             ReadWrap(style),
-            ReadAlignment(style, "justify-content", CssInitialValues.JustifyContent),
+            Justify(justify, Text(style, "justify-content")),
             ReadAlignment(style, "align-items", CssInitialValues.AlignItems),
             ReadAlignment(style, "align-content", CssInitialValues.AlignContent),
             rowGap,
             columnGap,
-            ReadNumber(style, "flex-grow", 0),
-            ReadNumber(style, "flex-shrink", 1),
-            ReadBasis(style),
+            grow,
+            shrink,
+            basis,
+            basisIsContent,
             (Int32)ReadNumber(style, "order", 0),
             ReadAlignment(style, "align-self", CssInitialValues.AlignSelf));
+    }
+
+    /// <summary>
+    /// Reads the three flex longhands, containing the shorthand's keyword forms: <c>flex: none</c>
+    /// and its kin are stored as a whole rather than split into their longhands, so the longhands
+    /// would all answer at their initials - a shrink of one where <c>none</c> meant zero.
+    /// </summary>
+    private static (Double Grow, Double Shrink, StyleLength Basis, Boolean BasisIsContent) ReadFlexLonghands(
+        ComputedStyle style)
+    {
+        var grow = ReadNumber(style, "flex-grow", 0);
+        var shrink = ReadNumber(style, "flex-shrink", 1);
+        var basis = ReadBasis(style);
+        var basisIsContent = Text(style, "flex-basis") == "content";
+
+        if (KeywordFlex(Text(style, "flex")) is { } keyword)
+        {
+            (grow, shrink, basis, basisIsContent) = keyword;
+        }
+
+        return (grow, shrink, basis, basisIsContent);
     }
 
     /// <summary>
@@ -150,6 +179,7 @@ public readonly struct FlexStyle
         0,
         1,
         StyleLength.Auto,
+        false,
         0,
         CssInitialValues.AlignSelf);
 
@@ -163,18 +193,32 @@ public readonly struct FlexStyle
         Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
     {
         var (rowGap, columnGap) = ReadGapsFused(find, ownSize, dimensions);
+        var justify = ReadAlignmentFused(find("justify-content"), CssInitialValues.JustifyContent);
+
+        var grow = ReadNumberFused(find("flex-grow"), 0);
+        var shrink = ReadNumberFused(find("flex-shrink"), 1);
+        var basis = ReadBasisFused(find("flex-basis"), ownSize, dimensions);
+        var basisIsContent = Text(find("flex-basis")) == "content";
+
+        // The keyword forms of the shorthand are stored as a whole rather than split into their
+        // longhands, so the longhands read as their initials unless the shorthand is read here.
+        if (KeywordFlex(Text(find("flex"))) is { } keyword)
+        {
+            (grow, shrink, basis, basisIsContent) = keyword;
+        }
 
         return new FlexStyle(
             ReadDirectionFused(find("flex-direction")),
             ReadWrapFused(find("flex-wrap")),
-            ReadAlignmentFused(find("justify-content"), CssInitialValues.JustifyContent),
+            Justify(justify, Text(find("justify-content"))),
             ReadAlignmentFused(find("align-items"), CssInitialValues.AlignItems),
             ReadAlignmentFused(find("align-content"), CssInitialValues.AlignContent),
             rowGap,
             columnGap,
-            ReadNumberFused(find("flex-grow"), 0),
-            ReadNumberFused(find("flex-shrink"), 1),
-            ReadBasisFused(find("flex-basis"), ownSize, dimensions),
+            grow,
+            shrink,
+            basis,
+            basisIsContent,
             (Int32)ReadNumberFused(find("order"), 0),
             ReadAlignmentFused(find("align-self"), CssInitialValues.AlignSelf));
     }
@@ -406,6 +450,9 @@ public readonly struct FlexStyle
         FlexContentMode.Center => FlexAlignment.Center,
         FlexContentMode.SpaceBetween => FlexAlignment.SpaceBetween,
         FlexContentMode.SpaceAround => FlexAlignment.SpaceAround,
+        FlexContentMode.SpaceEvenly => FlexAlignment.SpaceEvenly,
+        FlexContentMode.SelfStart => FlexAlignment.Start,
+        FlexContentMode.SelfEnd => FlexAlignment.End,
         FlexContentMode.Stretch => FlexAlignment.Stretch,
         FlexContentMode.Baseline => FlexAlignment.Baseline,
         _ => CssInitialValues.UnmappableAlignment,
@@ -435,6 +482,32 @@ public readonly struct FlexStyle
         basis.HasValue
             ? basis
             : StyleLength.Auto;
+
+    /// <summary>
+    /// The keyword forms of the <c>flex</c> shorthand, which the aggregator stores as a whole rather
+    /// than splitting into its longhands: read through the longhands alone, <c>flex: none</c> would
+    /// answer a shrink of one where it meant zero.
+    /// </summary>
+    private static (Double Grow, Double Shrink, StyleLength Basis, Boolean BasisIsContent)? KeywordFlex(
+        String text) => text switch
+    {
+        "none" => (0.0, 0.0, StyleLength.Auto, false),
+        "auto" => (1.0, 1.0, StyleLength.Auto, false),
+        "initial" => (0.0, 1.0, StyleLength.Auto, false),
+        _ => null,
+    };
+
+    /// <summary>
+    /// The physical keywords <c>justify-content</c> takes beside the alignment ones: <c>right</c>
+    /// justifies at the right edge and <c>left</c> at the left one, which in a page that reads
+    /// left-to-right is the end and the start.
+    /// </summary>
+    private static FlexAlignment Justify(FlexAlignment read, String text) => text switch
+    {
+        "right" => FlexAlignment.End,
+        "left" => FlexAlignment.Start,
+        _ => read,
+    };
 
     /// <summary>
     /// Reads a plain number. The initial values of <c>flex-grow</c>, <c>flex-shrink</c> and

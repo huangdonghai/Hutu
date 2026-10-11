@@ -144,11 +144,14 @@ internal sealed class TableGrid
 
                     if (cell.Specified is { } specified)
                     {
-                        // A declared width acts as a floor on the column, which is what keeps a column
-                        // from shrinking below the width its cells asked for. It is remembered
-                        // separately because the fixed layout treats it as the column's whole width.
+                        // A declared width fixes the column: its used width is the declared size,
+                        // clamped up to the content minimum, and it never absorbs extra space. The
+                        // floor is recorded on Minimum; the ceiling is pinned to the same value so the
+                        // column cannot grow past what was asked for. It is remembered in Declared so
+                        // that the fixed layout treats it as the column's whole width and the automatic
+                        // layout keeps it out of the extra-space sharing.
                         Minimum[cell.Column] = Math.Max(Minimum[cell.Column], specified);
-                        Maximum[cell.Column] = Math.Max(Maximum[cell.Column], specified);
+                        Maximum[cell.Column] = Minimum[cell.Column];
                         Declared[cell.Column] = Math.Max(Declared[cell.Column] ?? 0, specified);
                     }
                 }
@@ -238,13 +241,33 @@ internal sealed class TableGrid
             return;
         }
 
-        // Room to spare: every column grows by an equal share, which is what keeps a table with a
-        // declared width from leaving a gap on the right.
-        var extra = (target - sumMax) / Columns;
+        // Room to spare: the declared columns already hold their asked-for width, so the leftover
+        // space goes only to the columns without a declared width, split between them in proportion
+        // to the room each wanted (its max-content). Declared columns never grow.
+        var extra = target - sumMax;
+        var autoMax = 0.0;
+        var autoCount = 0;
 
         for (var i = 0; i < Columns; i++)
         {
-            Widths[i] = Maximum[i] + extra;
+            if (Declared[i] is null)
+            {
+                autoMax += Maximum[i];
+                autoCount++;
+            }
+        }
+
+        for (var i = 0; i < Columns; i++)
+        {
+            if (Declared[i] is null)
+            {
+                var share = autoCount > 0 ? (autoMax > 0 ? extra * Maximum[i] / autoMax : extra / autoCount) : extra / Columns;
+                Widths[i] = Maximum[i] + share;
+            }
+            else
+            {
+                Widths[i] = Maximum[i];
+            }
         }
     }
 
@@ -283,7 +306,7 @@ internal sealed class TableGrid
             }
 
             Minimum[i] = Math.Max(Minimum[i], hint);
-            Maximum[i] = Math.Max(Maximum[i], hint);
+            Maximum[i] = Minimum[i];
             Declared[i] = Math.Max(Declared[i] ?? 0, hint);
         }
     }

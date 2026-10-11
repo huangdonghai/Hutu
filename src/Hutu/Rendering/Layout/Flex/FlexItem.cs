@@ -22,6 +22,10 @@ internal sealed class FlexItem
     public Double Grow;
     public Double Shrink;
     public StyleLength Basis;
+
+    /// <summary>Gets whether the base size is <c>content</c>: measured, and deaf to the main-size property.</summary>
+    public Boolean BasisIsContent;
+
     public Int32 Order;
     public FlexAlignment AlignSelf;
 
@@ -60,6 +64,12 @@ internal sealed class FlexItem
 
     /// <summary>Gets the used content-box cross size.</summary>
     public Double UsedCross;
+
+    /// <summary>
+    /// Gets the distance from the item's border-box top to its first baseline, which the items a
+    /// line aligns by baseline are raised against.
+    /// </summary>
+    public Double FirstBaseline;
 
     /// <summary>Gets the border box's main size.</summary>
     public Double BorderBoxMain => UsedMain + InsetMain;

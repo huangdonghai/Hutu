@@ -239,6 +239,7 @@ internal sealed partial class FlexFormattingContext
             Grow = Math.Max(0, flex.Grow),
             Shrink = Math.Max(0, flex.Shrink),
             Basis = flex.Basis,
+            BasisIsContent = flex.BasisIsContent,
             Order = flex.Order,
             AlignSelf = flex.AlignSelf,
             InsetMain = insetMain,
@@ -298,6 +299,16 @@ internal sealed partial class FlexFormattingContext
     {
         var style = item.Box.Style;
         var isBorderBox = BoxModel.IsBorderBox(style);
+
+        // A base size of `content` is measured from what the item holds, and the main-size property
+        // it would otherwise fall through to is exactly what `content` exists to set aside - so the
+        // measurement is the one that keeps a declared width out of the answer.
+        if (item.BasisIsContent)
+        {
+            return isRow
+                ? Math.Max(0, _engine.MeasureContentIntrinsic(item.Box, context).MaxContent - item.InsetMain)
+                : Math.Max(0, _engine.Measure(item.Box, MeasureConstraints.FitWidth(context.ContainingBlock.Width), context).Height - item.InsetMain);
+        }
 
         if (item.Basis.HasValue && !(item.Basis.Kind == StyleLengthKind.Percent && mainSize is null))
         {
@@ -458,7 +469,7 @@ internal sealed partial class FlexFormattingContext
 
             foreach (var item in items)
             {
-                var cross = lineCross + CrossOffset(item, flex.AlignItems, line.CrossSize - item.OuterCross);
+                var cross = lineCross + CrossOffset(item, flex.AlignItems, line.CrossSize - item.OuterCross, line.Baseline);
                 Double x;
                 Double y;
 
@@ -527,7 +538,7 @@ internal sealed partial class FlexFormattingContext
     /// <c>align-self</c> override the container's <c>align-items</c>. Auto cross margins take the
     /// space before the alignment keywords do.
     /// </summary>
-    private static Double CrossOffset(FlexItem item, FlexAlignment alignItems, Double space)
+    private static Double CrossOffset(FlexItem item, FlexAlignment alignItems, Double space, Double baseline)
     {
         var free = Math.Max(0, space);
 
@@ -539,6 +550,14 @@ internal sealed partial class FlexFormattingContext
         }
 
         var align = item.AlignSelf == FlexAlignment.Auto ? alignItems : item.AlignSelf;
+
+        if (align == FlexAlignment.Baseline)
+        {
+            // Baseline-aligned items share the line's baseline: each is set down as far below the
+            // line's start as its own first baseline sits above the one they share. Nothing is
+            // raised above the start - the lowest first baseline belongs to an item standing there.
+            return Math.Max(0, baseline - item.FirstBaseline);
+        }
 
         return align switch
         {
