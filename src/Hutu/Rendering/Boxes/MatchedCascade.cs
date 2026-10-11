@@ -38,7 +38,7 @@ public sealed class MatchedCascade
 
     private Boolean? _substitution;
 
-    private MatchedCascade(List<ICssStyleRule> rules, ICssStyleDeclaration? inline)
+    internal MatchedCascade(List<ICssStyleRule> rules, ICssStyleDeclaration? inline)
     {
         _rules = rules;
         _inline = inline;
@@ -56,17 +56,18 @@ public sealed class MatchedCascade
 
     /// <summary>
     /// Matches an element against the index: the rules that could match it, ordered the way the
-    /// cascade applies them, with its inline style last.
+    /// cascade applies them. The inline style is left out of this list on purpose - it is folded in
+    /// by the cascade that wraps the list - because the list alone is what keys the cache, and
+    /// building the wrapper before the lookup would throw away the one a hit returns.
     /// </summary>
     /// <param name="candidates">
     /// The rules that could match it, collected by the caller - the index needs them to key the
     /// result, and collecting them twice would pay for the bucketing twice.
     /// </param>
-    internal static MatchedCascade Match(
+    internal static List<ICssStyleRule> MatchRules(
         IElement element,
         List<ICssStyleRule> rules,
-        List<Int32> candidates,
-        ICssStyleDeclaration? inline)
+        List<Int32> candidates)
     {
         var scope = element.Owner?.DocumentElement;
 
@@ -94,7 +95,7 @@ public sealed class MatchedCascade
             }
         }
 
-        return new MatchedCascade(matched, inline);
+        return matched;
     }
 
     /// <summary>

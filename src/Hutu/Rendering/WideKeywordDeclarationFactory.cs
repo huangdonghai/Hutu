@@ -3,6 +3,7 @@ using AngleSharp.Css.Dom;
 using AngleSharp.Css.Parser;
 using AngleSharp.Text;
 using System;
+using System.Collections.Generic;
 
 namespace Hutu.Rendering;
 
@@ -26,6 +27,14 @@ public sealed class WideKeywordDeclarationFactory : IDeclarationFactory
 {
     private readonly IDeclarationFactory _inner;
 
+    /// <summary>
+    /// The wrapped declaration info, held per property name. The inner factory already caches its own
+    /// <see cref="DeclarationInfo"/>, so the converter and aggregator are stable for a given name - but
+    /// the wrapper we put around them is not, and would otherwise be re-allocated on every declaration
+    /// of a property that recurs all over a page. Caching the wrapped result keeps that work to once.
+    /// </summary>
+    private readonly Dictionary<String, DeclarationInfo> _cache = new(StringComparer.OrdinalIgnoreCase);
+
     /// <param name="inner">
     /// The factory whose grammar every declaration keeps. Without one, the reader reads declarations
     /// the way AngleSharp's own factory does.
@@ -35,15 +44,23 @@ public sealed class WideKeywordDeclarationFactory : IDeclarationFactory
 
     public DeclarationInfo Create(String propertyName)
     {
-        var info = _inner.Create(propertyName);
+        if (_cache.TryGetValue(propertyName, out var cached))
+        {
+            return cached;
+        }
 
-        return new DeclarationInfo(
+        var info = _inner.Create(propertyName);
+        var wrapped = new DeclarationInfo(
             info.Name,
             new KeywordsFirst(info.Converter, info.Aggregator),
             info.Flags,
             info.InitialValue,
             info.Shorthands,
             info.Longhands);
+
+        _cache[propertyName] = wrapped;
+
+        return wrapped;
     }
 
     /// <summary>

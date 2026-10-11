@@ -348,16 +348,20 @@ public sealed class RuleBucketIndex
     {
         var candidates = CollectCandidates(element);
         var inline = InlineOf(element);
-        var matched = MatchedCascade.Match(element, _rules, candidates, inline);
-        var key = new CascadeKey(matched.Matched, inline?.CssText);
+        var matched = MatchedCascade.MatchRules(element, _rules, candidates);
+        var key = new CascadeKey(matched, inline?.CssText);
 
+        // The match is what the key is built from, so it must run before the lookup; what the lookup
+        // spares is the wrapper around it, not the matching. A hit returns the cascade already held
+        // and the freshly matched list is dropped - the wrapper is only built on a miss.
         if (_cascades.TryGetValue(key, out var known))
         {
             return known;
         }
 
-        _cascades.Add(key, matched);
-        return matched;
+        var cascade = new MatchedCascade(matched, inline);
+        _cascades.Add(key, cascade);
+        return cascade;
     }
 
     /// <summary>
