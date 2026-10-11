@@ -10,10 +10,9 @@ namespace Hutu.Rendering.Layout;
 /// The alignment keywords flex shares between justification and alignment.
 /// </summary>
 /// <remarks>
-/// This mirrors <see cref="FlexContentMode"/> but adds <c>space-evenly</c> and makes
-/// <c>start</c>/<c>end</c> explicit. AngleSharp.Css' keyword table is missing those, so its enum
-/// cannot be trusted to round-trip them; the reader falls back to the serialised string for the ones
-/// it cannot map.
+/// This mirrors <see cref="FlexContentMode"/> but keeps Hutu's own alignment vocabulary, so the layout
+/// code never depends on the parser's enum. <c>space-evenly</c>, <c>start</c> and <c>end</c> are now
+/// defined as keywords in AngleSharp.Css, but the local switch still lists them explicitly.
 /// </remarks>
 public enum FlexAlignment : byte
 {
