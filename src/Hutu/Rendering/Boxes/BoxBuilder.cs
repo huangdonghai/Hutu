@@ -21,6 +21,12 @@ namespace Hutu.Rendering.Boxes;
 /// <c>display</c> is <c>none</c> are dropped, and - inside a block that mixes block-level content -
 /// runs of inline-level content are wrapped in anonymous blocks so the layout engine sees a single
 /// formatting context per container.
+/// <para>
+/// This is the legacy <b>render-tree</b> build: it assumes the css cascade has already produced a
+/// styled render tree. The engine now renders through <see cref="TryBuildFused"/>, which builds the
+/// box tree straight from the DOM and is the live path. Keep this method only for the probe's
+/// side-by-side comparison - do not treat it as the production route or optimise it as one.
+/// </para>
 /// </remarks>
 public static partial class BoxBuilder
 {

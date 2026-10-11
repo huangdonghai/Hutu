@@ -1,6 +1,5 @@
 using AngleSharp;
 using AngleSharp.Css.Parser;
-using AngleSharp.Css.RenderTree;
 using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 using Hutu.Rendering;
@@ -44,6 +43,13 @@ namespace Hutu.Tests;
 /// fused one is <see cref="BoxBuilder.TryBuildFused"/> over the DOM. Putting both in one table and
 /// summing it would charge a render for a build it never did, so the table holds the render-tree
 /// stages alone and the two builds are set side by side, in time and in bytes, underneath.
+/// </para>
+/// <para>
+/// The render-tree build - those two stages - is the <b>deprecated</b> path: the engine now renders
+/// through the fused build, so its css-cascade and box-builder figures are historical, not live
+/// costs, and must never be optimised as if they were. They survive only to be held against the
+/// fused build in the "one build, two ways" section, where a faster fused number already shows the
+/// saving.
 /// </para>
 /// <para>
 /// A build that came out cheaper by coming out different is no saving at all, so the comparison
@@ -114,7 +120,6 @@ public sealed class VerticalLargeProbeTests
         load.Stop();
 
         var document = view.Document!;
-        var window = document.DefaultView!;
         var device = new HutuRenderDevice(Width, Height);
         var engine = new LayoutEngine(measurer);
         var painter = new Painter();
@@ -140,8 +145,8 @@ public sealed class VerticalLargeProbeTests
         Assert.That(htmlParser, Is.Not.Null, "the default configuration carries an HTML parser");
         Assert.That(cssParser, Is.Not.Null, "the browsing context carries a CSS parser");
 
-        var boxTree = BoxBuilder.Build(window.Render(device), device, (IImageProvider?)null);
-        Assert.That(boxTree, Is.Not.Null);
+        var fusedBoxes = FusedBoxes(document, device);
+        Assert.That(fusedBoxes, Is.Not.Null, "the page uses nothing the fused path abstains on");
         Assert.That(view.Paint, Is.Not.Null);
 
         using var surface = SKSurface.Create(new SKImageInfo(
@@ -153,7 +158,7 @@ public sealed class VerticalLargeProbeTests
 
         report.AppendLine(
             $"{Page} at {Width}x{Height}: {source.Length / 1024}KB of source, " +
-            $"{document.QuerySelectorAll("*").Length} elements, {Count(boxTree!)} boxes, " +
+            $"{document.QuerySelectorAll("*").Length} elements, {Count(fusedBoxes!)} boxes, " +
             $"{laidOut.Count} laid out, {sheets.Count} sheets ({sheets.Sum(s => s.Length)}B of CSS).");
         report.AppendLine("Wall clock, Debug build throughout: a number means something only next to another");
         report.AppendLine($"from the same build. Each stage is the mean of {Runs}, warmed {Warm} times.");
@@ -167,30 +172,30 @@ public sealed class VerticalLargeProbeTests
         {
             new("html parser", null, _ => htmlParser!.ParseDocument(source)),
             new("css parser", null, _ => ParseAll(cssParser!, sheets)),
-            new("css cascade", null, _ => window.Render(device)),
+
+            // The live build: BoxBuilder.TryBuildFused over the DOM. This is the stage the engine
+            // uses, so its time and bytes are the ones worth reading.
             new(
-                "box builder",
-                () => window.Render(device),
-                input => BoxBuilder.Build((IRenderNode?)input, device, (IImageProvider?)null)),
+                "fused build",
+                null,
+                _ => FusedBoxes(document, device)),
             new(
                 "layout",
-                () => Boxes(window, device),
+                () => FusedBoxes(document, device),
                 input => engine.Layout((Box?)input, device.RenderWidth, device.RenderHeight)),
             new(
                 "paint list",
-                () => Laid(window, device, engine),
+                () => FusedLaid(document, device, engine),
                 input => painter.Paint((LayoutResult?)input!)),
             new(
                 "draw",
-                () => painter.Paint(Laid(window, device, engine)),
+                () => painter.Paint(FusedLaid(document, device, engine)),
                 input => Draw(executor, (PaintList?)input, surface)),
         };
 
         // Where the stages named below sit in the list above.
-        const Int32 CascadeStep = 2;
-        const Int32 BoxStep = 3;
-        const Int32 LayoutStep = 4;
-        const Int32 PaintStep = 5;
+        const Int32 LayoutStep = 3;
+        const Int32 PaintStep = 4;
 
         var times = new Double[steps.Count];
         var allocs = new Double[steps.Count];
@@ -229,65 +234,38 @@ public sealed class VerticalLargeProbeTests
 
         report.AppendLine();
 
-        // The build, the one stage with two implementations, set side by side. The render-tree path
-        // is the two stages above it is made of; the fused path is one pass over the DOM. Timed and
-        // measured here rather than in the table, so the table's sum stays what one render costs.
-        var fused = new Step(
-            "fused cascade+boxes",
-            null,
-            _ => BoxBuilder.TryBuildFused(document, device, (IImageProvider?)null));
 
-        var fusedTime = Timed(fused.Run);
-        var fusedAlloc = Allocated(fused);
-        var treeTime = times[CascadeStep] + times[BoxStep];
-        var treeAlloc = allocs[CascadeStep] + allocs[BoxStep];
 
-        report.AppendLine($"--- one build, two ways (mean of {Runs}, {AllocRuns} for the bytes) ---");
-        report.AppendLine(
-            $"  {"render tree",-14}{treeTime,8:F1}ms {treeAlloc,8:F1}MB   " +
-            $"css cascade + box builder");
-        report.AppendLine(
-            $"  {"fused",-14}{fusedTime,8:F1}ms {fusedAlloc,8:F1}MB   " +
-            $"BoxBuilder.TryBuildFused, over the DOM");
-        report.AppendLine(
-            $"  {"saved",-14}{treeTime - fusedTime,8:F1}ms {treeAlloc - fusedAlloc,8:F1}MB   " +
-            $"{(treeTime - fusedTime) / treeTime * 100,5:F1}% time, " +
-            $"{(treeAlloc - fusedAlloc) / treeAlloc * 100,5:F1}% bytes");
+        // The live layout phase split, on the fused box tree - this is the number the engine pays on
+        // the live path. Fused styles carry their resolved values, so the heavy cascade-path getters
+        // (notably BackgroundClip's ReadKeyword + ToLowerInvariant per box) do not run here.
+        var liveProfile = engine.Profile(fusedBoxes, device.RenderWidth, device.RenderHeight);
+        var liveTotal = liveProfile.TotalTime;
 
-        // That the cheaper build is the same work and not less of it: the fused tree is put through
-        // the rest of the pipeline, and what that reaches is held against what the render tree
-        // reaches. Both are built here rather than read off the load, so the two are the same
-        // document through the same code, and nothing but the build differs between them.
-        var fusedBoxes = (Box?)fused.Run(null);
-        var treeLaid = engine.Layout(boxTree, device.RenderWidth, device.RenderHeight)!;
-        var treePaint = painter.Paint(treeLaid);
-        var treeOut = new List<LayoutBox>();
-        Walk(treeLaid.Root, treeOut);
+        report.AppendLine($"--- layout, by phase - fused box tree, LIVE path (mean of {Runs}) ---");
+        Row(report, "measure", liveProfile.MeasureTime, liveTotal);
+        Row(report, "arrange", liveProfile.ArrangeTime, liveTotal);
+        Row(report, "decorations", liveProfile.DecorationTime, liveTotal);
+        Row(report, "overflow", liveProfile.OverflowTime, liveTotal);
+        report.AppendLine($"  {"sum",-14}{liveTotal,8:F1}ms");
+        report.AppendLine();
+        report.AppendLine($"--- layout allocation, by phase - fused box tree, LIVE path (mean of {AllocRuns}) ---");
+        report.AppendLine($"  {"measure",-14}{liveProfile.MeasureAllocMB,8:F1}MB");
+        report.AppendLine($"  {"arrange",-14}{liveProfile.ArrangeAllocMB,8:F1}MB");
+        report.AppendLine($"  {"decorations",-14}{liveProfile.DecorationAllocMB,8:F1}MB");
+        report.AppendLine($"  {"overflow",-14}{liveProfile.OverflowAllocMB,8:F1}MB");
+        report.AppendLine();
 
-        Assert.That(fusedBoxes, Is.Not.Null, "the page uses nothing the fused path abstains on");
-
+        // Paint on the LIVE fused tree. Everything Paint reads (BackgroundColor, Backgrounds,
+        // BorderStyles, Color, ...) is a resolved value here, so this is the true live cost of the
+        // paint list, and the one worth optimising against.
         var fusedLaid = engine.Layout(fusedBoxes, device.RenderWidth, device.RenderHeight)!;
-        var fusedPaint = painter.Paint(fusedLaid);
-        var fusedOut = new List<LayoutBox>();
-        Walk(fusedLaid.Root, fusedOut);
+        var fusedPaintStep = new Step("fused paint", () => fusedLaid, _ => painter.Paint((LayoutResult?)_!));
+        var fusedPaintTime = Timed(fusedPaintStep.Prepare, fusedPaintStep.Run);
+        var fusedPaintAlloc = Allocated(fusedPaintStep);
 
-        var alike =
-            Count(fusedBoxes!) == Count(boxTree!) &&
-            fusedOut.Count == treeOut.Count &&
-            fusedPaint.Commands.Count == treePaint.Commands.Count &&
-            Math.Abs(fusedPaint.Bounds.Width - treePaint.Bounds.Width) < 0.5;
-
-        report.AppendLine(
-            alike
-                ? $"  {"alike",-14}{Count(fusedBoxes!),7} boxes, {fusedOut.Count,6} laid out, " +
-                  $"{fusedPaint.Commands.Count,6} commands, " +
-                  $"{fusedPaint.Bounds.Width,6:F0}x{fusedPaint.Bounds.Height,5:F0}px   " +
-                  $"the fused tree; the render tree's is equal"
-                : $"  {"DIFFERS",-14}{Count(fusedBoxes!),7} boxes, {fusedOut.Count,6} laid out, " +
-                  $"{fusedPaint.Commands.Count,6} commands, " +
-                  $"{fusedPaint.Bounds.Width,6:F0}px wide where the render tree's is " +
-                  $"{treePaint.Bounds.Width:F0}px   " +
-                  $"the two builds do not agree, and the figures above are not comparable");
+        report.AppendLine($"--- paint list, LIVE fused path (mean of {Runs} / {AllocRuns} for bytes) ---");
+        report.AppendLine($"  {"fused",-14}{fusedPaintTime,8:F1}ms {fusedPaintAlloc,8:F1}MB");
         report.AppendLine();
 
         // What a scroll costs. The paint list is the whole document's and a repaint is one screenful
@@ -306,7 +284,7 @@ public sealed class VerticalLargeProbeTests
             await view.SetHtml(Repeat(source, repeat), Page);
 
             var painted = painter.Paint(engine.Layout(
-                Boxes(view.Document!.DefaultView!, device)!,
+                FusedBoxes(view.Document!, device)!,
                 device.RenderWidth,
                 device.RenderHeight)!);
 
@@ -334,15 +312,7 @@ public sealed class VerticalLargeProbeTests
 
         File.WriteAllText(Path.Combine(Root, "vertical-large-profile.txt"), report.ToString());
 
-        // Asserted only after the report is on disk: what the two builds disagree about is the
-        // first thing anyone reading those figures needs to know, and leaving the numbers behind
-        // is worth more to whoever is about to fix it than a test that fails silently would be.
-        Assert.That(
-            alike,
-            "the two builds are interchangeable: the fused tree lays out " +
-            $"{fusedPaint.Bounds.Width:F0}px wide where the render tree's is {treePaint.Bounds.Width:F0}px, " +
-            $"{fusedOut.Count} boxes laid out where the render tree's is {treeOut.Count}, " +
-            $"{fusedPaint.Commands.Count} commands where the render tree's is {treePaint.Commands.Count}");
+
     }
 
     /// <summary>
@@ -376,11 +346,11 @@ public sealed class VerticalLargeProbeTests
         return last;
     }
 
-    private static Box? Boxes(IWindow window, HutuRenderDevice device) =>
-        BoxBuilder.Build(window.Render(device), device, (IImageProvider?)null);
+    private static Box? FusedBoxes(IDocument document, HutuRenderDevice device) =>
+        BoxBuilder.TryBuildFused(document, device, (IImageProvider?)null);
 
-    private static LayoutResult Laid(IWindow window, HutuRenderDevice device, LayoutEngine engine) =>
-        engine.Layout(Boxes(window, device), device.RenderWidth, device.RenderHeight)!;
+    private static LayoutResult FusedLaid(IDocument document, HutuRenderDevice device, LayoutEngine engine) =>
+        engine.Layout(FusedBoxes(document, device), device.RenderWidth, device.RenderHeight)!;
 
     /// <summary>
     /// The page with its body repeated, which is how a document long enough to tell the two figures of
