@@ -285,6 +285,54 @@ public sealed class PseudoShortCircuitTests
         Assert.That(PaintedColour(view, "aaa"), Is.EqualTo(0xFF000000u));
     }
 
+    [Test]
+    public async Task ASelectorTheParserCannotReadStillLoadsAndNeverShortCircuits()
+    {
+        using var view = CreateView();
+
+        // A rule written for a pseudo-element the parser does not model comes back with no selector
+        // text at all, and reading that text used to walk off the end of it - which took the whole load
+        // down with it. The document has to come back, and nothing may be skipped on account of a rule
+        // that was never read: this one states <c>:hover</c> in the very part that went missing.
+        await view.SetHtml(
+            "<html><body style='margin:0'><style>" +
+            "li:hover::marker { color: #ff0000 }" +
+            "</style><ul><li>aaa</li></ul></body></html>");
+
+        var run = TextRun(view, "aaa");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(view.Layout, Is.Not.Null, "the document loads and lays out");
+            Assert.That(
+                view.Paint!.Commands.Any(c => c is TextCommand { Text: "• " }),
+                Is.True,
+                "and the item it marks is marked");
+            Assert.That(
+                view.PointerMoved(run.BorderBox.X + 1, run.BorderBox.Y + 1).Changed,
+                Is.True,
+                "a selector that could not be read cannot promise it holds no :hover");
+        });
+    }
+
+    [Test]
+    public async Task APseudoElementTheParserCanSpellIsStillReadAsNoHoverRule()
+    {
+        using var view = CreateView();
+        await view.SetHtml(
+            "<html><body style='margin:0'><style>" +
+            "li::before { color: #ff0000 }" +
+            "</style><ul><li>aaa</li></ul></body></html>");
+
+        var run = TextRun(view, "aaa");
+
+        Assert.That(
+            view.PointerMoved(run.BorderBox.X + 1, run.BorderBox.Y + 1).Changed,
+            Is.False,
+            "a selector that came back as text says what it holds, pseudo-element and all - so the " +
+            "absence of :hover is proven and the rebuild is skipped");
+    }
+
     private static HutuViewInternal CreateView()
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

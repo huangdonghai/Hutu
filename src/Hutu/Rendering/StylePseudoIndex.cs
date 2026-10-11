@@ -147,8 +147,27 @@ internal sealed class StylePseudoIndex
         // @font-face, @keyframes and @property carry no element selectors and need no walk.
     }
 
-    private static void ScanText(string text, ref Found found)
+    /// <summary>
+    /// Reads one rule's selector for the tracked pseudo-classes.
+    /// </summary>
+    /// <remarks>
+    /// A selector the parser will not hand back as text is read as a rule that may mention anything,
+    /// which is every one of the rules written for a pseudo-element the parser does not model - and
+    /// <c>::marker</c> is one of those. Nothing was learned from such a rule, so nothing may be skipped
+    /// because of it: the page <c>li:hover::marker</c> states a pseudo-class in the very selector that
+    /// comes back null, and a scan that read it as nothing would let a hover rebuild be talked out of.
+    /// This is the fail-open the class promises, bought at the price of the short-circuit on pages that
+    /// mark their items - which is the trade a reader would make.
+    /// </remarks>
+    private static void ScanText(string? text, ref Found found)
     {
+        if (text is null)
+        {
+            found = Found.All;
+
+            return;
+        }
+
         for (var name = 0; name < Names.Length; name++)
         {
             if (((byte)found & (1 << name)) == 0 && ContainsPseudo(text, Names[name]))
