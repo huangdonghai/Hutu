@@ -104,7 +104,7 @@ public sealed class SkiaRenderingTests
 
         // Arial carries no CJK glyph, so the run has to leave it for a system font that does. This
         // only means anything on a machine that offers one, so a system without is left inconclusive.
-        var runs = measurer.GetRuns("中文", style);
+        var runs = measurer.Decompose("中文", style);
         var carrier = runs.FirstOrDefault(run => run.Font.Typeface?.GetGlyph('中') != 0);
 
         Assume.That(carrier, Is.Not.Null, "no system font carries CJK on this machine");
@@ -143,11 +143,12 @@ public sealed class SkiaRenderingTests
                 continue;
             }
 
-            var vertical = measurer.Shaper.GetVerticalForm(font, character);
-
-            if (vertical.IsSubstituted)
+            if (IsSubstituted(measurer.Shaper, font, character))
             {
-                Assert.That(vertical.Glyph, Is.Not.Zero, $"U+{(Int32)character:X4} was answered with the null glyph");
+                Assert.That(
+                    measurer.Shaper.ShapeVertical(font, character.ToString()).Glyphs[0],
+                    Is.Not.Zero,
+                    $"U+{(Int32)character:X4} was answered with the null glyph");
                 continue;
             }
 
@@ -170,13 +171,22 @@ public sealed class SkiaRenderingTests
 
         // The mark has no presentation form of its own, so the form the font declares is the only way
         // a column has of standing it on end instead of ruling a line across the column.
-        var vertical = measurer.Shaper.GetVerticalForm(font, 'ー');
-
         Assert.That(
-            vertical.IsSubstituted,
+            IsSubstituted(measurer.Shaper, font, 'ー'),
             Is.True,
             "the mark stays a line across the column unless the font has a form that stands it up");
-        Assert.That(vertical.Glyph, Is.Not.Zero);
+        Assert.That(measurer.Shaper.ShapeVertical(font, "ー").Glyphs[0], Is.Not.Zero);
+    }
+
+    /// <summary>Whether the shaper answers a vertical run with a glyph of its own rather than the one a line would use.</summary>
+    private static Boolean IsSubstituted(SkiaTextShaper shaper, SKFont font, Char character)
+    {
+        var vertical = shaper.ShapeVertical(font, character.ToString());
+
+        return vertical.Succeeded &&
+               vertical.Glyphs.Length == 1 &&
+               vertical.Glyphs[0] != 0 &&
+               vertical.Glyphs[0] != font.Typeface?.GetGlyph(character);
     }
 
     [Test]

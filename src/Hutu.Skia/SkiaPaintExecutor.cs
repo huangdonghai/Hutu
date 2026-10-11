@@ -507,6 +507,10 @@ public sealed class SkiaPaintExecutor
         canvas.DrawRect(ToRect(side), paint);
     }
 
+    /// <summary>
+    /// Draws a run of text as the blob the measurer's cache keeps for it: the glyphs are shaped and
+    /// positioned once per text, style and spacing, and every frame after the first is a single draw.
+    /// </summary>
     private void DrawText(SKCanvas canvas, TextCommand command)
     {
         var metrics = _measurer.GetMetrics(command.Font);
@@ -516,7 +520,7 @@ public sealed class SkiaPaintExecutor
         if (!command.Flow.IsVertical)
         {
             var baseline = (Single)(command.Bounds.Y + command.Baseline);
-            DrawRuns(canvas, _measurer.GetRuns(command.Text, command.Font), (Single)command.Bounds.X, baseline, paint, command.LetterSpacing);
+            DrawRunBlob(canvas, command, baseline, paint, command.LetterSpacing);
 
             if (command.Underline)
             {
@@ -537,7 +541,7 @@ public sealed class SkiaPaintExecutor
         }
         else if (command.Flow.Orientation == TextOrientation.Upright)
         {
-            DrawUpright(canvas, command, metrics, paint);
+            DrawUprightColumn(canvas, command, paint);
         }
         else
         {
@@ -554,6 +558,21 @@ public sealed class SkiaPaintExecutor
         if (command.LineThrough)
         {
             DrawColumnDecoration(canvas, command, Math.Abs(metrics.StrikeoutOffset), metrics.StrikeoutThickness, paint);
+        }
+    }
+
+    /// <summary>
+    /// Draws the blob the cache keeps for the run, at the place the run is set. The blob carries its
+    /// glyphs relative to its own origin, so one object answers every frame and every scroll: drawing
+    /// it at the run's position is what lands each glyph where the layout measured it.
+    /// </summary>
+    private void DrawRunBlob(SKCanvas canvas, TextCommand command, Single baseline, SKPaint paint, Double letterSpacing)
+    {
+        var blob = _measurer.Blobs.GetRunBlob(command.Font, command.Text, letterSpacing);
+
+        if (blob is not null)
+        {
+            canvas.DrawText(blob, (Single)command.Bounds.X, baseline, paint);
         }
     }
 
@@ -589,103 +608,32 @@ public sealed class SkiaPaintExecutor
 
         canvas.Save();
         canvas.RotateDegrees(upward ? -90 : 90, baselineX, start);
-        DrawRuns(canvas, _measurer.GetRuns(command.Text, command.Font), baselineX, start, paint, command.LetterSpacing);
+        DrawRunBlob(canvas, command, start, paint, command.LetterSpacing);
         canvas.Restore();
     }
 
     /// <summary>
     /// Draws a run of characters that stay upright, one under the other, each owning the step the
-    /// layout gave it and centred across the column.
-    /// </summary>
-    private void DrawUpright(SKCanvas canvas, TextCommand command, FontMetrics metrics, SKPaint paint)
-    {
-        var emBox = metrics.Ascent + metrics.Descent;
-        var inline = 0.0;
-
-        // The steps are asked of the measurer rather than worked out again here, so a character is
-        // drawn at the very place the layout put it.
-        var measurer = (ITextMeasurer)_measurer;
-
-        foreach (var character in command.Text)
-        {
-            var step = Math.Max(
-                measurer.MeasureAdvance(character.ToString(), command.Font, command.Flow),
-                command.Font.Size) + command.LetterSpacing;
-
-            // The step is the character's cell and it starts where the layout put it. Where the
-            // baseline goes inside that cell is the font's to say - see DrawUprightCharacter - so the
-            // middle of the em box stands in only for a font that will not.
-            var cellTop = command.Bounds.Y + inline;
-            var fallback = (Single)(cellTop + ((step - emBox) / 2) + metrics.Ascent);
-
-            DrawUprightCharacter(canvas, command, character, cellTop, fallback, paint);
-            inline += step;
-        }
-    }
-
-    /// <summary>
-    /// Draws one character of a column in the form a column sets it in, on the baseline the font puts
-    /// it on.
+    /// layout gave it and centred across the column. The whole run is one blob the cache keeps: the
+    /// cells are resolved once and every frame after the first is a single draw.
     /// </summary>
     /// <remarks>
-    /// A font declares where each glyph's baseline goes down a column, and it moves that place for the
-    /// characters - the 句读 above all - that would otherwise sit in the corner of their cell: asking
-    /// for the form alone leaves those marks half a character out of place. The form itself is either
-    /// the glyph the font substitutes for a vertical run, drawn as it is because it need not stand for
-    /// a character a document could name, or the vertical presentation form Unicode reserved for the
-    /// character. Neither is allowed to cost the run anything: the forms are as wide as the characters
-    /// they replace, so the step the layout measured still lands every character after them where it
-    /// always did. A character with no form at all is drawn exactly as it was before.
+    /// The decisions a cell is made of - the font that carries the character, the form the font
+    /// substitutes for it down a column, where the font puts its baseline inside the cell, and the
+    /// width it is centred by - all live in the measurer's decomposition, which is where the layout's
+    /// own steps come from too. The executor only asks for the blob and draws it.
     /// </remarks>
-    private void DrawUprightCharacter(
-        SKCanvas canvas,
-        TextCommand command,
-        Char character,
-        Double cellTop,
-        Single fallbackBaseline,
-        SKPaint paint)
+    private void DrawUprightColumn(SKCanvas canvas, TextCommand command, SKPaint paint)
     {
-        var font = _measurer.GetFont(command.Font, character);
-        var vertical = _measurer.Shaper.GetVerticalForm(font, character);
-        var text = character.ToString();
-        var centre = ColumnCentre(command, text);
-        var baseline = Baseline(command, vertical, cellTop, fallbackBaseline);
+        var blob = _measurer.Blobs.GetColumnBlob(command.Font, command.Text, command.LetterSpacing, command.Bounds.Width);
 
-        if (vertical.IsSubstituted)
+        if (blob is not null)
         {
-            _measurer.Shaper.DrawVerticalGlyph(canvas, font, vertical.Glyph, centre, baseline, paint);
-            return;
+            // The blob's glyphs are positioned relative to the column, so drawing it at the column's
+            // own origin lands each character in the cell the layout gave it.
+            canvas.DrawText(blob, (Single)command.Bounds.X, (Single)command.Bounds.Y, paint);
         }
-
-        if (VerticalForms.TryGet(character, out var replacement) && _measurer.HasGlyph(command.Font, replacement))
-        {
-            text = replacement.ToString();
-            font = _measurer.GetFont(command.Font, replacement);
-            centre = ColumnCentre(command, text);
-
-            // The form the author could have written is a glyph of the same font, drawn where the
-            // font puts that glyph - so writing `。` and writing `︒` are one and the same picture.
-            baseline = Baseline(command, _measurer.Shaper.GetVerticalForm(font, replacement), cellTop, fallbackBaseline);
-        }
-
-        canvas.DrawText(text, centre, baseline, font, paint);
     }
-
-    /// <summary>
-    /// Gets the baseline a column puts the glyph on: the place the font declares, or the stand-in the
-    /// caller worked out for a font that will not declare one.
-    /// </summary>
-    private static Single Baseline(TextCommand command, VerticalForm vertical, Double cellTop, Single fallback) =>
-        vertical.HasOrigin
-            ? (Single)(cellTop + (vertical.Origin * command.Font.Size))
-            : fallback;
-
-    /// <summary>
-    /// Gets the position across the column a character is centred at, which is asked of the text that
-    /// ends up drawn rather than of the character the layout was given.
-    /// </summary>
-    private Single ColumnCentre(TextCommand command, String text) =>
-        (Single)(command.Bounds.X + ((command.Bounds.Width - _measurer.MeasureWidth(text, command.Font)) / 2));
 
     /// <summary>
     /// Draws a run <c>text-combine-upright: all</c> welded into the single em it stands for, which it
@@ -699,8 +647,6 @@ public sealed class SkiaPaintExecutor
         {
             return;
         }
-
-        var runs = _measurer.GetRuns(command.Text, command.Font);
 
         // The run was measured as one em, so squeezing the glyphs along the axis they are set on until
         // they are that long is what makes them line up with the characters around them.
@@ -718,7 +664,7 @@ public sealed class SkiaPaintExecutor
             var x = (Single)(command.Bounds.X + ((command.Bounds.Width - natural) / 2));
 
             canvas.Scale(squeeze, 1, x, (Single)command.Bounds.Y);
-            DrawRuns(canvas, runs, x, y, paint);
+            DrawRunBlob(canvas, command, y, paint, 0);
         }
         else
         {
@@ -726,107 +672,10 @@ public sealed class SkiaPaintExecutor
 
             canvas.RotateDegrees(90, baselineX, start);
             canvas.Scale(squeeze, 1, baselineX, start);
-            DrawRuns(canvas, runs, baselineX, start, paint);
+            DrawRunBlob(canvas, command, start, paint, 0);
         }
 
         canvas.Restore();
-    }
-
-    /// <summary>
-    /// Draws the runs of a text command one after another along its baseline, each advancing by the
-    /// width it was measured with. A run changes font where the family had no glyph, which is how the
-    /// characters a family cannot set are kept without a box in the middle of the text.
-    /// </summary>
-    /// <param name="letterSpacing">
-    /// The extra space the run carries after every character. It is folded into each glyph's position
-    /// and the run is drawn as one positioned blob, so the text still costs a single draw rather than
-    /// one per character, and the font's own advances between glyphs are left as they are.
-    /// </param>
-    private void DrawRuns(SKCanvas canvas, IReadOnlyList<SkiaTextRun> runs, Single x, Single baseline, SKPaint paint, Double letterSpacing = 0)
-    {
-        foreach (var run in runs)
-        {
-            // A script whose glyphs join or reorder is drawn from the glyphs the shaper named, at the
-            // very places it put them, so what is drawn is what was measured. Everything else keeps the
-            // font's own direct mapping, which is a single draw and the whole of the common case.
-            if (_measurer.TryShape(run.Font, run.Text, out var shaped))
-            {
-                DrawShapedRun(canvas, run.Font, shaped, x, baseline, paint, letterSpacing);
-                x += shaped.Width + (Single)(letterSpacing * shaped.Glyphs.Length);
-                continue;
-            }
-
-            if (letterSpacing == 0 || run.Text.Length == 0)
-            {
-                canvas.DrawText(run.Text, x, baseline, run.Font, paint);
-                x += run.Font.MeasureText(run.Text);
-                continue;
-            }
-
-            var glyphs = run.Font.GetGlyphs(run.Text);
-            var positions = run.Font.GetGlyphPositions(run.Text, new SKPoint(x, baseline));
-
-            for (var index = 0; index < positions.Length; index++)
-            {
-                positions[index].X += (Single)(letterSpacing * index);
-            }
-
-            using var builder = new SKTextBlobBuilder();
-            var placed = builder.AllocatePositionedRun(run.Font, glyphs.Length);
-            placed.SetGlyphs(glyphs);
-            placed.SetPositions(positions);
-            using var blob = builder.Build();
-
-            if (blob is not null)
-            {
-                // The run carries absolute positions, so the blob itself is drawn at the origin.
-                canvas.DrawText(blob, 0, 0, paint);
-            }
-
-            x += run.Font.MeasureText(run.Text) + (Single)(letterSpacing * run.Text.Length);
-        }
-    }
-
-    /// <summary>
-    /// Draws a shaped run: the glyphs the font set the text in, each at the place the shaper gave it
-    /// along the baseline. The places are relative to where the run starts, so the pen is added to
-    /// each, which is also what lets the drawing agree with the width the run was measured to.
-    /// </summary>
-    private static void DrawShapedRun(
-        SKCanvas canvas,
-        SKFont font,
-        ShapedRun run,
-        Single x,
-        Single baseline,
-        SKPaint paint,
-        Double letterSpacing)
-    {
-        var count = run.Glyphs.Length;
-
-        if (count == 0 || run.Points.Length < count)
-        {
-            return;
-        }
-
-        var positions = new SKPoint[count];
-
-        for (var index = 0; index < count; index++)
-        {
-            positions[index] = new SKPoint(
-                x + run.Points[index].X + (Single)(letterSpacing * index),
-                baseline + run.Points[index].Y);
-        }
-
-        using var builder = new SKTextBlobBuilder();
-        var placed = builder.AllocatePositionedRun(font, count);
-        placed.SetGlyphs(run.Glyphs);
-        placed.SetPositions(positions);
-        using var blob = builder.Build();
-
-        if (blob is not null)
-        {
-            canvas.DrawText(blob, 0, 0, paint);
-        }
     }
 
     private static void DrawGradient(SKCanvas canvas, LinearGradientCommand command)

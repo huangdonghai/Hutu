@@ -21,17 +21,6 @@ public sealed class ArabicTextTests
     private const String LamAlef = "لا";
 
     [Test]
-    public void OnlyAScriptThatNeedsShapingAsksForIt()
-    {
-        Assert.That(SkiaTextShaper.NeedsShaping("hello world"), Is.False, "Latin maps straight to glyphs");
-        Assert.That(SkiaTextShaper.NeedsShaping("中文"), Is.False, "CJK does too");
-        Assert.That(SkiaTextShaper.NeedsShaping(""), Is.False);
-        Assert.That(SkiaTextShaper.NeedsShaping(Word), Is.True, "Arabic has to be shaped");
-        Assert.That(SkiaTextShaper.NeedsShaping("עברית"), Is.True, "Hebrew is reordered even though it does not join");
-        Assert.That(SkiaTextShaper.NeedsShaping("हिन्दी"), Is.True, "so is Devanagari");
-    }
-
-    [Test]
     public void ArabicLettersAreShapedIntoTheirJoinedForms()
     {
         using var measurer = new SkiaTextMeasurer();
@@ -50,7 +39,7 @@ public sealed class ArabicTextTests
 
         // Every glyph but the first advances the pen; a run of no width, or with its glyphs stacked on
         // the origin, would be a run that was never laid out along its baseline.
-        Assert.That(shaped.Width, Is.GreaterThan(0));
+        Assert.That(shaped.Advance, Is.GreaterThan(0));
         Assert.That(shaped.Points[^1].X, Is.GreaterThan(0), "the last glyph sits along the run");
     }
 
@@ -81,7 +70,7 @@ public sealed class ArabicTextTests
 
         Assert.That(
             measurer.MeasureWidth(Word, style),
-            Is.EqualTo(shaped.Width).Within(0.0001),
+            Is.EqualTo(shaped.Advance).Within(0.0001),
             "the layout has to advance by the glyphs that will be drawn, not by the characters");
     }
 
