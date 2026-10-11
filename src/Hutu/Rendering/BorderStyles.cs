@@ -1,3 +1,5 @@
+using System;
+
 namespace Hutu.Rendering;
 
 /// <summary>The stroke one side of a border is drawn with, i.e. what <c>border-style</c> selects.</summary>
@@ -21,7 +23,7 @@ public enum BorderLineStyle : byte
 /// The strokes are carried per side rather than as a single flag because a box may mix them, and a
 /// rounded border has to be drawn side by side along one continuous outline.
 /// </remarks>
-public readonly struct BorderStyles
+public readonly struct BorderStyles : IEquatable<BorderStyles>
 {
     public BorderStyles(BorderLineStyle top, BorderLineStyle right, BorderLineStyle bottom, BorderLineStyle left)
     {
@@ -54,4 +56,14 @@ public readonly struct BorderStyles
     /// instead of being cut apart at the corners.
     /// </summary>
     public Boolean IsUniform => Top == Right && Top == Bottom && Top == Left;
+
+    /// <summary>
+    /// Gets whether the four sides of two borders are drawn with the same four strokes.
+    /// </summary>
+    public Boolean Equals(BorderStyles other) =>
+        Top == other.Top && Right == other.Right && Bottom == other.Bottom && Left == other.Left;
+
+    public override Boolean Equals(Object? obj) => obj is BorderStyles other && Equals(other);
+
+    public override Int32 GetHashCode() => HashCode.Combine(Top, Right, Bottom, Left);
 }

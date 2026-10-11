@@ -55,7 +55,7 @@ public enum StyleMathFunction : byte
 /// <c>margin: auto</c> and <c>width: auto</c> work.
 /// </para>
 /// </remarks>
-public readonly struct StyleLength
+public readonly struct StyleLength : IEquatable<StyleLength>
 {
     private readonly Double _value;
     private readonly StyleLengthKind _kind;
@@ -193,6 +193,77 @@ public readonly struct StyleLength
         }
 
         return copy;
+    }
+
+    /// <summary>
+    /// Gets whether two lengths are the same length: the same kind, the same function, the same number,
+    /// and for a math function the same arguments.
+    /// </summary>
+    /// <remarks>
+    /// The number is compared by its bits rather than by <c>==</c>, which is what this struct's own
+    /// equality already said: a value type with nothing to compare by falls back to walking its bytes,
+    /// so <c>0</c> and <c>-0</c> were never equal and neither were two NaNs of different payload. That
+    /// answer is kept deliberately rather than inherited - an area built from lengths is shared between
+    /// every box whose areas agree, and a comparison that begins calling two different lengths one would
+    /// hand a box a border it never asked for.
+    /// <para>
+    /// The arguments are compared by content, not by reference. A <c>min()</c> written in a stylesheet
+    /// twice is parsed twice into two arrays, and comparing the arrays by reference would let those two
+    /// lengths disagree - costing sharing, which alone would be harmless, but this equality is also the
+    /// half a hash has to agree with, and the hash below does not look at the arguments at all. Two
+    /// lengths that differ only in their arguments therefore have the same hash and unequal equals, the
+    /// one direction a table tolerates; the other direction is the one that breaks it quietly.
+    /// </para>
+    /// </remarks>
+    public Boolean Equals(StyleLength other) =>
+        _kind == other._kind &&
+        _function == other._function &&
+        BitConverter.DoubleToInt64Bits(_value) == BitConverter.DoubleToInt64Bits(other._value) &&
+        OperandsEqual(_operands, other._operands);
+
+    public override Boolean Equals(Object? obj) => obj is StyleLength other && Equals(other);
+
+    /// <summary>
+    /// Gets a hash of the kind, the function and the number's bits - and not of the arguments, which
+    /// <see cref="Equals"/> does compare. A table asks this on every probe while it asks the full
+    /// equality only once per bucket, and dropping the arguments can only ever split a pair that was
+    /// unequal anyway: equal lengths agree on everything hashed here.
+    /// </summary>
+    public override Int32 GetHashCode() =>
+        HashCode.Combine(_kind, _function, BitConverter.DoubleToInt64Bits(_value));
+
+    /// <summary>
+    /// Compares two lengths the way the type answers it, which is not the way a bare <see cref="Double"/>
+    /// would be. Declared rather than left absent: without it the language forbids <c>==</c> on this
+    /// struct today, and whatever replaces that error tomorrow would be free to disagree with
+    /// <see cref="Equals(StyleLength)"/> over <c>0</c>, <c>-0</c> and NaN - the one disagreement a
+    /// shared area cannot survive.
+    /// </summary>
+    public static Boolean operator ==(StyleLength one, StyleLength other) => one.Equals(other);
+
+    public static Boolean operator !=(StyleLength one, StyleLength other) => !one.Equals(other);
+
+    private static Boolean OperandsEqual(StyleLength[]? one, StyleLength[]? other)
+    {
+        if (ReferenceEquals(one, other))
+        {
+            return true;
+        }
+
+        if (one is null || other is null || one.Length != other.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < one.Length; index++)
+        {
+            if (!one[index].Equals(other[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public override String ToString() => _kind switch
