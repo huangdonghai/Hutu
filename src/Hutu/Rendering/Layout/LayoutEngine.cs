@@ -1,6 +1,7 @@
 ﻿using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace Hutu.Rendering.Layout;
 
@@ -102,6 +103,7 @@ public sealed class LayoutEngine
         _contentIntrinsic.Clear();
         _intrinsicFree.Clear();
         _contentIntrinsicFree.Clear();
+        _inline.ResetPlanCache();
 
         var size = Measure(root, MeasureConstraints.FitWidth(width), context);
         var margin = BoxModel.UsedMargin(root.Style, width, size.Width);
@@ -140,6 +142,192 @@ public sealed class LayoutEngine
         ScrollableOverflow.MoveToOrigin(rootBox, content);
 
         return new LayoutResult(rootBox, content.Width, content.Height);
+    }
+
+    /// <summary>
+    /// How a layout's time and allocation split across its phases.
+    /// </summary>
+    public sealed record LayoutProfile(
+        Double MeasureTime,
+        Double ArrangeTime,
+        Double DecorationTime,
+        Double OverflowTime,
+        Double MeasureAllocMB,
+        Double ArrangeAllocMB,
+        Double DecorationAllocMB,
+        Double OverflowAllocMB,
+        Double TotalTime);
+
+    /// <summary>
+    /// Runs the full layout and reports how its time and allocation divide across the phases: the
+    /// measure that sizes the tree, the arrange that places it, the corner-radius resolution, and the
+    /// scrollable-overflow pass. Meant for the performance probe rather than production - it repeats
+    /// the work several times to average it.
+    /// </summary>
+    /// <remarks>
+    /// The four phases are the same ones <see cref="Layout"/> performs, run in the same order; the sum
+    /// of the phase times is the whole layout. Allocation is measured per phase on its own so the figure
+    /// is that phase's garbage, not the garbage the ones before it left - which is why each phase is
+    /// warmed on a fresh cache before it is timed.
+    /// </remarks>
+    public LayoutProfile Profile(Box? root, Double viewportWidth, Double viewportHeight = 0, Offset scroll = default)
+    {
+        if (root is null)
+        {
+            return new LayoutProfile(0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+
+        const Int32 warm = 3;
+        const Int32 runs = 8;
+        const Int32 allocRuns = 3;
+
+        var width = Math.Max(1, viewportWidth);
+        var viewport = new Size(width, Math.Max(0, viewportHeight));
+        var context = new LayoutContext(viewport, viewport, scroll, _measurer);
+
+        // Time, with the caches cold on the first of every run as Layout itself leaves them.
+        var measureTime = 0.0;
+        var arrangeTime = 0.0;
+        var decorationTime = 0.0;
+        var overflowTime = 0.0;
+
+        for (var iteration = 0; iteration < warm; iteration++)
+        {
+            RunLayout(root, width, viewport, context, null, null, null, null);
+        }
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+
+        for (var iteration = 0; iteration < runs; iteration++)
+        {
+            var measure = new Stopwatch();
+            var arrange = new Stopwatch();
+            var decoration = new Stopwatch();
+            var overflow = new Stopwatch();
+
+            RunLayout(root, width, viewport, context, measure, arrange, decoration, overflow);
+
+            measureTime += measure.Elapsed.TotalMilliseconds;
+            arrangeTime += arrange.Elapsed.TotalMilliseconds;
+            decorationTime += decoration.Elapsed.TotalMilliseconds;
+            overflowTime += overflow.Elapsed.TotalMilliseconds;
+        }
+
+        // Allocation, each phase measured on its own so the figure is that phase's garbage alone.
+        var measureAlloc = 0.0;
+        var arrangeAlloc = 0.0;
+        var decorationAlloc = 0.0;
+        var overflowAlloc = 0.0;
+
+        for (var iteration = 0; iteration < allocRuns; iteration++)
+        {
+            ResetCaches();
+            var before = GC.GetTotalAllocatedBytes(false);
+            Measure(root, MeasureConstraints.FitWidth(width), context);
+            measureAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
+        }
+
+        for (var iteration = 0; iteration < allocRuns; iteration++)
+        {
+            ResetCaches();
+            var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+            var before = GC.GetTotalAllocatedBytes(false);
+            Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
+            arrangeAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
+        }
+
+        for (var iteration = 0; iteration < allocRuns; iteration++)
+        {
+            ResetCaches();
+            var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+            var rootBox = Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
+            var before = GC.GetTotalAllocatedBytes(false);
+            ResolveDecorations(rootBox);
+            decorationAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
+        }
+
+        for (var iteration = 0; iteration < allocRuns; iteration++)
+        {
+            ResetCaches();
+            var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+            var rootBox = Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
+            ResolveDecorations(rootBox);
+            var content = ScrollableOverflow.Of(rootBox, new Rect(0, 0, width, viewport.Height));
+            var before = GC.GetTotalAllocatedBytes(false);
+            ScrollableOverflow.MoveToOrigin(rootBox, content);
+            overflowAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
+        }
+
+        return new LayoutProfile(
+            measureTime / runs,
+            arrangeTime / runs,
+            decorationTime / runs,
+            overflowTime / runs,
+            measureAlloc / allocRuns,
+            arrangeAlloc / allocRuns,
+            decorationAlloc / allocRuns,
+            overflowAlloc / allocRuns,
+            (measureTime + arrangeTime + decorationTime + overflowTime) / runs);
+    }
+
+    /// <summary>Runs one full layout, timing whichever phases are handed a stopwatch.</summary>
+    private void RunLayout(
+        Box root,
+        Double width,
+        Size viewport,
+        LayoutContext context,
+        Stopwatch? measure,
+        Stopwatch? arrange,
+        Stopwatch? decoration,
+        Stopwatch? overflow)
+    {
+        ResetCaches();
+
+        measure?.Start();
+        var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+        measure?.Stop();
+
+        arrange?.Start();
+        var rootBox = Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
+        arrange?.Stop();
+
+        decoration?.Start();
+        ResolveDecorations(rootBox);
+        decoration?.Stop();
+
+        overflow?.Start();
+        var content = ScrollableOverflow.Of(rootBox, new Rect(0, 0, width, viewport.Height));
+        ScrollableOverflow.MoveToOrigin(rootBox, content);
+        overflow?.Stop();
+    }
+
+    /// <summary>Clears the per-pass caches so a repeat measures the work fresh, as <see cref="Layout"/> does.</summary>
+    private void ResetCaches()
+    {
+        _cache.Clear();
+        _intrinsic.Clear();
+        _contentIntrinsic.Clear();
+        _intrinsicFree.Clear();
+        _contentIntrinsicFree.Clear();
+        _inline.ResetPlanCache();
+    }
+
+    /// <summary>The root's border box, exactly as <see cref="Layout"/> computes it.</summary>
+    private static Rect RootBorderBox(Box root, Size size, Double width, Size viewport, LayoutContext context)
+    {
+        var margin = BoxModel.UsedMargin(root.Style, width, size.Width);
+        var initial = new Rect(0, 0, width, viewport.Height);
+        var flow = root.Flow;
+        var (inlineStart, _) = flow.InlineMargins(margin);
+        var (blockStart, _) = flow.BlockMargins(margin);
+
+        return flow.Map(
+            initial,
+            inlineStart,
+            flow.InlineExtent(size.Width, size.Height),
+            blockStart,
+            flow.BlockExtent(size.Width, size.Height));
     }
 
     /// <summary>

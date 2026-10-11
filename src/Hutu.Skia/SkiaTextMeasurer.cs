@@ -34,6 +34,13 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     private readonly ConcurrentDictionary<DecompositionKey, IReadOnlyList<SkiaTextRun>> _decompositions = new();
     private readonly ConcurrentDictionary<DecompositionKey, IReadOnlyList<UprightCell>> _uprightCells = new();
 
+    /// <summary>
+    /// How far one character advances in one style, which is what a column of upright text asks once per
+    /// character. Kept by character rather than by string because the answer belongs to the pair: a page
+    /// of repeated text then costs a table of the characters it actually uses.
+    /// </summary>
+    private readonly ConcurrentDictionary<CharAdvanceKey, Double> _charAdvances = new();
+
     public SkiaTextMeasurer(SkiaFontResolver? resolver = null)
     {
         _resolver = resolver ?? new SkiaFontResolver();
@@ -136,6 +143,23 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         return width;
     }
 
+    /// <summary>
+    /// Gets how far one character advances along the axis it runs on. A column steps by this once per
+    /// character, so it is answered from a table rather than by writing the character out as a string
+    /// and decomposing that again - the same answer, looked up on a key the column never allocates.
+    /// </summary>
+    public Double MeasureAdvance(Char character, FontStyle style, WritingModeInfo flow)
+    {
+        // The flow is not read, exactly as the string form does not read it: what a character advances
+        // along a column is the width of the glyph the style resolves to, and a backend that lets a
+        // script say otherwise overrides both forms together.
+        _ = flow;
+
+        return _charAdvances.GetOrAdd(
+            new CharAdvanceKey(style, character),
+            _ => MeasureWidth(character.ToString(), style));
+    }
+
     public void Dispose()
     {
         foreach (var font in _fonts.Values)
@@ -153,6 +177,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         _metrics.Clear();
         _decompositions.Clear();
         _uprightCells.Clear();
+        _charAdvances.Clear();
         _blobs.Dispose();
         _shaper.Dispose();
         _resolver.Dispose();
@@ -347,6 +372,27 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                 return (Style.GetHashCode() * 397) ^ StringComparer.Ordinal.GetHashCode(_text);
             }
         }
+    }
+
+    /// <summary>The style and the character whose advance is kept together.</summary>
+    private readonly struct CharAdvanceKey : IEquatable<CharAdvanceKey>
+    {
+        public CharAdvanceKey(FontStyle style, Char character)
+        {
+            Style = style;
+            Character = character;
+        }
+
+        public FontStyle Style { get; }
+
+        public Char Character { get; }
+
+        public Boolean Equals(CharAdvanceKey other) =>
+            Style.Equals(other.Style) && Character == other.Character;
+
+        public override Boolean Equals(Object? obj) => obj is CharAdvanceKey other && Equals(other);
+
+        public override Int32 GetHashCode() => (Style.GetHashCode() * 397) ^ Character;
     }
 
     private readonly struct FallbackFontKey : IEquatable<FallbackFontKey>

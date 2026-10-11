@@ -551,7 +551,7 @@ public sealed class TextSelector
             return run.Font.Size / Math.Max(1, run.Text?.Length ?? 1);
         }
 
-        var advance = _measurer.MeasureAdvance(character.ToString(), run.Font, run.Flow);
+        var advance = _measurer.MeasureAdvance(character, run.Font, run.Flow);
 
         return run.Flow.IsUpright(character) ? Math.Max(advance, run.Font.Size) : advance;
     }

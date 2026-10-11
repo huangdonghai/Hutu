@@ -1,6 +1,7 @@
 ﻿using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
 namespace Hutu.Rendering.Layout;
 
@@ -60,6 +61,73 @@ public sealed class InlineLayout
 {
     private readonly ITextMeasurer _measurer;
 
+    /// <summary>
+    /// The lines each container was broken into, kept for the rest of the layout pass.
+    /// </summary>
+    /// <remarks>
+    /// A context is broken into lines by the measuring phase and its lines are placed by the arranging
+    /// one, and both of them used to run the whole breaking themselves: the same text chunked, oriented,
+    /// measured and lined up twice, for the second time producing nothing but the placement of what the
+    /// first had already settled. A line the placing phase reads is a line it does not have to make,
+    /// which is what this dictionary is for - a plan is settled once <see cref="BuildLines"/> returns
+    /// (<see cref="LineBuilder.Build"/> and <see cref="MarkSlices"/> are the only writers) and every
+    /// reader after that only places.<para>
+    /// The key carries the resolved indentation as well as the inline extent, because a percentage
+    /// <c>text-indent</c> is a share of the containing block, and the two phases reach this container
+    /// through contexts that are not always the same. Two that disagree about the indent are two
+    /// different breakings and get their own plan.<br/>
+    /// It lives exactly as long as the pass does, cleared with the engine's own caches, so a repeat
+    /// layout never inherits lines from a tree it has not measured.<br/>
+    /// What is held is not free: the lines stay live until the pass ends instead of becoming garbage
+    /// when the measuring phase does. It is the cheaper half of the trade - the placing phase used to
+    /// build its own copy of every one of them and throw it away straight after.
+    /// </remarks>
+    private readonly Dictionary<LinePlanKey, List<Line>> _plans = new();
+
+    /// <summary>Drops the plans, which belong to one layout pass as the engine's own caches do.</summary>
+    internal void ResetPlanCache() => _plans.Clear();
+
+    /// <summary>
+    /// Gets the lines the container's inline content is broken into at this extent, making them the
+    /// first time the pass asks and handing back the same lines every time it asks again.
+    /// </summary>
+    private List<Line> Plan(
+        Box container,
+        Double maxInline,
+        WritingModeInfo flow,
+        InlineContext context,
+        Double indent)
+    {
+        var key = new LinePlanKey(container, maxInline, indent, FlowSignature(flow));
+
+        if (_plans.TryGetValue(key, out var known))
+        {
+            return known;
+        }
+
+        var items = new List<InlineItem>();
+        Collect(container, items, flow, null, maxInline);
+
+        // Content with nothing to break still gets a plan: the phases ask again for the same answer and
+        // an empty list is the same work saved as any other.
+        var lines = items.Count == 0
+            ? new List<Line>()
+            : BuildLines(items, maxInline, flow, context, indent);
+
+        _plans[key] = lines;
+        return lines;
+    }
+
+    /// <summary>
+    /// Packs the writing mode, orientation, direction and upright combining into the one number the
+    /// plan key wants. <see cref="WritingModeInfo"/> is a value type that answers equality through the
+    /// reflection-based default rather than an override, so hashing and comparing it whole is what
+    /// this avoids.
+    /// </summary>
+    private static Int32 FlowSignature(WritingModeInfo flow) =>
+        (((Int32)flow.Mode) << 12) | (((Int32)flow.Orientation) << 8) | (((Int32)flow.Direction) << 1) |
+        (flow.CombinesUpright ? 1 : 0);
+
     public InlineLayout(ITextMeasurer measurer) => _measurer = measurer;
 
     /// <summary>
@@ -82,18 +150,12 @@ public sealed class InlineLayout
 
     private InlineContentSize MeasureCore(Box container, Double maxInline, WritingModeInfo flow, InlineContext context)
     {
-        var items = new List<InlineItem>();
-        Collect(container, items, flow, null, maxInline);
-
-        if (items.Count == 0)
-        {
-            return default;
-        }
+        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context));
 
         var block = 0.0;
         var inline = 0.0;
 
-        foreach (var line in BuildLines(items, maxInline, flow, context, Indentation(container, flow, context)))
+        foreach (var line in lines)
         {
             if (line.Height > 0)
             {
@@ -191,18 +253,22 @@ public sealed class InlineLayout
                 continue;
             }
 
-            foreach (var chunk in TextChunker.Chunks(item.Text!))
+            // The chunks are ranges of the item's own text: only a width is wanted here, and a string
+            // per chunk would be characters copied for a number.
+            var source = item.Text!;
+
+            foreach (var chunk in TextChunker.Ranges(source))
             {
-                var width = Measure(item.Style, chunk, flow);
+                var width = Measure(item.Style, source, chunk.Start, chunk.Length, flow);
                 maxContent += width;
 
-                if (TextChunker.IsWhiteSpace(chunk))
+                if (TextChunker.IsWhiteSpace(source, chunk.Start, chunk.Length))
                 {
                     // A collapsible space is a break opportunity: the run before it can be split.
                     minContent = Math.Max(minContent, unbreakable);
                     unbreakable = 0;
                 }
-                else if (TextChunker.IsCjk(chunk[0]))
+                else if (TextChunker.IsCjk(source[chunk.Start]))
                 {
                     // A line may break on either side of a CJK character, so the character stands
                     // alone rather than joining the run around it, and it is the run beside it - the
@@ -240,15 +306,12 @@ public sealed class InlineLayout
     private Double LayoutCore(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow, InlineContext context)
     {
         var maxInline = flow.InlineExtent(contentBox.Width, contentBox.Height);
-        var items = new List<InlineItem>();
-        Collect(container, items, flow, null, maxInline);
 
-        if (items.Count == 0)
-        {
-            return 0;
-        }
+        // The lines the measuring phase broke this content into, if it broke them at the same extent -
+        // which is what the block layout makes sure of, since it reconstructs the child's containing
+        // block from the same arithmetic it measured against.
+        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context));
 
-        var lines = BuildLines(items, maxInline, flow, context, Indentation(container, flow, context));
         var cursor = 0.0;
         var step = new InlineStep();
 
@@ -775,27 +838,31 @@ public sealed class InlineLayout
             }
 
             // An inline element may ask for an orientation of its own, so each run is measured and
-            // drawn in the flow of the box it came from rather than in the container's.
+            // drawn in the flow of the box it came from rather than in the container's. The font is
+            // taken once for the item, because every piece of it is set in that one font.
             var itemFlow = item.Box.Flow;
+            var font = item.Style.GetFont();
 
-            foreach (var chunk in TextChunker.Chunks(item.Text!))
+            foreach (var chunk in TextChunker.Ranges(item.Text!))
             {
-                foreach (var run in Runs(chunk, item.Style, itemFlow))
+                foreach (var run in new OrientedPieces(item.Text!, chunk.Start, chunk.Length, itemFlow))
                 {
-                    if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + run.Width > maxInline)
+                    var piece = Measure(item.Style, font, run, itemFlow);
+
+                    if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + piece.Width > maxInline)
                     {
                         lines.Add(builder.Build(_measurer, maxInline, carried));
                         carried = lines[^1].ContinuesToNext;
                         builder = new LineBuilder(item.Style, carried);
 
                         // The space that triggered the break is consumed by it.
-                        if (run.IsWhiteSpace)
+                        if (piece.IsWhiteSpace)
                         {
                             continue;
                         }
                     }
 
-                    builder.Add(run.Text, run.Width, item.Style, item.Box, run.Flow, item.Inline);
+                    builder.Add(piece.Source, piece.Start, piece.Length, piece.Width, item.Style, item.Box, piece.Flow, item.Inline);
                 }
             }
         }
@@ -1180,19 +1247,34 @@ public sealed class InlineLayout
             : padding.Horizontal + border.Horizontal;
     }
 
-    /// <summary>Measures a chunk of text the way the writing mode advances it.</summary>
+    /// <summary>Measures a whole string of text the way the writing mode advances it.</summary>
     private Double Measure(ComputedStyle style, String chunk, WritingModeInfo flow) =>
-        MeasureChunk(_measurer, style, chunk, flow);
+        MeasureChunk(_measurer, style, chunk, 0, chunk.Length, flow);
+
+    /// <summary>Measures a range of text the way the writing mode advances it.</summary>
+    private Double Measure(ComputedStyle style, String source, Int32 start, Int32 length, WritingModeInfo flow) =>
+        MeasureChunk(_measurer, style, source, start, length, flow);
 
     /// <summary>
-    /// Measures a chunk against the measurer, adding the letter spacing the style asks for on top of
+    /// Measures a range against the measurer, adding the letter spacing the style asks for on top of
     /// every character - the last one included, which is what CSS says a spaced run is worth.
     /// </summary>
-    private static Double MeasureChunk(ITextMeasurer measurer, ComputedStyle style, String chunk, WritingModeInfo flow) =>
+    /// <remarks>
+    /// A range rather than a string because the range is what the line keeps: a string made here for
+    /// the measurer's sake is characters copied that the run would only copy again when it merged with
+    /// the piece after it.
+    /// </remarks>
+    private static Double MeasureChunk(
+        ITextMeasurer measurer,
+        ComputedStyle style,
+        String source,
+        Int32 start,
+        Int32 length,
+        WritingModeInfo flow) =>
         (flow.IsVertical
-            ? MeasureColumn(chunk, style.GetFont(), style.FontSize, flow, measurer)
-            : measurer.MeasureWidth(chunk, style.GetFont()))
-        + (style.LetterSpacing * chunk.Length);
+            ? MeasureColumn(source, start, length, style.GetFont(), style.FontSize, flow, measurer)
+            : measurer.MeasureWidth(source.Substring(start, length), style.GetFont()))
+        + (style.LetterSpacing * length);
 
     /// <summary>
     /// Measures the annotation of a ruby item: how far it reaches along the inline axis, how much room
@@ -1223,8 +1305,6 @@ public sealed class InlineLayout
             descent += halfLeading;
         }
 
-        var runs = Runs(text, style, flow);
-
         return new RubyAnnotation(
             text,
             Measure(style, text, flow),
@@ -1233,19 +1313,26 @@ public sealed class InlineLayout
             item.Box.Style.HasRubyUnder,
             style,
             item.AnnotationBox!,
-            runs.Count > 0 ? runs[0].Flow : flow);
+            ResolveOrientation(text, flow));
     }
 
     /// <summary>
-    /// Measures a chunk the way a column advances it. Upright text advances by its em box rather than
-    /// by its horizontal width, so a Latin letter that would leave room to spare in a line still takes
-    /// a whole em in a column, and text combined upright is compressed into a single em.
+    /// Measures a range of text the way a column advances it. Upright text advances by its em box
+    /// rather than by its horizontal width, so a Latin letter that would leave room to spare in a line
+    /// still takes a whole em in a column, and text combined upright is compressed into a single em.
     /// </summary>
-    private static Double MeasureColumn(String chunk, FontStyle font, Double fontSize, WritingModeInfo flow, ITextMeasurer measurer)
+    private static Double MeasureColumn(
+        String source,
+        Int32 origin,
+        Int32 length,
+        FontStyle font,
+        Double fontSize,
+        WritingModeInfo flow,
+        ITextMeasurer measurer)
     {
         var total = 0.0;
 
-        foreach (var run in Orient(chunk, flow))
+        foreach (var run in new OrientedPieces(source, origin, length, flow))
         {
             total += run.Advance(font, measurer, fontSize, flow);
         }
@@ -1254,84 +1341,111 @@ public sealed class InlineLayout
     }
 
     /// <summary>
-    /// Splits a chunk into the pieces a column has to measure and draw separately, which is wherever
-    /// the orientation changes and wherever <c>text-combine-upright</c> sets a short run as one box.
+    /// Walks the pieces a range of text is measured and drawn in: wherever the orientation changes, and
+    /// wherever <c>text-combine-upright</c> sets a short run as one box. Text along a line is one piece,
+    /// the whole range, measured exactly as it always was.
     /// </summary>
-    private static List<OrientedRun> Orient(String chunk, WritingModeInfo flow)
+    /// <remarks>
+    /// Walked rather than collected, because a column of upright text is one character to a piece - the
+    /// smallest thing the engine splits at and the one asked for most often. On a page of CJK the walk
+    /// runs tens of thousands of times per layout, and a list per piece is a heap object per character;
+    /// the pieces are ranges of the same string besides, not copies of it.
+    /// </remarks>
+    private struct OrientedPieces
     {
-        var runs = new List<OrientedRun>();
-        var index = 0;
+        private readonly String _source;
+        private readonly WritingModeInfo _flow;
+        private readonly Int32 _origin;
+        private readonly Int32 _length;
+        private Int32 _index;
+        private Boolean _taken;
 
-        while (index < chunk.Length)
+        public OrientedPieces(String source, Int32 origin, Int32 length, WritingModeInfo flow)
         {
-            if (flow.CombinesUpright && TextChunker.IsCombinable(chunk[index]))
-            {
-                var length = 0;
+            _source = source;
+            _flow = flow;
+            _origin = origin;
+            _length = length;
+            _index = origin;
+            _taken = false;
+            Current = default;
+        }
 
-                while (index + length < chunk.Length && TextChunker.IsCombinable(chunk[index + length]))
+        public OrientedPieces GetEnumerator() => this;
+
+        public OrientedRun Current { get; private set; }
+
+        public Boolean MoveNext()
+        {
+            if (!_flow.IsVertical)
+            {
+                if (_taken || _length == 0)
                 {
-                    length++;
+                    return false;
+                }
+
+                _taken = true;
+                Current = OrientedRun.Line(_source, _origin, _length);
+                return true;
+            }
+
+            var end = _origin + _length;
+
+            if (_index >= end)
+            {
+                return false;
+            }
+
+            if (_flow.CombinesUpright && TextChunker.IsCombinable(_source[_index]))
+            {
+                var count = 0;
+
+                while (_index + count < end && TextChunker.IsCombinable(_source[_index + count]))
+                {
+                    count++;
                 }
 
                 // Only a short run reads as one box. A longer one is ordinary text that happens to be
                 // turned, and combining it would squeeze a whole word into a single em.
-                if (length <= 4)
+                if (count <= 4)
                 {
-                    runs.Add(OrientedRun.Combined(chunk.Substring(index, length)));
-                    index += length;
-                    continue;
+                    Current = OrientedRun.Combined(_source, _index, count);
+                    _index += count;
+                    return true;
                 }
             }
 
-            var upright = flow.IsUpright(chunk[index]);
-            var start = index;
+            var upright = _flow.IsUpright(_source[_index]);
+            var start = _index;
 
-            while (index < chunk.Length && flow.IsUpright(chunk[index]) == upright)
+            while (_index < end && _flow.IsUpright(_source[_index]) == upright)
             {
-                index++;
+                _index++;
             }
 
-            runs.Add(upright
-                ? OrientedRun.Upright(chunk[start..index])
-                : OrientedRun.Rotated(chunk[start..index]));
+            Current = OrientedRun.Of(_source, start, _index - start, upright);
+            return true;
         }
-
-        return runs;
     }
 
     /// <summary>
-    /// Turns a chunk into the runs that are measured and drawn separately, carrying the advance and
-    /// the orientation of each. Horizontal text stays one run, measured exactly as it was before, so
-    /// the horizontal path is unchanged down to the numbers.
+    /// Measures one piece of a range: how far it advances and which way its glyphs are set. Horizontal
+    /// text is measured as the whole run it is, exactly as before, so the horizontal path is unchanged
+    /// down to the numbers.
     /// </summary>
-    private List<MeasuredRun> Runs(String chunk, ComputedStyle style, WritingModeInfo flow)
+    private MeasuredRun Measure(ComputedStyle style, FontStyle font, OrientedRun run, WritingModeInfo flow)
     {
-        var runs = new List<MeasuredRun>();
-        var spacing = style.LetterSpacing;
+        var spacing = style.LetterSpacing * run.Length;
 
-        if (!flow.IsVertical)
-        {
-            runs.Add(new MeasuredRun(
-                chunk,
-                _measurer.MeasureWidth(chunk, style.GetFont()) + (spacing * chunk.Length),
-                flow,
-                TextChunker.IsWhiteSpace(chunk)));
-
-            return runs;
-        }
-
-        var font = style.GetFont();
-
-        foreach (var run in Orient(chunk, flow))
-        {
-            runs.Add(new MeasuredRun(
-                run.Text,
-                run.Advance(font, _measurer, style.FontSize, flow) + (spacing * run.Text.Length),
-                PinOrientation(flow, run),
-                TextChunker.IsWhiteSpace(run.Text)));
-        }
-
-        return runs;
+        return new MeasuredRun(
+            run.Source,
+            run.Start,
+            run.Length,
+            flow.IsVertical
+                ? run.Advance(font, _measurer, style.FontSize, flow) + spacing
+                : _measurer.MeasureWidth(run.Source.Substring(run.Start, run.Length), font) + spacing,
+            PinOrientation(flow, run),
+            TextChunker.IsWhiteSpace(run.Source, run.Start, run.Length));
     }
 
     /// <summary>
@@ -1372,7 +1486,7 @@ public sealed class InlineLayout
             return flow;
         }
 
-        foreach (var run in Orient(text, flow))
+        foreach (var run in new OrientedPieces(text, 0, text.Length, flow))
         {
             return PinOrientation(flow, run);
         }
@@ -1457,25 +1571,46 @@ public sealed class InlineLayout
     /// <summary>A piece of a text node that shares one orientation and is measured and drawn as one.</summary>
     private readonly struct OrientedRun
     {
-        private OrientedRun(String text, Boolean upright, Boolean combined)
+        private OrientedRun(String source, Int32 start, Int32 length, Boolean upright, Boolean combined)
         {
-            Text = text;
+            Source = source;
+            Start = start;
+            Length = length;
             IsUpright = upright;
             IsCombined = combined;
         }
 
-        public String Text { get; }
+        /// <summary>Gets the string the run is a piece of.</summary>
+        public String Source { get; }
+
+        /// <summary>Gets where in that string the run begins.</summary>
+        public Int32 Start { get; }
+
+        /// <summary>Gets how many characters the run takes.</summary>
+        public Int32 Length { get; }
+
+        /// <summary>
+        /// Gets the run as a string, which is what the measurer speaks: made on asking, because most
+        /// runs are only ever advanced over and never handed to anything that wants the characters.
+        /// </summary>
+        public String Text => Source.Substring(Start, Length);
 
         public Boolean IsUpright { get; }
 
         /// <summary>Gets whether the run is set as a single upright box rather than turned.</summary>
         public Boolean IsCombined { get; }
 
-        public static OrientedRun Upright(String text) => new(text, true, false);
+        public static OrientedRun Combined(String source, Int32 start, Int32 length) => new(source, start, length, true, true);
 
-        public static OrientedRun Rotated(String text) => new(text, false, false);
+        /// <summary>Gets the whole of a range along a line, which is not split by orientation at all.</summary>
+        public static OrientedRun Line(String source, Int32 start, Int32 length) => new(source, start, length, false, false);
 
-        public static OrientedRun Combined(String text) => new(text, true, true);
+        /// <summary>
+        /// Gets a piece by the one distinction a column draws on it: upright characters take their em
+        /// box and are drawn one to a cell, turned ones take the width they had along a line.
+        /// </summary>
+        public static OrientedRun Of(String source, Int32 start, Int32 length, Boolean upright) =>
+            new(source, start, length, upright, false);
 
         /// <summary>
         /// Gets the distance the run takes along the inline axis of the column it sits in: an upright
@@ -1496,9 +1631,12 @@ public sealed class InlineLayout
 
             var total = 0.0;
 
-            foreach (var character in Text)
+            // Walked over the source rather than over a string of this run's: an upright run is measured
+            // character by character, and the answer is the character's and the font's, so neither the
+            // character nor a string holding it is made afresh to ask for it.
+            for (var index = Start; index < Start + Length; index++)
             {
-                total += Math.Max(measurer.MeasureAdvance(character.ToString(), font, flow), fontSize);
+                total += Math.Max(measurer.MeasureAdvance(Source[index], font, flow), fontSize);
             }
 
             return total;
@@ -1508,15 +1646,22 @@ public sealed class InlineLayout
     /// <summary>An oriented run together with the advance it was measured to, ready for the builder.</summary>
     private readonly struct MeasuredRun
     {
-        public MeasuredRun(String text, Double width, WritingModeInfo flow, Boolean isWhiteSpace)
+        public MeasuredRun(String source, Int32 start, Int32 length, Double width, WritingModeInfo flow, Boolean isWhiteSpace)
         {
-            Text = text;
+            Source = source;
+            Start = start;
+            Length = length;
             Width = width;
             Flow = flow;
             IsWhiteSpace = isWhiteSpace;
         }
 
-        public String Text { get; }
+        /// <summary>Gets the string the run is a piece of, with the run's own place in it.</summary>
+        public String Source { get; }
+
+        public Int32 Start { get; }
+
+        public Int32 Length { get; }
 
         public Double Width { get; }
 
@@ -1611,7 +1756,9 @@ public sealed class InlineLayout
     private sealed class TextFragment
     {
         public TextFragment(
-            String text,
+            String source,
+            Int32 start,
+            Int32 length,
             Double width,
             ComputedStyle style,
             Box box,
@@ -1623,7 +1770,9 @@ public sealed class InlineLayout
             Double baseWidth = 0,
             AtomicInline? atomic = null)
         {
-            Text = text;
+            Source = source;
+            Start = start;
+            Length = length;
             Width = width;
             Style = style;
             Box = box;
@@ -1650,7 +1799,46 @@ public sealed class InlineLayout
         /// </summary>
         public Double BaseWidth { get; }
 
-        public String Text { get; set; }
+        /// <summary>
+        /// Gets the string the fragment's text is a piece of. A fragment whose pieces came from two
+        /// different strings carries a string of its own, which is the one case a merge has to write
+        /// out - and it is one per element rather than one per character.
+        /// </summary>
+        public String Source { get; private set; }
+
+        /// <summary>Gets where in <see cref="Source"/> the fragment's text begins.</summary>
+        public Int32 Start { get; private set; }
+
+        /// <summary>Gets how many characters the fragment holds.</summary>
+        public Int32 Length { get; set; }
+
+        /// <summary>
+        /// Gets the fragment's text as a string, which is what the node the painter draws out of wants.
+        /// Asked once per fragment, when the line is placed - not once per chunk of it, as it was while
+        /// the chunks were being appended one character at a time.
+        /// </summary>
+        public String Text => Source.Substring(Start, Length);
+
+        /// <summary>Takes the fragment's text to be the whole of the given string.</summary>
+        public void MergeInto(String text)
+        {
+            Source = text;
+            Start = 0;
+            Length = text.Length;
+        }
+
+        /// <summary>Gets how many spaces the fragment ends with, which is what a line does not draw.</summary>
+        public Int32 TrailingSpaces()
+        {
+            var count = 0;
+
+            for (var index = Start + Length - 1; index >= Start && Source[index] == ' '; index--)
+            {
+                count++;
+            }
+
+            return count;
+        }
 
         public Double Width { get; set; }
 
@@ -1810,6 +1998,44 @@ public sealed class InlineLayout
         public Box Box { get; }
 
         public WritingModeInfo Flow { get; }
+    }
+
+    /// <summary>
+    /// One breaking of one container's inline content: the box it was broken out of, the extent it was
+    /// broken at, the indentation its first line started with, and the writing mode it was read in.
+    /// </summary>
+    /// <remarks>
+    /// The container is compared by identity rather than by its own equality: two boxes that happen to
+    /// carry the same style are still two containers whose lines belong to each of them alone.
+    /// </remarks>
+    private readonly struct LinePlanKey : IEquatable<LinePlanKey>
+    {
+        public LinePlanKey(Box container, Double maxInline, Double indent, Int32 flow)
+        {
+            Container = container;
+            MaxInline = maxInline;
+            Indent = indent;
+            Flow = flow;
+        }
+
+        public Box Container { get; }
+
+        public Double MaxInline { get; }
+
+        public Double Indent { get; }
+
+        public Int32 Flow { get; }
+
+        public Boolean Equals(LinePlanKey other) =>
+            ReferenceEquals(Container, other.Container) &&
+            MaxInline == other.MaxInline &&
+            Indent == other.Indent &&
+            Flow == other.Flow;
+
+        public override Boolean Equals(Object? obj) => obj is LinePlanKey other && Equals(other);
+
+        public override Int32 GetHashCode() =>
+            HashCode.Combine(RuntimeHelpers.GetHashCode(Container), MaxInline, Indent, Flow);
     }
 
     private sealed class Line
@@ -2037,6 +2263,8 @@ public sealed class InlineLayout
 
             _fragments.Add(new TextFragment(
                 String.Empty,
+                0,
+                0,
                 width,
                 box.Style,
                 box,
@@ -2058,6 +2286,8 @@ public sealed class InlineLayout
 
             _fragments.Add(new TextFragment(
                 String.Empty,
+                0,
+                0,
                 atomic.InlineSize,
                 box.Style,
                 box,
@@ -2069,7 +2299,9 @@ public sealed class InlineLayout
         }
 
         public void Add(
-            String text,
+            String source,
+            Int32 start,
+            Int32 length,
             Double width,
             ComputedStyle style,
             Box box,
@@ -2089,14 +2321,27 @@ public sealed class InlineLayout
                 // inline element's edge.
                 if (ReferenceEquals(last.Box, box) && last.Flow.Equals(flow) && ReferenceEquals(last.Inline, inline))
                 {
-                    last.Text += text;
+                    // The run grows by the piece added and nothing is copied, because the piece is the
+                    // next thing in the same string - which every chunk of one text node is. A run whose
+                    // pieces come from two strings is the one case that still has to be written out: a
+                    // box with more than one text child, and one merge per element rather than one per
+                    // character.
+                    if (ReferenceEquals(last.Source, source) && last.Start + last.Length == start)
+                    {
+                        last.Length += length;
+                    }
+                    else
+                    {
+                        last.MergeInto(last.Text + source.Substring(start, length));
+                    }
+
                     last.Width += width;
                     Width += width;
                     return;
                 }
             }
 
-            _fragments.Add(new TextFragment(text, width, style, box, flow, inline));
+            _fragments.Add(new TextFragment(source, start, length, width, style, box, flow, inline));
             Width += width;
         }
 
@@ -2120,6 +2365,8 @@ public sealed class InlineLayout
 
             _fragments.Add(new TextFragment(
                 text,
+                0,
+                text.Length,
                 width,
                 style,
                 box,
@@ -2275,27 +2522,29 @@ public sealed class InlineLayout
                     break;
                 }
 
-                if (TextChunker.IsWhiteSpace(last.Text))
+                if (TextChunker.IsWhiteSpace(last.Source, last.Start, last.Length))
                 {
                     _fragments.RemoveAt(_fragments.Count - 1);
                     continue;
                 }
 
-                var trimmed = last.Text.TrimEnd(' ');
+                var trailing = last.TrailingSpaces();
 
-                if (trimmed.Length == last.Text.Length)
+                if (trailing == 0)
                 {
                     break;
                 }
 
-                if (trimmed.Length == 0)
+                if (trailing >= last.Length)
                 {
                     _fragments.RemoveAt(_fragments.Count - 1);
                     continue;
                 }
 
-                last.Text = trimmed;
-                last.Width = MeasureChunk(measurer, last.Style, trimmed, last.Flow);
+                // Shortening the run is moving its end, not cutting a string: the characters the line
+                // drops were never copied out of the text node to begin with.
+                last.Length -= trailing;
+                last.Width = MeasureChunk(measurer, last.Style, last.Source, last.Start, last.Length, last.Flow);
                 break;
             }
         }

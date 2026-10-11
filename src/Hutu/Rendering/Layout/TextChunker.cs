@@ -13,59 +13,55 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 public static class TextChunker
 {
+    /// <summary>
+    /// A chunk line breaking may separate, as a range of the string it was cut from rather than as a
+    /// string of its own.
+    /// </summary>
+    public readonly struct ChunkRange
+    {
+        public ChunkRange(Int32 start, Int32 length)
+        {
+            Start = start;
+            Length = length;
+        }
+
+        public Int32 Start { get; }
+
+        public Int32 Length { get; }
+    }
+
+    /// <summary>
+    /// Gets the chunks of the text as ranges of it, which is what a line is built out of.
+    /// </summary>
+    /// <remarks>
+    /// A range and not a substring because a chunk is a piece of a run the line goes on collecting:
+    /// turning it into a string copies characters the run was about to copy again when it merged with
+    /// the chunk after it. A string is made where one is really asked for - by the measurer, and by the
+    /// layout node the painter draws text out of.
+    /// </remarks>
+    public static ChunkRanges Ranges(String text) => new(text);
+
     public static IEnumerable<String> Chunks(String text)
     {
-        var index = 0;
-
-        while (index < text.Length)
+        foreach (var range in Ranges(text))
         {
-            var current = text[index];
-
-            if (Char.IsWhiteSpace(current))
-            {
-                var end = index;
-
-                while (end < text.Length && Char.IsWhiteSpace(text[end]))
-                {
-                    end++;
-                }
-
-                yield return text[index..end];
-                index = end;
-                continue;
-            }
-
-            var length = Char.IsHighSurrogate(current) && index + 1 < text.Length ? 2 : 1;
-
-            if (IsCjk(current))
-            {
-                yield return text.Substring(index, length);
-                index += length;
-                continue;
-            }
-
-            var wordEnd = index + length;
-
-            while (wordEnd < text.Length && !Char.IsWhiteSpace(text[wordEnd]) && !IsCjk(text[wordEnd]))
-            {
-                wordEnd++;
-            }
-
-            yield return text[index..wordEnd];
-            index = wordEnd;
+            yield return text.Substring(range.Start, range.Length);
         }
     }
 
-    public static Boolean IsWhiteSpace(String chunk)
+    public static Boolean IsWhiteSpace(String chunk) => IsWhiteSpace(chunk, 0, chunk.Length);
+
+    /// <summary>Gets whether the range is nothing but white space, which is what a line may break at.</summary>
+    public static Boolean IsWhiteSpace(String text, Int32 start, Int32 length)
     {
-        if (chunk.Length == 0)
+        if (length == 0)
         {
             return false;
         }
 
-        foreach (var character in chunk)
+        for (var index = start; index < start + length; index++)
         {
-            if (!Char.IsWhiteSpace(character))
+            if (!Char.IsWhiteSpace(text[index]))
             {
                 return false;
             }
@@ -101,4 +97,77 @@ public static class TextChunker
     /// </summary>
     public static Boolean IsCombinable(Char character) =>
         !Char.IsWhiteSpace(character) && !IsUpright(character);
+
+    /// <summary>The chunks of one string, walked without materialising any of them.</summary>
+    public readonly struct ChunkRanges
+    {
+        private readonly String _text;
+
+        public ChunkRanges(String text) => _text = text;
+
+        public Enumerator GetEnumerator() => new(_text);
+
+        /// <summary>The walk itself: the same rule <see cref="Chunks"/> applies, over indices.</summary>
+        public struct Enumerator
+        {
+            private readonly String _text;
+            private Int32 _index;
+
+            public Enumerator(String text)
+            {
+                _text = text;
+                _index = 0;
+                Current = default;
+            }
+
+            public ChunkRange Current { get; private set; }
+
+            public Boolean MoveNext()
+            {
+                var text = _text;
+
+                if (text is null || _index >= text.Length)
+                {
+                    return false;
+                }
+
+                var index = _index;
+                var current = text[index];
+
+                if (Char.IsWhiteSpace(current))
+                {
+                    var end = index;
+
+                    while (end < text.Length && Char.IsWhiteSpace(text[end]))
+                    {
+                        end++;
+                    }
+
+                    Current = new ChunkRange(index, end - index);
+                    _index = end;
+                    return true;
+                }
+
+                var length = Char.IsHighSurrogate(current) && index + 1 < text.Length ? 2 : 1;
+
+                if (IsCjk(current))
+                {
+                    Current = new ChunkRange(index, length);
+                    _index = index + length;
+                    return true;
+                }
+
+                var wordEnd = index + length;
+
+                while (wordEnd < text.Length && !Char.IsWhiteSpace(text[wordEnd]) && !IsCjk(text[wordEnd]))
+                {
+                    wordEnd++;
+                }
+
+                Current = new ChunkRange(index, wordEnd - index);
+                _index = wordEnd;
+                return true;
+            }
+        }
+    }
 }

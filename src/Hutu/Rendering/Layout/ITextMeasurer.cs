@@ -34,6 +34,22 @@ public interface ITextMeasurer
     Double MeasureAdvance(String text, FontStyle style, WritingModeInfo flow) => MeasureWidth(text, style);
 
     /// <summary>
+    /// Gets how far one character advances along the axis it runs on.
+    /// </summary>
+    /// <remarks>
+    /// The single-character form of <see cref="MeasureAdvance(String,FontStyle,WritingModeInfo)"/>, and
+    /// worth having because a column of upright text asks it once per character: a backend that keeps the
+    /// answer by character and font then answers a whole page from a table, where the string form would
+    /// write out a one-character string and hash it per character.
+    /// <para>
+    /// A backend that overrides the flow-dependent behaviour of the string form should override this
+    /// with it, or the two will disagree about the same character.
+    /// </para>
+    /// </remarks>
+    Double MeasureAdvance(Char character, FontStyle style, WritingModeInfo flow) =>
+        MeasureAdvance(character.ToString(), style, flow);
+
+    /// <summary>
     /// Gets the extent the text occupies along the block axis: the height of a horizontal line, or the
     /// width of a vertical column.
     /// </summary>
