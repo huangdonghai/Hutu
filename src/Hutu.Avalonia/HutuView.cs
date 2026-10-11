@@ -41,6 +41,20 @@ public class HutuView : ScrollViewer
     /// </summary>
     private readonly HashSet<String> _visited = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The reader's place, read at the head of a measure pass before the scroller has updated its
+    /// viewport and clamped its offset, and put back once the relayout a resize produced has been
+    /// measured - which is what keeps a vertical page anchored by the edge it reads from.
+    /// </summary>
+    private Offset _place;
+
+    /// <summary>
+    /// The place above, kept over until the extent the relayout produces is reported: the restore
+    /// that runs at once can be clamped by the extent the scroller still holds, and has to be made
+    /// good once the new one arrives.
+    /// </summary>
+    private Offset? _reanchor;
+
     public HutuView()
     {
         // The same loader decodes the images for layout and draws them, so a run is never measured
@@ -127,12 +141,14 @@ public class HutuView : ScrollViewer
     /// <remarks>
     /// Every offset a reader moves in is counted from that corner, so it is the origin whichever way
     /// the document reads - a vertical page's beginning is at the far end of the layout's x, which is
-    /// what <see cref="InTheFrame"/> turns zero into. Loading a document therefore has to say where it
-    /// is rather than leave it where the last one was scrolled to, since the scroller keeps its offset
-    /// across a change of extent.
+    /// what <see cref="ScrollTo"/>'s mirror turns zero into. Loading a document therefore has to say
+    /// where it is rather than leave it where the last one was scrolled to, since the scroller keeps
+    /// its offset across a change of extent.
     /// </remarks>
     private void OpenAtTheStart()
     {
+        _reanchor = null;
+
         ScrollTo(0, 0);
 
         // A scroller already at the beginning has nothing to report, and the surface has to be told
@@ -149,36 +165,47 @@ public class HutuView : ScrollViewer
     /// document laid out again at another size moves the frame under a reader who has not moved, and
     /// a scroller whose own offset is unchanged reports nothing.
     /// </remarks>
-    private void ApplyScrollOffset() => _surface.SetScrollOffset(InTheFrame(new Offset(Offset.X, Offset.Y)));
+    private void ApplyScrollOffset()
+    {
+        var range = ScrollableRange();
+
+        // The scroller's own offset is the frame offset - the point of the document the viewport's
+        // top left corner stands at - because the presenter drags the document under itself from the
+        // layout's left edge on every axis. The reader's frame, where zero is the corner the page
+        // begins at, exists only at this view's API, and the mirror between the two is taken where
+        // an offset crosses - in <see cref="ScrollTo"/>, and in <see cref="ToReader"/> here.
+        _surface.SetScrollOffset(new Offset(
+            Math.Clamp(Offset.X, 0, range.X),
+            Math.Clamp(Offset.Y, 0, range.Y)));
+    }
 
     /// <summary>
-    /// Gets the offset the layout is drawn at for a reader who is at the given place in the document.
+    /// Gets where a reader is for where the scroller says the viewport stands: the two frames differ
+    /// on any axis the page reads against, and the core works out which those are.
     /// </summary>
-    /// <remarks>
-    /// The two frames differ on any axis the page reads against, and which those are is a fact about
-    /// the writing mode, so the core works it out. Everything below the surface - what the painter is
-    /// handed, what a pointer is measured against - is in the layout's frame, so this is where the
-    /// one crosses to the other.
-    /// </remarks>
-    private Offset InTheFrame(Offset scroll)
+    private Offset ToReader(Offset presenter)
     {
         var layout = _internalView.Layout;
 
-        if (layout is null)
+        return layout is null
+            ? presenter
+            : layout.ScrollPosition(presenter, _internalView.ViewportWidth, _internalView.ViewportHeight);
+    }
+
+    /// <summary>
+    /// Puts the viewport back at a reader's place, the place being turned into the offset the
+    /// scroller counts from the layout's left edge.
+    /// </summary>
+    private void Reanchor(Offset reader)
+    {
+        if (_internalView.Layout is not { } layout)
         {
-            return scroll;
+            return;
         }
 
-        // The place a reader is at is somewhere in the document, and one the scroller has not caught
-        // up with yet is still nearer one end of it than past it: a document that has just been laid
-        // out at another size has another range, and the scrollbar catches up a pass later. What the
-        // surface is handed has to be a point of the document either way.
-        var range = ScrollableRange();
-        var place = new Offset(
-            Math.Clamp(scroll.X, 0, range.X),
-            Math.Clamp(scroll.Y, 0, range.Y));
+        var presenter = layout.FrameOffset(reader, _internalView.ViewportWidth, _internalView.ViewportHeight);
 
-        return layout.FrameOffset(place, _internalView.ViewportWidth, _internalView.ViewportHeight);
+        Offset = new Vector(presenter.X, presenter.Y);
     }
 
     public string GetHtml()
@@ -307,28 +334,38 @@ public class HutuView : ScrollViewer
         }
 
         var range = ScrollableRange();
-
-        Offset = new Vector(
+        var reader = new Offset(
             Math.Clamp(x, 0, range.X),
             Math.Clamp(y, 0, range.Y));
+
+        // The scroller counts from the layout's left edge on every axis, so a reader's offset - zero
+        // at the corner the page begins at - has to be mirrored before it is assigned, which is what
+        // puts a vertical page's first column against the right edge at the start of the document.
+        var presenter = _internalView.Layout is { } layout
+            ? layout.FrameOffset(reader, _internalView.ViewportWidth, _internalView.ViewportHeight)
+            : reader;
+
+        Offset = new Vector(presenter.X, presenter.Y);
     }
 
     /// <summary>Scrolls to the top of the document, keeping the horizontal position.</summary>
     public void ScrollToTop()
     {
-        ScrollTo(Offset.X, 0);
+        ScrollTo(ToReader(new Offset(Offset.X, Offset.Y)).X, 0);
     }
 
     /// <summary>Scrolls to the end of the document, keeping the horizontal position.</summary>
     public void ScrollToBottom()
     {
-        ScrollTo(Offset.X, _internalView.Layout?.Height ?? 0);
+        ScrollTo(ToReader(new Offset(Offset.X, Offset.Y)).X, _internalView.Layout?.Height ?? 0);
     }
 
     /// <summary>Scrolls by a delta, clamped the way <see cref="ScrollTo"/> clamps.</summary>
     public void ScrollBy(double dx, double dy)
     {
-        ScrollTo(Offset.X + dx, Offset.Y + dy);
+        var at = ToReader(new Offset(Offset.X, Offset.Y));
+
+        ScrollTo(at.X + dx, at.Y + dy);
     }
 
     /// <summary>
@@ -341,11 +378,10 @@ public class HutuView : ScrollViewer
     {
         ArgumentNullException.ThrowIfNull(element);
 
-        // Asked in the layout's frame, because an element's box is a rectangle of the layout, and
-        // answered in it too; the view scrolls in the reader's, so the answer is turned round before
-        // it is assigned.
-        var frame = InTheFrame(new Offset(Offset.X, Offset.Y));
-        var target = _internalView.GetVerticalFrameOffset(element, alignment, frame.Y);
+        // Asked in the layout's frame, because an element's box is a rectangle of the layout, and the
+        // scroller's own offset already is one; the answer comes back in the reader's frame, which is
+        // what ScrollTo takes.
+        var target = _internalView.GetVerticalFrameOffset(element, alignment, Offset.Y);
 
         if (target is null)
         {
@@ -353,7 +389,7 @@ public class HutuView : ScrollViewer
         }
 
         var place = _internalView.Layout!.ScrollPosition(
-            new Offset(frame.X, target.Value),
+            new Offset(Offset.X, target.Value),
             _internalView.ViewportWidth,
             _internalView.ViewportHeight);
 
@@ -403,7 +439,7 @@ public class HutuView : ScrollViewer
         {
             var scrollable = ScrollableRange().Y;
 
-            return scrollable <= 0 ? 1 : Math.Clamp(Offset.Y / scrollable, 0, 1);
+            return scrollable <= 0 ? 1 : Math.Clamp(ToReader(new Offset(0, Offset.Y)).Y / scrollable, 0, 1);
         }
     }
 
@@ -417,6 +453,16 @@ public class HutuView : ScrollViewer
             Math.Max(0, (layout?.Height ?? 0) - _internalView.ViewportHeight));
     }
 
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        // Read before the base measure runs, because it is what updates the viewport and clamps the
+        // offset - and a place clamped against a viewport the document has not caught up with is a
+        // place lost, which the resize below would then anchor to.
+        _place = ToReader(new Offset(Offset.X, Offset.Y));
+
+        return base.MeasureOverride(availableSize);
+    }
+
     protected override Size ArrangeOverride(Size finalSize)
     {
         var arranged = base.ArrangeOverride(finalSize);
@@ -428,10 +474,15 @@ public class HutuView : ScrollViewer
                 Math.Max(1, (int)Math.Floor(finalSize.Width)),
                 Math.Max(1, (int)Math.Floor(finalSize.Height))))
         {
-            _surface.Refresh();
-
             // A resize lays the document out again - a column is as long as the window is tall, so
             // the page is another size - which moves the frame under a reader who has not scrolled.
+            // The place is put back in the reader's frame, so a vertical page is anchored by the
+            // edge it reads from - its right one - rather than by the left edge the scroller counts
+            // from, and whatever it was reading stays where it was.
+            _surface.Refresh();
+            Reanchor(_place);
+            _reanchor = _place;
+
             ApplyScrollOffset();
         }
 
@@ -446,6 +497,13 @@ public class HutuView : ScrollViewer
         if (change.Property == OffsetProperty)
         {
             ApplyScrollOffset();
+        }
+        else if (change.Property == ExtentProperty && _reanchor is { } reader)
+        {
+            // The extent the relayout produced has been measured, so the anchor can be put back
+            // without being clamped short of the edge it is held to.
+            _reanchor = null;
+            Reanchor(reader);
         }
     }
 

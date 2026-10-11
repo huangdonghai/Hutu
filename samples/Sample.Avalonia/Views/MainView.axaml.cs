@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Rendering;
 using Hutu.Rendering.Interaction;
 using Sample.Common;
 using System;
@@ -72,6 +73,33 @@ public partial class MainView : ContentPage
     {
         if (e.Key == Key.Enter)
             _ = NavigateAsync(AddressBar.Text);
+    }
+
+    /// <summary>
+    /// Reads the state the window's constructor left the overlays in, so the button answers for
+    /// whatever the window starts with rather than for a state assumed here.
+    /// </summary>
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+
+        if (TopLevel.GetTopLevel(this) is { } topLevel)
+        {
+            OverlayButton.IsChecked = topLevel.RendererDiagnostics.DebugOverlays != RendererDebugOverlays.None;
+        }
+    }
+
+    /// <summary>
+    /// Turns the renderer's debug overlays on or off against the window the view sits in.
+    /// </summary>
+    private void Overlay_Click(object? sender, RoutedEventArgs e)
+    {
+        if (TopLevel.GetTopLevel(this) is not { } topLevel)
+            return;
+
+        topLevel.RendererDiagnostics.DebugOverlays = OverlayButton.IsChecked == true
+            ? RendererDebugOverlays.Fps | RendererDebugOverlays.RenderTimeGraph
+            : RendererDebugOverlays.None;
     }
 
     private async void Back_Click(object? sender, RoutedEventArgs e) => await GoBackAsync();

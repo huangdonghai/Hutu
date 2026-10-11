@@ -14,13 +14,23 @@
     </Design.DataContext>
 
     <Grid RowDefinitions="Auto,*" RowSpacing="8">
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="6">
-            <Button Grid.Column="0" x:Name="BackButton" Content="←" ToolTip.Tip="后退" Click="Back_Click" IsEnabled="False" />
-            <Button Grid.Column="1" x:Name="ForwardButton" Content="→" ToolTip.Tip="前进" Click="Forward_Click" IsEnabled="False" />
-            <Button Grid.Column="2" x:Name="RefreshButton" Content="⟳" ToolTip.Tip="刷新" Click="Refresh_Click" IsEnabled="False" />
-            <TextBox Grid.Column="3" x:Name="AddressBar" PlaceholderText="输入网址..." KeyDown="AddressBar_KeyDown" />
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="6">
+            <Button Grid.Column="0" x:Name="BackButton" Content="←" ToolTip.Tip="Backward" Click="Back_Click" IsEnabled="False" />
+            <Button Grid.Column="1" x:Name="ForwardButton" Content="→" ToolTip.Tip="Forward" Click="Forward_Click" IsEnabled="False" />
+            <Button Grid.Column="2" x:Name="RefreshButton" Content="⟳" ToolTip.Tip="Refresh" Click="Refresh_Click" IsEnabled="False" />
+            <TextBox Grid.Column="3" x:Name="AddressBar" PlaceholderText="Enter URL..." KeyDown="AddressBar_KeyDown" />
+            <ToggleButton Grid.Column="4" x:Name="OverlayButton" Content="FPS" IsChecked="False"
+                          ToolTip.Tip="Rendering Diagnostics Overlay (FPS / Render Time)" Click="Overlay_Click" />
         </Grid>
 
-        <hutu:HutuView Grid.Row="1" x:Name="MyHutuView" VerticalScrollBarVisibility ="Visible" />
+        <hutu:HutuView Grid.Row="1" x:Name="MyHutuView">
+            <ScrollViewer.Styles>
+                <Style Selector="ScrollBar">
+                    <Setter Property="ShowDelay" Value="0" />
+                    <Setter Property="HideDelay" Value="0" />
+                    <Setter Property="AllowAutoHide" Value="False" />
+                </Style>
+            </ScrollViewer.Styles>
+        </hutu:HutuView>
     </Grid>
 </ContentPage>

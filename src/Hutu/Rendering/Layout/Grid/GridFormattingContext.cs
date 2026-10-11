@@ -677,7 +677,16 @@ internal sealed class GridFormattingContext
             }
             else
             {
-                height = ContentHeight(item.Box, item.AreaWidth, context) + insetV;
+                // Measure answers with the item's border box, its insets and all, so they are added
+                // here only for an anonymous wrapper, whose answer is its content alone. Adding them
+                // for both would size the row to the item twice over - a padded cell would stand
+                // taller than what it holds by its own padding again.
+                height = ContentHeight(item.Box, item.AreaWidth, context);
+
+                if (item.Box.IsAnonymous)
+                {
+                    height += insetV;
+                }
             }
 
             item.MinHeight = height + margin;
