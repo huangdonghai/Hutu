@@ -541,7 +541,7 @@ public sealed class SkiaPaintExecutor
         }
         else if (command.Flow.Orientation == TextOrientation.Upright)
         {
-            DrawUprightColumn(canvas, command, paint);
+            DrawUprightColumn(canvas, command, metrics, paint);
         }
         else
         {
@@ -614,24 +614,28 @@ public sealed class SkiaPaintExecutor
 
     /// <summary>
     /// Draws a run of characters that stay upright, one under the other, each owning the step the
-    /// layout gave it and centred across the column. The whole run is one blob the cache keeps: the
+    /// layout gave it and centred across the em box. The whole run is one blob the cache keeps: the
     /// cells are resolved once and every frame after the first is a single draw.
     /// </summary>
     /// <remarks>
     /// The decisions a cell is made of - the font that carries the character, the form the font
     /// substitutes for it down a column, where the font puts its baseline inside the cell, and the
     /// width it is centred by - all live in the measurer's decomposition, which is where the layout's
-    /// own steps come from too. The executor only asks for the blob and draws it.
+    /// own steps come from too. The executor only asks for the blob and draws it, moved by the room
+    /// the em box leaves in the column so the characters sit centred across the column's width.
     /// </remarks>
-    private void DrawUprightColumn(SKCanvas canvas, TextCommand command, SKPaint paint)
+    private void DrawUprightColumn(SKCanvas canvas, TextCommand command, FontMetrics metrics, SKPaint paint)
     {
-        var blob = _measurer.Blobs.GetColumnBlob(command.Font, command.Text, command.LetterSpacing, command.Bounds.Width);
+        var blob = _measurer.Blobs.GetColumnBlob(command.Font, command.Text, command.LetterSpacing);
 
         if (blob is not null)
         {
-            // The blob's glyphs are positioned relative to the column, so drawing it at the column's
-            // own origin lands each character in the cell the layout gave it.
-            canvas.DrawText(blob, (Single)command.Bounds.X, (Single)command.Bounds.Y, paint);
+            // The blob's glyphs are positioned relative to the column and centred across the em box,
+            // so drawing it at the origin the column's width leaves the em box at lands each
+            // character in the cell the layout gave it.
+            var emBox = metrics.Ascent + metrics.Descent;
+            var x = (Single)(command.Bounds.X + ((command.Bounds.Width - emBox) / 2));
+            canvas.DrawText(blob, x, (Single)command.Bounds.Y, paint);
         }
     }
 

@@ -14,14 +14,13 @@ namespace Hutu.Skia;
 /// positions and the native object behind them are made again for text a page draws every frame.
 /// The blobs here carry their glyphs relative to their own origin, so the one object answers every
 /// frame and every scroll: the caller draws it at the run's position and the glyphs land where the
-/// layout measured them. A column's blob is keyed by the width of the column as well, because an
-/// upright character is centred across it.
+/// layout measured them. A column's blob centres each upright character across the em box, so it
+/// answers at whatever width the column is drawn at as well.
 /// </remarks>
 public sealed class SkiaTextBlobCache : IDisposable
 {
     private readonly SkiaTextMeasurer _measurer;
-    private readonly ConcurrentDictionary<TextBlobKey, SKTextBlob?> _runs = new();
-    private readonly ConcurrentDictionary<UprightBlobKey, SKTextBlob?> _columns = new();
+    private readonly ConcurrentDictionary<TextBlobKey, SKTextBlob?> _blobs = new();
 
     // A blob is native memory, so the loser of the usual get-or-add race would leak what it built:
     // the build is kept under a lock, which costs nothing that matters, since it runs once per key.
@@ -33,62 +32,47 @@ public sealed class SkiaTextBlobCache : IDisposable
     /// Gets the blob a run of horizontal text is drawn as, with its glyphs positioned relative to the
     /// run's own origin, so it is drawn at wherever the run starts.
     /// </summary>
-    public SKTextBlob? GetRunBlob(FontStyle style, String text, Double letterSpacing)
-    {
-        var key = new TextBlobKey(style, text, letterSpacing);
-
-        lock (_gate)
-        {
-            if (_runs.TryGetValue(key, out var cached))
-            {
-                return cached;
-            }
-
-            var blob = BuildRunBlob(style, text, letterSpacing);
-            _runs[key] = blob;
-            return blob;
-        }
-    }
+    public SKTextBlob? GetRunBlob(FontStyle style, String text, Double letterSpacing) =>
+        GetBlob(BlobKind.Run, style, text, letterSpacing);
 
     /// <summary>
     /// Gets the blob a column of upright characters is drawn as, with its glyphs positioned relative
     /// to the column's own origin, so it is drawn at wherever the column starts.
     /// </summary>
     /// <remarks>
-    /// The column width is part of what the blob is made of - each character is centred across it -
-    /// which is why it stands in the key rather than being left to the caller to translate.
+    /// Each character is centred across the em box rather than across the column's own width, so the
+    /// one blob answers a column of any width: the caller draws it where the column's width puts it.
     /// </remarks>
-    public SKTextBlob? GetColumnBlob(FontStyle style, String text, Double letterSpacing, Double columnWidth)
+    public SKTextBlob? GetColumnBlob(FontStyle style, String text, Double letterSpacing) =>
+        GetBlob(BlobKind.Column, style, text, letterSpacing);
+
+    private SKTextBlob? GetBlob(BlobKind kind, FontStyle style, String text, Double letterSpacing)
     {
-        var key = new UprightBlobKey(style, text, letterSpacing, columnWidth);
+        var key = new TextBlobKey(kind, style, text, letterSpacing);
 
         lock (_gate)
         {
-            if (_columns.TryGetValue(key, out var cached))
+            if (_blobs.TryGetValue(key, out var cached))
             {
                 return cached;
             }
 
-            var blob = BuildColumnBlob(style, text, letterSpacing, columnWidth);
-            _columns[key] = blob;
+            var blob = kind == BlobKind.Run
+                ? BuildRunBlob(style, text, letterSpacing)
+                : BuildColumnBlob(style, text, letterSpacing);
+            _blobs[key] = blob;
             return blob;
         }
     }
 
     public void Dispose()
     {
-        foreach (var blob in _runs.Values)
+        foreach (var blob in _blobs.Values)
         {
             blob?.Dispose();
         }
 
-        foreach (var blob in _columns.Values)
-        {
-            blob?.Dispose();
-        }
-
-        _runs.Clear();
-        _columns.Clear();
+        _blobs.Clear();
     }
 
     /// <summary>
@@ -181,7 +165,7 @@ public sealed class SkiaTextBlobCache : IDisposable
     /// to say, falling back to the middle of the em box for a font that will not. A character with
     /// no glyph of its own to draw is set by its font's own mapping of the text it stands for.
     /// </remarks>
-    private SKTextBlob? BuildColumnBlob(FontStyle style, String text, Double letterSpacing, Double columnWidth)
+    private SKTextBlob? BuildColumnBlob(FontStyle style, String text, Double letterSpacing)
     {
         var metrics = _measurer.GetMetrics(style);
         var emBox = metrics.Ascent + metrics.Descent;
@@ -196,7 +180,7 @@ public sealed class SkiaTextBlobCache : IDisposable
             var baseline = cell.BaselineOffset is { } offset
                 ? (Single)(inline + offset)
                 : (Single)(inline + ((step - emBox) / 2) + metrics.Ascent);
-            var centre = (Single)((columnWidth - cell.CentreWidth) / 2);
+            var centre = (Single)((emBox - cell.CentreWidth) / 2);
 
             if (cell.DrawByGlyph)
             {
@@ -241,23 +225,34 @@ public sealed class SkiaTextBlobCache : IDisposable
         placed.SetPositions(positions);
     }
 
-    /// <summary>The style, text and spacing a run's blob was built for, which is what makes it reusable.</summary>
+    /// <summary>Whether a blob sets its text along a line or down a column.</summary>
+    private enum BlobKind
+    {
+        Run,
+        Column
+    }
+
+    /// <summary>The kind, style, text and spacing a blob was built for, which is what makes it reusable.</summary>
     private readonly struct TextBlobKey : IEquatable<TextBlobKey>
     {
         private readonly String _text;
 
-        public TextBlobKey(FontStyle style, String text, Double spacing)
+        public TextBlobKey(BlobKind kind, FontStyle style, String text, Double spacing)
         {
+            Kind = kind;
             Style = style;
             _text = text;
             Spacing = spacing;
         }
+
+        public BlobKind Kind { get; }
 
         public FontStyle Style { get; }
 
         public Double Spacing { get; }
 
         public Boolean Equals(TextBlobKey other) =>
+            Kind == other.Kind &&
             Style.Equals(other.Style) &&
             Spacing.Equals(other.Spacing) &&
             String.Equals(_text, other._text, StringComparison.Ordinal);
@@ -268,47 +263,9 @@ public sealed class SkiaTextBlobCache : IDisposable
         {
             unchecked
             {
-                var hash = Style.GetHashCode();
+                var hash = Kind.GetHashCode();
+                hash = (hash * 397) ^ Style.GetHashCode();
                 hash = (hash * 397) ^ Spacing.GetHashCode();
-                return (hash * 397) ^ StringComparer.Ordinal.GetHashCode(_text);
-            }
-        }
-    }
-
-    /// <summary>The style, text, spacing and column width a column's blob was built for.</summary>
-    private readonly struct UprightBlobKey : IEquatable<UprightBlobKey>
-    {
-        private readonly String _text;
-
-        public UprightBlobKey(FontStyle style, String text, Double spacing, Double columnWidth)
-        {
-            Style = style;
-            _text = text;
-            Spacing = spacing;
-            ColumnWidth = columnWidth;
-        }
-
-        public FontStyle Style { get; }
-
-        public Double Spacing { get; }
-
-        public Double ColumnWidth { get; }
-
-        public Boolean Equals(UprightBlobKey other) =>
-            Style.Equals(other.Style) &&
-            Spacing.Equals(other.Spacing) &&
-            ColumnWidth.Equals(other.ColumnWidth) &&
-            String.Equals(_text, other._text, StringComparison.Ordinal);
-
-        public override Boolean Equals(Object? obj) => obj is UprightBlobKey other && Equals(other);
-
-        public override Int32 GetHashCode()
-        {
-            unchecked
-            {
-                var hash = Style.GetHashCode();
-                hash = (hash * 397) ^ Spacing.GetHashCode();
-                hash = (hash * 397) ^ ColumnWidth.GetHashCode();
                 return (hash * 397) ^ StringComparer.Ordinal.GetHashCode(_text);
             }
         }
