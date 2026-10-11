@@ -54,6 +54,23 @@ public sealed class FusedParent
     public WritingMode WritingMode { get; init; } = WritingMode.HorizontalTb;
 
     /// <summary>
+    /// Gets the parent's font area, which stands for every value above that came out of it. The areas are
+    /// interned, so the reference says all six at once - and says them cheaply enough that resolving a
+    /// font can be skipped outright when nothing about it has changed.
+    /// </summary>
+    internal FontArea? Font { get; init; }
+
+    /// <summary>Gets the parent's text area, standing the same way for the four inherited text values.</summary>
+    internal TextArea? Text { get; init; }
+
+    /// <summary>
+    /// Gets the tag name of the element this parent is, folded the way the box builder folds it. A list
+    /// inside a list is left to its outer one's margins, so which element an area belongs to is part of
+    /// what its children resolve - and the parent's own name is the whole of that answer.
+    /// </summary>
+    internal String? Tag { get; init; }
+
+    /// <summary>
     /// Where an annotation goes, which <c>ruby-position</c> states on an ancestor as often as on
     /// the pair itself and carries down like any other inherited property.
     /// </summary>
@@ -64,7 +81,7 @@ public sealed class FusedParent
     public CursorKind Cursor { get; init; }
 
     /// <summary>The values a parent hands down to its children.</summary>
-    public FusedParent Next(ComputedStyle style, MatchedCascade cascade) => new()
+    public FusedParent Next(ComputedStyle style, MatchedCascade cascade, String? tag = null) => new()
     {
         FontSize = style.FontSize,
         Color = style.Color,
@@ -89,6 +106,12 @@ public sealed class FusedParent
         Indent = style.TextIndent,
         Direction = style.Direction,
         WritingMode = style.WritingMode,
+
+        // The areas, not the values above, are what a child's cached font and text are keyed on: one
+        // interned instance already carries every value a child could inherit from them.
+        Font = style.ResolvedFont,
+        Text = style.ResolvedText,
+        Tag = tag,
         Ruby = style.RubyPosition,
         Orientation = style.DeclaredTextOrientation,
         CombinesUpright = style.DeclaredTextCombineUpright,
@@ -112,88 +135,229 @@ public static class FusedStyleFactory
         FusedParent parent,
         IRenderDimensions dimensions,
         FontFaceTable? faces,
-        StyleIntern? pool)
+        StyleIntern? pool,
+        FusedAreaCache? cache = null)
     {
         Func<String, ICssProperty?> find = cascade.Find;
 
         var size = ComputedStyle.ResolveFontSizeFused(find("font-size"), parent.FontSize, dimensions);
-        var font = new FontArea
-        {
-            Size = size,
-            Family = ComputedStyle.ResolveFontFamilyFused(find("font-family"), parent.FontFamily, faces),
-            Weight = ComputedStyle.ResolveFontWeightFused(find("font-weight"), parent.Weight),
-            Italic = ComputedStyle.ResolveFontStyleFused(find("font-style"), parent.Italic),
-            LetterSpacing = ComputedStyle.ResolveLetterSpacingFused(find("letter-spacing"), parent.LetterSpacing, size, dimensions),
-            LineHeight = ComputedStyle.ResolveLineHeightFused(
-                find("line-height"), parent.LineHeightHit, size, parent.LineHeight, dimensions),
-        };
 
-        var text = new TextArea
-        {
-            WhiteSpace = ComputedStyle.ResolveWhiteSpaceFused(find("white-space"), parent.WhiteSpace),
-            Align = ComputedStyle.ResolveTextAlignFused(find("text-align"), parent.Align),
-            VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign),
-            Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, size, dimensions),
-        };
+        // A font is decided by the declarations, the size it is set at, the parent's font - family,
+        // weight, slant, spacing and line height all travel down - and one thing no area holds: the
+        // property a relative <c>line-height</c> was authored in, which keeps travelling until someone
+        // declares their own. Two elements can share a font and still inherit different ones of those,
+        // so both go into the key; a cache that left the second out would hand a paragraph the leading
+        // of the div whose font it happens to match.
+        var fontKey = new AreaKey(cascade, size, parent.Font, parent.LineHeightHit);
 
-        var borderStyles = ComputedStyle.ResolveBorderStylesFused(find);
-        var borderWidths = ComputedStyle.ResolveBorderWidthsFused(find, borderStyles, size, dimensions);
-        var border = new BorderArea
+        if (cache is not null && cache.TryFont(fontKey, out var font))
         {
-            TopStyle = borderStyles.Top,
-            RightStyle = borderStyles.Right,
-            BottomStyle = borderStyles.Bottom,
-            LeftStyle = borderStyles.Left,
-            TopWidth = borderWidths.Top,
-            RightWidth = borderWidths.Right,
-            BottomWidth = borderWidths.Bottom,
-            LeftWidth = borderWidths.Left,
-            Lines = ComputedStyle.ResolveBorderLinesFused(borderStyles),
-            Radius = ComputedStyle.ResolveBorderRadiusFused(find, size, dimensions),
-        };
+            // Nothing read: family, weight, slant, spacing and leading all came from an element that
+            // matched alike, at the same size, under the same inherited font and the same authored
+            // line-height.
+        }
+        else
+        {
+            var built = new FontArea
+            {
+                Size = size,
+                Family = ComputedStyle.ResolveFontFamilyFused(find("font-family"), parent.FontFamily, faces),
+                Weight = ComputedStyle.ResolveFontWeightFused(find("font-weight"), parent.Weight),
+                Italic = ComputedStyle.ResolveFontStyleFused(find("font-style"), parent.Italic),
+                LetterSpacing = ComputedStyle.ResolveLetterSpacingFused(find("letter-spacing"), parent.LetterSpacing, size, dimensions),
+                LineHeight = ComputedStyle.ResolveLineHeightFused(
+                    find("line-height"), parent.LineHeightHit, size, parent.LineHeight, dimensions),
+            };
 
-        var boxModel = new BoxModelArea
-        {
-            BoxSizing = ComputedStyle.ResolveBoxSizingFused(find("box-sizing")),
-            Width = ComputedStyle.ResolveBoxLengthFused(find("width"), RenderMode.Horizontal, size, dimensions, StyleLength.Auto),
-            Height = ComputedStyle.ResolveBoxLengthFused(find("height"), RenderMode.Vertical, size, dimensions, StyleLength.Auto),
-            MinWidth = ComputedStyle.ResolveBoxLengthFused(find("min-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
-            MaxWidth = ComputedStyle.ResolveBoxLengthFused(find("max-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
-            MinHeight = ComputedStyle.ResolveBoxLengthFused(find("min-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),
-            MaxHeight = ComputedStyle.ResolveBoxLengthFused(find("max-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),
-            Margin = ComputedStyle.ResolveThicknessFused(find, element, size, dimensions, DetermineFlow(element, cascade, parent), "margin", StyleLength.Zero),
-            Padding = ComputedStyle.ResolveThicknessFused(find, element, size, dimensions, DetermineFlow(element, cascade, parent), "padding", StyleLength.Zero),
-        };
+            font = pool is null ? built : pool.Font(built);
 
-        var display = new DisplayPositioningArea
-        {
-            Display = ComputedStyle.ResolveDisplayFused(find("display")),
-            ObjectFit = ComputedStyle.ResolveObjectFitFused(find("object-fit")),
-            ClipsOverflow = ComputedStyle.ResolveClipsOverflowFused(find("overflow-x"), find("overflow-y")),
-        };
+            if (cache is not null)
+            {
+                cache.Store(fontKey, font);
+            }
+        }
 
-        var outlineStyle = ComputedStyle.ResolveOutlineStyleFused(find("outline-style"));
-        var visual = new VisualEffectsArea
-        {
-            OutlineStyle = outlineStyle,
-            OutlineWidth = ComputedStyle.ResolveOutlineWidthFused(outlineStyle, find("outline-width"), size, dimensions),
-            OutlineOffset = ComputedStyle.ResolveOutlineOffsetFused(find("outline-offset"), size, dimensions),
-        };
+        // A text behaviour reads the same three inputs - the cascade, the size the indent is measured
+        // at, and the parent's text - and nothing of the element's identity, so it caches the same way.
+        var textKey = new AreaKey(cascade, size, parent.Text);
 
-        var decoration = ComputedStyle.ResolveDecorationFused(find);
-        var textDecoration = new TextDecorationArea
+        if (cache is not null && cache.TryText(textKey, out var text))
         {
-            Underline = decoration.Underline,
-            LineThrough = decoration.LineThrough,
-        };
+            // Nothing read.
+        }
+        else
+        {
+            var built = new TextArea
+            {
+                WhiteSpace = ComputedStyle.ResolveWhiteSpaceFused(find("white-space"), parent.WhiteSpace),
+                Align = ComputedStyle.ResolveTextAlignFused(find("text-align"), parent.Align),
+                VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign),
+                Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, size, dimensions),
+            };
+
+            text = pool is null ? built : pool.Text(built);
+
+            if (cache is not null)
+            {
+                cache.Store(textKey, text);
+            }
+        }
+
+        // A border is read from the cascade and the font size alone - the size is in the key because a
+        // width in em is that many pixels of it - so an element that matched the same cascade at the
+        // same size as an earlier one has nothing left to resolve. What the cache holds is the interned
+        // instance, so a hit hands back the very object the value table would have found.
+        var key = new AreaKey(cascade, size);
+
+        if (cache is not null && cache.TryBorder(key, out var border))
+        {
+            // Resolved for this cascade and size already: the four style longhands, the four widths,
+            // the line kinds and the four radii are not read again.
+        }
+        else
+        {
+            var borderStyles = ComputedStyle.ResolveBorderStylesFused(find);
+            var borderWidths = ComputedStyle.ResolveBorderWidthsFused(find, borderStyles, size, dimensions);
+            var built = new BorderArea
+            {
+                TopStyle = borderStyles.Top,
+                RightStyle = borderStyles.Right,
+                BottomStyle = borderStyles.Bottom,
+                LeftStyle = borderStyles.Left,
+                TopWidth = borderWidths.Top,
+                RightWidth = borderWidths.Right,
+                BottomWidth = borderWidths.Bottom,
+                LeftWidth = borderWidths.Left,
+                Lines = ComputedStyle.ResolveBorderLinesFused(borderStyles),
+                Radius = ComputedStyle.ResolveBorderRadiusFused(find, size, dimensions),
+            };
+
+            border = pool is null ? built : pool.Border(built);
+
+            if (cache is not null)
+            {
+                cache.Store(key, border);
+            }
+        }
+
+        // The flow an element's text runs in, resolved once. The box model needs it to map its four
+        // logical sides onto physical ones and the keywords need it as they stand, so it is worked out
+        // here rather than where each reader asks - a heading's margins asked for it twice over, and the
+        // mode it lives in depends on a property that was being read a third time below.
+        var writingMode = ComputedStyle.ResolveWritingModeFused(find("writing-mode"), parent.WritingMode);
+        var direction = ComputedStyle.ResolveDirectionFused(element, find("direction"), parent.Direction);
+        var orientation = ComputedStyle.ResolveTextOrientationFused(find("text-orientation"), parent.Orientation);
+        var combine = ComputedStyle.ResolveTextCombineFused(find("text-combine-upright"), parent.CombinesUpright);
+        var flow = Flow(writingMode, direction, orientation, combine);
+
+        // A box model is decided by four things: the declarations, the size a percentage or an em is
+        // measured at, the flow its sides are mapped through, and which element it is - its own tag name,
+        // since the sample stylesheet gives headings and paragraphs margins of their own, and its
+        // parent's, since a list inside a list is left to the outer one's margins. Nothing else about the
+        // element enters, so the four cache like the rest.
+        var boxKey = cache is null
+            ? default
+            : new AreaKey(cascade, size, parent.Tag, cache.Tag(element.LocalName), FlowStamp(parent));
+
+        if (cache is not null && cache.TryBoxModel(boxKey, out var boxModel))
+        {
+            // Resolved for this kind of place in the tree already: neither the eight lengths nor the two
+            // thicknesses - nor the flow they are mapped through - was read again.
+        }
+        else
+        {
+            var built = new BoxModelArea
+            {
+                BoxSizing = ComputedStyle.ResolveBoxSizingFused(find("box-sizing")),
+                Width = ComputedStyle.ResolveBoxLengthFused(find("width"), RenderMode.Horizontal, size, dimensions, StyleLength.Auto),
+                Height = ComputedStyle.ResolveBoxLengthFused(find("height"), RenderMode.Vertical, size, dimensions, StyleLength.Auto),
+                MinWidth = ComputedStyle.ResolveBoxLengthFused(find("min-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
+                MaxWidth = ComputedStyle.ResolveBoxLengthFused(find("max-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
+                MinHeight = ComputedStyle.ResolveBoxLengthFused(find("min-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),
+                MaxHeight = ComputedStyle.ResolveBoxLengthFused(find("max-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),
+                Margin = ComputedStyle.ResolveThicknessFused(find, element, size, dimensions, flow, "margin", StyleLength.Zero),
+                Padding = ComputedStyle.ResolveThicknessFused(find, element, size, dimensions, flow, "padding", StyleLength.Zero),
+            };
+
+            boxModel = pool is null ? built : pool.BoxModel(built);
+
+            if (cache is not null)
+            {
+                cache.Store(boxKey, boxModel);
+            }
+        }
+
+        // Neither an overflow nor a fit nor a display keyword is a length, so these two read the cascade
+        // alone: the key is the bare one, which keeps them to one entry per cascade rather than one per
+        // size the page happens to set.
+        var plain = new AreaKey(cascade, 0);
+
+        if (cache is not null && cache.TryDisplay(plain, out var display))
+        {
+            // Nothing read.
+        }
+        else
+        {
+            var built = new DisplayPositioningArea
+            {
+                Display = ComputedStyle.ResolveDisplayFused(find("display")),
+                ObjectFit = ComputedStyle.ResolveObjectFitFused(find("object-fit")),
+                ClipsOverflow = ComputedStyle.ResolveClipsOverflowFused(find("overflow-x"), find("overflow-y")),
+            };
+
+            display = pool is null ? built : pool.DisplayPositioning(built);
+
+            if (cache is not null)
+            {
+                cache.Store(plain, display);
+            }
+        }
+
+        if (cache is not null && cache.TryVisual(key, out var visual))
+        {
+            // The outline was resolved for this cascade and size already.
+        }
+        else
+        {
+            var outlineStyle = ComputedStyle.ResolveOutlineStyleFused(find("outline-style"));
+            var built = new VisualEffectsArea
+            {
+                OutlineStyle = outlineStyle,
+                OutlineWidth = ComputedStyle.ResolveOutlineWidthFused(outlineStyle, find("outline-width"), size, dimensions),
+                OutlineOffset = ComputedStyle.ResolveOutlineOffsetFused(find("outline-offset"), size, dimensions),
+            };
+
+            visual = pool is null ? built : pool.VisualEffects(built);
+
+            if (cache is not null)
+            {
+                cache.Store(key, visual);
+            }
+        }
+
+        if (cache is not null && cache.TryDecoration(plain, out var textDecoration))
+        {
+            // Neither stroke was read.
+        }
+        else
+        {
+            var decoration = ComputedStyle.ResolveDecorationFused(find);
+            var built = new TextDecorationArea
+            {
+                Underline = decoration.Underline,
+                LineThrough = decoration.LineThrough,
+            };
+
+            textDecoration = pool is null ? built : pool.Decoration(built);
+
+            if (cache is not null)
+            {
+                cache.Store(plain, textDecoration);
+            }
+        }
 
         var color = ComputedStyle.ResolveColorFused(
             element, find("color"), parent.Color, ComputedStyle.ResolveLinkColorFused(element));
-
-        var direction = ComputedStyle.ResolveDirectionFused(element, find("direction"), parent.Direction);
-        var writingMode = ComputedStyle.ResolveWritingModeFused(find("writing-mode"), parent.WritingMode);
-        var orientation = ComputedStyle.ResolveTextOrientationFused(find("text-orientation"), parent.Orientation);
-        var combine = ComputedStyle.ResolveTextCombineFused(find("text-combine-upright"), parent.CombinesUpright);
 
         var keywords = new ComputedStyle.FusedKeywords
         {
@@ -215,6 +379,22 @@ public static class FusedStyleFactory
         };
 
         var values = new ComputedStyle.StyleValues();
+
+        // Every area is shared rather than duplicated. An area record is written to be immutable and
+        // shared - "the same instance stands for every box whose values agree", as the discipline on them
+        // says - so each one goes through the intern table as it is built, and the four the area cache
+        // answered first are the same instance by the other route: what the cache hands out is exactly
+        // what the table had kept. A null pool, which is what a caller with no tree to share within
+        // passes, keeps the copies this path made before any of it was wired up.
+        //
+        // What is shared is exactly the seven areas whose properties cannot depend on the element's own
+        // live state. The colours, the background layers, the cursor and the positioning are not: a
+        // border colour resolves `currentcolor` against a colour that depends on whether an anchor has
+        // been visited, and that answer belongs to the box holding it rather than to a table two boxes
+        // might agree with today and disagree with after a click. All seven read the cascade, the font
+        // size and the parent's interned instance alone - the box model adds the two tag names and the
+        // inherited flow, all of which a key can hold exactly - so they sit behind the area cache as
+        // well and are not even resolved twice when nothing about them has changed.
         values.Font = font;
         values.Text = text;
         values.Border = border;
@@ -254,23 +434,39 @@ public static class FusedStyleFactory
     }
 
     /// <summary>
-    /// Resolves the writing mode the element settles on, for the thickness flow mapping.
+    /// Packs the flow a parent passes down into the number a key holds it in: the writing mode, the
+    /// direction, and the two upright properties - each null or one of a handful of values, each given a
+    /// field wide enough to hold all of them. Nothing is folded away, so no two flows come out alike.
     /// </summary>
-    private static WritingModeInfo DetermineFlow(IElement element, MatchedCascade cascade, FusedParent parent)
+    private static Int32 FlowStamp(FusedParent parent)
     {
-        var mode = ComputedStyle.ResolveWritingModeFused(cascade.Find("writing-mode"), parent.WritingMode);
-        var direction = ComputedStyle.ResolveDirectionFused(element, cascade.Find("direction"), parent.Direction);
+        var orientation = parent.Orientation is { } named ? (Int32)named + 1 : 0;
+        var combines = parent.CombinesUpright is { } stated ? (stated ? 2 : 1) : 0;
 
-        if (mode == WritingMode.HorizontalTb)
-        {
-            return direction == TextDirection.LeftToRight
-                ? WritingModeInfo.Horizontal
-                : new WritingModeInfo(WritingMode.HorizontalTb, TextOrientation.Mixed, false, direction);
-        }
-
-        var orientation = ComputedStyle.ResolveTextOrientationFused(cascade.Find("text-orientation"), parent.Orientation);
-        var combine = ComputedStyle.ResolveTextCombineFused(cascade.Find("text-combine-upright"), parent.CombinesUpright);
-
-        return new WritingModeInfo(mode, orientation ?? TextOrientation.Mixed, combine ?? false, direction);
+        return (Int32)parent.WritingMode
+            | ((Int32)parent.Direction << 3)
+            | (orientation << 4)
+            | (combines << 7);
     }
+
+    /// <summary>
+    /// Settles the flow an element's text runs in from the mode, the direction and the two upright
+    /// properties, which the caller has already resolved.
+    /// </summary>
+    /// <remarks>
+    /// Along a line the orientation and the combining mean nothing, so a horizontal mode is handed back
+    /// as the shared horizontal flow - or as that flow turned around for a right-to-left one, which is
+    /// what <c>rtl</c> along a line asks for. A column takes the orientation it was set to, or mixed
+    /// when none was, and the combining with it.
+    /// </remarks>
+    private static WritingModeInfo Flow(
+        WritingMode mode,
+        TextDirection direction,
+        TextOrientation? orientation,
+        Boolean? combine) =>
+        mode == WritingMode.HorizontalTb
+            ? direction == TextDirection.LeftToRight
+                ? WritingModeInfo.Horizontal
+                : new WritingModeInfo(mode, TextOrientation.Mixed, false, direction)
+            : new WritingModeInfo(mode, orientation ?? TextOrientation.Mixed, combine ?? false, direction);
 }

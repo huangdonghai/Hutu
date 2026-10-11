@@ -41,10 +41,11 @@ public static partial class BoxBuilder
         var sheets = SheetsOf(document);
         var index = RuleBucketIndex.Build(sheets, device);
         var pool = new StyleIntern();
+        var cache = new FusedAreaCache();
         var supported = true;
 
         var box = BuildFusedElement(
-            root, index, FusedParent.Root, device, images, faces, pool, WritingModeInfo.Horizontal, ref supported);
+            root, index, FusedParent.Root, device, images, faces, pool, cache, WritingModeInfo.Horizontal, ref supported);
 
         if (!supported || box is null)
         {
@@ -65,6 +66,7 @@ public static partial class BoxBuilder
         IImageProvider? images,
         FontFaceTable? faces,
         StyleIntern pool,
+        FusedAreaCache cache,
         WritingModeInfo inheritedFlow,
         ref Boolean supported)
     {
@@ -79,7 +81,7 @@ public static partial class BoxBuilder
             return null;
         }
 
-        var style = FusedStyleFactory.Build(element, cascade, parent, device, faces, pool);
+        var style = FusedStyleFactory.Build(element, cascade, parent, device, faces, pool, cache);
 
         if (style.IsDisplayNone)
         {
@@ -112,8 +114,10 @@ public static partial class BoxBuilder
             switch (child)
             {
                 case IElement elementChild:
+                    // The parent's own tag name travels down with it: a box model needs it, because the
+                    // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
-                        elementChild, index, parent.Next(style, cascade), device, images, faces, pool, flow, ref supported);
+                        elementChild, index, parent.Next(style, cascade, cache.Tag(element.LocalName)), device, images, faces, pool, cache, flow, ref supported);
 
                     if (childBox is not null)
                     {

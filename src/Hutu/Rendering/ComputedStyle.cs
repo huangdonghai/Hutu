@@ -1484,6 +1484,17 @@ public readonly struct ComputedStyle
     public Boolean IsDisplayNone =>
         _values.DisplayPositioning.Display.Equals("none", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Gets the font area this style answers from. Exposed to the builder rather than read through the
+    /// properties below, because the instance is itself an answer: areas are interned, so two styles that
+    /// set the same font hold the same object, and an element that inherits a font inherits something a
+    /// cache can name by reference instead of by walking its six values.
+    /// </summary>
+    internal FontArea ResolvedFont => _values.Font;
+
+    /// <summary>Gets the text area this style answers from, shared with every style whose text agrees.</summary>
+    internal TextArea ResolvedText => _values.Text;
+
     public String WhiteSpace => _values.Text.WhiteSpace;
 
     /// <summary>
