@@ -383,11 +383,15 @@ public sealed class LayoutEngine
     /// so a padding given to the item moves the marker and its gap together, as it does in a browser.
     /// </para>
     /// <para>
-    /// A marker <c>inside</c> its item is left unplaced for now: it belongs to the line, and giving it a
-    /// rectangle of its own here would draw it over the text it is supposed to precede. Neither is a
-    /// column marked yet - along a page that runs down, the inline axis is vertical, so a marker stands
-    /// above its column rather than beside its text, and that is a placement of its own rather than the
-    /// same arithmetic turned sideways.
+    /// A column is marked too, and there the marker stands above its column rather than beside its text:
+    /// along a page that runs down, the inline axis is vertical, so the same rule - the marker's end on
+    /// the edge the line begins at - lands it in the gutter at the head of the column, centred across
+    /// the width the column takes and upright, which is what a browser draws.
+    /// </para>
+    /// <para>
+    /// A marker stated <c>inside</c> its item never reaches here: the builder made it the item's first
+    /// inline box, so it is laid out with the text and takes room on the line, which is what an inside
+    /// marker is. Only the marker that hangs beside an item is placed from the finished geometry.
     /// </para>
     /// </remarks>
     private void ResolveMarkers(LayoutBox box)
@@ -399,30 +403,60 @@ public sealed class LayoutEngine
         // An item that is an atomic inline-level box is a block container too, and so is a Block here.
         if (box.Kind == LayoutKind.Block &&
             source.Marker is { Length: > 0 } text &&
-            source.MarkerPosition == MarkerPosition.Outside &&
-            !box.Vertical)
+            source.MarkerPosition == MarkerPosition.Outside)
         {
             var font = source.Style.GetFont();
             var metrics = _measurer.GetMetrics(font);
-            var width = _measurer.MeasureWidth(text, font);
+            var advance = _measurer.MeasureWidth(text, font);
             var content = box.ContentBox;
+            var line = FirstLine(box);
 
-            // Where the reader's eye first lands on the item, stated as a coordinate of the page: the
-            // baseline of its first line, or - for an item whose content is all blocks and tables - the
-            // baseline the first line of its font would have had.
-            var standing = FirstLine(box) is { } line
-                ? line.BorderBox.Y + line.Baseline
-                : content.Y + metrics.Ascent;
+            if (box.Vertical)
+            {
+                var em = metrics.Ascent + metrics.Descent;
+                var upward = box.Flow.InlineSign < 0;
 
-            // The edge the content begins at is the one the line starts reading from, which a page that
-            // reads right to left puts on the other side - and the marker ends there rather than starting
-            // there, since it is the item's text that keeps its edge and the marker that hangs out.
-            var start = box.Flow.InlineSign > 0
-                ? content.X - width
-                : content.Right;
+                // The column the marker stands over: the first line's, where the item reaches a line, and
+                // its own content box where it does not - an empty item is still marked, the way a
+                // browser marks one.
+                var column = line is { } standing ? standing.BorderBox : content;
 
-            box.MarkerBounds = new Rect(start, standing - metrics.Ascent, width, metrics.Ascent + metrics.Descent);
-            box.MarkerBaseline = metrics.Ascent;
+                // The edge the column begins at, which is its head where the line runs down and its foot
+                // where a mode reads up the page. The marker ends there, so the space it carries is what
+                // leaves the room between it and the first character below.
+                var edge = upward ? column.Bottom : column.Y;
+
+                box.MarkerBounds = new Rect(
+                    column.X + (column.Width - em) / 2,
+                    upward ? edge : edge - advance,
+                    em,
+                    advance);
+
+                // Across the column, the baseline sits a descent from the left where the ascent leans
+                // right and an ascent from the left where the run turns the other way - which is the
+                // side an upward column puts it on.
+                box.MarkerBaseline = upward ? metrics.Ascent : metrics.Descent;
+            }
+            else
+            {
+                // Where the reader's eye first lands on the item, stated as a coordinate of the page: the
+                // baseline of its first line, or - for an item that reaches no line at all - the baseline
+                // the first line of its own font would have had.
+                var standing = line is { } first
+                    ? first.BorderBox.Y + first.Baseline
+                    : content.Y + metrics.Ascent;
+
+                // The edge the content begins at is the one the line starts reading from, which a page
+                // that reads right to left puts on the other side - and the marker ends there rather than
+                // starting there, since it is the item's text that keeps its edge and the marker that
+                // hangs out.
+                var start = box.Flow.InlineSign > 0
+                    ? box.ContentBox.X - advance
+                    : box.ContentBox.Right;
+
+                box.MarkerBounds = new Rect(start, standing - metrics.Ascent, advance, metrics.Ascent + metrics.Descent);
+                box.MarkerBaseline = metrics.Ascent;
+            }
         }
 
         foreach (var child in box.Children)

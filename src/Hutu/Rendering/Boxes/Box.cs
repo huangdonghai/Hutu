@@ -164,6 +164,17 @@ public sealed class Box
     public Boolean IsAnonymous { get; init; }
 
     /// <summary>
+    /// Gets whether this text box is a list item's marker rather than something the author wrote.
+    /// </summary>
+    /// <remarks>
+    /// A marker stated <c>inside</c> its item is the first inline box of that item, so unlike the marker
+    /// that hangs beside an item it has to be laid out with the text - and that means a box of its own.
+    /// It is a box the reader never chose: selecting across it skips it and copying a line does not bring
+    /// it back, because a marker is not part of what the document says.
+    /// </remarks>
+    public Boolean IsMarker { get; init; }
+
+    /// <summary>
     /// Gets whether the element's content is replaced - an image - instead of being its children.
     /// Such a box never has children: its geometry comes from the intrinsic size and the CSS
     /// constraints. Whether it is block-level or inline-level is still decided by <c>display</c>,

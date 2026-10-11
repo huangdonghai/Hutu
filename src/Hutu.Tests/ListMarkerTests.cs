@@ -193,16 +193,41 @@ public sealed class ListMarkerTests
     }
 
     [Test]
-    public async Task AColumnIsNotMarkedYet()
+    public async Task APageThatResetsItsListMarginsStillHasRoomForItsMarkers()
+    {
+        var laid = await LaidOut("", "<ul style='margin:0'><li>one</li></ul>");
+        var item = Marked(laid.Root);
+
+        // The gutter is a padding, which is what a browser makes it too: a page that zeroes its list
+        // margins - and nearly every page does that to a list - takes away the space around the list,
+        // not the space its markers stand in.
+        Assert.Multiple(() =>
+        {
+            Assert.That(item.ContentBox.X, Is.EqualTo(40).Within(0.5), "the items still begin 40px in");
+            Assert.That(item.MarkerBounds!.Value.X, Is.GreaterThan(0), "and the marker is on the page");
+        });
+    }
+
+    [Test]
+    public async Task AColumnIsMarkedAtItsHeadAndCentredAcrossItsWidth()
     {
         var laid = await LaidOut("", "<ul style='writing-mode:vertical-rl'><li>item</li></ul>");
-        var item = FirstBlockWithElement(laid.Root, "li");
+        var item = Marked(laid.Root);
+        var column = FirstLine(laid.Root);
+        var marker = item.MarkerBounds!.Value;
 
-        // Along a column the marker stands above it rather than beside it, which is a placement of its
-        // own. The counting is done all the same, so what is missing is only where it is drawn - and
-        // nothing is drawn where the layout said nothing.
-        Assert.That(item.Source.Marker, Is.EqualTo("• "), "the item knows its marker");
-        Assert.That(item.MarkerBounds, Is.Null, "and no rectangle is claimed for a column yet");
+        // Along a column the inline axis is vertical, so the same rule - the marker's end on the edge the
+        // line begins at - puts it above the column rather than beside its text, and an upright character
+        // sits centred across the width the column takes. This is what a browser draws.
+        Assert.Multiple(() =>
+        {
+            Assert.That(marker.Bottom, Is.EqualTo(column.BorderBox.Y).Within(0.5),
+                "the marker ends at the head of the column, its own space leaving the room below it");
+            Assert.That(marker.X + marker.Width / 2, Is.EqualTo(column.BorderBox.X + column.BorderBox.Width / 2).Within(0.5),
+                "and it stands across the middle of the column");
+            Assert.That(marker.Height, Is.GreaterThan(0), "the marker runs down, not across");
+            Assert.That(item.Source.Marker, Is.EqualTo("• "));
+        });
     }
 
     [Test]
@@ -236,8 +261,8 @@ public sealed class ListMarkerTests
                 "a count below one is still a number, signed");
             Assert.That(ListMarkers.For("disc", "url(bullet.png)", 1), Is.Null,
                 "an image marker waits for the painting that can draw one");
-            Assert.That(ListMarkers.For("hebrew", null, 1), Is.Null,
-                "a style with no table here claims no marker rather than a wrong one");
+            Assert.That(ListMarkers.For("armenian", null, 1), Is.Null,
+                "a style whose table we do not have claims no marker rather than a wrong one");
         });
     }
 
@@ -280,6 +305,84 @@ public sealed class ListMarkerTests
                 return value >= 0 ? value : "〇一二三四五六七八九".IndexOf(digit);
             }
         }
+    }
+
+    [Test]
+    public void AHebrewCountIsAddedUpFromTheLargestWorth()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ListMarkers.For("hebrew", null, 1), Is.EqualTo("א. "));
+            Assert.That(ListMarkers.For("hebrew", null, 11), Is.EqualTo("יא. "));
+
+            // Fifteen and sixteen are written with the letters of טו and טז rather than the two that
+            // would spell a name, which is the one rule in Hebrew numbering a reader looks for.
+            Assert.That(ListMarkers.For("hebrew", null, 15), Is.EqualTo("טו. "));
+            Assert.That(ListMarkers.For("hebrew", null, 16), Is.EqualTo("טז. "));
+            Assert.That(ListMarkers.For("hebrew", null, 18), Is.EqualTo("יח. "));
+            Assert.That(ListMarkers.For("hebrew", null, 25), Is.EqualTo("כה. "));
+            Assert.That(ListMarkers.For("hebrew", null, 40), Is.EqualTo("מ. "),
+                "forty is the open mem, not the final form that sits next to it in the block");
+            Assert.That(ListMarkers.For("hebrew", null, 115), Is.EqualTo("קטו. "),
+                "and the exception holds inside a larger number");
+            Assert.That(ListMarkers.For("hebrew", null, 500), Is.EqualTo("תק. "),
+                "past four hundred the hundreds are made of the same pieces");
+            Assert.That(ListMarkers.For("hebrew", null, 999), Is.EqualTo("תתקצט. "));
+            Assert.That(ListMarkers.For("hebrew", null, 1000), Is.EqualTo("1000. "),
+                "beyond a thousand the count falls back to decimal");
+        });
+    }
+
+    [Test]
+    public void AChineseCountingStyleReadsTheNumberAsItIsSaid()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 3), Is.EqualTo("三. "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 10), Is.EqualTo("十. "),
+                "a leading ten is read without its one");
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 11), Is.EqualTo("十一. "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 20), Is.EqualTo("二十. "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 105), Is.EqualTo("一百零五. "),
+                "a skipped place is read out as a zero");
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 110), Is.EqualTo("一百一十. "),
+                "but a place that only ends empty is not");
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 1001), Is.EqualTo("一千零一. "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 10000), Is.EqualTo("一万. "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 100000), Is.EqualTo("十万. "),
+                "a group of ten myriad is said as ten myriad, not as one-times-ten myriad");
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 10000005), Is.EqualTo("一千万零五. "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 100000005), Is.EqualTo("一亿零五. "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 1000), Is.EqualTo("一千. "));
+            Assert.That(ListMarkers.For("traditional-chinese-informal", null, 10000), Is.EqualTo("一萬. "));
+            Assert.That(ListMarkers.For("cjk-ideographic", null, 5), Is.EqualTo("五. "),
+                "the legacy name counts the traditional way");
+
+            // The formal reading is the anti-fraud hand: it keeps the one of its ten, because a bare
+            // 十 stands ready to be made into 二十 by one added stroke.
+            Assert.That(ListMarkers.For("simplified-chinese-formal", null, 12), Is.EqualTo("壹拾贰. "));
+            Assert.That(ListMarkers.For("traditional-chinese-formal", null, 12), Is.EqualTo("壹拾貳. "));
+
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, -1), Is.Null,
+                "there is no reading below zero, and none is claimed");
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 1_000_000_000), Is.EqualTo("十亿. "),
+                "the hundred million group reads its ten the same way a plain ten does");
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, int.MaxValue),
+                Does.Contain("亿").And.Contain("万"),
+                "and the largest number an item can hold still comes out of the groups it is read by");
+        });
+    }
+
+    [Test]
+    public async Task ALivePageCountsItsItemsInTheStyleEachListAskedFor()
+    {
+        var markers = await Markers(
+            ".hebrew { list-style-type: hebrew } .cn { list-style-type: simplified-chinese-informal }",
+            "<ol class='hebrew' start='14'><li>one</li><li>two</li></ol>" +
+            "<ol class='cn'><li>one</li><li>two</li></ol>");
+
+        Assert.That(markers, Is.EqualTo(new[] { "יד. ", "טו. ", "一. ", "二. " }),
+            "the transition the showcase page was built to show: fourteen, then fifteen written the way it must be");
     }
 
     [Test]
@@ -333,11 +436,61 @@ public sealed class ListMarkerTests
     [Test]
     public async Task AStyleWithNoTableHereMarksNothing()
     {
-        var markers = await Markers("", "<ol style='list-style-type:simplified-chinese-informal'><li>one</li></ol>");
+        // The two kana lists and the additive Caucasian and Ethiopian styles need tables that have to be
+        // taken from the spec rather than written out of memory, so they are absent on purpose: a list
+        // without its marks is a gap, and a wrong mark is a lie.
+        var markers = await Markers("", "<ol style='list-style-type:hiragana-iroha'><li>one</li></ol>");
 
         Assert.That(markers, Is.EqualTo(new String?[] { null }),
-            "the spoken counting styles are still ahead of us, and a missing marker is honest where a " +
-            "decimal one would not be");
+            "a style with no table here spells no marker");
+    }
+
+    [Test]
+    public async Task AnInsideMarkerSharesTheFirstLineWithItsText()
+    {
+        var laid = await LaidOut("", "<ul style='list-style-position:inside'><li>one</li></ul>");
+        var item = FirstBlockWithElement(laid.Root, "li");
+
+        // An inside marker is the item's first inline box, so it is laid out with the text and takes room
+        // on the line - which is a different machinery from the marker that hangs beside an item.
+        Assert.Multiple(() =>
+        {
+            Assert.That(item.Source.Marker, Is.Null, "the mark is not carried beside the item");
+            Assert.That(item.MarkerBounds, Is.Null, "and no place is worked out for it after the lines");
+            Assert.That(Texts(FirstLine(laid.Root)), Is.EqualTo(new[] { "• ", "one" }),
+                "it is the first run of the item's own line");
+        });
+    }
+
+    [Test]
+    public async Task AnInsideMarkerBeforeABlockTakesALineOfItsOwn()
+    {
+        var laid = await LaidOut("", "<ul style='list-style-position:inside'><li><p>text</p></li></ul>");
+        var lines = Lines(laid.Root);
+
+        Assert.That(lines, Has.Count.GreaterThanOrEqualTo(2), "the marker and the paragraph are two lines");
+        Assert.Multiple(() =>
+        {
+            Assert.That(Texts(lines[0]), Is.EqualTo(new[] { "•" }),
+                "the first inline box in a block whose rest is blocks makes a line of its own - and the " +
+                "space its marker carries closes that line, so it is taken away as any trailing space is");
+            Assert.That(Texts(lines[1]), Is.EqualTo(new[] { "text" }));
+        });
+    }
+
+    [Test]
+    public async Task AnInsideMarkerIsNotPartOfWhatTheReaderCopies()
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(900, 600);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><ul style='list-style-position:inside'><li>one</li></ul></body></html>");
+
+        view.SelectAll();
+
+        Assert.That(view.SelectedText, Is.EqualTo("one"),
+            "the mark is laid out with the text but the reader never chose it, so a copy leaves it out");
     }
 
     private static async Task<List<String?>> Markers(String css, String body)
@@ -425,6 +578,52 @@ public sealed class ListMarkerTests
         Assert.That(found, Is.Not.Null, "a line was laid out");
 
         return found!;
+    }
+
+    /// <summary>The text of every run under a box, in the order the layout set them down.</summary>
+    private static List<String> Texts(LayoutBox box)
+    {
+        var runs = new List<String>();
+
+        CollectTexts(box, runs);
+
+        return runs;
+    }
+
+    private static void CollectTexts(LayoutBox box, List<String> into)
+    {
+        if (box.Kind == LayoutKind.Text)
+        {
+            into.Add(box.Text!);
+        }
+
+        foreach (var child in box.Children)
+        {
+            CollectTexts(child, into);
+        }
+    }
+
+    /// <summary>Every line box under a root, in document order.</summary>
+    private static List<LayoutBox> Lines(LayoutBox root)
+    {
+        var lines = new List<LayoutBox>();
+
+        CollectLines(root, lines);
+
+        return lines;
+    }
+
+    private static void CollectLines(LayoutBox box, List<LayoutBox> into)
+    {
+        if (box.Kind == LayoutKind.Line)
+        {
+            into.Add(box);
+        }
+
+        foreach (var child in box.Children)
+        {
+            CollectLines(child, into);
+        }
     }
 
     private static LayoutBox? Find(LayoutBox box, Func<LayoutBox, Boolean> wants)

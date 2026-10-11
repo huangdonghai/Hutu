@@ -20,6 +20,12 @@ namespace Hutu.Rendering.Boxes;
 /// as a string is left exactly as its author wrote it, since such a marker has no automatic gap at all
 /// and the room it wants is inside the string.
 /// </para>
+/// <para>
+/// Where the marker goes is the item's <c>list-style-position</c>, and the two answers are made by
+/// different machinery: an outside marker is carried on the box and placed by the layout once the lines
+/// are down, while an inside marker becomes the item's first inline box here, so that the line breaks
+/// around it like any other text.
+/// </para>
 /// </remarks>
 public static class ListMarkers
 {
@@ -39,12 +45,49 @@ public static class ListMarkers
             }
 
             var number = Value(child) ?? running;
+            var text = For(child.Style.ListStyleType, child.Style.ListStyleImage, number);
 
-            child.Marker = For(child.Style.ListStyleType, child.Style.ListStyleImage, number);
             child.MarkerPosition = child.Style.ListStylePosition;
+
+            if (text is not null && child.Style.ListStylePosition == MarkerPosition.Inside)
+            {
+                PlaceInside(child, text);
+            }
+            else
+            {
+                // Beside an item the marker is no part of its text: the layout is given a place for it
+                // once the lines are down, and nothing in the line knows it exists.
+                child.Marker = text;
+            }
 
             running = reversed ? number - 1 : number + 1;
         }
+    }
+
+    /// <summary>
+    /// Puts a marker stated <c>inside</c> its item at the head of that item's content, where it is laid
+    /// out with the text and takes room on the line: an inside marker is the first inline box of the
+    /// principal box, which is a different thing from the marker that hangs outside it.
+    /// </summary>
+    private static void PlaceInside(Box item, String text)
+    {
+        var marker = new Box(BoxKind.Text, item.Style) { Text = text, Flow = item.Flow, IsMarker = true };
+
+        if (item.Children.Count > 0 && item.Children[0].IsInlineLevel)
+        {
+            // The item opens with inline content, so the marker joins that content and the two share the
+            // first line: the mark, then its text beside it.
+            item.Children.Insert(0, marker);
+
+            return;
+        }
+
+        // The item opens with a block, or has nothing a line could hold. The marker is still the first
+        // inline box in it, and the first thing in a block whose rest is blocks is a line of its own -
+        // which in this tree is an anonymous block, the same shape the builder wraps inline runs in.
+        var line = new Box(BoxKind.Block, item.Style) { IsAnonymous = true, Flow = item.Flow };
+        line.Children.Add(marker);
+        item.Children.Insert(0, line);
     }
 
     /// <summary>

@@ -97,6 +97,45 @@ internal static class CounterStyles
         (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"),
     };
 
+    /// <summary>
+    /// Hebrew numerals, added up from the largest worth. The alphabet's twenty-two letters are one run
+    /// of consecutive code points, and the five final forms are not used for numbers, so the tens run
+    /// from <c>כ</c> to <c>צ</c> without them; past four hundred the hundreds are built up out of the
+    /// same pieces. The two values that would spell out a name are written the way every Hebrew
+    /// bookkeeper writes them: <c>טו</c> and <c>טז</c> rather than <c>יה</c> and <c>וה</c>.
+    /// </summary>
+    private static readonly (Int32 Value, String Numeral)[] HebrewNumerals =
+    {
+        (400, "ת"), (300, "ש"), (200, "ר"), (100, "ק"),
+        (90, "צ"), (80, "פ"), (70, "ע"), (60, "ס"), (50, "נ"), (40, "מ"), (30, "ל"), (20, "כ"),
+        (19, "יט"), (18, "יח"), (16, "טז"), (15, "טו"), (10, "י"),
+        (9, "ט"), (8, "ח"), (7, "ז"), (6, "ו"), (5, "ה"), (4, "ד"), (3, "ג"), (2, "ב"), (1, "א"),
+    };
+
+    /// <summary>
+    /// The Chinese counting styles, which spell a number out as it is read: the digits, a unit word on
+    /// every place, and <c>零</c> where a place was skipped. Nothing here needed a table copied from
+    /// anywhere - the characters are the ones the language writes, and the shape of a number follows
+    /// the shape of the word for it.
+    /// </summary>
+    /// <param name="Formal">
+    /// Whether the style is the anti-fraud formal reading (the <c>大写</c>), which keeps the one of
+    /// <c>拾</c> - <c>一十</c> rather than the plain reading's <c>十</c> - because a bare <c>十</c> is a
+    /// character away from a forged number.
+    /// </param>
+    private sealed record Counting(String Digits, String Zero, String Ten, String Hundred, String Thousand, String Myriad, String HundredMyriad, Boolean Formal);
+
+    private static readonly Dictionary<String, Counting> CountingStyles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["simplified-chinese-informal"] = new("一二三四五六七八九", "零", "十", "百", "千", "万", "亿", false),
+        ["simplified-chinese-formal"] = new("壹贰叁肆伍陆柒捌玖", "零", "拾", "佰", "仟", "万", "亿", true),
+        ["traditional-chinese-informal"] = new("一二三四五六七八九", "零", "十", "百", "千", "萬", "億", false),
+        ["traditional-chinese-formal"] = new("壹貳參肆伍陸柒捌玖", "零", "拾", "佰", "仟", "萬", "億", true),
+
+        // What the older name on the block means, spelled the traditional way.
+        ["cjk-ideographic"] = new("一二三四五六七八九", "零", "十", "百", "千", "萬", "億", false),
+    };
+
     /// <summary>Gets whether the name asks for no marker at all.</summary>
     public static Boolean IsNone(String type) => type.Equals("none", StringComparison.OrdinalIgnoreCase);
 
@@ -147,6 +186,18 @@ internal static class CounterStyles
         if (type.Equals("upper-roman", StringComparison.OrdinalIgnoreCase))
         {
             return Roman(number, true);
+        }
+
+        if (CountingStyles.TryGetValue(type, out var counting))
+        {
+            return Counted(counting, number);
+        }
+
+        if (type.Equals("hebrew", StringComparison.OrdinalIgnoreCase))
+        {
+            // Four digits is where a Hebrew number stops having a shape of its own; past it the count
+            // is written the way a fixed list beyond its end is - in decimal.
+            return number is >= 1 and <= 999 ? Additive(number, HebrewNumerals) : Decimal(number);
         }
 
         if (Alphabetic.TryGetValue(type, out var alphabet))
@@ -237,6 +288,142 @@ internal static class CounterStyles
 
         return result.ToString();
     }
+
+    /// <summary>
+    /// Writes a number in one of the Chinese counting styles: the groups of <c>亿</c> and <c>万</c> first,
+    /// each read as a number of its own, and the remainder below ten thousand after them.
+    /// </summary>
+    /// <remarks>
+    /// There is no upper case to fall back on: an item's number is a 32-bit count, and two billion fits
+    /// inside the hundred million group, which is the last one a Chinese number nests.
+    /// </remarks>
+    private static String? Counted(Counting style, Int32 number)
+    {
+        if (number < 0)
+        {
+            // Nothing is read below zero in a spoken style: there is no word for it that an author of
+            // this list meant, so no marker is claimed rather than a borrowed decimal one.
+            return null;
+        }
+
+        if (number == 0)
+        {
+            return style.Zero;
+        }
+
+        var result = new StringBuilder();
+        var rest = number;
+
+        foreach (var (size, unit) in new[] { (100_000_000, style.HundredMyriad), (10_000, style.Myriad) })
+        {
+            if (rest < size)
+            {
+                continue;
+            }
+
+            var group = rest / size;
+            rest %= size;
+
+            result.Append(UnderTenThousand(style, group, atStart: result.Length == 0));
+            result.Append(unit);
+
+            // A group that begins below its own thousand leaves a hole that is read out as a zero -
+            // the one in <c>一亿零五</c>, which is not the same number as <c>一亿五</c> would suggest.
+            if (rest > 0 && rest < size / 10)
+            {
+                result.Append(style.Zero);
+            }
+        }
+
+        result.Append(UnderTenThousand(style, rest, atStart: result.Length == 0));
+
+        return result.ToString();
+    }
+
+    /// <summary>
+    /// Writes a number below ten thousand in the style's own characters, reading each place with its
+    /// unit and skipping the one of a leading ten - <c>十二</c> is how twelve is said, while the formal
+    /// hand writes it out as <c>壹拾贰</c> so that nothing stands ready to be added in front of it.
+    /// </summary>
+    private static String UnderTenThousand(Counting style, Int32 number, Boolean atStart)
+    {
+        if (number == 0)
+        {
+            return string.Empty;
+        }
+
+        var result = new StringBuilder();
+
+        var thousands = number / 1000;
+        var hundreds = number / 100 % 10;
+        var tens = number / 10 % 10;
+        var units = number % 10;
+
+        if (thousands > 0)
+        {
+            result.Append(style.Digits[thousands - 1]);
+            result.Append(style.Thousand);
+        }
+
+        if (hundreds > 0)
+        {
+            if (result.Length > 0 && tens == 0 && units > 0)
+            {
+                result.Append(style.Zero);
+            }
+
+            result.Append(style.Digits[hundreds - 1]);
+            result.Append(style.Hundred);
+        }
+        else if (thousands > 0 && (tens > 0 || units > 0))
+        {
+            result.Append(style.Zero);
+        }
+
+        if (tens > 0)
+        {
+            var leading = result.Length == 0 && atStart && tens == 1 && !style.Formal;
+
+            if (!leading)
+            {
+                result.Append(style.Digits[tens - 1]);
+            }
+
+            result.Append(style.Ten);
+        }
+        else if ((thousands > 0 || hundreds > 0) && units > 0 && !(tens == 0 && hundreds == 0))
+        {
+            // A place with nothing in it, with something written before it and something after.
+            result.Append(style.Zero);
+        }
+
+        if (units > 0)
+        {
+            result.Append(style.Digits[units - 1]);
+        }
+
+        return result.ToString();
+    }
+
+    /// <summary>Adds up a number from the largest worth down, the way the additive systems are read.</summary>
+    private static String Additive(Int32 number, (Int32 Value, String Numeral)[] worth)
+    {
+        var result = new StringBuilder();
+
+        foreach (var (value, numeral) in worth)
+        {
+            while (number >= value)
+            {
+                result.Append(numeral);
+                number -= value;
+            }
+        }
+
+        return result.ToString();
+    }
+
+    /// <summary>The count a style could not hold, written in plain decimal.</summary>
+    private static String Decimal(Int32 number) => number.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>Writes a number in a script's own numerals, signed, the way decimal writes it.</summary>
     private static String Positional(Int32 number, String numerals)

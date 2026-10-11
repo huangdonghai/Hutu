@@ -27,12 +27,13 @@ namespace Hutu.Rendering;
 /// <see cref="ComputedStyle"/>'s reading of a thickness.
 /// </para>
 /// <para>
-/// The room a list leaves at the edge its items begin at is not stated here either - it comes from
-/// <see cref="ComputedStyle"/>'s defaults with the rest of the spacing HTML asks for. It is worth
-/// knowing where it lives when the markers are read: an item's marker hangs in that gutter, outside the
-/// list's own box, so a background given to the list stops at its edge and does not reach under its
-/// bullets. A browser gives the same room as a padding, which does reach; the difference shows only on a
-/// list that is given a background, and the sheet is not the place to settle it - the default is.
+/// The room a list keeps at the edge its items begin at is the one spacing stated here, and it is
+/// stated as a padding rather than the <c>margin-left</c> the sample writes, because an item's marker
+/// hangs in that room: given as a margin, a page that resets its list margins - which nearly every page
+/// does - would take away the space the markers stand in and they would be drawn off the edge of the
+/// list. Given as a padding it belongs to the list's own box, so the list's background reaches under its
+/// markers as it does in a browser, and being on the inline axis it lands at the head of a column rather
+/// than to the left of a row.
 /// </para>
 /// <para>
 /// It replaces the sheet AngleSharp.Css ships rather than adding to it, and is registered ahead of
@@ -92,7 +93,7 @@ td, th, tr      { vertical-align: inherit }
 s, strike, del  { text-decoration: line-through }
 hr              { border: 1px inset }
 ol, ul, dir,
-menu            { list-style-type: disc; list-style-position: outside }
+menu            { padding-inline-start: 40px; list-style-type: disc; list-style-position: outside }
 ol              { list-style-type: decimal }
 u, ins          { text-decoration: underline }
 br::before      { content: '\A'; white-space: pre-line }

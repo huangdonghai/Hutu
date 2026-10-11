@@ -247,7 +247,10 @@ public sealed class TextSelector
             line = box;
         }
 
-        if (!viewportAnchored && box.Kind == LayoutKind.Text && !String.IsNullOrEmpty(box.Text))
+        // A marker that stands inside its item is laid out with the text but is not part of it: the
+        // reader never chose it, so selecting across it passes over it and a copy does not bring it back.
+        if (!viewportAnchored && box.Kind == LayoutKind.Text && !String.IsNullOrEmpty(box.Text) &&
+            !box.Source.IsMarker)
         {
             _order[box] = _runs.Count;
             _runs.Add(box);

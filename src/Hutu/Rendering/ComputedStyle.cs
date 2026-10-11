@@ -2832,7 +2832,12 @@ public readonly struct ComputedStyle
             _ => null,
         };
 
-        var indent = tag is "ul" or "ol" or "dir" or "menu" or "dd" or "blockquote" ? 40.0 : (Double?)null;
+        // The room a list keeps at the edge its items begin at is not supplied here: it is a padding the
+        // user-agent sheet states, so that a page resetting its margins - which almost every page does to
+        // a list - does not also take away the space its markers stand in. Only the indentation that is
+        // genuinely spacing around content is left as a margin: the definition list's term and the
+        // quotation, which no marker depends on.
+        var indent = tag is "dd" or "blockquote" ? 40.0 : (Double?)null;
         var indentEnd = tag == "blockquote" ? indent : null;
         var space = block is { } size ? size * fontSize : (Double?)null;
 
