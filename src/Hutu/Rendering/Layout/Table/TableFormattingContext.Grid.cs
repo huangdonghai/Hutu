@@ -288,7 +288,7 @@ internal sealed partial class TableFormattingContext
     private void ResolveCellIntrinsics(TableBuild build, LayoutContext context)
     {
         var basis = build.Basis;
-        var cellContext = context.ForContainingBlock(new Size(basis, 0));
+        var cellContext = context.ForContainingBlock(new Size(0, 0));
 
         foreach (var row in build.Grid.Rows)
         {
@@ -404,7 +404,17 @@ internal sealed partial class TableFormattingContext
         }
 
         var resolved = Math.Max(0, width.Resolve(basis));
-        return BoxModel.IsBorderBox(box.Style) ? resolved : resolved + insets;
+
+        if (BoxModel.IsBorderBox(box.Style))
+        {
+            return resolved;
+        }
+
+        // A percentage width sizes the grid area itself: the per cent is of the table's width and
+        // the insets sit inside it rather than on top of it, which is what keeps a row of cells
+        // declared in per cents from adding their padding past the width the table was given.
+        // A length is still a content-box width, so it carries the insets as before.
+        return width.Kind == StyleLengthKind.Percent ? resolved : resolved + insets;
     }
 
     private static Boolean Occupied(HashSet<(Int32 Row, Int32 Column)> occupied, Int32 row, Int32 column, Int32 columnSpan, Int32 rowSpan)
