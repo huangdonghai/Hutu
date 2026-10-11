@@ -183,6 +183,11 @@ public static partial class BoxBuilder
                 break;
         }
 
+        // Every child is here now, so this is the first point at which an item can be told which item it
+        // is. The same call runs in the render-tree builder, which is what keeps the two trees marking
+        // the same items the same way.
+        ListMarkers.Mark(box);
+
         return box;
     }
 

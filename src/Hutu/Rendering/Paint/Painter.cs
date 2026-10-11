@@ -94,6 +94,27 @@ public sealed class Painter
                 break;
         }
 
+        // A marker is text, drawn where the layout put it and in the font and colour of the item it
+        // marks - so a bullet in a heading is a bullet of the heading's size, and one in red text is red.
+        // It stands beside the item rather than in it, which is why nothing else about the box decides
+        // where it goes, and why it is emitted after the box's own background and its children: the space
+        // it hangs in belongs to the list, and nothing is laid out there to be drawn over.
+        if (box.MarkerBounds is { } marker && box.Source.Marker is { Length: > 0 } marks)
+        {
+            var marked = box.Source.Style;
+
+            target.Add(new TextCommand(
+                marker,
+                marks,
+                box.MarkerBaseline,
+                marked.GetFont(),
+                ToArgb(marked.Color),
+                false,
+                false,
+                box.Flow,
+                0));
+        }
+
         // The outline is emitted last because it is drawn around the box rather than in it, which also
         // puts it after the clip the children were wrapped in: the box's own overflow must not cut it
         // off, while the clip of the nearest ancestor that hides its overflow still holds it in.

@@ -315,6 +315,10 @@ public static partial class BoxBuilder
                 break;
         }
 
+        // Marked from the assembled children, as the fused builder does, so the two paths count the same
+        // items the same way.
+        ListMarkers.Mark(box);
+
         return box;
     }
 

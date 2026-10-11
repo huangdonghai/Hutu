@@ -171,6 +171,7 @@ public readonly struct ComputedStyle
         ResolveDisplayPositioning(pool);
         ResolveVisualEffects(pool);
         ResolveText(pool, parent);
+        ResolveList(pool, parent);
     }
 
     /// <summary>The names a font property can begin with, the <c>font</c> shorthand included.</summary>
@@ -179,6 +180,14 @@ public readonly struct ComputedStyle
 
     /// <summary>The names a text property can begin with.</summary>
     private static readonly String[] TextNames = { "white-space", "text-align", "vertical-align", "text-indent" };
+
+    /// <summary>
+    /// The names a list marker property can begin with. The three longhands, not the <c>list-style</c>
+    /// shorthand: the shorthand is absent from a declaration that only ever states a longhand, and
+    /// comparing that alone would take an item that picked its own type for the parent's.
+    /// </summary>
+    private static readonly String[] ListNames =
+        { "list-style-type", "list-style-position", "list-style-image" };
 
     /// <summary>The name a decoration property begins with, both longhands included.</summary>
     private static readonly String[] DecorationNames = { "text-decoration" };
@@ -254,6 +263,39 @@ public readonly struct ComputedStyle
         };
 
         _values.Text = pool is null ? text : pool.Text(text);
+    }
+
+    /// <summary>
+    /// Resolves the list marker style, taking the parent's where the element authored none of it.
+    /// </summary>
+    /// <remarks>
+    /// All three properties are inherited, so an item that says nothing about its marker is marked the
+    /// way the list around it says - which is how a <c>ul</c> gets its discs and the <c>li</c> inside it
+    /// never has to be told.
+    /// </remarks>
+    private void ResolveList(StyleIntern? pool, ComputedStyle? parent)
+    {
+        if (parent is { } inherited && Inherits(inherited, ListNames))
+        {
+            _values.List = inherited._values.List;
+
+            return;
+        }
+
+        // Read into a local because a struct's methods cannot reach `this` from inside a local function,
+        // and the three resolvers below are handed one lookup rather than three reads.
+        var declaration = _style;
+
+        ICssProperty? Find(String name) => declaration.GetProperty(name);
+
+        var area = new ListArea
+        {
+            Type = ResolveListStyleTypeFused(Find(PropertyNames.ListStyleType), parent?._values.List.Type ?? "disc"),
+            Position = ResolveMarkerPositionFused(Find(PropertyNames.ListStylePosition), parent?._values.List.Position ?? MarkerPosition.Outside),
+            Image = ResolveListStyleImageFused(Find(PropertyNames.ListStyleImage), parent?._values.List.Image),
+        };
+
+        _values.List = pool is null ? area : pool.List(area);
     }
 
     private void ResolveTextDecoration(StyleIntern? pool, ComputedStyle? parent)
@@ -568,6 +610,69 @@ public readonly struct ComputedStyle
         // is the exception: the cascade leaves it unresolved but the computed declaration behind the
         // old path has already folded it in - a `td` under a `tbody` reads `middle`, never `inherit`.
         return text.Equals("inherit", StringComparison.OrdinalIgnoreCase) ? parentValue : text;
+    }
+
+    /// <summary>
+    /// Resolves what a list item is marked with, from the element's own cascaded declaration, for the
+    /// fused path. The property is inherited, so a miss takes the parent's resolved name - which is
+    /// also how the <c>disc</c> and <c>decimal</c> the user-agent sheet states on the list reach the
+    /// items below it: the cascade never puts them on the item, since no rule speaks of it there.
+    /// </summary>
+    /// <remarks>
+    /// The name is kept as written, wide keywords and all, which is what <see cref="ResolveKeywordFused"/>
+    /// does for the other inherited keywords and what keeps the two build paths reading the same value.
+    /// A name no counter style answers for - <c>inherit</c> among them - then spells no marker rather
+    /// than guessing at one.
+    /// </remarks>
+    public static String ResolveListStyleTypeFused(ICssProperty? declared, String parent)
+    {
+        var text = declared?.Value?.Trim();
+
+        return String.IsNullOrWhiteSpace(text) ? parent : text!;
+    }
+
+    /// <summary>
+    /// Resolves where an item's marker stands, for the fused path. Inherited, so a miss takes the
+    /// parent's answer.
+    /// </summary>
+    public static MarkerPosition ResolveMarkerPositionFused(ICssProperty? declared, MarkerPosition parent)
+    {
+        if (declared is null)
+        {
+            return parent;
+        }
+
+        var text = declared.Value?.Trim();
+
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            return parent;
+        }
+
+        return text.Equals("inside", StringComparison.OrdinalIgnoreCase)
+            ? MarkerPosition.Inside
+            : text.Equals("outside", StringComparison.OrdinalIgnoreCase)
+                ? MarkerPosition.Outside
+                : parent;
+    }
+
+    /// <summary>
+    /// Resolves the image an item is marked with, for the fused path. The reference is kept as written:
+    /// resolving it is the document's work, not the style's, and <c>none</c> and a bare keyword both
+    /// answer as no image.
+    /// </summary>
+    public static String? ResolveListStyleImageFused(ICssProperty? declared, String? parent)
+    {
+        if (declared is null)
+        {
+            return parent;
+        }
+
+        var text = declared.Value?.Trim();
+
+        return String.IsNullOrWhiteSpace(text) || text.Equals("none", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : text;
     }
 
     private static String ResolveKeywordFused(ICssProperty? declared, String parentValue, String initial, Boolean inherited)
@@ -1424,6 +1529,8 @@ public readonly struct ComputedStyle
 
         internal TextDecorationArea Decoration = new();
 
+        internal ListArea List = ListArea.Default;
+
         // Null until something asks. See ComputedStyle.Position and .Flex for why these four wait
         // while the areas above do not.
         internal FlexStyle? Flex;
@@ -1494,6 +1601,21 @@ public readonly struct ComputedStyle
 
     /// <summary>Gets the text area this style answers from, shared with every style whose text agrees.</summary>
     internal TextArea ResolvedText => _values.Text;
+
+    /// <summary>
+    /// Gets the list marker style the element's items are marked with. Read as an area by the builder,
+    /// which hands it to the children the way it hands the font and the text.
+    /// </summary>
+    internal ListArea ResolvedList => _values.List;
+
+    /// <summary>Gets what an item of this element's list is marked with, as the name or string written.</summary>
+    public String ListStyleType => _values.List.Type;
+
+    /// <summary>Gets whether an item's marker stands beside its text or at the head of its first line.</summary>
+    public MarkerPosition ListStylePosition => _values.List.Position;
+
+    /// <summary>Gets the image an item is marked with, or null for a glyph or a counter.</summary>
+    public String? ListStyleImage => _values.List.Image;
 
     public String WhiteSpace => _values.Text.WhiteSpace;
 

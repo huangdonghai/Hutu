@@ -116,6 +116,23 @@ public sealed class Box
     public WritingModeInfo Flow { get; internal set; } = WritingModeInfo.Horizontal;
 
     /// <summary>
+    /// Gets the marker this item is drawn with - the glyph, or the counted text with its suffix - or
+    /// null when the box is not a list item, or its list asks for no marker.
+    /// </summary>
+    /// <remarks>
+    /// Filled in by <see cref="ListMarkers"/> once a container has assembled its children, because an
+    /// item's marker says which item it is among its siblings, and that is unknown while any one of
+    /// them is still being built. Layout takes no notice of it: a marker beside an item hangs in the
+    /// space the list was given and does not move the item's own box. It is the painting that reads it.
+    /// </remarks>
+    public String? Marker { get; internal set; }
+
+    /// <summary>
+    /// Gets where the marker stands: beside the item's text, or at the head of its first line.
+    /// </summary>
+    public MarkerPosition MarkerPosition { get; internal set; } = MarkerPosition.Outside;
+
+    /// <summary>
     /// Gets whether the box wants the same intrinsic size at every containing block: nothing in the
     /// subtree it holds reads a fraction of one.
     /// </summary>

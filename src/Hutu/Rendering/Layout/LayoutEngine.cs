@@ -133,6 +133,11 @@ public sealed class LayoutEngine
 
         ResolveDecorations(rootBox);
 
+        // The markers of a list are placed from the same geometry, and after it for the same reason: an
+        // item's marker stands level with the first line the item reaches, which is only known once the
+        // lines have been put down.
+        ResolveMarkers(rootBox);
+
         // What the document occupies is what a viewport has to be able to reach, which is not the
         // root's box: a page whose columns run sideways, or a box placed off an edge, reaches past
         // it. It is never less than the viewport itself either, because the viewport is what the
@@ -294,6 +299,7 @@ public sealed class LayoutEngine
 
         decoration?.Start();
         ResolveDecorations(rootBox);
+        ResolveMarkers(rootBox);
         decoration?.Stop();
 
         overflow?.Start();
@@ -360,6 +366,91 @@ public sealed class LayoutEngine
         {
             ResolveDecorations(child);
         }
+    }
+
+    /// <summary>
+    /// Works out where each list item's marker is drawn.
+    /// </summary>
+    /// <remarks>
+    /// A marker beside an item is not in it: it hangs in the space the list was given for the purpose,
+    /// ending at the edge the item's content begins at, and standing on the baseline of the first line
+    /// the item reaches - its own first line when it has one, and the first line of whatever is nested
+    /// inside it when it does not, which is where a browser puts the bullet of an item that opens with a
+    /// sublist.
+    /// <para>
+    /// The rectangle is the whole marker box, which is wider than the glyph in it: every marker carries
+    /// the space that gaps it from the text, and the space belongs to the marker rather than to the item,
+    /// so a padding given to the item moves the marker and its gap together, as it does in a browser.
+    /// </para>
+    /// <para>
+    /// A marker <c>inside</c> its item is left unplaced for now: it belongs to the line, and giving it a
+    /// rectangle of its own here would draw it over the text it is supposed to precede. Neither is a
+    /// column marked yet - along a page that runs down, the inline axis is vertical, so a marker stands
+    /// above its column rather than beside its text, and that is a placement of its own rather than the
+    /// same arithmetic turned sideways.
+    /// </para>
+    /// </remarks>
+    private void ResolveMarkers(LayoutBox box)
+    {
+        var source = box.Source;
+
+        // Only the item's own box is given a place for its marker: a line box borrows the style and the
+        // element of the item it belongs to, and marking it as well would draw the bullet once per line.
+        // An item that is an atomic inline-level box is a block container too, and so is a Block here.
+        if (box.Kind == LayoutKind.Block &&
+            source.Marker is { Length: > 0 } text &&
+            source.MarkerPosition == MarkerPosition.Outside &&
+            !box.Vertical)
+        {
+            var font = source.Style.GetFont();
+            var metrics = _measurer.GetMetrics(font);
+            var width = _measurer.MeasureWidth(text, font);
+            var content = box.ContentBox;
+
+            // Where the reader's eye first lands on the item, stated as a coordinate of the page: the
+            // baseline of its first line, or - for an item whose content is all blocks and tables - the
+            // baseline the first line of its font would have had.
+            var standing = FirstLine(box) is { } line
+                ? line.BorderBox.Y + line.Baseline
+                : content.Y + metrics.Ascent;
+
+            // The edge the content begins at is the one the line starts reading from, which a page that
+            // reads right to left puts on the other side - and the marker ends there rather than starting
+            // there, since it is the item's text that keeps its edge and the marker that hangs out.
+            var start = box.Flow.InlineSign > 0
+                ? content.X - width
+                : content.Right;
+
+            box.MarkerBounds = new Rect(start, standing - metrics.Ascent, width, metrics.Ascent + metrics.Descent);
+            box.MarkerBaseline = metrics.Ascent;
+        }
+
+        foreach (var child in box.Children)
+        {
+            ResolveMarkers(child);
+        }
+    }
+
+    /// <summary>
+    /// Gets the first line the box reaches, searching its own lines before those of anything nested in
+    /// it - which is the line a marker is drawn level with.
+    /// </summary>
+    private static LayoutBox? FirstLine(LayoutBox box)
+    {
+        if (box.Kind == LayoutKind.Line)
+        {
+            return box;
+        }
+
+        foreach (var child in box.Children)
+        {
+            if (FirstLine(child) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

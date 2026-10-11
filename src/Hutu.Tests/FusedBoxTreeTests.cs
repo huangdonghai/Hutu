@@ -87,6 +87,11 @@ public sealed class FusedBoxTreeTests
         Assert.That(b.Style.Width, Is.EqualTo(a.Style.Width), $"{where} width");
         Assert.That(b.Style.TextIndent, Is.EqualTo(a.Style.TextIndent), $"{where} text-indent");
         Assert.That(b.Style.WhiteSpace, Is.EqualTo(a.Style.WhiteSpace), $"{where} white-space");
+
+        // Markers are counted from the assembled children, so they are worth comparing too: an item the
+        // two paths count apart would show here before it ever reached the page.
+        Assert.That(b.Marker, Is.EqualTo(a.Marker), $"{where} marker");
+        Assert.That(b.MarkerPosition, Is.EqualTo(a.MarkerPosition), $"{where} marker position");
         Assert.That(b.IsReplaced, Is.EqualTo(a.IsReplaced), $"{where} replaced");
     }
 

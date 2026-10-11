@@ -64,6 +64,14 @@ public sealed class FusedParent
     internal TextArea? Text { get; init; }
 
     /// <summary>
+    /// Gets the parent's list marker style. Every property in it is inherited, so an item is marked the
+    /// way its list was - and this is the only channel through which the user-agent sheet's
+    /// <c>disc</c> on a <c>ul</c> reaches the <c>li</c> under it, since the fused path reads each element
+    /// from the rules that matched that element alone.
+    /// </summary>
+    internal ListArea? List { get; init; }
+
+    /// <summary>
     /// Gets the tag name of the element this parent is, folded the way the box builder folds it. A list
     /// inside a list is left to its outer one's margins, so which element an area belongs to is part of
     /// what its children resolve - and the parent's own name is the whole of that answer.
@@ -111,6 +119,7 @@ public sealed class FusedParent
         // interned instance already carries every value a child could inherit from them.
         Font = style.ResolvedFont,
         Text = style.ResolvedText,
+        List = style.ResolvedList,
         Tag = tag,
         Ruby = style.RubyPosition,
         Orientation = style.DeclaredTextOrientation,
@@ -239,6 +248,15 @@ public static class FusedStyleFactory
                 cache.Store(key, border);
             }
         }
+
+        // A marker style is decided by the declarations and the list around the element - never by the
+        // element's identity - so it is an area like the text and joins the shared ones below.
+        var list = new ListArea
+        {
+            Type = ComputedStyle.ResolveListStyleTypeFused(find("list-style-type"), parent.List?.Type ?? "disc"),
+            Position = ComputedStyle.ResolveMarkerPositionFused(find("list-style-position"), parent.List?.Position ?? MarkerPosition.Outside),
+            Image = ComputedStyle.ResolveListStyleImageFused(find("list-style-image"), parent.List?.Image),
+        };
 
         // The flow an element's text runs in, resolved once. The box model needs it to map its four
         // logical sides onto physical ones and the keywords need it as they stand, so it is worked out
@@ -402,6 +420,7 @@ public static class FusedStyleFactory
         values.DisplayPositioning = display;
         values.VisualEffects = visual;
         values.Decoration = textDecoration;
+        values.List = pool is null ? list : pool.List(list);
         values.Position = PositionStyle.ReadFused(find, size, dimensions);
 
         // The table longhands are five property lookups no element that is not part of a table has a

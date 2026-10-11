@@ -130,6 +130,25 @@ public sealed class LayoutBox
     public Double Baseline { get; set; }
 
     /// <summary>
+    /// Gets or sets where a list item's marker is drawn, or null for a box that carries none.
+    /// </summary>
+    /// <remarks>
+    /// Worked out once the tree is arranged, by <see cref="LayoutEngine"/>, and read only by the
+    /// painting: the marker is text, and text is drawn where its box and its baseline say. It is kept
+    /// apart from the box's own <see cref="Text"/> and <see cref="Baseline"/> because a marker belongs to
+    /// no line - it hangs beside the item, in the space the list was given for it, and takes no part in
+    /// where the item's own text stands.
+    /// </remarks>
+    public Rect? MarkerBounds { get; set; }
+
+    /// <summary>
+    /// Gets the distance from the top edge of <see cref="MarkerBounds"/> to the baseline the marker
+    /// stands on, stated the way <see cref="Baseline"/> is - as a distance inside the box rather than a
+    /// coordinate of the page.
+    /// </summary>
+    public Double MarkerBaseline { get; set; }
+
+    /// <summary>
     /// Gets or sets the writing mode, text orientation and upright combining the box was laid out
     /// with. The whole subtree inherits it, so a vertical container makes its text vertical unless an
     /// inner box asks for horizontal again.

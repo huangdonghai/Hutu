@@ -27,6 +27,14 @@ namespace Hutu.Rendering;
 /// <see cref="ComputedStyle"/>'s reading of a thickness.
 /// </para>
 /// <para>
+/// The room a list leaves at the edge its items begin at is not stated here either - it comes from
+/// <see cref="ComputedStyle"/>'s defaults with the rest of the spacing HTML asks for. It is worth
+/// knowing where it lives when the markers are read: an item's marker hangs in that gutter, outside the
+/// list's own box, so a background given to the list stops at its edge and does not reach under its
+/// bullets. A browser gives the same room as a padding, which does reach; the difference shows only on a
+/// list that is given a background, and the sheet is not the place to settle it - the default is.
+/// </para>
+/// <para>
 /// It replaces the sheet AngleSharp.Css ships rather than adding to it, and is registered ahead of
 /// the CSS services so that theirs is never supplied: two sheets at the user-agent level would be two
 /// sources to reconcile, and a property both state would be decided by registration order.

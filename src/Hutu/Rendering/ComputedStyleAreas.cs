@@ -254,6 +254,47 @@ internal sealed record TextDecorationArea
 }
 
 /// <summary>
+/// Where a list item's marker stands relative to its text: beside it, in the space the list was given,
+/// or at the head of the first line.
+/// </summary>
+public enum MarkerPosition : Byte
+{
+    Outside,
+    Inside,
+}
+
+/// <summary>
+/// How an element's list items are marked, as <c>list-style</c> and its longhands ask for it.
+/// </summary>
+/// <remarks>
+/// All three properties are inherited, so this area travels to children the same way the font and the
+/// text do. The type is the name the page wrote - <c>disc</c>, <c>cjk-decimal</c> - or, for a marker
+/// written as a string, that string with its quotes: the parser hands back both, and it hands back some
+/// names as plain text because it has no enumeration entry for them, so the name is the one form that
+/// survives everything. Spelling a number out of it is <see cref="Boxes.CounterStyles"/>'s work.
+/// <para>
+/// The image is the reference as written - a URL is resolved against the document rather than the
+/// style, and nothing paints one yet - so it stays a string and stays unresolved.
+/// </para>
+/// </remarks>
+internal sealed record ListArea
+{
+    /// <summary>
+    /// What an element that is not a list item, or a list that says nothing, shares. The type is
+    /// <c>disc</c> and the position <c>outside</c>, which is what CSS makes both initial; a
+    /// <c>ul</c> that reaches them through the user-agent sheet and an element that inherits them from
+    /// its parent end up on this same value either way.
+    /// </summary>
+    internal static readonly ListArea Default = new();
+
+    internal String Type { get; init; } = "disc";
+
+    internal MarkerPosition Position { get; init; } = MarkerPosition.Outside;
+
+    internal String? Image { get; init; }
+}
+
+/// <summary>
 /// One intern table per area, alive for one box tree.
 /// </summary>
 /// <remarks>
@@ -286,6 +327,21 @@ public sealed class StyleIntern
     private readonly Dictionary<TextArea, TextArea> _text = new();
 
     private readonly Dictionary<TextDecorationArea, TextDecorationArea> _decoration = new();
+
+    private readonly Dictionary<ListArea, ListArea> _list = new();
+
+    /// <summary>Gets the instance standing for a list marker style.</summary>
+    internal ListArea List(ListArea area)
+    {
+        if (_list.TryGetValue(area, out var existing))
+        {
+            return existing;
+        }
+
+        _list[area] = area;
+
+        return area;
+    }
 
     /// <summary>Gets the instance standing for a text decoration area.</summary>
     internal TextDecorationArea Decoration(TextDecorationArea area)
