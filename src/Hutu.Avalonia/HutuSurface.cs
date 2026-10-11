@@ -41,6 +41,39 @@ public sealed class HutuSurface : Control
     private LinkTarget? _pressed;
     private Point _pressedAt;
 
+    /// <summary>How much the document is scaled for display, 1 meaning no scaling.</summary>
+    private Double _zoom = 1;
+
+    /// <summary>
+    /// Gets or sets the page zoom. The document itself has already been laid out at the scaled
+    /// viewport by the time this is set, so the surface's part is only to report the scaled extent to
+    /// the surrounding scroller and to draw - and take pointer events in - the scaled pixels.
+    /// </summary>
+    public Double Zoom
+    {
+        get => _zoom;
+        set
+        {
+            if (Math.Abs(_zoom - value) < 1e-6)
+            {
+                return;
+            }
+
+            _zoom = value;
+            InvalidateMeasure();
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>
+    /// Raised when the reader asks for a zoom with Ctrl + the wheel. The argument is the factor to
+    /// apply - above one for a wheel up, below one for a wheel down.
+    /// </summary>
+    public event Action<Double>? ZoomWheel;
+
+    /// <summary>Turns a point in this control's pixels into the document coordinates the core expects.</summary>
+    private Point ToDocument(Point point) => new(point.X / _zoom, point.Y / _zoom);
+
     // One instance rather than one per assignment, so a move over text does not allocate and the
     // cursor a test reads back is the same object every time.
     private static readonly Cursor TextCursor = new(StandardCursorType.Ibeam);
@@ -70,7 +103,9 @@ public sealed class HutuSurface : Control
     {
         var layout = _view.Layout;
 
-        return layout is null ? default : new Size(layout.Width, layout.Height);
+        return layout is null
+            ? default
+            : new Size(layout.Width * _zoom, layout.Height * _zoom);
     }
 
     public override void Render(DrawingContext context)
@@ -83,10 +118,11 @@ public sealed class HutuSurface : Control
         }
 
         context.Custom(new SkiaPaintDrawOperation(
-            new Rect(0, 0, paint.Bounds.Width, paint.Bounds.Height),
+            new Rect(0, 0, paint.Bounds.Width * _zoom, paint.Bounds.Height * _zoom),
             paint,
             _executor,
-            _scroll));
+            _scroll,
+            _zoom));
     }
 
     /// <summary>
@@ -103,11 +139,11 @@ public sealed class HutuSurface : Control
             return;
         }
 
-        // The point a pointer event carries is already a point of the document: the surface is the
-        // document's own size and the presenter drags it under the viewport, so the coordinates the
-        // events report are the layout's own. That is what keeps scrolling out of the core, where
-        // nothing knows about it - adding the offset here would count it twice.
-        var point = e.GetPosition(this);
+        // A pointer event reports a point in this control's pixels; with a zoom applied those are the
+        // document's pixels scaled up, so the point is brought back to document coordinates before it
+        // reaches the core. That is what keeps scrolling out of the core, where nothing knows about it -
+        // and what keeps the offset from being counted twice.
+        var point = ToDocument(e.GetPosition(this));
 
         // Marked before the gesture starts, because what the press changes - a rule answering to
         // `:active` - moves the very boxes the gesture is about to be placed against.
@@ -131,7 +167,7 @@ public sealed class HutuSurface : Control
             // Remembered rather than acted on: whether this was a click on a link is only known once
             // the button comes up again, without the gesture having turned into a selection.
             _pressed = _view.LinkAt(point.X, point.Y);
-            _pressedAt = e.GetPosition(this);
+            _pressedAt = point;
 
             e.Pointer.Capture(this);
         }
@@ -157,7 +193,7 @@ public sealed class HutuSurface : Control
     {
         base.OnPointerMoved(e);
 
-        var point = e.GetPosition(this);
+        var point = ToDocument(e.GetPosition(this));
 
         if (_dragging)
         {
@@ -337,7 +373,7 @@ public sealed class HutuSurface : Control
 
         // The release can land somewhere the last move never reported, so the final position comes
         // from here rather than being assumed to be the previous one.
-        var point = e.GetPosition(this);
+        var point = ToDocument(e.GetPosition(this));
 
         _view.ExtendSelection(point.X, point.Y);
 
@@ -350,7 +386,7 @@ public sealed class HutuSurface : Control
         SetHint(landed.Hint);
         Repaint(landed.Changed);
 
-        Follow(pressed, e.GetPosition(this));
+        Follow(pressed, point);
 
         InvalidateVisual();
         e.Handled = true;
@@ -368,6 +404,25 @@ public sealed class HutuSurface : Control
 
         // Whatever was being pressed is let go of as well: the button is not coming back to this.
         Repaint(_view.PointerReleased());
+    }
+
+    /// <summary>
+    /// Answers Ctrl + the wheel with a zoom instead of a scroll. The event is taken here, at the
+    /// innermost control rather than at the scroller, because a presenter deeper in the tree handles
+    /// the wheel first and would move the page before the zoom could be asked for - which is exactly
+    /// what a reader holding Ctrl does not want. Without Ctrl the event is left alone, so it bubbles
+    /// up to the scroller and scrolls the way it always has.
+    /// </summary>
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+    {
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            e.Handled = true;
+            ZoomWheel?.Invoke(e.Delta.Y > 0 ? 1.1 : 1 / 1.1);
+            return;
+        }
+
+        base.OnPointerWheelChanged(e);
     }
 
     /// <summary>

@@ -14,13 +14,19 @@
     </Design.DataContext>
 
     <Grid RowDefinitions="Auto,*" RowSpacing="8">
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="6">
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto" ColumnSpacing="6">
             <Button Grid.Column="0" x:Name="BackButton" Content="←" ToolTip.Tip="Backward" Click="Back_Click" IsEnabled="False" />
             <Button Grid.Column="1" x:Name="ForwardButton" Content="→" ToolTip.Tip="Forward" Click="Forward_Click" IsEnabled="False" />
             <Button Grid.Column="2" x:Name="RefreshButton" Content="⟳" ToolTip.Tip="Refresh" Click="Refresh_Click" IsEnabled="False" />
             <TextBox Grid.Column="3" x:Name="AddressBar" PlaceholderText="Enter URL..." KeyDown="AddressBar_KeyDown" />
             <ToggleButton Grid.Column="4" x:Name="OverlayButton" Content="FPS" IsChecked="False"
                           ToolTip.Tip="Rendering Diagnostics Overlay (FPS / Render Time)" Click="Overlay_Click" />
+            <StackPanel Grid.Column="5" Orientation="Horizontal" VerticalAlignment="Center" ToolTip.Tip="Zoom: Ctrl + wheel, Ctrl + Plus, Ctrl + Minus, Ctrl + 0">
+                <Button Content="−" Width="28" Click="ZoomOut_Click" />
+                <TextBlock x:Name="ZoomLabel" Text="100%" VerticalAlignment="Center" Margin="4,0" MinWidth="44" TextAlignment="Center" />
+                <Button Content="+" Width="28" Click="ZoomIn_Click" />
+                <Button Content="⤢" Width="28" Margin="4,0,0,0" Click="ZoomReset_Click" ToolTip.Tip="Reset zoom (Ctrl + 0)" />
+            </StackPanel>
         </Grid>
 
         <hutu:HutuView Grid.Row="1" x:Name="MyHutuView">

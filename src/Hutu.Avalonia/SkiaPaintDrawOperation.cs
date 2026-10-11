@@ -18,13 +18,15 @@ internal sealed class SkiaPaintDrawOperation : ICustomDrawOperation
     private readonly PaintList _paint;
     private readonly SkiaPaintExecutor _executor;
     private readonly Offset _scroll;
+    private readonly Double _zoom;
 
-    public SkiaPaintDrawOperation(Rect bounds, PaintList paint, SkiaPaintExecutor executor, Offset scroll)
+    public SkiaPaintDrawOperation(Rect bounds, PaintList paint, SkiaPaintExecutor executor, Offset scroll, Double zoom)
     {
         Bounds = bounds;
         _paint = paint;
         _executor = executor;
         _scroll = scroll;
+        _zoom = zoom;
     }
 
     public Rect Bounds { get; }
@@ -47,6 +49,14 @@ internal sealed class SkiaPaintDrawOperation : ICustomDrawOperation
         }
 
         using var lease = feature.Lease();
-        _executor.Execute(_paint, lease.SkCanvas, _scroll);
+        var canvas = lease.SkCanvas;
+
+        // The document is drawn in its own coordinates and the page zoom is a plain scale of the whole
+        // thing: a fixed or sticky box is offset by the scroll in this same - already scaled - space, so
+        // the executor's own counter-translation keeps it pinned exactly as it does at zoom 1.
+        canvas.Save();
+        canvas.Scale((Single)_zoom);
+        _executor.Execute(_paint, canvas, _scroll);
+        canvas.Restore();
     }
 }

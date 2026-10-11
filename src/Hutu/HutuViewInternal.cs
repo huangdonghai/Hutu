@@ -91,6 +91,26 @@ public sealed class HutuViewInternal : IDisposable
     /// <summary>Gets the height the styles were last computed against.</summary>
     public int ViewportHeight => _renderDevice.ViewPortHeight;
 
+    /// <summary>
+    /// Gets or sets the page zoom. A change lays the document out again at the scaled viewport - the
+    /// window divided by the zoom - which is what makes a zoomed page reflow rather than merely
+    /// magnify. The viewport itself is untouched, so no size report is needed from the host.
+    /// </summary>
+    public Double Zoom
+    {
+        get => _renderDevice.Zoom;
+        set
+        {
+            if (Math.Abs(_renderDevice.Zoom - value) < 1e-6)
+            {
+                return;
+            }
+
+            _renderDevice.Zoom = value;
+            UpdateRenderTree();
+        }
+    }
+
     /// <summary>Gets the current selection, or null when nothing is selected.</summary>
     public TextSelection? Selection => _selection;
 
@@ -478,7 +498,11 @@ public sealed class HutuViewInternal : IDisposable
 
         return bounds is null
             ? null
-            : layout.VerticalFrameOffsetFor(bounds.Value, ViewportHeight, alignment, currentOffset);
+            : layout.VerticalFrameOffsetFor(
+                bounds.Value,
+                ViewportHeight / Zoom,
+                alignment,
+                currentOffset);
     }
 
     /// <summary>

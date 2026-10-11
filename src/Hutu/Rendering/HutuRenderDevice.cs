@@ -40,10 +40,29 @@ public sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
     public Int32 ViewPortHeight { get; private set; }
 
     /// <inheritdoc />
-    public Double RenderWidth => ViewPortWidth;
+    public Double RenderWidth => ViewPortWidth / Zoom;
 
     /// <inheritdoc />
-    public Double RenderHeight => ViewPortHeight;
+    public Double RenderHeight => ViewPortHeight / Zoom;
+
+    /// <summary>How much the page is scaled for display, 1 meaning no scaling.</summary>
+    private Double _zoom = 1;
+
+    /// <summary>
+    /// Gets or sets the page zoom, the way a browser's Ctrl + does. The viewport the document is laid
+    /// out at is the window divided by the zoom, so a change reflows the page: the content is laid out
+    /// again at the scaled width and drawn that much larger, rather than being magnified after the fact.
+    /// </summary>
+    /// <remarks>
+    /// The font size and the resolution are left alone, because a zoomed pixel is still a pixel: a
+    /// 16px face keeps its 16 CSS pixels and is merely drawn over two of them. It is the viewport -
+    /// and with it every percentage, every <c>vw</c>, and every media query - that scales.
+    /// </remarks>
+    public Double Zoom
+    {
+        get => _zoom;
+        set => _zoom = value > 0 ? value : 1;
+    }
 
     /// <summary>
     /// Gets or sets the default font size in pixels. It stands in for the root font size, so it

@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
 using Hutu.Rendering.Interaction;
 using Hutu.Skia;
 using System;
@@ -55,6 +56,21 @@ public class HutuView : ScrollViewer
     /// </summary>
     private Offset? _reanchor;
 
+    /// <summary>The smallest the page can be zoomed to.</summary>
+    private const Double MinZoom = 0.1;
+
+    /// <summary>The largest the page can be zoomed to.</summary>
+    private const Double MaxZoom = 10;
+
+    /// <summary>The current page zoom; 1 means no scaling. It is what the keyboard and wheel drive.</summary>
+    public Double Zoom { get; private set; } = 1;
+
+    /// <summary>Raised after the page zoom changes, so a host can show the new level.</summary>
+    public event Action? ZoomChanged;
+
+    /// <summary>The window the zoom keys are listened on, kept for the detach that unregisters them.</summary>
+    private TopLevel? _attachedTopLevel;
+
     public HutuView()
     {
         // The same loader decodes the images for layout and draws them, so a run is never measured
@@ -81,6 +97,10 @@ public class HutuView : ScrollViewer
         // change leaves the host nothing to do but draw again - which also covers a selection made
         // through the API rather than by pointing at the text.
         _internalView.SelectionChanged += _surface.InvalidateVisual;
+
+        // The surface catches Ctrl + the wheel before the scroller can scroll with it, and hands the
+        // factor here to be applied.
+        _surface.ZoomWheel += factor => ChangeZoom(Zoom * factor);
     }
 
     public void AddEpubResourceSource(string epubFileName)
@@ -171,30 +191,46 @@ public class HutuView : ScrollViewer
 
         // The scroller's own offset is the frame offset - the point of the document the viewport's
         // top left corner stands at - because the presenter drags the document under itself from the
-        // layout's left edge on every axis. The reader's frame, where zero is the corner the page
+        // layout's left edge on every axis. It is counted in the surface's pixels, which are the
+        // document's pixels scaled by the zoom, so it is scaled back on the way down: the painter
+        // speaks in document pixels. The reader's frame, where zero is the corner the page
         // begins at, exists only at this view's API, and the mirror between the two is taken where
         // an offset crosses - in <see cref="ScrollTo"/>, and in <see cref="ToReader"/> here.
         _surface.SetScrollOffset(new Offset(
-            Math.Clamp(Offset.X, 0, range.X),
-            Math.Clamp(Offset.Y, 0, range.Y)));
+            Math.Clamp(Offset.X, 0, range.X) / Zoom,
+            Math.Clamp(Offset.Y, 0, range.Y) / Zoom));
     }
 
     /// <summary>
+    /// Gets the viewport the document is laid out at: the window divided by the zoom. The mirror
+    /// between the reader's and the scroller's frames is taken in the document's pixels, so it is
+    /// this viewport - not the window's - that the mirror asks for.
+    /// </summary>
+    private Double LayoutViewportWidth => _internalView.ViewportWidth / Zoom;
+
+    /// <summary>The viewport height the document is laid out at, in document pixels.</summary>
+    private Double LayoutViewportHeight => _internalView.ViewportHeight / Zoom;
+
+    /// <summary>
     /// Gets where a reader is for where the scroller says the viewport stands: the two frames differ
-    /// on any axis the page reads against, and the core works out which those are.
+    /// on any axis the page reads against, and the core works out which those are. The scroller's
+    /// offset arrives in the surface's pixels and is scaled back to the document's before the mirror
+    /// is taken, and the answer comes back in document pixels.
     /// </summary>
     private Offset ToReader(Offset presenter)
     {
         var layout = _internalView.Layout;
+        var frame = new Offset(presenter.X / Zoom, presenter.Y / Zoom);
 
         return layout is null
-            ? presenter
-            : layout.ScrollPosition(presenter, _internalView.ViewportWidth, _internalView.ViewportHeight);
+            ? frame
+            : layout.ScrollPosition(frame, LayoutViewportWidth, LayoutViewportHeight);
     }
 
     /// <summary>
     /// Puts the viewport back at a reader's place, the place being turned into the offset the
-    /// scroller counts from the layout's left edge.
+    /// scroller counts from the layout's left edge. The mirror answers in document pixels, so the
+    /// result is scaled up into the scroller's before it is assigned.
     /// </summary>
     private void Reanchor(Offset reader)
     {
@@ -203,9 +239,9 @@ public class HutuView : ScrollViewer
             return;
         }
 
-        var presenter = layout.FrameOffset(reader, _internalView.ViewportWidth, _internalView.ViewportHeight);
+        var presenter = layout.FrameOffset(reader, LayoutViewportWidth, LayoutViewportHeight);
 
-        Offset = new Vector(presenter.X, presenter.Y);
+        Offset = new Vector(presenter.X * Zoom, presenter.Y * Zoom);
     }
 
     public string GetHtml()
@@ -333,7 +369,7 @@ public class HutuView : ScrollViewer
             UpdateLayout();
         }
 
-        var range = ScrollableRange();
+        var range = ScrollableRangeDoc();
         var reader = new Offset(
             Math.Clamp(x, 0, range.X),
             Math.Clamp(y, 0, range.Y));
@@ -341,11 +377,12 @@ public class HutuView : ScrollViewer
         // The scroller counts from the layout's left edge on every axis, so a reader's offset - zero
         // at the corner the page begins at - has to be mirrored before it is assigned, which is what
         // puts a vertical page's first column against the right edge at the start of the document.
+        // The mirror works in document pixels, so the answer is scaled up into the scroller's.
         var presenter = _internalView.Layout is { } layout
-            ? layout.FrameOffset(reader, _internalView.ViewportWidth, _internalView.ViewportHeight)
+            ? layout.FrameOffset(reader, LayoutViewportWidth, LayoutViewportHeight)
             : reader;
 
-        Offset = new Vector(presenter.X, presenter.Y);
+        Offset = new Vector(presenter.X * Zoom, presenter.Y * Zoom);
     }
 
     /// <summary>Scrolls to the top of the document, keeping the horizontal position.</summary>
@@ -379,9 +416,9 @@ public class HutuView : ScrollViewer
         ArgumentNullException.ThrowIfNull(element);
 
         // Asked in the layout's frame, because an element's box is a rectangle of the layout, and the
-        // scroller's own offset already is one; the answer comes back in the reader's frame, which is
-        // what ScrollTo takes.
-        var target = _internalView.GetVerticalFrameOffset(element, alignment, Offset.Y);
+        // scroller's own offset already is one - scaled back into document pixels, as the frame
+        // counts in those; the answer comes back in the reader's frame, which is what ScrollTo takes.
+        var target = _internalView.GetVerticalFrameOffset(element, alignment, Offset.Y / Zoom);
 
         if (target is null)
         {
@@ -389,9 +426,9 @@ public class HutuView : ScrollViewer
         }
 
         var place = _internalView.Layout!.ScrollPosition(
-            new Offset(Offset.X, target.Value),
-            _internalView.ViewportWidth,
-            _internalView.ViewportHeight);
+            new Offset(Offset.X / Zoom, target.Value),
+            LayoutViewportWidth,
+            LayoutViewportHeight);
 
         ScrollTo(place.X, place.Y);
         return true;
@@ -430,6 +467,53 @@ public class HutuView : ScrollViewer
     }
 
     /// <summary>
+    /// Scales the page, keeping the document point under the viewport's top-left where it was so a zoom
+    /// grows the content out from where the reader is looking rather than from the origin.
+    /// </summary>
+    /// <remarks>
+    /// A zoom is a relayout, not a magnification: the core is told the new level first, which lays the
+    /// document out again at the scaled viewport - the window divided by the zoom - the way a browser
+    /// reflows a page its reader has zoomed. The surface is told second, because the extent it reports
+    /// is the new document's size in the scroller's pixels.
+    /// </remarks>
+    private void ChangeZoom(Double next)
+    {
+        var clamped = Math.Clamp(next, MinZoom, MaxZoom);
+
+        if (Math.Abs(clamped - Zoom) < 1e-6)
+        {
+            return;
+        }
+
+        // The scroller's offset is in the surface's pixels, which are the document's pixels scaled by the
+        // current zoom. Hold the document point at the viewport's top-left across the change.
+        var docX = Offset.X / Zoom;
+        var docY = Offset.Y / Zoom;
+
+        _internalView.Zoom = clamped;
+        _surface.Zoom = clamped;
+        Zoom = clamped;
+
+        // Caught up on rather than deferred, so the extent the new layout produces is known before the
+        // offset is put back: the scroller clamps whatever it is handed against the extent it holds.
+        _surface.InvalidateMeasure();
+        UpdateLayout();
+
+        Offset = new Vector(docX * clamped, docY * clamped);
+        ApplyScrollOffset();
+        ZoomChanged?.Invoke();
+    }
+
+    /// <summary>Zooms in one step, the way Ctrl++ does.</summary>
+    public void ZoomIn() => ChangeZoom(Zoom + 0.1);
+
+    /// <summary>Zooms out one step, the way Ctrl+- does.</summary>
+    public void ZoomOut() => ChangeZoom(Zoom - 0.1);
+
+    /// <summary>Resets the zoom to 100%, the way Ctrl+0 does.</summary>
+    public void ZoomReset() => ChangeZoom(1);
+
+    /// <summary>
     /// Gets how far through the document the viewport has moved, from 0 at the beginning to 1 at the
     /// end. A document that fits is reported as fully scrolled.
     /// </summary>
@@ -437,20 +521,35 @@ public class HutuView : ScrollViewer
     {
         get
         {
-            var scrollable = ScrollableRange().Y;
+            var scrollable = ScrollableRangeDoc().Y;
 
             return scrollable <= 0 ? 1 : Math.Clamp(ToReader(new Offset(0, Offset.Y)).Y / scrollable, 0, 1);
         }
     }
 
     /// <summary>Gets the distance the document can scroll, which is zero where it fits the viewport.</summary>
+    /// <remarks>
+    /// The scroller's offset is counted in the surface's pixels, which are the document's pixels
+    /// scaled by the zoom, so the extent is the laid-out size times the zoom less the window.
+    /// </remarks>
     private Vector ScrollableRange()
+    {
+        var document = ScrollableRangeDoc();
+
+        return new Vector(document.X * Zoom, document.Y * Zoom);
+    }
+
+    /// <summary>
+    /// Gets the distance the document can scroll in its own pixels, which is zero where it fits the
+    /// viewport it was laid out at.
+    /// </summary>
+    private Vector ScrollableRangeDoc()
     {
         var layout = _internalView.Layout;
 
         return new Vector(
-            Math.Max(0, (layout?.Width ?? 0) - _internalView.ViewportWidth),
-            Math.Max(0, (layout?.Height ?? 0) - _internalView.ViewportHeight));
+            Math.Max(0, (layout?.Width ?? 0) - LayoutViewportWidth),
+            Math.Max(0, (layout?.Height ?? 0) - LayoutViewportHeight));
     }
 
     protected override Size MeasureOverride(Size availableSize)
@@ -524,5 +623,84 @@ public class HutuView : ScrollViewer
         }
 
         base.OnKeyDown(e);
+    }
+
+    /// <summary>
+    /// Puts the zoom keys on the window, where a browser keeps them.
+    /// </summary>
+    /// <remarks>
+    /// A key only reaches this view when one of its descendants holds the focus, and a reader pressing
+    /// Ctrl + Plus expects the page to zoom whichever control - if any - has it. Listening at the window
+    /// answers that; the handler takes the bubble phase with handled events included, so the keys are
+    /// seen wherever they end up.
+    /// </remarks>
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+
+        _attachedTopLevel = TopLevel.GetTopLevel(this);
+        _attachedTopLevel?.AddHandler(
+            KeyDownEvent,
+            OnWindowKeyDown,
+            RoutingStrategies.Bubble,
+            handledEventsToo: true);
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        _attachedTopLevel?.RemoveHandler(KeyDownEvent, OnWindowKeyDown);
+        _attachedTopLevel = null;
+
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    /// <summary>
+    /// Ctrl with the zoom keys scales the page, the way a browser does: Plus in, Minus out, 0 back to
+    /// 100%. Everything else is left exactly as it was, so keys the focused control wants - Ctrl+C in
+    /// the address bar, say - still reach it untouched.
+    /// </summary>
+    private void OnWindowKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (!e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case Key.OemPlus:
+            case Key.Add:
+                e.Handled = true;
+                ChangeZoom(Zoom + 0.1);
+                break;
+
+            case Key.OemMinus:
+            case Key.Subtract:
+                e.Handled = true;
+                ChangeZoom(Zoom - 0.1);
+                break;
+
+            case Key.D0:
+            case Key.NumPad0:
+                e.Handled = true;
+                ChangeZoom(1);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Ctrl + wheel zooms the page instead of scrolling it: a wheel up grows the content, a wheel down
+    /// shrinks it, both in the same 10% steps the keys use.
+    /// </summary>
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+    {
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            e.Handled = true;
+            ChangeZoom(Zoom * (e.Delta.Y > 0 ? 1.1 : 1 / 1.1));
+            return;
+        }
+
+        base.OnPointerWheelChanged(e);
     }
 }

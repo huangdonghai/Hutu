@@ -37,6 +37,10 @@ public partial class MainView : ContentPage
         // history - so the back button walks back out of it.
         MyHutuView.NavigationRequested += Follow;
 
+        // The zoom indicator tracks the view's zoom level, including the keyboard and wheel shortcuts.
+        MyHutuView.ZoomChanged += UpdateZoomLabel;
+        UpdateZoomLabel();
+
         UpdateNavigation();
 
         // The page the reader last had open is opened again, so the app comes back where it was left
@@ -111,6 +115,16 @@ public partial class MainView : ContentPage
         if (_position >= 0)
             await GoAsync(_position);
     }
+
+    /// <summary>Shows the current page zoom as a percentage next to the zoom buttons.</summary>
+    private void UpdateZoomLabel() =>
+        ZoomLabel.Text = $"{(Int32)Math.Round(MyHutuView.Zoom * 100)}%";
+
+    private void ZoomIn_Click(object? sender, RoutedEventArgs e) => MyHutuView.ZoomIn();
+
+    private void ZoomOut_Click(object? sender, RoutedEventArgs e) => MyHutuView.ZoomOut();
+
+    private void ZoomReset_Click(object? sender, RoutedEventArgs e) => MyHutuView.ZoomReset();
 
     /// <summary>
     /// Answers the fourth and fifth mouse buttons, which are the browser's back and forward. The press
