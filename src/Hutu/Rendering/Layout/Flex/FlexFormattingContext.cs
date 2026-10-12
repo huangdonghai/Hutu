@@ -155,6 +155,7 @@ internal sealed partial class FlexFormattingContext
         var crossGap = Math.Max(0, isRow ? flex.RowGap : flex.ColumnGap);
 
         var items = new List<FlexItem>();
+        var sequence = 0;
 
         foreach (var child in box.Children)
         {
@@ -162,12 +163,17 @@ internal sealed partial class FlexFormattingContext
             // placed against the container instead.
             if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child))
             {
-                items.Add(CreateItem(child, isRow, mainSize, context));
+                items.Add(CreateItem(child, isRow, mainSize, context, sequence++));
             }
         }
 
-        // `order` is a stable sort key, so the document order of equal items is preserved.
-        items.Sort(static (left, right) => left.Order.CompareTo(right.Order));
+        // `order` is a stable sort key, so the document order of equal items is preserved - which takes
+        // a second key to do: the sort trades items whose order is the same about as it partitions,
+        // and above a container's handful of children the row arrives in an order no author wrote.
+        items.Sort(static (left, right) =>
+            left.Order != right.Order
+                ? left.Order.CompareTo(right.Order)
+                : left.Sequence.CompareTo(right.Sequence));
 
         foreach (var item in items)
         {
@@ -218,7 +224,8 @@ internal sealed partial class FlexFormattingContext
         Box child,
         Boolean isRow,
         Double? mainSize,
-        LayoutContext context)
+        LayoutContext context,
+        Int32 sequence)
     {
         var style = child.Style;
         var flex = style.Flex;
@@ -241,6 +248,7 @@ internal sealed partial class FlexFormattingContext
             Basis = flex.Basis,
             BasisIsContent = flex.BasisIsContent,
             Order = flex.Order,
+            Sequence = sequence,
             AlignSelf = flex.AlignSelf,
             InsetMain = insetMain,
             InsetCross = insetCross,

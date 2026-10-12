@@ -163,8 +163,16 @@ internal sealed class TableGrid
         }
 
         // Cells that span several columns are folded in from the narrowest span outwards, so a
-        // `colspan="2"` cell cannot claim more than its share of the columns it covers.
-        spanning.Sort(static (left, right) => left.Span.CompareTo(right.Span));
+        // <c>colspan="2"</c> cell cannot claim more than its share of the columns it covers. The row
+        // and column settle what the span alone cannot: a sort that only compares the span trades
+        // equal spans about, and which column a cell's width was spread over then depends on how many
+        // cells the table has.
+        spanning.Sort(static (left, right) =>
+            left.Span != right.Span
+                ? left.Span.CompareTo(right.Span)
+                : left.Row != right.Row
+                    ? left.Row.CompareTo(right.Row)
+                    : left.Column.CompareTo(right.Column));
 
         foreach (var cell in spanning)
         {

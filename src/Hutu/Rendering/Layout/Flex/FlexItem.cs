@@ -27,6 +27,13 @@ internal sealed class FlexItem
     public Boolean BasisIsContent;
 
     public Int32 Order;
+
+    /// <summary>
+    /// Gets or sets where the item stood among its siblings, which is the order it keeps when nothing
+    /// says otherwise: <c>order</c> is compared first and this settles the ties, because the sort that
+    /// arranges the items trades equal keys about rather than leaving them where they were.
+    /// </summary>
+    public Int32 Sequence;
     public FlexAlignment AlignSelf;
 
     // Box model along the main axis, in the direction the flex container runs.

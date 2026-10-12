@@ -280,6 +280,32 @@ public sealed class FlexLayoutTests
     }
 
     [Test]
+    public async Task ItemsThatNameNoOrderKeepTheOrderTheDocumentDid()
+    {
+        // Twenty items, each one character wider than the last, none declaring `order`: a sort that is
+        // not stable permutes them, and the row comes out in an order nobody wrote. The count matters -
+        // the sort switches from its insertion path to its partitioning one above sixteen, which is
+        // where equal keys start trading places.
+        var made = String.Concat(Enumerable.Range(0, 20).Select(index =>
+            $"<div id='i{index}' style='width:{10 + index}px'></div>"));
+
+        using var view = CreateView(600);
+        await view.SetHtml(
+            $"<html><body style='margin:0'><div style='display:flex;width:600px'>{made}</div></body></html>");
+
+        var x = 0.0;
+
+        for (var index = 0; index < 20; index++)
+        {
+            var box = Find(view, $"i{index}").BorderBox;
+
+            Assert.That(box.X, Is.EqualTo(x).Within(0.5), $"item {index} follows item {index - 1}");
+            Assert.That(box.Width, Is.EqualTo(10 + index).Within(0.5));
+            x += 10 + index;
+        }
+    }
+
+    [Test]
     public async Task PaddingAndBorderAreExcludedFromTheContentSize()
     {
         using var view = CreateView(400);
