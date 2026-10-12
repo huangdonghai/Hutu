@@ -26,6 +26,22 @@ namespace Hutu.Skia;
 /// </remarks>
 public sealed class SkiaImageLoader : IImageLoader, IDisposable
 {
+    /// <summary>
+    /// How many pictures are asked for at once. A page's images go to a handful of hosts, and one
+    /// connection at a time would make a reader wait out every round trip in turn - fifty of them at
+    /// a tenth of a second is five seconds of nothing on screen - while a hundred at once only buys
+    /// queueing at the server and starves the document's own requests of bandwidth.
+    /// </summary>
+    private const Int32 ConcurrentFetches = 8;
+
+    /// <summary>
+    /// How long one image may take to answer and send. The requester's own timeout stops at the
+    /// response's head, so a host that sends a few bytes and then stops - or a redirect that walks
+    /// forever - is outside it, and would otherwise hold one of the slots open for as long as the
+    /// process lives.
+    /// </summary>
+    private static readonly TimeSpan FetchDeadline = TimeSpan.FromSeconds(10);
+
     private readonly ConcurrentDictionary<String, Entry> _entries = new(StringComparer.Ordinal);
 
     public ImageSize? GetSize(String url) =>
@@ -37,18 +53,53 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
 
     public async Task LoadAsync(IReadOnlyList<String> urls, ResourceFetcher fetch, CancellationToken cancellationToken)
     {
+        // Already attempted - including the failed attempts, which must not be retried on every
+        // relayout.
+        var pending = new List<String>(urls.Count);
+
         foreach (var url in urls)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Already attempted - including the failed attempts, which must not be retried on every
-            // relayout.
-            if (_entries.ContainsKey(url))
+            if (!_entries.ContainsKey(url))
             {
-                continue;
+                pending.Add(url);
             }
+        }
 
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        // In parallel, but with each result written to its own slot: what one image costs another
+        // image must not depend on which of them answers first, and a decoded picture is never
+        // thrown away because a slower one came in beside it.
+        using var gate = new SemaphoreSlim(ConcurrentFetches);
+        var loads = new List<Task>(pending.Count);
+
+        foreach (var url in pending)
+        {
+            loads.Add(FillAsync(url, fetch, gate, cancellationToken));
+        }
+
+        await Task.WhenAll(loads).ConfigureAwait(false);
+    }
+
+    /// <summary>Loads one URL into the cache once a slot in the gate is free, if it loads at all.</summary>
+    private async Task FillAsync(
+        String url,
+        ResourceFetcher fetch,
+        SemaphoreSlim gate,
+        CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
             _entries[url] = await LoadOneAsync(url, fetch, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 
@@ -269,9 +320,14 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
 
     private static async Task<Entry> LoadOneAsync(String url, ResourceFetcher fetch, CancellationToken cancellationToken)
     {
+        // One clock over the whole of it, so a picture that is slow to answer and slow to send is
+        // given up on once rather than at every await.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(FetchDeadline);
+
         try
         {
-            await using var stream = await fetch(url, cancellationToken).ConfigureAwait(false);
+            await using var stream = await fetch(url, deadline.Token).ConfigureAwait(false);
 
             if (stream is null)
             {
@@ -279,13 +335,18 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
             }
 
             using var buffer = new MemoryStream();
-            await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+            await stream.CopyToAsync(buffer, deadline.Token).ConfigureAwait(false);
 
             return Decode(buffer.ToArray());
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The reader moved on; the page they asked for is not what is being reported on.
+            throw;
+        }
         catch (OperationCanceledException)
         {
-            throw;
+            return Entry.Failed($"the resource took longer than {FetchDeadline.TotalSeconds:F0}s");
         }
         catch (Exception exception)
         {

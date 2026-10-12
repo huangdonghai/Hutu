@@ -10,12 +10,34 @@ namespace Hutu;
 
 public sealed class HookHttpRequest : BaseRequester
 {
-    private readonly IEnumerable<IRequester> _resourceRequesters;
-    private readonly DefaultHttpRequester _defaultHttpRequester = new();
+    /// <summary>
+    /// How long a host has to answer. AngleSharp's requester waits 45s, which is a lifetime for a
+    /// picture: a page that refers to one server that has stopped answering would hold its whole
+    /// load - and a reader with it - for three quarters of a minute. A real page on a real line
+    /// answers in seconds, and what does not is not going to.
+    /// </summary>
+    private static readonly TimeSpan AnswerTimeout = TimeSpan.FromSeconds(15);
 
-    public HookHttpRequest(IEnumerable<IRequester> resourceRequesters)
+    private readonly IEnumerable<IRequester> _resourceRequesters;
+    private readonly DefaultHttpRequester _defaultHttpRequester;
+
+    /// <summary>
+    /// Creates the requester, asking pages as <paramref name="userAgent"/> - or as AngleSharp's own
+    /// agent when none is given, which is what a page's server-side skin detection sees.
+    /// </summary>
+    public HookHttpRequest(IEnumerable<IRequester> resourceRequesters, String? userAgent = null)
     {
         _resourceRequesters = resourceRequesters;
+        _defaultHttpRequester = userAgent is { Length: > 0 } agent
+            ? new DefaultHttpRequester(agent) { Timeout = AnswerTimeout }
+            : new DefaultHttpRequester { Timeout = AnswerTimeout };
+    }
+
+    /// <summary>Gets or sets the agent the next request is announced as.</summary>
+    public String UserAgent
+    {
+        get => _defaultHttpRequester.Headers["User-Agent"];
+        set => _defaultHttpRequester.Headers["User-Agent"] = value;
     }
 
     public override bool SupportsProtocol(string protocol)

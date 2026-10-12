@@ -111,6 +111,23 @@ public sealed class HutuViewInternal : IDisposable
         }
     }
 
+    /// <summary>
+    /// Gets or sets the agent a page is asked as. It is the engine's own name rather than a borrowed
+    /// browser's, because a reader is entitled to know what fetched them - but it has to say something
+    /// about the shape of the reader, since a page's server can pick what to send from it alone:
+    /// MediaWiki answers an agent it does not recognise with its mobile skin, which is another
+    /// document - another markup, another set of style sheets - than the desktop one the reader was
+    /// comparing the rendering against.
+    /// </summary>
+    /// <remarks>
+    /// Set it before a load: the browsing context built for that load is what carries it, and the
+    /// images fetched afterwards go out through the same chain.
+    /// </remarks>
+    public String UserAgent { get; set; } = DefaultUserAgent;
+
+    /// <summary>The agent a host that says nothing is asking as: a desktop reader, under the engine's own name.</summary>
+    private const String DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Hutu";
+
     /// <summary>Gets the current selection, or null when nothing is selected.</summary>
     public TextSelection? Selection => _selection;
 
@@ -345,7 +362,27 @@ public sealed class HutuViewInternal : IDisposable
         _resourceRequesters.Add(new EmbeddedResourceRequester(assembly, folder));
     }
 
+    /// <summary>
+    /// Loads a document and every image it refers to, the whole picture ready when the returned task
+    /// completes. This is <see cref="LoadDocumentAsync"/> followed by <see cref="PrefetchImagesAsync"/>;
+    /// a host that draws should load them separately, so the page can be on screen while its pictures
+    /// are still arriving.
+    /// </summary>
     public async Task<IDocument> LoadUrlAsync(
+        string? url,
+        CancellationToken cancellationToken = default)
+    {
+        var document = await LoadDocumentAsync(url, cancellationToken).ConfigureAwait(false);
+        await PrefetchImagesAsync(cancellationToken).ConfigureAwait(false);
+        return document;
+    }
+
+    /// <summary>
+    /// Loads a document and builds it once, without waiting for any image. The text, the colours and
+    /// the geometry are all there when the task completes - only the replaced boxes are sized from
+    /// their attributes rather than from the picture that will not arrive until later.
+    /// </summary>
+    public async Task<IDocument> LoadDocumentAsync(
         string? url,
         CancellationToken cancellationToken = default)
     {
@@ -358,7 +395,6 @@ public sealed class HutuViewInternal : IDisposable
             var document = await context.OpenAsync(url, cancellationToken)
                 .ConfigureAwait(false);
             SetDocument(document, context);
-            await PrefetchImagesAsync(cancellationToken).ConfigureAwait(false);
             return document;
         }
         catch
@@ -369,9 +405,22 @@ public sealed class HutuViewInternal : IDisposable
     }
 
     /// <summary>
-    /// Parses the supplied HTML without requesting the URL; the URL is used as the base for relative resources.
+    /// Parses the supplied HTML without requesting the URL, and fetches the images it refers to; the
+    /// URL is used as the base for relative resources.
     /// </summary>
     public async Task<IDocument> SetHtml(string html, string? url = null)
+    {
+        var document = await SetHtmlDocumentAsync(html, url).ConfigureAwait(false);
+        await PrefetchImagesAsync(CancellationToken.None).ConfigureAwait(false);
+        return document;
+    }
+
+    /// <summary>
+    /// Parses the supplied HTML without requesting the URL and without waiting for its images; the URL
+    /// is used as the base for relative resources. Split from the pictures for the same reason
+    /// <see cref="LoadDocumentAsync"/> is.
+    /// </summary>
+    public async Task<IDocument> SetHtmlDocumentAsync(string html, string? url = null)
     {
         ArgumentNullException.ThrowIfNull(html);
 
@@ -388,7 +437,6 @@ public sealed class HutuViewInternal : IDisposable
                 .ConfigureAwait(false);
 
             SetDocument(document, context);
-            await PrefetchImagesAsync(CancellationToken.None).ConfigureAwait(false);
             return document;
         }
         catch
@@ -865,14 +913,24 @@ public sealed class HutuViewInternal : IDisposable
     /// The requesters the browsing context uses, in the order they are consulted.
     /// </summary>
     private List<IRequester> CreateRequesterChain() =>
-        new(_resourceRequesters) { new FileRequester(), new HookHttpRequest(_resourceRequesters) };
+        new(_resourceRequesters) { new FileRequester(), new HookHttpRequest(_resourceRequesters, UserAgent) };
 
     /// <summary>
-    /// Fetches and decodes the images the document refers to, then lays out again so the boxes can
-    /// use their intrinsic sizes. Prefetching is what lets the pipeline itself stay synchronous;
-    /// the second pass is cheap and relayouts triggered by resizing reuse the cache.
+    /// Fetches and decodes the images the document refers to, then lays the document out again so the
+    /// boxes can use their intrinsic sizes.
     /// </summary>
-    private async Task PrefetchImagesAsync(CancellationToken cancellationToken)
+    /// <remarks>
+    /// Prefetching is what lets the pipeline itself stay synchronous. It is separate from the load -
+    /// and a host that draws is expected to put a paint between the two - because it is the slowest
+    /// part of opening a real page by an order of magnitude: a portal's fifty-odd pictures at a tenth
+    /// of a second apiece are seven seconds of a reader looking at nothing, and the text of that page
+    /// was ready after the first fraction of one of them.
+    /// <para>
+    /// The second pass is cheap beside that, and relayouts triggered by resizing reuse the cache: an
+    /// image already fetched - or already failed - is never asked for again.
+    /// </para>
+    /// </remarks>
+    public async Task PrefetchImagesAsync(CancellationToken cancellationToken)
     {
         if (_imageLoader is null)
         {

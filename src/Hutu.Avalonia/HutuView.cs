@@ -113,6 +113,18 @@ public class HutuView : ScrollViewer
         _internalView.AddEmbeddedResourceSource(assembly, folder);
     }
 
+    /// <summary>
+    /// Gets or sets the agent a page is asked as. A page's server can choose what to send from this
+    /// alone - MediaWiki answers an agent it does not recognise with its mobile skin, which is another
+    /// document than the desktop one a reader looking at the same address in a browser is shown - so a
+    /// host that wants to be asked for a particular shape of page says so here. Set it before a load.
+    /// </summary>
+    public string UserAgent
+    {
+        get => _internalView.UserAgent;
+        set => _internalView.UserAgent = value;
+    }
+
     /// <summary>Loads a document from a URL and repaints once it is in place.</summary>
     /// <remarks>
     /// The task is handed back rather than discarded: a load can fail, and an <c>async void</c> would
@@ -125,14 +137,23 @@ public class HutuView : ScrollViewer
     /// resume on the pool; adding <c>ConfigureAwait(false)</c> here would hand the invalidation to a
     /// thread that does not own the control.
     /// </para>
+    /// <para>
+    /// The document is drawn before its pictures are asked for, and drawn again when they arrive. A
+    /// portal's fifty-odd images are several seconds at any reasonable fetch rate, and the text they
+    /// hang from needed a tenth of one of them: making a reader wait for the whole of it is how a
+    /// page that is merely slow to fill looks as though nothing had happened at all.
+    /// </para>
     /// </remarks>
     public async Task<IDocument> LoadUrlAsync(
         string url,
         CancellationToken cancellationToken = default)
     {
-        var document = await _internalView.LoadUrlAsync(url, cancellationToken);
+        var document = await _internalView.LoadDocumentAsync(url, cancellationToken);
         _surface.Refresh();
         OpenAtTheStart();
+
+        await _internalView.PrefetchImagesAsync(cancellationToken);
+        RedrawWithThePictures();
         return document;
     }
 
@@ -149,10 +170,25 @@ public class HutuView : ScrollViewer
     /// </remarks>
     public async Task<IDocument> SetHtml(string html, string url = "")
     {
-        var document = await _internalView.SetHtml(html, url);
+        var document = await _internalView.SetHtmlDocumentAsync(html, url);
         _surface.Refresh();
         OpenAtTheStart();
+
+        await _internalView.PrefetchImagesAsync(CancellationToken.None);
+        RedrawWithThePictures();
         return document;
+    }
+
+    /// <summary>
+    /// Paints the document again once its images have been fetched and the layout has been put together
+    /// around them. The scroll offset is handed to the surface again rather than only the surface being
+    /// told to draw: the boxes moved under a reader who had not scrolled, and where the drawn frame
+    /// stands is a fact the scroller reports only when its own offset changes.
+    /// </summary>
+    private void RedrawWithThePictures()
+    {
+        _surface.Refresh();
+        ApplyScrollOffset();
     }
 
     /// <summary>
