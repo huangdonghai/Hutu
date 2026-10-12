@@ -29,6 +29,12 @@ public sealed class FusedParent
     public String Align { get; init; } = "start";
 
     /// <summary>
+    /// Gets whether the parent is seen, which is what decides whether this element is seen when it says
+    /// nothing: a dropdown's hundred boxes are hidden by the one container around them.
+    /// </summary>
+    public String Visibility { get; init; } = CssInitialValues.Visibility;
+
+    /// <summary>
     /// The parent's own resolved vertical alignment. The property is not inherited, so this
     /// travels only to answer an <c>inherit</c> - which the user-agent sheet declares on every
     /// row and cell of a table.
@@ -115,6 +121,7 @@ public sealed class FusedParent
         LineHeightHit = cascade.Find("line-height") ?? LineHeightHit,
         WhiteSpace = style.WhiteSpace,
         Align = style.TextAlign,
+        Visibility = style.Visibility,
         VerticalAlign = style.VerticalAlign,
         InFlex = style.Display.Contains("flex", StringComparison.OrdinalIgnoreCase),
         InGrid = style.Display.Contains("grid", StringComparison.OrdinalIgnoreCase),
@@ -233,6 +240,7 @@ public static class FusedStyleFactory
                 Align = ComputedStyle.ResolveTextAlignFused(find("text-align"), parent.Align),
                 VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign),
                 Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, size, dimensions),
+                Visibility = ComputedStyle.ResolveVisibilityFused(find("visibility"), parent.Visibility),
             };
 
             text = pool is null ? built : pool.Text(built);

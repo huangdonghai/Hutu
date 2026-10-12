@@ -179,7 +179,7 @@ public readonly struct ComputedStyle
         { "font-size", "font-family", "font-weight", "font-style", "letter-spacing", "line-height" };
 
     /// <summary>The names a text property can begin with.</summary>
-    private static readonly String[] TextNames = { "white-space", "text-align", "vertical-align", "text-indent" };
+    private static readonly String[] TextNames = { "white-space", "text-align", "vertical-align", "text-indent", "visibility" };
 
     /// <summary>
     /// The names a list marker property can begin with. The three longhands, not the <c>list-style</c>
@@ -260,6 +260,7 @@ public readonly struct ComputedStyle
             Align = Keyword("text-align", CssInitialValues.TextAlign),
             VerticalAlign = Keyword("vertical-align", CssInitialValues.VerticalAlign),
             Indent = ReadLength("text-indent", RenderMode.Horizontal, StyleLength.Zero),
+            Visibility = Keyword("visibility", CssInitialValues.Visibility),
         };
 
         _values.Text = pool is null ? text : pool.Text(text);
@@ -581,6 +582,14 @@ public readonly struct ComputedStyle
     /// </summary>
     public static String ResolveWhiteSpaceFused(ICssProperty? declared, String parentValue) =>
         ResolveKeywordFused(declared, parentValue, CssInitialValues.WhiteSpace, inherited: true);
+
+    /// <summary>
+    /// Resolves whether a box draws itself from the element's own cascaded declaration, for the fused
+    /// path. The property is inherited: a miss takes the parent's resolved value, which is what lets a
+    /// hidden menu hide the hundred boxes inside it without any of them saying so.
+    /// </summary>
+    public static String ResolveVisibilityFused(ICssProperty? declared, String parentValue) =>
+        ResolveKeywordFused(declared, parentValue, CssInitialValues.Visibility, inherited: true);
 
     /// <summary>
     /// Resolves the text alignment from the element's own cascaded declaration, for the fused
@@ -1661,6 +1670,19 @@ public readonly struct ComputedStyle
     public String? ListStyleImage => _values.List.Image;
 
     public String WhiteSpace => _values.Text.WhiteSpace;
+
+    /// <summary>Gets whether this box is seen, as the element and the ancestors above it settled it.</summary>
+    public String Visibility => _values.Text.Visibility;
+
+    /// <summary>
+    /// Gets whether the box draws nothing of itself. <c>collapse</c> is counted in: a box that keeps its
+    /// space and paints no lines of its own is painted the same way here as one that is hidden.
+    /// </summary>
+    /// <remarks>
+    /// Layout is untouched by this - a hidden box holds its ground and its descendants' geometry stands -
+    /// so it is only the painting and the pointing that ask.
+    /// </remarks>
+    public Boolean IsHidden => !_values.Text.Visibility.Equals("visible", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Gets whether runs of white space collapse to a single space, which is the case for every

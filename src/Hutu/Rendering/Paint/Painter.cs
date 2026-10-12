@@ -54,6 +54,20 @@ public sealed class Painter
 
     private void PaintBox(LayoutBox box, PaintList list, List<PaintCommand> target)
     {
+        // A box that is not seen draws nothing of itself - no background, border, image, text, marker
+        // or outline - and still lets what is inside it draw, because a descendant can ask to be seen
+        // again and a hidden menu is a hundred boxes hidden by the one around them. The geometry is
+        // untouched either way, which is why this is a painting rule and not a layout one.
+        //
+        // A line box is not an element and borrows the style of the text it carries, so it never
+        // decides for itself: its runs answer for their own elements, and a visible span in a hidden
+        // paragraph keeps its line to be drawn on.
+        if (box.Kind != LayoutKind.Line && box.Source.Style.IsHidden)
+        {
+            PaintChildren(box, list, target);
+            return;
+        }
+
         switch (box.Kind)
         {
             case LayoutKind.Text:

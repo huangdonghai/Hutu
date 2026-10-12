@@ -238,6 +238,26 @@ public sealed class FlexLayoutTests
     }
 
     [Test]
+    public async Task AnItemWithAnAutomaticSizeIsMeasuredByItsContent()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;width:300px'>" +
+            "<div id='a'>aaaaaaaaaaaa</div>" +
+            "<div id='b'>bbbb</div>" +
+            "</div>" +
+            "</body></html>");
+
+        // The fake measurer gives five pixels a character, so the content asks for 60 and 20 of the
+        // 300 - and an item that took the container's width instead would push its neighbour off the
+        // page, which is what a header made of two such items comes to.
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(60).Within(0.5), "flex-basis auto is the content size");
+        Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(60).Within(0.5));
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(20).Within(0.5));
+    }
+
+    [Test]
     public async Task PaddingAndBorderAreExcludedFromTheContentSize()
     {
         using var view = CreateView(400);

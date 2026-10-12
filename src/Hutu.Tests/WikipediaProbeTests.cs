@@ -267,6 +267,55 @@ public sealed class WikipediaProbeTests
              "full build of the document");
 
         Line("");
+        Line("--- the boxes that reach furthest right, and what makes them reach ---");
+
+        foreach (var node in Walk(laid.Root)
+            .OrderBy(box => box.BorderBox.Right)
+            .Reverse()
+            .Take(8))
+        {
+            var element = node.Source.Element;
+            var classes = element?.GetAttribute("class");
+
+            Line($"  reaches {node.BorderBox.Right,6:F0}  x {node.BorderBox.X,6:F0} w {node.BorderBox.Width,6:F0}  " +
+                 $"{element?.LocalName ?? node.Kind.ToString()}"
+                 + $"{(classes is { Length: > 0 } some ? "." + some.Split(' ')[0] : string.Empty)}  "
+                 + $"pos:{node.Source.Style.Position.Position} float:{node.Source.Style.Float} hidden:{node.Source.Style.IsHidden}");
+        }
+
+        Line("");
+        Line("--- the chain from the widest box up to the root ---");
+
+        var parents = new Dictionary<LayoutBox, LayoutBox?>();
+
+        void Map(LayoutBox node, LayoutBox? above)
+        {
+            parents[node] = above;
+
+            foreach (var child in node.Children)
+            {
+                Map(child, node);
+            }
+        }
+
+        Map(laid.Root, null);
+
+        var widest = Walk(laid.Root)
+            .OrderBy(box => box.BorderBox.Right)
+            .Last();
+
+        for (var at = widest; at is not null; at = parents[at])
+        {
+            var element = at.Source.Element;
+            var classes = element?.GetAttribute("class");
+
+            Line($"  x {at.BorderBox.X,7:F0} w {at.BorderBox.Width,6:F0}  {element?.LocalName ?? at.Kind.ToString()}"
+                 + $"{(classes is { Length: > 0 } some ? "." + some.Split(' ')[0] : string.Empty)}  "
+                 + $"display:{at.Source.Style.Display} pos:{at.Source.Style.Position.Position} "
+                 + $"width:{(at.Source.Style.Width.HasValue ? at.Source.Style.Width.Resolve(1348).ToString("F0") : "auto")}");
+        }
+
+        Line("");
         Line("--- where the containers land ---");
 
         foreach (var selector in Selectors)

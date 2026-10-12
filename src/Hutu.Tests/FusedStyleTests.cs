@@ -52,6 +52,10 @@ public sealed class FusedStyleTests
             // a page whose columns quietly stop floating.
             ".left { float: left; width: 40px } .right { float: right; width: 40px }" +
             ".below { clear: both } .edge { clear: left }" +
+            // Inherited, and hidden from a container rather than the leaf, so the fused path has to carry
+            // the parent's answer down the way it carries the text values and the other path finds it
+            // already folded into a computed style.
+            ".hid { visibility: hidden } .seen { visibility: visible }" +
             "</style></head>" +
             "<body>" +
             "<h1>Title</h1>" +
@@ -66,6 +70,7 @@ public sealed class FusedStyleTests
             "<div class='vars fall'>f</div>" +
             "<div class='left'>l</div><div class='right'>r</div>" +
             "<div class='below'>below</div><div class='edge'>edge</div>" +
+            "<div class='hid'><span class='seen'>again</span><span>away</span></div>" +
             "<a href='https://example.com'>l</a>" +
             String.Concat(Enumerable.Repeat("<p class='note'>x<span class='noteid'>2</span></p>", 10)) +
             "</body></html>");
@@ -147,6 +152,7 @@ public sealed class FusedStyleTests
 
         // Text
         Eq(a.WhiteSpace, b.WhiteSpace, where, "white-space");
+        Eq(a.Visibility, b.Visibility, where, "visibility");
         Eq(a.TextAlign, b.TextAlign, where, "text-align");
         Eq(a.VerticalAlign, b.VerticalAlign, where, "vertical-align");
         Eq(a.TextIndent, b.TextIndent, where, "text-indent");
@@ -328,6 +334,7 @@ public sealed class FusedStyleTests
             LineHeightHit = cascade.Find("line-height"),
             WhiteSpace = style.WhiteSpace,
             Align = style.TextAlign,
+            Visibility = style.Visibility,
             Indent = style.TextIndent,
             Direction = style.Direction,
             WritingMode = style.WritingMode,

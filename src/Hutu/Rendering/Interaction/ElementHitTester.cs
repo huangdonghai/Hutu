@@ -98,6 +98,20 @@ public sealed class ElementHitTester
             return;
         }
 
+        // A box that is not seen draws nothing, and a reader cannot be pointing at what is not there -
+        // the same rule the painter follows, and for the same reason that what is inside it may still be
+        // seen, so the walk goes on. A line box borrows the style of the text it carries and so does
+        // not answer for an element of its own.
+        if (box.Kind != LayoutKind.Line && box.Source.Style.IsHidden)
+        {
+            foreach (var child in box.Children)
+            {
+                Visit(child);
+            }
+
+            return;
+        }
+
         if (box.ClipsOverflow && !Contains(box.PaddingBox, _x, _y))
         {
             return;

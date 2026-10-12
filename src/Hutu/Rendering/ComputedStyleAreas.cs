@@ -248,6 +248,14 @@ internal sealed record TextArea
     /// pass has.
     /// </summary>
     internal StyleLength Indent { get; init; } = StyleLength.Zero;
+
+    /// <summary>
+    /// Gets whether the box draws itself, which is inherited like the rest of the area: an element that
+    /// says nothing is seen or hidden the way its parent was, and a descendant can always ask to be seen
+    /// again. <c>collapse</c> is kept with <c>hidden</c> as not visible, which is what a box that takes
+    /// space and draws nothing comes to here.
+    /// </summary>
+    internal String Visibility { get; init; } = CssInitialValues.Visibility;
 }
 
 /// <summary>

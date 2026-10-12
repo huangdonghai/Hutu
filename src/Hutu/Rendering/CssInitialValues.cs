@@ -43,6 +43,12 @@ internal static class CssInitialValues
     // --- Text --------------------------------------------------------------------------------
     internal const String WhiteSpace = "normal";
 
+    /// <summary>
+    /// The initial value of <c>visibility</c>, which is inherited - so this is what an element reads
+    /// when neither it nor any ancestor ever said otherwise.
+    /// </summary>
+    internal const String Visibility = "visible";
+
     /// <remarks>
     /// The specification leaves this one implementation-defined, so it is a choice rather than a
     /// transcription - and the only entry here that is not read straight off the specification. It is
