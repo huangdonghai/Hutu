@@ -319,6 +319,8 @@ public static class FusedStyleFactory
             var built = new DisplayPositioningArea
             {
                 Display = ComputedStyle.ResolveDisplayFused(find("display")),
+                Float = ComputedStyle.ResolveFloatFused(find("float")),
+                Clear = ComputedStyle.ResolveClearFused(find("clear")),
                 ObjectFit = ComputedStyle.ResolveObjectFitFused(find("object-fit")),
                 ClipsOverflow = ComputedStyle.ResolveClipsOverflowFused(find("overflow-x"), find("overflow-y")),
             };

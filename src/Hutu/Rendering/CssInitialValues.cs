@@ -34,6 +34,12 @@ internal static class CssInitialValues
 
     internal const String ObjectFit = "fill";
 
+    // Both of these are `none`, and neither is inherited: a page that declares no float on an element
+    // means the element stays in flow, which is what the area record's default already answers.
+    internal const String Float = "none";
+
+    internal const String Clear = "none";
+
     // --- Text --------------------------------------------------------------------------------
     internal const String WhiteSpace = "normal";
 

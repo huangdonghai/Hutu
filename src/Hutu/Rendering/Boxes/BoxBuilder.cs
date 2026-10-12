@@ -487,6 +487,18 @@ public static partial class BoxBuilder
             return BoxKind.Grid;
         }
 
+        // A float joins its container's block flow rather than the line it would have sat on: the
+        // specification blockifies the inline-level outer roles before any box is generated, so
+        // `display: inline` with `float: left` is a block that happens to be pulled to one edge, and
+        // `inline-block` under a float is that same block container minus the line. The two are
+        // indistinguishable from here on: the engine arranges an inline-block exactly as it arranges
+        // a block, and only the line that would have held it knows the difference.
+        if (style.Float != FloatSide.None &&
+            display.StartsWith("inline", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Block;
+        }
+
         // An inline-block is the one inline-level box that is a block container in its own right, so
         // it has to be picked out before the catch-all below, which would otherwise let it fall in
         // with the elements that are laid out as runs on the line.

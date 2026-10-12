@@ -797,6 +797,41 @@ public readonly struct ComputedStyle
         KeywordText(declared, CssInitialValues.Display);
 
     /// <summary>
+    /// Resolves which edge a box floats to from the element's own cascaded declaration, for the
+    /// fused path. Neither the keyword nor a keyword this engine does not place maps to anything
+    /// but staying in flow.
+    /// </summary>
+    public static Layout.FloatSide ResolveFloatFused(ICssProperty? declared) =>
+        ToFloat(KeywordText(declared, CssInitialValues.Float));
+
+    /// <summary>Resolves which side's floats a box clears, for the fused path.</summary>
+    public static Layout.ClearSide ResolveClearFused(ICssProperty? declared) =>
+        ToClear(KeywordText(declared, CssInitialValues.Clear));
+
+    /// <summary>
+    /// Maps the <c>float</c> keyword. The logical spellings are left in flow deliberately: they mean
+    /// the inline edges of the box's own writing mode, and answering them from a physical keyword
+    /// would put a float on the wrong edge of a right-to-left or vertical page silently.
+    /// </summary>
+    private static Layout.FloatSide ToFloat(String text) =>
+        text.Trim().ToLowerInvariant() switch
+        {
+            "left" => Layout.FloatSide.Left,
+            "right" => Layout.FloatSide.Right,
+            _ => Layout.FloatSide.None,
+        };
+
+    /// <summary>Maps the <c>clear</c> keyword, with the same rule about the logical spellings.</summary>
+    private static Layout.ClearSide ToClear(String text) =>
+        text.Trim().ToLowerInvariant() switch
+        {
+            "left" => Layout.ClearSide.Left,
+            "right" => Layout.ClearSide.Right,
+            "both" => Layout.ClearSide.Both,
+            _ => Layout.ClearSide.None,
+        };
+
+    /// <summary>
     /// Resolves whether either overflow axis clips, from the element's own cascaded
     /// declarations, for the fused path. A miss takes visible.
     /// </summary>
@@ -1321,8 +1356,8 @@ public readonly struct ComputedStyle
             ? share.Value
             : null;
 
-    /// <summary>The names a display or a clipping property can begin with.</summary>
-    private static readonly String[] DisplayNames = { "display", "object-fit", "overflow" };
+    /// <summary>The names a display, a clipping or a float property can begin with.</summary>
+    private static readonly String[] DisplayNames = { "display", "object-fit", "overflow", "float", "clear" };
 
     /// <summary>The name an outline property begins with. The colour matches too, and resolving the
     /// area for it alone is harmless - it reads the three that are here and finds nothing.</summary>
@@ -1340,6 +1375,8 @@ public readonly struct ComputedStyle
         var area = new DisplayPositioningArea
         {
             Display = Keyword("display", CssInitialValues.Display),
+            Float = ToFloat(Keyword("float", CssInitialValues.Float)),
+            Clear = ToClear(Keyword("clear", CssInitialValues.Clear)),
             ClipsOverflow = !IsOverflowVisible("overflow-x") || !IsOverflowVisible("overflow-y"),
             ObjectFit = value.ToLowerInvariant() switch
             {
@@ -1587,6 +1624,12 @@ public readonly struct ComputedStyle
     // --- Box generation -------------------------------------------------
 
     public String Display => _values.DisplayPositioning.Display;
+
+    /// <summary>Gets which edge this box floats to, or <see cref="FloatSide.None"/> when it stays in flow.</summary>
+    public FloatSide Float => _values.DisplayPositioning.Float;
+
+    /// <summary>Gets which side's floats this box moves down past.</summary>
+    public ClearSide Clear => _values.DisplayPositioning.Clear;
 
     public Boolean IsDisplayNone =>
         _values.DisplayPositioning.Display.Equals("none", StringComparison.OrdinalIgnoreCase);

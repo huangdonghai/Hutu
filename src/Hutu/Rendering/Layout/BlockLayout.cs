@@ -395,6 +395,7 @@ internal sealed class BlockLayout
         var first = true;
         var childContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
         var constraints = MeasureConstraints.FitWidth(contentWidth);
+        var tracks = TracksFor(box, contentWidth, 0);
 
         foreach (var child in box.Children)
         {
@@ -410,10 +411,20 @@ internal sealed class BlockLayout
                 continue;
             }
 
+            var margin = child.Style.Margin.Resolve(contentWidth);
+
+            if (tracks is { } floats && IsFloat(child))
+            {
+                // The float is sized and put on its edge, and the cursor is left exactly where it
+                // was: a float takes no room in the stack, which is the whole reason the container
+                // has to be measured with the tracks rather than with the cursor alone.
+                PlaceFloat(child, floats, cursor, contentWidth, childContext);
+                continue;
+            }
+
             // The parent's content box is the child's containing block, so the child is handed its
             // width rather than the width left after its own margins: resolving those is its job.
-            var margin = child.Style.Margin.Resolve(contentWidth);
-            var spacing = first ? margin.Top : Math.Max(previousBottomMargin, margin.Top);
+            var spacing = Spacing(child, tracks, margin, cursor, first, previousBottomMargin);
             var size = _engine.Measure(child, constraints, childContext);
 
             cursor += spacing + size.Height;
@@ -421,7 +432,114 @@ internal sealed class BlockLayout
             first = false;
         }
 
-        return cursor + previousBottomMargin;
+        return Math.Max(cursor + previousBottomMargin, tracks?.Bottom ?? 0);
+    }
+
+    /// <summary>
+    /// Gets the distance the stack moves on before the child: its own top margin, or the larger of
+    /// that and the box above it's bottom margin - pushed further still when the child clears floats.
+    /// </summary>
+    private static Double Spacing(
+        Box child,
+        FloatTracks? tracks,
+        Thickness margin,
+        Double cursor,
+        Boolean first,
+        Double previousBottomMargin)
+    {
+        var spacing = first ? margin.Top : Math.Max(previousBottomMargin, margin.Top);
+
+        // A cleared box is moved below the floats it refuses to stand beside. What it moved through
+        // is not given back to the margins around it, and the stack resumes from where the box
+        // landed - which is what lets a portal put its "more" link under the two columns rather than
+        // beside them.
+        if (tracks is { } floats && child.Style.Clear != ClearSide.None)
+        {
+            var cleared = floats.ClearBelow(child.Style.Clear, cursor + spacing);
+            spacing = Math.Max(spacing, cleared - cursor);
+        }
+
+        return spacing;
+    }
+
+    /// <summary>Gets whether the child is pinned to an edge of its container instead of stacked in it.</summary>
+    private static Boolean IsFloat(Box child) => child.Style.Float != FloatSide.None;
+
+    /// <summary>
+    /// Gets the tracks the container's floats are placed against, or null when nothing in it can
+    /// float and the walk need not carry them.
+    /// </summary>
+    /// <remarks>
+    /// A column is left out deliberately: its block axis runs sideways, so a float pinned to a
+    /// physical edge would have to be placed against a band that stacks along x, and the tracks here
+    /// only know how to stack down. Such a box keeps its place in the column stack, which is the
+    /// behaviour floats had before this existed - visible, and rare on a page that reads sideways.
+    /// </remarks>
+    private static FloatTracks? TracksFor(Box box, Double contentWidth, Double originX)
+    {
+        var floats = false;
+
+        foreach (var child in box.Children)
+        {
+            if (child.IsBlockLevel && IsFloat(child) && !PositionedLayout.IsOutOfFlow(child))
+            {
+                floats = true;
+                break;
+            }
+        }
+
+        return floats && !box.Flow.IsVertical
+            ? new FloatTracks(originX, originX + contentWidth)
+            : null;
+    }
+
+    /// <summary>
+    /// Sizes a float against the room its edge leaves and reserves that room in the tracks. Both
+    /// phases call this with the same numbers, so the width the arranging phase reads out of the
+    /// measurement cache is the one the container's height was answered from.
+    /// </summary>
+    private (Rect BorderBox, Size Size) PlaceFloat(
+        Box child,
+        FloatTracks tracks,
+        Double top,
+        Double contentWidth,
+        LayoutContext childContext)
+    {
+        var style = child.Style;
+        var margin = style.Margin.Resolve(contentWidth);
+        var y = tracks.ClearBelow(style.Clear, top);
+        var (freeLeft, freeRight) = tracks.FreeSpanAt(y, 0);
+
+        // A float with a declared width is measured against the container it sits in, so a percentage
+        // inside it resolves against the containing block rather than against the room a neighbour
+        // left. One whose width is <c>auto</c> shrinks to fit that room: CSS gives it the preferred
+        // width clamped between its own minimum and what is free, which is what makes a floated
+        // thumbnail take its picture's width and a floated paragraph take the column's.
+        var size = style.Width.HasValue
+            ? _engine.Measure(child, MeasureConstraints.FitWidth(contentWidth), childContext)
+            : ShrinkToFit(child, margin, freeRight - freeLeft, childContext);
+
+        // An auto margin on a float is zero rather than a share of what the width left over: the
+        // constraint equation that makes <c>margin: 0 auto</c> centre a block has no part for a box
+        // that is not in flow to solve.
+        var box = tracks.Place(style.Float, size.Width, size.Height, margin, y);
+
+        return (box, size);
+    }
+
+    /// <summary>
+    /// Measures a float whose width the author left to the content: the preferred width, clamped
+    /// between what the float cannot go below and what its edge has left of room.
+    /// </summary>
+    private Size ShrinkToFit(Box child, Thickness margin, Double free, LayoutContext childContext)
+    {
+        var intrinsic = _engine.MeasureIntrinsic(child, childContext);
+        var room = Math.Max(0, free - margin.Horizontal);
+        var fit = Math.Max(intrinsic.MinContent, Math.Min(room, intrinsic.MaxContent));
+
+        // The basis carries the margins back on, because an auto width in the box model is the
+        // containing block less the margins and the insets - and the answer wanted is the border box.
+        return _engine.Measure(child, MeasureConstraints.FitWidth(fit + margin.Horizontal), childContext);
     }
 
     private void ArrangeBlockChildren(
@@ -437,6 +555,7 @@ internal sealed class BlockLayout
         var first = true;
         var constraints = MeasureConstraints.FitWidth(contentWidth);
         var outOfFlow = new List<(Box Box, Offset Static)>();
+        var tracks = TracksFor(box, contentWidth, contentX);
 
         foreach (var child in box.Children)
         {
@@ -446,7 +565,18 @@ internal sealed class BlockLayout
             }
 
             var margin = child.Style.Margin.Resolve(contentWidth);
-            var spacing = first ? margin.Top : Math.Max(previousBottomMargin, margin.Top);
+
+            if (tracks is { } floats && IsFloat(child))
+            {
+                // The same walk the measuring phase ran, at the same numbers: the width it reads out
+                // of the cache is the one the container's height was answered from, and the place it
+                // reserves is the one a clearing box below it is measured against.
+                var placed = PlaceFloat(child, floats, cursor, contentWidth, context);
+                parent.Children.Add(_engine.Arrange(child, placed.BorderBox, context));
+                continue;
+            }
+
+            var spacing = Spacing(child, tracks, margin, cursor, first, previousBottomMargin);
 
             if (PositionedLayout.IsOutOfFlow(child))
             {

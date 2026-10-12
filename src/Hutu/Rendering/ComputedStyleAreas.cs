@@ -147,6 +147,17 @@ internal sealed record DisplayPositioningArea
     internal String Display { get; init; } = CssInitialValues.Display;
 
     /// <summary>
+    /// Gets which edge the box floats to, which is the reason the box left normal flow and the edge
+    /// its container reserves room against. <see cref="Layout.FloatSide.None"/> is the common case and
+    /// needs no declaration at all, which is why it is the record's default rather than a value the
+    /// resolver answers with.
+    /// </summary>
+    internal Layout.FloatSide Float { get; init; }
+
+    /// <summary>Gets which side's floats the box moves down past before it takes its place.</summary>
+    internal Layout.ClearSide Clear { get; init; }
+
+    /// <summary>
     /// Gets how a replaced box fits its content, resolved here rather than left as a keyword: the
     /// reader lowercases the declaration's text to answer, which allocates on a path the painter
     /// walks for every image.

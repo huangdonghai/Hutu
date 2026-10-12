@@ -120,6 +120,8 @@ public sealed class FusedStyleTests
         // Display
         Eq(a.Display, b.Display, where, "display");
         Eq(a.IsDisplayNone, b.IsDisplayNone, where, "display-none");
+        Eq(a.Float, b.Float, where, "float");
+        Eq(a.Clear, b.Clear, where, "clear");
         Eq(a.ObjectFit, b.ObjectFit, where, "object-fit");
         Eq(a.ClipsOverflow, b.ClipsOverflow, where, "overflow");
 
