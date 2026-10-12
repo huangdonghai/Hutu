@@ -599,8 +599,15 @@ public sealed class LayoutEngine
     /// and <c>max-content</c> inline sizes. A flex or grid container answers for its items, so an
     /// item with an automatic basis can ask its own intrinsic width before anything is decided.
     /// </summary>
+    /// <remarks>
+    /// The containing block the measurement descends with is marked as a hypothesis, because that is
+    /// what it is: the answer is the width the box would need, so a percentage among the box's own
+    /// declarations cannot be resolved against it without the answer being fed back into the question.
+    /// </remarks>
     internal IntrinsicSize MeasureIntrinsic(Box box, LayoutContext context)
     {
+        context = context.WithHypotheticalBasis();
+
         // A box that answers the same at every containing block is cached without the basis. The walk
         // that asks about it - a table sizing its tracks, a flex container negotiating its items -
         // asks under several, and every one of them used to be paid for separately even though the
@@ -693,6 +700,10 @@ public sealed class LayoutEngine
     /// </summary>
     internal IntrinsicSize MeasureContentIntrinsic(Box box, LayoutContext context)
     {
+        // The same hypothesis about the containing block, for the same reason: this is an intrinsic
+        // measurement of the content, and a percentage down inside it has no settled block to speak of.
+        context = context.WithHypotheticalBasis();
+
         if (box.IntrinsicIgnoresBasis)
         {
             if (_contentIntrinsicFree.TryGetValue(box, out var free))

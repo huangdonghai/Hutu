@@ -212,9 +212,14 @@ internal sealed class BlockLayout
         }
 
         // A declared width settles both extents of a row: the content cannot be any wider than the box
-        // it is confined to. A column's width is its block extent and says nothing about its line.
+        // it is confined to. A column's width is its block extent and says nothing about its line. And a
+        // width that is a fraction of the containing block says nothing while that block is the thing
+        // being asked about - which is the state an intrinsic measurement works in - so it is left to
+        // answer as `auto` and be measured from its content, as the specification has a percentage
+        // against an indefinite block come to.
         if (!box.Flow.IsVertical &&
             style.Width.HasValue &&
+            !(style.Width.ReadsContainingBlock && context.BasisIsHypothetical) &&
             !(style.Width.Kind == StyleLengthKind.Percent && basis <= 0))
         {
             var specified = Math.Max(0, style.Width.Resolve(basis));
@@ -260,6 +265,14 @@ internal sealed class BlockLayout
             min = 0;
             max = 0;
 
+            // The float is the exception to stacking. A block's children run down the page one after
+            // another, so the widest of them is what the block asks for - but a float leaves the stack
+            // and joins the line, so a container holding a row of them is as wide as the whole row.
+            // That is what two badges side by side in a footer ask their list for, and what a
+            // shrink-to-fit of that list has to answer: given the widest one instead, the list is made
+            // too narrow for its own row and the second badge drops below the first.
+            var alongside = 0.0;
+
             foreach (var child in box.Children)
             {
                 if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
@@ -272,8 +285,19 @@ internal sealed class BlockLayout
                 var childIntrinsic = _engine.MeasureIntrinsic(child, context);
                 var (before, after) = child.Flow.InlineMargins(child.Style.Margin.Resolve(basis));
                 min = Math.Max(min, childIntrinsic.MinContent + before + after);
+
+                // Only along a row: a column's children already lie beside each other, and a float in
+                // a column keeps its place in that stack rather than leaving it.
+                if (IsFloat(child) && !child.Flow.IsVertical)
+                {
+                    alongside += childIntrinsic.MaxContent + before + after;
+                    continue;
+                }
+
                 max = Math.Max(max, childIntrinsic.MaxContent + before + after);
             }
+
+            max = Math.Max(max, alongside);
         }
         else
         {

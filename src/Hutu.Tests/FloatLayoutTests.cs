@@ -357,6 +357,31 @@ public sealed class FloatLayoutTests
         Assert.That(paragraph.BorderBox.Width, Is.EqualTo(80).Within(0.5));
     }
 
+    [Test]
+    public async Task AFloatIsAsWideAsTheRowItsOwnFloatsMake()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(Page(
+            "<div id='f' style='float:right'>" +
+            "<div id='a' style='float:left;width:60px;height:20px'></div>" +
+            "<div id='b' style='float:left;width:60px;height:20px'></div>" +
+            "</div>"));
+
+        // The two inside stand beside each other, so the row they make is 120 wide and the float holding
+        // them is 120 wide too. Asked for the widest of its children - which is what a stack of blocks
+        // wants - the float is made half as wide, the second box drops below the first, and a pair of
+        // badges in a footer comes out as a column of them.
+        var outer = Bounds(view, "f");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outer.Width, Is.EqualTo(120).Within(0.5), "the whole row rather than the widest of it");
+            Assert.That(outer.Height, Is.EqualTo(20).Within(0.5), "and one row tall");
+            Assert.That(Bounds(view, "b").X, Is.EqualTo(340).Within(0.5), "beside its sibling at the edge");
+        });
+    }
+
     private static Rect Bounds(HutuViewInternal view, String id)
     {
         var element = view.Document!.GetElementById(id);

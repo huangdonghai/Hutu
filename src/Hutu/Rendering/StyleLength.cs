@@ -95,6 +95,40 @@ public readonly struct StyleLength : IEquatable<StyleLength>
     public Boolean HasValue => _kind is StyleLengthKind.Pixels or StyleLengthKind.Percent or StyleLengthKind.Math;
 
     /// <summary>
+    /// Gets whether this length is a fraction of the containing block, through itself or through an
+    /// argument of a <c>min()</c>, <c>max()</c> or <c>clamp()</c>.
+    /// </summary>
+    /// <remarks>
+    /// A box that reads the containing block cannot be sized from a hypothesis about it, which is what
+    /// an intrinsic measurement hands down - see <c>LayoutContext.BasisIsHypothetical</c>.
+    /// </remarks>
+    public Boolean ReadsContainingBlock => Kind switch
+    {
+        StyleLengthKind.Percent => true,
+        StyleLengthKind.Math => OperandsReadContainingBlock(_operands),
+        _ => false,
+    };
+
+    /// <summary>Gets whether any argument of a math function reads the containing block.</summary>
+    private static Boolean OperandsReadContainingBlock(StyleLength[]? operands)
+    {
+        if (operands is null)
+        {
+            return false;
+        }
+
+        foreach (var operand in operands)
+        {
+            if (operand.ReadsContainingBlock)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Gets the arguments of a <see cref="StyleLengthKind.Math"/> length, or null for every other
     /// kind.
     /// </summary>

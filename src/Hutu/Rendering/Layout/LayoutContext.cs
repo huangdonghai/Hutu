@@ -41,7 +41,7 @@ public readonly struct LayoutContext
         Offset scroll,
         Rect absoluteContainingBlock,
         ITextMeasurer measurer)
-        : this(containingBlock, containingBlockRect, viewport, viewportRect, scroll, absoluteContainingBlock, measurer, null)
+        : this(containingBlock, containingBlockRect, viewport, viewportRect, scroll, absoluteContainingBlock, measurer, null, false)
     {
     }
 
@@ -53,7 +53,8 @@ public readonly struct LayoutContext
         Offset scroll,
         Rect absoluteContainingBlock,
         ITextMeasurer measurer,
-        FloatBand? floats)
+        FloatBand? floats,
+        Boolean hypothetical)
     {
         ContainingBlock = containingBlock;
         ContainingBlockRect = containingBlockRect;
@@ -63,6 +64,7 @@ public readonly struct LayoutContext
         AbsoluteContainingBlock = absoluteContainingBlock;
         Measurer = measurer;
         Floats = floats;
+        BasisIsHypothetical = hypothetical;
     }
 
     /// <summary>Gets the box percentages, auto widths and relative positioning resolve against.</summary>
@@ -94,6 +96,34 @@ public readonly struct LayoutContext
     internal FloatBand? Floats { get; }
 
     /// <summary>
+    /// Gets whether the containing block handed down is a hypothesis rather than a fact.
+    /// </summary>
+    /// <remarks>
+    /// An intrinsic measurement asks what a box would need at whatever width it ends up with, so while
+    /// one is running the block a percentage speaks of has no size to be a fraction of yet - and a
+    /// percentage answered with the width being asked about is the answer fed back into the question.
+    /// That is how a menu bar whose entries each declare <c>width: 100%</c> comes to ask every one of
+    /// them for the whole row, and the row overflows the page. The specification's word for it is that a
+    /// percentage against an indefinite containing block behaves as <c>auto</c>.
+    /// </remarks>
+    public Boolean BasisIsHypothetical { get; }
+
+    /// <summary>
+    /// Gets the same context seen from inside an intrinsic measurement, where the containing block is
+    /// the thing being worked out rather than something settled beforehand.
+    /// </summary>
+    internal LayoutContext WithHypotheticalBasis() => new(
+        ContainingBlock,
+        ContainingBlockRect,
+        Viewport,
+        ViewportRect,
+        Scroll,
+        AbsoluteContainingBlock,
+        Measurer,
+        Floats,
+        true);
+
+    /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
     /// known, which is a per-child answer rather than one shared by the whole container: two siblings
     /// stand at different heights, and a float reaching down between them narrows only the lower one.
@@ -106,7 +136,8 @@ public readonly struct LayoutContext
         Scroll,
         AbsoluteContainingBlock,
         Measurer,
-        floats);
+        floats,
+        BasisIsHypothetical);
 
     /// <summary>Gets the context a box's children see, with its content box as their containing block.</summary>
     /// <remarks>
@@ -123,7 +154,8 @@ public readonly struct LayoutContext
         Scroll,
         AbsoluteContainingBlock,
         Measurer,
-        Floats);
+        Floats,
+        BasisIsHypothetical);
 
     /// <summary>
     /// Gets the context a box's children see when the content box's position is known, which is what
@@ -137,7 +169,8 @@ public readonly struct LayoutContext
         Scroll,
         AbsoluteContainingBlock,
         Measurer,
-        Floats);
+        Floats,
+        BasisIsHypothetical);
 
     /// <summary>
     /// Gets the context a positioned box's children see: the absolute containing block becomes this
@@ -152,5 +185,6 @@ public readonly struct LayoutContext
         Scroll,
         paddingBox,
         Measurer,
-        Floats);
+        Floats,
+        BasisIsHypothetical);
 }

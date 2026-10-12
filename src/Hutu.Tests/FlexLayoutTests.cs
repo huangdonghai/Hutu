@@ -258,6 +258,28 @@ public sealed class FlexLayoutTests
     }
 
     [Test]
+    public async Task AnItemHoldingAPercentageWidthIsStillMeasuredByItsContent()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;justify-content:space-between;width:300px'>" +
+            "<div id='a' style='display:flex'><div style='width:100%'>aaaaaaaa</div></div>" +
+            "<div id='b' style='display:flex'><div style='width:100%'>bbbb</div></div>" +
+            "</div>" +
+            "</body></html>");
+
+        // A site's menu bar is made of exactly this: an item whose every box inside declares
+        // `width: 100%`. While the item is being asked what it needs, the block that percentage speaks
+        // of is the very answer, so it has to fall back to the content - otherwise each item asks for
+        // the whole row, the row cannot shrink them below what they asked for, and the second is placed
+        // off the edge of the page.
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(40).Within(0.5), "eight characters, not the row");
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(20).Within(0.5));
+        Assert.That(Find(view, "b").BorderBox.Right, Is.EqualTo(300).Within(0.5), "and space-between still puts the second at the end");
+    }
+
+    [Test]
     public async Task PaddingAndBorderAreExcludedFromTheContentSize()
     {
         using var view = CreateView(400);
