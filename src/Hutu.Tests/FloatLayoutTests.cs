@@ -3,6 +3,7 @@ using Hutu.Rendering.Boxes;
 using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Hutu.Tests;
@@ -212,6 +213,37 @@ public sealed class FloatLayoutTests
         // column lands exactly where the same box with no float would.
         Assert.That(Bounds(floated, "a"), Is.EqualTo(Bounds(plain, "a")));
         Assert.That(Bounds(floated, "b"), Is.EqualTo(Bounds(plain, "b")));
+    }
+
+    /// <summary>
+    /// The next gap, written down rather than approved: a block whose container holds a float still
+    /// makes every one of its line boxes the full width of that container, so its text is drawn under
+    /// the floating box. The block's own box already overlaps the float the way a browser's does - that
+    /// part is right - and what is missing is the one rule CSS adds on top of it, that a line box next
+    /// to a float starts at the float's edge and ends before it. It is not a one-line change because the
+    /// width a line breaks at is decided by the cached line plan, which a float would have to make a
+    /// function of where the line sits.
+    /// </summary>
+    [Test]
+    public async Task ALineStillRunsUnderAFloat()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='h' style='width:200px'>" +
+            "<img id='f' src='x.png' style='width:120px;height:60px;float:left'>" +
+            "<p id='p' style='margin:0'>word word word word word word word word word word</p></div>"));
+
+        var paragraph = view.Layout!.FindBox(view.Document!.GetElementById("p")!)!;
+        var line = paragraph.Children.FirstOrDefault(box => box.Kind == LayoutKind.Line);
+
+        Assert.That(line, Is.Not.Null, "the paragraph has a line box to look at");
+        Assert.That(line!.BorderBox.Y, Is.EqualTo(0).Within(0.5), "the block does overlap the float, as it should");
+
+        // A browser shortens the lines standing beside the image to the 80 pixels left of it and
+        // returns to the full width below it: the first line box there is 80 wide in a 200 pixel block.
+        Assert.That(line.BorderBox.X, Is.EqualTo(0), "the line does not step past the float");
+        Assert.That(line.BorderBox.Width, Is.EqualTo(200).Within(0.5), "nor is it shortened by it");
     }
 
     private static Rect Bounds(HutuViewInternal view, String id)
