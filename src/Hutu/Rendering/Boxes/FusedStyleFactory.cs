@@ -72,6 +72,13 @@ public sealed class FusedParent
     internal ListArea? List { get; init; }
 
     /// <summary>
+    /// Gets the scope this element's own <c>var()</c> references were read through, which is what its
+    /// children inherit unless they redeclare a custom property of their own. Null for a page that
+    /// declares none anywhere, which is every sample page and most of the tests.
+    /// </summary>
+    public VariableScope? Variables { get; init; }
+
+    /// <summary>
     /// Gets the tag name of the element this parent is, folded the way the box builder folds it. A list
     /// inside a list is left to its outer one's margins, so which element an area belongs to is part of
     /// what its children resolve - and the parent's own name is the whole of that answer.
@@ -89,7 +96,7 @@ public sealed class FusedParent
     public CursorKind Cursor { get; init; }
 
     /// <summary>The values a parent hands down to its children.</summary>
-    public FusedParent Next(ComputedStyle style, MatchedCascade cascade, String? tag = null) => new()
+    public FusedParent Next(ComputedStyle style, MatchedCascade cascade, VariableScope? variables, String? tag = null) => new()
     {
         FontSize = style.FontSize,
         Color = style.Color,
@@ -120,6 +127,7 @@ public sealed class FusedParent
         Font = style.ResolvedFont,
         Text = style.ResolvedText,
         List = style.ResolvedList,
+        Variables = variables,
         Tag = tag,
         Ruby = style.RubyPosition,
         Orientation = style.DeclaredTextOrientation,
@@ -145,9 +153,32 @@ public static class FusedStyleFactory
         IRenderDimensions dimensions,
         FontFaceTable? faces,
         StyleIntern? pool,
-        FusedAreaCache? cache = null)
+        FusedAreaCache? cache = null,
+        VariableScope? variables = null)
     {
-        Func<String, ICssProperty?> find = cascade.Find;
+        // The scope is read through only where one exists: a page that declares no custom property
+        // never asks for a substitution, and the cascade's own lookup - with the answers it remembers -
+        // is then the reader, exactly as it was before variables came in.
+        ICssStyleDeclaration? computed = null;
+
+        Func<String, ICssProperty?> find = name =>
+        {
+            var property = variables is null ? cascade.Find(name) : variables.ReadProperty(cascade, name);
+
+            // A longhand that the cascade holds with no text at all is the shadow a shorthand written
+            // as a variable leaves behind: <c>padding: var(--pad)</c> reaches the declaration list as
+            // four empty children, because the expansion cannot be worked out until the variable can be
+            // - and the shorthand itself is nowhere in the list to be read through. Computing this one
+            // element's style is what expands it, and doing it only here keeps every other name on the
+            // fused path's own cheap reading.
+            if (property is not null && String.IsNullOrEmpty(property.Value))
+            {
+                computed ??= element.Owner?.DefaultView?.GetComputedStyle(element, String.Empty);
+                property = computed?.GetProperty(name) ?? property;
+            }
+
+            return property;
+        };
 
         var size = ComputedStyle.ResolveFontSizeFused(find("font-size"), parent.FontSize, dimensions);
 
@@ -157,7 +188,7 @@ public static class FusedStyleFactory
         // declares their own. Two elements can share a font and still inherit different ones of those,
         // so both go into the key; a cache that left the second out would hand a paragraph the leading
         // of the div whose font it happens to match.
-        var fontKey = new AreaKey(cascade, size, parent.Font, parent.LineHeightHit);
+        var fontKey = new AreaKey(cascade, size, parent.Font, parent.LineHeightHit, variables: variables);
 
         if (cache is not null && cache.TryFont(fontKey, out var font))
         {
@@ -188,7 +219,7 @@ public static class FusedStyleFactory
 
         // A text behaviour reads the same three inputs - the cascade, the size the indent is measured
         // at, and the parent's text - and nothing of the element's identity, so it caches the same way.
-        var textKey = new AreaKey(cascade, size, parent.Text);
+        var textKey = new AreaKey(cascade, size, parent.Text, variables: variables);
 
         if (cache is not null && cache.TryText(textKey, out var text))
         {
@@ -216,7 +247,7 @@ public static class FusedStyleFactory
         // width in em is that many pixels of it - so an element that matched the same cascade at the
         // same size as an earlier one has nothing left to resolve. What the cache holds is the interned
         // instance, so a hit hands back the very object the value table would have found.
-        var key = new AreaKey(cascade, size);
+        var key = new AreaKey(cascade, size, variables: variables);
 
         if (cache is not null && cache.TryBorder(key, out var border))
         {
@@ -275,7 +306,7 @@ public static class FusedStyleFactory
         // element enters, so the four cache like the rest.
         var boxKey = cache is null
             ? default
-            : new AreaKey(cascade, size, parent.Tag, cache.Tag(element.LocalName), FlowStamp(parent));
+            : new AreaKey(cascade, size, parent.Tag, cache.Tag(element.LocalName), FlowStamp(parent), variables);
 
         if (cache is not null && cache.TryBoxModel(boxKey, out var boxModel))
         {
@@ -308,7 +339,7 @@ public static class FusedStyleFactory
         // Neither an overflow nor a fit nor a display keyword is a length, so these two read the cascade
         // alone: the key is the bare one, which keeps them to one entry per cascade rather than one per
         // size the page happens to set.
-        var plain = new AreaKey(cascade, 0);
+        var plain = new AreaKey(cascade, 0, variables: variables);
 
         if (cache is not null && cache.TryDisplay(plain, out var display))
         {

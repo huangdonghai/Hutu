@@ -214,34 +214,6 @@ public sealed class FloatLayoutTests
         Assert.That(Bounds(floated, "b"), Is.EqualTo(Bounds(plain, "b")));
     }
 
-    [Test]
-    public async Task AFloatStillFloatsWhenTheFusedPathGivesUp()
-    {
-        using var view = CreateView();
-
-        // A var() in an element's own cascade is what makes the fused resolvers abstain over a whole
-        // document, and the page then builds through the render tree - which is where a MediaWiki is
-        // for every element it has. The float has to survive the change of path, or a page that uses
-        // custom properties loses its columns as well as its speed.
-        await view.SetHtml(Page(
-            "<div id='area' style='width:300px'>" +
-            "<div id='lm' style='float:left;width:100px;height:40px'></div>" +
-            "<div id='r' style='float:right;width:100px;height:40px'></div>" +
-            "<div id='trap' style='margin-left:var(--undefined-side, 0px)'></div>" +
-            "</div>"));
-
-        var device = new HutuRenderDevice(600, 600);
-
-        Assert.That(
-            BoxBuilder.TryBuildFused(view.Document!, device, null, null),
-            Is.Null,
-            "the document has to be on the fallback for this to be testing what it says it tests");
-
-        Assert.That(Bounds(view, "lm").X, Is.EqualTo(0));
-        Assert.That(Bounds(view, "r").X, Is.EqualTo(200), "the right float reaches the container's right edge");
-        Assert.That(Bounds(view, "area").Height, Is.EqualTo(40), "and the container still holds them");
-    }
-
     private static Rect Bounds(HutuViewInternal view, String id)
     {
         var element = view.Document!.GetElementById(id);

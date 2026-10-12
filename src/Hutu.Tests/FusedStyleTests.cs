@@ -39,6 +39,19 @@ public sealed class FusedStyleTests
             ".opaque { background-color: #abcdef; background-clip: content-box; overflow: hidden }" +
             ".inherit { color: inherit; text-indent: inherit }" +
             "a { color: #00f }" +
+            // Custom properties, in the shapes a real sheet writes them in: declared once at the root
+            // and read a dozen levels down, redeclared on a branch so that two elements matching the
+            // same rules want different answers, resolved through a chain of two names, fallen back
+            // when nothing declares the name, and left unresolvable to see what the property does then.
+            ":root { --accent: #146eb4; --pad: 6px; --wide: var(--w2) }" +
+            ".redeclare { --accent: #008000 }" +
+            ".vars { color: var(--accent); padding: var(--pad); width: var(--wide); text-indent: var(--missing) }" +
+            ".fall { color: var(--missing, rgb(1, 2, 3)); margin-left: var(--missing, 12px) }" +
+            // Read on both paths by different readers - the fused one from the matched declarations, the
+            // other from a computed style - so a keyword one of them loses shows up here rather than as
+            // a page whose columns quietly stop floating.
+            ".left { float: left; width: 40px } .right { float: right; width: 40px }" +
+            ".below { clear: both } .edge { clear: left }" +
             "</style></head>" +
             "<body>" +
             "<h1>Title</h1>" +
@@ -48,8 +61,53 @@ public sealed class FusedStyleTests
             "<div class='pos'>p</div>" +
             "<div class='opaque'>o</div>" +
             "<div class='inherit'>i</div>" +
+            "<div class='vars'>v</div>" +
+            "<div class='redeclare'><span class='vars'>inside a redeclared branch</span></div>" +
+            "<div class='vars fall'>f</div>" +
+            "<div class='left'>l</div><div class='right'>r</div>" +
+            "<div class='below'>below</div><div class='edge'>edge</div>" +
             "<a href='https://example.com'>l</a>" +
             String.Concat(Enumerable.Repeat("<p class='note'>x<span class='noteid'>2</span></p>", 10)) +
+            "</body></html>");
+
+        AssertFusedStylesMatch(document);
+    }
+
+    /// <summary>
+    /// A colour the author wrote as a variable, declared on the root and read four levels down: the
+    /// other path computes it by substituting, so the two agreeing is the whole check.
+    /// </summary>
+    [Test]
+    public async Task AColorDeclaredAtTheRootReachesTheBoxBelow()
+    {
+        using var view = CreateView();
+
+        var document = await view.SetHtml(
+            "<html><head><style>" +
+            ":root { --accent: #146eb4 }" +
+            "body { color: #222 } div.wrap span.marked { color: var(--accent) }" +
+            "</style></head><body><div class='wrap'><span class='marked'>c</span></div></body></html>");
+
+        AssertFusedStylesMatch(document);
+    }
+
+    /// <summary>
+    /// A colour written as a variable whose name the same element declares - the neighbourhood a root
+    /// declaration cannot exercise, because the scope has to open at the element itself.
+    /// </summary>
+    [Test]
+    public async Task AColorDeclaredAndUsedByOneElement()
+    {
+        using var view = CreateView();
+
+        var document = await view.SetHtml(
+            "<html><head><style>" +
+            "body { color: #222 }" +
+            ".one { --accent: #008000; color: var(--accent) }" +
+            ".two { --accent: #800000 }" +
+            ".two span { color: var(--accent) }" +
+            "</style></head><body>" +
+            "<div class='one'>green</div><div class='two'><span>also green? no, maroon</span></div>" +
             "</body></html>");
 
         AssertFusedStylesMatch(document);
@@ -114,8 +172,8 @@ public sealed class FusedStyleTests
         Eq(a.Height, b.Height, where, "height");
         Eq(a.MinWidth, b.MinWidth, where, "min-width");
         Eq(a.MaxWidth, b.MaxWidth, where, "max-width");
-        Eq(a.Margin, b.Margin, where, "margin");
-        Eq(a.Padding, b.Padding, where, "padding");
+        SameEdges(a.Margin, b.Margin, where, "margin");
+        SameEdges(a.Padding, b.Padding, where, "padding");
 
         // Display
         Eq(a.Display, b.Display, where, "display");
@@ -157,9 +215,43 @@ public sealed class FusedStyleTests
     {
         if (!Equals(expected, actual))
         {
-            Assert.Fail($"fused {what} of <{where}>: expected '{expected}', got '{actual}'");
+            Assert.Fail($"fused {what} of <{where}>: expected '{Readable(expected)}', got '{Readable(actual)}'");
         }
     }
+
+    /// <summary>
+    /// Renders a value the way a stylesheet would write it. A computed value's own <c>ToString</c> is
+    /// the type's name, which leaves a failure saying only that two objects of the same class differ.
+    /// </summary>
+    private static String Readable(Object? value) =>
+        value is AngleSharp.Css.Dom.ICssValue css ? css.CssText : value?.ToString() ?? "null";
+
+    /// <summary>
+    /// Compares a four-sided set of lengths by what each side comes to rather than by the two structs,
+    /// which say nothing a reader of the failure can use: the values are units that have not been
+    /// resolved yet, and the interesting part is the number they resolve to and which side disagrees.
+    /// </summary>
+    private static void SameEdges(StyleThickness expected, StyleThickness actual, String where, String what)
+    {
+        if (Equals(expected, actual))
+        {
+            return;
+        }
+
+        Assert.Fail(
+            $"fused {what} of <{where}>: expected {Edges(expected)}, got {Edges(actual)}, " +
+            "sides as top/right/bottom/left resolved against the 900px the styles were compared at");
+    }
+
+    private static String Edges(StyleThickness thickness) =>
+        $"{Edge(thickness.Top)} / {Edge(thickness.Right)} / {Edge(thickness.Bottom)} / {Edge(thickness.Left)}";
+
+    private static String Edge(StyleLength length) =>
+        !length.HasValue
+            ? "none"
+            : length.IsAuto
+                ? "auto"
+                : length.Resolve(900).ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
 
     private static Dictionary<IElement, ComputedStyle> OldStyles(IWindow window, HutuRenderDevice device)
     {
@@ -197,7 +289,15 @@ public sealed class FusedStyleTests
 
         if (document.DocumentElement is { } root)
         {
-            WalkElements(root, index, FusedParent.Root, device, faces, pool, styles);
+            WalkElements(
+                root,
+                index,
+                FusedParent.Root,
+                device,
+                faces,
+                pool,
+                document.Context.GetService<AngleSharp.Css.Parser.ICssParser>(),
+                styles);
         }
 
         return styles;
@@ -210,10 +310,12 @@ public sealed class FusedStyleTests
         HutuRenderDevice device,
         FontFaceTable? faces,
         StyleIntern pool,
+        AngleSharp.Css.Parser.ICssParser? parser,
         Dictionary<IElement, ComputedStyle> styles)
     {
         var cascade = MatchedCascade.ForElement(index, element);
-        var style = FusedStyleFactory.Build(element, cascade, parent, device, faces, pool);
+        var variables = VariableScope.Open(cascade, parent.Variables, parser);
+        var style = FusedStyleFactory.Build(element, cascade, parent, device, faces, pool, variables: variables);
         styles.Add(element, style);
 
         var inherited = new FusedParent
@@ -231,11 +333,12 @@ public sealed class FusedStyleTests
             WritingMode = style.WritingMode,
             Orientation = style.DeclaredTextOrientation,
             CombinesUpright = style.DeclaredTextCombineUpright,
+            Variables = variables,
         };
 
         foreach (var child in element.Children.OfType<IElement>())
         {
-            WalkElements(child, index, inherited, device, faces, pool, styles);
+            WalkElements(child, index, inherited, device, faces, pool, parser, styles);
         }
     }
 

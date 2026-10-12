@@ -36,7 +36,13 @@ public sealed class MatchedCascade
     /// </remarks>
     private readonly Dictionary<String, ICssProperty?> _found = new(StringComparer.Ordinal);
 
-    private Boolean? _substitution;
+    /// <summary>
+    /// What one walk over this cascade's declarations answers: the custom properties it declares, and
+    /// whether any of its values asks for an environment variable. Null until asked - most cascades
+    /// are never asked, because a page that declares no custom property and names no environment
+    /// variable needs neither answer.
+    /// </summary>
+    private CascadeScan? _scan;
 
     internal MatchedCascade(List<ICssStyleRule> rules, ICssStyleDeclaration? inline)
     {
@@ -46,6 +52,9 @@ public sealed class MatchedCascade
 
     /// <summary>Gets the rules that matched, in the order the cascade applies them.</summary>
     internal IReadOnlyList<ICssStyleRule> Matched => _rules;
+
+    /// <summary>Gets the element's own inline style, which the cascade applies last of all.</summary>
+    internal ICssStyleDeclaration? Inline => _inline;
 
     /// <summary>
     /// Gets the cascade an element matches, which the index may already have worked out for an
@@ -153,46 +162,90 @@ public sealed class MatchedCascade
     }
 
     /// <summary>
-    /// Gets whether any matched declaration's text mentions a substitution function. The
-    /// fused resolvers read cascaded values as written and never resolve <c>var()</c> or
-    /// <c>env()</c> the way computing a style does, so an element that uses either falls
-    /// back to the render-tree path.
+    /// Gets what one walk over the declarations answers: the names starting with <c>--</c> that any
+    /// matched rule or the inline style declares - which decides whether a variable scope has to open
+    /// for this element at all - and whether any value names an environment variable, which nothing in
+    /// the engine can answer and so is the one substitution the fused path still gives the whole
+    /// document up over. A <c>var()</c> in itself is no reason to give up: it is read through the
+    /// scope the element's variables are resolved in.
     /// </summary>
-    public Boolean UsesSubstitution()
+    /// <remarks>
+    /// Asked once per cascade, and the cascade is shared between the elements that matched alike, so
+    /// the walk is paid once for each distinct set of declarations rather than once per element - the
+    /// same shape as the answers <see cref="Find"/> remembers.
+    /// </remarks>
+    internal CascadeScan Scan()
     {
-        // Asked once per element, and it reads every declaration of every matched rule - so on a
-        // shared cascade it is worth the same remembering the answers to Find are.
-        _substitution ??= WalkForSubstitution();
-        return _substitution.Value;
+        _scan ??= Walk();
+        return _scan.Value;
     }
 
-    private Boolean WalkForSubstitution()
+    private static readonly IReadOnlyList<String> NoNames = Array.Empty<String>();
+
+    private CascadeScan Walk()
     {
+        List<String>? names = null;
+        var environment = false;
+        var variable = false;
+
         for (var i = 0; i < _rules.Count; i++)
         {
-            if (MentionsSubstitution(_rules[i].Style))
-            {
-                return true;
-            }
+            Read(_rules[i].Style, ref names, ref environment, ref variable);
         }
 
-        return _inline is not null && MentionsSubstitution(_inline);
+        if (_inline is not null)
+        {
+            Read(_inline, ref names, ref environment, ref variable);
+        }
+
+        return new CascadeScan(names is null ? NoNames : names, variable, environment);
     }
 
-    private static Boolean MentionsSubstitution(ICssStyleDeclaration declaration)
+    private static void Read(
+        ICssStyleDeclaration declaration,
+        ref List<String>? names,
+        ref Boolean environment,
+        ref Boolean variable)
     {
         foreach (var property in declaration)
         {
+            var name = property.Name;
+
+            if (name.StartsWith("--", StringComparison.Ordinal))
+            {
+                // The last declaration of a name is the one a lookup finds, and a name met twice costs
+                // one wasted entry in a list walked once per variable, so the duplicate is left in
+                // rather than paying for a set to keep it out.
+                (names ??= new List<String>()).Add(name);
+                continue;
+            }
+
             var text = property.Value;
 
-            if (!String.IsNullOrEmpty(text) &&
-                (text.Contains("var(", StringComparison.OrdinalIgnoreCase) ||
-                 text.Contains("env(", StringComparison.OrdinalIgnoreCase)))
+            if (String.IsNullOrEmpty(text))
             {
-                return true;
+                continue;
+            }
+
+            if (!variable && text.Contains("var(", StringComparison.OrdinalIgnoreCase))
+            {
+                variable = true;
+            }
+
+            if (!environment && text.Contains("env(", StringComparison.OrdinalIgnoreCase))
+            {
+                environment = true;
             }
         }
-
-        return false;
     }
+
+    /// <summary>What a walk over a cascade's declarations came back with.</summary>
+    /// <param name="CustomProperties">The custom property names declared, empty when there are none.</param>
+    /// <param name="UsesVariable">Whether a value names a variable - which needs a scope to read even
+    /// when this cascade declares nothing, because the answer may be the fallback written after the name.</param>
+    /// <param name="UsesEnvironment">Whether a value names an environment variable.</param>
+    internal readonly record struct CascadeScan(
+        IReadOnlyList<String> CustomProperties,
+        Boolean UsesVariable,
+        Boolean UsesEnvironment);
 }

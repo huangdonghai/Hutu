@@ -1,5 +1,6 @@
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
+using AngleSharp.Css.Parser;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
 using Hutu.Rendering.Layout;
@@ -44,8 +45,14 @@ public static partial class BoxBuilder
         var cache = new FusedAreaCache();
         var supported = true;
 
+        // A custom property is read by parsing its substituted text back into a declaration, which is
+        // the parser's job. A document that declares none never asks, and one that does without a parser
+        // to answer with is left to the render tree - the same decision the engine made when it could
+        // not read variables at all, and one no context built by WithCss() ever reaches.
+        var parser = document.Context.GetService<ICssParser>();
+
         var box = BuildFusedElement(
-            root, index, FusedParent.Root, device, images, faces, pool, cache, WritingModeInfo.Horizontal, ref supported);
+            root, index, FusedParent.Root, device, images, faces, pool, cache, parser, WritingModeInfo.Horizontal, ref supported);
 
         if (!supported || box is null)
         {
@@ -67,21 +74,30 @@ public static partial class BoxBuilder
         FontFaceTable? faces,
         StyleIntern pool,
         FusedAreaCache cache,
+        ICssParser? parser,
         WritingModeInfo inheritedFlow,
         ref Boolean supported)
     {
         var cascade = MatchedCascade.ForElement(index, element);
 
-        // The fused resolvers read cascaded values as written, so a var() or env() - which only the
-        // cascade's own substitution can resolve - abandons the whole document to the render-tree
-        // path.
-        if (cascade.UsesSubstitution())
+        // An environment variable is the one substitution nothing here can answer - it is a value the
+        // host has and the stylesheet does not - so the document is handed over rather than guessed at.
+        // A var() is no longer such a case: the scope opened below reads it.
+        if (cascade.Scan().UsesEnvironment)
         {
             supported = false;
             return null;
         }
 
-        var style = FusedStyleFactory.Build(element, cascade, parent, device, faces, pool, cache);
+        var variables = VariableScope.Open(cascade, parent.Variables, parser);
+
+        if (variables is null && parser is null && VariableScope.NeedsParser(cascade))
+        {
+            supported = false;
+            return null;
+        }
+
+        var style = FusedStyleFactory.Build(element, cascade, parent, device, faces, pool, cache, variables);
 
         if (style.IsDisplayNone)
         {
@@ -117,7 +133,7 @@ public static partial class BoxBuilder
                     // The parent's own tag name travels down with it: a box model needs it, because the
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
-                        elementChild, index, parent.Next(style, cascade, cache.Tag(element.LocalName)), device, images, faces, pool, cache, flow, ref supported);
+                        elementChild, index, parent.Next(style, cascade, variables, cache.Tag(element.LocalName)), device, images, faces, pool, cache, parser, flow, ref supported);
 
                     if (childBox is not null)
                     {

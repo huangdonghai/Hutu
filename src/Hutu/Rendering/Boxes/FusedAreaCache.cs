@@ -115,9 +115,10 @@ public sealed class FusedAreaCache
 
 /// <summary>
 /// One resolution's input: the cascade an element matched, the one length an area was read at, the two
-/// identities the resolution reads beyond that, and the inherited flow packed into a number. The scalars
-/// are zero and the references null for the areas that read none of them, which keeps those to one entry
-/// per cascade rather than one per chance variation.
+/// identities the resolution reads beyond that, the inherited flow packed into a number, and the scope
+/// its <c>var()</c> references resolve in. The scalars are zero and the references null for the areas
+/// that read none of them, which keeps those to one entry per cascade rather than one per chance
+/// variation.
 /// </summary>
 /// <remarks>
 /// The cascade is taken by identity. It is itself shared between the elements that matched alike - the
@@ -125,20 +126,34 @@ public sealed class FusedAreaCache
 /// already a statement about the declarations behind it, and comparing two of them by reference is both
 /// the cheap and the exact answer. The object slots are taken the same way by intent: each holds
 /// something already one object per distinct value - a parent's interned area, a tag name folded through
-/// <see cref="FusedAreaCache.Tag"/>, the property a line-height was authored in - so a reference says
-/// what the values are without walking them. And the stamp packs four inherited enumerals into fields
-/// wide enough to hold each one's every value, which makes it a name for the combination rather than a
-/// digest of it: no two flows share a stamp, so no two flows can be confused for one.
+/// <see cref="FusedAreaCache.Tag"/>, the property a line-height was authored in, the scope an element's
+/// variables are read in - so a reference says what the values are without walking them. And the stamp
+/// packs four inherited enumerals into fields wide enough to hold each one's every value, which makes it
+/// a name for the combination rather than a digest of it: no two flows share a stamp, so no two flows can
+/// be confused for one.
+/// <para>
+/// The scope is not part of the cascade, and that is precisely why it has to be in the key: the same set
+/// of matched rules reads a different colour under an ancestor that redeclared the variable than under
+/// one that left it alone. Two elements that matched alike but stand in different variable neighbourhoods
+/// are two resolutions, and a key that named only the declarations would let them share an answer.
+/// </para>
 /// </remarks>
 public readonly struct AreaKey : IEquatable<AreaKey>
 {
-    public AreaKey(MatchedCascade cascade, Double scalar, Object? inherited = null, Object? identity = null, Int32 stamp = 0)
+    public AreaKey(
+        MatchedCascade cascade,
+        Double scalar,
+        Object? inherited = null,
+        Object? identity = null,
+        Int32 stamp = 0,
+        Object? variables = null)
     {
         Cascade = cascade;
         Scalar = scalar;
         Inherited = inherited;
         Identity = identity;
         Stamp = stamp;
+        Variables = variables;
     }
 
     public MatchedCascade Cascade { get; }
@@ -158,10 +173,18 @@ public readonly struct AreaKey : IEquatable<AreaKey>
     /// <summary>Gets the flow the parent passed down, packed. Zero where no flow is read.</summary>
     public Int32 Stamp { get; }
 
+    /// <summary>
+    /// Gets the scope the cascade's <c>var()</c> references were read through, or null where the
+    /// element's neighbourhood declares no custom property at all - the same null every page that uses
+    /// none keeps, so adding the slot costs those pages nothing.
+    /// </summary>
+    public Object? Variables { get; }
+
     public Boolean Equals(AreaKey other) =>
         ReferenceEquals(Cascade, other.Cascade) &&
         ReferenceEquals(Inherited, other.Inherited) &&
         ReferenceEquals(Identity, other.Identity) &&
+        ReferenceEquals(Variables, other.Variables) &&
         Stamp == other.Stamp &&
         BitConverter.DoubleToInt64Bits(Scalar) == BitConverter.DoubleToInt64Bits(other.Scalar);
 
@@ -180,5 +203,6 @@ public readonly struct AreaKey : IEquatable<AreaKey>
             BitConverter.DoubleToInt64Bits(Scalar),
             RuntimeHelpers.GetHashCode(Inherited),
             RuntimeHelpers.GetHashCode(Identity),
-            Stamp);
+            Stamp,
+            RuntimeHelpers.GetHashCode(Variables));
 }
