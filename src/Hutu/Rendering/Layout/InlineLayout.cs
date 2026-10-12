@@ -197,6 +197,10 @@ public sealed class InlineLayout
         var maxContent = indent;
         var unbreakable = indent;
 
+        // Whether the stream has reached anything a line would draw. White space ahead of it asks for
+        // no room, because the line it would begin is the one line that does not draw it.
+        var sawContent = false;
+
         // Nothing here is broken into lines, so an element is opened once and stays open: the padding
         // it brings with it is charged to the run that enters it, wherever in the stream that is.
         var open = new List<OpenInline>();
@@ -223,6 +227,7 @@ public sealed class InlineLayout
                 minContent = Math.Max(minContent, extent);
                 maxContent += extent;
                 unbreakable += extent;
+                sawContent = true;
                 continue;
             }
 
@@ -236,6 +241,7 @@ public sealed class InlineLayout
 
                 maxContent += extent;
                 unbreakable += extent;
+                sawContent = true;
                 minContent = Math.Max(minContent, intrinsic.MinContent + start + end);
                 continue;
             }
@@ -250,6 +256,7 @@ public sealed class InlineLayout
 
                 maxContent += extent;
                 unbreakable += extent;
+                sawContent = true;
                 continue;
             }
 
@@ -264,12 +271,21 @@ public sealed class InlineLayout
 
                 if (TextChunker.IsWhiteSpace(source, chunk.Start, chunk.Length))
                 {
+                    // A collapsible space the line would begin with is not drawn, so it asks for no
+                    // room in either extent and leaves the break it stands at uncounted as well.
+                    if (!sawContent && !item.Style.IsPreformatted)
+                    {
+                        continue;
+                    }
+
                     // A collapsible space is a break opportunity: the run before it can be split.
                     minContent = Math.Max(minContent, unbreakable);
                     unbreakable = 0;
                 }
                 else if (TextChunker.IsCjk(source[chunk.Start]))
                 {
+                    sawContent = true;
+
                     // A line may break on either side of a CJK character, so the character stands
                     // alone rather than joining the run around it, and it is the run beside it - the
                     // Latin word, say - that decides how narrow the content can go.
@@ -278,6 +294,7 @@ public sealed class InlineLayout
                 }
                 else
                 {
+                    sawContent = true;
                     unbreakable += width;
                 }
             }
@@ -848,6 +865,15 @@ public sealed class InlineLayout
                 foreach (var run in new OrientedPieces(item.Text!, chunk.Start, chunk.Length, itemFlow))
                 {
                     var piece = Measure(item.Style, font, run, itemFlow);
+
+                    // White space a line begins with is not drawn. The node a run of text starts with
+                    // may begin with the one space an element's edge collapsed into, and only the line
+                    // knows whether that edge is a line's start - so the piece is dropped here rather
+                    // than when the nodes were collapsed.
+                    if (piece.IsWhiteSpace && !builder.HasContent && !item.Style.IsPreformatted)
+                    {
+                        continue;
+                    }
 
                     if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + piece.Width > maxInline)
                     {
@@ -2308,6 +2334,16 @@ public sealed class InlineLayout
             WritingModeInfo flow,
             InlineAncestor? inline)
         {
+            var isSpace = TextChunker.IsWhiteSpace(source, start, length);
+
+            // White space that follows white space across an element's edge collapses into the space
+            // already on the line: the pieces come from two nodes, so no node's own collapse saw them
+            // together, and the line is where their neighbourhood finally shows up.
+            if (isSpace && _fragments.Count > 0 && EndsInCollapsibleSpace(_fragments[^1]))
+            {
+                return;
+            }
+
             Enter(inline);
 
             if (_fragments.Count > 0)
@@ -2344,6 +2380,14 @@ public sealed class InlineLayout
             _fragments.Add(new TextFragment(source, start, length, width, style, box, flow, inline));
             Width += width;
         }
+
+        private static Boolean EndsInCollapsibleSpace(TextFragment fragment) =>
+            !fragment.IsReplaced &&
+            fragment.Atomic is null &&
+            fragment.Ruby is null &&
+            fragment.Length > 0 &&
+            !fragment.Style.IsPreformatted &&
+            TextChunker.IsWhiteSpace(fragment.Source, fragment.Start + fragment.Length - 1, 1);
 
         /// <summary>
         /// Adds a ruby pair, which never joins the run before it: the base has an annotation of its own

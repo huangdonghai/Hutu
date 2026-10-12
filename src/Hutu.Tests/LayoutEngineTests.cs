@@ -151,6 +151,22 @@ public sealed class LayoutEngineTests
         Assert.That(lines, Is.EqualTo(new[] { "a b" }));
     }
 
+    [Test]
+    public async Task SpaceAfterAnInlineElementSurvivesCollapsing()
+    {
+        // The space stands at the head of the text node that follows </b>, and a node's own
+        // collapse used to take it for a line's leading white space and drop it.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0'><b>slice</b> (the initial value)</p>" +
+            "</body></html>");
+
+        var lines = Lines(view).Select(LineText).ToList();
+
+        Assert.That(lines, Is.EqualTo(new[] { "slice (the initial value)" }));
+    }
+
     private static HutuViewInternal CreateView(int viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

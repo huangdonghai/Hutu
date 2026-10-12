@@ -610,7 +610,9 @@ public static partial class BoxBuilder
 
     /// <summary>
     /// Collapses every run of ASCII white space to a single space, leaving the rest untouched. The
-    /// result may still be white space only; line layout decides whether it survives.
+    /// result may still be white space only; line layout decides whether it survives. A space at
+    /// either end of a node survives the collapse as well: whether it is a line's start or end, or
+    /// the one space an element's edge sits between, is a question for the line, not the node.
     /// </summary>
     private static String CollapseWhitespace(String text)
     {
@@ -625,7 +627,7 @@ public static partial class BoxBuilder
                 continue;
             }
 
-            if (pendingSpace && builder.Length > 0)
+            if (pendingSpace)
             {
                 builder.Append(' ');
             }
@@ -634,7 +636,7 @@ public static partial class BoxBuilder
             builder.Append(character);
         }
 
-        if (pendingSpace && builder.Length > 0)
+        if (pendingSpace)
         {
             builder.Append(' ');
         }
