@@ -171,6 +171,54 @@ public sealed class PortalLoadProbeTests
              $"{Walk(view.Layout.Root).Count} boxes laid out");
         Line("  a browser at the same viewport: 1642x8440");
 
+        var shortened = 0;
+        var total = 0;
+        var samples = new List<String>();
+
+        void Sweep(LayoutBox node, LayoutBox? above)
+        {
+            if (node.Kind == LayoutKind.Line && above is { } block)
+            {
+                total++;
+
+                // The line box begins where the block's content box does unless a float is in the way,
+                // so the distance past that is the float's edge - and the block's own insets are what
+                // stands between its border box and its content.
+                var content = block.BorderBox.X + block.Border.Left + block.Padding.Left;
+                var inset = node.BorderBox.X - content;
+
+                if (inset > 0.5)
+                {
+                    shortened++;
+
+                    if (samples.Count < 8)
+                    {
+                        var element = node.Source.Element;
+                        var classes = element?.GetAttribute("class");
+
+                        samples.Add($"    line pushed {inset,5:F0} in, to {node.BorderBox.Right,6:F0}, inside " +
+                            $"{block.BorderBox.X + block.Border.Left + block.Padding.Left,6:F0}" +
+                            $"..{block.BorderBox.Right,6:F0}  of " +
+                            $"{(classes is { Length: > 0 } some ? "." + some.Split(' ')[0] : element?.LocalName ?? "?")}");
+                    }
+                }
+            }
+
+            foreach (var child in node.Children)
+            {
+                Sweep(child, node);
+            }
+        }
+
+        Sweep(view.Layout.Root, null);
+
+        Line($"  lines: {shortened} of {total} begin past a float's edge");
+
+        foreach (var sample in samples)
+        {
+            Line(sample);
+        }
+
         foreach (var selector in Selectors)
         {
             var taken = 0;

@@ -425,7 +425,15 @@ internal sealed class BlockLayout
             // The parent's content box is the child's containing block, so the child is handed its
             // width rather than the width left after its own margins: resolving those is its job.
             var spacing = Spacing(child, tracks, margin, cursor, first, previousBottomMargin);
-            var size = _engine.Measure(child, constraints, childContext);
+
+            // The child's lines stand in the band of the floats around it, at the height the child
+            // itself reaches: two siblings at different depths have different room beside a float,
+            // so the band is answered per child rather than by the one context the container shares.
+            var band = BandFor(child, tracks, context.Floats, cursor + spacing, margin.Left, 0, 0, contentWidth);
+            var size = _engine.Measure(
+                child,
+                constraints,
+                band is null ? childContext : childContext.WithFloats(band));
 
             cursor += spacing + size.Height;
             previousBottomMargin = margin.Bottom;
@@ -464,6 +472,60 @@ internal sealed class BlockLayout
 
     /// <summary>Gets whether the child is pinned to an edge of its container instead of stacked in it.</summary>
     private static Boolean IsFloat(Box child) => child.Style.Float != FloatSide.None;
+
+    /// <summary>
+    /// Gets the band a child's line boxes stand in: the container's own floats, or the ones it inherited
+    /// when nothing in it floats, with the child's content corner placed inside them.
+    /// </summary>
+    /// <param name="top">
+    /// Where the child's border box begins along the axis the floats stack down, in the coordinates this
+    /// pass is working in - relative to the content corner while measuring, absolute while arranging.
+    /// </param>
+    /// <param name="left">The same for the axis the floats are pinned along.</param>
+    /// <param name="contentX">
+    /// Where this box's content corner sits in those same coordinates, which is where the corner of the
+    /// frame the inherited band is written in sits - the ancestor's tracks are not in this box's frame
+    /// until the distance between the two is added back.
+    /// </param>
+    /// <param name="contentY">The same for the other axis.</param>
+    private static FloatBand? BandFor(
+        Box child,
+        FloatTracks? own,
+        FloatBand? inherited,
+        Double top,
+        Double left,
+        Double contentX,
+        Double contentY,
+        Double basis)
+    {
+        var tracks = own ?? inherited?.Tracks;
+
+        if (tracks is null)
+        {
+            return null;
+        }
+
+        var border = BorderOf(child);
+        var padding = child.Style.Padding.Resolve(basis);
+
+        // A container that holds the floats keeps their frame as its own, which is the frame the child's
+        // position is already written in. One that does not hands the ancestor's frame down, and the
+        // distance from the ancestor's corner to this box's is the band's own origin.
+        var originY = (own is null ? inherited!.OriginY + top - contentY : top) + border.Top + padding.Top;
+        var originLeft = (own is null ? inherited!.Left + left - contentX : left) + border.Left + padding.Left;
+
+        // Nothing that ended above this box can narrow a line inside it: the floats in a band are placed
+        // at or below the content they were met after, so once the deepest of them is level with the
+        // box's own content top, the box and everything stacked in it reads at full width. Without this
+        // a single float near the top of a column hands a band to every block below it, and every one of
+        // them breaks its lines twice for a float it will never touch.
+        if (tracks.Bottom <= originY)
+        {
+            return null;
+        }
+
+        return new FloatBand(tracks, originY, originLeft);
+    }
 
     /// <summary>
     /// Gets the tracks the container's floats are placed against, or null when nothing in it can
@@ -591,7 +653,12 @@ internal sealed class BlockLayout
             var used = BoxModel.UsedMargin(child.Style, contentWidth, size.Width);
             var rect = new Rect(contentX + used.Left, cursor + spacing, size.Width, size.Height);
 
-            parent.Children.Add(_engine.Arrange(child, rect, context));
+            // The band is worked out from where the child actually lands, margins included, and handed
+            // down for the arranging: the measuring pass ran the same arithmetic from its own cursor.
+            var band = BandFor(
+                child, tracks, context.Floats, cursor + spacing, contentX + used.Left, contentX, contentY, contentWidth);
+
+            parent.Children.Add(_engine.Arrange(child, rect, band is null ? context : context.WithFloats(band)));
 
             cursor = rect.Bottom;
             previousBottomMargin = margin.Bottom;

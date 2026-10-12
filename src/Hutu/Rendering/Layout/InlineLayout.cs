@@ -98,7 +98,7 @@ public sealed class InlineLayout
         InlineContext context,
         Double indent)
     {
-        var key = new LinePlanKey(container, maxInline, indent, FlowSignature(flow));
+        var key = new LinePlanKey(container, maxInline, indent, FlowSignature(flow), context.Containing.Floats);
 
         if (_plans.TryGetValue(key, out var known))
         {
@@ -161,6 +161,9 @@ public sealed class InlineLayout
             {
                 block += line.Height;
             }
+
+            // Room a line had to drop through to get clear of a float is height the block owes it too.
+            block += line.GapBefore;
 
             // The room the line takes is what its runs take plus the distance it was set in by, which
             // only the first line of a box has any of.
@@ -338,22 +341,26 @@ public sealed class InlineLayout
             // height at all still has glyphs, and they are drawn overflowing the line they sit on.
             if (line.Fragments.Count == 0)
             {
-                cursor += Math.Max(0, line.Height);
+                cursor += Math.Max(0, line.Height) + line.GapBefore;
                 continue;
             }
+
+            // The room a line had to fall through to get clear of a float belongs ahead of it, not after:
+            // the line that dropped stands at the height it reached, and the ones below it stack from there.
+            cursor += line.GapBefore;
 
             // The line box spans the whole inline extent of the content box and only as much of the
             // block one as it needs, so in a row it is the content width and the line's own height,
             // and in a column the content height and the band the text runs down.
             var lineBox = new LayoutBox(container, LayoutKind.Line)
             {
-                BorderBox = flow.Map(contentBox, 0, maxInline, cursor, line.Height),
+                BorderBox = flow.Map(contentBox, line.Left, line.Extent, cursor, line.Height),
                 Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent),
                 Flow = flow,
             };
 
             var open = new List<OpenInline>();
-            var origin = line.Offset;
+            var origin = line.Offset + line.Left;
 
             foreach (var fragment in line.Fragments)
             {
@@ -772,16 +779,35 @@ public sealed class InlineLayout
         // draws no start edge for an element whose start edge is already on the line above.
         var carried = (HashSet<InlineAncestor>?)null;
 
+        // How much room each line has, which is the block's extent for every block that has nothing
+        // floated beside it and the float's far edge for the lines that have. A column is left out, as
+        // it has been for floats themselves: the band a line would be shortened by runs sideways there.
+        var room = new LineRoom(
+            flow.IsVertical ? null : context.Containing.Floats,
+            maxInline);
+
         // Only the first line of the content is set in; the line after a forced break begins where any
         // other line does, which is what leaving the indent behind on the first builder says.
         var builder = new LineBuilder(indent);
+
+        void Close(LineBuilder filled)
+        {
+            var line = filled.Build(_measurer, room.Room, carried);
+
+            line.Left = room.Inset;
+            line.Extent = room.Room;
+            line.GapBefore = room.Gap;
+
+            lines.Add(line);
+            carried = line.ContinuesToNext;
+            room.Next(line.Height);
+        }
 
         foreach (var item in items)
         {
             if (item.IsBreak)
             {
-                lines.Add(builder.Build(_measurer, maxInline, carried));
-                carried = lines[^1].ContinuesToNext;
+                Close(builder);
                 builder = new LineBuilder(item.Style, carried);
                 continue;
             }
@@ -795,10 +821,9 @@ public sealed class InlineLayout
                 var inlineSize = flow.InlineExtent(width, height);
                 var blockSize = flow.BlockExtent(width, height);
 
-                if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + inlineSize > maxInline)
+                if (builder.HasContent && room.Room > 0 && builder.ExtentFor(item.Inline) + inlineSize > room.Room)
                 {
-                    lines.Add(builder.Build(_measurer, maxInline, carried));
-                    carried = lines[^1].ContinuesToNext;
+                    Close(builder);
                     builder = new LineBuilder(item.Style, carried);
                 }
 
@@ -814,14 +839,13 @@ public sealed class InlineLayout
                 // The room the line has left is measured along the axis the line itself runs along, so
                 // it is a physical width in a row and a height in a column. Nothing is bounded when the
                 // line has no definite extent at all.
-                var room = maxInline <= 0 ? Double.PositiveInfinity : maxInline - builder.Width;
+                var spare = room.Room <= 0 ? Double.PositiveInfinity : room.Room - builder.Width;
 
-                var atomic = MeasureInlineBlock(item.Box, maxInline, room, flow, context);
+                var atomic = MeasureInlineBlock(item.Box, maxInline, spare, flow, context);
 
-                if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > maxInline)
+                if (builder.HasContent && room.Room > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > room.Room)
                 {
-                    lines.Add(builder.Build(_measurer, maxInline, carried));
-                    carried = lines[^1].ContinuesToNext;
+                    Close(builder);
                     builder = new LineBuilder(item.Style, carried);
                 }
 
@@ -843,10 +867,9 @@ public sealed class InlineLayout
                 var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
                 var extent = Math.Max(baseWidth, annotation.Width);
 
-                if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + extent > maxInline)
+                if (builder.HasContent && room.Room > 0 && builder.ExtentFor(item.Inline) + extent > room.Room)
                 {
-                    lines.Add(builder.Build(_measurer, maxInline, carried));
-                    carried = lines[^1].ContinuesToNext;
+                    Close(builder);
                     builder = new LineBuilder(item.Style, carried);
                 }
 
@@ -875,10 +898,9 @@ public sealed class InlineLayout
                         continue;
                     }
 
-                    if (builder.HasContent && maxInline > 0 && builder.ExtentFor(item.Inline) + piece.Width > maxInline)
+                    if (builder.HasContent && room.Room > 0 && builder.ExtentFor(item.Inline) + piece.Width > room.Room)
                     {
-                        lines.Add(builder.Build(_measurer, maxInline, carried));
-                        carried = lines[^1].ContinuesToNext;
+                        Close(builder);
                         builder = new LineBuilder(item.Style, carried);
 
                         // The space that triggered the break is consumed by it.
@@ -895,7 +917,7 @@ public sealed class InlineLayout
 
         if (builder.HasContent)
         {
-            lines.Add(builder.Build(_measurer, maxInline, carried));
+            Close(builder);
         }
 
         MarkSlices(lines, maxInline);
@@ -2028,20 +2050,32 @@ public sealed class InlineLayout
 
     /// <summary>
     /// One breaking of one container's inline content: the box it was broken out of, the extent it was
-    /// broken at, the indentation its first line started with, and the writing mode it was read in.
+    /// broken at, the indentation its first line started with, the writing mode it was read in, and the
+    /// floats its lines had to stand aside for together with how far down and in the container sits
+    /// among them.
     /// </summary>
     /// <remarks>
     /// The container is compared by identity rather than by its own equality: two boxes that happen to
     /// carry the same style are still two containers whose lines belong to each of them alone.
+    /// <para>
+    /// The three float parts are what a line's room is asked from, and they are the reason a block beside
+    /// a float is broken twice in a pass - once while measuring, from its own origin, and once while
+    /// arranging, at the height it actually lands at. A block with nothing floated near it pays nothing:
+    /// all three are null and zero in both phases, and the plan it made while measuring is the one the
+    /// placing reads.
+    /// </para>
     /// </remarks>
     private readonly struct LinePlanKey : IEquatable<LinePlanKey>
     {
-        public LinePlanKey(Box container, Double maxInline, Double indent, Int32 flow)
+        public LinePlanKey(Box container, Double maxInline, Double indent, Int32 flow, FloatBand? band)
         {
             Container = container;
             MaxInline = maxInline;
             Indent = indent;
             Flow = flow;
+            Tracks = band?.Tracks;
+            BandY = band?.OriginY ?? 0;
+            BandLeft = band?.Left ?? 0;
         }
 
         public Box Container { get; }
@@ -2052,16 +2086,116 @@ public sealed class InlineLayout
 
         public Int32 Flow { get; }
 
+        public FloatTracks? Tracks { get; }
+
+        public Double BandY { get; }
+
+        public Double BandLeft { get; }
+
         public Boolean Equals(LinePlanKey other) =>
             ReferenceEquals(Container, other.Container) &&
             MaxInline == other.MaxInline &&
             Indent == other.Indent &&
-            Flow == other.Flow;
+            Flow == other.Flow &&
+            ReferenceEquals(Tracks, other.Tracks) &&
+            BandY == other.BandY &&
+            BandLeft == other.BandLeft;
 
         public override Boolean Equals(Object? obj) => obj is LinePlanKey other && Equals(other);
 
         public override Int32 GetHashCode() =>
-            HashCode.Combine(RuntimeHelpers.GetHashCode(Container), MaxInline, Indent, Flow);
+            HashCode.Combine(
+                RuntimeHelpers.GetHashCode(Container),
+                MaxInline,
+                Indent,
+                Flow,
+                RuntimeHelpers.GetHashCode(Tracks),
+                BandY,
+                BandLeft);
+    }
+
+    /// <summary>
+    /// How much room the line being built has, which is the block's own extent less whatever a float
+    /// standing at that line's height takes of it.
+    /// </summary>
+    /// <remarks>
+    /// The room is worked out once per line, when it opens, rather than per run added to it: a line
+    /// whose width moved while it was being filled would let the same word break on one pass and
+    /// stand on the next, and a block would settle at whatever the order of measuring happened to be.
+    /// <para>
+    /// A line that finds no room at all - a float across the whole width, or two meeting in the middle
+    /// - is dropped below the floats in its band, which is what the specification does for a line box
+    /// too narrow for anything and what the block's height then has to count. One dropped still
+    /// narrower than a character gives up and overflows, the way a float wider than its container does.
+    /// </para>
+    /// </remarks>
+    private sealed class LineRoom
+    {
+        private readonly FloatBand? _band;
+        private readonly Double _max;
+
+        public LineRoom(FloatBand? band, Double max)
+        {
+            _band = band;
+            _max = max;
+            Open();
+        }
+
+        /// <summary>Gets how far down the block's lines have reached, which is where the next one stands.</summary>
+        public Double Top { get; private set; }
+
+        /// <summary>Gets how far the line that is open now reaches along the inline axis.</summary>
+        public Double Room { get; private set; }
+
+        /// <summary>Gets where that line begins inside the block's content box.</summary>
+        public Double Inset { get; private set; }
+
+        /// <summary>Gets the room it had to drop through to get there, which the block's stack owes it.</summary>
+        public Double Gap { get; private set; }
+
+        /// <summary>Moves on to the next line, at the height the one just built took.</summary>
+        public void Next(Double height)
+        {
+            Top += height;
+            Open();
+        }
+
+        private void Open()
+        {
+            Gap = 0;
+
+            if (_band is not { } band)
+            {
+                Room = _max;
+                Inset = 0;
+                return;
+            }
+
+            Room = band.Room(Top, _max, out var inset);
+            Inset = inset;
+
+            if (Room > 0)
+            {
+                return;
+            }
+
+            var below = band.Below(Top);
+
+            if (below > Top)
+            {
+                Gap = below - Top;
+                Top = below;
+
+                Room = band.Room(Top, _max, out inset);
+                Inset = inset;
+            }
+
+            if (Room <= 0)
+            {
+                Room = _max;
+                Inset = 0;
+            }
+        }
     }
 
     private sealed class Line
@@ -2071,6 +2205,24 @@ public sealed class InlineLayout
         public Double Ascent { get; set; }
 
         public Double Height { get; set; }
+
+        /// <summary>
+        /// Gets or sets where the line begins inside its block's content box: zero for every line of a
+        /// block with nothing floated beside it, and the far edge of the float for one that has.
+        /// </summary>
+        public Double Left { get; set; }
+
+        /// <summary>
+        /// Gets or sets the extent the line was broken at, which is the block's content extent unless a
+        /// float shortens it. Alignment works within this much, and the line box is drawn this wide.
+        /// </summary>
+        public Double Extent { get; set; }
+
+        /// <summary>
+        /// Gets or sets the room the line had to drop to get clear of a float that left it nothing to
+        /// stand in, which the block's own stack has to add back where it counts lines out.
+        /// </summary>
+        public Double GapBefore { get; set; }
 
         /// <summary>Gets the extent the line's fragments take along the inline axis, before alignment.</summary>
         public Double Used { get; set; }

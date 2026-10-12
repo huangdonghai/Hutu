@@ -216,34 +216,96 @@ public sealed class FloatLayoutTests
     }
 
     /// <summary>
-    /// The next gap, written down rather than approved: a block whose container holds a float still
-    /// makes every one of its line boxes the full width of that container, so its text is drawn under
-    /// the floating box. The block's own box already overlaps the float the way a browser's does - that
-    /// part is right - and what is missing is the one rule CSS adds on top of it, that a line box next
-    /// to a float starts at the float's edge and ends before it. It is not a one-line change because the
-    /// width a line breaks at is decided by the cached line plan, which a float would have to make a
-    /// function of where the line sits.
+    /// A line box standing beside a float begins at the float's far edge and ends before it, and the
+    /// lines below the float take the block's full width again. This is the rule that makes text read
+    /// around a picture rather than under it, and the block's own box overlapping the float - which it
+    /// does in a browser too - is what leaves the shortening as the only thing to do.
     /// </summary>
     [Test]
-    public async Task ALineStillRunsUnderAFloat()
+    public async Task ALineStopsAtTheFloatAndResumesBelowIt()
     {
         using var view = CreateView();
 
         await view.SetHtml(Page(
             "<div id='h' style='width:200px'>" +
-            "<img id='f' src='x.png' style='width:120px;height:60px;float:left'>" +
+            "<img id='f' src='x.png' style='width:120px;height:20px;float:left'>" +
             "<p id='p' style='margin:0'>word word word word word word word word word word</p></div>"));
 
         var paragraph = view.Layout!.FindBox(view.Document!.GetElementById("p")!)!;
-        var line = paragraph.Children.FirstOrDefault(box => box.Kind == LayoutKind.Line);
+        var lines = paragraph.Children.Where(box => box.Kind == LayoutKind.Line).ToList();
 
-        Assert.That(line, Is.Not.Null, "the paragraph has a line box to look at");
-        Assert.That(line!.BorderBox.Y, Is.EqualTo(0).Within(0.5), "the block does overlap the float, as it should");
+        Assert.That(lines[0].BorderBox.X, Is.EqualTo(120).Within(0.5), "the line starts at the float's far edge");
+        Assert.That(lines[0].BorderBox.Width, Is.EqualTo(80).Within(0.5), "and reaches only what it leaves");
+        Assert.That(lines.Count, Is.GreaterThan(2), "narrower lines break the same words into more of them");
+        Assert.That(
+            lines.Any(line => line.BorderBox.Width > 199),
+            "and a line below the float takes the block's whole width again");
+    }
 
-        // A browser shortens the lines standing beside the image to the 80 pixels left of it and
-        // returns to the full width below it: the first line box there is 80 wide in a 200 pixel block.
-        Assert.That(line.BorderBox.X, Is.EqualTo(0), "the line does not step past the float");
-        Assert.That(line.BorderBox.Width, Is.EqualTo(200).Within(0.5), "nor is it shortened by it");
+    /// <summary>
+    /// A float belongs to the container that holds it and shortens the lines of the blocks inside that
+    /// container as well, however deep - which is the difference between text beside a picture and text
+    /// that only steps around the picture sitting in its own box.
+    /// </summary>
+    [Test]
+    public async Task ADescendantsLinesStandAsideForTheContainersFloat()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='h' style='width:200px'>" +
+            "<img id='f' src='x.png' style='width:120px;height:20px;float:left'>" +
+            "<div id='w' style='margin:0'><p id='p' style='margin:0'>word word word word word word</p></div></div>"));
+
+        var paragraph = view.Layout!.FindBox(view.Document!.GetElementById("p")!)!;
+        var line = paragraph.Children.First(box => box.Kind == LayoutKind.Line);
+
+        Assert.That(line.BorderBox.X, Is.EqualTo(120).Within(0.5), "the float is three boxes above it");
+        Assert.That(line.BorderBox.Width, Is.EqualTo(80).Within(0.5));
+    }
+
+    /// <summary>
+    /// A float pinned to the far edge shortens the line's reach rather than its start, so the words keep
+    /// beginning at the content edge and stop short of the picture.
+    /// </summary>
+    [Test]
+    public async Task AFloatOnTheFarEdgeEndsTheLineShortOfIt()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='h' style='width:200px'>" +
+            "<img id='f' src='x.png' style='width:100px;height:20px;float:right'>" +
+            "<p id='p' style='margin:0'>word word word word word word</p></div>"));
+
+        var paragraph = view.Layout!.FindBox(view.Document!.GetElementById("p")!)!;
+        var line = paragraph.Children.First(box => box.Kind == LayoutKind.Line);
+
+        Assert.That(line.BorderBox.X, Is.EqualTo(0).Within(0.5), "the line keeps its own start");
+        Assert.That(line.BorderBox.Width, Is.EqualTo(100).Within(0.5), "and reaches only to the float");
+    }
+
+    /// <summary>
+    /// A float that leaves a line no room at all is a line that has to stand below it, and the height it
+    /// dropped through is room the block's own stack has to count - which is why both passes ask the
+    /// same question of the same plan.
+    /// </summary>
+    [Test]
+    public async Task ALineWithNoRoomLeftItDropsBelowTheFloat()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='h' style='width:200px'>" +
+            "<img id='f' src='x.png' style='width:200px;height:30px;float:left'>" +
+            "<p id='p' style='margin:0'>word word word word word word</p></div>"));
+
+        var paragraph = view.Layout!.FindBox(view.Document!.GetElementById("p")!)!;
+        var lines = paragraph.Children.Where(box => box.Kind == LayoutKind.Line).ToList();
+
+        Assert.That(lines[0].BorderBox.Y, Is.EqualTo(30).Within(0.5), "below the float that left it nowhere");
+        Assert.That(lines[0].BorderBox.Width, Is.EqualTo(200).Within(0.5), "where the block is its own width again");
+        Assert.That(paragraph.BorderBox.Height, Is.GreaterThanOrEqualTo(40), "and the drop is part of the height");
     }
 
     private static Rect Bounds(HutuViewInternal view, String id)

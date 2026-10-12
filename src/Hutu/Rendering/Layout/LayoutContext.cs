@@ -41,6 +41,19 @@ public readonly struct LayoutContext
         Offset scroll,
         Rect absoluteContainingBlock,
         ITextMeasurer measurer)
+        : this(containingBlock, containingBlockRect, viewport, viewportRect, scroll, absoluteContainingBlock, measurer, null)
+    {
+    }
+
+    private LayoutContext(
+        Size containingBlock,
+        Rect containingBlockRect,
+        Size viewport,
+        Rect viewportRect,
+        Offset scroll,
+        Rect absoluteContainingBlock,
+        ITextMeasurer measurer,
+        FloatBand? floats)
     {
         ContainingBlock = containingBlock;
         ContainingBlockRect = containingBlockRect;
@@ -49,6 +62,7 @@ public readonly struct LayoutContext
         Scroll = scroll;
         AbsoluteContainingBlock = absoluteContainingBlock;
         Measurer = measurer;
+        Floats = floats;
     }
 
     /// <summary>Gets the box percentages, auto widths and relative positioning resolve against.</summary>
@@ -73,7 +87,34 @@ public readonly struct LayoutContext
 
     public ITextMeasurer Measurer { get; }
 
+    /// <summary>
+    /// Gets the floats this box's line boxes stand aside for, and where the box begins inside them -
+    /// null for a box with nothing floated anywhere above it, which is most of a page.
+    /// </summary>
+    internal FloatBand? Floats { get; }
+
+    /// <summary>
+    /// Gets the context a child is handed when the floats around it and its own place among them are
+    /// known, which is a per-child answer rather than one shared by the whole container: two siblings
+    /// stand at different heights, and a float reaching down between them narrows only the lower one.
+    /// </summary>
+    internal LayoutContext WithFloats(FloatBand? floats) => new(
+        ContainingBlock,
+        ContainingBlockRect,
+        Viewport,
+        ViewportRect,
+        Scroll,
+        AbsoluteContainingBlock,
+        Measurer,
+        floats);
+
     /// <summary>Gets the context a box's children see, with its content box as their containing block.</summary>
+    /// <remarks>
+    /// The band rides along rather than being dropped: a box that holds no floats of its own leaves the
+    /// ones above it in force for everything inside it, and a context that lost the band on the way down
+    /// would shorten only the lines of the container the floats sit in - which is the difference between
+    /// a title beside its picture and the same title one <c>div</c> deeper.
+    /// </remarks>
     public LayoutContext ForContainingBlock(Size contentBox) => new(
         contentBox,
         new Rect(ContainingBlockRect.X, ContainingBlockRect.Y, contentBox.Width, contentBox.Height),
@@ -81,7 +122,8 @@ public readonly struct LayoutContext
         ViewportRect,
         Scroll,
         AbsoluteContainingBlock,
-        Measurer);
+        Measurer,
+        Floats);
 
     /// <summary>
     /// Gets the context a box's children see when the content box's position is known, which is what
@@ -94,7 +136,8 @@ public readonly struct LayoutContext
         ViewportRect,
         Scroll,
         AbsoluteContainingBlock,
-        Measurer);
+        Measurer,
+        Floats);
 
     /// <summary>
     /// Gets the context a positioned box's children see: the absolute containing block becomes this
@@ -108,5 +151,6 @@ public readonly struct LayoutContext
         ViewportRect,
         Scroll,
         paddingBox,
-        Measurer);
+        Measurer,
+        Floats);
 }
