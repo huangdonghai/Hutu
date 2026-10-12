@@ -66,6 +66,12 @@ public sealed class SelectorKeyExtractor : ISelectorVisitor
     private Boolean _hasKeylessPosition;
     private Boolean _collecting;
 
+    /// <summary>
+    /// Gets how many compounds of the selector asked for a key, counted whether or not the key was
+    /// new. A position that asked for one is a position the index can prune with.
+    /// </summary>
+    private Int32 _flushed;
+
     private SelectorKeyExtractor()
     {
     }
@@ -89,12 +95,18 @@ public sealed class SelectorKeyExtractor : ISelectorVisitor
         ResetKey();
 
         var collecting = _collecting;
-        var recorded = _keys.Count;
+        var counted = _flushed;
         _collecting = true;
         selector.Accept(this);
         _collecting = collecting;
 
-        if (_keys.Count == recorded && !FlushKey())
+        // Whether this position produced a key is asked of the counter rather than of the key list,
+        // because the list deduplicates: a selector that names the same class twice - and every
+        // selector list of the form `.a .b, .c .b`, which is how a sheet states one rule for several
+        // places of a page - adds nothing the second time. Reading the flat list length then says the
+        // second half had no key, the rule joins the bucket every element is tested against, and a
+        // page that writes its selectors this way pays for the whole sheet per element.
+        if (_flushed == counted && !FlushKey())
         {
             _hasKeylessPosition = true;
         }
@@ -118,6 +130,11 @@ public sealed class SelectorKeyExtractor : ISelectorVisitor
         {
             Append(RuleKeyKind.Tag, _tag);
             found = true;
+        }
+
+        if (found)
+        {
+            _flushed++;
         }
 
         ResetKey();

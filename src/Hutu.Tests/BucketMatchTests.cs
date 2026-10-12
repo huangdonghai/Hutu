@@ -1,5 +1,6 @@
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
+using AngleSharp.Css.Parser;
 using AngleSharp.Dom;
 using Hutu.Rendering;
 using Hutu.Rendering.Boxes;
@@ -66,6 +67,47 @@ public sealed class BucketMatchTests
             "</body></html>");
 
         AssertBucketsMatchLinear(document);
+    }
+
+    [Test]
+    public async Task ASelectorListThatRepeatsItsKeyStillKeysTheRule()
+    {
+        // `.a .note, .b .note` asks for the class `note` of both halves. The key list deduplicates,
+        // so reading its length said the second half had produced no key at all and the rule fell into
+        // the bucket every element of the page is tested against - which is most of a build on a site
+        // that writes its rules this way. Pruning must still be exact, which is what the comparison
+        // against the linear walk checks.
+        using var view = CreateView();
+        var document = await view.SetHtml(
+            "<html><head><style>" +
+            ".wrap .note, .other .note { color: #000002 }" +
+            "#main .note, .note { color: #000003 }" +
+            "p .note, div .note, span .note { color: #000004 }" +
+            "</style></head>" +
+            "<body style='margin:0'><div id='main' class='wrap'><p><span class='note'>x</span></p></div>" +
+            "<div class='other'><b class='note'>y</b></div></body></html>");
+
+        AssertBucketsMatchLinear(document);
+
+        Assert.That(
+            KeysOf(".wrap .note, .other .note"),
+            Is.EqualTo(new[] { "Class:note" }),
+            "two halves that ask for the same key still ask for it");
+        Assert.That(
+            KeysOf(".wrap .note, .other .mark"),
+            Is.EqualTo(new[] { "Class:note", "Class:mark" }));
+        Assert.That(
+            KeysOf(":link, :visited"),
+            Is.Null,
+            "a selector with nothing to key on stays where every element is tested against it");
+    }
+
+    private static String[]? KeysOf(String text)
+    {
+        var sheet = new CssParser().ParseStyleSheet(text + " { color: red }");
+        var keys = SelectorKeyExtractor.Extract(((ICssStyleRule)sheet.Rules[0]).Selector);
+
+        return keys?.Select(key => $"{key.Kind}:{key.Value}").ToArray();
     }
 
     private static void AssertBucketsMatchLinear(IDocument document)
