@@ -352,6 +352,48 @@ public sealed class GridLayoutTests
         return view;
     }
 
+    /// <summary>
+    /// A gap the engine states rather than hides: <c>grid</c>, <c>grid-template</c> and
+    /// <c>grid-template-areas</c> are not read, and a named line or area places like <c>auto</c>, so an
+    /// item that asks to be in a named area is placed as if it had asked for nothing. The numbers below
+    /// are what that comes to today; the comment beside them is what a browser makes of the same
+    /// document, which is what a parser for the shorthand has to reach.
+    /// </summary>
+    /// <remarks>
+    /// This is not academic: the frame of the Wikipedia main page is built out of
+    /// <c>grid-template: "titlebar columnEnd" ... / minmax(0,59.25rem) min-content</c> with each region
+    /// naming its area, and without it every region falls into one implicit column that grows as wide
+    /// as the widest thing in it - which is how a 1348 pixel page comes to be measured 4075 across.
+    /// </remarks>
+    [Test]
+    public async Task ANamedAreaPlacesLikeAutoBecauseTheTemplateIsNotRead()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;width:300px;grid-template-columns:100px 100px;" +
+            "grid-template-rows:50px 50px;grid-template-areas:&#39;head side&#39; &#39;body side&#39;'>" +
+            "<div id='a' style='grid-area:side'>a</div>" +
+            "<div id='b' style='grid-area:head'>b</div>" +
+            "<div id='c' style='grid-area:body'>c</div>" +
+            "</div>" +
+            "</body></html>");
+
+        // A browser: a in the second column across both rows (100,0 100x100), b at the head of the
+        // first (0,0 100x50) and c below it (0,50 100x50). Naming none of it, the three are placed as
+        // if they had asked for nothing at all - along the two declared columns, in document order.
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+        var c = Find(view, "c");
+
+        Assert.That(a.BorderBox.X, Is.EqualTo(0).Within(0.5), "the area's column is not known");
+        Assert.That(a.BorderBox.Y, Is.EqualTo(0).Within(0.5));
+        Assert.That(b.BorderBox.X, Is.EqualTo(100).Within(0.5), "and the area's row is not either");
+        Assert.That(b.BorderBox.Y, Is.EqualTo(0).Within(0.5));
+        Assert.That(c.BorderBox.X, Is.EqualTo(0).Within(0.5));
+        Assert.That(c.BorderBox.Y, Is.EqualTo(50).Within(0.5));
+    }
+
     private static LayoutBox Find(HutuViewInternal view, String id)
     {
         foreach (var node in Walk(view))
