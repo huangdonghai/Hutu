@@ -52,7 +52,7 @@ public static partial class BoxBuilder
         var parser = document.Context.GetService<ICssParser>();
 
         var box = BuildFusedElement(
-            root, index, FusedParent.Root, device, images, faces, pool, cache, parser, WritingModeInfo.Horizontal, ref supported);
+            root, index, FusedParent.Root, device, images, faces, pool, cache, parser, WritingModeInfo.Horizontal, false, ref supported);
 
         if (!supported || box is null)
         {
@@ -76,6 +76,7 @@ public static partial class BoxBuilder
         FusedAreaCache cache,
         ICssParser? parser,
         WritingModeInfo inheritedFlow,
+        Boolean inItemContainer,
         ref Boolean supported)
     {
         var cascade = MatchedCascade.ForElement(index, element);
@@ -106,6 +107,16 @@ public static partial class BoxBuilder
 
         var kind = ResolveKind(element, style);
 
+        // A flex or grid container blockifies its children: an inline-level child is an item of its
+        // own, laid out as a block and carrying the style the page gave it. Left inline, a run of
+        // `span` and `a` children would be wrapped into one anonymous block that carries the
+        // container's style instead - and every flex property those children declared would be
+        // dropped, which is what collapses a card title or a nav row to nothing.
+        if (inItemContainer && kind is BoxKind.Inline or BoxKind.InlineBlock)
+        {
+            kind = BoxKind.Block;
+        }
+
         // The substitution above is now the one thing that abandons a document. Every formatting
         // context has the readers it needs - `PositionStyle`, `TableStyle`, `FlexStyle`, `GridStyle`
         // - each taking the cascaded declarations instead of a computed one, and ruby needs none of
@@ -133,7 +144,8 @@ public static partial class BoxBuilder
                     // The parent's own tag name travels down with it: a box model needs it, because the
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
-                        elementChild, index, parent.Next(style, cascade, variables, cache.Tag(element.LocalName)), device, images, faces, pool, cache, parser, flow, ref supported);
+                        elementChild, index, parent.Next(style, cascade, variables, cache.Tag(element.LocalName)), device, images, faces, pool, cache, parser, flow,
+                        kind is BoxKind.Flex or BoxKind.Grid, ref supported);
 
                     if (childBox is not null)
                     {

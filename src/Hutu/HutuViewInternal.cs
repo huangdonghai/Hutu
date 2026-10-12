@@ -369,6 +369,14 @@ public sealed class HutuViewInternal : IDisposable
     /// the geometry are all there when the task completes - only the replaced boxes are sized from
     /// their attributes rather than from the picture that will not arrive until later.
     /// </summary>
+    /// <remarks>
+    /// The await keeps the caller's context, unlike a fetch that only hands a result back. What runs
+    /// after it - building the document, and the events a build raises - belongs to whoever asked, and a
+    /// host answers those by invalidating a visual, which the platform only lets the thread that owns it
+    /// do. Dropping the context here lost a navigation outright: the host's handler was an <c>async</c>
+    /// <c>void</c>, so the exception it threw on the wrong thread had nowhere to be seen and the reader
+    /// was left with a click that did nothing at all.
+    /// </remarks>
     public async Task<IDocument> LoadDocumentAsync(
         string? url,
         CancellationToken cancellationToken = default)
@@ -379,8 +387,7 @@ public sealed class HutuViewInternal : IDisposable
 
         try
         {
-            var document = await context.OpenAsync(url, cancellationToken)
-                .ConfigureAwait(false);
+            var document = await context.OpenAsync(url, cancellationToken);
             SetDocument(document, context);
             return document;
         }
@@ -415,13 +422,13 @@ public sealed class HutuViewInternal : IDisposable
 
         try
         {
-            // A virtual response parses the provided content while preserving its URL as the document base.
+            // A virtual response parses the provided content while preserving its URL as the document
+            // base. The context is kept for the same reason LoadDocumentAsync keeps it.
             var document = await context.OpenAsync(response => response
                     .Address(NormalizeUrl(url))
                     .Status(HttpStatusCode.OK)
                     .Header("Content-Type", "text/html; charset=utf-8")
-                    .Content(html))
-                .ConfigureAwait(false);
+                    .Content(html));
 
             SetDocument(document, context);
             return document;
@@ -932,9 +939,11 @@ public sealed class HutuViewInternal : IDisposable
 
         var requesters = CreateRequesterChain();
 
+        // The context is kept for the same reason LoadDocumentAsync keeps it: what follows is a
+        // rebuild, and a rebuild raises what the host may listen to. The fetch itself ran on the pool
+        // whatever this says; only its completion comes back here.
         await _imageLoader
-            .LoadAsync(urls, (url, token) => FetchResourceAsync(requesters, url, token), cancellationToken)
-            .ConfigureAwait(false);
+            .LoadAsync(urls, (url, token) => FetchResourceAsync(requesters, url, token), cancellationToken);
 
         // Only worth rerunning when at least one image actually became measurable; a page whose
         // images all failed keeps the layout it already has.

@@ -280,6 +280,29 @@ public sealed class FlexLayoutTests
     }
 
     [Test]
+    public async Task AnInlineChildOfAFlexContainerIsAnItemOfItsOwn()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;width:300px'>" +
+            "<span id='a' style='width:100px;height:20px'>one</span>" +
+            "<a id='b' href='#' style='width:80px;height:20px'>two</a>" +
+            "</div>" +
+            "</body></html>");
+
+        // Gathered into one anonymous block instead, they would be runs of that block: its style rather
+        // than theirs, and an inline box takes no width - which is how a card's title or a nav row of
+        // links loses every size the page gave it. As items they are measured, placed and sized.
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(100).Within(0.5), "the span's own width");
+            Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(100).Within(0.5), "beside it, not inside it");
+            Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(80).Within(0.5));
+        });
+    }
+
+    [Test]
     public async Task ItemsThatNameNoOrderKeepTheOrderTheDocumentDid()
     {
         // Twenty items, each one character wider than the last, none declaring `order`: a sort that is
