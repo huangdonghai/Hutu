@@ -373,6 +373,15 @@ internal static class LengthReader
         return false;
     }
 
+    /// <summary>
+    /// Folds a <c>calc()</c> to a number of pixels, for a caller that wants the answer rather than a
+    /// length to hand down. Reading the expression as a plain length gives zero - it is a math value
+    /// that only becomes a number once its operands have been resolved - so a caller that skipped the
+    /// fold sized its box at nothing.
+    /// </summary>
+    internal static Double? FoldCalc(CssCalcValue calc, RenderMode mode, IRenderDimensions dimensions, FontSource font) =>
+        TryFoldCalc(calc, mode, dimensions, font, out var length) ? length.Value : null;
+
     private static StyleLength? FromCssLength(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, FontSource font)
     {
         if (value.Type == CssLengthValue.Unit.Percent)

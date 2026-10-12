@@ -125,6 +125,40 @@ public sealed class VariableStyleTests
         Assert.That(fused!.Children, Is.Not.Empty, "and the box under it is still built by the fused path");
     }
 
+    /// <summary>
+    /// The form a portal's stylesheet writes its sizes in: a <c>calc()</c> multiplying a length by a
+    /// variable that only the desktop client defines, with the web's answer left as the fallback.
+    /// </summary>
+    [Test]
+    public async Task AFallbackInsideACalcSizesTheFont()
+    {
+        using var view = await Laid(
+            ".t { font-size: calc(18px * var(--clientfont-scale, 1)); line-height: 1 }",
+            "<p id='t' class='t'>word</p>");
+
+        Assert.That(Bounds(view, "#t").Height, Is.EqualTo(18).Within(0.5), "the fallback answers for the missing name");
+    }
+
+    [Test]
+    public async Task AVariableInsideACalcMultipliesTheLength()
+    {
+        using var view = await Laid(
+            ":root { --scale: 2 } .t { font-size: calc(18px * var(--scale)); line-height: 1 }",
+            "<p id='t' class='t'>word</p>");
+
+        Assert.That(Bounds(view, "#t").Height, Is.EqualTo(36).Within(0.5));
+    }
+
+    [Test]
+    public async Task AFallbackInsideACalcSizesAWidth()
+    {
+        using var view = await Laid(
+            ".x { width: calc(100px * var(--nope, 2)); height: 10px }",
+            "<div id='x' class='x'></div>");
+
+        Assert.That(Bounds(view, "#x").Width, Is.EqualTo(200).Within(0.5));
+    }
+
     private static async Task<HutuViewInternal> Laid(String css, String body)
     {
         var view = CreateView();

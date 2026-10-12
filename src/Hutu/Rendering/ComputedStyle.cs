@@ -2930,6 +2930,17 @@ public readonly struct ComputedStyle
             value = keyword.Value;
         }
 
+        // A `calc()` is a math value that AngleSharp will also answer as a length, and its number is
+        // zero until the expression has been folded - so a reader that asked this function for pixels
+        // was told the expression measured nothing. That is how a portal's `font-size: calc(18px * var(
+        // --clientfont-scale, 1))`, the form it writes near two hundred of its sizes in, came out as a
+        // font of no size at all: the text held no line, the box holding it collapsed, and a reader saw
+        // an empty page where the sheet had said what to draw.
+        if (value is CssCalcValue calc)
+        {
+            return LengthReader.FoldCalc(calc, mode, dimensions, font);
+        }
+
         // A length is resolved through the reader so that its font-relative units land on the
         // element's own font size; anything else is left to AngleSharp.
         if (value is CssLengthValue length)
