@@ -27,13 +27,18 @@ namespace Hutu.Rendering;
 /// <see cref="ComputedStyle"/>'s reading of a thickness.
 /// </para>
 /// <para>
-/// The room a list keeps at the edge its items begin at is the one spacing stated here, and it is
-/// stated as a padding rather than the <c>margin-left</c> the sample writes, because an item's marker
-/// hangs in that room: given as a margin, a page that resets its list margins - which nearly every page
-/// does - would take away the space the markers stand in and they would be drawn off the edge of the
-/// list. Given as a padding it belongs to the list's own box, so the list's background reaches under its
-/// markers as it does in a browser, and being on the inline axis it lands at the head of a column rather
-/// than to the left of a row.
+/// The room a list keeps at the edge its items begin at is the one spacing that is <em>not</em> stated
+/// here, and what decides that is who has to yield to whom. Given as a margin, a page that resets its
+/// list margins - which nearly every page does - would take away the space its markers stand in and they
+/// would be drawn off the edge of the list. Given as this sheet states a spacing, it comes back to the
+/// reader as a declaration of the page, because nothing in the cascade here tells the two sheets apart:
+/// a page that says <c>padding: 0</c> and means it - a wiki's lists do, indenting by a margin of their
+/// own instead - would be overruled by the reader, and its items would begin forty pixels further along
+/// the line than the page asked. It is therefore supplied where a reader's own value belongs, beside the
+/// space around a heading, which a page's declaration does beat: see <c>ComputedStyle</c>'s reading of a
+/// thickness. Being a padding it still belongs to the list's own box, so the list's background reaches
+/// under its markers as it does in a browser, and being on the inline axis it lands at the head of a
+/// column rather than to the left of a row.
 /// </para>
 /// <para>
 /// It replaces the sheet AngleSharp.Css ships rather than adding to it, and is registered ahead of
@@ -93,7 +98,7 @@ td, th, tr      { vertical-align: inherit }
 s, strike, del  { text-decoration: line-through }
 hr              { border: 1px inset }
 ol, ul, dir,
-menu            { padding-inline-start: 40px; list-style-type: disc; list-style-position: outside }
+menu            { list-style-type: disc; list-style-position: outside }
 ol              { list-style-type: decimal }
 u, ins          { text-decoration: underline }
 br::before      { content: '\A'; white-space: pre-line }

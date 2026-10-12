@@ -209,6 +209,43 @@ public sealed class ListMarkerTests
     }
 
     [Test]
+    public async Task APageThatResetsItsListPaddingTakesTheRoomForItsMarkersBackToo()
+    {
+        // The wiki's lists are the reason this is asked: the page indents them by a margin of its own
+        // and zeroes their padding, and a browser then begins the items exactly where the list does.
+        var laid = await LaidOut("", "<ul style='margin-left:26px;padding:0'><li>one</li></ul>");
+        var item = Marked(laid.Root);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(item.ContentBox.X, Is.EqualTo(26).Within(0.5), "the reader's 40px yields to the page");
+            Assert.That(item.MarkerBounds!.Value.Right, Is.EqualTo(item.ContentBox.X).Within(0.5),
+                "and the marker hangs out into the margin the page left there");
+        });
+    }
+
+    [Test]
+    public async Task AListThatStatesItsOwnIndentPhysicallyIsNotOverruledByTheReader()
+    {
+        var laid = await LaidOut("", "<ul style='padding-left:12px'><li>one</li></ul>");
+        var item = Marked(laid.Root);
+
+        Assert.That(item.ContentBox.X, Is.EqualTo(12).Within(0.5),
+            "a side the page named, the reader's supplied one gives way to it");
+    }
+
+    [Test]
+    public async Task AListThatStatesItsOwnIndentByAxisKeepsThatNaming()
+    {
+        // The flow-relative name still wins over the physical one, as it does in a browser reading the
+        // same page sideways: what the reader supplies is only ever for a side nothing was said about.
+        var laid = await LaidOut("", "<ul style='padding-left:12px;padding-inline-start:8px'><li>one</li></ul>");
+        var item = Marked(laid.Root);
+
+        Assert.That(item.ContentBox.X, Is.EqualTo(8).Within(0.5));
+    }
+
+    [Test]
     public async Task AColumnIsMarkedAtItsHeadAndCentredAcrossItsWidth()
     {
         var laid = await LaidOut("", "<ul style='writing-mode:vertical-rl'><li>item</li></ul>");

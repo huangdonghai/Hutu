@@ -147,9 +147,11 @@ public static partial class BoxBuilder
     }
 
     /// <summary>
-    /// Builds the box for an image. The intrinsic size is preferred, then the declared width and
-    /// height attributes, and finally the specification's default object size - so a box of usable
-    /// geometry always exists, whatever happened to the resource.
+    /// Builds the box for an image. The picture that arrived answers the intrinsic size, and the
+    /// <c>width</c>/<c>height</c> attributes are kept beside it as the presentational hint they are - so
+    /// a box of usable geometry always exists whatever happened to the resource, and a box whose
+    /// picture did arrive is still the size the page asked for rather than the size the bitmap happens
+    /// to be.
     /// </summary>
     private static Box BuildReplaced(
         IHtmlImageElement image,
@@ -160,15 +162,14 @@ public static partial class BoxBuilder
     {
         var url = ImageUrlResolver.Resolve(image, image.Source);
         var intrinsic = url is null ? null : images?.GetSize(url);
+        var declared = DeclaredSize(image);
 
         if (intrinsic is not { IsValid: true })
         {
-            var attributeWidth = image.DisplayWidth;
-            var attributeHeight = image.DisplayHeight;
-
-            intrinsic = attributeWidth > 0 && attributeHeight > 0
-                ? new ImageSize(attributeWidth, attributeHeight)
-                : new ImageSize(300, 150);
+            // Nothing decoded to size from, so the document's own numbers stand in for the picture's -
+            // both axes of them, because half a declaration gives no ratio to lay out against - and the
+            // specification's default object size answers for a page that declared nothing.
+            intrinsic = declared is { IsValid: true } stated ? stated : new ImageSize(300, 150);
         }
 
         return new Box(kind, style)
@@ -177,8 +178,24 @@ public static partial class BoxBuilder
             IsReplaced = true,
             SourceUrl = url,
             IntrinsicSize = intrinsic,
+            AttributeSize = declared,
             Flow = flow,
         };
+    }
+
+    /// <summary>
+    /// The size the element's <c>width</c>/<c>height</c> attributes declare. A missing or unreadable
+    /// attribute leaves that axis zero, which the sizing reads as <c>auto</c> and answers from the
+    /// picture's ratio - the way a page that states only the width still gets a proportional height.
+    /// </summary>
+    private static ImageSize? DeclaredSize(IHtmlImageElement image)
+    {
+        var width = image.DisplayWidth;
+        var height = image.DisplayHeight;
+
+        return width > 0 || height > 0
+            ? new ImageSize(width, height)
+            : null;
     }
 
     /// <summary>

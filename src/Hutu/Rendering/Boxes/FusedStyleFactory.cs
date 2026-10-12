@@ -323,11 +323,18 @@ public static class FusedStyleFactory
         }
         else
         {
+            // The two axes the replaced sizing asks about separately: a declaration there means the page
+            // spoke about that axis, and its absence is what leaves room for the element's own attribute.
+            var widthDeclaration = find("width");
+            var heightDeclaration = find("height");
+
             var built = new BoxModelArea
             {
                 BoxSizing = ComputedStyle.ResolveBoxSizingFused(find("box-sizing")),
-                Width = ComputedStyle.ResolveBoxLengthFused(find("width"), RenderMode.Horizontal, size, dimensions, StyleLength.Auto),
-                Height = ComputedStyle.ResolveBoxLengthFused(find("height"), RenderMode.Vertical, size, dimensions, StyleLength.Auto),
+                Width = ComputedStyle.ResolveBoxLengthFused(widthDeclaration, RenderMode.Horizontal, size, dimensions, StyleLength.Auto),
+                Height = ComputedStyle.ResolveBoxLengthFused(heightDeclaration, RenderMode.Vertical, size, dimensions, StyleLength.Auto),
+                WidthDeclared = widthDeclaration is not null,
+                HeightDeclared = heightDeclaration is not null,
                 MinWidth = ComputedStyle.ResolveBoxLengthFused(find("min-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
                 MaxWidth = ComputedStyle.ResolveBoxLengthFused(find("max-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
                 MinHeight = ComputedStyle.ResolveBoxLengthFused(find("min-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),

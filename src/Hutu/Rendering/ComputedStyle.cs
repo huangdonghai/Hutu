@@ -1366,17 +1366,25 @@ public readonly struct ComputedStyle
     private void ResolveBoxModel(StyleIntern? pool)
     {
         // An element that declares nothing still has a box model to resolve where the reader gives it
-        // margins of its own - which is every heading and paragraph of a page that states none.
-        if (!DeclaresAny(BoxModelNames) && Defaults("margin") is (null, null, null, null))
+        // margins of its own - which is every heading and paragraph of a page that states none - or a
+        // padding of its own, which is every list the page leaves its markers to.
+        if (!DeclaresAny(BoxModelNames) &&
+            Defaults("margin") is (null, null, null, null) &&
+            Defaults("padding") is (null, null, null, null))
         {
             return;
         }
 
+        var declaredWidth = ReadDeclared("width", RenderMode.Horizontal);
+        var declaredHeight = ReadDeclared("height", RenderMode.Vertical);
+
         var model = new BoxModelArea
         {
             BoxSizing = ResolveBoxSizing(),
-            Width = ReadLength("width", RenderMode.Horizontal, StyleLength.Auto),
-            Height = ReadLength("height", RenderMode.Vertical, StyleLength.Auto),
+            Width = declaredWidth ?? StyleLength.Auto,
+            Height = declaredHeight ?? StyleLength.Auto,
+            WidthDeclared = declaredWidth is not null,
+            HeightDeclared = declaredHeight is not null,
             MinWidth = ReadLength("min-width", RenderMode.Horizontal, StyleLength.None),
             MaxWidth = ReadLength("max-width", RenderMode.Horizontal, StyleLength.None),
             MinHeight = ReadLength("min-height", RenderMode.Vertical, StyleLength.None),
@@ -2104,6 +2112,17 @@ public readonly struct ComputedStyle
 
     public StyleLength Height => _values.BoxModel.Height;
 
+    /// <summary>
+    /// Gets whether the page spoke about the width, as opposed to the initial <c>auto</c> standing in for
+    /// silence. A replaced box asks, because an element's own <c>width</c> attribute answers only where
+    /// nothing was said - an author's <c>width: auto</c> is a request that the content decide, and the
+    /// attribute is not a reply to it.
+    /// </summary>
+    public Boolean HasDeclaredWidth => _values.BoxModel.WidthDeclared;
+
+    /// <summary>Gets whether the page spoke about the height. See <see cref="HasDeclaredWidth"/>.</summary>
+    public Boolean HasDeclaredHeight => _values.BoxModel.HeightDeclared;
+
     public StyleLength MinWidth => _values.BoxModel.MinWidth;
 
     public StyleLength MaxWidth => _values.BoxModel.MaxWidth;
@@ -2569,18 +2588,6 @@ public readonly struct ComputedStyle
     private static CssWideKeyword? KeywordIn(ICssStyleDeclaration? declaration, String name) =>
         declaration?.GetProperty(name)?.RawValue as CssWideKeyword;
 
-    /// <summary>
-    /// Gets the space HTML leaves around an element whose page says nothing about it, as the four
-    /// flow-relative distances the reader supplies: the block axis is the space between blocks, and
-    /// the inline axis the space along the line.
-    /// </summary>
-    /// <remarks>
-    /// These are the values the CSS 2.2 sample stylesheet states, which is where a browser's defaults
-    /// come from as well - stated to the flow rather than to the page, so that a column reads the
-    /// space between blocks beside itself instead of down it. Nothing is returned for a padding, for
-    /// an element HTML gives no margins to, or for a list inside a list, which the sample leaves to its
-    /// outer one.
-    /// </remarks>
     /// <summary>Gets whether a list sits inside another one, whose own margins the sample leaves it to.</summary>
     private static Boolean IsNested(IElement element) =>
         element.ParentElement?.LocalName is "ul" or "ol";
@@ -2675,7 +2682,7 @@ public readonly struct ComputedStyle
         var blockEndKeyword = SideKeyword("-block-end");
 
         var (defaultBlockStart, defaultBlockEnd, defaultInlineStart, defaultInlineEnd) =
-            MarginDefaults(prefix, element, ownSize);
+            ReaderDefaults(prefix, element, ownSize);
 
         if (inlineStart is null && inlineEnd is null && blockStart is null && blockEnd is null &&
             inlineStartKeyword is null && inlineEndKeyword is null &&
@@ -2739,17 +2746,51 @@ public readonly struct ComputedStyle
     }
 
     private (StyleLength? BlockStart, StyleLength? BlockEnd, StyleLength? InlineStart, StyleLength? InlineEnd) Defaults(String prefix) =>
-        MarginDefaults(prefix, _element, _values.Font.Size);
+        ReaderDefaults(prefix, _element, _values.Font.Size);
 
-    private static (StyleLength? BlockStart, StyleLength? BlockEnd, StyleLength? InlineStart, StyleLength? InlineEnd) MarginDefaults(
+    /// <summary>
+    /// Gets what the reader supplies for an element the page says nothing about, as the four
+    /// flow-relative distances: the block axis is the space between blocks, and the inline axis the
+    /// space along the line.
+    /// </summary>
+    /// <remarks>
+    /// These are the values the CSS 2.2 sample stylesheet states, which is where a browser's defaults
+    /// come from as well - stated to the flow rather than to the page, so that a column reads the
+    /// space between blocks beside itself instead of down it. Nothing is returned for an element HTML
+    /// gives nothing to, or for a list inside a list, which the sample leaves to its outer one.
+    /// <para>
+    /// What lands here rather than in the sheet is decided by who has to yield: a value the sheet states
+    /// is read back as a declaration of the page, since nothing in the cascade tells the two sheets
+    /// apart, so a page that resets the same property would be overruled by the reader. A value supplied
+    /// here is what the reader gives an unsaid side, which any word of the page's beats.
+    /// </para>
+    /// </remarks>
+    private static (StyleLength? BlockStart, StyleLength? BlockEnd, StyleLength? InlineStart, StyleLength? InlineEnd) ReaderDefaults(
         String prefix, IElement? element, Double fontSize)
     {
-        if (!String.Equals(prefix, "margin", StringComparison.Ordinal) || element is null)
+        if (element is null)
         {
             return default;
         }
 
         var tag = element.LocalName.ToLowerInvariant();
+
+        if (String.Equals(prefix, "padding", StringComparison.Ordinal))
+        {
+            // The room a list keeps at the edge its items begin at, which is where their markers hang.
+            // A page that zeroes its list margins says nothing about it - so it is no margin - and a page
+            // that zeroes its list padding means to take it back - so it is no sheet declaration either,
+            // which would read as the page's own and win. Every level of nesting keeps its own, as a
+            // browser's sheet gives it.
+            return tag is "ul" or "ol" or "dir" or "menu"
+                ? (null, null, Pixels(40), null)
+                : default;
+        }
+
+        if (!String.Equals(prefix, "margin", StringComparison.Ordinal))
+        {
+            return default;
+        }
 
         var block = tag switch
         {
@@ -2764,11 +2805,8 @@ public readonly struct ComputedStyle
             _ => null,
         };
 
-        // The room a list keeps at the edge its items begin at is not supplied here: it is a padding the
-        // user-agent sheet states, so that a page resetting its margins - which almost every page does to
-        // a list - does not also take away the space its markers stand in. Only the indentation that is
-        // genuinely spacing around content is left as a margin: the definition list's term and the
-        // quotation, which no marker depends on.
+        // Only the indentation that is genuinely spacing around content is left as a margin: the
+        // definition list's term and the quotation, which no marker depends on.
         var indent = tag is "dd" or "blockquote" ? 40.0 : (Double?)null;
         var indentEnd = tag == "blockquote" ? indent : null;
         var space = block is { } size ? size * fontSize : (Double?)null;

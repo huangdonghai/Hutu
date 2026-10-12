@@ -122,6 +122,21 @@ internal sealed record BoxModelArea
 
     internal StyleLength Height { get; init; } = StyleLength.Auto;
 
+    /// <summary>
+    /// Gets whether the cascade was told anything about the width at all, as opposed to answering with
+    /// the initial <c>auto</c> because nothing was said.
+    /// </summary>
+    /// <remarks>
+    /// The two read the same as a length and mean opposite things: an author's <c>width: auto</c> asks
+    /// that the content decide, while the initial value asks nothing and leaves room for a presentational
+    /// hint - the element's own <c>width</c> attribute - to answer. Only a reader that kept the two apart
+    /// can tell which boxes that hint applies to.
+    /// </remarks>
+    internal Boolean WidthDeclared { get; init; }
+
+    /// <summary>Gets whether the cascade was told anything about the height. See <see cref="WidthDeclared"/>.</summary>
+    internal Boolean HeightDeclared { get; init; }
+
     internal StyleLength MinWidth { get; init; } = StyleLength.None;
 
     internal StyleLength MaxWidth { get; init; } = StyleLength.None;

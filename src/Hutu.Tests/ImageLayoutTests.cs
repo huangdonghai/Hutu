@@ -10,8 +10,8 @@ using System.Threading.Tasks;
 namespace Hutu.Tests;
 
 /// <summary>
-/// Covers replaced-element layout: sizing from the intrinsic size, the width/height constraints,
-/// and participation in line breaking.
+/// Covers replaced-element layout: sizing from the intrinsic size and from the width/height
+/// attributes, the constraints that outrank each of them, and participation in line breaking.
 /// </summary>
 [TestFixture]
 public sealed class ImageLayoutTests
@@ -30,6 +30,87 @@ public sealed class ImageLayoutTests
         Assert.That(image, Is.Not.Null);
         Assert.That(image!.BorderBox.Width, Is.EqualTo(400).Within(0.5));
         Assert.That(image.BorderBox.Height, Is.EqualTo(200).Within(0.5));
+    }
+
+    [Test]
+    public async Task TheAttributesSizeTheBoxRatherThanThePictureThatArrived()
+    {
+        // <img width="197" height="99" src="…250px…"> - the thumbnail a wiki ships: the bitmap is one
+        // width, the page asked for another, and the attributes are where the asking is written down.
+        using var view = CreateView(800, ImageUrl, 400, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><img src='res:/a.svg' width='197' height='99'></body></html>");
+
+        var image = FindKind(view, LayoutKind.Image);
+
+        Assert.That(image!.BorderBox.Width, Is.EqualTo(197).Within(0.5), "the declared width, not the bitmap's 400");
+        Assert.That(image.BorderBox.Height, Is.EqualTo(99).Within(0.5));
+        Assert.That(image.Source.IntrinsicSize?.Width, Is.EqualTo(400).Within(0.5),
+            "the picture keeps its own size, which is what an object-fit has to fit");
+    }
+
+    [Test]
+    public async Task AuthorCssOverridesTheAttributesAndTheOtherAxisFollowsThePicture()
+    {
+        // A browser measured on a real page: with `width: 50%` declared and both attributes present, the
+        // width comes from the sheet and the height stays what the attribute said - squashed, because
+        // nothing asked for a proportional height.
+        using var view = CreateView(800, ImageUrl, 400, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><img src='res:/a.svg' width='100' height='50' style='width:200px'></body></html>");
+
+        var image = FindKind(view, LayoutKind.Image);
+
+        Assert.That(image!.BorderBox.Width, Is.EqualTo(200).Within(0.5), "the sheet outranks the attribute");
+        Assert.That(image.BorderBox.Height, Is.EqualTo(50).Within(0.5), "the attribute still answers that axis");
+    }
+
+    [Test]
+    public async Task ADeclaredAutoHeightFollowsThePictureRatherThanTheAttribute()
+    {
+        // `img { max-width: 100%; height: auto }`, the responsive idiom: the attribute that would have
+        // pinned the height is taken back, and the ratio of the picture that arrived decides it.
+        using var view = CreateView(800, ImageUrl, 400, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><img src='res:/a.svg' width='100' height='50' style='width:200px;height:auto'></body></html>");
+
+        var image = FindKind(view, LayoutKind.Image);
+
+        Assert.That(image!.BorderBox.Width, Is.EqualTo(200).Within(0.5));
+        Assert.That(image.BorderBox.Height, Is.EqualTo(100).Within(0.5), "200 at the picture's 2:1");
+    }
+
+    [Test]
+    public async Task AMaxWidthViolationLeavesTheHeightTheAttributesSaid()
+    {
+        // Measured in a browser the same way: a box clamped on one axis and declared on the other does
+        // not keep the picture's shape - only an `auto` height would have followed the clamp.
+        using var view = CreateView(800, ImageUrl, 400, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><img src='res:/a.svg' width='400' height='200' style='max-width:100px'></body></html>");
+
+        var image = FindKind(view, LayoutKind.Image);
+
+        Assert.That(image!.BorderBox.Width, Is.EqualTo(100).Within(0.5));
+        Assert.That(image.BorderBox.Height, Is.EqualTo(200).Within(0.5));
+    }
+
+    [Test]
+    public async Task HalfADeclarationLeavesTheOtherAxisToThePicture()
+    {
+        using var view = CreateView(800, ImageUrl, 400, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><img src='res:/a.svg' width='100'></body></html>");
+
+        var image = FindKind(view, LayoutKind.Image);
+
+        Assert.That(image!.BorderBox.Width, Is.EqualTo(100).Within(0.5));
+        Assert.That(image.BorderBox.Height, Is.EqualTo(50).Within(0.5), "the picture's 2:1, not the default object's");
     }
 
     [Test]

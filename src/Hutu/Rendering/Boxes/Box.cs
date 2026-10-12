@@ -192,6 +192,22 @@ public sealed class Box
     /// </summary>
     public ImageSize? IntrinsicSize { get; init; }
 
+    /// <summary>
+    /// Gets the size the element declares through its <c>width</c>/<c>height</c> attributes, or null
+    /// where it declares neither. An axis left out is zero, which the sizing reads as nothing declared
+    /// there.
+    /// </summary>
+    /// <remarks>
+    /// The specification maps those attributes to the CSS <c>width</c> and <c>height</c> properties at
+    /// the presentational-hint level: under anything the author wrote, above the picture's own size.
+    /// A thumbnail is the whole reason that matters - a page that asks for a 197-pixel display width
+    /// says so in the attribute and ships a 250-pixel bitmap, so a box built from the bitmap is a
+    /// quarter wider than the page asked for. It is kept on the box rather than folded into the style
+    /// because the style a box carries is shared by everything the same rules matched, and an attribute
+    /// belongs to one element.
+    /// </remarks>
+    public ImageSize? AttributeSize { get; init; }
+
     public List<Box> Children { get; } = new();
 
     /// <summary>
