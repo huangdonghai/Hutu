@@ -353,20 +353,12 @@ public sealed class GridLayoutTests
     }
 
     /// <summary>
-    /// A gap the engine states rather than hides: <c>grid</c>, <c>grid-template</c> and
-    /// <c>grid-template-areas</c> are not read, and a named line or area places like <c>auto</c>, so an
-    /// item that asks to be in a named area is placed as if it had asked for nothing. The numbers below
-    /// are what that comes to today; the comment beside them is what a browser makes of the same
-    /// document, which is what a parser for the shorthand has to reach.
+    /// A template area placed by name: the item says which cell it belongs to and the grid says where
+    /// that cell is, on both axes and across the rows the area spans. This is the shape a real page's
+    /// frame is written in, and the numbers are what a browser makes of the same document.
     /// </summary>
-    /// <remarks>
-    /// This is not academic: the frame of the Wikipedia main page is built out of
-    /// <c>grid-template: "titlebar columnEnd" ... / minmax(0,59.25rem) min-content</c> with each region
-    /// naming its area, and without it every region falls into one implicit column that grows as wide
-    /// as the widest thing in it - which is how a 1348 pixel page comes to be measured 4075 across.
-    /// </remarks>
     [Test]
-    public async Task ANamedAreaPlacesLikeAutoBecauseTheTemplateIsNotRead()
+    public async Task ANamedAreaPlacesTheItemWhereTheTemplateSays()
     {
         using var view = CreateView(400);
         await view.SetHtml(
@@ -379,19 +371,95 @@ public sealed class GridLayoutTests
             "</div>" +
             "</body></html>");
 
-        // A browser: a in the second column across both rows (100,0 100x100), b at the head of the
-        // first (0,0 100x50) and c below it (0,50 100x50). Naming none of it, the three are placed as
-        // if they had asked for nothing at all - along the two declared columns, in document order.
         var a = Find(view, "a");
         var b = Find(view, "b");
         var c = Find(view, "c");
 
-        Assert.That(a.BorderBox.X, Is.EqualTo(0).Within(0.5), "the area's column is not known");
+        Assert.That(a.BorderBox.X, Is.EqualTo(100).Within(0.5), "the side cell is the second column");
         Assert.That(a.BorderBox.Y, Is.EqualTo(0).Within(0.5));
-        Assert.That(b.BorderBox.X, Is.EqualTo(100).Within(0.5), "and the area's row is not either");
+        Assert.That(a.BorderBox.Height, Is.EqualTo(100).Within(0.5), "and it reaches down both rows");
+        Assert.That(b.BorderBox.X, Is.EqualTo(0).Within(0.5));
         Assert.That(b.BorderBox.Y, Is.EqualTo(0).Within(0.5));
-        Assert.That(c.BorderBox.X, Is.EqualTo(0).Within(0.5));
-        Assert.That(c.BorderBox.Y, Is.EqualTo(50).Within(0.5));
+        Assert.That(c.BorderBox.Y, Is.EqualTo(50).Within(0.5), "the body cell is below the head one");
+    }
+
+    /// <summary>
+    /// A line named in the track list, which is the other thing an item's placement can point at: the
+    /// names in front of the sizes are not tracks, so they are read from the text of the list.
+    /// </summary>
+    [Test]
+    public async Task ANamedLinePlacesTheItemWhereTheTracksSay()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;width:300px;" +
+            "grid-template-columns:[first] 100px [second] 100px;grid-template-rows:50px 50px'>" +
+            "<div id='a' style='grid-column:second;grid-row:2'>a</div>" +
+            "<div id='b' style='grid-column:first/span 2'>b</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+
+        Assert.That(a.BorderBox.X, Is.EqualTo(100).Within(0.5), "the second named line");
+        Assert.That(a.BorderBox.Y, Is.EqualTo(50).Within(0.5));
+        Assert.That(b.BorderBox.X, Is.EqualTo(0).Within(0.5));
+        Assert.That(b.BorderBox.Width, Is.EqualTo(200).Within(0.5), "and a span across both");
+    }
+
+    /// <summary>
+    /// A template that names its cells without sizing them still says how many tracks there are: the
+    /// grid gets one column per cell of a row and one row per string, each sized as <c>auto</c>.
+    /// </summary>
+    [Test]
+    public async Task ATemplateOfAreasAloneSetsTheTrackCount()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;width:300px;grid-template-areas:&#39;left right&#39; &#39;left right&#39;'>" +
+            "<div id='a' style='grid-area:left'>a</div>" +
+            "<div id='b' style='grid-area:right'>b</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+
+        Assert.That(a.BorderBox.X, Is.EqualTo(0).Within(0.5));
+        Assert.That(b.BorderBox.X, Is.GreaterThan(a.BorderBox.Right - 0.5), "the second column starts after the first");
+        Assert.That(b.BorderBox.Right, Is.EqualTo(300).Within(1), "and the two together fill the grid");
+
+        // Both areas cover both rows, so both items reach the same depth however those rows were sized;
+        // a grid that had not read the template would have laid them one under the other instead.
+        Assert.That(a.BorderBox.Bottom, Is.EqualTo(b.BorderBox.Bottom).Within(0.5));
+        Assert.That(a.BorderBox.Height, Is.GreaterThan(0));
+    }
+
+    /// <summary>
+    /// A cell of the template can be left unnamed with a <c>.</c>, which claims the track without
+    /// giving it a name anything could be placed by. The real pages that need this are the ones whose
+    /// frame leaves a corner of the grid to whatever falls there.
+    /// </summary>
+    [Test]
+    public async Task ACellOfATemplateCanBeLeftUnnamed()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;width:300px;grid-template-areas:&#39;a .&#39; &#39;a .&#39;'>" +
+            "<div id='a' style='grid-area:a'>a</div>" +
+            "<div id='b'>b</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        Assert.That(a.BorderBox.X, Is.EqualTo(0).Within(0.5));
+        Assert.That(a.BorderBox.Right, Is.LessThan(300).Within(1), "the unnamed cell still holds a column");
+        Assert.That(a.BorderBox.Width, Is.GreaterThan(100), "and the named one keeps the rest it was sized to");
     }
 
     private static LayoutBox Find(HutuViewInternal view, String id)

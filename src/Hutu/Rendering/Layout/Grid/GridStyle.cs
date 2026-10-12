@@ -289,10 +289,14 @@ internal readonly struct GridLine
 /// its own alignment through the same struct.
 /// </summary>
 /// <remarks>
-/// <c>grid</c>, <c>grid-template</c> and <c>grid-template-areas</c> are deliberately not read. The
-/// two shorthands rebuild their value into an internal type that cannot be named here, and nothing in
-/// the sample pages uses either. Named lines and named areas are parsed but not resolved, so they
-/// place like <c>auto</c>.
+/// The <c>grid</c> and <c>grid-template</c> shorthands are still not read - the cascade splits them
+/// into the longhands this does read before anything is looked at, which is what makes a page whose
+/// frame is written as <c>grid-template: "toolbar side" 1fr / ... </c> legible here at all.
+/// <c>grid-template-areas</c> is read as text, and so are the names written in front of the tracks,
+/// because a track list's line names are exactly what the track classifier walks past: they are not
+/// tracks. An item placed by a name is resolved against the two of them by <see cref="Resolve"/>;
+/// a name nothing answers stays unresolved and places like <c>auto</c>, which is the same answer as
+/// before there were any names to read.
 /// </remarks>
 internal readonly struct GridStyle
 {
@@ -308,7 +312,10 @@ internal readonly struct GridStyle
         FlexAlignment justifyItems,
         FlexAlignment alignItems,
         Double rowGap,
-        Double columnGap)
+        Double columnGap,
+        GridAreas? areas,
+        GridLineNames? columnLines,
+        GridLineNames? rowLines)
     {
         Columns = columns;
         Rows = rows;
@@ -322,6 +329,9 @@ internal readonly struct GridStyle
         AlignItems = alignItems;
         RowGap = rowGap;
         ColumnGap = columnGap;
+        Areas = areas;
+        ColumnLines = columnLines;
+        RowLines = rowLines;
     }
 
     /// <summary>Gets the explicit column tracks, with a fixed <c>repeat()</c> already expanded.</summary>
@@ -354,6 +364,15 @@ internal readonly struct GridStyle
 
     public Double ColumnGap { get; }
 
+    /// <summary>Gets the named cells of the template, or null when it names none.</summary>
+    public GridAreas? Areas { get; }
+
+    /// <summary>Gets the names written on the column lines, or null when none were written.</summary>
+    public GridLineNames? ColumnLines { get; }
+
+    /// <summary>Gets the names written on the row lines, or null when none were written.</summary>
+    public GridLineNames? RowLines { get; }
+
     /// <summary>
     /// The longhands' initial values: what a style that was never handed a grid context answers
     /// with. A fused style carries no declaration, so a box that is not part of a grid cannot be
@@ -373,7 +392,10 @@ internal readonly struct GridStyle
         FlexAlignment.Stretch,
         FlexAlignment.Stretch,
         0,
-        0);
+        0,
+        null,
+        null,
+        null);
 
     internal static GridStyle Read(ComputedStyle style)
     {
@@ -401,9 +423,29 @@ internal readonly struct GridStyle
         var alignItems = Alignment(source, "align-items", CssInitialValues.AlignItemsGrid);
         var justifyItems = Alignment(source, "justify-items", CssInitialValues.JustifyItemsGrid);
 
+        var columns = ReadTracks(source, "grid-template-columns");
+        var rows = ReadTracks(source, "grid-template-rows");
+        var areas = GridAreas.Parse(source.Text("grid-template-areas"));
+
+        // A template area creates the tracks its cells cover: the names say how many rows and columns
+        // there are even where no sizes were written for them, and a track that is explicit but has no
+        // size is sized as <c>auto</c>, which is the same answer an item placed past the edge gets.
+        if (areas is { } template)
+        {
+            while (columns.StaticCount < template.ColumnCount)
+            {
+                columns.Add(GridTrackSize.Auto);
+            }
+
+            while (rows.StaticCount < template.RowCount)
+            {
+                rows.Add(GridTrackSize.Auto);
+            }
+        }
+
         return new GridStyle(
-            ReadTracks(source, "grid-template-columns"),
-            ReadTracks(source, "grid-template-rows"),
+            columns,
+            rows,
             ReadAutoTrack(source, "grid-auto-columns"),
             ReadAutoTrack(source, "grid-auto-rows"),
             autoFlow.Column,
@@ -417,7 +459,67 @@ internal readonly struct GridStyle
                 ? (place.Align == FlexAlignment.Auto ? FlexAlignment.Stretch : place.Align)
                 : alignItems,
             Math.Max(0, rowGap),
-            Math.Max(0, columnGap));
+            Math.Max(0, columnGap),
+            areas,
+            GridLineNames.Parse(source.Text("grid-template-columns")),
+            GridLineNames.Parse(source.Text("grid-template-rows")));
+    }
+
+    /// <summary>
+    /// Turns one side of an item's placement from a name into the line the template says that name is,
+    /// leaving every other kind of line - and a name nothing claims - exactly as it was read.
+    /// </summary>
+    /// <param name="end">
+    /// Which side of the item this line is. The cascade expands <c>grid-area: toolbar</c> into four
+    /// longhands that all say <c>toolbar</c>, while the specification reads the two that end a span as
+    /// asking for the area's far line - so the side has to be known here or an area would cover one
+    /// track of its own template.
+    /// </param>
+    /// <remarks>
+    /// Names written on the tracks come first, then the area's own: a template that calls one of its
+    /// cells by a name the tracks also wrote on a line is the page's problem, and the written line is
+    /// the more specific answer. The <c>-start</c> and <c>-end</c> spellings name the lines on either
+    /// side of what an area covers whichever side is asking, which is what lets
+    /// <c>grid-column: toolbar</c> and <c>grid-column-end: toolbar-end</c> say the same rectangle.
+    /// </remarks>
+    internal GridLine Resolve(GridLine line, Boolean horizontal, Boolean end)
+    {
+        if (line.Kind != GridLineKind.Name || line.Name is not { } name)
+        {
+            return line;
+        }
+
+        if ((horizontal ? ColumnLines : RowLines)?.IndexOf(name) is { } written)
+        {
+            return GridLine.At(written);
+        }
+
+        if (Areas is { } areas)
+        {
+            // The name of an area, on its own, is the line it starts at - unless the side asking is
+            // the one that ends there, which the specification reads as the line after its last track.
+            if (areas.TryBounds(name, out var startColumn, out var endColumn, out var startRow, out var endRow))
+            {
+                return GridLine.At(end
+                    ? (horizontal ? endColumn : endRow)
+                    : (horizontal ? startColumn : startRow));
+            }
+
+            var starting = name.EndsWith("-start", StringComparison.Ordinal);
+            var ending = !starting && name.EndsWith("-end", StringComparison.Ordinal);
+
+            if ((starting || ending) &&
+                areas.TryBounds(name[..^6], out var areaColumn, out var areaColumnEnd, out var areaRow, out var areaRowEnd))
+            {
+                var reached = ending
+                    ? (horizontal ? areaColumnEnd : areaRowEnd)
+                    : (horizontal ? areaColumn : areaRow);
+
+                return GridLine.At(reached);
+            }
+        }
+
+        return GridLine.Auto;
     }
 
     /// <summary>Reads one of the alignment longhands, from whichever source the reader was given.</summary>

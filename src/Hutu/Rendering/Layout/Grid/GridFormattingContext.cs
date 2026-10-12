@@ -199,8 +199,8 @@ internal sealed class GridFormattingContext
 
         foreach (var item in items)
         {
-            ResolveAxis(item, true, explicitColumns);
-            ResolveAxis(item, false, explicitRows);
+            ResolveAxis(item, true, explicitColumns, grid);
+            ResolveAxis(item, false, explicitRows, grid);
         }
 
         Place(items, grid, explicitColumns, explicitRows);
@@ -319,10 +319,15 @@ internal sealed class GridFormattingContext
     /// Resolves one axis of an item's placement into a track index and a span. A definite side wins;
     /// otherwise a <c>span</c> fixes only the reach and the index is left to the placement pass.
     /// </summary>
-    private static void ResolveAxis(GridCell item, Boolean horizontal, Int32 explicitTracks)
+    /// <remarks>
+    /// A side written as a name - the area an item asked for, or a line the tracks were named - is
+    /// settled by the grid first, because nothing else knows which line that name is: the same word
+    /// means one line in one template and another in the next.
+    /// </remarks>
+    private static void ResolveAxis(GridCell item, Boolean horizontal, Int32 explicitTracks, GridStyle grid)
     {
-        var start = horizontal ? item.ColumnStart : item.RowStart;
-        var end = horizontal ? item.ColumnEnd : item.RowEnd;
+        var start = grid.Resolve(horizontal ? item.ColumnStart : item.RowStart, horizontal, end: false);
+        var end = grid.Resolve(horizontal ? item.ColumnEnd : item.RowEnd, horizontal, end: true);
         var lines = explicitTracks + 1;
         var startIndex = start.Resolve(lines);
         var endIndex = end.Resolve(lines);
