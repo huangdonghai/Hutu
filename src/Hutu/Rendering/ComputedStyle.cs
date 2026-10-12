@@ -47,80 +47,6 @@ public readonly struct ComputedStyle
     /// </summary>
     private readonly StyleValues _values;
 
-    /// <param name="specified">
-    /// The cascaded declaration, when it is available. It is preferred for backgrounds: the computed
-    /// declaration loses the position, size and repeat of a layered background, because AngleSharp
-    /// rebuilds the shorthand's longhands lossily.
-    /// </param>
-    /// <param name="element">
-    /// The element the style belongs to. Needed to resolve the relative URLs of background images,
-    /// which the image cache is keyed by.
-    /// </param>
-    /// <param name="parentFontSize">
-    /// The font size the parent box resolved to. A percentage <c>font-size</c> is relative to it, and
-    /// since AngleSharp computes that percentage against the render device - the viewport - instead, the
-    /// box builder hands the real reference down and it is applied here. Zero means it is unknown and
-    /// the device's own font size stands in.
-    /// </param>
-    /// <param name="parentColor">
-    /// The colour the parent box resolved to, which is not always the colour the parent's computed
-    /// declaration holds: a link is painted in the engine's own link colour without that colour ever
-    /// reaching the declaration, so the words inside the link take it from here.
-    /// </param>
-    /// <param name="declaresFontSize">
-    /// Whether the element declares its own <c>font-size</c> rather than taking one over from a
-    /// parent. Only a declared relative size is measured against the parent; working that out means a
-    /// second cascade, so the box builder settles it once and the answer is carried here.
-    /// </param>
-    public ComputedStyle(
-        ICssStyleDeclaration style,
-        IRenderDimensions dimensions,
-        ICssStyleDeclaration? specified = null,
-        IElement? element = null,
-        Double parentFontSize = 0,
-        CssColorValue? parentColor = null,
-        Boolean declaresFontSize = false,
-        FontFaceTable? faces = null)
-        : this(style, dimensions, specified, element, parentFontSize, parentColor, declaresFontSize, null, null, faces)
-    {
-    }
-
-    /// <param name="pool">
-    /// The intern table the box builder fills in for the tree it is building, so that two boxes whose
-    /// areas agree share one instance. Null leaves each style with its own copies, which costs memory
-    /// and changes nothing else - which is why a caller that has no table, a test building a style by
-    /// hand, can simply pass none.
-    /// </param>
-    internal ComputedStyle(
-        ICssStyleDeclaration style,
-        IRenderDimensions dimensions,
-        ICssStyleDeclaration? specified,
-        IElement? element,
-        Double parentFontSize,
-        CssColorValue? parentColor,
-        Boolean declaresFontSize,
-        StyleIntern? pool,
-        ComputedStyle? parent,
-        FontFaceTable? faces = null)
-    {
-        _style = style ?? throw new ArgumentNullException(nameof(style));
-        _dimensions = dimensions ?? throw new ArgumentNullException(nameof(dimensions));
-        _specified = specified;
-        _element = element;
-        _parentFontSize = parentFontSize;
-        _parentColor = parentColor;
-        _declaresFontSize = declaresFontSize;
-        _faces = faces;
-
-        // Assigned before it is filled because a struct cannot call its own methods until every field
-        // has a value, and the resolver is one of those methods. Anything it read through this object
-        // before the fill would therefore see the shared default rather than fail loudly, so the
-        // resolver reads declarations and nothing else - which keeps a mistake here to the shape of a
-        // border that quietly stops being drawn, the one a border test cannot miss.
-        _values = new StyleValues();
-        ResolveAreas(pool, parent);
-    }
-
     /// <summary>
     /// Builds a style from areas the fused box-builder path already resolved, with no
     /// declaration behind it: the accessors that would read one answer from the fused
@@ -143,35 +69,6 @@ public readonly struct ComputedStyle
         _faces = faces;
         values.Fused = fused;
         _values = values;
-    }
-
-    /// <summary>
-    /// Resolves the areas whose properties cannot be inherited, and interns what it builds.
-    /// </summary>
-    /// <remarks>
-    /// A property that cannot be inherited is in the element's declaration if and only if the element
-    /// itself declared it, because AngleSharp merges only inheritable properties down from the parent.
-    /// The names being absent from both declarations is therefore proof that every value in the area
-    /// would come out at its initial value, and the area is left at the shared default: no reads, no
-    /// allocation, no table lookup. That is the path the whole design rests on - it is what makes the
-    /// cost depend on what a document declares rather than on how many properties the engine knows.
-    /// </remarks>
-    private void ResolveAreas(StyleIntern? pool, ComputedStyle? parent)
-    {
-        // The font first, and not by preference. Every other area reads lengths, a length in em, ex or
-        // ch resolves against the element's own font size, and the reader asks this style for that size
-        // - so an area resolved before the font would measure against a size of zero and quietly fall
-        // back to the device's. There is no dependency the other way: the font resolves against the
-        // parent's size, which the constructor is handed.
-        ResolveFont(pool, parent);
-        ResolveTextDecoration(pool, parent);
-
-        ResolveBorder(pool);
-        ResolveBoxModel(pool);
-        ResolveDisplayPositioning(pool);
-        ResolveVisualEffects(pool);
-        ResolveText(pool, parent);
-        ResolveList(pool, parent);
     }
 
     /// <summary>The names a font property can begin with, the <c>font</c> shorthand included.</summary>
@@ -2098,36 +1995,6 @@ public readonly struct ComputedStyle
 
         return device is not null &&
                window.GetStyleCollection(device).ComputeExplicitStyle(element).GetProperty(name)?.RawValue is not null;
-    }
-
-    /// <summary>
-    /// Gets whether the element the declaration belongs to declares the property on itself, as opposed
-    /// to taking the parent's value over by inheritance, without running a second cascade.
-    /// </summary>
-    /// <remarks>
-    /// A property the element did not declare itself is the very object the parent holds: the cascade
-    /// merges an inheritable declaration down by reference. So a property that is the parent's own is
-    /// inherited, and a property that is not was declared on the element. This is the same test
-    /// <see cref="Inherits"/> uses, applied to any property rather than to a set of names.
-    /// <para>
-    /// A parent that is not in hand means there is nothing to inherit from, so a property present is
-    /// taken as declared.
-    /// </para>
-    /// </remarks>
-    internal static Boolean DeclaresOwn(
-        ICssStyleDeclaration specified,
-        ComputedStyle? parent,
-        String name)
-    {
-        var mine = specified.TryGetProperty(name);
-
-        if (parent is null)
-        {
-            return mine is not null;
-        }
-
-        var theirs = parent.Value._specified?.TryGetProperty(name);
-        return !Same(mine, theirs);
     }
 
     // --- Box model ------------------------------------------------------

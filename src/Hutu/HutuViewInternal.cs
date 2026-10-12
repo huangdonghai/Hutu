@@ -2,7 +2,6 @@
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
-using AngleSharp.Css.RenderTree;
 using AngleSharp.Html.Dom;
 using AngleSharp.Io;
 using Hutu.Rendering;
@@ -60,18 +59,6 @@ public sealed class HutuViewInternal : IDisposable
     /// Without an answer no link is ever marked visited, which is a page that shows everything as new.
     /// </remarks>
     public Func<String, Boolean>? IsVisited { get; set; }
-
-    /// <summary>
-    /// Gets the styled render tree for the current document, or null when nothing is loaded. It
-    /// carries DOM references and computed styles but no geometry.
-    /// </summary>
-    /// <remarks>
-    /// The fused pipeline builds no render tree, so asking for one computes it here on demand -
-    /// the property keeps its meaning for a caller that wants it, without the build paying for a
-    /// tree nobody reads.
-    /// </remarks>
-    public IRenderNode? RenderTree =>
-        _pipeline.RenderTree ?? (_pipeline.RenderTree = Document?.DefaultView?.Render(_renderDevice));
 
     /// <summary>
     /// Gets the laid-out tree and the document size, or null when nothing is loaded or no text
@@ -649,8 +636,7 @@ public sealed class HutuViewInternal : IDisposable
     }
 
     /// <summary>
-    /// Recomputes the styled render tree for the active document, if any. The render tree is what
-    /// the box tree is built from; it carries no geometry. Whatever was selected is dropped, which
+    /// Rebuilds the box tree for the active document, dropping whatever was selected, which
     /// is what a document or a viewport changing asks for.
     /// </summary>
     private void UpdateRenderTree() => Rebuild(null);
@@ -937,9 +923,7 @@ public sealed class HutuViewInternal : IDisposable
             return;
         }
 
-        var urls = _pipeline.RenderTree is { } renderTree
-            ? ImageUrlCollector.Collect(renderTree)
-            : ImageUrlCollector.Collect(Document!, _renderDevice);
+        var urls = ImageUrlCollector.Collect(Document!, _renderDevice);
 
         if (urls.Count == 0)
         {

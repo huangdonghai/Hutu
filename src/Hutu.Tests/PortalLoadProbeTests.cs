@@ -1,7 +1,6 @@
 using AngleSharp;
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
-using AngleSharp.Css.RenderTree;
 using AngleSharp.Dom;
 using AngleSharp.Io;
 using Hutu.Rendering;
@@ -84,18 +83,16 @@ public sealed class PortalLoadProbeTests
 
         var faces = Timed("font face table", () => FontFaceTable.From(full));
         var boxes = Timed("fused build", () => BoxBuilder.TryBuildFused(full, device, (IImageProvider?)null, faces));
-        Line($"  fused build returned {(boxes is null ? "NULL - the page falls back to the render tree" : "a box tree")}");
-
-        var built = boxes ?? Timed(
-            "render-tree build",
-            () => BoxBuilder.Build(
-                Timed("render tree", () => full.DefaultView!.Render(device)),
-                device,
-                (IImageProvider?)null,
-                faces));
-
+        Line($"  fused build returned {(boxes is null ? "NULL" : "a box tree")}");
+        
+        if (boxes is null)
+        {
+            Line("  the fused path abstains on this document");
+            return;
+        }
+        
         using var measurer = new SkiaTextMeasurer();
-        var layout = Timed("layout", () => new LayoutEngine(measurer).Layout(built, Width, Height));
+        var layout = Timed("layout", () => new LayoutEngine(measurer).Layout(boxes, Width, Height));
         var paint = Timed("paint list", () => new Painter().Paint(layout!));
 
         Line("");
@@ -343,6 +340,59 @@ public sealed class PortalLoadProbeTests
         foreach (var offender in offenders)
         {
             Line(offender);
+        }
+
+        // The other half of the same question: a line that was pushed in has to be pushed against
+        // something. A shift with no float at its edge is a band read from the wrong origin, which is
+        // what happens where a context hands its children the container's own corner rather than
+        // rebasing it to each of them.
+        var shifted = 0;
+        var unjustified = 0;
+        var stray = new List<String>();
+
+        void CheckShift(LayoutBox node, LayoutBox? block)
+        {
+            if (node.Kind == LayoutKind.Line && block is { } owner && Seen(node))
+            {
+                var box = node.BorderBox;
+                var content = owner.BorderBox.X + owner.Border.Left + owner.Padding.Left;
+
+                if (box.X - content > 0.5)
+                {
+                    shifted++;
+
+                    var against = floated.Any(area =>
+                        Seen(area) &&
+                        Math.Abs(box.X - area.BorderBox.Right) < 1.5 &&
+                        area.BorderBox.Bottom > box.Y &&
+                        area.BorderBox.Y < box.Bottom);
+
+                    if (!against)
+                    {
+                        unjustified++;
+
+                        if (stray.Count < 6)
+                        {
+                            stray.Add($"    shifted {box.X - content,5:F0} with nothing at its edge: " +
+                                $"{Tag(owner)} at {box.X,6:F0}, content begins {content,6:F0}");
+                        }
+                    }
+                }
+            }
+
+            foreach (var child in node.Children)
+            {
+                CheckShift(child, node.Kind == LayoutKind.Line ? block : node);
+            }
+        }
+
+        CheckShift(view.Layout.Root, null);
+
+        Line($"  lines shifted in: {shifted}, of which {unjustified} have no float at their edge");
+
+        foreach (var line in stray)
+        {
+            Line(line);
         }
 
         foreach (var selector in Selectors)

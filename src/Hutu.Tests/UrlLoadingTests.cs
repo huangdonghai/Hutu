@@ -30,7 +30,6 @@ public sealed class UrlLoadingTests
             await view.LoadUrlAsync(new Uri(path).AbsoluteUri);
 
             Assert.That(view.GetHtml(), Does.Contain("from disk"));
-            Assert.That(view.RenderTree, Is.Not.Null);
             Assert.That(view.Layout, Is.Not.Null);
         }
         finally
@@ -156,7 +155,6 @@ public sealed class UrlLoadingTests
         Assert.That(
             view.GetComputedStyle(body).GetPropertyValue("line-height").Trim(),
             Is.EqualTo("1.6"));
-        Assert.That(view.RenderTree, Is.Not.Null);
     }
 
     /// <summary>
@@ -179,7 +177,6 @@ public sealed class UrlLoadingTests
 
         Assert.That(view.GetComputedStyle(ex!).GetPropertyValue("width").Trim(), Does.EndWith("px"));
         Assert.That(view.GetComputedStyle(ch!).GetPropertyValue("width").Trim(), Does.EndWith("px"));
-        Assert.That(view.RenderTree, Is.Not.Null);
     }
 
     private static HutuViewInternal CreateView()

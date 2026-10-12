@@ -1,5 +1,4 @@
 ﻿using AngleSharp.Css;
-using AngleSharp.Css.RenderTree;
 using AngleSharp.Dom;
 using Hutu.Rendering.Boxes;
 using Hutu.Rendering.Layout;
@@ -9,7 +8,7 @@ using Hutu.Rendering.Paint;
 namespace Hutu.Rendering;
 
 /// <summary>
-/// Orchestrates the rendering pipeline for a single document: the AngleSharp.Css render tree, the
+/// Orchestrates the rendering pipeline for a single document: the
 /// box tree, layout and the platform-neutral paint list.
 /// </summary>
 /// <remarks>
@@ -36,12 +35,6 @@ public sealed class RenderingPipeline
     }
 
     /// <summary>
-    /// Gets the styled render tree produced by the last run, or null when nothing was built yet.
-    /// It carries DOM references and computed styles but no geometry.
-    /// </summary>
-    public IRenderNode? RenderTree { get; internal set; }
-
-    /// <summary>
     /// Gets the box tree produced by the last run, or null when there is nothing to render.
     /// </summary>
     public Box? BoxTree { get; private set; }
@@ -61,7 +54,6 @@ public sealed class RenderingPipeline
     /// <summary>Drops the derived trees so the next run recomputes styles from the document.</summary>
     public void Invalidate()
     {
-        RenderTree = null;
         BoxTree = null;
         Layout = null;
         Paint = null;
@@ -125,32 +117,15 @@ public sealed class RenderingPipeline
     }
 
     /// <summary>
-    /// Rebuilds the render tree, the box tree and the layout for the document using the current
-    /// device, and returns the render tree. A document without a window yields null.
+    /// Rebuilds the box tree and the layout for the document using the current device.
+    /// A document without a window yields null.
     /// </summary>
-    public IRenderNode? Build(IDocument document)
+    public void Build(IDocument document)
     {
-        var window = document.DefaultView;
-
         // The fused path matches, cascades and computes from the DOM directly, with no render
-        // tree and no per-element declaration. A document it cannot yet reproduce whole comes
-        // back null, and the render tree is built for that document instead.
+        // tree and no per-element declaration.
         var faces = FontFaceTable.From(document);
         BoxTree = BoxBuilder.TryBuildFused(document, _device, _images, faces);
-
-        if (BoxTree is not null)
-        {
-            RenderTree = null;
-        }
-        else
-        {
-            RenderTree = window?.Render(_device);
-
-            // The faces the document declares are read once for the build rather than per box: they are a
-            // property of the sheets, and every element that asks for one of those names gets the same
-            // answer however deep in the tree it sits.
-            BoxTree = BoxBuilder.Build(RenderTree, _device, _images, faces);
-        }
 
         // A highlight names boxes of the layout it was measured against, so a new layout always drops
         // it: keeping it would leave the painter looking up runs that no longer exist. The host points
@@ -163,6 +138,5 @@ public sealed class RenderingPipeline
         Layout = _layout?.Layout(BoxTree, _device.RenderWidth, _device.RenderHeight);
 
         Paint = Layout is null ? null : _painter.Paint(Layout);
-        return RenderTree;
     }
 }

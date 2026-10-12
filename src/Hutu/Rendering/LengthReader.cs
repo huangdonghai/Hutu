@@ -130,6 +130,18 @@ internal static class LengthReader
 
         switch (value)
         {
+            case CssCalcValue calc:
+                // calc() expressions are evaluated by AngleSharp's own Compute pipeline, which
+                // folds every operand to pixels against the device and then combines them. The
+                // result is a plain pixel length - percentages inside calc() are resolved against
+                // the viewport at this point, which is what the old render-tree path did.
+                if (TryFoldCalc(calc, mode, dimensions, font, out length))
+                {
+                    return true;
+                }
+
+                return false;
+
             case CssLengthValue css:
                 // `auto`, `normal` and `content` share the length type but carry no number, and the
                 // only way to tell them apart is the text they serialise to.
@@ -331,6 +343,34 @@ internal static class LengthReader
         }
 
         return FromCssLength(parsed, mode, dimensions, font);
+    }
+
+    /// <summary>
+    /// Evaluates a <c>calc()</c> expression to a pixel length by running AngleSharp's own
+    /// compute pipeline over it. The compute context supplies the device dimensions so that
+    /// percentages and font-relative units resolve the way the render tree used to.
+    /// </summary>
+    private static Boolean TryFoldCalc(CssCalcValue calc, RenderMode mode, IRenderDimensions dimensions, FontSource font, out StyleLength length)
+    {
+        length = default;
+
+        var context = new CalcComputeContext(dimensions);
+        var computed = ((ICssValue)calc).Compute(context);
+
+        if (computed is CssLengthValue result && !Double.IsNaN(result.Value) && !Double.IsInfinity(result.Value))
+        {
+            var pixels = result.Type == CssLengthValue.Unit.Percent
+                ? result.Value / 100.0 * (mode == RenderMode.Horizontal ? dimensions.RenderWidth : dimensions.RenderHeight)
+                : ToPixel(result, mode, dimensions, font);
+
+            if (!Double.IsNaN(pixels) && !Double.IsInfinity(pixels))
+            {
+                length = StyleLength.FromPixels(pixels);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static StyleLength? FromCssLength(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, FontSource font)

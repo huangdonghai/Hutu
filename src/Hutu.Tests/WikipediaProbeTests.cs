@@ -179,32 +179,16 @@ public sealed class WikipediaProbeTests
         var boxes = BoxBuilder.TryBuildFused(document, device, (IImageProvider?)null, faces);
         fused.Stop();
         Line($"fused build       {fused.Elapsed.TotalMilliseconds,8:F0}ms   " +
-             (boxes is null
-                ? "NULL - the page falls back to the render tree, so this page runs on the deprecated path"
-                : "a box tree"));
-
-        var built = boxes ?? BoxBuilder.Build(view.RenderTree, device, (IImageProvider?)null, faces);
+             (boxes is null ? "NULL" : "a box tree"));
 
         if (boxes is null)
         {
-            // The fallback's own two stages, which the pipeline never times apart: building the
-            // styled render tree, and turning it into boxes. This is the deprecated path, and the
-            // page is on it because of the substitution above.
-            var window = document.DefaultView!;
-            var tree = Stopwatch.StartNew();
-            var renderTree = window.Render(device);
-            tree.Stop();
-
-            var build = Stopwatch.StartNew();
-            var legacy = BoxBuilder.Build(renderTree, device, (IImageProvider?)null, faces);
-            build.Stop();
-
-            GC.KeepAlive(legacy);
-            Line($"render tree     {tree.Elapsed.TotalMilliseconds,8:F0}ms   then the box builder {build.Elapsed.TotalMilliseconds:F0}ms - the deprecated path");
+            Line("the fused path abstains on this document");
+            return;
         }
 
         var engine = new LayoutEngine(measurer);
-        var profile = engine.Profile(built, Width, Height);
+        var profile = engine.Profile(boxes, Width, Height);
 
         Line($"layout            {profile.TotalTime,8:F1}ms   " +
              $"measure {profile.MeasureTime:F1} / arrange {profile.ArrangeTime:F1} / " +
@@ -212,7 +196,7 @@ public sealed class WikipediaProbeTests
         Line($"                  {profile.MeasureAllocMB + profile.ArrangeAllocMB,8:F1}MB   " +
              $"measure {profile.MeasureAllocMB:F1} / arrange {profile.ArrangeAllocMB:F1}");
 
-        var laid = engine.Layout(built, Width, Height)!;
+        var laid = engine.Layout(boxes, Width, Height)!;
         Line($"document          {laid.Width:F0}x{laid.Height:F0}   (a browser: {Width}x3854)");
         Line($"  the pipeline's own answer: {view.Layout!.Width:F0}x{view.Layout.Height:F0}");
 
@@ -252,12 +236,9 @@ public sealed class WikipediaProbeTests
         Line($"draw one frame    {drew.Elapsed.TotalMilliseconds,8:F1}ms   the whole viewport");
 
         // What a state change costs, because a hover over anything the interface styles is a state
-        // change: the whole document is built, laid out and painted again. On this page that is the
-        // deprecated path every time, because of the substitution the fused resolvers cannot read -
-        // so the render tree is rebuilt from scratch as well.
+        // change: the whole document is built, laid out and painted again.
         var rebuild = Stopwatch.StartNew();
-        var again = BoxBuilder.TryBuildFused(document, device, (IImageProvider?)null, faces) ??
-            BoxBuilder.Build(document.DefaultView!.Render(device), device, (IImageProvider?)null, faces);
+        var again = BoxBuilder.TryBuildFused(document, device, (IImageProvider?)null, faces);
         var relaid = engine.Layout(again, Width, Height);
         var repainted = relaid is null ? null : new Painter().Paint(relaid);
         rebuild.Stop();
@@ -357,8 +338,7 @@ public sealed class WikipediaProbeTests
 
         // Counted over the elements rather than the boxes, because every box an element generates
         // carries that element's style: a flex container's text and line boxes would otherwise be
-        // counted as flex containers too. This is the cascade the boxes were actually built from - the
-        // page is on the render-tree path, whose styles come from AngleSharp.
+        // counted as flex containers too.
         var styles = document.DefaultView!;
 
         foreach (var element in document.QuerySelectorAll("*"))

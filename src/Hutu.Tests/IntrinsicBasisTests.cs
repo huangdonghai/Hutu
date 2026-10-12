@@ -178,8 +178,7 @@ public sealed class IntrinsicBasisTests
             await view.LoadUrlAsync(page);
 
             var device = new HutuRenderDevice(900, 600);
-            var window = view.Document!.DefaultView!;
-            var tree = BoxBuilder.Build(window.Render(device), device, (IImageProvider?)null);
+            var tree = BoxBuilder.TryBuildFused(view.Document!, device, (IImageProvider?)null);
 
             var engine = new LayoutEngine(skia);
             engine.Layout(tree, device.RenderWidth, device.RenderHeight);
@@ -196,8 +195,7 @@ public sealed class IntrinsicBasisTests
     private static List<Box> Boxes(HutuViewInternal view, String tag)
     {
         var device = new HutuRenderDevice(800, 600);
-        var window = view.Document!.DefaultView!;
-        var root = BoxBuilder.Build(window.Render(device), device, (IImageProvider?)null);
+        var root = BoxBuilder.TryBuildFused(view.Document!, device, (IImageProvider?)null);
 
         var found = new List<Box>();
 

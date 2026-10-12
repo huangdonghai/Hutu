@@ -1,8 +1,4 @@
-﻿using AngleSharp.Css;
-using AngleSharp.Css.Dom;
-using AngleSharp.Css.RenderTree;
-using AngleSharp.Css.Values;
-using AngleSharp.Dom;
+﻿using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
@@ -13,57 +9,14 @@ using System.Text;
 namespace Hutu.Rendering.Boxes;
 
 /// <summary>
-/// Turns the styled render tree into a box tree.
+/// Turns the styled DOM into a box tree.
 /// </summary>
 /// <remarks>
-/// The render tree is a faithful projection of the DOM with computed styles; it is not a
-/// formatting structure. This builder applies the two rules that make it one: subtrees whose
-/// <c>display</c> is <c>none</c> are dropped, and - inside a block that mixes block-level content -
-/// runs of inline-level content are wrapped in anonymous blocks so the layout engine sees a single
-/// formatting context per container.
-/// <para>
-/// This is the legacy <b>render-tree</b> build: it assumes the css cascade has already produced a
-/// styled render tree. The engine now renders through <see cref="TryBuildFused"/>, which builds the
-/// box tree straight from the DOM and is the live path. Keep this method only for the probe's
-/// side-by-side comparison - do not treat it as the production route or optimise it as one.
-/// </para>
+/// The engine renders through <see cref="TryBuildFused"/>, which builds the
+/// box tree straight from the DOM.
 /// </remarks>
 public static partial class BoxBuilder
 {
-    /// <summary>
-    /// Builds the box tree for the given render tree, or null when there is nothing to render.
-    /// </summary>
-    /// <param name="images">
-    /// Supplies the intrinsic size of images. Optional: without it a replaced box falls back to the
-    /// declared attributes and then to the specification's default object size.
-    /// </param>
-    public static Box? Build(
-        IRenderNode? renderTree,
-        IRenderDimensions dimensions,
-        IImageProvider? images = null,
-        FontFaceTable? faces = null)
-    {
-        if (renderTree is not ElementRenderNode root)
-        {
-            return null;
-        }
-
-        // One table for the tree. Areas are interned by value, so two boxes that resolve the same
-        // values end up sharing one instance whether or not they are related - which is something a
-        // reference to the parent's area could not catch, since sibling list items agree as much as
-        // an inheriting child does.
-        var pool = new StyleIntern();
-        var box = BuildElement(root, dimensions, images, faces, WritingModeInfo.Horizontal, pool, null);
-
-        if (box is not null)
-        {
-            AdoptBodyFlow(box, dimensions);
-            MarkBasisUse(box);
-        }
-
-        return box;
-    }
-
     /// <summary>
     /// Gives the page the writing mode the <c>body</c> runs in, when the root declares none of its own.
     /// </summary>
@@ -83,11 +36,6 @@ public static partial class BoxBuilder
     /// and one that inherits the root's is horizontal in the cascade whatever this settles on.
     /// </para>
     /// </remarks>
-    private static void AdoptBodyFlow(Box root, IRenderDimensions dimensions)
-    {
-        AdoptBodyFlow(root, root.Element is { } element && ComputedStyle.Declares(element, dimensions, "writing-mode"));
-    }
-
     /// <summary>
     /// The same, with the root's own declaration already settled by the caller - the fused
     /// path reads it from the cascade it already has.
@@ -184,160 +132,6 @@ public static partial class BoxBuilder
 
         return false;
     }
-
-    private static Box? BuildElement(
-        ElementRenderNode node,
-        IRenderDimensions dimensions,
-        IImageProvider? images,
-        FontFaceTable? faces,
-        WritingModeInfo inherited,
-        StyleIntern pool,
-        ComputedStyle? parent,
-        Double parentFontSize = 0,
-        CssColorValue? parentColor = null)
-    {
-        var style = new ComputedStyle(
-            node.ComputedStyle,
-            dimensions,
-            node.SpecifiedStyle,
-            node.Ref,
-            parentFontSize,
-            parentColor,
-            DeclaresRelativeFontSize(node.SpecifiedStyle, parent),
-            pool,
-            parent,
-            faces);
-
-        if (style.IsDisplayNone)
-        {
-            return null;
-        }
-
-        var element = node.Ref;
-        var kind = ResolveKind(element, style);
-        var flow = ResolveFlow(style, inherited);
-
-        // A rule and a break are empty: neither takes children. The break needs saying because the
-        // render tree hands it some - it puts a second <br> node inside the one it made for the
-        // element, with a newline under that, and the builder used to turn those into a nested
-        // break carrying a white-space text box. Nothing about it survives layout: the text
-        // collapses and the inner break is a forced break inside a forced break. The DOM, which is
-        // what the fused path reads, has a <br> with no children at all, so the two builders
-        // disagreed about a shape that decides nothing.
-        if (kind is BoxKind.HorizontalRule or BoxKind.LineBreak)
-        {
-            return new Box(kind, style) { Element = element, Flow = flow };
-        }
-
-        if (element is IHtmlImageElement image)
-        {
-            return BuildReplaced(image, kind, style, flow, images);
-        }
-
-        var children = new List<Box>(node.Children is ICollection<IRenderNode> collection ? collection.Count : 0);
-
-        // Resolved once: working out the colour of a link costs a second selector match, and every one
-        // of the link's children asks its parent box for the same answer.
-        var color = style.Color;
-
-        foreach (var child in node.Children)
-        {
-            switch (child)
-            {
-                case ElementRenderNode elementChild:
-                    var childBox = BuildElement(elementChild, dimensions, images, faces, flow, pool, style, style.FontSize, color);
-
-                    if (childBox is not null)
-                    {
-                        children.Add(childBox);
-                    }
-
-                    break;
-
-                case TextRenderNode textChild:
-                    var textBox = BuildText(textChild, style, flow);
-
-                    if (textBox is not null)
-                    {
-                        children.Add(textBox);
-                    }
-
-                    break;
-            }
-        }
-
-        if (kind == BoxKind.Inline && HasBlockLevel(children))
-        {
-            // An inline box holding block-level content cannot be laid out as a line box. Promoting
-            // it to a block container approximates the block-in-inline fixup browsers perform and,
-            // unlike ignoring the children, never loses content.
-            kind = BoxKind.Block;
-        }
-
-        var box = new Box(kind, style) { Element = element, Flow = flow };
-
-        switch (kind)
-        {
-            // A cell is an ordinary block container; only the table context above it is different.
-            // So is an inline-block, which is a block container that the surrounding line places as
-            // one unit - it is the outer role, not the inner one, that the line box sees.
-            case BoxKind.Block:
-            case BoxKind.InlineBlock:
-            case BoxKind.TableCell:
-                GroupChildren(box, children);
-                break;
-
-            // A flex or grid container's children are all items, so a run of inline content is one
-            // item even when there is nothing else around it - it is wrapped rather than left to
-            // form a line box, which is what makes a bare word inside either container behave.
-            case BoxKind.Flex:
-            case BoxKind.Grid:
-                GroupChildren(box, children, true);
-                break;
-
-            case BoxKind.Table:
-                box.Children.AddRange(children);
-                TableFixup.NormalizeTable(box);
-                break;
-
-            case BoxKind.TableRowGroup:
-                box.Children.AddRange(children);
-                TableFixup.NormalizeRowGroup(box);
-                break;
-
-            case BoxKind.TableRow:
-                box.Children.AddRange(children);
-                TableFixup.NormalizeRow(box);
-                break;
-
-            default:
-                box.Children.AddRange(children);
-                break;
-        }
-
-        // Marked from the assembled children, as the fused builder does, so the two paths count the same
-        // items the same way.
-        ListMarkers.Mark(box);
-
-        return box;
-    }
-
-    /// <summary>
-    /// Gets whether the element declares a font-relative <c>font-size</c> of its own rather than taking
-    /// one over from a parent.
-    /// </summary>
-    /// <remarks>
-    /// A relative font size the element declares is measured against its parent, while an inherited one
-    /// is already resolved. Telling the two apart by reference — the parent's own property object means
-    /// the element took it over — costs nothing, so it is only paid where the answer changes anything:
-    /// a size in pixels or an absolute unit means the same thing either way.
-    /// </remarks>
-    private static Boolean DeclaresRelativeFontSize(
-        ICssStyleDeclaration specified,
-        ComputedStyle? parent) =>
-        specified.GetProperty("font-size")?.RawValue is CssLengthValue size &&
-        ComputedStyle.IsFontRelative(size.Type) &&
-        ComputedStyle.DeclaresOwn(specified, parent, "font-size");
 
     private static Boolean HasBlockLevel(List<Box> children)
     {
@@ -516,13 +310,8 @@ public static partial class BoxBuilder
             : BoxKind.Block;
     }
 
-    private static Box? BuildText(TextRenderNode node, ComputedStyle parentStyle, WritingModeInfo flow) =>
-        BuildTextValue(node.Ref.Data, parentStyle, flow) is { } text
-            ? new Box(BoxKind.Text, parentStyle) { Source = node.Ref, Text = text, Flow = flow }
-            : null;
-
     /// <summary>
-    /// The heart of <see cref="BuildText"/> over the raw text, shared with the fused walk that
+    /// The heart of the text-building logic, shared with the fused walk that
     /// reaches text through the DOM rather than the render tree.
     /// </summary>
     private static String? BuildTextValue(String raw, ComputedStyle parentStyle, WritingModeInfo flow)
