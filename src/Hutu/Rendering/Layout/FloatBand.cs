@@ -61,6 +61,12 @@ internal sealed class FloatBand
     }
 
     /// <summary>
+    /// Gets the span the band's floats leave at the block's own content edge, which is where a box that
+    /// keeps its own formatting context has to stand clear of.
+    /// </summary>
+    public (Double Left, Double Right) FreeSpan() => Tracks.FreeSpanAt(OriginY, 0.001);
+
+    /// <summary>
     /// Gets the height a line with no room left to it in drops to: below every float standing in the
     /// band, which is the rule the specification gives for a line box too narrow to hold anything.
     /// </summary>

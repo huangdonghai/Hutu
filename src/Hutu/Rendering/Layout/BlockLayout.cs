@@ -429,11 +429,24 @@ internal sealed class BlockLayout
             // The child's lines stand in the band of the floats around it, at the height the child
             // itself reaches: two siblings at different depths have different room beside a float,
             // so the band is answered per child rather than by the one context the container shares.
-            var band = BandFor(child, tracks, context.Floats, cursor + spacing, margin.Left, 0, 0, contentWidth);
-            var size = _engine.Measure(
+            var (shift, room, band) = FormattingRoot(
                 child,
-                constraints,
-                band is null ? childContext : childContext.WithFloats(band));
+                BandFor(child, tracks, context.Floats, cursor + spacing, margin.Left, 0, 0, contentWidth),
+                contentWidth);
+
+            var passContext = childContext.WithFloats(band);
+            var childConstraints = constraints;
+
+            // A box that steps clear of the floats is measured against the room that stepping leaves it,
+            // and the arranging pass runs the same arithmetic to read the size back out of the cache.
+            if (shift > 0)
+            {
+                passContext = passContext.ForContainingBlock(
+                    new Size(room, childContext.ContainingBlock.Height));
+                childConstraints = MeasureConstraints.FitWidth(room);
+            }
+
+            var size = _engine.Measure(child, childConstraints, passContext);
 
             cursor += spacing + size.Height;
             previousBottomMargin = margin.Bottom;
@@ -525,6 +538,36 @@ internal sealed class BlockLayout
         }
 
         return new FloatBand(tracks, originY, originLeft);
+    }
+
+    /// <summary>
+    /// Gets how far a box that keeps its own formatting context has to stand from the floats around it,
+    /// how much of the container is left for it, and the band its own lines should read.
+    /// </summary>
+    /// <remarks>
+    /// The border edge of a formatting root may not touch the margin edge of a float, which is what
+    /// makes <c>overflow: hidden</c> beside a floated picture the two column layout it has been used for
+    /// since then - and the box keeps its own width rather than merely shortening its lines, because a
+    /// box that clips its overflow is a container of its own and not a run of text. Its own lines are
+    /// then nobody else's business: nothing outside a formatting root narrows what is inside it, so the
+    /// band stops here as well as the box moving.
+    /// </remarks>
+    private static (Double Shift, Double Room, FloatBand? Band) FormattingRoot(
+        Box child,
+        FloatBand? band,
+        Double contentWidth)
+    {
+        if (band is null || !child.Style.ClipsOverflow)
+        {
+            return (0, contentWidth, band);
+        }
+
+        var (left, right) = band.FreeSpan();
+
+        var shift = Math.Max(0, left - band.Left);
+        var room = Math.Max(0, Math.Min(contentWidth, right - band.Left) - shift);
+
+        return (shift, room, null);
     }
 
     /// <summary>
@@ -649,16 +692,29 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            var size = _engine.Measure(child, constraints, context);
+            // The band and the step clear of the floats are the measuring pass's own arithmetic, run
+            // again at the place the child lands, so the size read back is the one it was answered with.
+            var (shift, room, band) = FormattingRoot(
+                child,
+                BandFor(
+                    child, tracks, context.Floats,
+                    cursor + spacing, contentX + margin.Left, contentX, contentY, contentWidth),
+                contentWidth);
+
+            var passContext = context.WithFloats(band);
+            var childConstraints = constraints;
+
+            if (shift > 0)
+            {
+                passContext = passContext.ForContainingBlock(new Size(room, context.ContainingBlock.Height));
+                childConstraints = MeasureConstraints.FitWidth(room);
+            }
+
+            var size = _engine.Measure(child, childConstraints, passContext);
             var used = BoxModel.UsedMargin(child.Style, contentWidth, size.Width);
-            var rect = new Rect(contentX + used.Left, cursor + spacing, size.Width, size.Height);
+            var rect = new Rect(contentX + used.Left + shift, cursor + spacing, size.Width, size.Height);
 
-            // The band is worked out from where the child actually lands, margins included, and handed
-            // down for the arranging: the measuring pass ran the same arithmetic from its own cursor.
-            var band = BandFor(
-                child, tracks, context.Floats, cursor + spacing, contentX + used.Left, contentX, contentY, contentWidth);
-
-            parent.Children.Add(_engine.Arrange(child, rect, band is null ? context : context.WithFloats(band)));
+            parent.Children.Add(_engine.Arrange(child, rect, passContext));
 
             cursor = rect.Bottom;
             previousBottomMargin = margin.Bottom;

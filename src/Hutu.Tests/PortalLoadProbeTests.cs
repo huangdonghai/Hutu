@@ -219,6 +219,132 @@ public sealed class PortalLoadProbeTests
             Line(sample);
         }
 
+        // The self-check, which needs no browser: a line box that shares ground with a floated box is
+        // text drawn under a picture, which is the one thing this is supposed to prevent. A float's own
+        // content lies inside its box by right, so a line whose block sits under the float is not asked
+        // about at all.
+        var floated = new List<LayoutBox>();
+        var parents = new Dictionary<LayoutBox, LayoutBox?>();
+
+        void Collect(LayoutBox node, LayoutBox? above)
+        {
+            parents[node] = above;
+
+            if (node.Source.Element is not null && !node.Source.IsAnonymous &&
+                !Seen(node) &&
+                node.Source.Style.Float != FloatSide.None &&
+                node.Source.Style.Position.Position is not (PositionMode.Absolute or PositionMode.Fixed))
+            {
+                floated.Add(node);
+            }
+
+            foreach (var child in node.Children)
+            {
+                Collect(child, node);
+            }
+        }
+
+        Collect(view.Layout.Root, null);
+
+        var overlapped = 0;
+        var offenders = new List<String>();
+
+        void Check(LayoutBox node, LayoutBox? block)
+        {
+            if (node.Kind == LayoutKind.Line && block is { } owner && Seen(node))
+            {
+                foreach (var area in floated)
+                {
+                    var box = node.BorderBox;
+                    var edges = area.BorderBox;
+
+                    if (box.X + 0.5 >= edges.Right || edges.X + 0.5 >= box.Right ||
+                        box.Y + 0.5 >= edges.Bottom || edges.Y + 0.5 >= box.Bottom ||
+                        Owns(area, owner))
+                    {
+                        continue;
+                    }
+
+                    overlapped++;
+
+                    if (offenders.Count < 8)
+                    {
+                        offenders.Add($"    text under a picture: line " +
+                            $"{box.X,6:F0}..{box.Right,6:F0} at {box.Y,5:F0} of {Tag(owner)} " +
+                            $"crosses {Tag(area)} " +
+                            $"at {edges.X,6:F0}..{edges.Right,6:F0} {edges.Y,5:F0}..{edges.Bottom,5:F0}");
+                    }
+
+                    break;
+                }
+            }
+
+            foreach (var child in node.Children)
+            {
+                Check(child, node.Kind == LayoutKind.Line ? block : node);
+            }
+        }
+
+        // Whether the floated element is the line's own block or stands above it in the tree: the
+        // content of a float lies inside the float's box by right, and a text box borrows the style of
+        // the element holding it - which is why the comparison is of elements rather than of boxes, or
+        // every word inside a floated link reads as text drawn under a picture.
+        Boolean Owns(LayoutBox area, LayoutBox owner)
+        {
+            var floated = Elem(area.Source);
+
+            if (floated is null)
+            {
+                return false;
+            }
+
+            for (var at = owner; at is not null; at = parents.TryGetValue(at, out var above) ? above : null)
+            {
+                if (ReferenceEquals(Elem(at.Source), floated))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        AngleSharp.Dom.IElement? Elem(Box box) => box.Element ?? box.Source?.ParentElement;
+
+        // Whether a box is drawn at all, which is what makes an overlap something a reader sees: the
+        // portal's nav bars hide a hundred boxes each until they are opened, and those hold their
+        // geometry just as a hidden one does.
+        Boolean Seen(LayoutBox node)
+        {
+            for (var at = node; at is not null; at = parents.TryGetValue(at, out var above) ? above : null)
+            {
+                if (at.Source.Style.IsHidden)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        String Tag(LayoutBox node)
+        {
+            var element = node.Source.Element;
+            var classes = element?.GetAttribute("class");
+
+            return (element?.LocalName ?? node.Kind.ToString())
+                + (classes is { Length: > 0 } some ? "." + some.Split(' ')[0] : string.Empty);
+        }
+
+        Check(view.Layout.Root, null);
+
+        Line($"  lines overlapping a float they do not belong to: {overlapped} of {total}");
+
+        foreach (var offender in offenders)
+        {
+            Line(offender);
+        }
+
         foreach (var selector in Selectors)
         {
             var taken = 0;

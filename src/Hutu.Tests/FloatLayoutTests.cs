@@ -308,6 +308,55 @@ public sealed class FloatLayoutTests
         Assert.That(paragraph.BorderBox.Height, Is.GreaterThanOrEqualTo(40), "and the drop is part of the height");
     }
 
+    /// <summary>
+    /// The border edge of a box that keeps its own formatting context may not touch a float: it steps
+    /// to the room the float leaves and takes that room as its width, which is the whole reason
+    /// <c>overflow: hidden</c> beside a floated picture has been a two column layout for twenty years.
+    /// A box that clips is a container rather than a run of text, so it moves instead of only its lines
+    /// shortening.
+    /// </summary>
+    [Test]
+    public async Task AFormattingRootStepsClearOfTheFloatAndTakesTheRoomLeft()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='h' style='width:200px'>" +
+            "<img id='f' src='x.png' style='width:120px;height:60px;float:left'>" +
+            "<div id='b' style='overflow:hidden;height:20px'>aside</div></div>"));
+
+        var aside = Bounds(view, "b");
+
+        Assert.That(aside.X, Is.EqualTo(120).Within(0.5), "clear of the float's margin edge");
+        Assert.That(aside.Width, Is.EqualTo(80).Within(0.5), "and as wide as what that leaves");
+    }
+
+    /// <summary>
+    /// Nothing outside a formatting root narrows what is inside it: once the box has stepped clear of
+    /// the floats, its own content is the container's whole width and its lines read as if no float
+    /// existed above it - which is why both halves of the last test had to happen together.
+    /// </summary>
+    [Test]
+    public async Task TheLinesInsideAFormattingRootAnswerOnlyToItsOwnFloats()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='h' style='width:200px'>" +
+            "<img id='f' src='x.png' style='width:120px;height:60px;float:left'>" +
+            "<div id='b' style='overflow:hidden'><p id='p' style='margin:0'>word word word word word word</p></div></div>"));
+
+        var box = view.Layout!.FindBox(view.Document!.GetElementById("b")!)!;
+        var paragraph = view.Layout.FindBox(view.Document!.GetElementById("p")!)!;
+        var line = paragraph.Children.First(node => node.Kind == LayoutKind.Line);
+
+        var content = box.BorderBox.X + box.Border.Left + box.Padding.Left;
+
+        Assert.That(line.BorderBox.X, Is.EqualTo(content).Within(0.5), "the box already stood clear");
+        Assert.That(line.BorderBox.Right, Is.EqualTo(box.BorderBox.Right).Within(0.5), "so its lines fill it");
+        Assert.That(paragraph.BorderBox.Width, Is.EqualTo(80).Within(0.5));
+    }
+
     private static Rect Bounds(HutuViewInternal view, String id)
     {
         var element = view.Document!.GetElementById(id);

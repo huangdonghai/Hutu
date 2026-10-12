@@ -21,11 +21,12 @@ namespace Hutu.Rendering.Layout;
 /// arranging pass reads from the cache would not be the one the height was answered from.
 /// </para>
 /// <para>
-/// Only the floats a container holds directly are kept here. A float nested inside a plain block
-/// inside this one belongs to the outer context in CSS and would escape it until the nearest block
-/// formatting root; making that work needs the leak to be reported up through the measure pass,
-/// which is a change to what a measurement is allowed to depend on, and so is left for the pass that
-/// introduces formatting contexts as objects rather than inferring them from a box's own style.
+/// Only the floats a container holds directly are kept here, which is what CSS asks: a float belongs to
+/// its nearest block container ancestor, and the line boxes of a block outside that container are not
+/// adjacent to it and do not step aside for it. What CSS does add is a rule about boxes rather than
+/// lines - the border edge of a box that establishes a formatting context may not touch a float's
+/// margin edge - and that is settled where the child is placed, in <see cref="BlockLayout"/>, rather
+/// than here.
 /// </para>
 /// </remarks>
 internal sealed class FloatTracks
