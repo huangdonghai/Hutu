@@ -9,7 +9,7 @@ namespace Hutu.Rendering;
 /// <see cref="StyleLength"/>, percentage included, because a percentage radius is relative to the size
 /// of the box itself and only the layout pass knows that size.
 /// </remarks>
-public readonly struct StyleCornerRadius : IEquatable<StyleCornerRadius>
+internal readonly struct StyleCornerRadius : IEquatable<StyleCornerRadius>
 {
     public StyleCornerRadius(StyleLength horizontal, StyleLength vertical)
     {
@@ -36,7 +36,7 @@ public readonly struct StyleCornerRadius : IEquatable<StyleCornerRadius>
 }
 
 /// <summary>The four corners of <c>border-radius</c>, in visual order around the box.</summary>
-public readonly struct StyleCornerRadii : IEquatable<StyleCornerRadii>
+internal readonly struct StyleCornerRadii : IEquatable<StyleCornerRadii>
 {
     public StyleCornerRadii(
         StyleCornerRadius topLeft,

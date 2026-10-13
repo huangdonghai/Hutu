@@ -18,14 +18,14 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 public readonly struct TextPosition : IEquatable<TextPosition>
 {
-    public TextPosition(LayoutBox box, Int32 index)
+    internal TextPosition(LayoutBox box, Int32 index)
     {
         Box = box ?? throw new ArgumentNullException(nameof(box));
         Index = index;
     }
 
     /// <summary>Gets the text run the position belongs to.</summary>
-    public LayoutBox Box { get; }
+    internal LayoutBox Box { get; }
 
     /// <summary>Gets the character offset inside the run's text.</summary>
     public Int32 Index { get; }

@@ -30,7 +30,7 @@ namespace Hutu.Rendering.Boxes;
 /// </para>
 /// </para>
 /// </remarks>
-public sealed class FusedAreaCache
+internal sealed class FusedAreaCache
 {
     private readonly Dictionary<AreaKey, BorderArea> _border = new();
     private readonly Dictionary<AreaKey, DisplayPositioningArea> _display = new();
@@ -138,7 +138,7 @@ public sealed class FusedAreaCache
 /// are two resolutions, and a key that named only the declarations would let them share an answer.
 /// </para>
 /// </remarks>
-public readonly struct AreaKey : IEquatable<AreaKey>
+internal readonly struct AreaKey : IEquatable<AreaKey>
 {
     public AreaKey(
         MatchedCascade cascade,

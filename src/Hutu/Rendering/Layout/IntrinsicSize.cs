@@ -12,7 +12,7 @@ namespace Hutu.Rendering.Layout;
 /// grid tracks, the automatic table layout and a <c>flex-basis: content</c> all ask for one or the
 /// other before a definite size has been handed down.
 /// </remarks>
-public readonly struct IntrinsicSize
+internal readonly struct IntrinsicSize
 {
     public IntrinsicSize(Double minContent, Double maxContent)
     {

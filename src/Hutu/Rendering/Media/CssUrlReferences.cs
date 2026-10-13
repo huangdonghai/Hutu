@@ -13,7 +13,7 @@ namespace Hutu.Rendering.Media;
 /// the one part that is needed before parsing a value's structure - knowing which resources a
 /// declaration refers to.
 /// </remarks>
-public static class CssUrlReferences
+internal static class CssUrlReferences
 {
     private static readonly Regex Pattern = new(
         @"url\(\s*(?<url>[^)]*?)\s*\)",

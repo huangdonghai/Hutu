@@ -22,7 +22,7 @@ namespace Hutu.Rendering;
 /// user-agent level, and the reader is that level.
 /// </para>
 /// </remarks>
-public sealed class CssWideKeyword : ICssValue
+internal sealed class CssWideKeyword : ICssValue
 {
     public CssWideKeyword(String text) => CssText = text.Trim();
 

@@ -8,7 +8,7 @@ namespace Hutu.Rendering;
 /// ignores the padding and the border overstates the box. The min and max widths and heights follow
 /// the same setting, as the specification requires.
 /// </remarks>
-public enum BoxSizing : byte
+internal enum BoxSizing : byte
 {
     /// <summary>A declared size is the size of the content box, the initial value.</summary>
     ContentBox,

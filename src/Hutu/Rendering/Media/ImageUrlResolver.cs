@@ -12,7 +12,7 @@ namespace Hutu.Rendering.Media;
 /// null instead of throwing when there is no usable base, so a malformed reference simply yields no
 /// image.
 /// </remarks>
-public static class ImageUrlResolver
+internal static class ImageUrlResolver
 {
     public static String? Resolve(IElement element, String? url)
     {

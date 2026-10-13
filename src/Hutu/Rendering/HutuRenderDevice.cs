@@ -17,7 +17,7 @@ namespace Hutu.Rendering;
 /// a usable viewport and the host is expected to update it before triggering a relayout.
 /// </para>
 /// </remarks>
-public sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
+internal sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
 {
     /// <summary>The viewport assumed until the host reports its real size.</summary>
     public const Int32 DefaultViewportWidth = 800;

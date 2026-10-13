@@ -46,7 +46,7 @@ namespace Hutu.Rendering;
 /// sources to reconcile, and a property both state would be decided by registration order.
 /// </para>
 /// </remarks>
-public sealed class UserAgentStyleSheetProvider : ICssDefaultStyleSheetProvider
+internal sealed class UserAgentStyleSheetProvider : ICssDefaultStyleSheetProvider
 {
     private const String Source = @"
 html, address,

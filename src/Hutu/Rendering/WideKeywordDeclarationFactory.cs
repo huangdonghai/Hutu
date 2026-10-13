@@ -23,7 +23,7 @@ namespace Hutu.Rendering;
 /// this kind is asked for by name, and only the first one answers.
 /// </para>
 /// </remarks>
-public sealed class WideKeywordDeclarationFactory : IDeclarationFactory
+internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
 {
     private readonly IDeclarationFactory _inner;
 

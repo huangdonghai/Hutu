@@ -10,7 +10,7 @@ namespace Hutu.Rendering;
 /// would be indistinguishable from <c>0px</c> - a length a box can be sized from, which is how a
 /// missing <c>flex-basis</c> once came out as zero instead of <c>auto</c>.
 /// </remarks>
-public enum StyleLengthKind : byte
+internal enum StyleLengthKind : byte
 {
     /// <summary>Nothing was read. Never a valid length.</summary>
     Unset,
@@ -32,7 +32,7 @@ public enum StyleLengthKind : byte
 }
 
 /// <summary>Which of the length functions a <see cref="StyleLengthKind.Math"/> value is.</summary>
-public enum StyleMathFunction : byte
+internal enum StyleMathFunction : byte
 {
     Min,
     Max,
@@ -55,7 +55,7 @@ public enum StyleMathFunction : byte
 /// <c>margin: auto</c> and <c>width: auto</c> work.
 /// </para>
 /// </remarks>
-public readonly struct StyleLength : IEquatable<StyleLength>
+internal readonly struct StyleLength : IEquatable<StyleLength>
 {
     private readonly Double _value;
     private readonly StyleLengthKind _kind;

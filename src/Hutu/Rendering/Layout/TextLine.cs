@@ -5,7 +5,7 @@ namespace Hutu.Rendering.Layout;
 /// <summary>
 /// One laid-out line of text as produced by line breaking, before it is positioned in a line box.
 /// </summary>
-public readonly struct TextLine
+internal readonly struct TextLine
 {
     public TextLine(String text, Double width)
     {

@@ -7,10 +7,14 @@ namespace Hutu.Rendering.Layout;
 /// The two axes are kept apart because a radius is an ellipse, which is how <c>border-radius: 40px / 10px</c>
 /// produces a flattened corner. A corner with a zero on either axis is square - that is what the spec
 /// asks for, and normalising it here keeps every consumer from having to test for it.
+/// <para>
+/// A corner is the layout's answer to a declared radius; a backend is told the four of them and draws
+/// what it is told.
+/// </para>
 /// </remarks>
 public readonly struct CornerRadius
 {
-    public CornerRadius(Double horizontal, Double vertical)
+    internal CornerRadius(Double horizontal, Double vertical)
     {
         Horizontal = horizontal;
         Vertical = vertical;
@@ -37,7 +41,7 @@ public readonly struct CornerRadius
 /// </remarks>
 public readonly struct CornerRadii
 {
-    public CornerRadii(
+    internal CornerRadii(
         CornerRadius topLeft,
         CornerRadius topRight,
         CornerRadius bottomRight,
@@ -77,7 +81,11 @@ public readonly struct CornerRadii
     /// Resolves the written radii against the size of the box, which is the border box: that is what
     /// a percentage radius is relative to, and what the overlap rule is measured against.
     /// </summary>
-    public static CornerRadii Resolve(StyleCornerRadii specified, Double width, Double height)
+    /// <remarks>
+    /// It is the engine's own step, not a backend's: the specified radii are a style, and a style
+    /// never reaches a drawing surface.
+    /// </remarks>
+    internal static CornerRadii Resolve(StyleCornerRadii specified, Double width, Double height)
     {
         var radii = new CornerRadii(
             Resolve(specified.TopLeft, width, height),

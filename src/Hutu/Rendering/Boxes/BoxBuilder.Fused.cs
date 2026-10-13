@@ -22,7 +22,7 @@ namespace Hutu.Rendering.Boxes;
 /// functions, ruby) makes the whole build abstain, so the caller falls back to the render
 /// tree for that document: one decision, no mixed tree.
 /// </remarks>
-public static partial class BoxBuilder
+internal static partial class BoxBuilder
 {
     /// <summary>
     /// Builds the box tree from the document's own DOM, or null when the document uses

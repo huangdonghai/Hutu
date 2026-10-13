@@ -24,7 +24,7 @@ namespace Hutu.Rendering;
 /// declared being the one that answers. The rules are read once for a build rather than per element.
 /// </para>
 /// </remarks>
-public sealed class FontFaceTable
+internal sealed class FontFaceTable
 {
     private static readonly String[] NoFamilies = Array.Empty<String>();
 

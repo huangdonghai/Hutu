@@ -11,6 +11,10 @@ namespace Hutu.Rendering.Layout;
 /// static rectangle and the rule; the painter applies <see cref="Shift"/> with the scroll offset it
 /// is handed, so scrolling never reruns the layout pass. An <c>auto</c> edge is carried as
 /// <see cref="Double.NaN"/>, which no comparison or clamp will satisfy, so it needs no special case.
+/// <para>
+/// <see cref="Shift"/> is the whole of what a backend asks of it. The rectangles and the declared edges
+/// are the layout's own record of where the box was put, and nothing outside the engine reads them.
+/// </para>
 /// </remarks>
 public sealed class StickyConstraint
 {
@@ -23,7 +27,7 @@ public sealed class StickyConstraint
     /// its section.
     /// </param>
     /// <param name="box">The box's static rectangle, i.e. where it sits with no scroll at all.</param>
-    public StickyConstraint(Rect viewport, Rect containingBlock, Rect box, Double top, Double right, Double bottom, Double left)
+    internal StickyConstraint(Rect viewport, Rect containingBlock, Rect box, Double top, Double right, Double bottom, Double left)
     {
         Viewport = viewport;
         ContainingBlock = containingBlock;
@@ -35,33 +39,33 @@ public sealed class StickyConstraint
     }
 
     /// <summary>Gets the scrollport, i.e. the viewport rectangle at the origin.</summary>
-    public Rect Viewport { get; }
+    internal Rect Viewport { get; }
 
     /// <summary>
     /// Gets the containing block the box may not leave. Settable because the constraint travels with
     /// the box: a layout whose document is moved to the frame a scroller measures in moves both the
     /// box and the block it is bound to, and the shift it works out is the same either way.
     /// </summary>
-    public Rect ContainingBlock { get; internal set; }
+    internal Rect ContainingBlock { get; set; }
 
     /// <summary>Gets the static rectangle the shift is measured from.</summary>
-    public Rect Box { get; internal set; }
+    internal Rect Box { get; set; }
 
-    public Double Top { get; }
+    internal Double Top { get; }
 
-    public Double Right { get; }
+    internal Double Right { get; }
 
-    public Double Bottom { get; }
+    internal Double Bottom { get; }
 
-    public Double Left { get; }
+    internal Double Left { get; }
 
-    public Boolean HasTop => !Double.IsNaN(Top);
+    internal Boolean HasTop => !Double.IsNaN(Top);
 
-    public Boolean HasRight => !Double.IsNaN(Right);
+    internal Boolean HasRight => !Double.IsNaN(Right);
 
-    public Boolean HasBottom => !Double.IsNaN(Bottom);
+    internal Boolean HasBottom => !Double.IsNaN(Bottom);
 
-    public Boolean HasLeft => !Double.IsNaN(Left);
+    internal Boolean HasLeft => !Double.IsNaN(Left);
 
     /// <summary>
     /// Gets how far the box moves from its static position at the given scroll offset. The box is

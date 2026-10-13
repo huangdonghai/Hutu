@@ -12,7 +12,7 @@ namespace Hutu.Rendering.Layout;
 /// vertical modes swap the two, which is what makes text run down a column and the columns advance
 /// sideways.
 /// </remarks>
-public enum WritingMode
+internal enum WritingMode
 {
     /// <summary>The inline axis runs along x, the block axis down the page. The default.</summary>
     HorizontalTb,
@@ -38,7 +38,7 @@ public enum WritingMode
 /// axis the line runs along, and the direction decides which way along that axis it reads. A row of
 /// Arabic and a row of English share a writing mode and differ only here.
 /// </remarks>
-public enum TextDirection
+internal enum TextDirection
 {
     /// <summary>The line reads from the start of the inline axis to its end.</summary>
     LeftToRight,
@@ -71,10 +71,16 @@ public enum TextOrientation
 /// advance. Both are signed, so an offset always grows in the reading direction and the caller never
 /// has to know whether that is rightward, leftward, downward or upward. A row's sign comes from the
 /// direction the text reads in, and a column's from the writing mode.
+/// <para>
+/// What leaves the engine with a text run is four questions: whether the run is vertical, how its
+/// glyphs are turned, whether <c>text-combine-upright</c> wants one box, and which way along the line
+/// it advances. The axis arithmetic that places a box is asked before the run is drawn, so the answers
+/// are already physical rectangles by the time a backend sees them.
+/// </para>
 /// </remarks>
 public readonly struct WritingModeInfo
 {
-    public WritingModeInfo(
+    internal WritingModeInfo(
         WritingMode mode,
         TextOrientation orientation = TextOrientation.Mixed,
         Boolean combinesUpright = false,
@@ -87,9 +93,9 @@ public readonly struct WritingModeInfo
     }
 
     /// <summary>The writing mode plain horizontal text uses, which is what every existing box gets.</summary>
-    public static WritingModeInfo Horizontal { get; } = new(WritingMode.HorizontalTb);
+    internal static WritingModeInfo Horizontal { get; } = new(WritingMode.HorizontalTb);
 
-    public WritingMode Mode { get; }
+    internal WritingMode Mode { get; }
 
     /// <summary>Gets how the glyphs are turned once the mode is vertical.</summary>
     public TextOrientation Orientation { get; }
@@ -101,10 +107,10 @@ public readonly struct WritingModeInfo
     /// Gets the direction the line reads in. It is the <c>direction</c> property, which the
     /// <c>dir</c> attribute stands in for when the page wrote no rule.
     /// </summary>
-    public TextDirection Direction { get; }
+    internal TextDirection Direction { get; }
 
     /// <summary>Gets whether the line reads from the end of the inline axis back to its start.</summary>
-    public Boolean IsRightToLeft => Direction == TextDirection.RightToLeft;
+    internal Boolean IsRightToLeft => Direction == TextDirection.RightToLeft;
 
     /// <summary>Gets whether the inline axis runs down the page rather than along it.</summary>
     public Boolean IsVertical => Mode != WritingMode.HorizontalTb;
@@ -113,7 +119,7 @@ public readonly struct WritingModeInfo
     /// Gets whether the mode turns every glyph by itself. <c>sideways-rl</c> and <c>sideways-lr</c> do,
     /// whatever <c>text-orientation</c> says.
     /// </summary>
-    public Boolean IsSidewaysMode => Mode is WritingMode.SidewaysRl or WritingMode.SidewaysLr;
+    internal Boolean IsSidewaysMode => Mode is WritingMode.SidewaysRl or WritingMode.SidewaysLr;
 
     /// <summary>Gets the sign an inline offset grows by: text always reads downward in a column, but a
     /// row reads leftward under <c>direction: rtl</c>, and a column reads upward under
@@ -123,7 +129,7 @@ public readonly struct WritingModeInfo
         : IsRightToLeft ? -1 : 1;
 
     /// <summary>Gets the sign a block offset grows by: only the two right-to-left modes grow leftward.</summary>
-    public Int32 BlockSign => Mode is WritingMode.VerticalRl or WritingMode.SidewaysRl ? -1 : 1;
+    internal Int32 BlockSign => Mode is WritingMode.VerticalRl or WritingMode.SidewaysRl ? -1 : 1;
 
     /// <summary>
     /// Gets whether the page begins at the right edge of the document, so that how far along a reader
@@ -134,34 +140,34 @@ public readonly struct WritingModeInfo
     /// leftward from it, and a line of a right-to-left row reads from it. What they share is the only
     /// thing a scroller asks about - which edge x is measured from.
     /// </remarks>
-    public Boolean StartsAtTheRight => IsVertical ? BlockSign < 0 : IsRightToLeft;
+    internal Boolean StartsAtTheRight => IsVertical ? BlockSign < 0 : IsRightToLeft;
 
     /// <summary>
     /// Gets whether the page begins at the bottom edge of the document, which is what a vertical mode
     /// that reads up the page asks for. Every other mode begins at the top.
     /// </summary>
-    public Boolean StartsAtTheBottom => IsVertical && InlineSign < 0;
+    internal Boolean StartsAtTheBottom => IsVertical && InlineSign < 0;
 
     /// <summary>Gets the size a physical box has along the axis the text runs.</summary>
-    public Double InlineExtent(Double width, Double height) => IsVertical ? height : width;
+    internal Double InlineExtent(Double width, Double height) => IsVertical ? height : width;
 
     /// <summary>Gets the size a physical box has along the axis the lines advance.</summary>
-    public Double BlockExtent(Double width, Double height) => IsVertical ? width : height;
+    internal Double BlockExtent(Double width, Double height) => IsVertical ? width : height;
 
     /// <summary>Gets the physical size a logical pair of extents adds up to.</summary>
-    public Size SizeOf(Double inlineExtent, Double blockExtent) =>
+    internal Size SizeOf(Double inlineExtent, Double blockExtent) =>
         IsVertical ? new Size(blockExtent, inlineExtent) : new Size(inlineExtent, blockExtent);
 
     /// <summary>
     /// Gets the coordinate the block axis starts at on the physical axis - the right edge of a
     /// right-to-left content box, its left edge otherwise, and the top edge in horizontal writing.
     /// </summary>
-    public Double BlockStart(Rect contentBox) => IsVertical
+    internal Double BlockStart(Rect contentBox) => IsVertical
         ? BlockSign < 0 ? contentBox.Right : contentBox.X
         : contentBox.Y;
 
     /// <summary>Gets the coordinate the inline axis starts at on the physical axis.</summary>
-    public Double InlineStart(Rect contentBox) => IsVertical
+    internal Double InlineStart(Rect contentBox) => IsVertical
         ? InlineSign < 0 ? contentBox.Bottom : contentBox.Y
         : InlineSign < 0 ? contentBox.Right : contentBox.X;
 
@@ -169,7 +175,7 @@ public readonly struct WritingModeInfo
     /// Maps a logical frame - an offset and a size along each axis, measured from the containing
     /// block's content box - onto the physical rectangle it occupies.
     /// </summary>
-    public Rect Map(Rect contentBox, Double inlineOffset, Double inlineSize, Double blockOffset, Double blockSize)
+    internal Rect Map(Rect contentBox, Double inlineOffset, Double inlineSize, Double blockOffset, Double blockSize)
     {
         if (!IsVertical)
         {
@@ -202,7 +208,7 @@ public readonly struct WritingModeInfo
     /// mirrored to be expressed from the left. Horizontal text is unaffected: its block-start edge
     /// already is the top one, and the painter measures the baseline down from it.
     /// </remarks>
-    public Double BlockOffsetFromLeft(Double blockSize, Double fromBlockStart) =>
+    internal Double BlockOffsetFromLeft(Double blockSize, Double fromBlockStart) =>
         BlockSign < 0 ? blockSize - fromBlockStart : fromBlockStart;
 
     /// <summary>
@@ -215,7 +221,7 @@ public readonly struct WritingModeInfo
     /// the margins on this axis belong to the box, and the ones on the
     /// <see cref="BlockMargins(Thickness)">block axis</see> to whoever stacks it.
     /// </remarks>
-    public (Double Start, Double End) InlineMargins(Thickness margin) =>
+    internal (Double Start, Double End) InlineMargins(Thickness margin) =>
         IsVertical
             ? InlineSign > 0 ? (margin.Top, margin.Bottom) : (margin.Bottom, margin.Top)
             : InlineSign > 0 ? (margin.Left, margin.Right) : (margin.Right, margin.Left);
@@ -224,7 +230,7 @@ public readonly struct WritingModeInfo
     /// Splits a box's margins into the pair that opens and closes it across the lines, which is the
     /// axis the next line advances along.
     /// </summary>
-    public (Double Start, Double End) BlockMargins(Thickness margin) =>
+    internal (Double Start, Double End) BlockMargins(Thickness margin) =>
         IsVertical
             ? BlockSign > 0 ? (margin.Left, margin.Right) : (margin.Right, margin.Left)
             : (margin.Top, margin.Bottom);
@@ -234,7 +240,7 @@ public readonly struct WritingModeInfo
     /// the fullwidth forms - upright and turns the rest, which is what makes Latin read sideways in a
     /// column while the text around it does not.
     /// </summary>
-    public Boolean IsUpright(Char character)
+    internal Boolean IsUpright(Char character)
     {
         if (IsSidewaysMode || Orientation == TextOrientation.Sideways)
         {

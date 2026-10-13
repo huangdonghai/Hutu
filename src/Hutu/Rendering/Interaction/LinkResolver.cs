@@ -13,7 +13,7 @@ namespace Hutu.Rendering.Interaction;
 /// usual kind - mean the same thing here as it does in the page. An anchor with nothing to follow is not
 /// a link at all: one with no href is a placeholder, and an empty one or a bare "#" goes nowhere.
 /// </remarks>
-public static class LinkResolver
+internal static class LinkResolver
 {
     /// <summary>Gets the link an element declares, or null when it declares none.</summary>
     public static LinkTarget? Resolve(IElement element)

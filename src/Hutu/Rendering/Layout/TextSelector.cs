@@ -25,7 +25,7 @@ namespace Hutu.Rendering.Layout;
 /// run is in document coordinates and needs nothing but the point.
 /// </para>
 /// </remarks>
-public sealed class TextSelector
+internal sealed class TextSelector
 {
     private readonly ITextMeasurer _measurer;
     private readonly List<LayoutBox> _runs = new();

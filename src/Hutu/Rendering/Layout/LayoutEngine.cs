@@ -29,7 +29,7 @@ namespace Hutu.Rendering.Layout;
 /// track sizing asks for them again on every pass of its negotiation.
 /// </para>
 /// </remarks>
-public sealed class LayoutEngine
+internal sealed class LayoutEngine
 {
     private readonly InlineLayout _inline;
     private readonly BlockLayout _block;
@@ -152,7 +152,7 @@ public sealed class LayoutEngine
     /// <summary>
     /// How a layout's time and allocation split across its phases.
     /// </summary>
-    public sealed record LayoutProfile(
+internal sealed record LayoutProfile(
         Double MeasureTime,
         Double ArrangeTime,
         Double DecorationTime,

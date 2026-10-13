@@ -22,10 +22,14 @@ public enum BorderLineStyle : byte
 /// <remarks>
 /// The strokes are carried per side rather than as a single flag because a box may mix them, and a
 /// rounded border has to be drawn side by side along one continuous outline.
+/// <para>
+/// A backend reads which stroke each side asks for; the four are put together from the computed style,
+/// which is no part of a host's work.
+/// </para>
 /// </remarks>
 public readonly struct BorderStyles : IEquatable<BorderStyles>
 {
-    public BorderStyles(BorderLineStyle top, BorderLineStyle right, BorderLineStyle bottom, BorderLineStyle left)
+    internal BorderStyles(BorderLineStyle top, BorderLineStyle right, BorderLineStyle bottom, BorderLineStyle left)
     {
         Top = top;
         Right = right;

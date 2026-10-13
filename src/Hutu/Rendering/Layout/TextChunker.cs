@@ -11,13 +11,13 @@ namespace Hutu.Rendering.Layout;
 /// This lives in the platform-neutral layer because line breaking itself does: the measurer only
 /// supplies advance widths, while the decision of where a line may break is script logic.
 /// </remarks>
-public static class TextChunker
+internal static class TextChunker
 {
     /// <summary>
     /// A chunk line breaking may separate, as a range of the string it was cut from rather than as a
     /// string of its own.
     /// </summary>
-    public readonly struct ChunkRange
+internal readonly struct ChunkRange
     {
         public ChunkRange(Int32 start, Int32 length)
         {
@@ -99,7 +99,7 @@ public static class TextChunker
         !Char.IsWhiteSpace(character) && !IsUpright(character);
 
     /// <summary>The chunks of one string, walked without materialising any of them.</summary>
-    public readonly struct ChunkRanges
+internal readonly struct ChunkRanges
     {
         private readonly String _text;
 
@@ -108,7 +108,7 @@ public static class TextChunker
         public Enumerator GetEnumerator() => new(_text);
 
         /// <summary>The walk itself: the same rule <see cref="Chunks"/> applies, over indices.</summary>
-        public struct Enumerator
+internal struct Enumerator
         {
             private readonly String _text;
             private Int32 _index;

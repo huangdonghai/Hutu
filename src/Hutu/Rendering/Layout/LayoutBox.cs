@@ -6,7 +6,7 @@ using System.Collections.Generic;
 namespace Hutu.Rendering.Layout;
 
 /// <summary>The role of a node in the layout tree.</summary>
-public enum LayoutKind
+internal enum LayoutKind
 {
     /// <summary>A block box with a margin, border and padding.</summary>
     Block,
@@ -49,7 +49,7 @@ public enum LayoutKind
 /// with a neighbour and the colour that wins may belong to the neighbour, so the resolution has to be
 /// carried on the box instead.
 /// </remarks>
-public readonly struct BorderColors
+internal readonly struct BorderColors
 {
     public BorderColors(UInt32 top, UInt32 right, UInt32 bottom, UInt32 left)
     {
@@ -76,7 +76,7 @@ public readonly struct BorderColors
 /// carries the resolved font and the distance from the top of its box to the baseline, so the
 /// painter does not have to redo any of the measurement.
 /// </remarks>
-public sealed class LayoutBox
+internal sealed class LayoutBox
 {
     public LayoutBox(Box source, LayoutKind kind)
     {

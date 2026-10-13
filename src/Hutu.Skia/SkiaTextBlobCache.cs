@@ -17,7 +17,7 @@ namespace Hutu.Skia;
 /// layout measured them. A column's blob centres each upright character across the em box, so it
 /// answers at whatever width the column is drawn at as well.
 /// </remarks>
-public sealed class SkiaTextBlobCache : IDisposable
+internal sealed class SkiaTextBlobCache : IDisposable
 {
     private readonly SkiaTextMeasurer _measurer;
     private readonly ConcurrentDictionary<TextBlobKey, SKTextBlob?> _blobs = new();

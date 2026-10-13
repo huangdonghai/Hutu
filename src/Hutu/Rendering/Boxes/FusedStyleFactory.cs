@@ -13,7 +13,7 @@ namespace Hutu.Rendering.Boxes;
 /// What a fused style inherits from its parent: the resolved values the resolvers take on a
 /// miss, plus the parent's own cascaded <c>line-height</c> for the size-dependent inherit.
 /// </summary>
-public sealed class FusedParent
+internal sealed class FusedParent
 {
     public static readonly FusedParent Root = new();
 
@@ -151,7 +151,7 @@ public sealed class FusedParent
 /// Every resolver reads the element's own cascade, where a hit is a declared value and a miss
 /// is an inherited one - the distinction the render-tree path settles by a second cascade.
 /// </remarks>
-public static class FusedStyleFactory
+internal static class FusedStyleFactory
 {
     public static ComputedStyle Build(
         IElement element,

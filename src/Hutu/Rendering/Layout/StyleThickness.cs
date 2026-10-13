@@ -10,7 +10,7 @@ namespace Hutu.Rendering.Layout;
 /// <em>width</em>, including the top and bottom ones. That is why this resolves from a single basis
 /// rather than one per axis.
 /// </remarks>
-public readonly struct StyleThickness : IEquatable<StyleThickness>
+internal readonly struct StyleThickness : IEquatable<StyleThickness>
 {
     public StyleThickness(StyleLength top, StyleLength right, StyleLength bottom, StyleLength left)
     {

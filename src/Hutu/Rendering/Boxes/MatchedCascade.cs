@@ -19,7 +19,7 @@ namespace Hutu.Rendering.Boxes;
 /// accumulation exactly: the last important declaration wins, and only when nothing
 /// important is declared does the last normal one.
 /// </remarks>
-public sealed class MatchedCascade
+internal sealed class MatchedCascade
 {
     private readonly List<ICssStyleRule> _rules;
     private readonly ICssStyleDeclaration? _inline;

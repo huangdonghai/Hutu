@@ -10,10 +10,14 @@ namespace Hutu.Rendering.Interaction;
 /// A link into the document it is in is kept apart from one that leaves it, because the two are the
 /// work of different layers: an anchor is a scroll and a mark the document itself can do, while loading
 /// another document is the host's.
+/// <para>
+/// What a link asks for is read out of the document, so a host is told where one points rather than
+/// assembling the answer itself: the constructor belongs to the engine.
+/// </para>
 /// </remarks>
 public readonly struct LinkTarget
 {
-    public LinkTarget(String url, String? target, Boolean isDownload, Boolean isFragment, String? fragment)
+    internal LinkTarget(String url, String? target, Boolean isDownload, Boolean isFragment, String? fragment)
     {
         Url = url;
         Target = target;

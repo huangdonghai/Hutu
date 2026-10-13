@@ -19,7 +19,7 @@ namespace Hutu.Rendering.Media;
 /// <c>conic-gradient</c> are deliberately not supported.
 /// </para>
 /// </remarks>
-public static class BackgroundLayerParser
+internal static class BackgroundLayerParser
 {
     /// <param name="resolveUrl">
     /// Resolves a reference to an absolute URL. Background images are declared relative to the

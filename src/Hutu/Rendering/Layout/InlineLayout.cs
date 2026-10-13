@@ -10,7 +10,7 @@ namespace Hutu.Rendering.Layout;
 /// Which physical axis either one lands on is the writing mode's business, not the content's: a block
 /// asks for the pair and then decides what to do with it.
 /// </remarks>
-public readonly struct InlineContentSize
+internal readonly struct InlineContentSize
 {
     public InlineContentSize(Double inline, Double block)
     {
@@ -57,7 +57,7 @@ public readonly struct InlineContentSize
 /// <see cref="WritingModeInfo"/> is the only thing that knows which is which.
 /// </para>
 /// </remarks>
-public sealed class InlineLayout
+internal sealed class InlineLayout
 {
     private readonly ITextMeasurer _measurer;
 

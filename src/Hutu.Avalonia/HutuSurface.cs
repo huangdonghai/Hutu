@@ -28,7 +28,7 @@ namespace Hutu.Avalonia;
 /// hosts reuse the same selection without reimplementing it.
 /// </para>
 /// </remarks>
-public sealed class HutuSurface : Control
+internal sealed class HutuSurface : Control
 {
     /// <summary>How far the pointer may stray between press and release and still be the same click.</summary>
     private const Double ClickSlop = 4;

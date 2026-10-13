@@ -16,4 +16,10 @@
     <ProjectReference Include="..\Hutu.Skia\Hutu.Skia.csproj" />
   </ItemGroup>
 
+  <!-- The headless tests drive the surface the reader points at, which is no part of what a host
+       composes: it is reached through HutuView, and the tests look it up in the visual tree. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hutu.Avalonia.Tests" />
+  </ItemGroup>
+
 </Project>

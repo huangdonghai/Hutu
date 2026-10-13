@@ -19,7 +19,7 @@ namespace Hutu.Rendering.Paint;
 /// positive layer. Boxes fixed to the viewport are diverted to their own layer instead, and a box
 /// that hides its overflow wraps its children in a clipping pair.
 /// </remarks>
-public sealed class Painter
+internal sealed class Painter
 {
     /// <summary>The colour a selection is highlighted with when the host chooses none.</summary>
     /// <remarks>

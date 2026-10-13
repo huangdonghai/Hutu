@@ -14,7 +14,7 @@ namespace Hutu.Rendering.Layout;
 /// code never depends on the parser's enum. <c>space-evenly</c>, <c>start</c> and <c>end</c> are now
 /// defined as keywords in AngleSharp.Css, but the local switch still lists them explicitly.
 /// </remarks>
-public enum FlexAlignment : byte
+internal enum FlexAlignment : byte
 {
     /// <summary>Not set: a flex item defers to its container, a container defers to its initial value.</summary>
     Auto,
@@ -45,7 +45,7 @@ public enum FlexAlignment : byte
 /// A shorthand such as <c>flex</c> is deliberately not read: AngleSharp.Css rebuilds a shorthand
 /// from its longhands lossily, so the longhands are the only faithful source.
 /// </remarks>
-public readonly struct FlexStyle
+internal readonly struct FlexStyle
 {
     private FlexStyle(
         FlexDirection direction,

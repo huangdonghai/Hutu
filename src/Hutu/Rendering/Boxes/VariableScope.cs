@@ -28,7 +28,7 @@ namespace Hutu.Rendering.Boxes;
 /// parent had, because a miss is exactly what they were built to answer.
 /// </para>
 /// </remarks>
-public sealed class VariableScope
+internal sealed class VariableScope
 {
     /// <summary>How deep a chain of references is followed before it is called circular.</summary>
     private const Int32 Deepest = 32;

@@ -20,7 +20,7 @@ namespace Hutu.Rendering.Layout;
 /// so both shapes are accepted.
 /// </para>
 /// </remarks>
-public readonly struct PositionStyle
+internal readonly struct PositionStyle
 {
     private PositionStyle(
         PositionMode position,

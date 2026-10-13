@@ -41,20 +41,28 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     /// </summary>
     private readonly ConcurrentDictionary<CharAdvanceKey, Double> _charAdvances = new();
 
-    public SkiaTextMeasurer(SkiaFontResolver? resolver = null)
+    public SkiaTextMeasurer() : this(null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a measurer over a resolver someone else already built. A host has no reason to reach
+    /// it: the typefaces are the engine's business, and the resolver it hands round is <see cref="Fonts"/>.
+    /// </summary>
+    internal SkiaTextMeasurer(SkiaFontResolver? resolver)
     {
         _resolver = resolver ?? new SkiaFontResolver();
         _blobs = new SkiaTextBlobCache(this);
     }
 
     /// <summary>Gets the resolver this measurer shares its typefaces with.</summary>
-    public SkiaFontResolver Fonts => _resolver;
+    internal SkiaFontResolver Fonts => _resolver;
 
     /// <summary>Gets the shaper every glyph this measurer speaks of was shaped by.</summary>
-    public SkiaTextShaper Shaper => _shaper;
+    internal SkiaTextShaper Shaper => _shaper;
 
     /// <summary>Gets the cache of drawn text the paint executor reads its blobs from.</summary>
-    public SkiaTextBlobCache Blobs => _blobs;
+    internal SkiaTextBlobCache Blobs => _blobs;
 
     /// <summary>Gets the cached font for the style; the paint executor draws with the same instance.</summary>
     public SKFont GetFont(FontStyle style) => _fonts.GetOrAdd(style, CreateFont);
@@ -88,8 +96,12 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     /// This is the one answer measurement and painting both read: the layout folds the advances into
     /// where a line breaks, and the painter folds them into where each run starts. The decomposition
     /// is kept by style and text, so a page's words are split and shaped once rather than per frame.
+    /// <para>
+    /// Both decompositions are the backend's own arithmetic: a run names the typeface and the glyph
+    /// indices this drawing surface draws with, which is nothing a host or another backend can use.
+    /// </para>
     /// </remarks>
-    public IReadOnlyList<SkiaTextRun> Decompose(String text, FontStyle style)
+    internal IReadOnlyList<SkiaTextRun> Decompose(String text, FontStyle style)
     {
         if (String.IsNullOrEmpty(text))
         {
@@ -114,7 +126,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     /// vertical form the font substitutes for it, and the presentation form Unicode reserved when
     /// the font does not answer.
     /// </remarks>
-    public IReadOnlyList<UprightCell> DecomposeUpright(String text, FontStyle style)
+    internal IReadOnlyList<UprightCell> DecomposeUpright(String text, FontStyle style)
     {
         if (String.IsNullOrEmpty(text))
         {
@@ -424,7 +436,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 /// carries its shaped form beside its width: a caller who draws the glyphs lands them within the
 /// advance another caller laid the run out by.
 /// </remarks>
-public readonly struct SkiaTextRun
+internal readonly struct SkiaTextRun
 {
     public SkiaTextRun(SKFont font, String text, ShapedRun shaped)
     {
@@ -452,7 +464,7 @@ public readonly struct SkiaTextRun
 /// layout's own arithmetic - <see cref="Advance"/> with the em floor and the spacing applied over it
 /// - and its glyph drawn inside that step, so what is drawn lands where the layout measured it.
 /// </summary>
-public readonly struct UprightCell
+internal readonly struct UprightCell
 {
     public UprightCell(
         SKFont font,

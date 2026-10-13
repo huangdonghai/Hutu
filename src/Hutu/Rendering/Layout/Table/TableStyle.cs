@@ -6,14 +6,14 @@ using System;
 namespace Hutu.Rendering.Layout;
 
 /// <summary>Where a caption is placed relative to the rows.</summary>
-public enum CaptionSide : byte
+internal enum CaptionSide : byte
 {
     Top,
     Bottom,
 }
 
 /// <summary>How a cell's content is aligned along the block (vertical) axis of the cell box.</summary>
-public enum CellVerticalAlignment : byte
+internal enum CellVerticalAlignment : byte
 {
     Baseline,
     Top,
@@ -33,7 +33,7 @@ public enum CellVerticalAlignment : byte
 /// <c>separate</c> and <c>false</c> for <c>collapse</c>. The serialisation round-trips faithfully, so
 /// the text is the only source that is not a trap.
 /// </remarks>
-public readonly struct TableStyle
+internal readonly struct TableStyle
 {
     private TableStyle(
         Boolean collapse,

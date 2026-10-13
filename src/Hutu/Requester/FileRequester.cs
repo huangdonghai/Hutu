@@ -14,7 +14,7 @@ namespace Hutu;
 /// opened without a server in between, and so a page loaded from disk can still pull in the style
 /// sheets and images it refers to relatively.
 /// </summary>
-public sealed class FileRequester : BaseRequester
+internal sealed class FileRequester : BaseRequester
 {
     public override bool SupportsProtocol(string protocol)
     {

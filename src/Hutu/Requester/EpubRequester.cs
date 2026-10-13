@@ -4,7 +4,7 @@ using System.Text;
 using AngleSharp;
 using AngleSharp.Io;
 
-public sealed class EpubRequester : BaseRequester, IDisposable
+internal sealed class EpubRequester : BaseRequester, IDisposable
 {
     private readonly ZipArchive _archive;
     private readonly string _rootPath;

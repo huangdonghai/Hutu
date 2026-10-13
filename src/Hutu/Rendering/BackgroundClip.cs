@@ -6,7 +6,7 @@ namespace Hutu.Rendering;
 /// the property - it is also the zero of this type, so a box whose style never mentioned the property
 /// is already painted the right way.
 /// </remarks>
-public enum BackgroundClip : byte
+internal enum BackgroundClip : byte
 {
     /// <summary>The border box, so the background reaches under a transparent border.</summary>
     BorderBox,

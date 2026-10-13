@@ -17,4 +17,14 @@
     <ProjectReference Include="..\..\deps\AngleSharp\src\AngleSharp\AngleSharp.Core.csproj" />
   </ItemGroup>
 
+  <!--
+    Everything the engine keeps to itself is internal now, so the tests that reach into style
+    computation, the box tree and the layout algorithm are granted the internals of this assembly.
+    They are separate assemblies rather than part of it, so the grant has to be said out loud.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hutu.Tests" />
+    <InternalsVisibleTo Include="Hutu.Avalonia.Tests" />
+  </ItemGroup>
+
 </Project>

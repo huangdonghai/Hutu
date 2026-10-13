@@ -18,7 +18,7 @@ namespace Hutu.Rendering.Interaction;
 /// pointer the default one there.
 /// </para>
 /// </remarks>
-public readonly struct HitResult
+internal readonly struct HitResult
 {
     private readonly IReadOnlyList<IElement>? _chain;
 

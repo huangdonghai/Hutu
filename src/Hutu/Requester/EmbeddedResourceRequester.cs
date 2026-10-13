@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace Hutu;
 
-public sealed class EmbeddedResourceRequester : BaseRequester
+internal sealed class EmbeddedResourceRequester : BaseRequester
 {
     private readonly Assembly _assembly;
     private readonly string _folder;

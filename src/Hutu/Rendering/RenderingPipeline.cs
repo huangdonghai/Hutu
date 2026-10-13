@@ -20,7 +20,7 @@ namespace Hutu.Rendering;
 /// stops at the box tree and <see cref="Layout"/> stays null.
 /// </para>
 /// </remarks>
-public sealed class RenderingPipeline
+internal sealed class RenderingPipeline
 {
     private readonly IRenderDevice _device;
     private readonly LayoutEngine? _layout;

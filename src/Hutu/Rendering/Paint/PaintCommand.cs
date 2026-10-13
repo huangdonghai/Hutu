@@ -9,6 +9,10 @@ namespace Hutu.Rendering.Paint;
 /// A platform-neutral drawing instruction. The layout side produces these; a backend executes them
 /// against its own canvas, which is what keeps painting out of the core.
 /// </summary>
+/// <remarks>
+/// The constructors belong to the painter alone: a backend is told what to draw and never assembles
+/// a command of its own, so what a host can do with a paint list is read it.
+/// </remarks>
 public abstract class PaintCommand
 {
     protected PaintCommand(Rect bounds) => Bounds = bounds;
@@ -20,7 +24,7 @@ public abstract class PaintCommand
 /// <summary>Fills a rectangle with a solid colour, given as packed ARGB.</summary>
 public sealed class FillCommand : PaintCommand
 {
-    public FillCommand(Rect bounds, UInt32 color, CornerRadii radii)
+    internal FillCommand(Rect bounds, UInt32 color, CornerRadii radii)
         : base(bounds)
     {
         Color = color;
@@ -39,7 +43,7 @@ public sealed class FillCommand : PaintCommand
 /// </summary>
 public sealed class BorderCommand : PaintCommand
 {
-    public BorderCommand(
+    internal BorderCommand(
         Rect bounds,
         Thickness widths,
         BorderStyles styles,
@@ -88,7 +92,7 @@ public sealed class BorderCommand : PaintCommand
 /// </remarks>
 public sealed class OutlineCommand : PaintCommand
 {
-    public OutlineCommand(
+    internal OutlineCommand(
         Rect bounds,
         CornerRadii radii,
         BorderLineStyle style,
@@ -125,7 +129,7 @@ public sealed class OutlineCommand : PaintCommand
 /// </summary>
 public sealed class ImageCommand : PaintCommand
 {
-    public ImageCommand(Rect bounds, String url, ObjectFit fit, CornerRadii radii)
+    internal ImageCommand(Rect bounds, String url, ObjectFit fit, CornerRadii radii)
         : base(bounds)
     {
         Url = url;
@@ -148,7 +152,7 @@ public sealed class ImageCommand : PaintCommand
 /// </summary>
 public sealed class BackgroundImageCommand : PaintCommand
 {
-    public BackgroundImageCommand(Rect bounds, BackgroundLayer layer, CornerRadii radii)
+    internal BackgroundImageCommand(Rect bounds, BackgroundLayer layer, CornerRadii radii)
         : base(bounds)
     {
         Layer = layer;
@@ -164,7 +168,7 @@ public sealed class BackgroundImageCommand : PaintCommand
 /// <summary>Draws one linear gradient layer across the background positioning area.</summary>
 public sealed class LinearGradientCommand : PaintCommand
 {
-    public LinearGradientCommand(Rect bounds, Double angleDegrees, IReadOnlyList<GradientStop> stops, CornerRadii radii)
+    internal LinearGradientCommand(Rect bounds, Double angleDegrees, IReadOnlyList<GradientStop> stops, CornerRadii radii)
         : base(bounds)
     {
         AngleDegrees = angleDegrees;
@@ -193,7 +197,7 @@ public sealed class LinearGradientCommand : PaintCommand
 /// </remarks>
 public sealed class PushClipCommand : PaintCommand
 {
-    public PushClipCommand(Rect bounds, CornerRadii radii)
+    internal PushClipCommand(Rect bounds, CornerRadii radii)
         : base(bounds) => Radii = radii;
 
     /// <summary>Gets the corner radii of the clip, relative to <see cref="PaintCommand.Bounds"/>.</summary>
@@ -207,7 +211,7 @@ public sealed class PopClipCommand : PaintCommand
     /// Creates the command that closes a clip. The area is carried along so that the command still
     /// describes where it applies, even though undoing a clip needs no geometry.
     /// </summary>
-    public PopClipCommand(Rect bounds)
+    internal PopClipCommand(Rect bounds)
         : base(bounds)
     {
     }
@@ -220,7 +224,7 @@ public sealed class TextCommand : PaintCommand
     /// Creates the command for a run of horizontal text, which is what a page that never asks for a
     /// writing mode is made of.
     /// </summary>
-    public TextCommand(
+    internal TextCommand(
         Rect bounds,
         String text,
         Double baseline,
@@ -237,7 +241,7 @@ public sealed class TextCommand : PaintCommand
     /// which way its glyphs are turned decides whether the backend rotates the whole run or stacks the
     /// characters upright one under the other.
     /// </param>
-    public TextCommand(
+    internal TextCommand(
         Rect bounds,
         String text,
         Double baseline,
@@ -255,7 +259,7 @@ public sealed class TextCommand : PaintCommand
     /// so that what it draws lands where the layout measured it. It is zero for text that asks for
     /// none.
     /// </param>
-    public TextCommand(
+    internal TextCommand(
         Rect bounds,
         String text,
         Double baseline,

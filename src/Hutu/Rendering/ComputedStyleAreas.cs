@@ -291,7 +291,7 @@ internal sealed record TextDecorationArea
 /// Where a list item's marker stands relative to its text: beside it, in the space the list was given,
 /// or at the head of the first line.
 /// </summary>
-public enum MarkerPosition : Byte
+internal enum MarkerPosition : Byte
 {
     Outside,
     Inside,
@@ -346,7 +346,7 @@ internal sealed record ListArea
 /// exists, by which point the allocation it saves has already been paid.
 /// </para>
 /// </remarks>
-public sealed class StyleIntern
+internal sealed class StyleIntern
 {
     private readonly Dictionary<BorderArea, BorderArea> _border = new();
 

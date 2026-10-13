@@ -13,7 +13,7 @@ namespace Hutu.Rendering.Boxes;
 /// The kind of an essential selector key: a name the rightmost compound selector requires
 /// every matched element to carry.
 /// </summary>
-public enum RuleKeyKind : Byte
+internal enum RuleKeyKind : Byte
 {
     /// <summary>The key is an id, compared ordinally.</summary>
     Id = 0,
@@ -29,7 +29,7 @@ public enum RuleKeyKind : Byte
 /// An essential property of a selector: the id, class or tag name the rightmost compound
 /// selector requires of every element it matches.
 /// </summary>
-public readonly struct RuleKey
+internal readonly struct RuleKey
 {
     public RuleKey(RuleKeyKind kind, String value)
     {
@@ -53,7 +53,7 @@ public readonly struct RuleKey
 /// element. This mirrors the proven extraction in AngleSharp.Css, using only its public
 /// selector visitor contract.
 /// </remarks>
-public sealed class SelectorKeyExtractor : ISelectorVisitor
+internal sealed class SelectorKeyExtractor : ISelectorVisitor
 {
     private const String AnyName = "*";
     private const String NestingName = "&";
@@ -249,7 +249,7 @@ public sealed class SelectorKeyExtractor : ISelectorVisitor
 /// Built from public CSSOM surface only: sheet enumeration, media validation, flattened
 /// matching styles, and per-rule matching.
 /// </remarks>
-public sealed class RuleBucketIndex
+internal sealed class RuleBucketIndex
 {
     private readonly List<ICssStyleRule> _rules;
     private readonly Dictionary<String, List<Int32>> _idBuckets;

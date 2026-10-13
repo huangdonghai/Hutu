@@ -13,7 +13,8 @@ namespace Hutu.Rendering.Interaction;
 /// </remarks>
 public readonly struct PointerInfo
 {
-    public PointerInfo(Boolean changed, CursorKind cursor, String? hint)
+    /// <summary>Records the answer one hit test came to; only the engine has one to answer.</summary>
+    internal PointerInfo(Boolean changed, CursorKind cursor, String? hint)
     {
         Changed = changed;
         Cursor = cursor;

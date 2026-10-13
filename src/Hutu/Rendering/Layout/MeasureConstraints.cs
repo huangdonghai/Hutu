@@ -10,7 +10,7 @@ namespace Hutu.Rendering.Layout;
 /// which is what an intrinsic measurement asks for. A number is a definite available size, which
 /// flex and grid hand down once their own algorithm has decided how much each item gets.
 /// </remarks>
-public readonly struct MeasureConstraints
+internal readonly struct MeasureConstraints
 {
     private MeasureConstraints(Double? availableWidth, Double? availableHeight)
     {

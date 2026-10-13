@@ -15,7 +15,7 @@ namespace Hutu.Skia;
 /// slant for the lifetime of the resolver. Matched typefaces are owned by the caller through
 /// <see cref="Dispose"/>.
 /// </remarks>
-public sealed class SkiaFontResolver : IDisposable
+internal sealed class SkiaFontResolver : IDisposable
 {
     /// <summary>How many files a name is opened against before the search is given up.</summary>
     /// <remarks>

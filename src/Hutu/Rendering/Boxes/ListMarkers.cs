@@ -27,7 +27,7 @@ namespace Hutu.Rendering.Boxes;
 /// around it like any other text.
 /// </para>
 /// </remarks>
-public static class ListMarkers
+internal static class ListMarkers
 {
     /// <summary>
     /// Marks the items of one container, counting them in the order they stand in it.

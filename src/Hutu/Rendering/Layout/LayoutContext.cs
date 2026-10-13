@@ -19,7 +19,7 @@ namespace Hutu.Rendering.Layout;
 /// resolves against (its nearest positioned ancestor's padding box, or the viewport).
 /// </para>
 /// </remarks>
-public readonly struct LayoutContext
+internal readonly struct LayoutContext
 {
     public LayoutContext(Size containingBlock, Size viewport, Offset scroll, ITextMeasurer measurer)
         : this(

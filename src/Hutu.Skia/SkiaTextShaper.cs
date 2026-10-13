@@ -25,7 +25,7 @@ namespace Hutu.Skia;
 /// first sight of a run the cost is a lookup.
 /// </para>
 /// </remarks>
-public sealed class SkiaTextShaper : IDisposable
+internal sealed class SkiaTextShaper : IDisposable
 {
     private readonly ConcurrentDictionary<IntPtr, SKShaper> _shapers = new();
     private readonly ConcurrentDictionary<ShapedRunKey, ShapedRun> _runs = new();
@@ -239,7 +239,7 @@ public sealed class SkiaTextShaper : IDisposable
 /// <see cref="None"/>, whose <see cref="Succeeded"/> is false and which the caller draws as unshaped
 /// text instead.
 /// </remarks>
-public readonly struct ShapedRun
+internal readonly struct ShapedRun
 {
     public ShapedRun(UInt16[] glyphs, SKPoint[] points, Single advance, Boolean succeeded)
     {

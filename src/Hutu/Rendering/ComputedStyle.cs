@@ -30,7 +30,7 @@ namespace Hutu.Rendering;
 /// This is a value type: it is created per box and must stay cheap to copy.
 /// </para>
 /// </remarks>
-public readonly struct ComputedStyle
+internal readonly struct ComputedStyle
 {
     private readonly ICssStyleDeclaration _style;
     private readonly ICssStyleDeclaration? _specified;

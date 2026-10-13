@@ -8,13 +8,23 @@ namespace Hutu.Rendering.Paint;
 /// the content they contain, and children after their parent.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Most of the document is in <see cref="Commands"/>, in document coordinates and already ordered by
 /// stacking level. The two viewport-anchored kinds live apart because a later scroll must move them
 /// differently: a fixed box stays put and a sticky box is pinned to an edge, and neither can be
 /// expressed as a document-coordinate command.
+/// </para>
+/// <para>
+/// A list is what the painter hands back, never what a host assembles, so the constructor - like the
+/// commands in it - belongs to the engine.
+/// </para>
 /// </remarks>
 public sealed class PaintList
 {
+    internal PaintList()
+    {
+    }
+
     public List<PaintCommand> Commands { get; } = new();
 
     /// <summary>
@@ -30,13 +40,16 @@ public sealed class PaintList
     public List<StickyLayer> Sticky { get; } = new();
 
     /// <summary>Gets the size of the painted document, which is the scrollable content size.</summary>
-    public Rect Bounds { get; set; }
+    public Rect Bounds { get; internal set; }
 }
 
-/// <summary>The commands of one sticky box together with the rule that pins it.</summary>
+/// <summary>
+/// The commands of one sticky box together with the rule that pins it. The painter puts a layer
+/// together as it walks the tree; a backend only asks the rule how far the box has moved.
+/// </summary>
 public sealed class StickyLayer
 {
-    public StickyLayer(StickyConstraint constraint) => Constraint = constraint;
+    internal StickyLayer(StickyConstraint constraint) => Constraint = constraint;
 
     public StickyConstraint Constraint { get; }
 

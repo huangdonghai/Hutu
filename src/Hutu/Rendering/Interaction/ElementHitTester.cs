@@ -34,7 +34,7 @@ namespace Hutu.Rendering.Interaction;
 /// itself rather than to the word it wraps.
 /// </para>
 /// </remarks>
-public sealed class ElementHitTester
+internal sealed class ElementHitTester
 {
     private readonly LayoutResult _layout;
 

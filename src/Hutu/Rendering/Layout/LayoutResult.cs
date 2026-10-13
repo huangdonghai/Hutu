@@ -35,14 +35,19 @@ public enum ScrollAlignment
 /// </remarks>
 public sealed class LayoutResult
 {
-    public LayoutResult(LayoutBox root, Double width, Double height)
+    internal LayoutResult(LayoutBox root, Double width, Double height)
     {
         Root = root;
         Width = width;
         Height = height;
     }
 
-    public LayoutBox Root { get; }
+    /// <summary>
+    /// Gets the root of the layout tree. It is the engine's own structure rather than anything a host
+    /// draws, so it stays inside: a host scrolls with <see cref="Width"/> and <see cref="Height"/> and
+    /// paints from the paint list.
+    /// </summary>
+    internal LayoutBox Root { get; }
 
     /// <summary>Gets the width of the laid-out document, i.e. the scrollable content width.</summary>
     public Double Width { get; }
@@ -98,7 +103,7 @@ public sealed class LayoutResult
     /// Gets the first box an element generated, in document order. An element whose content spans
     /// several lines generates several boxes; the first is the one its top edge belongs to.
     /// </summary>
-    public LayoutBox? FindBox(IElement element)
+    internal LayoutBox? FindBox(IElement element)
     {
         ArgumentNullException.ThrowIfNull(element);
         return FindBox(Root, element);

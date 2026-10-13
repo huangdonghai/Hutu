@@ -17,7 +17,7 @@ namespace Hutu.Rendering.Media;
 /// discoverable. URLs are resolved against the owning element's base URL, so
 /// <c>res:</c> / <c>epub:</c> references resolve exactly like the document's own resources do.
 /// </remarks>
-public static class ImageUrlCollector
+internal static class ImageUrlCollector
 {
     /// <summary>
     /// Collects from the document's own DOM, matching each element's background declaration

@@ -25,10 +25,14 @@ public enum BackgroundLayerSizeKind
 /// <remarks>
 /// The distinction matters because a percentage is relative to the positioning area, not to the
 /// viewport, so it cannot be resolved when the value is read - only when the box is known.
+/// <para>
+/// It is built while the declaration is parsed, so a backend reads one rather than making it; that is
+/// also why only <see cref="Resolve"/> is a host's to call.
+/// </para>
 /// </remarks>
 public readonly struct BackgroundOffset
 {
-    public BackgroundOffset(Double value, Boolean isPercentage)
+    internal BackgroundOffset(Double value, Boolean isPercentage)
     {
         Value = value;
         IsPercentage = isPercentage;
@@ -42,10 +46,13 @@ public readonly struct BackgroundOffset
     public Double Resolve(Double freeSpace) => IsPercentage ? Value * freeSpace : Value;
 }
 
-/// <summary>A colour stop of a gradient, with its position from 0 to 1.</summary>
+/// <summary>
+/// A colour stop of a gradient, with its position from 0 to 1. The parser lays the stops down; a
+/// backend only reads them back.
+/// </summary>
 public readonly struct GradientStop
 {
-    public GradientStop(Double offset, UInt32 color)
+    internal GradientStop(Double offset, UInt32 color)
     {
         Offset = offset;
         Color = color;
@@ -57,10 +64,13 @@ public readonly struct GradientStop
     public UInt32 Color { get; }
 }
 
-/// <summary>A linear gradient as declared in CSS.</summary>
+/// <summary>
+/// A linear gradient as declared in CSS. Like the stops it is made of, it is what the parser produces
+/// and what a backend draws, not something a host assembles.
+/// </summary>
 public sealed class LinearGradientSpec
 {
-    public LinearGradientSpec(Double angleDegrees, IReadOnlyList<GradientStop> stops)
+    internal LinearGradientSpec(Double angleDegrees, IReadOnlyList<GradientStop> stops)
     {
         AngleDegrees = angleDegrees;
         Stops = stops;
@@ -76,24 +86,28 @@ public sealed class LinearGradientSpec
 /// A single background layer, as resolved from the <c>background-image</c> and its companion
 /// longhands. Exactly one of <see cref="Url"/> and <see cref="Gradient"/> is set.
 /// </summary>
+/// <remarks>
+/// The layer is filled in by the parser and read by whoever draws it, so the writing side of every
+/// property stays inside the engine.
+/// </remarks>
 public sealed class BackgroundLayer
 {
     /// <summary>Gets the image to draw, or null for a gradient layer.</summary>
-    public String? Url { get; init; }
+    public String? Url { get; internal init; }
 
     /// <summary>Gets the gradient to draw, or null for an image layer.</summary>
-    public LinearGradientSpec? Gradient { get; init; }
+    public LinearGradientSpec? Gradient { get; internal init; }
 
-    public BackgroundLayerSizeKind SizeKind { get; init; }
+    public BackgroundLayerSizeKind SizeKind { get; internal init; }
 
-    public BackgroundOffset SizeWidth { get; init; }
+    public BackgroundOffset SizeWidth { get; internal init; }
 
-    public BackgroundOffset SizeHeight { get; init; }
+    public BackgroundOffset SizeHeight { get; internal init; }
 
-    public BackgroundOffset PositionX { get; init; }
+    public BackgroundOffset PositionX { get; internal init; }
 
-    public BackgroundOffset PositionY { get; init; }
+    public BackgroundOffset PositionY { get; internal init; }
 
     /// <summary>Gets whether the layer tiles. The initial value is <c>repeat</c>.</summary>
-    public Boolean Repeat { get; init; }
+    public Boolean Repeat { get; internal init; }
 }

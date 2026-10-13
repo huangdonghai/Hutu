@@ -15,7 +15,7 @@ namespace Hutu.Rendering.Boxes;
 /// The engine renders through <see cref="TryBuildFused"/>, which builds the
 /// box tree straight from the DOM.
 /// </remarks>
-public static partial class BoxBuilder
+internal static partial class BoxBuilder
 {
     /// <summary>
     /// Gives the page the writing mode the <c>body</c> runs in, when the root declares none of its own.

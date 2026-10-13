@@ -12,7 +12,7 @@ namespace Hutu.Rendering.Layout;
 /// construction time would tie the two together in both directions; it is handed along per call
 /// instead. The struct holds two references, so a call costs no allocation.
 /// </remarks>
-public readonly struct InlineContext
+internal readonly struct InlineContext
 {
     public InlineContext(LayoutEngine engine, LayoutContext containing)
     {

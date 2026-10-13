@@ -13,7 +13,7 @@ namespace Hutu.Rendering.Layout;
 /// <c>ClearMode</c> - and a pair of float keywords read as one set and the other as a second would
 /// only invite a mix-up at the call site.
 /// </remarks>
-public enum FloatSide
+internal enum FloatSide
 {
     /// <summary>The box takes its normal place in flow.</summary>
     None,
@@ -28,7 +28,7 @@ public enum FloatSide
 /// <summary>
 /// Which side's floats a box refuses to stand beside, moving down until it is clear of them.
 /// </summary>
-public enum ClearSide
+internal enum ClearSide
 {
     /// <summary>The box may sit beside a float.</summary>
     None,

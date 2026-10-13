@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace Hutu;
 
-public sealed class HookHttpRequest : BaseRequester
+internal sealed class HookHttpRequest : BaseRequester
 {
     /// <summary>
     /// How long a host has to answer. AngleSharp's requester waits 45s, which is a lifetime for a

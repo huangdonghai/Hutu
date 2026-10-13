@@ -17,4 +17,11 @@
     <ProjectReference Include="..\Hutu\Hutu.csproj" />
   </ItemGroup>
 
+  <!-- The font resolver, the shaper and the decomposition are the measurer's own machinery; the tests
+       that check a glyph actually landed in the right font are another assembly, so the internals have
+       to be opened to them. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hutu.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -7,7 +7,7 @@ using System.Collections.Generic;
 namespace Hutu.Rendering.Boxes;
 
 /// <summary>The formatting role of a box in the tree built from the styled render tree.</summary>
-public enum BoxKind
+internal enum BoxKind
 {
     /// <summary>A block-level box: it stacks vertically and may contain block or inline content.</summary>
     Block,
@@ -81,7 +81,7 @@ public enum BoxKind
 /// content inside a block that also has block-level children are wrapped in anonymous blocks.
 /// Geometry is not stored here; it is produced by the layout engine.
 /// </remarks>
-public sealed class Box
+internal sealed class Box
 {
     public Box(BoxKind kind, ComputedStyle style)
     {
