@@ -303,6 +303,31 @@ public sealed class FlexLayoutTests
     }
 
     [Test]
+    public async Task ATwoValueFlexShorthandStillGrowsTheItem()
+    {
+        // `flex: 1 1` names two of the three longhands and leaves the basis to default to `auto`, and a
+        // shorthand is the place where a rebuild of longhands back into a value can go lossy - which
+        // would leave the item asking for nothing and the row holding room it never handed over.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;width:300px'>" +
+            "<div id='a' style='flex:1 1'>aaaaaaaaaaaa</div>" +
+            "<div id='b' style='width:60px'></div>" +
+            "</div>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                Find(view, "a").BorderBox.Width,
+                Is.EqualTo(240).Within(0.5),
+                "its own sixty of content and the hundred and eighty the row had left");
+            Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(240).Within(0.5));
+        });
+    }
+
+    [Test]
     public async Task ItemsThatNameNoOrderKeepTheOrderTheDocumentDid()
     {
         // Twenty items, each one character wider than the last, none declaring `order`: a sort that is
