@@ -137,6 +137,10 @@ public sealed class SkiaPaintExecutor
                     DrawGradient(canvas, gradient);
                     break;
 
+                case TextClippedBackgroundCommand clipped:
+                    DrawTextClippedBackground(canvas, clipped);
+                    break;
+
                 case PushClipCommand clip:
                     canvas.Save();
                     SkiaRounded.Clip(canvas, ToRect(clip.Bounds), clip.Radii);
@@ -878,6 +882,75 @@ public sealed class SkiaPaintExecutor
         }
 
         canvas.Restore();
+    }
+
+    /// <summary>
+    /// Paints a background kept to the shape of the text it is clipped to: the layers are drawn into a
+    /// temporary layer over the box, the glyphs are then cut out of that layer - each glyph widened by
+    /// its own stroke - and the result is laid onto the page. Where the stroke is only transparent, the
+    /// ring paints nothing yet still lets more of the background through than the bare glyph would.
+    /// </summary>
+    private void DrawTextClippedBackground(SKCanvas canvas, TextClippedBackgroundCommand command)
+    {
+        var box = ToRect(command.Bounds);
+
+        // The background is drawn into a layer, then multiplied by a second layer that holds only the
+        // ink of the glyphs. That ink layer is filled and stroked over transparent with the plain
+        // source-over rule, so its alpha is the union of the two - a stroke widening the shape the
+        // background is kept to - and it is brought down onto the background with DstIn, which keeps the
+        // background exactly where the ink reaches and clears it where it does not.
+        var background = canvas.SaveLayer(box, null);
+
+        foreach (var inner in command.Layers)
+        {
+            DrawBackgroundLayer(canvas, inner);
+        }
+
+        using var ink = new SKPaint { Color = SKColors.Black, IsAntialias = true, Style = SKPaintStyle.Fill };
+        using var ring = new SKPaint
+        {
+            Color = SKColors.Black,
+            IsAntialias = true,
+            Style = SKPaintStyle.Stroke,
+            StrokeJoin = SKStrokeJoin.Round,
+        };
+
+        using var mask = new SKPaint { BlendMode = SKBlendMode.DstIn };
+
+        var layer = canvas.SaveLayer(box, mask);
+
+        foreach (var run in command.Mask)
+        {
+            StrokeGlyphs(canvas, run, ink);
+
+            if (run.StrokeWidth > 0)
+            {
+                ring.StrokeWidth = (Single)run.StrokeWidth;
+                StrokeGlyphs(canvas, run, ring);
+            }
+        }
+
+        canvas.RestoreToCount(layer);
+        canvas.RestoreToCount(background);
+    }
+
+    /// <summary>Draws one background command - a colour, a gradient or an image - into the layer at hand.</summary>
+    private void DrawBackgroundLayer(SKCanvas canvas, PaintCommand command)
+    {
+        switch (command)
+        {
+            case FillCommand fill:
+                Fill(canvas, fill);
+                break;
+
+            case LinearGradientCommand gradient:
+                DrawGradient(canvas, gradient);
+                break;
+
+            case BackgroundImageCommand background:
+                _images?.DrawBackground(canvas, background.Layer, ToRect(background.Bounds), background.Radii);
+                break;
+        }
     }
 
     private static void DrawGradient(SKCanvas canvas, LinearGradientCommand command)

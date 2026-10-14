@@ -1309,6 +1309,62 @@ public sealed class SkiaRenderingTests
         return ink;
     }
 
+    [Test]
+    public async Task BackgroundClippedToTextKeepsOnlyTheInkOfTheGlyphs()
+    {
+        using var measurer = new SkiaTextMeasurer();
+
+        var clip = "background:#ff0000; -webkit-background-clip: text; color: transparent";
+        var whole = "background:#ff0000; color: transparent";
+
+        var inside = await CountRed(measurer, clip);
+        var across = await CountRed(measurer, whole);
+
+        Assert.That(inside, Is.GreaterThan(50), "the background shows through the letter shapes");
+        Assert.That(inside, Is.LessThan(across / 2), "and nowhere else in the box, which the unclipped fill paints solid");
+    }
+
+    [Test]
+    public async Task ATransparentStrokeWidensTheBackgroundClippedToText()
+    {
+        using var measurer = new SkiaTextMeasurer();
+
+        var clip = "background:#ff0000; -webkit-background-clip: text; color: transparent";
+
+        var bare = await CountRed(measurer, clip);
+        var stroked = await CountRed(measurer, clip + "; -webkit-text-stroke: 8px transparent");
+
+        // The ring is transparent and paints nothing of its own, yet it stands outside the glyph it rings,
+        // so more of the background survives where it reaches - which is exactly why a stroke and no
+        // stroke come to different pictures once the background is clipped to the text.
+        Assert.That(stroked, Is.GreaterThan(bare + 50), "the transparent ring widens the ink the background is kept to");
+    }
+
+    /// <summary>Renders a red paragraph under the given declarations and counts the red pixels it left.</summary>
+    private static async Task<Int32> CountRed(SkiaTextMeasurer measurer, String declarations)
+    {
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(240, 120);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<p style='margin:0;font-size:40px;font-weight:900;padding:10px;{declarations}'>WWW</p>" +
+            "</body></html>");
+
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+        var red = 0;
+
+        foreach (var pixel in bitmap.Pixels)
+        {
+            if (pixel.Red > 180 && pixel.Green < 120 && pixel.Blue < 120)
+            {
+                red++;
+            }
+        }
+
+        return red;
+    }
+
     /// <summary>Finds the boxes the inline-blocks of a given name were given, which are block containers.</summary>
     private static System.Collections.Generic.List<LayoutBox> Boxes(HutuViewInternal view, String tag) =>
         LayoutOf(view).Where(box => box.Kind == LayoutKind.Block && box.Source.Element?.LocalName == tag).ToList();

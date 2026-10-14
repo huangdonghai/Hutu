@@ -186,6 +186,34 @@ public sealed class LinearGradientCommand : PaintCommand
 }
 
 /// <summary>
+/// Draws a box's background - the colour and any layers - but keeps it only where the box's text is:
+/// <c>background-clip: text</c>. The layers are painted, then masked to the union of the glyph shapes
+/// listed in <see cref="Mask"/>, each widened by its own text stroke, so a transparent stroke still
+/// lets more of the background through than no stroke would.
+/// </summary>
+/// <remarks>
+/// Grouped into one command rather than a clip pair because the mask is not a hard clip a canvas applies
+/// to what follows - it is the alpha of the glyphs multiplied out of a layer - and a backend that drew
+/// the layers, then the mask, then composed the result, is exactly the sequence a save-restore around
+/// them expresses in one instruction.
+/// </remarks>
+public sealed class TextClippedBackgroundCommand : PaintCommand
+{
+    internal TextClippedBackgroundCommand(Rect bounds, IReadOnlyList<PaintCommand> layers, IReadOnlyList<TextCommand> mask)
+        : base(bounds)
+    {
+        Layers = layers;
+        Mask = mask;
+    }
+
+    /// <summary>Gets the background commands painted before the mask is applied.</summary>
+    public IReadOnlyList<PaintCommand> Layers { get; }
+
+    /// <summary>Gets the runs whose glyph coverage the background is kept to.</summary>
+    public IReadOnlyList<TextCommand> Mask { get; }
+}
+
+/// <summary>
 /// Clips everything that follows to a rounded rectangle, until the matching
 /// <see cref="PopClipCommand"/>: what a box with an <c>overflow</c> other than <c>visible</c> asks for.
 /// </summary>

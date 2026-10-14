@@ -370,30 +370,90 @@ internal sealed class Painter
                 break;
         }
 
+        // The colour first and the layers last-first, so the first declared layer ends on top, as CSS
+        // paints them. They are gathered rather than sent straight out because a text clip wraps the
+        // whole set in one masked command.
+        var layers = new List<PaintCommand>();
+
         if (style.BackgroundColor is { } background && background.A != 0)
         {
-            target.Add(new FillCommand(area, ToArgb(background), radii));
+            layers.Add(new FillCommand(area, ToArgb(background), radii));
         }
 
-        var layers = style.Backgrounds;
+        var declared = style.Backgrounds;
+
+        for (var index = declared.Count - 1; index >= 0; index--)
+        {
+            var layer = declared[index];
+
+            if (layer.Gradient is { } gradient)
+            {
+                layers.Add(new LinearGradientCommand(area, gradient.AngleDegrees, gradient.Stops, radii));
+            }
+            else if (layer.Url is { Length: > 0 })
+            {
+                layers.Add(new BackgroundImageCommand(area, layer, radii));
+            }
+        }
 
         if (layers.Count == 0)
         {
             return;
         }
 
-        for (var index = layers.Count - 1; index >= 0; index--)
+        // Clipped to the text, the background survives only where a glyph covers it - and where none does
+        // there is nothing to paint, so a text-clipped box with no words in it is simply blank.
+        if (box.BackgroundClip == BackgroundClip.Text)
         {
-            var layer = layers[index];
+            var mask = CollectTextRuns(box);
 
-            if (layer.Gradient is { } gradient)
+            if (mask.Count > 0)
             {
-                target.Add(new LinearGradientCommand(area, gradient.AngleDegrees, gradient.Stops, radii));
+                target.Add(new TextClippedBackgroundCommand(area, layers, mask));
             }
-            else if (layer.Url is { Length: > 0 })
-            {
-                target.Add(new BackgroundImageCommand(area, layer, radii));
-            }
+
+            return;
+        }
+
+        target.AddRange(layers);
+    }
+
+    /// <summary>
+    /// Gathers the runs of text under a box, in the flow each was set, as the shapes a text-clipped
+    /// background is kept to. Only the glyph coverage matters to the mask, so the decorations and colour
+    /// are left off; the width each run is stroked with is kept, for a stroke widens the ink it is clipped
+    /// to as surely as it would paint one.
+    /// </summary>
+    private static IReadOnlyList<TextCommand> CollectTextRuns(LayoutBox box)
+    {
+        var runs = new List<TextCommand>();
+        GatherTextRuns(box, runs);
+        return runs;
+    }
+
+    private static void GatherTextRuns(LayoutBox node, List<TextCommand> runs)
+    {
+        if (!String.IsNullOrEmpty(node.Text))
+        {
+            var style = node.Source.Style;
+
+            runs.Add(new TextCommand(
+                node.BorderBox,
+                node.Text,
+                node.Baseline,
+                node.Font,
+                0xFF00_0000,
+                false,
+                false,
+                node.Flow,
+                style.LetterSpacing,
+                style.TextStrokeWidth,
+                0));
+        }
+
+        foreach (var child in node.Children)
+        {
+            GatherTextRuns(child, runs);
         }
     }
 
