@@ -277,17 +277,19 @@ internal sealed class InlineLayout
             foreach (var chunk in TextChunker.Ranges(source))
             {
                 var width = Measure(item.Style, source, chunk.Start, chunk.Length, flow);
+
+                // A collapsible space the line would begin with is not drawn, so it asks for no room in
+                // either extent and leaves the break it stands at uncounted as well.
+                if (!sawContent && !item.Style.IsPreformatted
+                    && TextChunker.IsWhiteSpace(source, chunk.Start, chunk.Length))
+                {
+                    continue;
+                }
+
                 maxContent += width;
 
                 if (TextChunker.IsWhiteSpace(source, chunk.Start, chunk.Length))
                 {
-                    // A collapsible space the line would begin with is not drawn, so it asks for no
-                    // room in either extent and leaves the break it stands at uncounted as well.
-                    if (!sawContent && !item.Style.IsPreformatted)
-                    {
-                        continue;
-                    }
-
                     // A collapsible space is a break opportunity: the run before it can be split.
                     minContent = Math.Max(minContent, unbreakable);
                     unbreakable = 0;
