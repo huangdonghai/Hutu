@@ -22,6 +22,15 @@ internal sealed partial class TableFormattingContext
         public Double Height;
 
         /// <summary>
+        /// Gets the caption's own measured width. A caption takes the table's content width when it
+        /// leaves its width to the content, but a declared width wins over the table - the same way a
+        /// block that is wider than its container still draws at the width it asked for. The table
+        /// context used to force every caption to its own content width, which crushed a caption wider
+        /// than an empty table to nothing.
+        /// </summary>
+        public Double Width;
+
+        /// <summary>
         /// Gets the caption's own used margins. A caption is a block box in the table's flow, so its
         /// margins apply like any block's: they shift the box and add to the space it claims along the
         /// stack. They are resolved once here against the table's content width and reused by both
@@ -396,7 +405,11 @@ internal sealed partial class TableFormattingContext
         foreach (var caption in build.Captions)
         {
             caption.Margin = caption.Box.Style.Margin.Resolve(contentWidth);
-            caption.Height = _engine.Measure(caption.Box, MeasureConstraints.FitWidth(contentWidth), captionContext).Height;
+            var avail = Math.Max(0, contentWidth - caption.Margin.Horizontal);
+            var size = _engine.Measure(caption.Box, MeasureConstraints.FitWidth(avail), captionContext);
+
+            caption.Width = size.Width;
+            caption.Height = size.Height;
 
             if (caption.Side == CaptionSide.Top)
             {

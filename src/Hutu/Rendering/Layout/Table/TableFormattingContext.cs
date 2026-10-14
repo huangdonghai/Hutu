@@ -114,6 +114,17 @@ internal sealed partial class TableFormattingContext
         var gridX = borderBox.X + build.Border.Left + build.Padding.Left;
         var topY = borderBox.Y + build.Border.Top + build.Padding.Top;
 
+        // A positioned table anchors the absolutely positioned descendants the captions and cells hand
+        // up to it, the same way a positioned block does: a static caption is not a containing block,
+        // so its abs child passes up to the nearest positioned ancestor - this table. The anchor is the
+        // outer box, not the padded one: position belongs to the table's wrapper box, and that box
+        // carries no border of its own (the border the drawing shows sits on the inner table box), so
+        // its padding edge is the outer edge. Insetting by this box's border would push every abs
+        // descendant off by that border, the way the gecko table-abs-pos references say it should not.
+        var childContext = PositionedLayout.IsPositioned(box)
+            ? context.WithAbsoluteContainingBlock(layout.BorderBox)
+            : context;
+
         foreach (var caption in build.Captions)
         {
             if (caption.Side != CaptionSide.Top)
@@ -121,12 +132,12 @@ internal sealed partial class TableFormattingContext
                 continue;
             }
 
-            layout.Children.Add(ArrangeCaption(caption, gridX, topY, contentWidth, context));
+            layout.Children.Add(ArrangeCaption(caption, gridX, topY, contentWidth, childContext));
             topY += caption.OuterHeight;
         }
 
         var gridY = topY;
-        ArrangeRows(build, layout, gridX, gridY, context);
+        ArrangeRows(build, layout, gridX, gridY, childContext);
 
         var bottomY = gridY + build.Grid.Height;
 
@@ -137,7 +148,7 @@ internal sealed partial class TableFormattingContext
                 continue;
             }
 
-            layout.Children.Add(ArrangeCaption(caption, gridX, bottomY, contentWidth, context));
+            layout.Children.Add(ArrangeCaption(caption, gridX, bottomY, contentWidth, childContext));
             bottomY += caption.OuterHeight;
         }
 
@@ -149,11 +160,13 @@ internal sealed partial class TableFormattingContext
         var margin = caption.Margin;
 
         // A caption is a block box in the table's flow, so its own margins shift it inside the band
-        // the table gave it and narrow it, the same way a block's margins sit it off its containing
-        // box. The absolutely positioned descendants anchor to where the box actually landed.
+        // the table gave it, the same way a block's margins sit it off its containing box. Its width
+        // is its own measured one - the table's content width when it left the width to the content,
+        // but its declared width when it named one, even wider than the table. The absolutely
+        // positioned descendants anchor to where that box actually landed.
         var boxX = x + margin.Left;
         var boxY = y + margin.Top;
-        var boxWidth = Math.Max(0, width - margin.Horizontal);
+        var boxWidth = caption.Width;
 
         var captionContext = context.ForContainingBlock(new Size(boxWidth, 0));
 
