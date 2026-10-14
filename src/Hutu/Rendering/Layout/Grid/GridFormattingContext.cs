@@ -366,6 +366,31 @@ internal sealed class GridFormattingContext
             automatic = true;
         }
 
+        // A user agent keeps an enormous implicit grid from being built by clamping how far a placement
+        // may reach; a span like `span 134217729` would otherwise ask for that many tracks, and the
+        // placement would spend itself marking every cell. No real grid comes near this ceiling, so the
+        // clamp only ever bites on the pathological case it exists to survive.
+        const Int32 maxTracks = 65536;
+
+        if (index < 0)
+        {
+            index = 0;
+        }
+        else if (index >= maxTracks)
+        {
+            index = maxTracks - 1;
+        }
+
+        if (span < 1)
+        {
+            span = 1;
+        }
+
+        if (index + span > maxTracks)
+        {
+            span = maxTracks - index;
+        }
+
         if (horizontal)
         {
             item.Column = index;

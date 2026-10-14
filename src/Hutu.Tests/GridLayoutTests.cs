@@ -345,6 +345,25 @@ public sealed class GridLayoutTests
         Assert.That(line.BorderBox.Y, Is.EqualTo(15).Within(0.5), "(40 - 10) / 2");
     }
 
+    /// <summary>
+    /// A span written past any practical grid is clamped to the user-agent ceiling rather than built
+    /// track by track - which is what keeps <c>grid-row-end: span 99999999</c> from spending the layout
+    /// marking a hundred million cells.
+    /// </summary>
+    [Test]
+    public async Task APathologicalSpanIsClampedNotMaterialized()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-auto-rows:1px'>" +
+            "<div id='a' style='grid-row-end:span 99999999'>x</div>" +
+            "</div></body></html>");
+
+        Assert.That(view.Layout!.Height, Is.LessThan(1_000_000).Within(1),
+            "the grid reaches its clamped ceiling of rows, not the literal hundred million");
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
