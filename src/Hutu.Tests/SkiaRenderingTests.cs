@@ -1269,6 +1269,46 @@ public sealed class SkiaRenderingTests
     private static System.Collections.Generic.List<LayoutBox> Inlines(HutuViewInternal view, String tag) =>
         LayoutOf(view).Where(box => box.Kind == LayoutKind.Inline && box.Source.Element?.LocalName == tag).ToList();
 
+    [Test]
+    public async Task ATextStrokePaintsTheInkATransparentFillLeavesOut()
+    {
+        using var measurer = new SkiaTextMeasurer();
+
+        // The fill is transparent, so nothing but a stroke can put ink on the page. A run with a wide
+        // stroke has to show it; the same run without one has to stay blank. That separates the stroke
+        // from the fill in a way neither could prove on its own.
+        var stroked = await CountInk(measurer, "-webkit-text-fill-color: transparent; -webkit-text-stroke: 6px black");
+        var bare = await CountInk(measurer, "-webkit-text-fill-color: transparent");
+
+        Assert.That(stroked, Is.GreaterThan(50), "the black ring paints a wide outline of each glyph");
+        Assert.That(bare, Is.EqualTo(0), "a transparent fill alone leaves no ink");
+    }
+
+    /// <summary>Renders a stroked/filled run under the given declarations and counts the ink it left.</summary>
+    private static async Task<Int32> CountInk(SkiaTextMeasurer measurer, String declarations)
+    {
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(200, 120);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<p style='margin:0;font-size:48px;font-weight:900;{declarations}'>WWW</p>" +
+            "</body></html>");
+
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+        var ink = 0;
+
+        foreach (var pixel in bitmap.Pixels)
+        {
+            if (pixel != SKColors.White)
+            {
+                ink++;
+            }
+        }
+
+        return ink;
+    }
+
     /// <summary>Finds the boxes the inline-blocks of a given name were given, which are block containers.</summary>
     private static System.Collections.Generic.List<LayoutBox> Boxes(HutuViewInternal view, String tag) =>
         LayoutOf(view).Where(box => box.Kind == LayoutKind.Block && box.Source.Element?.LocalName == tag).ToList();

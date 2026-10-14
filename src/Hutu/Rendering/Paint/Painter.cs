@@ -432,16 +432,22 @@ internal sealed class Painter
 
         var style = box.Source.Style;
 
+        // The fill colour stands in for the text colour where the page set one; the stroke travels so the
+        // back end rings each glyph with it, and a background clipped to the text can widen to it.
+        var fill = style.TextFillColor ?? ToArgb(style.Color);
+
         target.Add(new TextCommand(
             box.BorderBox,
             box.Text,
             box.Baseline,
             box.Font,
-            ToArgb(style.Color),
+            fill,
             style.HasUnderline,
             style.HasLineThrough,
             box.Flow,
-            style.LetterSpacing));
+            style.LetterSpacing,
+            style.TextStrokeWidth,
+            style.TextStrokeColor));
     }
 
     private static void AddBorder(LayoutBox box, ComputedStyle style, List<PaintCommand> target)

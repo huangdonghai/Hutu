@@ -269,6 +269,27 @@ public sealed class TextCommand : PaintCommand
         Boolean lineThrough,
         WritingModeInfo flow,
         Double letterSpacing)
+        : this(bounds, text, baseline, font, color, underline, lineThrough, flow, letterSpacing, 0, 0)
+    {
+    }
+
+    /// <param name="strokeWidth">
+    /// The width the glyphs are ringed with, in pixels, and <paramref name="strokeColor"/> its colour.
+    /// Both come from <c>-webkit-text-stroke</c>; a zero width is no stroke. The ring is drawn under the
+    /// fill, and its width also widens the ink a background clipped to the text is kept to.
+    /// </param>
+    internal TextCommand(
+        Rect bounds,
+        String text,
+        Double baseline,
+        FontStyle font,
+        UInt32 color,
+        Boolean underline,
+        Boolean lineThrough,
+        WritingModeInfo flow,
+        Double letterSpacing,
+        Double strokeWidth,
+        UInt32 strokeColor)
         : base(bounds)
     {
         Text = text;
@@ -279,6 +300,8 @@ public sealed class TextCommand : PaintCommand
         LineThrough = lineThrough;
         Flow = flow;
         LetterSpacing = letterSpacing;
+        StrokeWidth = strokeWidth;
+        StrokeColor = strokeColor;
     }
 
     public String Text { get; }
@@ -294,6 +317,12 @@ public sealed class TextCommand : PaintCommand
 
     /// <summary>Gets the extra space added after every character, in pixels; zero when there is none.</summary>
     public Double LetterSpacing { get; }
+
+    /// <summary>Gets the width the glyphs are ringed with, in pixels; zero is no stroke.</summary>
+    public Double StrokeWidth { get; }
+
+    /// <summary>Gets the packed ARGB of that ring; transparent when none was given.</summary>
+    public UInt32 StrokeColor { get; }
 
     public FontStyle Font { get; }
 

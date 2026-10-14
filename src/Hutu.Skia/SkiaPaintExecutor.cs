@@ -669,6 +669,23 @@ public sealed class SkiaPaintExecutor
 
         using var paint = new SKPaint { Color = new SKColor(command.Color), IsAntialias = true };
 
+        // A text stroke rings each glyph, drawn before - and so behind - the fill. A transparent stroke
+        // paints nothing of its own and is skipped; its width still matters, but only to a background
+        // clipped to the text, which widens to it in its own pass.
+        if (command.StrokeWidth > 0 && (command.StrokeColor & 0xFF00_0000) != 0)
+        {
+            using var stroke = new SKPaint
+            {
+                Color = new SKColor(command.StrokeColor),
+                IsAntialias = true,
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = (Single)command.StrokeWidth,
+                StrokeJoin = SKStrokeJoin.Round,
+            };
+
+            StrokeGlyphs(canvas, command, stroke);
+        }
+
         if (!command.Flow.IsVertical)
         {
             var baseline = (Single)(command.Bounds.Y + command.Baseline);
@@ -710,6 +727,35 @@ public sealed class SkiaPaintExecutor
         if (command.LineThrough)
         {
             DrawColumnDecoration(canvas, command, Math.Abs(metrics.StrikeoutOffset), metrics.StrikeoutThickness, paint);
+        }
+    }
+
+    /// <summary>
+    /// Rings the glyphs of a run, in whichever flow it is set, without the decorations - a stroke belongs
+    /// to the letterforms, not to the line under them.
+    /// </summary>
+    private void StrokeGlyphs(SKCanvas canvas, TextCommand command, SKPaint stroke)
+    {
+        if (!command.Flow.IsVertical)
+        {
+            var baseline = (Single)(command.Bounds.Y + command.Baseline);
+            DrawRunBlob(canvas, command, baseline, stroke, command.LetterSpacing);
+            return;
+        }
+
+        var metrics = _measurer.GetMetrics(command.Font);
+
+        if (command.Flow.CombinesUpright)
+        {
+            DrawCombined(canvas, command, metrics, stroke);
+        }
+        else if (command.Flow.Orientation == TextOrientation.Upright)
+        {
+            DrawUprightColumn(canvas, command, metrics, stroke);
+        }
+        else
+        {
+            DrawTurned(canvas, command, stroke);
         }
     }
 
