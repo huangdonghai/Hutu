@@ -67,6 +67,20 @@ public sealed class ListMarkerTests
     }
 
     [Test]
+    public async Task ACounterOverflowingTheNumberRangeStaysAtItsEdge()
+    {
+        // Past the largest an Int32 holds, the count settles there instead of wrapping to the smallest, and
+        // a reversed list that reaches the smallest - whose magnitude no Int32 can carry - writes it out.
+        var up = await Markers("", "<ol start='2147483646'><li>a</li><li>b</li><li>c</li><li>d</li></ol>");
+        Assert.That(up, Is.EqualTo(new[] { "2147483646. ", "2147483647. ", "2147483647. ", "2147483647. " }),
+            "a list counting past the ceiling holds at it");
+
+        var down = await Markers("", "<ol reversed start='-2147483646'><li>a</li><li>b</li><li>c</li><li>d</li></ol>");
+        Assert.That(down, Is.EqualTo(new[] { "-2147483646. ", "-2147483647. ", "-2147483648. ", "-2147483648. " }),
+            "and one counting past the floor holds at it, the smallest number written with its sign");
+    }
+
+    [Test]
     public async Task AReversedListCountsDownFromItsLength()
     {
         var markers = await Markers("", "<ol reversed><li>one</li><li>two</li><li>three</li></ol>");

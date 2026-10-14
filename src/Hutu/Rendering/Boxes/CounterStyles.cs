@@ -173,8 +173,10 @@ internal static class CounterStyles
         if (type.Equals("decimal-leading-zero", StringComparison.OrdinalIgnoreCase))
         {
             // Padded to two, and no further: a hundredth item is not turned into three digits.
-            return Math.Abs(number) < 10
-                ? (number < 0 ? "-" : string.Empty) + Math.Abs(number).ToString("D2", CultureInfo.InvariantCulture)
+            // The magnitude is taken as a long: the number a list saturates to can be the smallest an
+            // Int32 holds, whose own magnitude is one larger than the largest it can carry.
+            return Math.Abs((long)number) < 10
+                ? (number < 0 ? "-" : string.Empty) + Math.Abs((long)number).ToString("D2", CultureInfo.InvariantCulture)
                 : number.ToString(CultureInfo.InvariantCulture);
         }
 
@@ -428,7 +430,8 @@ internal static class CounterStyles
     /// <summary>Writes a number in a script's own numerals, signed, the way decimal writes it.</summary>
     private static String Positional(Int32 number, String numerals)
     {
-        var text = Math.Abs(number).ToString(CultureInfo.InvariantCulture);
+        // A long, because the smallest Int32 a list settles on has no positive twin within its own width.
+        var text = Math.Abs((long)number).ToString(CultureInfo.InvariantCulture);
         var result = new StringBuilder(text.Length + 1);
 
         if (number < 0)

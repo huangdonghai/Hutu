@@ -60,7 +60,12 @@ internal static class ListMarkers
                 child.Marker = text;
             }
 
-            running = reversed ? number - 1 : number + 1;
+            // The count runs up or down by one, but a list that reaches the edge of what a number holds
+            // stops there rather than wrapping past it: the UA limit an overflowing counter settles at is
+            // the last number the range can carry, which is what a browser draws for the items beyond it.
+            running = reversed
+                ? (number == Int32.MinValue ? number : number - 1)
+                : (number == Int32.MaxValue ? number : number + 1);
         }
     }
 
