@@ -35,6 +35,7 @@ internal sealed class LayoutEngine
     private readonly BlockLayout _block;
     private readonly FlexFormattingContext _flex;
     private readonly GridFormattingContext _grid;
+    private readonly MasonryFormattingContext _masonry;
     private readonly TableFormattingContext _table;
     private readonly PositionedLayout _positioned;
     private readonly ITextMeasurer _measurer;
@@ -74,6 +75,7 @@ internal sealed class LayoutEngine
         _block = new BlockLayout(this, _inline);
         _flex = new FlexFormattingContext(this);
         _grid = new GridFormattingContext(this);
+        _masonry = new MasonryFormattingContext(this, _grid);
         _table = new TableFormattingContext(this);
         _positioned = new PositionedLayout(this);
     }
@@ -587,6 +589,7 @@ internal sealed record LayoutProfile(
         {
             BoxKind.Flex => _flex.Arrange(box, borderBox, context),
             BoxKind.Grid => _grid.Arrange(box, borderBox, context),
+            BoxKind.Masonry => _masonry.Arrange(box, borderBox, context),
             BoxKind.Table => _table.Arrange(box, borderBox, context),
             _ => box.IsReplaced
                 ? ArrangeReplaced(box, borderBox, context)
@@ -680,6 +683,7 @@ internal sealed record LayoutProfile(
         {
             BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
             BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
+            BoxKind.Masonry => _masonry.MeasureIntrinsic(box, context),
             BoxKind.Table => _table.MeasureIntrinsic(box, context),
             _ => _block.MeasureIntrinsic(box, context),
         };
@@ -689,6 +693,7 @@ internal sealed record LayoutProfile(
         {
             BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
             BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
+            BoxKind.Masonry => _masonry.MeasureIntrinsic(box, context),
             BoxKind.Table => _table.MeasureIntrinsic(box, context),
             _ => _block.MeasureContentIntrinsic(box, context),
         };
@@ -735,6 +740,7 @@ internal sealed record LayoutProfile(
         {
             BoxKind.Flex => _flex.Measure(box, constraints, context),
             BoxKind.Grid => _grid.Measure(box, constraints, context),
+            BoxKind.Masonry => _masonry.Measure(box, constraints, context),
             BoxKind.Table => _table.Measure(box, constraints, context),
             _ => box.IsReplaced
                 ? MeasureReplaced(box, constraints, context)

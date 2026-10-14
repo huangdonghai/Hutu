@@ -284,6 +284,16 @@ internal static partial class BoxBuilder
                 return BoxKind.TableColumnGroup;
         }
 
+        // A grid-lanes (masonry) container is its own formatting context, not a grid: items pack into the
+        // shortest lane along the main axis. Matched on the inner role - `grid-lanes` or `masonry` anywhere
+        // in the display - before the grid test below, whose `StartsWith("grid")` would otherwise claim
+        // `grid-lanes` for the grid and miss the `inline grid-lanes` spelling entirely.
+        if (display.Contains("grid-lanes", StringComparison.OrdinalIgnoreCase) ||
+            display.Contains("masonry", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Masonry;
+        }
+
         // A flex or grid container is a container whichever form it takes; the engine does not yet
         // model the outer role of `inline-flex` or `inline-grid`, so both spellings of each produce
         // the same kind.

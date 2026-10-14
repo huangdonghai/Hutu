@@ -598,6 +598,67 @@ internal sealed class GridFormattingContext
         return tracks;
     }
 
+    /// <summary>
+    /// Sizes and places the cross (column) axis exactly as a grid would, and hands back the resolved
+    /// column widths plus each item's column, column span, placement row and area width. A grid-lanes
+    /// container borrows this wholesale: its cross axis is an ordinary grid axis - the track count, the
+    /// <c>auto</c>/<c>max-content</c> widths and the placement cursor are settled by the very same code
+    /// a grid uses - and only the lane axis, the rungs down each column, is packed differently after.
+    /// </summary>
+    /// <remarks>
+    /// This runs the first half of <see cref="Compute"/> (collect, resolve both axes' lines, place,
+    /// then size the columns) and stops before any row is sized or anything positioned, so nothing here
+    /// can change what a grid computes; it just reaches into the shared helpers for the column result.
+    /// </remarks>
+    internal CrossAxisLayout LayoutCrossTracks(Box box, Double contentWidth, Boolean definiteWidth, LayoutContext context)
+    {
+        var grid = box.Style.Grid;
+        var items = new List<GridCell>();
+
+        foreach (var child in box.Children)
+        {
+            if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child))
+            {
+                items.Add(Create(child));
+            }
+        }
+
+        var columnBasis = definiteWidth ? contentWidth : 0;
+        var gapX = grid.ColumnGap;
+        var gapY = grid.RowGap;
+
+        // The explicit grid bounds the automatic placement wrap, so both counts are taken before placing.
+        var explicitColumns = grid.Columns.ExplicitCount(columnBasis, gapX);
+        var explicitRows = grid.Rows.ExplicitCount(0, gapY);
+
+        foreach (var item in items)
+        {
+            ResolveAxis(item, true, explicitColumns, grid);
+            ResolveAxis(item, false, explicitRows, grid);
+        }
+
+        Place(items, grid, explicitColumns, explicitRows);
+
+        var itemContext = context.ForContainingBlock(new Size(contentWidth, 0));
+        var usedColumns = Used(items, true);
+        var columnTracks = SizeColumns(grid, items, usedColumns, columnBasis, gapX, definiteWidth, itemContext);
+
+        var layout = new CrossAxisLayout { GapX = gapX, GapY = gapY };
+
+        foreach (var track in columnTracks)
+        {
+            layout.ColumnWidths.Add(track.Base);
+        }
+
+        foreach (var item in items)
+        {
+            var areaWidth = Span(columnTracks, item.Column, item.ColumnSpan, gapX);
+            layout.Items.Add(new CrossPlacedItem(item.Box, item.Column, item.ColumnSpan, item.Row, areaWidth));
+        }
+
+        return layout;
+    }
+
     private List<Track> SizeRows(
         GridStyle grid,
         List<GridCell> items,
@@ -1248,5 +1309,40 @@ internal sealed class GridFormattingContext
         public Double ContentHeight;
 
         public List<GridCell> Items { get; } = new();
+    }
+
+    /// <summary>The resolved cross (column) axis a grid-lanes container borrows from the grid sizer.</summary>
+    internal sealed class CrossAxisLayout
+    {
+        public Double GapX;
+
+        public Double GapY;
+
+        public List<Double> ColumnWidths { get; } = new();
+
+        public List<CrossPlacedItem> Items { get; } = new();
+    }
+
+    /// <summary>One in-flow item's cross-axis placement and area width, as the grid settled them.</summary>
+    internal readonly struct CrossPlacedItem
+    {
+        public CrossPlacedItem(Box box, Int32 column, Int32 columnSpan, Int32 row, Double areaWidth)
+        {
+            Box = box;
+            Column = column;
+            ColumnSpan = columnSpan;
+            Row = row;
+            AreaWidth = areaWidth;
+        }
+
+        public Box Box { get; }
+
+        public Int32 Column { get; }
+
+        public Int32 ColumnSpan { get; }
+
+        public Int32 Row { get; }
+
+        public Double AreaWidth { get; }
     }
 }

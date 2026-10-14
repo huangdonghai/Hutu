@@ -47,6 +47,9 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         "-webkit-text-stroke-width",
         "-webkit-text-stroke-color",
         "-webkit-text-fill-color",
+        // The grid-lanes axis/packing descriptor, which AngleSharp has no grammar for at all; the lanes
+        // formatting context reads it as text.
+        "grid-lanes-direction",
     };
 
     /// <summary>
@@ -61,6 +64,18 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         ["background-clip"] = ["text"],
         ["color"] = ["-moz-default-color"],
         ["background-color"] = ["-moz-default-background-color"],
+    };
+
+    /// <summary>
+    /// The properties whose value is kept whole when it merely names one of these keywords somewhere in
+    /// it, rather than being exactly that keyword. <c>display</c> is the case: the grid-lanes spelling
+    /// arrives as a two-value form (<c>inline grid-lanes</c>, <c>block masonry</c>) that an exact
+    /// whole-value match would miss, and AngleSharp rejects the whole declaration for the unknown inner
+    /// keyword. Reading it keeps the page's own text for the box builder to route.
+    /// </summary>
+    private static readonly Dictionary<String, String[]> KeywordSubstringValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["display"] = ["grid-lanes", "masonry"],
     };
 
     /// <param name="inner">
@@ -100,9 +115,10 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // only that keyword is taken aside - every other value goes to AngleSharp as before, leaving its
         // own grammar and a shorthand's decomposition through it untouched. The rest keep their wide-keyword
         // reading.
-        IValueConverter converter = KeywordExtraValues.TryGetValue(propertyName, out var extra)
-            ? new ExtraKeywords(info.Converter, extra)
-            : new KeywordsFirst(info.Converter, info.Aggregator);
+        IValueConverter converter =
+            KeywordExtraValues.TryGetValue(propertyName, out var extra) ? new ExtraKeywords(info.Converter, extra) :
+            KeywordSubstringValues.TryGetValue(propertyName, out var contains) ? new AnyTokenPassThrough(info.Converter, contains) :
+            new KeywordsFirst(info.Converter, info.Aggregator);
 
         var wrapped = new DeclarationInfo(
             info.Name,
@@ -228,6 +244,52 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
             }
 
             if (Array.Exists(_extra, keyword => keyword.Equals(whole, StringComparison.OrdinalIgnoreCase)))
+            {
+                Consume(source);
+                return new CssRawValue(whole);
+            }
+
+            return _inner.Convert(source);
+        }
+
+        private static void Consume(StringSource source)
+        {
+            while (!source.IsDone)
+            {
+                source.Next();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads a known property's value and keeps the whole declaration when any token of it names one of a
+    /// short list of keywords AngleSharp's grammar does not - <c>display: inline grid-lanes</c>, whose
+    /// two-value form an exact whole-value match would miss. A value naming none of them is left at its
+    /// start for AngleSharp's own converter, so a wide keyword or an ordinary value is read as it always
+    /// was.
+    /// </summary>
+    private sealed class AnyTokenPassThrough : IValueConverter
+    {
+        private readonly IValueConverter _inner;
+        private readonly String[] _tokens;
+
+        public AnyTokenPassThrough(IValueConverter inner, String[] tokens)
+        {
+            _inner = inner;
+            _tokens = tokens;
+        }
+
+        public ICssValue? Convert(StringSource source)
+        {
+            var whole = source.Content.Substring(source.Index).Trim();
+
+            if (CssWideKeyword.Is(whole))
+            {
+                Consume(source);
+                return new CssWideKeyword(whole);
+            }
+
+            if (Array.Exists(_tokens, token => whole.Contains(token, StringComparison.OrdinalIgnoreCase)))
             {
                 Consume(source);
                 return new CssRawValue(whole);

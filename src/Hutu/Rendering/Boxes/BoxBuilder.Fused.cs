@@ -151,7 +151,7 @@ internal static partial class BoxBuilder
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
                         elementChild, index, parent.Next(style, cascade, variables, cache.Tag(element.LocalName)), device, images, faces, pool, cache, parser, flow,
-                        kind is BoxKind.Flex or BoxKind.Grid, ref supported);
+                        kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry, ref supported);
 
                     if (childBox is not null)
                     {
@@ -203,6 +203,7 @@ internal static partial class BoxBuilder
             // form a line box, which is what makes a bare word inside either container behave.
             case BoxKind.Flex:
             case BoxKind.Grid:
+            case BoxKind.Masonry:
                 GroupChildren(box, children, true);
                 break;
 

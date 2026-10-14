@@ -37,6 +37,12 @@ internal enum BoxKind
     /// columns rather than a single axis.</summary>
     Grid,
 
+    /// <summary>
+    /// A grid-lanes (masonry) container: block-level, and lays its children along one axis into the
+    /// shortest lane of the other, so tracks on the lane axis are sized by content rather than gridded.
+    /// </summary>
+    Masonry,
+
     /// <summary>A table wrapper box. Block-level in its parent's context, but lays its children out
     /// with the table algorithms rather than in normal flow.</summary>
     Table,
@@ -216,7 +222,7 @@ internal sealed class Box
     /// inside a <c>div</c>, say - it degrades to an empty block instead of joining a line box.
     /// </summary>
     public Boolean IsBlockLevel => Kind is BoxKind.Block or BoxKind.HorizontalRule or BoxKind.Flex or
-        BoxKind.Grid or BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or BoxKind.TableCell or
+        BoxKind.Grid or BoxKind.Masonry or BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or BoxKind.TableCell or
         BoxKind.TableCaption or BoxKind.TableColumn or BoxKind.TableColumnGroup;
 
     public Boolean IsInlineLevel => !IsBlockLevel;
