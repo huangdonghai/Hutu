@@ -508,14 +508,22 @@ internal readonly struct GridStyle
             var starting = name.EndsWith("-start", StringComparison.Ordinal);
             var ending = !starting && name.EndsWith("-end", StringComparison.Ordinal);
 
-            if ((starting || ending) &&
-                areas.TryBounds(name[..^6], out var areaColumn, out var areaColumnEnd, out var areaRow, out var areaRowEnd))
+            if (starting || ending)
             {
-                var reached = ending
-                    ? (horizontal ? areaColumnEnd : areaRowEnd)
-                    : (horizontal ? areaColumn : areaRow);
+                // Cut the suffix this spelling adds before asking for the area it names: "-start" is six
+                // characters, "-end" four. Cutting one length for both reads the wrong stem, and for a
+                // name no longer than the slice it asks for a substring of negative length.
+                var stem = starting ? name[..^6] : name[..^4];
 
-                return GridLine.At(reached);
+                if (stem.Length > 0 &&
+                    areas.TryBounds(stem, out var areaColumn, out var areaColumnEnd, out var areaRow, out var areaRowEnd))
+                {
+                    var reached = ending
+                        ? (horizontal ? areaColumnEnd : areaRowEnd)
+                        : (horizontal ? areaColumn : areaRow);
+
+                    return GridLine.At(reached);
+                }
             }
         }
 

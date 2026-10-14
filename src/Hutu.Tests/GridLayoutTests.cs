@@ -462,6 +462,30 @@ public sealed class GridLayoutTests
         Assert.That(a.BorderBox.Width, Is.GreaterThan(100), "and the named one keeps the rest it was sized to");
     }
 
+    /// <summary>
+    /// An area's <c>-end</c> line is named by cutting its four-character suffix, not the six that
+    /// <c>-start</c> takes. Cut the wrong length and a short area name asks for a substring of negative
+    /// length, while a longer one reads a stem that matches no area at all.
+    /// </summary>
+    [Test]
+    public async Task AnAreasEndLineCutsItsOwnSuffixLength()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;width:300px;grid-template-columns:100px 100px 100px;grid-template-rows:50px;" +
+            "grid-template-areas:&#39;. a a&#39;'>" +
+            "<div id='a' style='grid-column:a-start / a-end;grid-row:1'>a</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        // The area covers the second and third columns, so its start line is the second and its end the fourth.
+        Assert.That(a.BorderBox.X, Is.EqualTo(100).Within(0.5), "the -start line begins the area");
+        Assert.That(a.BorderBox.Right, Is.EqualTo(300).Within(0.5), "and the -end line closes it");
+    }
+
     private static LayoutBox Find(HutuViewInternal view, String id)
     {
         foreach (var node in Walk(view))
