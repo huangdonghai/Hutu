@@ -287,6 +287,42 @@ public sealed class BorderRadiusTests
         Assert.That(view.Paint!.Commands.OfType<PushClipCommand>(), Is.Empty);
     }
 
+    [Test]
+    public async Task ARelativelyPositionedChildIsStillClippedWhenAPositionedAncestorLiftsItIntoTheLayer()
+    {
+        // A positioned ancestor makes the painter walk this content on behalf of that stacking context,
+        // which lifts positioned descendants into its layer. A relatively positioned child is not taken
+        // out of the flow, so - CSS 2.1 section 11.1.1 - its containing block stays inside the clipping
+        // box and the clip still reaches it: it is painted back inside the clip, not lifted past it.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:relative'>" +
+            "<div id='b' style='width:100px;height:100px;overflow:hidden'>" +
+            "<div style='position:relative;width:200px;height:200px;background:#00ff00'></div>" +
+            "</div></div>" +
+            "</body></html>");
+
+        var commands = view.Paint!.Commands;
+        var box = BoxWithId(view, "b");
+        var childFill = commands.OfType<FillCommand>().Single(command => command.Color == 0xFF00FF00);
+
+        var opens = commands.OfType<PushClipCommand>()
+            .Where(clip => Math.Abs(clip.Bounds.X - box.PaddingBox.X) < 0.01 && Math.Abs(clip.Bounds.Width - box.PaddingBox.Width) < 0.01)
+            .ToList();
+
+        Assert.That(
+            opens.Any(clip => commands.IndexOf(clip) < commands.IndexOf(childFill)),
+            Is.True,
+            "the clip of the overflow-hidden box reaches the relative child even though a positioned " +
+            "ancestor took the walk into another stacking context");
+
+        Assert.That(
+            commands.OfType<PopClipCommand>().Any(clip => Math.Abs(clip.Bounds.X - box.PaddingBox.X) < 0.01 && commands.IndexOf(clip) > commands.IndexOf(childFill)),
+            Is.True,
+            "and it is closed again after the child, so the child is confined");
+    }
+
     private static async Task<LayoutBox> Box(String markup)
     {
         using var view = CreateView(400);

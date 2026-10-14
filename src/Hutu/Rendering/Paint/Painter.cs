@@ -52,11 +52,39 @@ internal sealed class Painter
         return list;
     }
 
+    /// <summary>One overflow clip standing around the place a box was found, kept so it can be put
+    /// back when that box is painted in a stacking context's layer.</summary>
+    private readonly record struct ClipEdge(Rect Bounds, CornerRadii Radii);
+
+    /// <summary>A positioned box left for an ancestor's stacking context to paint, with the overflow
+    /// clips that still reach it - those of the boxes it stands in that lie between it and the
+    /// layer, which the layer must not lift it out of.</summary>
+    private sealed class DeferredBox(LayoutBox box, List<ClipEdge> clips)
+    {
+        public LayoutBox Box { get; } = box;
+
+        public List<ClipEdge> Clips { get; } = clips;
+    }
+
+    /// <summary>Collects the positioned boxes a stacking context paints in its layer, and the overflow
+    /// clips standing along the walk that reaches each of them.</summary>
+    private sealed class DeferredStack
+    {
+        /// <summary>Gets the boxes waiting for the layer, in the order they were written.</summary>
+        public List<DeferredBox> Pending { get; } = [];
+
+        /// <summary>Gets the clips of the boxes climbed through on the way down that hide their
+        /// overflow, outermost first.</summary>
+        public List<ClipEdge> ActiveClips { get; } = [];
+    }
+
+    private static readonly List<ClipEdge> NoClips = [];
+
     /// <param name="deferred">
     /// Where a positioned descendant that belongs to a stacking context above this box is left, or null
     /// when this box is painted into the layer it stands in.
     /// </param>
-    private void PaintBox(LayoutBox box, PaintList list, List<PaintCommand> target, List<LayoutBox>? deferred = null)
+    private void PaintBox(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred = null)
     {
         // A box that is not seen draws nothing of itself - no background, border, image, text, marker
         // or outline - and still lets what is inside it draw, because a descendant can ask to be seen
@@ -107,7 +135,7 @@ internal sealed class Painter
                 {
                     if (deferred is not null && child.Position == PositionMode.Absolute && child.ZIndex == 0)
                     {
-                        deferred.Add(child);
+                        deferred.Pending.Add(new DeferredBox(child, NoClips));
                         continue;
                     }
 
@@ -186,7 +214,7 @@ internal sealed class Painter
             ToArgb(style.OutlineColor)));
     }
 
-    private void PaintBlock(LayoutBox box, PaintList list, List<PaintCommand> target, List<LayoutBox>? deferred = null)
+    private void PaintBlock(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred = null)
     {
         var style = box.Source.Style;
 
@@ -223,7 +251,7 @@ internal sealed class Painter
     /// no positioned child the document order is already the paint order, so the fast path avoids the
     /// four passes the layering needs.
     /// </summary>
-    private void PaintChildren(LayoutBox box, PaintList list, List<PaintCommand> target, List<LayoutBox>? deferred = null)
+    private void PaintChildren(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred = null)
     {
         // The clip covers the children only: the box's own background and border were painted before
         // it, which is what keeps a border from being cut off by the radius it draws.
@@ -232,25 +260,38 @@ internal sealed class Painter
         if (clipped)
         {
             target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
+
+            // While climbing on behalf of a stacking context above, the children are about to be lifted
+            // off this clip into that context's layer. The clip is noted, so that a descendant it still
+            // reaches - one whose containing block sits inside this box - gets it back when it is painted.
+            deferred?.ActiveClips.Add(new ClipEdge(box.PaddingBox, box.PaddingRadii));
         }
 
         if (deferred is not null)
         {
             // Walking the in-flow content of a box on behalf of the stacking context above it. A box
-            // taken out of the flow with an automatic level belongs to that context's positioned layer,
+            // taken out of the flow (absolute or fixed) belongs to that context's positioned layer,
             // however deep it stands in here, so it is left for the caller rather than painted where it
-            // happens to sit - which is how a box that should be covered ends up on top. It is left
-            // outside the clip this box may have pushed for the same reason: a clip reaches only the
-            // descendants whose containing block is inside the box that clips.
+            // happens to sit - which is how a box that should be covered ends up on top. Its containing
+            // block may sit outside this box, so it is left outside the clip too: a clip reaches only
+            // the descendants whose containing block is inside the box that clips.
+            //
+            // A relatively positioned box is not taken out of the flow - its containing block is the
+            // place it already stands - so every clip between it and the layer reaches it. It is left
+            // carrying those clips, which are put back around it when the layer is painted.
             foreach (var child in box.Children)
             {
-                if (child.Position != PositionMode.Static)
+                if (child.Position == PositionMode.Static)
                 {
-                    deferred.Add(child);
+                    PaintChild(child, list, target, deferred);
                     continue;
                 }
 
-                PaintChild(child, list, target, deferred);
+                var clips = child.Position == PositionMode.Relative
+                    ? new List<ClipEdge>(deferred.ActiveClips)
+                    : NoClips;
+
+                deferred.Pending.Add(new DeferredBox(child, clips));
             }
         }
         else if (HasPositionedChild(box))
@@ -268,6 +309,7 @@ internal sealed class Painter
         if (clipped)
         {
             target.Add(new PopClipCommand(box.PaddingBox));
+            deferred?.ActiveClips.RemoveAt(deferred.ActiveClips.Count - 1);
         }
     }
 
@@ -286,7 +328,7 @@ internal sealed class Painter
         //    not part of it, however deep it stands: it belongs to this stacking context's positioned
         //    layer, and painting it here would put it beneath a positioned sibling that comes later in
         //    the document - which is how a box that should be covered ends up on top.
-        var deferred = new List<LayoutBox>();
+        var deferred = new DeferredStack();
 
         foreach (var child in box.Children)
         {
@@ -295,7 +337,7 @@ internal sealed class Painter
                 // Its own layer is one of the other three passes; only an automatic level waits here.
                 if (child.ZIndex == 0)
                 {
-                    deferred.Add(child);
+                    deferred.Pending.Add(new DeferredBox(child, NoClips));
                 }
 
                 continue;
@@ -306,10 +348,22 @@ internal sealed class Painter
 
         // 3. Positioned boxes with `z-index: auto` or `0`, in document order: a box this box holds
         //    itself, then the ones the walk above met deeper in the tree. Depth is not the order - the
-        //    document is - so the layer is emitted in the order the boxes were written.
-        foreach (var child in deferred)
+        //    document is - so the layer is emitted in the order the boxes were written. A relatively
+        //    positioned box met deeper carries the overflow clips of the boxes it stands in, which are
+        //    put back around it here: the layer does not lift it out of a clip that reaches it.
+        foreach (var entry in deferred.Pending)
         {
-            PaintChild(child, list, target);
+            foreach (var clip in entry.Clips)
+            {
+                target.Add(new PushClipCommand(clip.Bounds, clip.Radii));
+            }
+
+            PaintChild(entry.Box, list, target);
+
+            for (var i = entry.Clips.Count - 1; i >= 0; i--)
+            {
+                target.Add(new PopClipCommand(entry.Clips[i].Bounds));
+            }
         }
 
         // 4. The positive z-index layer, lowest first. `OrderBy` is stable, so equal levels keep
@@ -337,7 +391,7 @@ internal sealed class Painter
     /// Paints one child into the layer its position asks for: a fixed box goes to the viewport layer,
     /// a sticky box to a pinned layer of its own, and everything else into the current one.
     /// </summary>
-    private void PaintChild(LayoutBox child, PaintList list, List<PaintCommand> target, List<LayoutBox>? deferred = null)
+    private void PaintChild(LayoutBox child, PaintList list, List<PaintCommand> target, DeferredStack? deferred = null)
     {
         switch (child.Position)
         {
