@@ -62,6 +62,26 @@ internal readonly struct PositionStyle
     /// <summary>Gets whether the box is removed from normal flow (<c>absolute</c> or <c>fixed</c>).</summary>
     public Boolean IsOutOfFlow => Position is PositionMode.Absolute or PositionMode.Fixed;
 
+    /// <summary>
+    /// What a box that says nothing about positioning is: in flow, at the place the flow gives it, with
+    /// no edge set and no stacking level of its own.
+    /// </summary>
+    /// <remarks>
+    /// An anonymous box carries this rather than its parent's. It has no element to declare a
+    /// <c>position</c> on, and a style inherited from a positioned parent would move a wrapper the
+    /// parent itself already moved - <see cref="PositionedLayout.IsOutOfFlow"/> guards the out-of-flow
+    /// half of that, and nothing guards the displacement, because the guard lives where the box is
+    /// asked about rather than where it is arranged.
+    /// </remarks>
+    internal static PositionStyle Static { get; } = new(
+        PositionMode.Static,
+        StyleLength.Auto,
+        StyleLength.Auto,
+        StyleLength.Auto,
+        StyleLength.Auto,
+        0,
+        false);
+
     internal static PositionStyle Read(ComputedStyle style) => new(
         ReadPosition(style),
         Inset(style, "top"),

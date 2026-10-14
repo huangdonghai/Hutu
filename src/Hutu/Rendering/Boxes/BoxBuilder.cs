@@ -388,7 +388,10 @@ internal static partial class BoxBuilder
         {
             if (wrapInline && children.Count > 0)
             {
-                var item = new Box(BoxKind.Block, parent.Style) { IsAnonymous = true, Flow = parent.Flow };
+                // Anonymous: it has no element, so it has no margin, no padding, no border and no
+                // position of its own. Taking the parent's style wholesale would give it the parent's
+                // margins, and a body's eight pixels would be counted twice.
+                var item = new Box(BoxKind.Block, parent.Style.AsAnonymous()) { IsAnonymous = true, Flow = parent.Flow };
 
                 foreach (var child in children)
                 {
@@ -453,7 +456,7 @@ internal static partial class BoxBuilder
                 continue;
             }
 
-            var anonymous = new Box(BoxKind.Block, parent.Style) { IsAnonymous = true, Flow = parent.Flow };
+            var anonymous = new Box(BoxKind.Block, parent.Style.AsAnonymous()) { IsAnonymous = true, Flow = parent.Flow };
             anonymous.Children.AddRange(run);
             parent.Children.Add(anonymous);
         }

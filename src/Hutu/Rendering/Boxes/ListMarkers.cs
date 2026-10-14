@@ -85,7 +85,7 @@ internal static class ListMarkers
         // The item opens with a block, or has nothing a line could hold. The marker is still the first
         // inline box in it, and the first thing in a block whose rest is blocks is a line of its own -
         // which in this tree is an anonymous block, the same shape the builder wraps inline runs in.
-        var line = new Box(BoxKind.Block, item.Style) { IsAnonymous = true, Flow = item.Flow };
+        var line = new Box(BoxKind.Block, item.Style.AsAnonymous()) { IsAnonymous = true, Flow = item.Flow };
         line.Children.Add(marker);
         item.Children.Insert(0, line);
     }

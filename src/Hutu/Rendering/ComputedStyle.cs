@@ -71,6 +71,49 @@ internal readonly struct ComputedStyle
         _values = values;
     }
 
+    /// <summary>
+    /// The style an anonymous box is given: this one, with every property that is not inherited taken
+    /// off it.
+    /// </summary>
+    /// <remarks>
+    /// CSS 2.1 §9.2.1.1 leaves an anonymous box at the initial value of every property that is not
+    /// inherited. Margin, padding and border are not inherited, so an anonymous box has none of them:
+    /// it takes exactly the place of the run of content it wraps, with nothing around it. Neither are
+    /// <c>display</c>, <c>float</c>, <c>clear</c>, <c>overflow</c>, <c>outline</c> or <c>position</c>,
+    /// so an anonymous box is a plain in-flow block that draws nothing of its own.
+    /// <para>
+    /// Handing the parent's style over wholesale hands it all of those too, and the damage is not
+    /// theoretical: a body's eight-pixel margin is counted a second time inside the body, which pushes
+    /// every line of text eight pixels in and eight pixels down from where it belongs; a parent's
+    /// <c>position: relative</c> displaces a wrapper the parent itself already displaced; and a
+    /// parent's <c>margin-bottom</c> swallows the top margin of the sibling that follows, because the
+    /// two collapse into a margin the anonymous box was never meant to have.
+    /// </para>
+    /// <para>
+    /// What <em>is</em> inherited travels on unchanged - the font, the text behaviour, the decorations
+    /// and the list marker style - because a word inside an anonymous block is set the way a word
+    /// beside it is, and the colours and background layers stay with the box that carries them.
+    /// </para>
+    /// </remarks>
+    internal ComputedStyle AsAnonymous()
+    {
+        var values = new StyleValues
+        {
+            Border = BorderArea.Default,
+            BoxModel = BoxModelArea.Default,
+            DisplayPositioning = new DisplayPositioningArea { Display = "block" },
+            VisualEffects = VisualEffectsArea.Default,
+            Font = _values.Font,
+            Text = _values.Text,
+            Decoration = _values.Decoration,
+            List = _values.List,
+            Position = PositionStyle.Static,
+            Fused = _values.Fused,
+        };
+
+        return new ComputedStyle(_dimensions, _element, _values.Fused!, values, _faces);
+    }
+
     /// <summary>The names a font property can begin with, the <c>font</c> shorthand included.</summary>
     private static readonly String[] FontNames =
         { "font-size", "font-family", "font-weight", "font-style", "letter-spacing", "line-height" };
