@@ -687,7 +687,6 @@ internal sealed class BlockLayout
         var previousBottomMargin = 0.0;
         var first = true;
         var constraints = MeasureConstraints.FitWidth(contentWidth);
-        var outOfFlow = new List<(Box Box, Offset Static)>();
         var tracks = TracksFor(box, contentWidth, contentX);
 
         foreach (var child in box.Children)
@@ -713,10 +712,20 @@ internal sealed class BlockLayout
 
             if (PositionedLayout.IsOutOfFlow(child))
             {
-                // Its place in flow is remembered as the static position - the anchor an unset
-                // offset falls back to - but the cursor does not advance, so the boxes after it
-                // close the gap it leaves behind.
-                outOfFlow.Add((child, new Offset(contentX + margin.Left, cursor + spacing)));
+                // Its place in flow is remembered as the static position - the anchor an unset offset
+                // falls back to - but the cursor does not advance, so the boxes after it close the gap
+                // it leaves behind.
+                //
+                // It is placed here, in the order the document wrote it, rather than after everything
+                // that follows it. Tree order is the paint order for a box with an automatic level, so a
+                // box appended past its later siblings is drawn over them whatever the stacking rules
+                // say - which is how a box that should be covered ends up on top. Placing it in order
+                // costs nothing: it takes no part in the stacking above either way.
+                parent.Children.Add(_engine.ArrangePositioned(
+                    child,
+                    new Offset(contentX + margin.Left, cursor + spacing),
+                    context));
+
                 continue;
             }
 
@@ -747,13 +756,6 @@ internal sealed class BlockLayout
             cursor = rect.Bottom;
             previousBottomMargin = margin.Bottom;
             first = false;
-        }
-
-        // The out-of-flow boxes are placed last, against the nearest positioned ancestor that the
-        // context already carries, and take no part in the stacking above.
-        foreach (var (child, staticPosition) in outOfFlow)
-        {
-            parent.Children.Add(_engine.ArrangePositioned(child, staticPosition, context));
         }
     }
 

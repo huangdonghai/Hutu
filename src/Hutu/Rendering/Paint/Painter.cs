@@ -52,7 +52,11 @@ internal sealed class Painter
         return list;
     }
 
-    private void PaintBox(LayoutBox box, PaintList list, List<PaintCommand> target)
+    /// <param name="deferred">
+    /// Where a positioned descendant that belongs to a stacking context above this box is left, or null
+    /// when this box is painted into the layer it stands in.
+    /// </param>
+    private void PaintBox(LayoutBox box, PaintList list, List<PaintCommand> target, List<LayoutBox>? deferred = null)
     {
         // A box that is not seen draws nothing of itself - no background, border, image, text, marker
         // or outline - and still lets what is inside it draw, because a descendant can ask to be seen
@@ -64,7 +68,7 @@ internal sealed class Painter
         // paragraph keeps its line to be drawn on.
         if (box.Kind != LayoutKind.Line && box.Source.Style.IsHidden)
         {
-            PaintChildren(box, list, target);
+            PaintChildren(box, list, target, deferred);
             return;
         }
 
@@ -91,20 +95,29 @@ internal sealed class Painter
                 // over the band its own runs take rather than over a whole line. It is given a box
                 // whether or not it has anything to draw, and most of them have nothing: the guards
                 // inside PaintBackground and AddBorder are what turn those away.
-                PaintBlock(box, list, target);
+                PaintBlock(box, list, target, deferred);
                 break;
 
             case LayoutKind.Line:
-                // A line box has no decorations of its own; only its runs are painted.
+                // A line box has no decorations of its own; only its runs are painted. A box taken out
+                // of the flow that stands on the line - the place it would have had, which is where its
+                // static position comes from - is left for the stacking context above, exactly as one
+                // standing among blocks is: it is here only to say where it belongs.
                 foreach (var child in box.Children)
                 {
-                    PaintBox(child, list, target);
+                    if (deferred is not null && child.Position == PositionMode.Absolute && child.ZIndex == 0)
+                    {
+                        deferred.Add(child);
+                        continue;
+                    }
+
+                    PaintBox(child, list, target, deferred);
                 }
 
                 break;
 
             default:
-                PaintBlock(box, list, target);
+                PaintBlock(box, list, target, deferred);
                 break;
         }
 
@@ -173,7 +186,7 @@ internal sealed class Painter
             ToArgb(style.OutlineColor)));
     }
 
-    private void PaintBlock(LayoutBox box, PaintList list, List<PaintCommand> target)
+    private void PaintBlock(LayoutBox box, PaintList list, List<PaintCommand> target, List<LayoutBox>? deferred = null)
     {
         var style = box.Source.Style;
 
@@ -189,7 +202,7 @@ internal sealed class Painter
             AddBorder(box, style, target);
         }
 
-        PaintChildren(box, list, target);
+        PaintChildren(box, list, target, deferred);
     }
 
     /// <summary>
@@ -197,7 +210,7 @@ internal sealed class Painter
     /// no positioned child the document order is already the paint order, so the fast path avoids the
     /// four passes the layering needs.
     /// </summary>
-    private void PaintChildren(LayoutBox box, PaintList list, List<PaintCommand> target)
+    private void PaintChildren(LayoutBox box, PaintList list, List<PaintCommand> target, List<LayoutBox>? deferred = null)
     {
         // The clip covers the children only: the box's own background and border were painted before
         // it, which is what keeps a border from being cut off by the radius it draws.
@@ -208,7 +221,26 @@ internal sealed class Painter
             target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
         }
 
-        if (HasPositionedChild(box))
+        if (deferred is not null)
+        {
+            // Walking the in-flow content of a box on behalf of the stacking context above it. A box
+            // taken out of the flow with an automatic level belongs to that context's positioned layer,
+            // however deep it stands in here, so it is left for the caller rather than painted where it
+            // happens to sit - which is how a box that should be covered ends up on top. It is left
+            // outside the clip this box may have pushed for the same reason: a clip reaches only the
+            // descendants whose containing block is inside the box that clips.
+            foreach (var child in box.Children)
+            {
+                if (child.Position != PositionMode.Static)
+                {
+                    deferred.Add(child);
+                    continue;
+                }
+
+                PaintChild(child, list, target, deferred);
+            }
+        }
+        else if (HasPositionedChild(box))
         {
             PaintStackedChildren(box, list, target);
         }
@@ -237,22 +269,34 @@ internal sealed class Painter
             }
         }
 
-        // 2. The in-flow, non-positioned content.
+        // 2. The in-flow, non-positioned content. A box taken out of the flow with an automatic level is
+        //    not part of it, however deep it stands: it belongs to this stacking context's positioned
+        //    layer, and painting it here would put it beneath a positioned sibling that comes later in
+        //    the document - which is how a box that should be covered ends up on top.
+        var deferred = new List<LayoutBox>();
+
         foreach (var child in box.Children)
         {
-            if (child.Position == PositionMode.Static)
+            if (child.Position != PositionMode.Static)
             {
-                PaintChild(child, list, target);
+                // Its own layer is one of the other three passes; only an automatic level waits here.
+                if (child.ZIndex == 0)
+                {
+                    deferred.Add(child);
+                }
+
+                continue;
             }
+
+            PaintChild(child, list, target, deferred);
         }
 
-        // 3. Positioned boxes with `z-index: auto` or `0`, in document order.
-        foreach (var child in box.Children)
+        // 3. Positioned boxes with `z-index: auto` or `0`, in document order: a box this box holds
+        //    itself, then the ones the walk above met deeper in the tree. Depth is not the order - the
+        //    document is - so the layer is emitted in the order the boxes were written.
+        foreach (var child in deferred)
         {
-            if (child.Position != PositionMode.Static && child.ZIndex == 0)
-            {
-                PaintChild(child, list, target);
-            }
+            PaintChild(child, list, target);
         }
 
         // 4. The positive z-index layer, lowest first. `OrderBy` is stable, so equal levels keep
@@ -280,7 +324,7 @@ internal sealed class Painter
     /// Paints one child into the layer its position asks for: a fixed box goes to the viewport layer,
     /// a sticky box to a pinned layer of its own, and everything else into the current one.
     /// </summary>
-    private void PaintChild(LayoutBox child, PaintList list, List<PaintCommand> target)
+    private void PaintChild(LayoutBox child, PaintList list, List<PaintCommand> target, List<LayoutBox>? deferred = null)
     {
         switch (child.Position)
         {
@@ -295,7 +339,7 @@ internal sealed class Painter
                 break;
 
             default:
-                PaintBox(child, list, target);
+                PaintBox(child, list, target, deferred);
                 break;
         }
     }

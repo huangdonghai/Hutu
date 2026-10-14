@@ -73,7 +73,9 @@ internal sealed class PositionedLayout
         var (width, x) = Horizontal(position, style, containingBlock, staticPosition.X, measured.Width, margin);
         var (height, y) = Vertical(position, style, containingBlock, staticPosition.Y, measured.Height, margin);
 
-        return _engine.Arrange(box, new Rect(x, y, width, height), childContext);
+        var placed = _engine.Arrange(box, new Rect(x, y, width, height), childContext);
+
+        return placed;
     }
 
     /// <summary>
