@@ -322,11 +322,16 @@ internal static class BackgroundLayerParser
 
     // --- colours --------------------------------------------------------
 
-    private static UInt32? ParseColor(String text)
+    /// <summary>
+    /// Reads a colour written as text - a hex triple, a named colour or an <c>rgb()</c>/<c>rgba()</c> -
+    /// as packed ARGB, or null when the text names no colour. The background layers use it, and so does
+    /// a reader of a vendor value AngleSharp never parsed into a colour of its own.
+    /// </summary>
+    internal static UInt32? ParseColor(String text)
     {
         if (text.StartsWith('#'))
         {
-            return CssColorValue.TryFromHex(text, out var hex) ? ToArgb(hex) : null;
+            return ParseHex(text[1..]);
         }
 
         var open = text.IndexOf('(');
@@ -373,6 +378,28 @@ internal static class BackgroundLayerParser
         Double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
             ? value
             : null;
+
+    /// <summary>Reads a hex colour written as three, four, six or eight digits, alpha last.</summary>
+    private static UInt32? ParseHex(String digits)
+    {
+        if (digits.Length is not (3 or 4 or 6 or 8) ||
+            !digits.All(Uri.IsHexDigit))
+        {
+            return null;
+        }
+
+        if (digits.Length is 3 or 4)
+        {
+            digits = String.Concat(digits.Select(c => new String(c, 2)));
+        }
+
+        Byte Channel(Int32 at) =>
+            Byte.Parse(digits.Substring(at, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+
+        var alpha = digits.Length == 8 ? Channel(6) : (Byte)255;
+
+        return ToArgb(CssColorValue.FromRgba(Channel(0), Channel(2), Channel(4), alpha / 255.0));
+    }
 
     private static UInt32 ToArgb(CssColorValue color) =>
         (UInt32)((color.A << 24) | (color.R << 16) | (color.G << 8) | color.B);

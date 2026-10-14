@@ -35,6 +35,20 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
     /// </summary>
     private readonly Dictionary<String, DeclarationInfo> _cache = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// The properties AngleSharp has no grammar for, kept whole as text for a reader to interpret. Each is
+    /// a vendor spelling the rendering requirements honour and no converter of AngleSharp's recognises, so
+    /// without this the declaration would never survive the parse at all.
+    /// </summary>
+    private static readonly HashSet<String> RawValueNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-webkit-background-clip",
+        "-webkit-text-stroke",
+        "-webkit-text-stroke-width",
+        "-webkit-text-stroke-color",
+        "-webkit-text-fill-color",
+    };
+
     /// <param name="inner">
     /// The factory whose grammar every declaration keeps. Without one, the reader reads declarations
     /// the way AngleSharp's own factory does.
@@ -49,10 +63,36 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
             return cached;
         }
 
+        // A vendor name AngleSharp cannot parse is kept whole rather than dropped, so the reader that
+        // meets it can make of the text what the property means. It has no AngleSharp grammar to keep, so
+        // no shorthands or longhands ride with it.
+        if (RawValueNames.Contains(propertyName))
+        {
+            var raw = new DeclarationInfo(
+                propertyName,
+                new RawKeep(),
+                PropertyFlags.None,
+                new CssRawValue(String.Empty),
+                Array.Empty<String>(),
+                Array.Empty<String>());
+
+            _cache[propertyName] = raw;
+            return raw;
+        }
+
         var info = _inner.Create(propertyName);
+
+        // background-clip is one AngleSharp knows, yet its grammar stops short of the "text" the
+        // requirements accept. Only that keyword is taken aside and every other value handed to AngleSharp
+        // as before, so a background shorthand's own decomposition - which writes the box values here - is
+        // left untouched.
+        var converter = propertyName.Equals("background-clip", StringComparison.OrdinalIgnoreCase)
+            ? (IValueConverter)new TextAlsoPassesThrough(info.Converter)
+            : new KeywordsFirst(info.Converter, info.Aggregator);
+
         var wrapped = new DeclarationInfo(
             info.Name,
-            new KeywordsFirst(info.Converter, info.Aggregator),
+            converter,
             info.Flags,
             info.InitialValue,
             info.Shorthands,
@@ -112,5 +152,72 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         public ICssValue[]? Split(ICssValue value) => _aggregator?.Split(value);
 
         public ICssValue? Merge(ICssValue[] values) => _aggregator?.Merge(values);
+    }
+
+    /// <summary>
+    /// Keeps the whole value of a property AngleSharp has no grammar for, exactly as the page wrote it,
+    /// save that a value which is only a wide keyword still reads as one.
+    /// </summary>
+    /// <remarks>
+    /// The source for a declaration is bounded to that declaration, so what remains from here to the end
+    /// is the value; it is taken whole and consumed to the end, which is what the parser expects a
+    /// converter to do. The reader downstream splits it apart again the way the property means it.
+    /// </remarks>
+    private sealed class RawKeep : IValueConverter
+    {
+        public ICssValue? Convert(StringSource source)
+        {
+            var raw = source.Content.Substring(source.Index);
+
+            while (!source.IsDone)
+            {
+                source.Next();
+            }
+
+            var trimmed = raw.Trim();
+
+            return CssWideKeyword.Is(trimmed)
+                ? new CssWideKeyword(trimmed)
+                : new CssRawValue(raw);
+        }
+    }
+
+    /// <summary>
+    /// Hands <c>background-clip</c> the one value AngleSharp's own grammar rejects - <c>text</c> - while
+    /// leaving every value it does know to be read as it always was.
+    /// </summary>
+    /// <remarks>
+    /// The keyword is read and then put back when it is not one of the two this converter claims, so the
+    /// wrapped converter sees exactly what it would have seen had this never stood in front of it - the
+    /// same discipline <see cref="KeywordsFirst"/> keeps for the wide keywords.
+    /// </remarks>
+    private sealed class TextAlsoPassesThrough : IValueConverter
+    {
+        private readonly IValueConverter _inner;
+
+        public TextAlsoPassesThrough(IValueConverter inner) => _inner = inner;
+
+        public ICssValue? Convert(StringSource source)
+        {
+            var start = source.Index;
+            var ident = source.ParseIdent();
+
+            if (CssWideKeyword.Is(ident))
+            {
+                return new CssWideKeyword(ident!);
+            }
+
+            if (!String.IsNullOrEmpty(ident) && ident!.Equals("text", StringComparison.OrdinalIgnoreCase))
+            {
+                return new CssRawValue("text");
+            }
+
+            while (source.Index > start)
+            {
+                source.Back();
+            }
+
+            return _inner.Convert(source);
+        }
     }
 }

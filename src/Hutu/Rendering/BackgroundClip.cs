@@ -16,4 +16,11 @@ internal enum BackgroundClip : byte
 
     /// <summary>The content box.</summary>
     ContentBox,
+
+    /// <summary>
+    /// The shape of the text the element paints, so the background shows through the glyphs and nowhere
+    /// else. Where the other members pick a box, this picks the ink, and a text stroke widens the glyphs
+    /// it clips to.
+    /// </summary>
+    Text,
 }

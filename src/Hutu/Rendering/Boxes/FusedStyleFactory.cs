@@ -24,6 +24,13 @@ internal sealed class FusedParent
     public Int32 Weight { get; init; } = 400;
     public Boolean Italic { get; init; }
     public Double? LineHeight { get; init; }
+
+    /// <summary>Gets the parent's text stroke, carried down because both halves of it are inherited.</summary>
+    public Double TextStrokeWidth { get; init; }
+    public UInt32 TextStrokeColor { get; init; }
+
+    /// <summary>Gets the parent's text fill colour, null where neither it nor an ancestor set one.</summary>
+    public UInt32? TextFillColor { get; init; }
     public ICssProperty? LineHeightHit { get; init; }
     public String WhiteSpace { get; init; } = "normal";
     public String Align { get; init; } = "start";
@@ -118,6 +125,9 @@ internal sealed class FusedParent
         Weight = style.FontWeight,
         Italic = style.IsItalic,
         LineHeight = style.LineHeight,
+        TextStrokeWidth = style.TextStrokeWidth,
+        TextStrokeColor = style.TextStrokeColor,
+        TextFillColor = style.TextFillColor,
 
         // The nearest declaration at or above this element, not merely its own. A number or a
         // share is re-resolved against every element's own size, so it has to keep travelling
@@ -445,6 +455,14 @@ internal static class FusedStyleFactory
         var color = ComputedStyle.ResolveColorFused(
             element, find("color"), parent.Color, ComputedStyle.ResolveLinkColorFused(element));
 
+        // The text stroke and fill are read here rather than in the keywords below because they reach
+        // across to the parent: each is inherited, and a shorthand sets both halves of the stroke at once.
+        var (strokeWidth, strokeColor) = ComputedStyle.ResolveTextStrokeFused(
+            find, parent.TextStrokeWidth, parent.TextStrokeColor, size, dimensions.RootFontSize);
+
+        var fillColor = ComputedStyle.ResolveTextFillColorFused(
+            find("-webkit-text-fill-color")?.Value, parent.TextFillColor);
+
         var keywords = new ComputedStyle.FusedKeywords
         {
             WritingMode = writingMode,
@@ -457,7 +475,10 @@ internal static class FusedStyleFactory
             Cursor = ComputedStyle.ResolveCursorFused(element, find("cursor"), parent.Cursor),
             Ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position"), parent.Ruby),
             OutlineColor = ComputedStyle.ResolveOutlineColorFused(find("outline-color"), color),
-            BackgroundClip = ComputedStyle.ResolveBackgroundClipFused(find("background-clip")),
+            BackgroundClip = ComputedStyle.ResolveBackgroundClipFused(find("background-clip"), find("-webkit-background-clip")),
+            TextStrokeWidth = strokeWidth,
+            TextStrokeColor = strokeColor,
+            TextFillColor = fillColor,
             BorderTopColor = ComputedStyle.ResolveBorderColorFused(find("border-top-color"), color),
             BorderRightColor = ComputedStyle.ResolveBorderColorFused(find("border-right-color"), color),
             BorderBottomColor = ComputedStyle.ResolveBorderColorFused(find("border-bottom-color"), color),

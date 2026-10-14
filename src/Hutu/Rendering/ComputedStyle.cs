@@ -1224,11 +1224,26 @@ internal readonly struct ComputedStyle
     };
 
     /// <summary>
-    /// Resolves the background clip from the element's own cascaded declaration, for the fused path.
+    /// Resolves the background clip from the element's own cascaded declarations, for the fused path.
+    /// The <c>-webkit-</c> spelling is read alongside the standard one because that is where a page still
+    /// says <c>text</c>: whichever names it wins, and the box values come from the standard property as
+    /// they always did.
     /// </summary>
-    public static BackgroundClip ResolveBackgroundClipFused(ICssProperty? declared)
+    public static BackgroundClip ResolveBackgroundClipFused(ICssProperty? declared, ICssProperty? webkitDeclared)
     {
-        var value = KeywordText(declared, String.Empty);
+        var clip = MapBackgroundClip(KeywordText(declared, String.Empty));
+
+        if (clip != BackgroundClip.Text &&
+            MapBackgroundClip(KeywordText(webkitDeclared, String.Empty)) == BackgroundClip.Text)
+        {
+            return BackgroundClip.Text;
+        }
+
+        return clip;
+    }
+
+    private static BackgroundClip MapBackgroundClip(String value)
+    {
         var comma = value.IndexOf(',');
         var keyword = (comma < 0 ? value : value[..comma]).Trim();
 
@@ -1236,8 +1251,143 @@ internal readonly struct ComputedStyle
         {
             "padding-box" => BackgroundClip.PaddingBox,
             "content-box" => BackgroundClip.ContentBox,
+            "text" => BackgroundClip.Text,
             _ => BackgroundClip.BorderBox,
         };
+    }
+
+    /// <summary>
+    /// Resolves the text stroke - the width the glyphs are ringed with and the colour of that ring - for
+    /// the fused path. Both are inherited, and the shorthand <c>-webkit-text-stroke</c> can set either;
+    /// a longhand written beside it wins for its own half, and anything left unsaid comes from the parent.
+    /// A width no one gave is none, and a colour no one gave is transparent.
+    /// </summary>
+    public static (Double Width, UInt32 Color) ResolveTextStrokeFused(
+        Func<String, ICssProperty?> find,
+        Double parentWidth,
+        UInt32 parentColor,
+        Double ownSize,
+        Double rootSize)
+    {
+        var shorthand = find("-webkit-text-stroke")?.Value;
+        Double? shorthandWidth = null;
+        UInt32? shorthandColor = null;
+
+        if (!String.IsNullOrWhiteSpace(shorthand))
+        {
+            foreach (var token in SplitValues(shorthand!))
+            {
+                if (shorthandWidth is null && ParseVendorLength(token, ownSize, rootSize) is { } length)
+                {
+                    shorthandWidth = length;
+                }
+                else if (shorthandColor is null && ParseVendorColor(token) is { } parsed)
+                {
+                    shorthandColor = parsed;
+                }
+            }
+        }
+
+        var width = ParseVendorLength(find("-webkit-text-stroke-width")?.Value ?? String.Empty, ownSize, rootSize)
+                    ?? shorthandWidth
+                    ?? parentWidth;
+
+        var color = ParseVendorColor(find("-webkit-text-stroke-color")?.Value ?? String.Empty) ?? shorthandColor ?? parentColor;
+
+        return (width, color);
+    }
+
+    /// <summary>
+    /// Resolves <c>-webkit-text-fill-color</c>, which stands in for the text colour where it is given and
+    /// is otherwise inherited; null means "not said", and the element's own colour paints the glyphs.
+    /// </summary>
+    public static UInt32? ResolveTextFillColorFused(String? declared, UInt32? parent)
+    {
+        if (!String.IsNullOrWhiteSpace(declared) && ParseVendorColor(declared!) is { } color)
+        {
+            return color;
+        }
+
+        return parent;
+    }
+
+    private static Double? ParseVendorLength(String text, Double ownSize, Double rootSize)
+    {
+        text = text.Trim();
+
+        switch (text.ToLowerInvariant())
+        {
+            case "": return null;
+            case "thin": return 1;
+            case "medium": return 3;
+            case "thick": return 5;
+        }
+
+        var match = VendorLengthPattern.Match(text);
+
+        if (!match.Success || !Double.TryParse(match.Groups["number"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            return null;
+        }
+
+        return match.Groups["unit"].Value.ToLowerInvariant() switch
+        {
+            "" or "px" => value,
+            "em" => value * ownSize,
+            "rem" => value * rootSize,
+            "%" => value / 100 * ownSize,
+            "pt" => value * 96 / 72,
+            "pc" => value * 16,
+            "in" => value * 96,
+            "cm" => value * 96 / 2.54,
+            "mm" => value * 96 / 25.4,
+            _ => null,
+        };
+    }
+
+    private static UInt32? ParseVendorColor(String text) =>
+        String.IsNullOrWhiteSpace(text) ? null : BackgroundLayerParser.ParseColor(text.Trim());
+
+    /// <summary>Captures a number and the unit that follows it, for a length read from raw text.</summary>
+    private static readonly System.Text.RegularExpressions.Regex VendorLengthPattern = new(
+        @"^(?<number>[+-]?(?:\d+\.?\d*|\.\d+))(?<unit>[a-zA-Z%]*)$",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>Splits a value into its whitespace-separated pieces, keeping what parentheses hold.</summary>
+    private static IEnumerable<String> SplitValues(String text)
+    {
+        var depth = 0;
+        var run = new System.Text.StringBuilder();
+
+        foreach (var c in text)
+        {
+            if (c == '(')
+            {
+                depth++;
+            }
+            else if (c == ')')
+            {
+                depth = Math.Max(0, depth - 1);
+            }
+
+            if (depth == 0 && Char.IsWhiteSpace(c))
+            {
+                if (run.Length > 0)
+                {
+                    yield return run.ToString();
+                    run.Clear();
+                }
+
+                continue;
+            }
+
+            run.Append(c);
+        }
+
+        if (run.Length > 0)
+        {
+            yield return run.ToString();
+        }
     }
 
     /// <summary>
@@ -1636,6 +1786,17 @@ internal readonly struct ComputedStyle
         internal CssColorValue? BorderRightColor;
         internal CssColorValue? BorderBottomColor;
         internal CssColorValue? BorderLeftColor;
+
+        /// <summary>Gets the width the glyphs are ringed with, in pixels; zero is no stroke.</summary>
+        internal Double TextStrokeWidth;
+
+        /// <summary>Gets the packed ARGB of that ring; transparent by default, so a stroke can widen the
+        /// ink a background is clipped to without painting a colour of its own.</summary>
+        internal UInt32 TextStrokeColor;
+
+        /// <summary>Gets the colour the glyph body is filled with, standing in for <c>color</c> where the
+        /// page set <c>-webkit-text-fill-color</c>; null means it did not.</summary>
+        internal UInt32? TextFillColor;
     }
 
     /// <summary>
@@ -2291,10 +2452,27 @@ internal readonly struct ComputedStyle
             {
                 "padding-box" => BackgroundClip.PaddingBox,
                 "content-box" => BackgroundClip.ContentBox,
+                "text" => BackgroundClip.Text,
                 _ => BackgroundClip.BorderBox,
             };
         }
     }
+
+    /// <summary>
+    /// Gets the width the text stroke is drawn at, in pixels; zero when the page asked for none. It is
+    /// carried down the tree, for the stroke is inherited and a text run only knows its own through the
+    /// element it belongs to.
+    /// </summary>
+    internal Double TextStrokeWidth => _values.Fused is { } fused ? fused.TextStrokeWidth : 0;
+
+    /// <summary>Gets the packed ARGB of the text stroke's colour; transparent when none was said.</summary>
+    internal UInt32 TextStrokeColor => _values.Fused is { } fused ? fused.TextStrokeColor : 0;
+
+    /// <summary>
+    /// Gets the colour the glyph body is filled with where <c>-webkit-text-fill-color</c> set one, or null
+    /// to let the element's own <c>color</c> paint it.
+    /// </summary>
+    internal UInt32? TextFillColor => _values.Fused is { } fused ? fused.TextFillColor : null;
 
     /// <summary>
     /// Gets whether descendants are clipped to the box, which is what every <c>overflow</c> value
