@@ -693,20 +693,31 @@ internal readonly struct ComputedStyle
         Func<String, ICssProperty?> find,
         (String Top, String Right, String Bottom, String Left) styles,
         Double ownSize,
-        IRenderDimensions dimensions) =>
+        IRenderDimensions dimensions,
+        BorderArea? parent) =>
     (
-        BorderWidthFused(styles.Top, find("border-top-width"), ownSize, dimensions),
-        BorderWidthFused(styles.Right, find("border-right-width"), ownSize, dimensions),
-        BorderWidthFused(styles.Bottom, find("border-bottom-width"), ownSize, dimensions),
-        BorderWidthFused(styles.Left, find("border-left-width"), ownSize, dimensions)
+        BorderWidthFused(styles.Top, find("border-top-width"), ownSize, dimensions, parent?.TopWidth),
+        BorderWidthFused(styles.Right, find("border-right-width"), ownSize, dimensions, parent?.RightWidth),
+        BorderWidthFused(styles.Bottom, find("border-bottom-width"), ownSize, dimensions, parent?.BottomWidth),
+        BorderWidthFused(styles.Left, find("border-left-width"), ownSize, dimensions, parent?.LeftWidth)
     );
 
     private static Double BorderWidthFused(
-        String style, ICssProperty? declared, Double ownSize, IRenderDimensions dimensions)
+        String style, ICssProperty? declared, Double ownSize, IRenderDimensions dimensions, Double? parentWidth)
     {
         if (!BorderArea.Draws(style))
         {
             return 0;
+        }
+
+        // `inherit` takes the parent's computed width, which was resolved to pixels at the parent's own
+        // font size - and that is the point of the keyword: a child set to a larger font does not read
+        // the parent's `1em` again as its own bigger em, it takes the length the parent came to. Only a
+        // plain `inherit` behaves so; `unset` on this non-inherited property falls to the initial medium,
+        // as every value the property itself cannot take does.
+        if (parentWidth is { } inherited && DeclaresInherit(declared))
+        {
+            return inherited;
         }
 
         if (declared is not null &&
@@ -719,6 +730,15 @@ internal readonly struct ComputedStyle
         // which the old path resolves the same way. Pinned by the differential test.
         return 3;
     }
+
+    /// <summary>
+    /// Gets whether a box-model declaration is the bare <c>inherit</c> keyword, which hands the side the
+    /// parent's computed value rather than a length or the property's own initial.
+    /// </summary>
+    private static Boolean DeclaresInherit(ICssProperty? declared) => declared is not null &&
+        (declared.RawValue is CssWideKeyword wide
+            ? wide.CssText.Equals("inherit", StringComparison.OrdinalIgnoreCase)
+            : declared.Value?.Trim().Equals("inherit", StringComparison.OrdinalIgnoreCase) == true);
 
     /// <summary>
     /// Resolves the corner radii from the element's own cascaded declarations, for the fused
@@ -1613,6 +1633,9 @@ internal readonly struct ComputedStyle
     /// cache can name by reference instead of by walking its six values.
     /// </summary>
     internal FontArea ResolvedFont => _values.Font;
+
+    /// <summary>Gets the border area this style answers from, shared with every style whose border agrees.</summary>
+    internal BorderArea ResolvedBorder => _values.Border;
 
     /// <summary>Gets the text area this style answers from, shared with every style whose text agrees.</summary>
     internal TextArea ResolvedText => _values.Text;

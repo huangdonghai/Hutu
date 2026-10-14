@@ -78,6 +78,13 @@ internal sealed class FusedParent
     internal ListArea? List { get; init; }
 
     /// <summary>
+    /// Gets the parent's border area. Border is not an inherited property, so this travels for one
+    /// reason only: a child that writes <c>border-width: inherit</c> takes the width the parent came to,
+    /// resolved at the parent's font size rather than re-read at the child's.
+    /// </summary>
+    internal BorderArea? Border { get; init; }
+
+    /// <summary>
     /// Gets the scope this element's own <c>var()</c> references were read through, which is what its
     /// children inherit unless they redeclare a custom property of their own. Null for a page that
     /// declares none anywhere, which is every sample page and most of the tests.
@@ -134,6 +141,7 @@ internal sealed class FusedParent
         Font = style.ResolvedFont,
         Text = style.ResolvedText,
         List = style.ResolvedList,
+        Border = style.ResolvedBorder,
         Variables = variables,
         Tag = tag,
         Ruby = style.RubyPosition,
@@ -263,9 +271,11 @@ internal static class FusedStyleFactory
 
         // A border is read from the cascade and the font size alone - the size is in the key because a
         // width in em is that many pixels of it - so an element that matched the same cascade at the
-        // same size as an earlier one has nothing left to resolve. What the cache holds is the interned
-        // instance, so a hit hands back the very object the value table would have found.
-        var key = new AreaKey(cascade, size, variables: variables);
+        // same size as an earlier one has nothing left to resolve. The parent's border rides in the key
+        // as well, for the one value that reaches across to it: a width the child inherits is the parent's
+        // computed length, not the child's own. What the cache holds is the interned instance, so a hit
+        // hands back the very object the value table would have found.
+        var key = new AreaKey(cascade, size, parent.Border, variables: variables);
 
         if (cache is not null && cache.TryBorder(key, out var border))
         {
@@ -275,7 +285,7 @@ internal static class FusedStyleFactory
         else
         {
             var borderStyles = ComputedStyle.ResolveBorderStylesFused(find);
-            var borderWidths = ComputedStyle.ResolveBorderWidthsFused(find, borderStyles, size, dimensions);
+            var borderWidths = ComputedStyle.ResolveBorderWidthsFused(find, borderStyles, size, dimensions, parent.Border);
             var built = new BorderArea
             {
                 TopStyle = borderStyles.Top,
