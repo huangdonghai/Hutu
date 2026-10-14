@@ -35,6 +35,9 @@
   <ItemGroup>
     <!-- Tests -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <!-- The reference collector drives the Edge that is already installed (channel: msedge), so this
+         package brings the driver but never a browser download. -->
+    <PackageVersion Include="Microsoft.Playwright" Version="1.60.0" />
     <!-- NUnit 4 is a floor set by Avalonia.Headless.NUnit, which needs >= 4.5.1. The tests only use
          the constraint model (Assert.That) and no classic asserts, so the major version is not a
          breaking change for them. -->

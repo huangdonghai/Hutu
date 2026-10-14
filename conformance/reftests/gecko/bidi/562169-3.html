@@ -1,0 +1,16 @@
+<link rel="match" href="562169-3-ref.html">
+<!DOCTYPE html>
+<html>
+ <head>
+  <meta charset="UTF-8">
+  <title>dir() selector</title>
+  <style>
+   :not(:dir(rtl)) + div { color: blue }
+   div { color: lime; text-align: left; }
+  </style>
+ </head>
+ <body>
+  <div dir="rtl">This element is rtl.</div>
+  <div>This element has default direction.</div>
+ </body>
+</html>

@@ -1,0 +1,24 @@
+<link rel="match" href="mix-blend-mode-culling-1207041-ref.html">
+<!DOCTYPE HTML>
+<head>
+  <style>
+    .parent {
+       width: 200px;
+       height: 200px;
+       isolation: isolate;
+       background: orange;
+    }
+    .child {
+      width: 200px;
+      height: 200px;
+      mix-blend-mode: screen;
+      background: green;
+    }
+  </style>
+</head>
+<body>
+ <div class="parent">
+  <div class="child">
+  </div>
+ </div>
+</body>

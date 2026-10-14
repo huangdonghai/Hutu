@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="NUnit" />
+    <PackageReference Include="NUnit3TestAdapter" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Hutu\Hutu.csproj" />
+    <ProjectReference Include="..\Hutu.Skia\Hutu.Skia.csproj" />
+    <!-- The schema the reference is written in and the case it is described by belong to the
+         collector; reading them here rather than re-declaring them is what keeps the two ends of the
+         harness from drifting apart without noticing. -->
+    <ProjectReference Include="..\..\tools\Hutu.Reference\Hutu.Reference.csproj" />
+  </ItemGroup>
+
+</Project>

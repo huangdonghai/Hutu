@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>an unclosed dialog</title>
+<link rel="match" href="unclosed-dialog-ref.html">
+<style>
+  /* A dialog that was never opened is not on the page: a browser hides it with the second half of its
+     own rule, <code>dialog:not([open]) { display: none }</code>, and this reader's sheet only has the
+     first half - <code>dialog { display: block }</code>, which HTML5 needed because the CSS 2.2 sheet
+     the engine is built from never knew the element. The reference is the blank page that implies, so
+     the pair disagrees until the rule is finished. */
+  html, body { margin: 0 }
+  dialog { padding: 0; border: 0 }
+  #inside { width: 100px; height: 50px; background: #ff0000 }
+</style>
+<dialog><div id="inside"></div></dialog>

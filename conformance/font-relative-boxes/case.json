@@ -1,0 +1,27 @@
+{
+  "page": "page.html",
+  "viewportWidth": 800,
+  "viewportHeight": 600,
+  "tolerance": 0.6,
+  "selectors": [
+    "body",
+    "#col",
+    "#card",
+    "#em",
+    "#pct",
+    "#abs",
+    "#row",
+    "#one",
+    "#two",
+    "#tail"
+  ],
+  "groups": [
+    "#row > div"
+  ],
+  "styles": [
+    "font-size",
+    "line-height",
+    "display",
+    "position"
+  ]
+}

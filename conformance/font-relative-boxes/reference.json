@@ -1,0 +1,203 @@
+{
+  "source": "page.html",
+  "environment": {
+    "browser": "151.0.4129.59",
+    "channel": "msedge",
+    "viewportWidth": 800,
+    "viewportHeight": 600,
+    "deviceScaleFactor": 1,
+    "colorScheme": "light",
+    "language": "en-US",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0",
+    "clientWidth": 800,
+    "clientHeight": 600,
+    "scrollWidth": 800,
+    "scrollHeight": 732,
+    "scriptsNeutralized": 0,
+    "handlersStripped": 0,
+    "noscriptBlocks": 0,
+    "webFonts": 0
+  },
+  "elements": [
+    {
+      "selector": "body",
+      "index": 0,
+      "found": true,
+      "x": 0,
+      "y": 0,
+      "width": 800,
+      "height": 732,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#col",
+      "index": 0,
+      "found": true,
+      "x": 130,
+      "y": 0,
+      "width": 540,
+      "height": 732,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "relative"
+      }
+    },
+    {
+      "selector": "#card",
+      "index": 0,
+      "found": true,
+      "x": 130,
+      "y": 16,
+      "width": 300,
+      "height": 100,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#em",
+      "index": 0,
+      "found": true,
+      "x": 130,
+      "y": 132,
+      "width": 280,
+      "height": 20,
+      "styles": {
+        "font-size": "28px",
+        "line-height": "42px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#pct",
+      "index": 0,
+      "found": true,
+      "x": 130,
+      "y": 168,
+      "width": 210,
+      "height": 20,
+      "styles": {
+        "font-size": "21px",
+        "line-height": "31.5px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#abs",
+      "index": 0,
+      "found": true,
+      "x": 165,
+      "y": 158,
+      "width": 200,
+      "height": 183,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "absolute"
+      }
+    },
+    {
+      "selector": "#row",
+      "index": 0,
+      "found": true,
+      "x": 130,
+      "y": 204,
+      "width": 540,
+      "height": 40,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "flex",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#one",
+      "index": 0,
+      "found": true,
+      "x": 130,
+      "y": 260,
+      "width": 540,
+      "height": 20,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#two",
+      "index": 0,
+      "found": true,
+      "x": 130,
+      "y": 296,
+      "width": 540,
+      "height": 20,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#tail",
+      "index": 0,
+      "found": true,
+      "x": 130,
+      "y": 332,
+      "width": 540,
+      "height": 400,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#row > div",
+      "index": 0,
+      "found": true,
+      "x": 130,
+      "y": 204,
+      "width": 100,
+      "height": 40,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#row > div",
+      "index": 1,
+      "found": true,
+      "x": 244,
+      "y": 204,
+      "width": 100,
+      "height": 40,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    }
+  ]
+}

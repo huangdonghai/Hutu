@@ -55,6 +55,36 @@ public sealed class PositionedLayoutTests
     }
 
     [Test]
+    public async Task AbsoluteBlockifiesTheBoxThatWasInline()
+    {
+        using var view = CreateView(400);
+
+        // A picture is inline, and a page that pins one to an offset of its containing block means it
+        // to leave the line it was written on. Left on the line, the offsets ask nothing of a box the
+        // line is placing, and the line grows to the height of the picture - so a logo declared at
+        // <c>top: 158px</c> is drawn at the head of its block and makes that block a hundred and
+        // fifty-eight pixels taller than anyone asked for.
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='wrap' style='position:relative;width:200px'>" +
+            "<img id='p' src='x.png' style='position:absolute;top:60px;left:20px;width:40px;height:30px'>" +
+            "text" +
+            "</div></body></html>");
+
+        var wrap = Find(view, "wrap");
+
+        // A picture is its own kind of box rather than a block, so it is looked up by its identity.
+        var picture = Walk(view.Layout!.Root).First(node => node.Source.Element?.Id == "p");
+
+        Assert.That(picture.BorderBox.X, Is.EqualTo(20).Within(0.5), "the declared left, not the place on the line");
+        Assert.That(picture.BorderBox.Y, Is.EqualTo(60).Within(0.5), "the declared top");
+        Assert.That(
+            wrap.BorderBox.Height,
+            Is.LessThan(60),
+            "a box that left the flow holds nothing up: the block is as tall as its one line");
+    }
+
+    [Test]
     public async Task AbsoluteResolvesAgainstThePaddingBoxOfItsAncestor()
     {
         using var view = CreateView(400);

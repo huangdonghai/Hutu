@@ -15,6 +15,11 @@ namespace Hutu.Tests;
 /// The document is wrapper-free apart from a body whose font size is the ten pixels the fake measurer
 /// gives every text a width of, so a geometry assertion is the layout's arithmetic and not the
 /// machine's fonts.
+/// <para>
+/// The root is the sixteen a reader starts from unless the document says otherwise, which is what makes
+/// the <c>rem</c> cases here worth their while: the size is the document's to choose, and the device the
+/// lengths are converted against has to be told what it chose.
+/// </para>
 /// </remarks>
 [TestFixture]
 public sealed class LengthUnitTests
@@ -99,6 +104,56 @@ public sealed class LengthUnitTests
             Box(view, "div").BorderBox.Width,
             Is.EqualTo(32),
             "two rem are twice the sixteen-pixel root, not twice the element's own size");
+    }
+
+    [Test]
+    public async Task RemIsAShareOfTheSizeTheDocumentChoseForItsRoot()
+    {
+        using var view = CreateView();
+
+        // The idiom a whole design system is built on: the root is set to ten pixels and every `rem` in
+        // the sheets is a multiple of that. Held to the sixteen the device starts at, a ten-rem box is
+        // sixteen pixels too wide - which is not a page but a page magnified a half again, and every
+        // line of text in it wrapping somewhere else than the author left it.
+        await view.SetHtml(
+            "<html style='font-size:62.5%'><body style='margin:0'>" +
+            "<div style='width:10rem;height:10px'></div></body></html>");
+
+        Assert.That(Box(view, "div").BorderBox.Width, Is.EqualTo(100).Within(0.01));
+    }
+
+    [Test]
+    public async Task RemOnTheRootIsAShareOfTheInitialSize()
+    {
+        using var view = CreateView();
+
+        // A root whose size is stated in rem cannot be a share of the size it is deciding, so the spec
+        // breaks the circle at the initial value: two rem are thirty-two, and the ten rem below are
+        // shares of the thirty-two the root came to.
+        await view.SetHtml(
+            "<html style='font-size:2rem'><body style='margin:0'>" +
+            "<div style='width:10rem;height:10px'></div></body></html>");
+
+        Assert.That(Box(view, "div").BorderBox.Width, Is.EqualTo(320).Within(0.01));
+    }
+
+    [Test]
+    public async Task ANextDocumentIsNotMeasuredAgainstTheLastOnesRoot()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html style='font-size:62.5%'><body style='margin:0'>" +
+            "<div style='width:10rem;height:10px'></div></body></html>");
+
+        Assert.That(Box(view, "div").BorderBox.Width, Is.EqualTo(100).Within(0.01));
+
+        // The device is one object over the life of the view and the root size is a fact about the
+        // document in it, so a page that says nothing about its own root has to go back to the size a
+        // reader does rather than keep the ten the last page asked for.
+        await view.SetHtml(Document("<div style='width:10rem;height:10px'></div>"));
+
+        Assert.That(Box(view, "div").BorderBox.Width, Is.EqualTo(160).Within(0.01));
     }
 
     [Test]

@@ -1,4 +1,5 @@
-﻿using AngleSharp.Dom;
+﻿using AngleSharp.Css.Dom;
+using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
@@ -298,6 +299,18 @@ internal static partial class BoxBuilder
             return BoxKind.Grid;
         }
 
+        // A box that leaves the flow is blockified exactly as a float is: `display: inline` with
+        // `position: absolute` is a box placed against its containing block, not a run sitting on the
+        // line it was written in. Left inline it is carried by that line, so the offsets never apply and
+        // the line is as tall as the box - which is how a logo pinned a hundred and fifty-eight pixels
+        // below the head of its block came to be drawn at the head of it, and to make that block twice
+        // the height the page asked for.
+        if (style.Position.Position is PositionMode.Absolute or PositionMode.Fixed &&
+            display.StartsWith("inline", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Block;
+        }
+
         // A float joins its container's block flow rather than the line it would have sat on: the
         // specification blockifies the inline-level outer roles before any box is generated, so
         // `display: inline` with `float: left` is a block that happens to be pulled to one edge, and
@@ -354,11 +367,16 @@ internal static partial class BoxBuilder
     /// </param>
     internal static void GroupChildren(Box parent, List<Box> children, Boolean wrapInline = false)
     {
+        // A child that left the flow is not one of them: it is laid out against a containing block of its
+        // own and takes no part in the lines or the stack this box forms. Counting it would wrap the
+        // inline content beside it in an anonymous block for no reason - and the box would then be placed
+        // against the block cursor, a fresh line, instead of the place in the flow it would have had,
+        // which is where an offset left unset falls back to.
         var hasBlock = false;
 
         foreach (var child in children)
         {
-            if (child.IsBlockLevel)
+            if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child))
             {
                 hasBlock = true;
                 break;
@@ -371,8 +389,26 @@ internal static partial class BoxBuilder
             if (wrapInline && children.Count > 0)
             {
                 var item = new Box(BoxKind.Block, parent.Style) { IsAnonymous = true, Flow = parent.Flow };
-                item.Children.AddRange(children);
-                parent.Children.Add(item);
+
+                foreach (var child in children)
+                {
+                    // A box that left the flow is not part of the run: burying it inside the anonymous
+                    // block would hide it from everything that goes looking for one, and it would never
+                    // be placed at all.
+                    if (PositionedLayout.IsOutOfFlow(child))
+                    {
+                        parent.Children.Add(child);
+                    }
+                    else
+                    {
+                        item.Children.Add(child);
+                    }
+                }
+
+                if (item.Children.Count > 0)
+                {
+                    parent.Children.Add(item);
+                }
             }
             else
             {

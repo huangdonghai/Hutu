@@ -30,7 +30,7 @@ internal static partial class BoxBuilder
     /// </summary>
     public static Box? TryBuildFused(
         IDocument document,
-        IRenderDevice device,
+        HutuRenderDevice device,
         IImageProvider? images = null,
         FontFaceTable? faces = null)
     {
@@ -38,6 +38,12 @@ internal static partial class BoxBuilder
         {
             return null;
         }
+
+        // Every build starts from the size a document that says nothing has, because the root's own
+        // relative size is a share of it - and a second document, or a resize of the first, must not be
+        // measured against whatever the last one decided. The walk hands the root's answer back to the
+        // device as soon as it has it; see <see cref="FusedStyleFactory.Build"/>.
+        device.RootFontSize = HutuRenderDevice.InitialFontSize;
 
         var sheets = SheetsOf(document);
         var index = RuleBucketIndex.Build(sheets, device);
@@ -69,7 +75,7 @@ internal static partial class BoxBuilder
         IElement element,
         RuleBucketIndex index,
         FusedParent parent,
-        IRenderDevice device,
+        HutuRenderDevice device,
         IImageProvider? images,
         FontFaceTable? faces,
         StyleIntern pool,

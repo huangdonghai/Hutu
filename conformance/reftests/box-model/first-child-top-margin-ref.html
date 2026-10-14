@@ -1,0 +1,10 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>the first box's top margin, placed</title>
+<style>
+  /* What a browser draws: the block forty down, because the margin above it belongs outside the
+     document rather than inside it. */
+  html, body { margin: 0 }
+  #one { position: absolute; left: 0; top: 40px; width: 100px; height: 20px; background: #ff0000 }
+</style>
+<div id="one"></div>

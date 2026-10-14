@@ -405,7 +405,11 @@ internal sealed class BlockLayout
         }
         else
         {
-            _inline.Layout(box, layout, content, flow, new InlineContext(_engine, context));
+            // The line's own boxes are arranged against the context they were measured against, but a box
+            // that left the flow anchors to the nearest positioned ancestor - which is this box's padding
+            // box when this box is the one that is positioned. Handing that along separately keeps the
+            // two questions from being answered by the same context.
+            _inline.Layout(box, layout, content, flow, new InlineContext(_engine, context, childContext));
         }
 
         return layout;
@@ -824,7 +828,12 @@ internal sealed class BlockLayout
     {
         foreach (var child in box.Children)
         {
-            if (child.IsBlockLevel)
+            // A child taken out of flow by `absolute` or `fixed` is not one of them: it is laid out
+            // against a containing block of its own and takes no part in the lines or the stack this box
+            // forms. Counting it would send a box whose only "block" child is out of flow down the block
+            // path, where that child's static position becomes the block cursor - a fresh line - instead
+            // of the place in the inline flow it would have had.
+            if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child))
             {
                 return true;
             }

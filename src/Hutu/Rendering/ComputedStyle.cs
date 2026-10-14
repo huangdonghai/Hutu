@@ -296,14 +296,14 @@ internal readonly struct ComputedStyle
     {
         if (declared?.RawValue is CssLengthValue relative && IsFontRelative(relative.Type))
         {
-            return ResolveFontRelative(relative, parentFontSize, dimensions);
+            return ResolveFontRelative(relative, parentFontSize);
         }
 
         if (declared?.RawValue is { } raw)
         {
             if (IsInheritKeyword(raw))
             {
-                return parentFontSize > 0 ? parentFontSize : dimensions.FontSize;
+                return parentFontSize > 0 ? parentFontSize : HutuRenderDevice.InitialFontSize;
             }
 
             if (TryReadFontSizeValue(declared, dimensions, out var pixels))
@@ -311,10 +311,12 @@ internal readonly struct ComputedStyle
                 return pixels;
             }
 
-            return dimensions.FontSize;
+            // A keyword the reader cannot turn into a length - `medium`, `larger`, a name from a
+            // font-size adjustment the engine does not model - starts from the size a reader does.
+            return HutuRenderDevice.InitialFontSize;
         }
 
-        return parentFontSize > 0 ? parentFontSize : dimensions.FontSize;
+        return parentFontSize > 0 ? parentFontSize : HutuRenderDevice.InitialFontSize;
     }
 
     private static Boolean IsInheritKeyword(ICssValue value) =>
@@ -1622,11 +1624,15 @@ internal readonly struct ComputedStyle
     /// rest of the engine uses for them.
     /// </summary>
     private Double ResolveFontRelative(CssLengthValue value) =>
-        ResolveFontRelative(value, _parentFontSize, _dimensions);
+        ResolveFontRelative(value, _parentFontSize);
 
-    private static Double ResolveFontRelative(CssLengthValue value, Double parentFontSize, IRenderDimensions dimensions)
+    private static Double ResolveFontRelative(CssLengthValue value, Double parentFontSize)
     {
-        var reference = parentFontSize > 0 ? parentFontSize : dimensions.FontSize;
+        // The root is the one element with no parent to take a size from, and its share is of the
+        // initial value rather than of the size it is deciding - which is also why the device is not
+        // asked here: by the time a child is read the device carries the root's size, and the root's
+        // own was resolved while it still carried the initial one.
+        var reference = parentFontSize > 0 ? parentFontSize : HutuRenderDevice.InitialFontSize;
 
         return value.Type switch
         {

@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>padding and border</title>
+<link rel="match" href="padding-and-border-ref.html">
+<style>
+  /* What is being asked: a box whose background reaches under its padding and stops at its border, and
+     a border that is its own width on every side. The reference reaches the same picture out of two
+     plain rectangles, so a pair that agrees says the box model was read the same way from two ends. */
+  html, body { margin: 0 }
+  #t { width: 100px; height: 50px; padding: 20px; border: 10px solid #ff0000; background: #0000ff }
+</style>
+<div id="t"></div>

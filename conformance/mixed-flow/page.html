@@ -1,0 +1,47 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>mixed flow</title>
+  <style>
+    /* One page that holds a little of everything the layout engine has to agree about: a clipped box
+       whose text has nowhere to go, a rounded one, a flex row with a growing item, a list and its
+       markers, a table with a spanning cell, a box pinned inside a positioned one, a sticky box, and
+       inline runs that break over two lines. It is the shape a golden is worth keeping, because a
+       change in any one of those contexts moves a line of the file. */
+    body { margin: 0; font: 16px/20px Arial, Helvetica, sans-serif }
+    .box { border: 2px solid #333333; padding: 6px; margin: 8px 0 }
+    #clip { width: 200px; height: 40px; overflow: hidden; background: #eeeeee }
+    #round { width: 120px; height: 40px; border-radius: 10px; background: #ccddee }
+    #flex { display: flex; gap: 10px; }
+    #flex div { width: 60px; height: 30px; background: #ffeecc }
+    #grow { flex: 1 1 0%; width: auto }
+    ul { margin: 0; padding-left: 24px }
+    li { margin: 2px 0 }
+    table { border-collapse: separate; border-spacing: 4px }
+    td { border: 1px solid #777777; padding: 3px }
+    #rel { position: relative; height: 70px }
+    #abs { position: absolute; top: 10px; right: 20px; width: 50px; height: 20px; background: #ddffaa }
+    #sticky { position: sticky; top: 5px; height: 20px; background: #aaddaa }
+    #inline span { background: #ffffee }
+    #nested { text-indent: 20px }
+    /* A column that is a share of the window rather than a number of pixels, so the page reflows as
+       the window changes. Without it every width gives the same height, and the two tests that ask
+       what happens as the window changes - that a wider one never makes the page taller, and that a
+       zoom reflows like a narrower window - pass by agreeing with themselves. */
+    #prose { width: 50% }
+  </style>
+</head>
+<body>
+  <div id="head" class="box">head</div>
+  <div id="clip" class="box">a long line of text that has nowhere to go</div>
+  <div id="round" class="box">round</div>
+  <div id="flex"><div>a</div><div id="grow"></div><div>c</div></div>
+  <ul id="list"><li>one</li><li>two</li></ul>
+  <table id="table"><tbody><tr><td>x</td><td>yy</td></tr><tr><td colspan="2">wide</td></tr></tbody></table>
+  <div id="rel" class="box"><div id="abs">abs</div><div id="sticky">sticky</div></div>
+  <p id="inline">text with <span>an inline</span> run</p>
+  <p id="prose">the quick brown fox jumps over the lazy dog and then keeps running through the field beside the river where the tall grass grows in long rows beside the old stone wall at the end of it</p>
+  <p id="nested">a paragraph with a first line set in</p>
+</body>
+</html>

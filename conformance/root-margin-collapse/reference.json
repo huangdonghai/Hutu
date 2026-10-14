@@ -1,0 +1,83 @@
+{
+  "source": "page.html",
+  "environment": {
+    "browser": "151.0.4129.59",
+    "channel": "msedge",
+    "viewportWidth": 800,
+    "viewportHeight": 600,
+    "deviceScaleFactor": 1,
+    "colorScheme": "light",
+    "language": "en-US",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0",
+    "clientWidth": 800,
+    "clientHeight": 600,
+    "scrollWidth": 800,
+    "scrollHeight": 1139,
+    "scriptsNeutralized": 0,
+    "handlersStripped": 0,
+    "noscriptBlocks": 0,
+    "webFonts": 0
+  },
+  "elements": [
+    {
+      "selector": "body",
+      "index": 0,
+      "found": true,
+      "x": 0,
+      "y": 64,
+      "width": 800,
+      "height": 1075.1875,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#head",
+      "index": 0,
+      "found": true,
+      "x": 0,
+      "y": 64,
+      "width": 320,
+      "height": 32,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#mid",
+      "index": 0,
+      "found": true,
+      "x": 0,
+      "y": 121.59375,
+      "width": 320,
+      "height": 32,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    },
+    {
+      "selector": "#tail",
+      "index": 0,
+      "found": true,
+      "x": 0,
+      "y": 179.1875,
+      "width": 800,
+      "height": 960,
+      "styles": {
+        "font-size": "14px",
+        "line-height": "21px",
+        "display": "block",
+        "position": "static"
+      }
+    }
+  ]
+}

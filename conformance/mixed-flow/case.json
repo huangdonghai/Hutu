@@ -1,0 +1,30 @@
+{
+  "page": "page.html",
+  "viewportWidth": 320,
+  "viewportHeight": 400,
+  "tolerance": 0.6,
+  "selectors": [
+    "body",
+    "#clip",
+    "#round",
+    "#flex",
+    "#grow",
+    "#list",
+    "#table",
+    "#rel",
+    "#abs",
+    "#sticky",
+    "#nested"
+  ],
+  "groups": [
+    "#flex > div",
+    "#list li",
+    "td"
+  ],
+  "styles": [
+    "font-size",
+    "line-height",
+    "display",
+    "position"
+  ]
+}

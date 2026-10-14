@@ -157,7 +157,7 @@ internal static class FusedStyleFactory
         IElement element,
         MatchedCascade cascade,
         FusedParent parent,
-        IRenderDimensions dimensions,
+        HutuRenderDevice dimensions,
         FontFaceTable? faces,
         StyleIntern? pool,
         FusedAreaCache? cache = null,
@@ -188,6 +188,16 @@ internal static class FusedStyleFactory
         };
 
         var size = ComputedStyle.ResolveFontSizeFused(find("font-size"), parent.FontSize, dimensions);
+
+        // The root's size is the number every `rem` further down the document is a share of, and the
+        // length conversion has only the device to ask for it - so this is the one moment it is known,
+        // and it is handed over before any other length on the element is read. The root's own size was
+        // just resolved against the initial value rather than against itself, which is what keeps the
+        // two from chasing each other round.
+        if (ReferenceEquals(parent, FusedParent.Root))
+        {
+            dimensions.RootFontSize = size;
+        }
 
         // A font is decided by the declarations, the size it is set at, the parent's font - family,
         // weight, slant, spacing and line height all travel down - and one thing no area holds: the

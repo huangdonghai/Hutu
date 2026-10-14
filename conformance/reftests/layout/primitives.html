@@ -1,0 +1,30 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>layout primitives</title>
+<link rel="match" href="primitives-ref.html">
+<style>
+  /* Four things a page is built out of, in one picture: a box that clips what overflows it, a box pinned
+     to the far edges rather than the near ones, a row that shares its spare width between two items, and
+     two overlapping boxes whose stacking levels disagree with their document order. The reference draws
+     the same picture out of placed rectangles, so the pair agrees only if each of the four came to where
+     it had to. */
+  html, body { margin: 0 }
+
+  #clip { position: absolute; left: 0; top: 0; width: 80px; height: 80px; overflow: hidden; background: #eeeeee }
+  #clip div { width: 120px; height: 120px; margin: 20px; background: #ff0000 }
+
+  #far { position: absolute; right: 20px; bottom: 30px; width: 50px; height: 40px; background: #00ff00 }
+
+  #row { position: absolute; left: 100px; top: 250px; width: 200px; height: 30px; display: flex }
+  #row div { flex: 1 1 0; height: 30px }
+  #a { background: #0000ff }
+  #b { background: #ff00ff }
+
+  #over { position: absolute; left: 300px; top: 10px; width: 60px; height: 60px; background: #000000; z-index: 1 }
+  #under { position: absolute; left: 320px; top: 30px; width: 60px; height: 60px; background: #ffffff; z-index: 2 }
+</style>
+<div id="clip"><div></div></div>
+<div id="far"></div>
+<div id="row"><div id="a"></div><div id="b"></div></div>
+<div id="over"></div>
+<div id="under"></div>

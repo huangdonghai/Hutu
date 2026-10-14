@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>adjacent margins</title>
+<link rel="match" href="adjacent-margins-ref.html">
+<style>
+  /* Two blocks whose facing margins meet: ten pixels from the bottom of one and ten from the top of the
+     other, which is one gap of ten rather than a sum of twenty. The reference puts the second block
+     where the collapse has to leave it, so the pair agrees only if the margins were shared out once. */
+  html, body { margin: 0 }
+  #one { width: 100px; height: 20px; background: #ff0000; margin-bottom: 10px }
+  #two { width: 100px; height: 20px; background: #00ff00; margin-top: 10px }
+</style>
+<div id="one"></div>
+<div id="two"></div>

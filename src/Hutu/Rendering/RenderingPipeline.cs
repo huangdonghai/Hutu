@@ -22,12 +22,12 @@ namespace Hutu.Rendering;
 /// </remarks>
 internal sealed class RenderingPipeline
 {
-    private readonly IRenderDevice _device;
+    private readonly HutuRenderDevice _device;
     private readonly LayoutEngine? _layout;
     private readonly IImageProvider? _images;
     private readonly Painter _painter = new();
 
-    public RenderingPipeline(IRenderDevice device, ITextMeasurer? textMeasurer = null, IImageProvider? images = null)
+    public RenderingPipeline(HutuRenderDevice device, ITextMeasurer? textMeasurer = null, IImageProvider? images = null)
     {
         _device = device;
         _layout = textMeasurer is null ? null : new LayoutEngine(textMeasurer);

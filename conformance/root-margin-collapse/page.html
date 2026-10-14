@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>root margin collapse</title>
+  <style>
+    /* The page's first box carries a top margin, and nothing between it and the document has a border
+       or padding to stop it, so the margin belongs outside the document: a browser begins the page
+       forty pixels down and the body's own box starts there. An engine that keeps the margin inside
+       reports a body at zero and a document forty pixels taller than anyone reads - and then places
+       every absolutely positioned box in the page against a containing block that started too high. */
+    body { margin: 0; font: 14px/1.5 Arial, Helvetica, sans-serif }
+    #head { margin-top: 4rem; height: 2rem; width: 20rem; background: #dddddd }
+    #mid { margin: 1.6rem 0; height: 2rem; width: 20rem }
+    #tail { height: 60rem }
+  </style>
+</head>
+<body>
+  <div id="head"></div>
+  <div id="mid"></div>
+  <div id="tail"></div>
+</body>
+</html>

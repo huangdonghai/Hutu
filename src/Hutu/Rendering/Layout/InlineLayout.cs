@@ -223,6 +223,13 @@ internal sealed class InlineLayout
             maxContent += insets;
             unbreakable += insets;
 
+            if (item.IsOutOfFlow)
+            {
+                // A box that left the flow asks for nothing: the extent the content needs is the extent
+                // of what is actually drawn on the line.
+                continue;
+            }
+
             if (item.IsReplaced)
             {
                 var (width, height) = ReplacedSizing.Resolve(item.Box, basis, 0);
@@ -468,6 +475,23 @@ internal sealed class InlineLayout
         Double cursor,
         InlineContext context)
     {
+        if (fragment.OutOfFlow)
+        {
+            // A box that left the flow is placed against its containing block rather than drawn as part of
+            // the line. Where it stood on the line is its static position: the place it would have had had
+            // it stayed in flow, which is what an offset left unset falls back to. The line only says
+            // where that was - the box's own geometry, and whatever offsets it declares, are the
+            // positioning pass's business.
+            var stood = flow.Map(contentBox, origin, 0, cursor, 0);
+
+            Attach(open, lineBox, context.Engine.ArrangePositioned(
+                fragment.Box,
+                new Offset(stood.X, stood.Y),
+                context.Absolute ?? context.Containing));
+
+            return;
+        }
+
         if (fragment.Atomic is { } atomic)
         {
             // The box is arranged as the block container it is - it brings its own geometry, radii and
@@ -608,6 +632,20 @@ internal sealed class InlineLayout
     {
         foreach (var child in container.Children)
         {
+            // A box that left the flow is not part of the line: it is placed against a containing block of
+            // its own. It is kept as an item of no extent so the place it would have had is still known -
+            // that place is the static position an offset left unset falls back to - while the line it
+            // sits on is neither wider nor taller for it.
+            //
+            // A run of text is never one of them, however the style it carries reads: `position` is not
+            // inherited, but a fused style hands a child the words its parent declared, and taking those
+            // literally would drop every run inside a positioned box off its own line.
+            if (child.Kind is not (BoxKind.Text or BoxKind.LineBreak) && PositionedLayout.IsOutOfFlow(child))
+            {
+                items.Add(InlineItem.CreateOutOfFlow(child, chain));
+                continue;
+            }
+
             switch (child.Kind)
             {
                 case BoxKind.Text:
@@ -812,6 +850,14 @@ internal sealed class InlineLayout
                 continue;
             }
 
+            if (item.IsOutOfFlow)
+            {
+                // No room is taken and the cursor does not move, so where the cursor stands when the box
+                // is met is the place it would have had. The fragment carries that much and nothing else.
+                builder.AddOutOfFlow(item.Box, item.Style, item.Inline);
+                continue;
+            }
+
             if (item.IsReplaced)
             {
                 // The container's inline extent is the containing block of everything on the line, so
@@ -915,7 +961,9 @@ internal sealed class InlineLayout
             }
         }
 
-        if (builder.HasContent)
+        // Closed for any fragment rather than for any content: a line whose only fragment is a box that
+        // left the flow draws nothing, but that box still has to be placed.
+        if (builder.HasFragments)
         {
             Close(builder);
         }
@@ -1730,7 +1778,8 @@ internal sealed class InlineLayout
             String? annotationText = null,
             ComputedStyle annotationStyle = default,
             Box? annotationBox = null,
-            Boolean atomic = false)
+            Boolean atomic = false,
+            Boolean outOfFlow = false)
         {
             Text = text;
             Style = style;
@@ -1742,6 +1791,7 @@ internal sealed class InlineLayout
             AnnotationStyle = annotationStyle;
             AnnotationBox = annotationBox;
             IsAtomic = atomic;
+            IsOutOfFlow = outOfFlow;
         }
 
         public String? Text { get; }
@@ -1766,6 +1816,13 @@ internal sealed class InlineLayout
         /// </summary>
         public Boolean IsAtomic { get; }
 
+        /// <summary>
+        /// Gets whether the item is a box that left the flow. It stands on the line only to say where it
+        /// would have been: it takes no room, and it is placed against a containing block of its own
+        /// rather than drawn as part of the line.
+        /// </summary>
+        public Boolean IsOutOfFlow { get; }
+
         /// <summary>Gets the annotation of a ruby item, or null when the item carries none.</summary>
         public String? AnnotationText { get; }
 
@@ -1789,6 +1846,9 @@ internal sealed class InlineLayout
 
         public static InlineItem CreateAtomic(Box box, InlineAncestor? inline) =>
             new(null, box.Style, box, inline, false, false, atomic: true);
+
+        public static InlineItem CreateOutOfFlow(Box box, InlineAncestor? inline) =>
+            new(null, box.Style, box, inline, false, false, outOfFlow: true);
 
         public static InlineItem CreateRuby(
             String text,
@@ -1816,7 +1876,8 @@ internal sealed class InlineLayout
             Double contentHeight = 0,
             RubyAnnotation? ruby = null,
             Double baseWidth = 0,
-            AtomicInline? atomic = null)
+            AtomicInline? atomic = null,
+            Boolean outOfFlow = false)
         {
             Source = source;
             Start = start;
@@ -1832,7 +1893,11 @@ internal sealed class InlineLayout
             Ruby = ruby;
             BaseWidth = baseWidth;
             Atomic = atomic;
+            OutOfFlow = outOfFlow;
         }
+
+        /// <summary>Gets whether the fragment is a box that left the flow, placed but not drawn here.</summary>
+        public Boolean OutOfFlow { get; }
 
         /// <summary>
         /// Gets the annotation that goes on the block-start side of this fragment's text, or null when
@@ -2424,7 +2489,18 @@ internal sealed class InlineLayout
         /// </summary>
         public Double Width { get; private set; }
 
-        public Boolean HasContent => _fragments.Count > 0;
+        /// <summary>
+        /// Gets whether the line carries anything drawn on it. A box that left the flow is not: it stands
+        /// on the line only to say where it would have been, so a line holding nothing else is an empty
+        /// line and takes no height.
+        /// </summary>
+        public Boolean HasContent => _fragments.Exists(fragment => !fragment.OutOfFlow);
+
+        /// <summary>
+        /// Gets whether the line carries any fragment at all, drawn or not. A line with nothing but a box
+        /// that left the flow still has to be closed, or that box is never placed.
+        /// </summary>
+        public Boolean HasFragments => _fragments.Count > 0;
 
         /// <summary>
         /// Gets the extent the line would already take if the next run sat in the given chain. The
@@ -2452,6 +2528,27 @@ internal sealed class InlineLayout
                 contentHeight: height));
 
             Width += width;
+        }
+
+        /// <summary>
+        /// Adds a box that left the flow. It takes no room: the cursor does not move and the line grows no
+        /// taller for it, so what the fragment records is only where the cursor stood - the place the box
+        /// would have had, which is the static position it is placed by.
+        /// </summary>
+        public void AddOutOfFlow(Box box, ComputedStyle style, InlineAncestor? inline)
+        {
+            Enter(inline);
+
+            _fragments.Add(new TextFragment(
+                String.Empty,
+                0,
+                0,
+                0,
+                style,
+                box,
+                box.Flow,
+                inline,
+                outOfFlow: true));
         }
 
         /// <summary>
@@ -2611,6 +2708,14 @@ internal sealed class InlineLayout
                 used += Advance(open, fragment.Inline, carried, origin: 0, apply: true, step: null);
                 used += fragment.Width;
 
+                if (fragment.OutOfFlow)
+                {
+                    // A box that left the flow takes no room across the line and reaches nothing above or
+                    // below its baseline: it is placed against a containing block of its own, and the line
+                    // it stood on is neither wider nor taller for it.
+                    continue;
+                }
+
                 // A replaced inline rests its bottom margin edge on the baseline, so it contributes
                 // its whole height as ascent and nothing as descent.
                 if (fragment.IsReplaced)
@@ -2684,9 +2789,11 @@ internal sealed class InlineLayout
                 line.ContinuesToNext = pending;
             }
 
-            if (line.Fragments.Count == 0)
+            if (Double.IsNegativeInfinity(ascent))
             {
-                // An empty line still occupies a line box, so an explicit break has height.
+                // Nothing on the line reaches above or below its baseline. That is an empty line, or one
+                // holding nothing but a box that left the flow; either way it is as tall as the fallback
+                // asks for and no taller.
                 var metrics = _fallback is { } fallback ? measurer.GetMetrics(fallback.GetFont()) : default;
                 ascent = _fallback is null ? 0 : metrics.Ascent;
                 descent = _fallback is null ? 0 : metrics.Descent;

@@ -1,0 +1,11 @@
+{
+  "$comment": [
+    "Which reftests the engine is known to draw differently from their reference, and why.",
+    "Keys are paths under conformance/reftests, with forward slashes; a key ending in /* covers that",
+    "directory. A value is 'pass', or 'fail: <what is missing>'. An entry is a claim with an expiry",
+    "date: when the engine starts drawing the pair the same, the test fails and says so."
+  ],
+  "tests": {
+    "form/unclosed-dialog.html": "fail: the reader's own sheet has dialog{display:block} but not dialog:not([open]){display:none}, so a dialog that was never opened is painted"
+  }
+}

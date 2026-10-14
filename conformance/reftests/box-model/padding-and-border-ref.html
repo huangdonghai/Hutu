@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>padding and border, drawn as rectangles</title>
+<style>
+  /* The same picture without a box model in it: a 160x110 red field - a hundred of content, forty of
+     padding and twenty of border across - and a blue rectangle inset by the ten pixels of border. The
+     padding is part of the background's own area, which is the thing the other page is asked about. */
+  html, body { margin: 0 }
+  div { position: absolute }
+  #border { left: 0; top: 0; width: 160px; height: 110px; background: #ff0000 }
+  #padded { left: 10px; top: 10px; width: 140px; height: 90px; background: #0000ff }
+</style>
+<div id="border"></div>
+<div id="padded"></div>

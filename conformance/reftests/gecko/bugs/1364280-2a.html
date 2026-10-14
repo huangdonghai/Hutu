@@ -1,0 +1,10 @@
+<link rel="match" href="1364280-2a-ref.html">
+<!DOCTYPE html>
+<style>
+  span { color: red; }
+  div:dir(rtl) + span { color: green; }
+</style>
+<body dir="rtl" onload="window.oldColor = getComputedStyle(document.querySelector('span')).color; document.querySelector('[dir=auto]').setAttribute('dir', '')">
+  <div dir="auto"></div>
+  <span>This should be green</span>
+</body>

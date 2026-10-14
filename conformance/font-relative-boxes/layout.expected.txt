@@ -1,0 +1,42 @@
+layout 800x732
+block  html                    0,0 800x732
+  block  body                    0,0 800x732
+    block  div#col                 130,0 540x732 pos:relative m:0/130/0/130
+      block  div#card                130,16 300x100
+        line   div#card                147,33 266x21
+          text   ~text                   147,33 20x21 "card" base 13.5 font 14@Arial, Helvetica, sans-serif
+      block  div#em                  130,132 280x20 m:16/0/0/0
+        line   div#em                  130,132 280x42
+          text   ~text                   130,132 10x42 "em" base 24 font 28@Arial, Helvetica, sans-serif
+      block  div#pct                 130,168 210x20 m:16/0/0/0
+        line   div#pct                 130,168 210x31.5
+          text   ~text                   130,168 15x31.5 "pct" base 18.75 font 21@Arial, Helvetica, sans-serif
+      block  div#row                 130,204 540x40 m:16/0/0/0
+        block  div                     130,204 100x40
+          line   div                     130,204 100x21
+            text   ~text                   130,204 5x21 "a" base 13.5 font 14@Arial, Helvetica, sans-serif
+        block  div                     244,204 100x40
+          line   div                     244,204 100x21
+            text   ~text                   244,204 5x21 "b" base 13.5 font 14@Arial, Helvetica, sans-serif
+      block  div#one.pair            130,260 540x20 m:16/0/16/0
+        line   div#one.pair            130,260 540x21
+          text   ~text                   130,260 15x21 "one" base 13.5 font 14@Arial, Helvetica, sans-serif
+      block  div#two.pair            130,296 540x20 m:16/0/16/0
+        line   div#two.pair            130,296 540x21
+          text   ~text                   130,296 15x21 "two" base 13.5 font 14@Arial, Helvetica, sans-serif
+      block  div#tail                130,332 540x400
+      block  span#abs                165,158 200x183 pos:absolute
+        line   span#abs                165,158 200x21
+          text   ~text                   165,158 200x21 "an inline box the page pins ..." base 13.5 font 14@Arial, Helvetica, sans-serif
+--- paint ---
+  flow   border            130,16 300x100 w:1/1/1/1 #ff888888
+  flow   text              147,33 20x21 "card" base 13.5 font 14@Arial, Helvetica, sans-serif #ff000000
+  flow   text              130,132 10x42 "em" base 24 font 28@Arial, Helvetica, sans-serif #ff000000
+  flow   text              130,168 15x31.5 "pct" base 18.75 font 21@Arial, Helvetica, sans-serif #ff000000
+  flow   text              130,204 5x21 "a" base 13.5 font 14@Arial, Helvetica, sans-serif #ff000000
+  flow   text              244,204 5x21 "b" base 13.5 font 14@Arial, Helvetica, sans-serif #ff000000
+  flow   text              130,260 15x21 "one" base 13.5 font 14@Arial, Helvetica, sans-serif #ff000000
+  flow   text              130,296 15x21 "two" base 13.5 font 14@Arial, Helvetica, sans-serif #ff000000
+  flow   fill              165,158 200x183 #ffeeeeee
+  flow   text              165,158 200x21 "an inline box the page pins ..." base 13.5 font 14@Arial, Helvetica, sans-serif #ff000000
+bounds 800x732

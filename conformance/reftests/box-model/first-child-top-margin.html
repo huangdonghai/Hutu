@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>the first box's top margin</title>
+<link rel="match" href="first-child-top-margin-ref.html">
+<style>
+  /* The margin of a page's first box collapses out through body and the root rather than sitting inside
+     them, so a browser begins the document forty pixels down. This pair turned out to say something
+     narrower than that: the engine puts the box at the same forty pixels and takes the margin into the
+     document's height instead, and a picture of the top of the page cannot tell the two apart. What it
+     does establish is that the box's own place is right; the extent is the
+     root-margin-collapse case's business, which compares the body's box against a browser's number. */
+  html, body { margin: 0 }
+  #one { width: 100px; height: 20px; background: #ff0000; margin-top: 40px }
+</style>
+<div id="one"></div>

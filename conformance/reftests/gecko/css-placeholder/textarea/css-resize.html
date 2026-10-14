@@ -1,0 +1,21 @@
+<link rel="match" href="css-resize-ref.html">
+<!DOCTYPE html>
+<html>
+  <!--
+    resize shouldn't be allowed on the ::placeholder.
+  -->
+  <link rel='stylesheet' type='text/css' href='style.css'>
+  <style>
+    textarea {
+      resize: none;
+    }
+    textarea::-moz-placeholder,
+    textarea::placeholder {
+      resize: both;
+    }
+  </style>
+  <body>
+    <textarea placeholder='foo'></textarea>
+    <textarea placeholder='bar'></textarea>
+  </body>
+</html>

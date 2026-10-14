@@ -1,0 +1,20 @@
+{
+  "page": "page.html",
+  "viewportWidth": 800,
+  "viewportHeight": 600,
+  "tolerance": 0.6,
+  "knownGap": "the first box's top margin does not collapse through body and the root, so the document begins at zero and is that margin taller than the page reads",
+  "selectors": [
+    "body",
+    "#head",
+    "#mid",
+    "#tail"
+  ],
+  "groups": [],
+  "styles": [
+    "font-size",
+    "line-height",
+    "display",
+    "position"
+  ]
+}

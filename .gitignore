@@ -436,3 +436,11 @@ FodyWeavers.xsd
 
 # What the vertical-large profiler writes beside the repository root
 /vertical-large-profile.txt
+
+# The script-free copy the reference collector hands to the browser; it is derived from the page
+# beside it and is rewritten on every capture.
+conformance/**/*.nojs.html
+
+# Where the harness writes what it produces rather than what it keeps: the pictures of reftest
+# differences, and the scratch the browser driver needs to run.
+/build/

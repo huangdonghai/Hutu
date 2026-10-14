@@ -11,7 +11,8 @@ namespace Hutu.Rendering;
 /// The device is read in two places, both during style computation rather than during drawing:
 /// media queries are validated against the viewport (<c>StyleCollection.CollectRules</c>), and
 /// relative lengths (<c>%</c>, <c>em</c>, <c>rem</c>, <c>vw</c>/<c>vh</c>) are converted against
-/// <see cref="RenderWidth"/>/<see cref="RenderHeight"/> (<c>CssLengthValue.ToPixel</c>).
+/// <see cref="RenderWidth"/>/<see cref="RenderHeight"/> and <see cref="RootFontSize"/>
+/// (<c>CssLengthValue.ToPixel</c>).
 /// <para>
 /// The conversion throws when a dimension is not strictly positive, so this device always reports
 /// a usable viewport and the host is expected to update it before triggering a relayout.
@@ -65,10 +66,28 @@ internal sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
     }
 
     /// <summary>
-    /// Gets or sets the default font size in pixels. It stands in for the root font size, so it
-    /// is what <c>em</c> and <c>rem</c> resolve against.
+    /// Gets or sets the root font size in pixels, which is what every <c>rem</c> in the document is a
+    /// share of.
     /// </summary>
-    public Double FontSize { get; set; } = 16;
+    /// <remarks>
+    /// The number is the document's to decide - <c>html { font-size: 62.5% }</c> is the idiom a whole
+    /// design system is built on, and a page that says it means ten, not sixteen - but the length
+    /// conversion is AngleSharp's and it has only this device to ask. So the box builder hands the
+    /// answer over once the root's own size is resolved, and hands over the initial value until it has:
+    /// a document that says nothing, and any property of the root element read before its size is known,
+    /// are measured against that.
+    /// </remarks>
+    public Double RootFontSize { get; set; } = InitialFontSize;
+
+    /// <summary>
+    /// Gets the font size a document that says nothing starts from: the <c>medium</c> every browser
+    /// begins at. It is also what a relative <c>font-size</c> on the root element resolves against,
+    /// since the root is the one element with no parent to take a size from.
+    /// </summary>
+    public const Double InitialFontSize = 16;
+
+    /// <inheritdoc />
+    public Double FontSize => RootFontSize;
 
     /// <inheritdoc />
     public Boolean IsInterlaced => false;

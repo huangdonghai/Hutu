@@ -25,6 +25,9 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Hutu.Tests" />
     <InternalsVisibleTo Include="Hutu.Avalonia.Tests" />
+    <!-- The conformance harness reads the layout tree and the resolved style of each box, which is
+         what a browser is being compared against; a host never needs it. -->
+    <InternalsVisibleTo Include="Hutu.Conformance.Tests" />
   </ItemGroup>
 
 </Project>

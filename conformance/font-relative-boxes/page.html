@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en" style="font-size:62.5%">
+<head>
+  <meta charset="utf-8">
+  <title>font relative boxes</title>
+  <style>
+    /* Every box here is sized in a font-relative unit against an explicit number, so the geometry is
+       the cascade's arithmetic rather than a measurement of some font this machine may not have. The
+       page is also taller than the viewport on purpose: that is what makes the collector meet the
+       scrollbar and come back at the content width. */
+    * { box-sizing: border-box }
+    body { margin: 0; font-size: 1.4rem; line-height: 1.5; font-family: Arial, Helvetica, sans-serif }
+    /* The column's first gap is its own padding rather than its child's margin: a margin there would
+       collapse out through the root, which is another subject and has its own case. */
+    #col { width: 54rem; margin: 0 auto; position: relative; padding-top: 1.6rem }
+    #card { width: 30rem; height: 10rem; padding: 1.6rem; border: 1px solid #888888 }
+    #em { font-size: 2em; width: 10em; height: 2rem; margin-top: 1.6rem }
+    #pct { font-size: 150%; width: 10em; height: 2rem; margin-top: 1.6rem }
+    #abs { position: absolute; top: 15.8rem; left: 3.5rem; width: 20rem; height: 18.3rem; background: #eeeeee }
+    #row { display: flex; gap: 1.4rem; margin-top: 1.6rem }
+    #row div { width: 10rem; height: 4rem }
+    .pair { margin: 1.6rem 0; height: 2rem }
+    #tail { height: 40rem }
+  </style>
+</head>
+<body>
+  <div id="col">
+    <div id="card">card</div>
+    <div id="em">em</div>
+    <div id="pct">pct</div>
+    <span id="abs">an inline box the page pins to an offset</span>
+    <div id="row"><div>a</div><div>b</div></div>
+    <div id="one" class="pair">one</div>
+    <div id="two" class="pair">two</div>
+    <div id="tail"></div>
+  </div>
+</body>
+</html>

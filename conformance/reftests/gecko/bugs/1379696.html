@@ -1,0 +1,15 @@
+<link rel="match" href="1379696-ref.html">
+<!DOCTYPE html>
+<style>
+  .bar:before {
+    content:'SHOULD NOT BE ORANGE'
+  }
+  .foo:before {
+    content:'SHOULD BE ORANGE'
+  }
+  :-moz-any(.foo):before {
+    background-color: orange;
+  }
+</style>
+<div class="bar"></div>
+<div class="foo"></div>
