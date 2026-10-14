@@ -95,6 +95,12 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 之前猜测 IsAnonymous 一刀切会误伤 block-in-inline 携带 inline 背景——错：本引擎只有 WrapInline 两处 IsAnonymous，无 block-in-inline 匿名机制；真实原因是浮动 shrink-to-fit 与网格项 bg 两个预存 bug 被遮盖。
 - **grid-lanes / masonry（先进排版）**：用户已指示"先进排版先不弄"，M2 最短车道 WIP 存于 stash，M4/M5/M6 未做。
 
+### 5.4 下一个浮动目标：`display:flow-root` 建立 BFC（需解析层）
+侦察 `floats-wrap-bfc-with-margin-*` / `nested-clearance-new-formatting-context` / `floats-bfc-003` 等用 `display:flow-root` 的一族：引擎里 flow-root **不建立 BFC**，故不会装住子 margin、也不会与浮动 stand-clear。
+- 探针已证：`display:flow-root` 的 `box.Style.Display` 实测为 **`"block"`**（AngleSharp 把 flow-root 归一/降为 block）——所以在 `EstablishesContext`/`FormattingRoot` 里加 `Display.Contains("flow-root")` 是**空操**（已验证无效并回退）。
+- 要落地需先在 **CSS 解析层保留 flow-root 令牌**（类比 grid-lanes 的 `WideKeywordDeclarationFactory`），或让 ComputedStyle 把 flow-root 单独标记。之后再：`EstablishesContext` 含 flow-root（装 margin）+ `FormattingRoot` 对 flow-root stand-clear。属解析+布局两段改动，中风险，单独一轮。
+- 其它残余浮动子因：clearance×大顶边距×父覆盖（`*-clearance`/`clear-*`，每例不同、易回退）、block-in-inline 拆分（`float-in-inline-*`，大块）、multicol×float（`floats-clear-multicol-*`）——均多因素耦合，非单一干净根因。
+
 ---
 
 ## 6. 关键代码位置
