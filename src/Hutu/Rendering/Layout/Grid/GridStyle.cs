@@ -267,10 +267,15 @@ internal readonly struct GridLine
     /// Resolves the line to a one-based number, wrapping a negative number from the end so that
     /// <c>-1</c> is the last line of the explicit grid.
     /// </summary>
+    /// <remarks>
+    /// A negative number past the first line would, in a browser, land in the implicit grid before the
+    /// explicit one. This model keeps no lines there, so the wrap is held to the first line rather than
+    /// allowed to run past it into a number no track list index can carry.
+    /// </remarks>
     public Int32? Resolve(Int32 lineCount) => Kind switch
     {
         GridLineKind.Index when Index > 0 => Index,
-        GridLineKind.Index => lineCount + 1 + Index,
+        GridLineKind.Index => Math.Max(1, lineCount + 1 + Index),
         _ => null,
     };
 
