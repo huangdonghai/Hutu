@@ -37,6 +37,15 @@ public sealed class CorpusImporter
     private static readonly Regex Href = new(
         @"\bhref\s*=\s*(?:""(?<v>[^""]*)""|'(?<v>[^']*)'|(?<v>[^\s>]+))", Options);
 
+    // A page reaches a picture in two ways: a CSS url() and an element's src. Both names are read here so
+    // the file beside the source page is brought along too, and a reference that draws one is not left
+    // pointing at a file the import never copied.
+    private static readonly Regex UrlValue = new(
+        @"url\s*\(\s*(?:""(?<v>[^""]*)""|'(?<v>[^']*)'|(?<v>[^)]*))\)", Options);
+
+    private static readonly Regex Src = new(
+        @"\bsrc\s*=\s*(?:""(?<v>[^""]*)""|'(?<v>[^']*)'|(?<v>[^\s>]+))", Options);
+
     [Test]
     public void ImportsTheStaticSubset()
     {
@@ -231,7 +240,87 @@ public sealed class CorpusImporter
 
         File.WriteAllText(test, html);
         File.Copy(candidate.Reference, reference, overwrite: true);
+
+        // Both halves are left where their source left them, so a picture each reaches for is copied in
+        // beside them. The two source pages may sit in different folders yet land in one here, so each is
+        // read against its own folder and its own relative path is what is kept under this one.
+        CopyReferencedResources(Path.GetDirectoryName(candidate.Test)!, directory, File.ReadAllText(candidate.Test));
+        CopyReferencedResources(Path.GetDirectoryName(candidate.Reference)!, directory, File.ReadAllText(candidate.Reference));
     }
+
+    /// <summary>
+    /// Copies, beside the laid-out pair, every picture the page reaches for by a relative path.
+    /// </summary>
+    /// <remarks>
+    /// A url() or src that names a data URL, a fragment, or something over the network is left alone - the
+    /// first two carry no file to copy and the last is deliberately not fetched, since a drawing has to
+    /// reach the same picture on every machine. Only raster pictures are brought along: a font or a
+    /// stylesheet pulled in the same way would move the width of a word, and a word's width is a question
+    /// about the machine's fonts rather than about the layout the pair is meant to check.
+    /// </remarks>
+    private static void CopyReferencedResources(String sourceDirectory, String destinationDirectory, String html)
+    {
+        foreach (var target in ReferencedFiles(html))
+        {
+            var name = Strip(target);
+
+            if (name.Length == 0 ||
+                name.StartsWith("#", StringComparison.Ordinal) ||
+                name.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains(":", StringComparison.Ordinal) ||
+                name.StartsWith("//", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var source = Path.GetFullPath(Path.Combine(sourceDirectory, name));
+
+            if (!IsPicture(source))
+            {
+                continue;
+            }
+
+            var relative = Path.GetRelativePath(sourceDirectory, source);
+            var destination = Path.Combine(destinationDirectory, relative);
+
+            if (String.Equals(source, destination, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(source, destination, overwrite: true);
+        }
+    }
+
+    /// <summary>Whether a path names a picture file that is actually there.</summary>
+    private static Boolean IsPicture(String path) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".png" or ".gif" or ".jpg" or ".jpeg" or ".bmp" or ".webp" or ".ico" => File.Exists(path),
+            _ => false,
+        };
+
+    /// <summary>The distinct paths a page reaches for, from its url() and src values.</summary>
+    private static IEnumerable<String> ReferencedFiles(String html)
+    {
+        var seen = new HashSet<String>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var regex in new[] { UrlValue, Src })
+        {
+            foreach (Match match in regex.Matches(html))
+            {
+                if (match.Groups["v"].Success && seen.Add(match.Groups["v"].Value))
+                {
+                    yield return match.Groups["v"].Value;
+                }
+            }
+        }
+    }
+
+    /// <summary>Drops the query and fragment a browser would not name a file by.</summary>
+    private static String Strip(String value) =>
+        Uri.UnescapeDataString(value.Split('?', '#')[0]).Trim();
 
     private static void WriteProvenance(String path, String kind, String source)
     {

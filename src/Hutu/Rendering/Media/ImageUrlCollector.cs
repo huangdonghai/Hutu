@@ -54,7 +54,8 @@ internal static class ImageUrlCollector
             Add(ImageUrlResolver.Resolve(element, source), urls, seen);
         }
 
-        var background = Boxes.MatchedCascade.ForElement(index, element).Find("background-image")?.Value;
+        var background = ComputedStyle.BackgroundImageWithHint(
+            Boxes.MatchedCascade.ForElement(index, element).Find("background-image"), element);
 
         foreach (var candidate in CssUrlReferences.Extract(background))
         {

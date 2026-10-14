@@ -1181,13 +1181,7 @@ internal readonly struct ComputedStyle
         // for it at the presentational-hint level when the author said nothing. The attribute is honoured
         // only on the elements HTML still maps it to - the body and the table's parts - and never on a
         // general block such as a div, exactly as a browser draws those and not the rest.
-        var image = find("background-image")?.Value;
-
-        if (String.IsNullOrWhiteSpace(image) && element is { } box && HonoursBackgroundAttribute(box.LocalName) &&
-            box.GetAttribute("background") is { Length: > 0 } picture)
-        {
-            image = $"url(\"{picture.Replace("\"", String.Empty)}\")";
-        }
+        var image = BackgroundImageWithHint(find("background-image"), element);
 
         return BackgroundLayerParser.Parse(
             image,
@@ -1197,6 +1191,25 @@ internal readonly struct ComputedStyle
             dimensions,
             fontSize,
             element is null ? null : url => ImageUrlResolver.Resolve(element, url));
+    }
+
+    /// <summary>
+    /// The background-image the element ends up with: its own cascaded value, or, when the author said
+    /// nothing, the legacy <c>background</c> attribute standing in at the presentational-hint level on the
+    /// few elements that still carry one. Both the resolved style and the picture collector read it here,
+    /// so a picture named only in the attribute is fetched as surely as one named in the stylesheet.
+    /// </summary>
+    internal static String? BackgroundImageWithHint(ICssProperty? declared, IElement? element)
+    {
+        var image = declared?.Value;
+
+        if (String.IsNullOrWhiteSpace(image) && element is { } box && HonoursBackgroundAttribute(box.LocalName) &&
+            box.GetAttribute("background") is { Length: > 0 } picture)
+        {
+            image = $"url(\"{picture.Replace("\"", String.Empty)}\")";
+        }
+
+        return image;
     }
 
     /// <summary>
