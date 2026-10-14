@@ -79,6 +79,13 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 - **测量感知的 min/max-height**（`{min,max}-height-separates-margin`、`margin-collapse-min-height-*`、`block-zero-min-height`）：规则成立**取决于 used height 是否真的钳住内容**，而 `CollapsedEnd` 是纯样式静态判定——要做成测量感知，比定高那条更侵入。
 - **`block-xhtml-root` / `table-caption`**：耦合 DOM 解析 / 表格子系统。
 
+#### 5.2.1 normal-flow 的 min-height 折叠族（已侦察，静态改法净负，未做）
+- 目标（`wpt/CSS2/normal-flow`）：`min-height-separates-margin`、`margin-collapse-min-height-001/002`、`max-height-separates-margin`、`*-through-percentage-height-*`、`child-bottom-margin-in-unresolvable-percentage-height`（~7 例，首差都在 x=8，纯竖直堆叠）。
+- 规范 §8.3.1："bottom margin of a box with **height auto AND min-height zero** collapses with last child" —— 这是**充分条件、非充要**。真实语义看 **used height**：min-height 只有**把 used height 顶到内容之上（active）**时才吸收末子底边距；若内容已 ≥ min-height（min-height 未生效），used=content，边距仍应照常折叠穿透。
+- **已试（静态门：`CollapsedEnd`/`IsSelfCollapsing` 里 `min-height>0` 即阻断折叠）**：修好 2 例（`min-height-separates-margin`、`margin-collapse-min-height-001`，都是 active min-height），但**打断 11 例 gecko**（inactive min-height 被误阻断穿透）→ **wpt +6 / gecko −11，净 −5**，已回退（HEAD 仍 `22c2ffa0`）。
+- **正解 = 测量感知**：折叠判定需知道本盒 content 高（`cursor`）与 min/max-height 的大小——`CollapsedEnd` 是父层调用的静态助手、拿不到本盒 content 高，改成测量感知要重构 Measure/Arrange 的边距回传（侵入大、易回退）。`max-height-*` 与百分比高度族同理需此路。`margin-collapse-min-height-002` 另含 marker 定位近失（1476px，与本门无关）。
+- 结论：此族**不是**能靠静态规则干净拿下的，暂缓；若做需专门一轮做测量感知折叠。
+
 ### 5.3 暂缓 / 不可胜（明确排除）
 - **`white-space` 残余多是 `break-spaces` / `pre-wrap`（CSS Text 3，非 2.1）**——按"先弄好基础"的口径暂缓。
 - **`floats` / `floats-clear`（CSS2 里约 65 例）**：异构多根因，非一处能翻一片。已收（`ab2def6d`）：**定宽 BFC 盒装不下时下移**（+2）。剩余子因待攻：**`floats-placement-*` 疑似浮动背景未绘制 / paint 层序 bug**（float 布局矩形对却画成容器底色——若是 paint 问题影响面大、优先查）；**`new-fc-separates-from-float` 的 BFC↔浮动 margin 分离**；**`*-clearance` / `clear-*` 的 clearance+顶边距算术**；**`floats-clear-multicol-*`（耦合 multicol）**。早期"仅 BFC 容器才包含浮动"的核心不变量修复实测净 −14（谓词漏 flex/grid item + 需跨块 band 折行），已回退。
