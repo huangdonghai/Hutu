@@ -93,6 +93,40 @@ internal sealed class FloatTracks
     }
 
     /// <summary>
+    /// Gets the height a box of <paramref name="inlineExtent"/> first stands clear of every float it
+    /// is beside, stepping down from <paramref name="top"/> one blocking float at a time. A box that
+    /// keeps its own formatting context may not overlap a float, so when the room left beside the
+    /// floats is narrower than the box it has to drop until it fits - the same descent a float makes
+    /// onto the next row, asked here for a box rather than a float. Returns <paramref name="top"/>
+    /// unchanged once nothing below still blocks it, so a box wider than the container just overflows.
+    /// </summary>
+    public Double FitBelow(Double top, Double inlineExtent)
+    {
+        var y = top;
+
+        for (var attempt = 0; attempt < _left.Count + _right.Count; attempt++)
+        {
+            var (left, right) = FreeSpanAt(y, 0.001);
+
+            if (right - left >= inlineExtent)
+            {
+                return y;
+            }
+
+            var next = NextBottom(y, 0.001);
+
+            if (next <= y)
+            {
+                break;
+            }
+
+            y = next;
+        }
+
+        return y;
+    }
+
+    /// <summary>
     /// Gets the height a box clearing the given side stands at: below every float it refuses to sit
     /// beside, and unchanged when there is none to go below.
     /// </summary>

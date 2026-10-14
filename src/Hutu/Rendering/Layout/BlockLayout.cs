@@ -519,7 +519,7 @@ internal sealed class BlockLayout
             // The child's lines stand in the band of the floats around it, at the height the child
             // itself reaches: two siblings at different depths have different room beside a float,
             // so the band is answered per child rather than by the one context the container shares.
-            var (shift, room, band) = FormattingRoot(
+            var (shift, room, drop, band) = FormattingRoot(
                 child,
                 BandFor(child, tracks, context.Floats, cursor + pending, margin.Left, 0, 0, contentWidth),
                 contentWidth);
@@ -547,7 +547,7 @@ internal sealed class BlockLayout
 
             var size = _engine.Measure(child, childConstraints, passContext);
 
-            cursor += pending + size.Height;
+            cursor += pending + drop + size.Height;
             pending = childBottom;
         }
 
@@ -629,22 +629,63 @@ internal sealed class BlockLayout
     /// then nobody else's business: nothing outside a formatting root narrows what is inside it, so the
     /// band stops here as well as the box moving.
     /// </remarks>
-    private static (Double Shift, Double Room, FloatBand? Band) FormattingRoot(
+    private static (Double Shift, Double Room, Double Drop, FloatBand? Band) FormattingRoot(
         Box child,
         FloatBand? band,
         Double contentWidth)
     {
         if (band is null || !child.Style.ClipsOverflow)
         {
-            return (0, contentWidth, band);
+            return (0, contentWidth, 0, band);
         }
 
-        var (left, right) = band.FreeSpan();
+        var tracks = band.Tracks;
+        var top = band.OriginY;
+
+        // A formatting root whose width the author set cannot shorten itself to squeeze into the room
+        // left beside a float, so when that room is narrower than the box it steps down to the next
+        // row where the whole box fits - the drop that keeps a fixed-width aside clear of a floated
+        // picture above it rather than shoving it past the container's edge. A box whose width is
+        // <c>auto</c> just shortens instead (the shift and room below), so it stays put and is left
+        // exactly where it was; only a declared extent forces the descent.
+        if (DeclaredRootExtent(child, contentWidth) is { } needed)
+        {
+            top = tracks.FitBelow(top, needed);
+        }
+
+        var (left, right) = tracks.FreeSpanAt(top, 0.001);
 
         var shift = Math.Max(0, left - band.Left);
         var room = Math.Max(0, Math.Min(contentWidth, right - band.Left) - shift);
+        var drop = Math.Max(0, top - band.OriginY);
 
-        return (shift, room, null);
+        return (shift, room, drop, null);
+    }
+
+    /// <summary>
+    /// The inline extent a formatting root insists on - its border box when the author declared a
+    /// width - or null when it leaves the width to the room (<c>auto</c>) or to a percentage of a
+    /// block still being settled, neither of which forces a descent. The horizontal margins are left
+    /// out: only the border box may not overlap a float, and a box standing beside one is allowed to
+    /// let its trailing margin reach past the room, which is why a fixed-width aside beside a
+    /// half-width float still sits beside it rather than dropping below.
+    /// </summary>
+    private static Double? DeclaredRootExtent(Box child, Double basis)
+    {
+        var width = child.Style.Width;
+
+        if (!width.HasValue || width.Kind == StyleLengthKind.Percent || width.ReadsContainingBlock)
+        {
+            return null;
+        }
+
+        var border = BorderOf(child);
+        var padding = child.Style.Padding.Resolve(basis);
+        var content = Math.Max(0, width.Resolve(basis));
+
+        return BoxModel.IsBorderBox(child.Style)
+            ? content
+            : content + padding.Horizontal + border.Horizontal;
     }
 
     /// <summary>
@@ -812,7 +853,7 @@ internal sealed class BlockLayout
 
             // The band and the step clear of the floats are the measuring pass's own arithmetic, run
             // again at the place the child lands, so the size read back is the one it was answered with.
-            var (shift, room, band) = FormattingRoot(
+            var (shift, room, drop, band) = FormattingRoot(
                 child,
                 BandFor(
                     child, tracks, context.Floats,
@@ -836,7 +877,7 @@ internal sealed class BlockLayout
 
             var size = _engine.Measure(child, childConstraints, passContext);
             var used = BoxModel.UsedMargin(child.Style, contentWidth, size.Width);
-            var rect = new Rect(contentX + used.Left + shift, cursor + pending, size.Width, size.Height);
+            var rect = new Rect(contentX + used.Left + shift, cursor + pending + drop, size.Width, size.Height);
 
             parent.Children.Add(_engine.Arrange(child, rect, passContext));
 

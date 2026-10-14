@@ -40,6 +40,42 @@ public sealed class FloatLayoutTests
     }
 
     [Test]
+    public async Task AFixedWidthFormattingContextDropsBesideANarrowerFloat()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='area' style='width:100px'>" +
+            "<div id='f1' style='float:left;width:100px;height:50px'></div>" +
+            "<div id='f2' style='float:left;width:50px;height:50px'></div>" +
+            "<div id='bfc' style='overflow:hidden;width:50px;height:50px'></div>" +
+            "</div>"));
+
+        // f1 fills the row, so a fixed-width formatting context cannot squeeze beside it and steps
+        // down to f2's row, taking the fifty pixels f2 leaves on the right - not shoved past the
+        // container's edge beside f1.
+        Assert.That(Bounds(view, "f1"), Is.EqualTo(new Rect(0, 0, 100, 50)));
+        Assert.That(Bounds(view, "f2"), Is.EqualTo(new Rect(0, 50, 50, 50)));
+        Assert.That(Bounds(view, "bfc"), Is.EqualTo(new Rect(50, 50, 50, 50)));
+    }
+
+    [Test]
+    public async Task AFixedWidthFormattingContextStillStandsBesideAFloatItFits()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='area' style='width:400px'>" +
+            "<div id='f' style='float:left;width:200px;height:20px'></div>" +
+            "<div id='bfc' style='overflow:hidden;width:200px;height:15px;margin-right:100px'></div>" +
+            "</div>"));
+
+        // The box fits in the room the float leaves, so it stays beside it: an ignored trailing
+        // margin does not force a descent. Only a box wider than the room drops below.
+        Assert.That(Bounds(view, "bfc"), Is.EqualTo(new Rect(200, 0, 200, 15)));
+    }
+
+    [Test]
     public async Task TheContainerReachesAsFarAsTheDeepestFloat()
     {
         using var view = CreateView();
