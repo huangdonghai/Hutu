@@ -144,6 +144,7 @@ internal sealed class MasonryFormattingContext
     {
         var plan = new LanePlan();
         var cross = _grid.LayoutCrossTracks(box, contentWidth, definiteWidth, context);
+        var grid = box.Style.Grid;
         var columnWidths = cross.ColumnWidths;
         var trackCount = columnWidths.Count;
 
@@ -186,7 +187,11 @@ internal sealed class MasonryFormattingContext
             }
 
             var areaWidth = item.AreaWidth;
-            var size = _engine.Measure(item.Box, MeasureConstraints.FitWidth(areaWidth), itemContext);
+
+            // The cross (inline) axis is an ordinary grid axis: a definite-width item sits wherever
+            // justify-self / justify-items puts it inside its lane track, and only stretch fills the track.
+            var (offset, width) = _grid.AlignInline(item.Box, areaWidth, grid.JustifyItems, itemContext);
+            var size = _engine.Measure(item.Box, MeasureConstraints.FitWidth(width), itemContext);
             var height = size.Height;
 
             // The item drops just below the deepest floor among the columns it covers.
@@ -203,7 +208,7 @@ internal sealed class MasonryFormattingContext
                 floor[c] = y + height;
             }
 
-            plan.Items.Add(new PlacedItem(item.Box, laneX[start], y, areaWidth, height));
+            plan.Items.Add(new PlacedItem(item.Box, laneX[start] + offset, y, width, height));
         }
 
         for (var c = 0; c < trackCount; c++)

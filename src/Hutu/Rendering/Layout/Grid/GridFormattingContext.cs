@@ -1173,6 +1173,30 @@ internal sealed class GridFormattingContext
         _ => 0.0,
     };
 
+    /// <summary>
+    /// Places a box horizontally inside an area of <paramref name="areaWidth"/>, honoring its
+    /// <c>justify-self</c> over the container's <c>justify-items</c>: a definite width stands, <c>stretch</c>
+    /// fills the area, and every other alignment shrinks the box to its content and offsets it. The
+    /// grid-lanes (masonry) context borrows this for its cross axis, which is an ordinary grid axis, so a
+    /// lanes container aligns items across its columns exactly as a grid does.
+    /// </summary>
+    internal (Double Offset, Double Width) AlignInline(Box box, Double areaWidth, FlexAlignment justifyItems, LayoutContext context)
+    {
+        var style = box.Style;
+        var basis = context.ContainingBlock.Width;
+        var margin = style.Margin.Resolve(basis);
+        var padding = style.Padding.Resolve(basis);
+        var border = BlockLayout.BorderOf(box);
+        var insetH = padding.Horizontal + border.Horizontal;
+        var isBorderBox = BoxModel.IsBorderBox(style);
+
+        var justify = style.GridItem.JustifySelf == FlexAlignment.Auto ? justifyItems : style.GridItem.JustifySelf;
+        var width = ResolveWidth(style, box, areaWidth, insetH, isBorderBox, justify, context);
+        var outer = width + margin.Left + margin.Right;
+
+        return (margin.Left + Space(justify, areaWidth - outer), width);
+    }
+
     private static Double Total(List<Track> tracks, Double gap)
     {
         var total = 0.0;

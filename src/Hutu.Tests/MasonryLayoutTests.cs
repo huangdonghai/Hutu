@@ -89,6 +89,52 @@ public sealed class MasonryLayoutTests
         Assert.That(b.BorderBox.X, Is.EqualTo(0).Within(0.5));
     }
 
+    [Test]
+    public async Task ADefiniteWidthItemAlignsAcrossItsLaneByJustifySelf()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid-lanes;grid-template-columns:repeat(3,80px);width:240px'>" +
+            "<div id='a' style='width:40px;height:10px;justify-self:center'>A</div>" +
+            "<div id='b' style='width:40px;height:10px;justify-self:end'>B</div>" +
+            "<div id='c' style='height:10px'>C</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+        var c = Find(view, "c");
+
+        // A sits centred in the first 80px lane, B flush right in the second, and C - left to the
+        // default stretch - still fills its lane.
+        Assert.That(a.BorderBox.X, Is.EqualTo(20).Within(0.5));
+        Assert.That(a.BorderBox.Width, Is.EqualTo(40).Within(0.5));
+        Assert.That(b.BorderBox.X, Is.EqualTo(120).Within(0.5));
+        Assert.That(c.BorderBox.X, Is.EqualTo(160).Within(0.5));
+        Assert.That(c.BorderBox.Width, Is.EqualTo(80).Within(0.5));
+    }
+
+    [Test]
+    public async Task TheContainerJustifyItemsSetsTheDefaultForAutoItems()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid-lanes;justify-items:center;grid-template-columns:repeat(2,80px);width:160px'>" +
+            "<div id='a' style='width:30px;height:10px'>A</div>" +
+            "<div id='b' style='width:30px;height:10px;justify-self:start'>B</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+
+        // A inherits the container's center (25px into its lane); B overrides it back to start.
+        Assert.That(a.BorderBox.X, Is.EqualTo(25).Within(0.5));
+        Assert.That(b.BorderBox.X, Is.EqualTo(80).Within(0.5));
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
