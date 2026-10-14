@@ -12,6 +12,7 @@ using Hutu.Rendering.Paint;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 using System.Net;
 using System.Reflection;
 using System.Threading;
@@ -428,7 +429,7 @@ public sealed class HutuViewInternal : IDisposable
                     .Address(NormalizeUrl(url))
                     .Status(HttpStatusCode.OK)
                     .Header("Content-Type", "text/html; charset=utf-8")
-                    .Content(html));
+                    .Content(WithoutCdataInStyles(html)));
 
             SetDocument(document, context);
             return document;
@@ -444,6 +445,28 @@ public sealed class HutuViewInternal : IDisposable
     {
         return Document?.DocumentElement?.OuterHtml ?? string.Empty;
     }
+
+    /// <summary>The body of one style element, which is where an XHTML sheet hides its markers.</summary>
+    private static readonly Regex StyleBody = new(
+        @"(?<open><style\b[^>]*>)(?<body>.*?)(?=</style>)",
+        RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Takes the CDATA markers out of the stylesheets, leaving everything else alone.
+    /// </summary>
+    /// <remarks>
+    /// A page written the XHTML way wraps its CSS in <c>&lt;![CDATA[ ... ]]&gt;</c>. In HTML those
+    /// markers mean nothing - a style element is raw text - so they reach the CSS parser as part of the
+    /// sheet and every rule in it is thrown away, which is how a reference page comes back with no styles
+    /// at all and its plain div measures as a full-width empty block. Stripping them inside the style
+    /// elements only leaves text that might legitimately carry the characters untouched.
+    /// </remarks>
+    private static String WithoutCdataInStyles(String html) =>
+        StyleBody.Replace(html, match =>
+            match.Groups["open"].Value +
+            match.Groups["body"].Value
+                .Replace("<![CDATA[", String.Empty, StringComparison.Ordinal)
+                .Replace("]]>", String.Empty, StringComparison.Ordinal));
 
     public ICssStyleDeclaration GetComputedStyle(
         IElement element,
