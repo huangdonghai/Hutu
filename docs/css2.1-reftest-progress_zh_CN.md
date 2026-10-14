@@ -9,10 +9,10 @@
 
 | 语料 | 基线 | 备注 |
 |---|---:|---|
-| **wpt** | **2872** | 含 Ahem 解锁 +95、定宽 BFC 下移 +2 |
+| **wpt** | **2875** | 含 Ahem 解锁 +95、定宽 BFC 下移 +2、浮动 %-margin/匿名透明 +3 |
 | **gecko** | **1850** | 含定高 margin 修复 +19 |
 | 崩溃 / 画不出 | **0 / 0** | |
-| 单测 | **555** | |
+| 单测 | **556** | |
 
 复现方式（判定回归的唯一仲裁是这套浏览器真相）：
 
@@ -83,13 +83,16 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 - **`white-space` 残余多是 `break-spaces` / `pre-wrap`（CSS Text 3，非 2.1）**——按"先弄好基础"的口径暂缓。
 - **`floats` / `floats-clear`（CSS2 里约 65 例）**：异构多根因，非一处能翻一片。已收（`ab2def6d`）：**定宽 BFC 盒装不下时下移**（+2）。剩余子因待攻：**`floats-placement-*` 疑似浮动背景未绘制 / paint 层序 bug**（float 布局矩形对却画成容器底色——若是 paint 问题影响面大、优先查）；**`new-fc-separates-from-float` 的 BFC↔浮动 margin 分离**；**`*-clearance` / `clear-*` 的 clearance+顶边距算术**；**`floats-clear-multicol-*`（耦合 multicol）**。早期"仅 BFC 容器才包含浮动"的核心不变量修复实测净 −14（谓词漏 flex/grid item + 需跨块 band 折行），已回退。
 
-#### paint bug 查到底：真因是被遮盖的浮动尺寸/网格背景 bug
-`floats-placement-001/002` 的 paint 症状根因：**生成式匿名块把父容器 background 又画了一遍**（BoxBuilder 用 `parent.Style.AsAnonymous()` 造匿名块，AsAnonymous 去了 margin/padding/border/position 但**留着 background**），这条多余的同色 fill 因“子按文档序绘制”盖住了先画的浮动。
-- 正确的 CSS 修法是令匿名块透明（`Painter.PaintBlock` 对 `box.Source.IsAnonymous` 跳过 background/border）→ placement-001/002 翻绿，但**空载全量净负**（gecko 1850→1848）。
-- **关键：那 −2 不是匿名透明本身错，而是它揭开了两个先前被绿色盖住的预存 bug**（已用 test/ref 双树坐实）：
-  - `gecko/bugs/249982-1.html`：**auto 宽浮动 + `margin-right:40%` 时浮动算宽错**。test float 得 `[203,188.85]`，ref（`margin-right:4em`，同为256）得 `[333,58.75]`——同样 256 边距，浮动宽度应都是 shrink-to-fit 的 58.75。百分比边距下浮动可用宽/收缩计算错，先前被匿名绿盖住而“相等”。
-  - `gecko/css-grid/grid-item-sizing-percent-002.html`：网格项 background/`background-clip:content-box` 与百分比 sizing 的交互（另一独立问题）。
-- 结论：把这条 paint bug“做对”= 匿名块透明（正确）+ 顺手修它揭开的浮动 %-margin 收缩尺寸 bug（独立、对真实页面有用）。浮动 %-margin shrink-to-fit 是下一个具体目标。之前“block-in-inline”的猜测是错的（本引擎只有 WrapInline 两处 IsAnonymous，无 block-in-inline 匿名机制）。
+#### paint bug 已修复（`158173d5`）
+`floats-placement-001/002` 的多余红 fill 根因是**生成式匿名块重复绘制父 background**（BoxBuilder 用 `parent.Style.AsAnonymous()` 造匿名块，保留了 background），因“子按文档序绘制”盖住了先画的浮动。
+- **修复（两件耦合的事，一起提交才净正）**：
+  1. `Painter.PaintBlock` 对 `box.Source.IsAnonymous` 跳过 background/border（匿名块非元素，只画子）——placement-001/002 翻绿。
+  2. 但单独上它会回退 `gecko/bugs/249982-1`：它**揭开一个预存的浮动 shrink-to-fit bug**——auto 宽 + `margin-right:40%` 的浮动把百分比边距算在收缩后的可用宽上而非包含块（得 188.85 应 58.75）。`BoxModel.ResolveWidth` 新增 `containingWidth` 参数：百分比的 width/margin/min/max **一律按包含块解析**，`basis` 只用于 auto 填充封顶；普通块两者相等、无变化（flex/grid/masonry 三处调用同步传 context 宽）。
+- 门禁：**wpt 2872→2875（+3）gecko 持平 1850（0 崩溃，556 单测）**。
+- **残留**：`gecko/css-grid/grid-item-sizing-percent-002` 仍失败——透明揭开的是另一个**网格项 background/`background-clip:content-box` 的独立 bug**（与浮动 %-margin 无关，需单独查）。
+
+#### （历史）早期误判更正
+之前猜测 IsAnonymous 一刀切会误伤 block-in-inline 携带 inline 背景——错：本引擎只有 WrapInline 两处 IsAnonymous，无 block-in-inline 匿名机制；真实原因是浮动 shrink-to-fit 与网格项 bg 两个预存 bug 被遮盖。
 - **grid-lanes / masonry（先进排版）**：用户已指示"先进排版先不弄"，M2 最短车道 WIP 存于 stash，M4/M5/M6 未做。
 
 ---
