@@ -1441,6 +1441,16 @@ internal readonly struct ComputedStyle
             return factor * size;
         }
 
+        // A line height written as a calc() keeps line-height's own rules: a percentage and a
+        // font-relative unit are multiples of the element's own font size, not of the viewport or the
+        // root. Folding against that size returns every length already in pixels; only a plain number is
+        // left bare, and a line height reads it as a multiple of the same size.
+        if (declared.RawValue is CssCalcValue calc &&
+            LengthReader.TryFoldCalcRaw(calc, size, out var unit, out var number))
+        {
+            return unit == CssLengthValue.Unit.None ? number * size : number;
+        }
+
         return TryReadLengthValue(declared, RenderMode.Vertical, new LengthReader.FontSource(size), dimensions, out var pixels)
             ? pixels
             : null;

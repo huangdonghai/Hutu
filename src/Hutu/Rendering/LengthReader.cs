@@ -357,7 +357,8 @@ internal static class LengthReader
         var context = new CalcComputeContext(dimensions);
         var computed = ((ICssValue)calc).Compute(context);
 
-        if (computed is CssLengthValue result && !Double.IsNaN(result.Value) && !Double.IsInfinity(result.Value))
+        if (computed is CssLengthValue result && result.Type != CssLengthValue.Unit.None &&
+            !Double.IsNaN(result.Value) && !Double.IsInfinity(result.Value))
         {
             var pixels = result.Type == CssLengthValue.Unit.Percent
                 ? result.Value / 100.0 * (mode == RenderMode.Horizontal ? dimensions.RenderWidth : dimensions.RenderHeight)
@@ -371,6 +372,46 @@ internal static class LengthReader
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Folds a <c>calc()</c> to its computed number and unit against a caller-supplied basis, rather than
+    /// the viewport and root. Line height is that caller: there a percentage and a font-relative unit are
+    /// multiples of the element's own font size, so the whole expression is folded against <paramref name="basis"/>.
+    /// A plain number comes back as such (<see cref="CssLengthValue.Unit.None"/>) - it is a multiplier, not
+    /// a length, and has nothing to convert.
+    /// </summary>
+    internal static Boolean TryFoldCalcRaw(CssCalcValue calc, Double basis, out CssLengthValue.Unit unit, out Double value)
+    {
+        var context = new CalcComputeContext(new FontBasis(basis));
+
+        if (((ICssValue)calc).Compute(context) is CssLengthValue result &&
+            !Double.IsNaN(result.Value) && !Double.IsInfinity(result.Value))
+        {
+            unit = result.Type;
+            value = result.Value;
+            return true;
+        }
+
+        unit = default;
+        value = 0;
+        return false;
+    }
+
+    /// <summary>
+    /// A render box that is the caller's font size on every side, so a calc that resolves percentages
+    /// and font-relative units does so against that size rather than against the viewport or the root.
+    /// Only the font-relative and percentage fold reads it, which is exactly what a line height wants.
+    /// </summary>
+    private sealed class FontBasis : IRenderDimensions
+    {
+        public FontBasis(Double basis) => RenderWidth = RenderHeight = FontSize = basis;
+
+        public Double RenderWidth { get; }
+
+        public Double RenderHeight { get; }
+
+        public Double FontSize { get; }
     }
 
     /// <summary>

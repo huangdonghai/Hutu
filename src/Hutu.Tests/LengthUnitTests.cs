@@ -180,6 +180,27 @@ public sealed class LengthUnitTests
             "150% of the paragraph's own twenty pixels, not a share of the viewport it is read through");
     }
 
+    [Test]
+    public async Task CalcLineHeightKeepsLineHeightsOwnUnits()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<p style='margin:0;font-size:20px;line-height:calc(150%)'>a</p>"));
+        Assert.That(OneLineHeight(view), Is.EqualTo(30).Within(0.01),
+            "a percentage in a line-height calc is of the element's font size, not the viewport");
+
+        await view.SetHtml(Document("<p style='margin:0;font-size:20px;line-height:calc(2 * 10px + 50%)'>b</p>"));
+        Assert.That(OneLineHeight(view), Is.EqualTo(30).Within(0.01),
+            "a length and a percentage fold together, each against its own basis");
+
+        await view.SetHtml(Document("<p style='margin:0;font-size:20px;line-height:calc(3)'>c</p>"));
+        Assert.That(OneLineHeight(view), Is.EqualTo(60).Within(0.01),
+            "a plain number is a multiple of the size - read as a length it has no unit to convert");
+    }
+
+    private static Double OneLineHeight(HutuViewInternal view) =>
+        Walk(view).First(node => node.Kind == LayoutKind.Line).BorderBox.Height;
+
     /// <summary>Gets the document under test: a body with no margin and the root font size the em tests assume.</summary>
     private static String Document(String content, Int32 width = 0) =>
         "<html><body style='margin:0;font-size:16px;line-height:1'" +
