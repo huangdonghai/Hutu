@@ -946,14 +946,38 @@ public sealed class HutuViewInternal : IDisposable
     /// image already fetched - or already failed - is never asked for again.
     /// </para>
     /// </remarks>
-    public async Task PrefetchImagesAsync(CancellationToken cancellationToken)
+    public async Task PrefetchImagesAsync(CancellationToken cancellationToken) =>
+        await PrefetchImagesAsync(null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Fetches only the pictures that come in through the file system or ride inside the page itself.
+    /// </summary>
+    /// <remarks>
+    /// A reftest has to reach the same picture on every machine and on every run, which a picture pulled
+    /// over http cannot promise - it is not there when the network is not, and it is a different picture
+    /// the moment the server changes its mind. A <c>file:</c> reference beside the page and a <c>data:</c>
+    /// URL baked into it are both fixed, so those and nothing else are what a deterministic drawing loads.
+    /// </remarks>
+    public async Task PrefetchLocalImagesAsync(CancellationToken cancellationToken) =>
+        await PrefetchImagesAsync(IsLocal, cancellationToken).ConfigureAwait(false);
+
+    private static Boolean IsLocal(String url) =>
+        url.StartsWith("file:", StringComparison.OrdinalIgnoreCase) ||
+        url.StartsWith("data:", StringComparison.OrdinalIgnoreCase);
+
+    private async Task PrefetchImagesAsync(Func<String, Boolean>? shouldFetch, CancellationToken cancellationToken)
     {
         if (_imageLoader is null)
         {
             return;
         }
 
-        var urls = ImageUrlCollector.Collect(Document!, _renderDevice);
+        IReadOnlyList<String> urls = ImageUrlCollector.Collect(Document!, _renderDevice);
+
+        if (shouldFetch is not null)
+        {
+            urls = urls.Where(shouldFetch).ToList();
+        }
 
         if (urls.Count == 0)
         {

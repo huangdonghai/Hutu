@@ -77,8 +77,15 @@ internal sealed class EngineReader : IDisposable
         set => _view.Zoom = value;
     }
 
-    public async Task LoadAsync(String html, String baseAddress) =>
+    public async Task LoadAsync(String html, String baseAddress)
+    {
         await _view.SetHtmlDocumentAsync(html, baseAddress);
+
+        // A reftest that reaches a picture through a file beside the page draws it; one that would
+        // reach it over the network does not, because a drawing has to come to the same pixels on every
+        // machine. A reader built on fixed metrics has no loader at all, so this is a no-op there.
+        await _view.PrefetchLocalImagesAsync(default);
+    }
 
     private SkiaPaintExecutor? _executor;
 
