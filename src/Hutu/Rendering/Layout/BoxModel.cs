@@ -21,27 +21,35 @@ internal static class BoxModel
     /// the content box, or as the border box under <c>box-sizing: border-box</c>. The min and max
     /// constraints are then applied to the result.
     /// </summary>
-    public static (Double BorderBox, Double Content) ResolveWidth(ComputedStyle style, Double basis, Double insets)
+    /// <remarks>
+    /// <paramref name="basis"/> is the room the box may fill, which a shrink-to-fit caller makes
+    /// smaller than the containing block. <paramref name="containingWidth"/> is the containing block
+    /// itself, which every percentage on the box - its width, its margins, its min and max - is
+    /// measured against, per CSS. Keeping the two apart is what lets a floated box with a percentage
+    /// margin shrink to its content instead of resolving that margin against the reduced room it was
+    /// handed. For an ordinary block the two are the same number and nothing changes.
+    /// </remarks>
+    public static (Double BorderBox, Double Content) ResolveWidth(ComputedStyle style, Double basis, Double containingWidth, Double insets)
     {
         var isBorderBox = IsBorderBox(style);
         Double content;
 
         if (style.Width.HasValue)
         {
-            var specified = Math.Max(0, style.Width.Resolve(basis));
+            var specified = Math.Max(0, style.Width.Resolve(containingWidth));
             content = Math.Max(0, isBorderBox ? specified - insets : specified);
         }
         else
         {
-            content = Math.Max(0, basis - style.Margin.Resolve(basis).Horizontal - insets);
+            content = Math.Max(0, basis - style.Margin.Resolve(containingWidth).Horizontal - insets);
         }
 
-        if (ContentBound(style.MaxWidth, basis, insets, isBorderBox) is { } maximum && content > maximum)
+        if (ContentBound(style.MaxWidth, containingWidth, insets, isBorderBox) is { } maximum && content > maximum)
         {
             content = maximum;
         }
 
-        if (ContentBound(style.MinWidth, basis, insets, isBorderBox) is { } minimum && content < minimum)
+        if (ContentBound(style.MinWidth, containingWidth, insets, isBorderBox) is { } minimum && content < minimum)
         {
             content = minimum;
         }

@@ -56,7 +56,7 @@ internal sealed class GridFormattingContext
         var insetH = padding.Horizontal + border.Horizontal;
         var insetV = padding.Vertical + border.Vertical;
 
-        var (_, contentWidth) = BoxModel.ResolveWidth(style, basisWidth, insetH);
+        var (_, contentWidth) = BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insetH);
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insetV);
 
         var plan = Compute(box, contentWidth, declaredHeight, context, definiteWidth: true, sizeRows: true);

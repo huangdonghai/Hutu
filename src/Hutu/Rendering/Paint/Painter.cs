@@ -190,6 +190,19 @@ internal sealed class Painter
     {
         var style = box.Source.Style;
 
+        // A generated anonymous box - the block stood between an inline run and a block sibling, or
+        // wrapping the whole inline content of a block - is not an element and owns no presentation. It
+        // borrows the container's computed values to lay its children out, but it must not paint them:
+        // the container already painted its own background behind the whole content box, so the
+        // anonymous block painting that same background again only risks covering a float that stands
+        // beside the run it wraps (children paint in document order, so the later anonymous block would
+        // bury the earlier float). It draws only what is inside it.
+        if (box.Source.IsAnonymous)
+        {
+            PaintChildren(box, list, target, deferred);
+            return;
+        }
+
         // An empty cell under `empty-cells: hide` paints neither its background nor, in the separated
         // border model, its border. Every other box paints both.
         if (!box.SuppressBackground)

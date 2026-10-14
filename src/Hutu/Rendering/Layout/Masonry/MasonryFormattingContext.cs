@@ -35,7 +35,7 @@ internal sealed class MasonryFormattingContext
         var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var inset = Insets(box, basisWidth);
 
-        var (_, contentWidth) = BoxModel.ResolveWidth(style, basisWidth, inset.Horizontal);
+        var (_, contentWidth) = BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, inset.Horizontal);
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, inset.Vertical);
 
         var plan = Compute(box, contentWidth, true, context);

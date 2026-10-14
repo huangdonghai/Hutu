@@ -418,6 +418,23 @@ public sealed class FloatLayoutTests
         });
     }
 
+    [Test]
+    public async Task AFloatWithAPercentageMarginShrinksToItsContent()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='c' style='width:200px'>" +
+            "<span id='f' style='float:right; margin-right:50%'>ab</span>" +
+            "</div>"));
+
+        // A floated box shrinks to its content. Its percentage margin is measured against the
+        // containing block - half of 200 is 100 - which leaves room for the two letters (10px), so the
+        // box is 10px wide. The old bug resolved that margin against the smaller shrink-to-fit room
+        // it handed the box, which fed back into the width and grew the box instead of shrinking it.
+        Assert.That(Bounds(view, "f").Width, Is.EqualTo(10).Within(0.5), "shrinks to its content, margin measured against the containing block");
+    }
+
     private static Rect Bounds(HutuViewInternal view, String id)
     {
         var element = view.Document!.GetElementById(id);
