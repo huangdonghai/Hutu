@@ -1,6 +1,6 @@
 layout 800x1139.2
 block  html                    0,0 800x1139.2
-  block  body                    0,0 800x1139.2
+  block  body                    0,64 800x1075.2
     block  div#head                0,64 320x32 m:64/0/0/0
     block  div#mid                 0,121.6 320x32 m:25.6/0/25.6/0
     block  div#tail                0,179.2 800x960

@@ -20,10 +20,12 @@ namespace Hutu.Rendering.Layout;
 /// by <see cref="ComputedStyle.Flow"/> alone.
 /// </para>
 /// <para>
-/// Adjacent sibling margins collapse to the larger of the two. Parent/child collapsing is not
-/// modelled yet: deciding whether the margins are adjoining needs the parent's border and padding,
-/// and letting a child's margin escape would move the content of every sample page, so it is left
-/// for a later pass.
+/// Margins collapse the way CSS 2.1 §8.3.1 says: adjacent siblings, a parent and its first or last
+/// in-flow child when nothing borders or pads between them, and a box with nothing inside it at all
+/// - whose own top and bottom adjoin and fold into one. A box that establishes a new formatting
+/// context (float, out-of-flow, overflow other than <c>visible</c>, inline-block, table part, a
+/// horizontal rule) seals its children's margins inside and is not itself folded into the stack it
+/// sits in; those edges stop the walk in <see cref="CollapsedTop"/> and <see cref="CollapsedBottom"/>.
 /// </para>
 /// </remarks>
 internal sealed class BlockLayout
@@ -150,6 +152,9 @@ internal sealed class BlockLayout
     /// <remarks>
     /// Nothing here answers for the inline axis: a column is as long as the space it was given, not
     /// as long as the tallest child, so what the children reach down it does not come into the size.
+    /// Margins collapse along the block axis (the physical x for a column) exactly as they do in a
+    /// row - a neighbour's adjoining margins fold into one strip, a child's outer edge escapes through
+    /// the box when nothing borders or pads there, and a box with nothing across it self-collapses.
     /// </remarks>
     private Double MeasureColumnChildren(
         Box box,
@@ -159,10 +164,12 @@ internal sealed class BlockLayout
         WritingModeInfo flow)
     {
         var cursor = 0.0;
-        var previousEndMargin = 0.0;
-        var first = true;
+        var pending = 0.0;
+        var throughStart = CollapsesThroughStart(box, flow, contentInline);
+        var throughEnd = CollapsesThroughEnd(box, flow, contentInline);
         var childContext = context.ForContainingBlock(new Size(basisBlock, contentInline));
         var constraints = MeasureConstraints.FitWidth(basisBlock);
+        var startEscapes = throughStart;
 
         foreach (var child in box.Children)
         {
@@ -172,20 +179,39 @@ internal sealed class BlockLayout
             }
 
             // The margins that separate the columns are the physical left and right ones, and which of
-            // the two a box starts with depends on the direction the columns run. The other pair is
-            // across the columns, where it is the child's own room: the child took it off the extent
-            // it was given to run down, which is the extent this one hands it.
-            var margin = child.Style.Margin.Resolve(contentInline);
-            var (startMargin, endMargin) = flow.BlockMargins(margin);
-            var spacing = first ? startMargin : Math.Max(previousEndMargin, startMargin);
+            // the two a box starts with depends on the direction the columns run. A child turned to the
+            // other axis is a wall here - it presents only its own margin, which <see
+            // cref="CollapsedStart"/> already handles by not folding through it.
+            var childStart = CollapsedStart(child, flow, contentInline);
+            var childEnd = CollapsedEnd(child, flow, contentInline);
+            var childSelfCollapses = IsSelfCollapsing(child, flow, contentInline);
+
+            // The leading run of self-collapsing boxes escapes through the box's own start edge, and
+            // the first box with extent joins that escape; the walk stops there.
+            if (startEscapes)
+            {
+                if (!childSelfCollapses)
+                {
+                    startEscapes = false;
+                }
+            }
+            else
+            {
+                pending = Combine(pending, childStart);
+            }
+
+            if (childSelfCollapses)
+            {
+                continue;
+            }
+
             var size = _engine.Measure(child, constraints, childContext);
 
-            cursor += spacing + flow.BlockExtent(size.Width, size.Height);
-            previousEndMargin = endMargin;
-            first = false;
+            cursor += pending + flow.BlockExtent(size.Width, size.Height);
+            pending = childEnd;
         }
 
-        return cursor + previousEndMargin;
+        return throughEnd ? cursor : cursor + pending;
     }
 
     /// <summary>
@@ -416,14 +442,25 @@ internal sealed class BlockLayout
     }
 
     /// <summary>Measures the block children and returns the height their stacking occupies.</summary>
+    /// <remarks>
+    /// Margins collapse the way CSS 2.1 §8.3.1 says: adjacent siblings fold their adjoining margins
+    /// into one strip, a child's outer edge adjoins the parent's own when the parent has no border
+    /// or padding at that end (and does not establish a formatting context), and a box that
+    /// self-collapses contributes its one combined margin to whichever strip surrounds it. The part
+    /// that escapes through the box is not stored in the box's own content height - it is already
+    /// accounted for in the collapsed top or bottom the box reports up and down the stack, which
+    /// <see cref="CollapsedTop"/> and <see cref="CollapsedBottom"/> compute on the same rules.
+    /// </remarks>
     private Double MeasureBlockChildren(Box box, Double contentWidth, Double contentHeight, LayoutContext context)
     {
         var cursor = 0.0;
-        var previousBottomMargin = 0.0;
-        var first = true;
+        var pending = 0.0;
+        var throughTop = CollapsesThroughStart(box, box.Flow, contentWidth);
+        var throughBottom = CollapsesThroughEnd(box, box.Flow, contentWidth);
         var childContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
         var constraints = MeasureConstraints.FitWidth(contentWidth);
         var tracks = TracksFor(box, contentWidth, 0);
+        var topEscapes = throughTop;
 
         foreach (var child in box.Children)
         {
@@ -445,21 +482,46 @@ internal sealed class BlockLayout
             {
                 // The float is sized and put on its edge, and the cursor is left exactly where it
                 // was: a float takes no room in the stack, which is the whole reason the container
-                // has to be measured with the tracks rather than with the cursor alone.
+                // has to be measured with the tracks rather than with the cursor alone. A float
+                // also seals the margin run - it does not join the collapse on either side.
                 PlaceFloat(child, floats, cursor, contentWidth, childContext);
                 continue;
             }
 
-            // The parent's content box is the child's containing block, so the child is handed its
-            // width rather than the width left after its own margins: resolving those is its job.
-            var spacing = Spacing(child, tracks, margin, cursor, first, previousBottomMargin);
+            var childTop = CollapsedStart(child, box.Flow, contentWidth);
+            var childBottom = CollapsedEnd(child, box.Flow, contentWidth);
+            var childSelfCollapses = IsSelfCollapsing(child, box.Flow, contentWidth);
+
+            // While the leading run of self-collapsing boxes continues, every top the walk meets
+            // is already part of this box's own reported collapsed top and escapes upward through
+            // it. The chain ends at the first box that has height of its own, and that box's top
+            // joins the escape too - the run adjoins all the way down to it.
+            if (topEscapes)
+            {
+                if (!childSelfCollapses)
+                {
+                    topEscapes = false;
+                }
+            }
+            else
+            {
+                pending = Combine(pending, childTop);
+            }
+
+            if (childSelfCollapses)
+            {
+                // A zero-height box sits inside the pending strip without advancing the cursor: its
+                // own combined margin has just been added, and the run carries it on to whichever
+                // box follows. Nothing here is a place in the stack the box occupies.
+                continue;
+            }
 
             // The child's lines stand in the band of the floats around it, at the height the child
             // itself reaches: two siblings at different depths have different room beside a float,
             // so the band is answered per child rather than by the one context the container shares.
             var (shift, room, band) = FormattingRoot(
                 child,
-                BandFor(child, tracks, context.Floats, cursor + spacing, margin.Left, 0, 0, contentWidth),
+                BandFor(child, tracks, context.Floats, cursor + pending, margin.Left, 0, 0, contentWidth),
                 contentWidth);
 
             var passContext = childContext.WithFloats(band);
@@ -474,41 +536,28 @@ internal sealed class BlockLayout
                 childConstraints = MeasureConstraints.FitWidth(room);
             }
 
+            // A cleared box is moved below the floats it refuses to stand beside. What it moved
+            // through is not given back to the surrounding margins - the stack resumes from where
+            // the box landed.
+            if (tracks is { } cleared && child.Style.Clear != ClearSide.None)
+            {
+                var clearedTo = cleared.ClearBelow(child.Style.Clear, cursor + pending);
+                pending = Math.Max(pending, clearedTo - cursor);
+            }
+
             var size = _engine.Measure(child, childConstraints, passContext);
 
-            cursor += spacing + size.Height;
-            previousBottomMargin = margin.Bottom;
-            first = false;
+            cursor += pending + size.Height;
+            pending = childBottom;
         }
 
-        return Math.Max(cursor + previousBottomMargin, tracks?.Bottom ?? 0);
-    }
+        // The trailing strip either escaped through the box (already in the collapsed bottom this
+        // box reports to its parent) or has to be reserved inside this box's content height. A
+        // container that holds floats still widens its height for them whatever the margin stack
+        // says about the last box in it.
+        var stacked = throughBottom ? cursor : cursor + pending;
 
-    /// <summary>
-    /// Gets the distance the stack moves on before the child: its own top margin, or the larger of
-    /// that and the box above it's bottom margin - pushed further still when the child clears floats.
-    /// </summary>
-    private static Double Spacing(
-        Box child,
-        FloatTracks? tracks,
-        Thickness margin,
-        Double cursor,
-        Boolean first,
-        Double previousBottomMargin)
-    {
-        var spacing = first ? margin.Top : Math.Max(previousBottomMargin, margin.Top);
-
-        // A cleared box is moved below the floats it refuses to stand beside. What it moved through
-        // is not given back to the margins around it, and the stack resumes from where the box
-        // landed - which is what lets a portal put its "more" link under the two columns rather than
-        // beside them.
-        if (tracks is { } floats && child.Style.Clear != ClearSide.None)
-        {
-            var cleared = floats.ClearBelow(child.Style.Clear, cursor + spacing);
-            spacing = Math.Max(spacing, cleared - cursor);
-        }
-
-        return spacing;
+        return Math.Max(stacked, tracks?.Bottom ?? 0);
     }
 
     /// <summary>Gets whether the child is pinned to an edge of its container instead of stacked in it.</summary>
@@ -684,10 +733,11 @@ internal sealed class BlockLayout
         LayoutContext context)
     {
         var cursor = contentY;
-        var previousBottomMargin = 0.0;
-        var first = true;
+        var pending = 0.0;
+        var throughTop = CollapsesThroughStart(box, box.Flow, contentWidth);
         var constraints = MeasureConstraints.FitWidth(contentWidth);
         var tracks = TracksFor(box, contentWidth, contentX);
+        var topEscapes = throughTop;
 
         foreach (var child in box.Children)
         {
@@ -702,13 +752,31 @@ internal sealed class BlockLayout
             {
                 // The same walk the measuring phase ran, at the same numbers: the width it reads out
                 // of the cache is the one the container's height was answered from, and the place it
-                // reserves is the one a clearing box below it is measured against.
+                // reserves is the one a clearing box below it is measured against. A float stands
+                // outside the margin collapse on either side.
                 var placed = PlaceFloat(child, floats, cursor, contentWidth, context);
                 parent.Children.Add(_engine.Arrange(child, placed.BorderBox, context));
                 continue;
             }
 
-            var spacing = Spacing(child, tracks, margin, cursor, first, previousBottomMargin);
+            var childTop = CollapsedStart(child, box.Flow, contentWidth);
+            var childBottom = CollapsedEnd(child, box.Flow, contentWidth);
+            var childSelfCollapses = IsSelfCollapsing(child, box.Flow, contentWidth);
+
+            // Same rule the measuring pass followed: while the leading run of self-collapsing
+            // boxes continues, every top has already escaped through the parent's own collapsed
+            // top, and the walk stops that escape at the first box with height.
+            if (topEscapes)
+            {
+                if (!childSelfCollapses)
+                {
+                    topEscapes = false;
+                }
+            }
+            else
+            {
+                pending = Combine(pending, childTop);
+            }
 
             if (PositionedLayout.IsOutOfFlow(child))
             {
@@ -723,9 +791,22 @@ internal sealed class BlockLayout
                 // costs nothing: it takes no part in the stacking above either way.
                 parent.Children.Add(_engine.ArrangePositioned(
                     child,
-                    new Offset(contentX + margin.Left, cursor + spacing),
+                    new Offset(contentX + margin.Left, cursor + pending),
                     context));
 
+                continue;
+            }
+
+            if (childSelfCollapses)
+            {
+                // A zero-height box still appears in the tree so the painter finds its style where
+                // the author left it - it is the box that carries the background, if any - but the
+                // cursor does not move: the pending strip continues to the next box without a stop
+                // here. The size it was measured to already agrees with the pass above.
+                var size0 = _engine.Measure(child, constraints, context);
+                var used0 = BoxModel.UsedMargin(child.Style, contentWidth, size0.Width);
+                var rect0 = new Rect(contentX + used0.Left, cursor, size0.Width, size0.Height);
+                parent.Children.Add(_engine.Arrange(child, rect0, context));
                 continue;
             }
 
@@ -735,7 +816,7 @@ internal sealed class BlockLayout
                 child,
                 BandFor(
                     child, tracks, context.Floats,
-                    cursor + spacing, contentX + margin.Left, contentX, contentY, contentWidth),
+                    cursor + pending, contentX + margin.Left, contentX, contentY, contentWidth),
                 contentWidth);
 
             var passContext = context.WithFloats(band);
@@ -747,15 +828,20 @@ internal sealed class BlockLayout
                 childConstraints = MeasureConstraints.FitWidth(room);
             }
 
+            if (tracks is { } cleared && child.Style.Clear != ClearSide.None)
+            {
+                var clearedTo = cleared.ClearBelow(child.Style.Clear, cursor + pending);
+                pending = Math.Max(pending, clearedTo - cursor);
+            }
+
             var size = _engine.Measure(child, childConstraints, passContext);
             var used = BoxModel.UsedMargin(child.Style, contentWidth, size.Width);
-            var rect = new Rect(contentX + used.Left + shift, cursor + spacing, size.Width, size.Height);
+            var rect = new Rect(contentX + used.Left + shift, cursor + pending, size.Width, size.Height);
 
             parent.Children.Add(_engine.Arrange(child, rect, passContext));
 
             cursor = rect.Bottom;
-            previousBottomMargin = margin.Bottom;
-            first = false;
+            pending = childBottom;
         }
     }
 
@@ -779,10 +865,11 @@ internal sealed class BlockLayout
         var flow = box.Flow;
         var contentInline = flow.InlineExtent(content.Width, content.Height);
         var cursor = 0.0;
-        var previousEndMargin = 0.0;
-        var first = true;
+        var pending = 0.0;
+        var throughStart = CollapsesThroughStart(box, flow, contentInline);
         var constraints = MeasureConstraints.FitWidth(basisBlock);
         var outOfFlow = new List<(Box Box, Offset Static)>();
+        var startEscapes = throughStart;
 
         foreach (var child in box.Children)
         {
@@ -792,15 +879,29 @@ internal sealed class BlockLayout
             }
 
             var margin = child.Style.Margin.Resolve(contentInline);
-            var (startMargin, endMargin) = flow.BlockMargins(margin);
             var (beforeIt, afterIt) = flow.InlineMargins(margin);
-            var spacing = first ? startMargin : Math.Max(previousEndMargin, startMargin);
+
+            var childStart = CollapsedStart(child, flow, contentInline);
+            var childEnd = CollapsedEnd(child, flow, contentInline);
+            var childSelfCollapses = IsSelfCollapsing(child, flow, contentInline);
+
+            if (startEscapes)
+            {
+                if (!childSelfCollapses)
+                {
+                    startEscapes = false;
+                }
+            }
+            else
+            {
+                pending = Combine(pending, childStart);
+            }
 
             if (PositionedLayout.IsOutOfFlow(child))
             {
                 // Same as in a row: the box takes no space, but the place it would have had is kept
                 // as the static position an unset offset falls back to.
-                var anchor = flow.Map(content, beforeIt, 0, cursor + spacing, 0);
+                var anchor = flow.Map(content, beforeIt, 0, cursor + pending, 0);
                 outOfFlow.Add((child, new Offset(anchor.X, anchor.Y)));
                 continue;
             }
@@ -811,13 +912,20 @@ internal sealed class BlockLayout
 
             // The margin that opens the child is where it begins down its column, the way a box in a
             // row begins after its left margin.
-            var rect = flow.Map(content, beforeIt, inlineSize, cursor + spacing, blockSize);
+            var rect = flow.Map(content, beforeIt, inlineSize, cursor + pending, blockSize);
 
             parent.Children.Add(_engine.Arrange(child, rect, context));
 
-            cursor += spacing + blockSize;
-            previousEndMargin = endMargin;
-            first = false;
+            if (childSelfCollapses)
+            {
+                // A box that self-collapses has nothing across it: it sits at the cursor the stack
+                // has reached and takes no step sideways, and its own combined margin - already in
+                // the pending run - carries on to whichever box follows. Same as in a row.
+                continue;
+            }
+
+            cursor += pending + blockSize;
+            pending = childEnd;
         }
 
         foreach (var (child, staticPosition) in outOfFlow)
@@ -878,5 +986,259 @@ internal sealed class BlockLayout
         return box.Kind == BoxKind.HorizontalRule && border.Horizontal == 0 && border.Vertical == 0
             ? new Thickness(1, 0, 0, 0)
             : border;
+    }
+
+    /// <summary>
+    /// Folds two adjoining margins the way CSS 2.1 §8.3.1 says a run of them collapses: the greatest
+    /// positive value plus the smallest negative one. A run of margins folds the same way however the
+    /// pairs are bracketed, which is what lets the stack accumulate them one neighbour at a time.
+    /// </summary>
+    private static Double Combine(Double left, Double right) =>
+        Math.Max(Math.Max(left, right), 0) + Math.Min(Math.Min(left, right), 0);
+
+    /// <summary>
+    /// Gets whether the box establishes a new block formatting context: it seals its children's
+    /// margins inside itself and none of its own escapes upward. Such a box is a hard wall for the
+    /// collapse walk - the chain stops here.
+    /// </summary>
+    /// <remarks>
+    /// A float and an out-of-flow box also establish a formatting context, but every caller here
+    /// already skips them before consulting this, so it does not ask about them.
+    /// <para>
+    /// The root element is folded in as well: CSS 2.1 §8.3.1 leaves the margins of the root's box
+    /// out of the collapse with its children, so the collapsed margin of the page's first box stays
+    /// inside the root rather than escaping above it and being lost to the viewport. That is what
+    /// begins a page a body's worth of margin down from the top edge.
+    /// </para>
+    /// </remarks>
+    private static Boolean EstablishesContext(Box box) =>
+        box.Element?.LocalName == "html" ||
+        box.Style.ClipsOverflow ||
+        box.Kind is BoxKind.InlineBlock or BoxKind.HorizontalRule or BoxKind.Flex or BoxKind.Grid or
+                    BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or BoxKind.TableCell or
+                    BoxKind.TableCaption;
+
+    /// <summary>
+    /// Gets whether the box seals a block formatting context of its own for the collapse walk: it
+    /// establishes one, is taken out of the flow, or is floated. Such a box presents only its own
+    /// margins and never lets a child's escape through it.
+    /// </summary>
+    private static Boolean IsWall(Box box) =>
+        EstablishesContext(box) || PositionedLayout.IsOutOfFlow(box) || IsFloat(box);
+
+    /// <summary>
+    /// Gets whether the child stacks its own block children along the same physical axis
+    /// <paramref name="flow"/> runs on, which is what lets a margin travel through the child along
+    /// that axis. A child turned to the other axis (a row inside a column, or the reverse) lays its
+    /// children out along a different edge, so nothing of theirs reaches the edge this walk collapses
+    /// on - the child presents only its own margin there.
+    /// </summary>
+    private static Boolean SameBlockAxis(Box child, WritingModeInfo flow) =>
+        child.Flow.IsVertical == flow.IsVertical && child.Flow.BlockSign == flow.BlockSign;
+
+    /// <summary>
+    /// The size the box declares along the axis <paramref name="flow"/> stacks on, or null when it
+    /// leaves that to the content. A value above zero pins the far edge away from the near one and so
+    /// keeps the two margins from adjoining.
+    /// </summary>
+    private static Double? DeclaredBlockExtent(Box box, WritingModeInfo flow, Double basis)
+    {
+        var border = BorderOf(box);
+        var padding = box.Style.Padding.Resolve(basis);
+
+        return flow.IsVertical
+            ? BoxModel.DeclaredWidth(box.Style, basis, padding.Horizontal + border.Horizontal)
+            : BoxModel.DeclaredHeight(box.Style, basis, padding.Vertical + border.Vertical);
+    }
+
+    /// <summary>
+    /// Gets whether the box self-collapses along <paramref name="flow"/>: nothing sits between its two
+    /// block-axis edges - no border, no padding, no in-flow content of its own, no declared extent
+    /// above zero - so its start and end margins adjoin and fold into one strip that occupies nothing
+    /// along the stack.
+    /// </summary>
+    private static Boolean IsSelfCollapsing(Box box, WritingModeInfo flow, Double basis)
+    {
+        if (IsWall(box) || box.IsReplaced || !SameBlockAxis(box, flow))
+        {
+            return false;
+        }
+
+        var border = BorderOf(box);
+        var padding = box.Style.Padding.Resolve(basis);
+        var (startBorder, endBorder) = flow.BlockMargins(border);
+        var (startPadding, endPadding) = flow.BlockMargins(padding);
+
+        if (startBorder > 0 || endBorder > 0 || startPadding > 0 || endPadding > 0)
+        {
+            return false;
+        }
+
+        if (DeclaredBlockExtent(box, flow, basis) is > 0)
+        {
+            return false;
+        }
+
+        foreach (var child in box.Children)
+        {
+            // Only a box taken clean out of the flow leaves the run untouched. A float does not: this
+            // engine grows a container to the depth of the floats it holds, so a box holding one has an
+            // extent of its own and its two block-axis margins do not adjoin.
+            if (PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            // An inline-level child generates a line box, and a line box occupies the block axis; a
+            // block-level child keeps the box from self-collapsing unless that child collapses in turn.
+            if (!child.IsBlockLevel || IsFloat(child) || !IsSelfCollapsing(child, flow, basis))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The margin the box presents on the block-start side for collapsing with what stands before it
+    /// along <paramref name="flow"/>: its own start margin folded through every leading self-collapsing
+    /// child and finally through the start of the first child that has extent - the strip that moves
+    /// outward through the box when nothing separates them, and what the box's stack reads as its
+    /// outer margin on that side.
+    /// </summary>
+    private static Double CollapsedStart(Box box, WritingModeInfo flow, Double basis)
+    {
+        var (own, ownEnd) = flow.BlockMargins(box.Style.Margin.Resolve(basis));
+
+        // A wall, or a box turned to the other axis, presents only its own margin: nothing travels
+        // through it along the axis this walk collapses on.
+        if (IsWall(box) || !SameBlockAxis(box, flow))
+        {
+            return own;
+        }
+
+        var border = BorderOf(box);
+        var padding = box.Style.Padding.Resolve(basis);
+        var (startBorder, _) = flow.BlockMargins(border);
+        var (startPadding, _) = flow.BlockMargins(padding);
+
+        if (startBorder > 0 || startPadding > 0)
+        {
+            return own;
+        }
+
+        var combined = own;
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child) || IsFloat(child))
+            {
+                continue;
+            }
+
+            combined = Combine(combined, CollapsedStart(child, flow, basis));
+
+            if (!IsSelfCollapsing(child, flow, basis))
+            {
+                return combined;
+            }
+        }
+
+        // Every in-flow block child was self-collapsing (or there were none), so the walk reached the
+        // far end of the stack. If the box itself self-collapses, its end margin adjoins the run too
+        // and the strip is one value the box reports on both sides.
+        if (IsSelfCollapsing(box, flow, basis))
+        {
+            combined = Combine(combined, ownEnd);
+        }
+
+        return combined;
+    }
+
+    /// <summary>
+    /// The margin the box presents on the block-end side: the mirror of <see cref="CollapsedStart"/>,
+    /// walking backward through the trailing self-collapsing children.
+    /// </summary>
+    private static Double CollapsedEnd(Box box, WritingModeInfo flow, Double basis)
+    {
+        var (own, ownEnd) = flow.BlockMargins(box.Style.Margin.Resolve(basis));
+
+        if (IsWall(box) || !SameBlockAxis(box, flow))
+        {
+            return ownEnd;
+        }
+
+        var border = BorderOf(box);
+        var padding = box.Style.Padding.Resolve(basis);
+        var (_, endBorder) = flow.BlockMargins(border);
+        var (_, endPadding) = flow.BlockMargins(padding);
+
+        if (endBorder > 0 || endPadding > 0)
+        {
+            return ownEnd;
+        }
+
+        var combined = ownEnd;
+
+        for (var i = box.Children.Count - 1; i >= 0; i--)
+        {
+            var child = box.Children[i];
+
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child) || IsFloat(child))
+            {
+                continue;
+            }
+
+            combined = Combine(combined, CollapsedEnd(child, flow, basis));
+
+            if (!IsSelfCollapsing(child, flow, basis))
+            {
+                return combined;
+            }
+        }
+
+        if (IsSelfCollapsing(box, flow, basis))
+        {
+            combined = Combine(combined, own);
+        }
+
+        return combined;
+    }
+
+    /// <summary>
+    /// Gets whether the box lets its first in-flow child's start margin escape through its own
+    /// block-start edge: the box stacks along <paramref name="flow"/>, seals no formatting context of
+    /// its own, and has no border or padding on that edge.
+    /// </summary>
+    private static Boolean CollapsesThroughStart(Box box, WritingModeInfo flow, Double basis)
+    {
+        if (IsWall(box) || !SameBlockAxis(box, flow))
+        {
+            return false;
+        }
+
+        var border = BorderOf(box);
+        var padding = box.Style.Padding.Resolve(basis);
+        var (startBorder, _) = flow.BlockMargins(border);
+        var (startPadding, _) = flow.BlockMargins(padding);
+
+        return startBorder == 0 && startPadding == 0;
+    }
+
+    /// <summary>The mirror of <see cref="CollapsesThroughStart"/>, for the last child's end margin.</summary>
+    private static Boolean CollapsesThroughEnd(Box box, WritingModeInfo flow, Double basis)
+    {
+        if (IsWall(box) || !SameBlockAxis(box, flow))
+        {
+            return false;
+        }
+
+        var border = BorderOf(box);
+        var padding = box.Style.Padding.Resolve(basis);
+        var (_, endBorder) = flow.BlockMargins(border);
+        var (_, endPadding) = flow.BlockMargins(padding);
+
+        return endBorder == 0 && endPadding == 0;
     }
 }

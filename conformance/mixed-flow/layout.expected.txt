@@ -1,6 +1,6 @@
 layout 320x649.68
 block  html                    0,0 320x649.68
-  block  body                    0,0 320x649.68
+  block  body                    0,8 320x623.76
     block  div#head.box            0,8 320x36 m:8/0/8/0
       line   div#head.box            8,16 304x20
         text   ~text                   8,16 20x20 "head" base 13 font 16@Arial, Helvetica, sans-serif
@@ -20,7 +20,7 @@ block  html                    0,0 320x649.68
       block  div                     260,180 60x30
         line   div                     260,180 60x20
           text   ~text                   260,180 5x20 "c" base 13 font 16@Arial, Helvetica, sans-serif
-    block  ul#list                 0,210 320x46
+    block  ul#list                 0,212 320x42
       block  li                      24,212 296x20 m:2/0/2/0
               marker14,217 10x10 base 8
         line   li                      24,212 296x20
@@ -43,12 +43,12 @@ block  html                    0,0 320x649.68
             line   td                      8,296 27x20
               text   ~text                   8,296 20x20 "wide" base 13 font 16@Arial, Helvetica, sans-serif
     block  div#rel.box             0,332 320x86 pos:relative m:8/0/8/0
-      block  div#sticky              8,340 304x20 pos:sticky
-        line   div#sticky              8,340 304x20
-          text   ~text                   8,340 30x20 "sticky" base 13 font 16@Arial, Helvetica, sans-serif
       block  div#abs                 248,344 50x20 pos:absolute
         line   div#abs                 248,344 50x20
           text   ~text                   248,344 15x20 "abs" base 13 font 16@Arial, Helvetica, sans-serif
+      block  div#sticky              8,340 304x20 pos:sticky
+        line   div#sticky              8,340 304x20
+          text   ~text                   8,340 30x20 "sticky" base 13 font 16@Arial, Helvetica, sans-serif
     block  p#inline                0,435.92 320x20 m:17.92/0/17.92/0
       line   p#inline                0,435.92 320x20
         text   ~text                   0,435.92 50x20 "text with " base 13 font 16@Arial, Helvetica, sans-serif
