@@ -122,7 +122,7 @@ internal sealed partial class TableFormattingContext
             }
 
             layout.Children.Add(ArrangeCaption(caption, gridX, topY, contentWidth, context));
-            topY += caption.Height;
+            topY += caption.OuterHeight;
         }
 
         var gridY = topY;
@@ -138,7 +138,7 @@ internal sealed partial class TableFormattingContext
             }
 
             layout.Children.Add(ArrangeCaption(caption, gridX, bottomY, contentWidth, context));
-            bottomY += caption.Height;
+            bottomY += caption.OuterHeight;
         }
 
         return layout;
@@ -146,15 +146,24 @@ internal sealed partial class TableFormattingContext
 
     private LayoutBox ArrangeCaption(CaptionEntry caption, Double x, Double y, Double width, LayoutContext context)
     {
-        var captionContext = context.ForContainingBlock(new Size(width, 0));
+        var margin = caption.Margin;
+
+        // A caption is a block box in the table's flow, so its own margins shift it inside the band
+        // the table gave it and narrow it, the same way a block's margins sit it off its containing
+        // box. The absolutely positioned descendants anchor to where the box actually landed.
+        var boxX = x + margin.Left;
+        var boxY = y + margin.Top;
+        var boxWidth = Math.Max(0, width - margin.Horizontal);
+
+        var captionContext = context.ForContainingBlock(new Size(boxWidth, 0));
 
         // A positioned caption anchors its own absolutely positioned descendants, as a block would.
         if (PositionedLayout.IsPositioned(caption.Box))
         {
-            captionContext = captionContext.WithAbsoluteContainingBlock(new Rect(x, y, width, caption.Height));
+            captionContext = captionContext.WithAbsoluteContainingBlock(new Rect(boxX, boxY, boxWidth, caption.Height));
         }
 
-        return _engine.Arrange(caption.Box, new Rect(x, y, width, caption.Height), captionContext);
+        return _engine.Arrange(caption.Box, new Rect(boxX, boxY, boxWidth, caption.Height), captionContext);
     }
 
     /// <summary>

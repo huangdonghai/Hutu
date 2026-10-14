@@ -20,6 +20,23 @@ internal sealed partial class TableFormattingContext
         public CaptionSide Side;
 
         public Double Height;
+
+        /// <summary>
+        /// Gets the caption's own used margins. A caption is a block box in the table's flow, so its
+        /// margins apply like any block's: they shift the box and add to the space it claims along the
+        /// stack. They are resolved once here against the table's content width and reused by both
+        /// phases, so the height the table was measured with and the box that gets drawn agree.
+        /// </summary>
+        public Thickness Margin;
+
+        /// <summary>
+        /// Gets the height the caption claims in the stack: its border box plus the margin that opens
+        /// it from what is above. Its bottom margin is left out on purpose - a caption sits against the
+        /// grid it borders, and the space below it is the grid's own to place, not a gap the caption's
+        /// outer edge pushes the rows by. Reserving it here would shove the rows down and overflow the
+        /// table out of an <c>overflow: hidden</c> box that was sized to hold them.
+        /// </summary>
+        public Double OuterHeight => Margin.Top + Height;
     }
 
     /// <summary>Everything the table context computes for one table, shared by both phases.</summary>
@@ -378,15 +395,16 @@ internal sealed partial class TableFormattingContext
 
         foreach (var caption in build.Captions)
         {
+            caption.Margin = caption.Box.Style.Margin.Resolve(contentWidth);
             caption.Height = _engine.Measure(caption.Box, MeasureConstraints.FitWidth(contentWidth), captionContext).Height;
 
             if (caption.Side == CaptionSide.Top)
             {
-                build.CaptionTop += caption.Height;
+                build.CaptionTop += caption.OuterHeight;
             }
             else
             {
-                build.CaptionBottom += caption.Height;
+                build.CaptionBottom += caption.OuterHeight;
             }
         }
     }
