@@ -325,6 +325,12 @@ internal static class FusedStyleFactory
             Type = ComputedStyle.ResolveListStyleTypeFused(find("list-style-type"), parent.List?.Type ?? "disc"),
             Position = ComputedStyle.ResolveMarkerPositionFused(find("list-style-position"), parent.List?.Position ?? MarkerPosition.Outside),
             Image = ComputedStyle.ResolveListStyleImageFused(find("list-style-image"), parent.List?.Image),
+
+            // The list-item counter operations are never inherited, so they read only from this element's
+            // own declarations - a plain null when it says nothing about that counter.
+            ListItemReset = ComputedStyle.ResolveListItemCounterFused(find("counter-reset"), 0),
+            ListItemSet = ComputedStyle.ResolveListItemCounterFused(find("counter-set"), 0),
+            ListItemIncrement = ComputedStyle.ResolveListItemCounterFused(find("counter-increment"), 1),
         };
 
         // The flow an element's text runs in, resolved once. The box model needs it to map its four

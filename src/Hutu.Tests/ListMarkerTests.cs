@@ -90,6 +90,31 @@ public sealed class ListMarkerTests
     }
 
     [Test]
+    public async Task AValueInTheMiddleOfAReversedListLiftsTheItemsAboveIt()
+    {
+        // A reversed list settles its starting number at layout time from where the items land, so a
+        // value stated mid-list is not merely worn by that item - the ones above it count back down from
+        // it. This is the interaction the browser fixed and the naive forward count got wrong.
+        var markers = await Markers("", "<ol reversed><li>seven</li><li value='6'>six</li><li>five</li></ol>");
+
+        Assert.That(markers, Is.EqualTo(new[] { "7. ", "6. ", "5. " }),
+            "the item above a stated value takes the next number up, not the list's length");
+    }
+
+    [Test]
+    public async Task AnItemCanSetOrStepTheListCounterDirectly()
+    {
+        var set = await Markers("", "<ol><li style='counter-set:list-item 5'>a</li><li>b</li></ol>");
+        var stepped = await Markers("", "<ol><li style='counter-increment:list-item 3'>a</li><li>b</li></ol>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(set, Is.EqualTo(new[] { "5. ", "6. " }), "counter-set makes the item that number and the count carries on");
+            Assert.That(stepped, Is.EqualTo(new[] { "3. ", "4. " }), "counter-increment moves the step it counts by");
+        });
+    }
+
+    [Test]
     public async Task AnItemThrownAwayIsNotCounted()
     {
         var markers = await Markers("",

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 namespace Hutu.Rendering.Boxes;
@@ -34,18 +35,27 @@ internal static class ListMarkers
     /// </summary>
     public static void Mark(Box container)
     {
-        var reversed = container.Element?.HasAttribute("reversed") == true;
-        var running = Start(container, Count(container), reversed);
+        var items = new List<Box>();
 
         foreach (var child in container.Children)
         {
-            if (!IsItem(child))
+            if (IsItem(child))
             {
-                continue;
+                items.Add(child);
             }
+        }
 
-            var number = Value(child) ?? running;
-            var text = For(child.Style.ListStyleType, child.Style.ListStyleImage, number);
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        var numbers = Number(items, container);
+
+        for (var i = 0; i < items.Count; i++)
+        {
+            var child = items[i];
+            var text = For(child.Style.ListStyleType, child.Style.ListStyleImage, numbers[i]);
 
             child.MarkerPosition = child.Style.ListStylePosition;
 
@@ -59,14 +69,122 @@ internal static class ListMarkers
                 // once the lines are down, and nothing in the line knows it exists.
                 child.Marker = text;
             }
-
-            // The count runs up or down by one, but a list that reaches the edge of what a number holds
-            // stops there rather than wrapping past it: the UA limit an overflowing counter settles at is
-            // the last number the range can carry, which is what a browser draws for the items beyond it.
-            running = reversed
-                ? (number == Int32.MinValue ? number : number - 1)
-                : (number == Int32.MaxValue ? number : number + 1);
         }
+    }
+
+    /// <summary>
+    /// Works out the number each item wears, walking the list the way CSS counts it: an item that gives
+    /// the <c>list-item</c> counter an absolute value (its <c>value</c> attribute, or a
+    /// <c>counter-set</c>/<c>counter-reset</c>) is an anchor the count is taken from; any other item moves
+    /// the running count by its own <c>counter-increment</c>, or by the list's step when it says nothing.
+    /// A list that is <c>reversed</c> steps down, and the items before the first anchor are counted back
+    /// from it - the browser settles a reversed list's starting value at layout time from where the items
+    /// actually land, which is how a lone <c>value</c> in the middle lifts the ones above it. A plain list
+    /// with nothing written on any item runs from its start exactly as it always did.
+    /// </summary>
+    private static Int32[] Number(List<Box> items, Box container)
+    {
+        var count = items.Count;
+        var reversed = container.Element?.HasAttribute("reversed") == true;
+        var step = reversed ? -1 : 1;
+        var start = Start(container, count, reversed);
+
+        // Each item's absolute anchor, if it gives one: a `counter-set`/`counter-reset` on `list-item`, or
+        // its `value` attribute. The first of those to speak wins.
+        var anchor = new Int32?[count];
+        var increment = new Int32[count];
+        var firstAnchor = -1;
+
+        for (var i = 0; i < count; i++)
+        {
+            var style = items[i].Style;
+            anchor[i] = style.ListItemSet ?? style.ListItemReset ?? Value(items[i]);
+
+            if (anchor[i] is { } a)
+            {
+                if (firstAnchor < 0)
+                {
+                    firstAnchor = i;
+                }
+
+                increment[i] = a;
+            }
+            else
+            {
+                increment[i] = style.ListItemIncrement ?? step;
+            }
+        }
+
+        var numbers = new Int32[count];
+
+        if (firstAnchor < 0)
+        {
+            // No anchor anywhere: the list's counter runs from its start, and each item moves it by its own
+            // `counter-increment` (or the list's step) before wearing the result - which is why an item
+            // that asks to jump by three shows that jump on itself, not on the one after.
+            var running = start - step;
+
+            for (var i = 0; i < count; i++)
+            {
+                running = Advance(running, increment[i]);
+                numbers[i] = running;
+            }
+
+            return numbers;
+        }
+
+        // Forward from the first anchor: it sets the count, and each later item either re-anchors or moves
+        // the running count along.
+        var current = increment[firstAnchor];
+        numbers[firstAnchor] = current;
+
+        for (var i = firstAnchor + 1; i < count; i++)
+        {
+            current = anchor[i] is { } a ? a : Advance(current, increment[i]);
+            numbers[i] = current;
+        }
+
+        // The items above the first anchor. A reversed list counts them back down from the anchor (so a
+        // value in the middle pulls the ones above it up); a forward list runs them from its start, which
+        // is where an unnumbered head of the list begins.
+        if (reversed)
+        {
+            for (var i = firstAnchor - 1; i >= 0; i--)
+            {
+                numbers[i] = numbers[i + 1] - step;
+            }
+        }
+        else
+        {
+            var running = start - step;
+
+            for (var i = 0; i < firstAnchor; i++)
+            {
+                running = Advance(running, increment[i]);
+                numbers[i] = running;
+            }
+        }
+
+        return numbers;
+    }
+
+    /// <summary>
+    /// Moves a counter by one step without wrapping over the edge of what it holds: a count that reaches
+    /// the last number the range carries stays there, which is what a browser draws for items past it.
+    /// </summary>
+    private static Int32 Advance(Int32 from, Int32 by)
+    {
+        if (by > 0 && from > Int32.MaxValue - by)
+        {
+            return Int32.MaxValue;
+        }
+
+        if (by < 0 && from < Int32.MinValue - by)
+        {
+            return Int32.MinValue;
+        }
+
+        return from + by;
     }
 
     /// <summary>
@@ -122,22 +240,6 @@ internal static class ListMarkers
         }
 
         return CounterStyles.IsCounted(type) ? spelled + ". " : spelled + " ";
-    }
-
-    /// <summary>Gets how many items the container has, which is where a reversed list counts from.</summary>
-    private static Int32 Count(Box container)
-    {
-        var items = 0;
-
-        foreach (var child in container.Children)
-        {
-            if (IsItem(child))
-            {
-                items++;
-            }
-        }
-
-        return items;
     }
 
     /// <summary>

@@ -326,6 +326,17 @@ internal sealed record ListArea
     internal MarkerPosition Position { get; init; } = MarkerPosition.Outside;
 
     internal String? Image { get; init; }
+
+    // The `list-item` counter operations this element declares on itself, if any, read out of
+    // `counter-reset`/`counter-set`/`counter-increment`. They are null when the element names `list-item`
+    // in none of those, which is the ordinary case. Unlike the three above they are NOT inherited - a
+    // marker number belongs to the item that wears it - so `ResolveList` layers them onto whichever base
+    // area it settled on rather than inheriting them with the marker's look.
+    internal Int32? ListItemReset { get; init; }
+
+    internal Int32? ListItemSet { get; init; }
+
+    internal Int32? ListItemIncrement { get; init; }
 }
 
 /// <summary>

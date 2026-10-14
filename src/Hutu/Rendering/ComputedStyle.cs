@@ -216,27 +216,120 @@ internal readonly struct ComputedStyle
     /// </remarks>
     private void ResolveList(StyleIntern? pool, ComputedStyle? parent)
     {
+        // The marker's look (type/position/image) is inherited, but the `list-item` counter operations are
+        // not - a counter belongs to the item that declares it. So the look may be taken from the parent
+        // unchanged, yet the counter fields are always recomputed from this element's own declarations
+        // (null when it names none), so an item that inherits its bullet does not also inherit a
+        // neighbour's `counter-set: list-item`.
+        ListArea area;
+
         if (parent is { } inherited && Inherits(inherited, ListNames))
         {
-            _values.List = inherited._values.List;
+            area = inherited._values.List with { ListItemReset = null, ListItemSet = null, ListItemIncrement = null };
+        }
+        else
+        {
+            // Read into a local because a struct's methods cannot reach `this` from inside a local function,
+            // and the three resolvers below are handed one lookup rather than three reads.
+            var declaration = _style;
 
-            return;
+            ICssProperty? Find(String name) => declaration.GetProperty(name);
+
+            area = new ListArea
+            {
+                Type = ResolveListStyleTypeFused(Find(PropertyNames.ListStyleType), parent?._values.List.Type ?? "disc"),
+                Position = ResolveMarkerPositionFused(Find(PropertyNames.ListStylePosition), parent?._values.List.Position ?? MarkerPosition.Outside),
+                Image = ResolveListStyleImageFused(Find(PropertyNames.ListStyleImage), parent?._values.List.Image),
+            };
         }
 
-        // Read into a local because a struct's methods cannot reach `this` from inside a local function,
-        // and the three resolvers below are handed one lookup rather than three reads.
-        var declaration = _style;
+        _values.List = pool is null
+            ? ApplyListItemCounters(area)
+            : pool.List(ApplyListItemCounters(area));
+    }
 
-        ICssProperty? Find(String name) => declaration.GetProperty(name);
-
-        var area = new ListArea
+    /// <summary>
+    /// Reads this element's own `list-item` counter operations out of the three counter properties, the
+    /// only counter this step cares about, and lays them on the area. Absent means null: a `list-item`
+    /// term in <c>counter-increment</c> with no number counts one, in <c>counter-reset</c> or
+    /// <c>counter-set</c> it counts zero, the same defaults CSS gives a bare counter name.
+    /// </summary>
+    private ListArea ApplyListItemCounters(ListArea area) =>
+        area with
         {
-            Type = ResolveListStyleTypeFused(Find(PropertyNames.ListStyleType), parent?._values.List.Type ?? "disc"),
-            Position = ResolveMarkerPositionFused(Find(PropertyNames.ListStylePosition), parent?._values.List.Position ?? MarkerPosition.Outside),
-            Image = ResolveListStyleImageFused(Find(PropertyNames.ListStyleImage), parent?._values.List.Image),
+            ListItemReset = ReadListItemCounter("counter-reset"),
+            ListItemSet = ReadListItemCounter("counter-set"),
+            ListItemIncrement = ReadListItemCounter("counter-increment"),
         };
 
-        _values.List = pool is null ? area : pool.List(area);
+    /// <summary>
+    /// Pulls the <c>list-item</c> term's integer out of a counter property's value, or null when the
+    /// element never names <c>list-item</c> there.
+    /// </summary>
+    private Int32? ReadListItemCounter(String property)
+    {
+        var value = _style.GetPropertyValue(property);
+
+        if (String.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var tokens = value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            if (!tokens[i].Equals("list-item", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (i + 1 < tokens.Length &&
+                Int32.TryParse(tokens[i + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var stated))
+            {
+                return stated;
+            }
+
+            return property == "counter-increment" ? 1 : 0;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Reads the <c>list-item</c> term out of one counter declaration for the fused path - the same scan
+    /// <see cref="ReadListItemCounter"/> makes, off the element's own declared value. Null when the
+    /// declaration never names <c>list-item</c>; <paramref name="bareDefault"/> is what a bare
+    /// <c>list-item</c> (no number) means: zero to reset or set, one to increment.
+    /// </summary>
+    public static Int32? ResolveListItemCounterFused(ICssProperty? declared, Int32 bareDefault)
+    {
+        var value = declared?.Value;
+
+        if (String.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var tokens = value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            if (!tokens[i].Equals("list-item", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (i + 1 < tokens.Length &&
+                Int32.TryParse(tokens[i + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var stated))
+            {
+                return stated;
+            }
+
+            return bareDefault;
+        }
+
+        return null;
     }
 
     private void ResolveTextDecoration(StyleIntern? pool, ComputedStyle? parent)
@@ -1863,6 +1956,15 @@ internal readonly struct ComputedStyle
 
     /// <summary>Gets the image an item is marked with, or null for a glyph or a counter.</summary>
     public String? ListStyleImage => _values.List.Image;
+
+    /// <summary>Gets the value this element resets the `list-item` counter to, or null if it does not.</summary>
+    public Int32? ListItemReset => _values.List.ListItemReset;
+
+    /// <summary>Gets the value this element sets the existing `list-item` counter to, or null if it does not.</summary>
+    public Int32? ListItemSet => _values.List.ListItemSet;
+
+    /// <summary>Gets by how much this element moves the `list-item` counter, or null to take the list's default step.</summary>
+    public Int32? ListItemIncrement => _values.List.ListItemIncrement;
 
     public String WhiteSpace => _values.Text.WhiteSpace;
 
