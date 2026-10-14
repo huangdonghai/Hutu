@@ -78,6 +78,25 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task AFixedHeightParentAbsorbsItsLastChildsBottomMargin()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='height:100px'><div style='height:40px;margin-bottom:20px'></div></div>" +
+            "<div style='height:20px'></div>" +
+            "</body></html>");
+
+        var boxes = FindAll(view, "div").ToList();
+
+        Assert.That(boxes, Has.Count.EqualTo(3));
+        // The parent's height is definite, so the child's 20px bottom margin collapses into that fixed
+        // region rather than escaping below the parent: the separator sits at the parent's bottom edge.
+        Assert.That(boxes[0].BorderBox.Height, Is.EqualTo(100).Within(0.5), "fixed height");
+        Assert.That(boxes[2].BorderBox.Y, Is.EqualTo(100).Within(0.5), "no escaped margin");
+    }
+
+    [Test]
     public async Task DisplayNoneSubtreeIsDropped()
     {
         using var view = CreateView(400);

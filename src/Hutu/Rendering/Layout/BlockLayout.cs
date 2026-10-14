@@ -1179,6 +1179,17 @@ internal sealed class BlockLayout
             return ownEnd;
         }
 
+        // A box that declares its extent along the stacking axis - a fixed height on a row - pins its
+        // far edge away from its content, so its last child's bottom margin collapses into that fixed
+        // region instead of adjoining the box's own end edge and escaping below it. Giving a container
+        // a height is the classic way to keep its children's margins from leaking out; the fixed-height
+        // reftests count on it - the box after such a parent sits at the parent's bottom edge, not a
+        // child margin further down. (An auto extent says nothing here, so the walk folds through.)
+        if (DeclaredBlockExtent(box, flow, basis) is > 0)
+        {
+            return ownEnd;
+        }
+
         var combined = ownEnd;
 
         for (var i = box.Children.Count - 1; i >= 0; i--)
