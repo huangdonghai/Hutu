@@ -9,10 +9,10 @@
 
 | 语料 | 基线 | 备注 |
 |---|---:|---|
-| **wpt** | **2877** | 含 Ahem +95、BFC 下移 +2、%-margin/匿名透明 +3、flow-root +2 |
+| **wpt** | **2883** | 含 Ahem +95、BFC 下移 +2、%-margin/匿名透明 +3、flow-root +2、list-item 计数器 +6 |
 | **gecko** | **1850** | 含定高 margin 修复 +19 |
 | 崩溃 / 画不出 | **0 / 0** | |
-| 单测 | **557** | |
+| 单测 | **559** | |
 
 复现方式（判定回归的唯一仲裁是这套浏览器真相）：
 
@@ -99,6 +99,11 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2875→2877（+2）。做法：AngleSharp 无 flow-root 语法会丢弃它→降为普通 block；`WideKeywordDeclarationFactory.KeywordSubstringValues["display"]` 加上 `"flow-root"`（与 grid-lanes/masonry 同机制，AnyTokenPassThrough 保留原词）；布局层 `EstablishesContext`/`FormattingRoot` 读 `Display.Contains("flow-root")`。注：无需改 `ComputedStyle` 的 display 取路径（fused 路径 KeywordText 读 declared 已能拿到保留的令牌，已隔离验证）。
 - 残留：`floats-wrap-bfc-with-margin-004/005/010`、`nested-clearance-new-formatting-context`、`floats-bfc-003`、`new-fc-*` 等仍失败——flow-root 建立后它们的残余错位是**另外的机制**（BFC 自动宽 + margin-left 旁的浮动定位、父高/清除交互），非单纯建立 BFC 可解。
 - 其它残余浮动子因：clearance×大顶边距×父覆盖（`*-clearance`/`clear-*`，每例不同、易回退）、block-in-inline 拆分（`float-in-inline-*`，大块）、multicol×float（`floats-clear-multicol-*`）——均多因素耦合，非单一干净根因。
+
+### 5.5 `display:list-item` 本体 OK；css-lists 残余靠 CSS 计数器引擎（`b6b0dcc8` 已推进一步）
+- 验证：`display:list-item`（任意元素、`<li>/<summary>` UA、disc/decimal、inside/outside、::marker）基础都通过；css-lists 110 失败集中在高级计数器特性。
+- **已做（`b6b0dcc8`，+6）**：marker 编号改走真正的 `list-item` 计数器——`ListArea` 新增非继承的 `ListItemReset/Set/Increment`（ComputedStyle 与 FusedStyleFactory 两条路径都从自身声明解析 `counter-*` 里的 `list-item` 项）；`ListMarkers.Number` 重写为锚点模型：`value`/`counter-set`/`counter-reset` 为绝对锚点，单项 `counter-increment` 在取号前作用于本项，reversed 列表的起始值在布局期由锚点反推（中段 value 抬高其上各项）。基础 `<ol>`/`reversed`/`start` 行为不变（无回归）。
+- **残余（css-lists ~104、其中 li-value-reversed 30）需更深的计数器语义**：~9 个是非-`<li>` 元素在项间 `counter-increment: list-item`（需遍历全部子节点而非仅项）；~12 个（006/007）是 **reversed 自动起始值由非单位 `counter-increment` 反推**（"last counter-increment determines the start value"）+ 嵌套 `counters(list-item,".")` 显示；余下为 `@counter-style`/string 等。属真正的 CSS 计数器引擎尾工（需全树作用域 + reversed 自动起始求解），建议单独一轮，不在此长会话尾部硬推。
 
 ---
 
