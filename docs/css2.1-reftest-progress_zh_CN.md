@@ -82,6 +82,11 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 ### 5.3 暂缓 / 不可胜（明确排除）
 - **`white-space` 残余多是 `break-spaces` / `pre-wrap`（CSS Text 3，非 2.1）**——按"先弄好基础"的口径暂缓。
 - **`floats` / `floats-clear`（CSS2 里约 65 例）**：异构多根因，非一处能翻一片。已收（`ab2def6d`）：**定宽 BFC 盒装不下时下移**（+2）。剩余子因待攻：**`floats-placement-*` 疑似浮动背景未绘制 / paint 层序 bug**（float 布局矩形对却画成容器底色——若是 paint 问题影响面大、优先查）；**`new-fc-separates-from-float` 的 BFC↔浮动 margin 分离**；**`*-clearance` / `clear-*` 的 clearance+顶边距算术**；**`floats-clear-multicol-*`（耦合 multicol）**。早期"仅 BFC 容器才包含浮动"的核心不变量修复实测净 −14（谓词漏 flex/grid item + 需跨块 band 折行），已回退。
+
+#### 已确认的一个 paint bug（待用正确姿势修）
+`floats-placement-001/002` 的根因查清了：**生成式匿名块把父容器的 background 又画了一遍**。用 dump paint FillCommand 证实：匿名 `~block`（BoxBuilder 用 `parent.Style.AsAnonymous()` 生成，AsAnonymous 去了 margin/padding/border/position 但**留着 background**）发出一条 `[0,0 100x50] red` 的 fill，盖在右侧浮动（float2）上方的区域上，后续 inline/abs 只补回左侧 → 右上角露出容器红。deep-look 里布局矩形全对、纯是这条多余红 fill。
+- 试过在 `Painter.PaintBlock` 里对 `box.Source.IsAnonymous` 一律跳过 background/border → placement-001/002 翻绿，但**空载全量净负**（wpt 持平、**gecko 1850→1848（−2）**）：block-in-inline 切分出的匿名盒按 CSS 应携带 inline 的背景，一并禁画就回退那两个。全部 IsAnonymous 盒都来自 `AsAnonymous()`，光靠这个标志**分不出**"透明包裹"与"该画背景的 inline 片段"两种。已回退。
+- 落地的下一步：需要先给两种匿名盒一个区分（例如 block-in-inline 片段带 inline 元素的 Style/Element、而块间包裹匿名盒不带），再只在"块间包裹"这一类上剥 background（或让 `AsAnonymous` 分场景决定是否清 background）。
 - **grid-lanes / masonry（先进排版）**：用户已指示"先进排版先不弄"，M2 最短车道 WIP 存于 stash，M4/M5/M6 未做。
 
 ---
