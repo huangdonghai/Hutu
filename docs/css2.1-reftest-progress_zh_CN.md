@@ -83,10 +83,13 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 - **`white-space` 残余多是 `break-spaces` / `pre-wrap`（CSS Text 3，非 2.1）**——按"先弄好基础"的口径暂缓。
 - **`floats` / `floats-clear`（CSS2 里约 65 例）**：异构多根因，非一处能翻一片。已收（`ab2def6d`）：**定宽 BFC 盒装不下时下移**（+2）。剩余子因待攻：**`floats-placement-*` 疑似浮动背景未绘制 / paint 层序 bug**（float 布局矩形对却画成容器底色——若是 paint 问题影响面大、优先查）；**`new-fc-separates-from-float` 的 BFC↔浮动 margin 分离**；**`*-clearance` / `clear-*` 的 clearance+顶边距算术**；**`floats-clear-multicol-*`（耦合 multicol）**。早期"仅 BFC 容器才包含浮动"的核心不变量修复实测净 −14（谓词漏 flex/grid item + 需跨块 band 折行），已回退。
 
-#### 已确认的一个 paint bug（待用正确姿势修）
-`floats-placement-001/002` 的根因查清了：**生成式匿名块把父容器的 background 又画了一遍**。用 dump paint FillCommand 证实：匿名 `~block`（BoxBuilder 用 `parent.Style.AsAnonymous()` 生成，AsAnonymous 去了 margin/padding/border/position 但**留着 background**）发出一条 `[0,0 100x50] red` 的 fill，盖在右侧浮动（float2）上方的区域上，后续 inline/abs 只补回左侧 → 右上角露出容器红。deep-look 里布局矩形全对、纯是这条多余红 fill。
-- 试过在 `Painter.PaintBlock` 里对 `box.Source.IsAnonymous` 一律跳过 background/border → placement-001/002 翻绿，但**空载全量净负**（wpt 持平、**gecko 1850→1848（−2）**）：block-in-inline 切分出的匿名盒按 CSS 应携带 inline 的背景，一并禁画就回退那两个。全部 IsAnonymous 盒都来自 `AsAnonymous()`，光靠这个标志**分不出**"透明包裹"与"该画背景的 inline 片段"两种。已回退。
-- 落地的下一步：需要先给两种匿名盒一个区分（例如 block-in-inline 片段带 inline 元素的 Style/Element、而块间包裹匿名盒不带），再只在"块间包裹"这一类上剥 background（或让 `AsAnonymous` 分场景决定是否清 background）。
+#### paint bug 查到底：真因是被遮盖的浮动尺寸/网格背景 bug
+`floats-placement-001/002` 的 paint 症状根因：**生成式匿名块把父容器 background 又画了一遍**（BoxBuilder 用 `parent.Style.AsAnonymous()` 造匿名块，AsAnonymous 去了 margin/padding/border/position 但**留着 background**），这条多余的同色 fill 因“子按文档序绘制”盖住了先画的浮动。
+- 正确的 CSS 修法是令匿名块透明（`Painter.PaintBlock` 对 `box.Source.IsAnonymous` 跳过 background/border）→ placement-001/002 翻绿，但**空载全量净负**（gecko 1850→1848）。
+- **关键：那 −2 不是匿名透明本身错，而是它揭开了两个先前被绿色盖住的预存 bug**（已用 test/ref 双树坐实）：
+  - `gecko/bugs/249982-1.html`：**auto 宽浮动 + `margin-right:40%` 时浮动算宽错**。test float 得 `[203,188.85]`，ref（`margin-right:4em`，同为256）得 `[333,58.75]`——同样 256 边距，浮动宽度应都是 shrink-to-fit 的 58.75。百分比边距下浮动可用宽/收缩计算错，先前被匿名绿盖住而“相等”。
+  - `gecko/css-grid/grid-item-sizing-percent-002.html`：网格项 background/`background-clip:content-box` 与百分比 sizing 的交互（另一独立问题）。
+- 结论：把这条 paint bug“做对”= 匿名块透明（正确）+ 顺手修它揭开的浮动 %-margin 收缩尺寸 bug（独立、对真实页面有用）。浮动 %-margin shrink-to-fit 是下一个具体目标。之前“block-in-inline”的猜测是错的（本引擎只有 WrapInline 两处 IsAnonymous，无 block-in-inline 匿名机制）。
 - **grid-lanes / masonry（先进排版）**：用户已指示"先进排版先不弄"，M2 最短车道 WIP 存于 stash，M4/M5/M6 未做。
 
 ---
