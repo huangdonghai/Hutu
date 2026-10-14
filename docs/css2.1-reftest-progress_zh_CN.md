@@ -9,10 +9,10 @@
 
 | 语料 | 基线 | 备注 |
 |---|---:|---|
-| **wpt** | **2883** | 含 Ahem +95、BFC 下移 +2、%-margin/匿名透明 +3、flow-root +2、list-item 计数器 +6 |
+| **wpt** | **2889** | 含 Ahem +95、BFC 下移 +2、%-margin/匿名透明 +3、flow-root +2、list-item 计数器 +6、全子节点计数 +6 |
 | **gecko** | **1850** | 含定高 margin 修复 +19 |
 | 崩溃 / 画不出 | **0 / 0** | |
-| 单测 | **559** | |
+| 单测 | **560** | |
 
 复现方式（判定回归的唯一仲裁是这套浏览器真相）：
 
@@ -102,8 +102,8 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 
 ### 5.5 `display:list-item` 本体 OK；css-lists 残余靠 CSS 计数器引擎（`b6b0dcc8` 已推进一步）
 - 验证：`display:list-item`（任意元素、`<li>/<summary>` UA、disc/decimal、inside/outside、::marker）基础都通过；css-lists 110 失败集中在高级计数器特性。
-- **已做（`b6b0dcc8`，+6）**：marker 编号改走真正的 `list-item` 计数器——`ListArea` 新增非继承的 `ListItemReset/Set/Increment`（ComputedStyle 与 FusedStyleFactory 两条路径都从自身声明解析 `counter-*` 里的 `list-item` 项）；`ListMarkers.Number` 重写为锚点模型：`value`/`counter-set`/`counter-reset` 为绝对锚点，单项 `counter-increment` 在取号前作用于本项，reversed 列表的起始值在布局期由锚点反推（中段 value 抬高其上各项）。基础 `<ol>`/`reversed`/`start` 行为不变（无回归）。
-- **残余（css-lists ~104、其中 li-value-reversed 30）需更深的计数器语义**：~9 个是非-`<li>` 元素在项间 `counter-increment: list-item`（需遍历全部子节点而非仅项）；~12 个（006/007）是 **reversed 自动起始值由非单位 `counter-increment` 反推**（"last counter-increment determines the start value"）+ 嵌套 `counters(list-item,".")` 显示；余下为 `@counter-style`/string 等。属真正的 CSS 计数器引擎尾工（需全树作用域 + reversed 自动起始求解），建议单独一轮，不在此长会话尾部硬推。
+- **已做（`b6b0dcc8` +6、`cd683c12` +6，共 +12）**：marker 编号走真正的 `list-item` 计数器——`ListArea` 新增非继承的 `ListItemReset/Set/Increment`（两条样式路径都从自身声明解析 `counter-*` 里的 `list-item` 项）；`ListMarkers.Number` 重写为**遍历容器全部子节点**的步内模型：非项元素（`<div>` 等）带 `counter-increment/set/reset: list-item` 会推动计数但不占号；`value`/`counter-set`/`counter-reset` 为绝对锚点；reversed 无 start 时布局期自定起始值使**末项=1**（多步增量会带动其后所有号），有 start 则首项=start。基础 `<ol>`/`reversed`/`start`/嵌套行为不变（无回归）。
+- **残余（css-lists ~98、li-value-reversed ~25）**：主因是 **嵌套 `counters(list-item,".")` 显示**与部分 reversed×多步×start 的组合边角（需 `content: counter()`/`counters()` 函数与完整作用域，属 CSS 2.1 §11 生成内容，未实现）；余为 `@counter-style`/string 等。完整作用域计数器与 `counter()`/`counters()` 是下一步（独立一轮）。
 
 ---
 
