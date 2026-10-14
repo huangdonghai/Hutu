@@ -1175,15 +1175,40 @@ internal readonly struct ComputedStyle
         Func<String, ICssProperty?> find,
         IElement? element,
         IRenderDimensions dimensions,
-        Double fontSize) =>
-        BackgroundLayerParser.Parse(
-            find("background-image")?.Value,
+        Double fontSize)
+    {
+        // The author's own background-image, or the element's legacy `background` attribute standing in
+        // for it at the presentational-hint level when the author said nothing. The attribute is honoured
+        // only on the elements HTML still maps it to - the body and the table's parts - and never on a
+        // general block such as a div, exactly as a browser draws those and not the rest.
+        var image = find("background-image")?.Value;
+
+        if (String.IsNullOrWhiteSpace(image) && element is { } box && HonoursBackgroundAttribute(box.LocalName) &&
+            box.GetAttribute("background") is { Length: > 0 } picture)
+        {
+            image = $"url(\"{picture.Replace("\"", String.Empty)}\")";
+        }
+
+        return BackgroundLayerParser.Parse(
+            image,
             find("background-position")?.Value,
             find("background-size")?.Value,
             find("background-repeat")?.Value,
             dimensions,
             fontSize,
             element is null ? null : url => ImageUrlResolver.Resolve(element, url));
+    }
+
+    /// <summary>
+    /// Gets whether an element's <c>background</c> attribute is a presentational hint the rendering
+    /// requirements still honour. Only the body and the parts of a table carry one; a div or any other
+    /// block ignores it outright.
+    /// </summary>
+    private static Boolean HonoursBackgroundAttribute(String localName) => localName.ToLowerInvariant() switch
+    {
+        "body" or "table" or "thead" or "tbody" or "tfoot" or "tr" or "td" or "th" => true,
+        _ => false,
+    };
 
     /// <summary>
     /// Resolves the background clip from the element's own cascaded declaration, for the fused path.
