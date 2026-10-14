@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using SkiaSharp;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -22,10 +23,13 @@ namespace Hutu.Conformance;
 /// is why this is a score and not an expectation.
 /// </para>
 /// <para>
-/// Two ways in. <see cref="StopsAtTheTenthFinding"/> is the one to use while a fix is being made: it draws
-/// until it has ten findings and then stops, which is a minute of work rather than half an hour, and each
-/// of the ten names a place to open. <see cref="TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay"/> is the
-/// whole corpus, and is the one to run at the end of a day to watch the number move.
+/// Three ways in. <see cref="StopsAtTheTenthFinding"/> is the one to use while a fix is being made: it
+/// draws until it has ten findings and then stops, which is a minute of work rather than half an hour, and
+/// each of the ten names a place to open. <see cref="TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay"/> is
+/// the whole corpus, and is the one to run at the end of a day to watch the number move.
+/// <see cref="LooksAtOnePairClosely"/> is for one of those ten: it draws a single pair, keeps the two
+/// pictures and a picture of where they part, and prints a map of the window as text, which is the
+/// difference between knowing a pair failed and knowing what to change.
 /// </para>
 /// <para>
 /// Both runs keep a log while they go - <c>build/score-&lt;corpus&gt;.log</c> and <c>build/quick.log</c> -
@@ -35,10 +39,11 @@ namespace Hutu.Conformance;
 /// which never came back gives up on the rest instead of spending the rest of the machine waiting.
 /// </para>
 /// <para>
-/// Because both draw the corpus, this fixture is explicit: run it by name rather than as part of an
+/// Because they all draw the corpus, this fixture is explicit: run it by name rather than as part of an
 /// ordinary run. <c>HUTU_SCORE_LIMIT</c> caps the pages drawn, for a run that is only asking whether the
-/// fixture works; <c>HUTU_SCORE_FINDINGS</c> changes how many the quick run stops at. The report is written
-/// to <c>build/reftest-score.md</c> as well as to the console.
+/// fixture works; <c>HUTU_SCORE_FINDINGS</c> changes how many the quick run stops at;
+/// <c>HUTU_SCORE_LOOK</c> names the pair to look at closely. The report is written to
+/// <c>build/reftest-score.md</c> as well as to the console.
 /// </para>
 /// </remarks>
 [TestFixture]
@@ -161,6 +166,205 @@ public sealed class ImportedCorpusTests
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, report);
+    }
+
+    /// <summary>
+    /// Looks at one pair closely: the two pictures, a picture of where they part, and a coarse map of it
+    /// written out as text.
+    /// </summary>
+    /// <remarks>
+    /// A finding is a count and a coordinate, which is enough to know that something is wrong and not
+    /// enough to know what. This is the entry for the second question: it draws one pair, keeps the
+    /// pictures, and prints a map of the window where every cell says what each side put there. A cell
+    /// the test filled and the reference left empty is a box that was drawn in the wrong place or not
+    /// drawn at all; a cell both filled differently is a colour or a shape; a cell both left empty is
+    /// where to stop looking. That map is what turns "40100 pixels differ" into a decision.
+    /// </remarks>
+    [Test]
+    public void LooksAtOnePairClosely()
+    {
+        var look = Environment.GetEnvironmentVariable("HUTU_SCORE_LOOK");
+
+        if (String.IsNullOrWhiteSpace(look))
+        {
+            Assert.Ignore("set HUTU_SCORE_LOOK to part of a pair's name, as in HUTU_SCORE_LOOK=table-row-1");
+        }
+
+        var pairs = Pairs()
+            .Where(pair => pair.Name.Contains(look, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (pairs.Count == 0)
+        {
+            Assert.Fail($"no borrowed pair is called anything like '{look}'");
+        }
+
+        var folder = Path.Combine(Corpus.Root, "build", "look");
+
+        Directory.CreateDirectory(folder);
+
+        foreach (var pair in pairs)
+        {
+            var (reference, relation, complaint) = Resolve(pair.Path);
+
+            TestContext.Out.WriteLine($"## {pair.Name}");
+            TestContext.Out.WriteLine($"   declares rel={relation} against {Path.GetFileName(reference ?? "nothing")}");
+
+            if (reference is null)
+            {
+                TestContext.Out.WriteLine($"   {complaint}");
+                continue;
+            }
+
+            using var drawn = ReftestRunner.Draw(pair.Path);
+            using var against = ReftestRunner.Draw(reference);
+
+            var name = Path.GetFileNameWithoutExtension(pair.Name).Replace('/', '_');
+
+            Save(drawn, Path.Combine(folder, name + "-test.png"));
+            Save(against, Path.Combine(folder, name + "-ref.png"));
+
+            var comparison = ReftestRunner.Compare(drawn, against, name, writeDiff: true);
+
+            TestContext.Out.WriteLine(comparison.Matched
+                ? "   the two agree"
+                : $"   {comparison.Differing} pixels differ, {comparison.Detail}");
+
+            if (!comparison.Matched)
+            {
+                TestContext.Out.WriteLine(Runs(drawn, against));
+            }
+
+            TestContext.Out.WriteLine(Map(drawn, against));
+            TestContext.Out.WriteLine(Tree(pair.Path));
+            TestContext.Out.WriteLine(Tree(reference));
+        }
+    }
+
+    /// <summary>
+    /// The layout tree and the paint list as text: every box, what it is and where it sits, and the
+    /// order the drawing happens in. A count and a coordinate say a picture is wrong; this says which
+    /// box put the wrong pixels there, which is the difference between guessing at a fix and knowing
+    /// one.
+    /// </summary>
+    private static String Tree(String page)
+    {
+        using var reader = EngineReader.WithTypefaces(ReftestRunner.Width, ReftestRunner.Height);
+
+        reader.LoadAsync(File.ReadAllText(page), new Uri(page).AbsoluteUri).GetAwaiter().GetResult();
+
+        return reader.Layout is { } layout && reader.Paint is { } paint
+            ? LayoutDumper.Dump(layout, paint)
+            : "   no layout";
+    }
+
+    /// <summary>
+    /// Where the two pictures part, scanline by scanline: each line that has a disagreement on it says
+    /// the stretch of it that disagrees and what each side drew there. A run of them that all say the
+    /// same thing is one shape, and one shape is one thing to fix.
+    /// </summary>
+    private static String Runs(SKBitmap test, SKBitmap reference)
+    {
+        var text = new StringBuilder();
+
+        for (var y = 0; y < test.Height; y++)
+        {
+            var from = -1;
+
+            for (var x = 0; x <= test.Width; x++)
+            {
+                var differs = x < test.Width && test.GetPixel(x, y) != reference.GetPixel(x, y);
+
+                if (differs && from < 0)
+                {
+                    from = x;
+                }
+                else if (!differs && from >= 0)
+                {
+                    text.AppendLine($"   y={y} x={from}..{x - 1} " +
+                                    $"test={Hex(test.GetPixel(from, y))} ref={Hex(reference.GetPixel(from, y))}");
+                    from = -1;
+                }
+            }
+        }
+
+        return text.ToString();
+    }
+
+    private static String Hex(SKColor color) => $"#{color.Red:x2}{color.Green:x2}{color.Blue:x2}";
+
+    /// <summary>Writes a picture, so a pair can be opened in whatever looks at pictures.</summary>
+    private static void Save(SKBitmap bitmap, String path)
+    {
+        using var image = SKImage.FromBitmap(bitmap);
+        using var stream = File.Create(path);
+
+        image.Encode(SKEncodedImageFormat.Png, 100).SaveTo(stream);
+    }
+
+    /// <summary>
+    /// The window as a grid of characters, one per <see cref="Cell"/> square of pixels. What a cell says
+    /// is what the two sides put in it, which is the whole question: a difference is not interesting, but
+    /// a difference with a shape is.
+    /// </summary>
+    private static String Map(SKBitmap test, SKBitmap reference)
+    {
+        const Int32 Cell = 8;
+
+        var text = new StringBuilder();
+
+        for (var y = 0; y < test.Height; y += Cell)
+        {
+            for (var x = 0; x < test.Width; x += Cell)
+            {
+                var here = Occupied(test, x, y, Cell);
+                var there = Occupied(reference, x, y, Cell);
+
+                text.Append(here && there
+                    ? Same(test, reference, x, y, Cell) ? '=' : 'X'
+                    : here ? 'T' : there ? 'R' : ' ');
+            }
+
+            text.AppendLine();
+        }
+
+        return text.ToString();
+    }
+
+    /// <summary>Whether anything but the page's own white is in this cell.</summary>
+    private static Boolean Occupied(SKBitmap bitmap, Int32 x, Int32 y, Int32 cell)
+    {
+        for (var dy = 0; dy < cell && y + dy < bitmap.Height; dy++)
+        {
+            for (var dx = 0; dx < cell && x + dx < bitmap.Width; dx++)
+            {
+                var pixel = bitmap.GetPixel(x + dx, y + dy);
+
+                if (pixel.Alpha != 0 && (pixel.Red != 0xff || pixel.Green != 0xff || pixel.Blue != 0xff))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether the two sides put the same thing in this cell.</summary>
+    private static Boolean Same(SKBitmap test, SKBitmap reference, Int32 x, Int32 y, Int32 cell)
+    {
+        for (var dy = 0; dy < cell && y + dy < test.Height; dy++)
+        {
+            for (var dx = 0; dx < cell && x + dx < test.Width; dx++)
+            {
+                if (test.GetPixel(x + dx, y + dy) != reference.GetPixel(x + dx, y + dy))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Every borrowed pair, named as the report names it, across every borrowed corpus.</summary>

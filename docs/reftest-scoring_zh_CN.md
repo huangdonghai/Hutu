@@ -88,8 +88,32 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `HUTU_SCORE_LIMIT` | 0（不限） | 每个语料最多画几页，冒烟用 |
+| `HUTU_SCORE_LIMIT` | 0（不限） | 每个语料最多画几页。**冒烟用，也是唯一可靠的回归对比基线**，见下 |
 | `HUTU_SCORE_FINDINGS` | 10 | 只影响快速检测 |
+
+### 回归对比：用固定样本，别用快速检测
+
+判断"这次改动是修好了还是弄坏了"，要用**确定性样本**：
+
+```powershell
+$env:HUTU_SCORE_LIMIT='60'
+dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
+  --filter 'FullyQualifiedName~TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay' --no-build
+```
+
+它画每个语料的前 60 页，**结果每次完全一致**（不依赖并行时序），6 秒跑完，
+比快速检测只慢 3 秒却多覆盖 4 倍页面。日常迭代建议用它，快速检测留给"随手看十条"。
+
+**当前基线**（2026-10-14，13,928 对语料的队首 120 页）：
+
+```
+gecko: 60 pairs — 48 通过 (80%)，12 不一致
+wpt:  60 pairs — 21 通过 (35%)，39 不一致
+合计: 120 pairs — 69 通过 (57.5%)
+```
+
+改完引擎跑一遍：**通过数往上走就是修好了，往下走就是弄坏了**。看通过数而不是 finding 条数——
+条数会随提前停止而漂移（见上一节那个坑），通过数不会。
 
 **两个自动刹车**（都是为了后台跑的安全）：
 - 单页绘制超时 **5 秒**（`ReftestRunner.Limit`）。实测均值约 0.11 秒/页，5 秒已是正常值 50 倍。
