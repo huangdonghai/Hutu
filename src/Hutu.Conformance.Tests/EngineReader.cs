@@ -106,17 +106,23 @@ internal sealed class EngineReader : IDisposable
             throw new InvalidOperationException("a reftest is drawn with real typefaces; this reader was built with fixed metrics");
         }
 
-        if (Paint is null)
-        {
-            throw new InvalidOperationException("the page produced no paint list to draw");
-        }
-
         _executor ??= new SkiaPaintExecutor(_typefaces, _images);
 
         using var surface = SKSurface.Create(new SKImageInfo(width, height))
             ?? throw new InvalidOperationException("Skia could not make a surface");
 
-        _executor.Execute(Paint, surface.Canvas);
+        // A page with nothing to paint - an empty document, or one whose root is display:none and so builds
+        // no box tree - is not an error but a blank canvas. A host shows it as the page's own background,
+        // which with no box left to carry one is the default white; the reference for such a page is a bare
+        // document on that same white. Draw the canvas rather than refusing to answer.
+        if (Paint is null)
+        {
+            surface.Canvas.Clear(SKColors.White);
+        }
+        else
+        {
+            _executor.Execute(Paint, surface.Canvas);
+        }
 
         using var image = surface.Snapshot();
 
