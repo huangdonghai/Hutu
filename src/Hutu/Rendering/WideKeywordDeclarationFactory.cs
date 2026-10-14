@@ -75,7 +75,7 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
     /// </summary>
     private static readonly Dictionary<String, String[]> KeywordSubstringValues = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["display"] = ["grid-lanes", "masonry"],
+        ["display"] = ["grid-lanes", "masonry", "flow-root"],
     };
 
     /// <param name="inner">

@@ -419,6 +419,24 @@ public sealed class FloatLayoutTests
     }
 
     [Test]
+    public async Task AFlowRootContainsItsChildMarginsWhereAPlainBlockLetsThemEscape()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div style='width:200px'>" +
+            "<div id='fr' style='display:flow-root'><div style='height:10px;margin-top:20px;margin-bottom:30px'></div></div>" +
+            "<div id='after' style='height:10px'></div>" +
+            "</div>"));
+
+        // A flow-root establishes a block formatting context, so the child's margins are contained
+        // inside it rather than escaping through its edges: the box is the whole 20+10+30 tall and the
+        // box after it starts below that, not drawn up into the escaped margin as a plain block would.
+        Assert.That(Bounds(view, "fr").Height, Is.EqualTo(60).Within(0.5), "contains the child margins");
+        Assert.That(Bounds(view, "after").Y, Is.EqualTo(60).Within(0.5));
+    }
+
+    [Test]
     public async Task AFloatWithAPercentageMarginShrinksToItsContent()
     {
         using var view = CreateView();

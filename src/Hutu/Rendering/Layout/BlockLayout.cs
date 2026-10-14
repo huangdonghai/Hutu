@@ -634,7 +634,8 @@ internal sealed class BlockLayout
         FloatBand? band,
         Double contentWidth)
     {
-        if (band is null || !child.Style.ClipsOverflow)
+        if (band is null || !(child.Style.ClipsOverflow ||
+                              child.Style.Display.Contains("flow-root", StringComparison.OrdinalIgnoreCase)))
         {
             return (0, contentWidth, 0, band);
         }
@@ -1055,6 +1056,7 @@ internal sealed class BlockLayout
     private static Boolean EstablishesContext(Box box) =>
         box.Element?.LocalName == "html" ||
         box.Style.ClipsOverflow ||
+        box.Style.Display.Contains("flow-root", StringComparison.OrdinalIgnoreCase) ||
         box.Kind is BoxKind.InlineBlock or BoxKind.HorizontalRule or BoxKind.Flex or BoxKind.Grid or
                     BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or BoxKind.TableCell or
                     BoxKind.TableCaption;
