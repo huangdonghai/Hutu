@@ -891,8 +891,14 @@ internal readonly struct ComputedStyle
     /// <summary>
     /// Resolves the outline style from the element's own cascaded declaration, for the fused path.
     /// </summary>
-    public static BorderLineStyle ResolveOutlineStyleFused(ICssProperty? declared) =>
-        ToLineStyle(KeywordText(declared, CssInitialValues.OutlineStyle));
+    public static BorderLineStyle ResolveOutlineStyleFused(ICssProperty? declared)
+    {
+        var style = ToLineStyle(KeywordText(declared, CssInitialValues.OutlineStyle));
+
+        // An outline is one ring with no sides to bevel, so a bevelled keyword falls back to solid for
+        // it even though a border draws the shade - a stroke the outline cannot express still shows.
+        return BorderStyles.IsBevel(style) ? BorderLineStyle.Solid : style;
+    }
 
     /// <summary>
     /// Resolves the outline width from the element's own cascaded declaration, for the fused
@@ -1350,6 +1356,13 @@ internal readonly struct ComputedStyle
         }
 
         var style = ToLineStyle(Keyword("outline-style", CssInitialValues.OutlineStyle));
+
+        // An outline is one ring with no sides to bevel, so a bevelled keyword falls back to solid for
+        // it even though a border draws the shade - a stroke the outline cannot express still shows.
+        if (BorderStyles.IsBevel(style))
+        {
+            style = BorderLineStyle.Solid;
+        }
 
         var area = new VisualEffectsArea
         {
@@ -2882,6 +2895,11 @@ internal readonly struct ComputedStyle
         "none" or "hidden" => BorderLineStyle.None,
         "dashed" => BorderLineStyle.Dashed,
         "dotted" => BorderLineStyle.Dotted,
+        "groove" => BorderLineStyle.Groove,
+        "ridge" => BorderLineStyle.Ridge,
+        "inset" => BorderLineStyle.Inset,
+        "outset" => BorderLineStyle.Outset,
+        "double" => BorderLineStyle.Double,
         _ => BorderLineStyle.Solid,
     };
 

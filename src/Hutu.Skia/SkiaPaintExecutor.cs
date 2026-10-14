@@ -248,6 +248,15 @@ public sealed class SkiaPaintExecutor
             return;
         }
 
+        // A bevelled side is not one flat colour but a light and a dark shade split across its width,
+        // so it cannot ride the single-stroke ring below; it is drawn side by side instead, each side
+        // clipped to the mitred quarter it owns. Other styles sharing the box still go down the ring.
+        if (command.Styles.HasBevel)
+        {
+            DrawBevelBorder(canvas, command);
+            return;
+        }
+
         using var ring = BorderRing(command);
         using var middle = BorderMiddle(command);
 
@@ -288,6 +297,135 @@ public sealed class SkiaPaintExecutor
         {
             DrawSide(canvas, new Rect(box.Right - widths.Right, box.Y, widths.Right, box.Height), command.RightColor);
         }
+    }
+
+    /// <summary>
+    /// Draws a border whose sides are bevelled: groove and ridge split each side's band into a darkened
+    /// and a lightened half, inset and outset give it one shade chosen by which corner the side meets,
+    /// and double lays two lines with the background showing between them. A side that is not bevelled
+    /// still draws flat, so a box may mix the two families.
+    /// </summary>
+    private static void DrawBevelBorder(SKCanvas canvas, BorderCommand command)
+    {
+        using var ring = BorderRing(command);
+        using var middle = BorderMiddle(command);
+
+        var box = command.Bounds;
+        var widths = command.Widths;
+
+        foreach (var side in BorderSides.All)
+        {
+            var style = command.Styles.Side(side);
+
+            if (style == BorderLineStyle.None)
+            {
+                continue;
+            }
+
+            var width = widths.Side(side);
+            var color = command.ColorOf(side);
+
+            canvas.Save();
+            canvas.ClipPath(SideQuad(box, widths, side), SKClipOperation.Intersect, antialias: true);
+
+            if (BorderStyles.IsBevel(style))
+            {
+                DrawBevelSide(canvas, box, width, side, style, color);
+            }
+            else
+            {
+                DrawBorderStroke(canvas, width, color, style, ring, middle);
+            }
+
+            canvas.Restore();
+        }
+    }
+
+    /// <summary>
+    /// Fills one bevelled side within the clip already narrowed to its mitred quarter. The light is
+    /// taken to fall from the top left, so a top or left side is the dark one of the pair and a bottom
+    /// or right side the light one; groove and ridge then set which half of the width each shade claims.
+    /// </summary>
+    private static void DrawBevelSide(
+        SKCanvas canvas,
+        Rect box,
+        Double width,
+        BorderSide side,
+        BorderLineStyle style,
+        UInt32 color)
+    {
+        if (width <= 0)
+        {
+            return;
+        }
+
+        var dark = Darken(color);
+        var light = Lighten(color);
+        var topOrLeft = side is BorderSide.Top or BorderSide.Left;
+        var half = width / 2;
+
+        switch (style)
+        {
+            case BorderLineStyle.Groove:
+                FillBand(canvas, box, side, 0, half, topOrLeft ? dark : light);
+                FillBand(canvas, box, side, half, width, topOrLeft ? light : dark);
+                break;
+
+            case BorderLineStyle.Ridge:
+                FillBand(canvas, box, side, 0, half, topOrLeft ? light : dark);
+                FillBand(canvas, box, side, half, width, topOrLeft ? dark : light);
+                break;
+
+            case BorderLineStyle.Inset:
+                FillBand(canvas, box, side, 0, width, topOrLeft ? dark : light);
+                break;
+
+            case BorderLineStyle.Outset:
+                FillBand(canvas, box, side, 0, width, topOrLeft ? light : dark);
+                break;
+
+            default:
+                // Double: two lines in the border colour with the background left showing between them.
+                var third = width / 3;
+                FillBand(canvas, box, side, 0, third, color);
+                FillBand(canvas, box, side, width - third, width, color);
+                break;
+        }
+    }
+
+    /// <summary>Fills the slice of a side that lies between two depths measured from its outer edge.</summary>
+    private static void FillBand(SKCanvas canvas, Rect box, BorderSide side, Double from, Double to, UInt32 color) =>
+        DrawSide(canvas, BandRect(box, side, from, to), color);
+
+    private static Rect BandRect(Rect box, BorderSide side, Double from, Double to) => side switch
+    {
+        BorderSide.Top => new Rect(box.X, box.Y + from, box.Width, to - from),
+        BorderSide.Bottom => new Rect(box.X, box.Bottom - to, box.Width, to - from),
+        BorderSide.Left => new Rect(box.X + from, box.Y, to - from, box.Height),
+        _ => new Rect(box.Right - to, box.Y, to - from, box.Height),
+    };
+
+    /// <summary>Gets a shade driven halfway toward black, keeping its alpha: the dark half of a bevel.</summary>
+    private static UInt32 Darken(UInt32 argb)
+    {
+        var alpha = argb & 0xFF00_0000;
+        var r = ((argb >> 16) & 0xFF) / 2;
+        var g = ((argb >> 8) & 0xFF) / 2;
+        var b = (argb & 0xFF) / 2;
+        return alpha | (r << 16) | (g << 8) | b;
+    }
+
+    /// <summary>Gets a shade driven halfway toward white, keeping its alpha: the light half of a bevel.</summary>
+    private static UInt32 Lighten(UInt32 argb)
+    {
+        var alpha = argb & 0xFF00_0000;
+        var r = ((argb >> 16) & 0xFF);
+        var g = ((argb >> 8) & 0xFF);
+        var b = (argb & 0xFF);
+        r += (255 - r) / 2;
+        g += (255 - g) / 2;
+        b += (255 - b) / 2;
+        return alpha | (r << 16) | (g << 8) | b;
     }
 
     private static void DrawBorderStroke(

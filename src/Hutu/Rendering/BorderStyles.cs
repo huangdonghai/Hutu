@@ -16,6 +16,24 @@ public enum BorderLineStyle : byte
 
     /// <summary>A stroke made of dots.</summary>
     Dotted,
+
+    /// <summary>
+    /// A groove carved into the canvas: each side splits its band into a darkened and a lightened
+    /// half, the two meeting along the width to catch an imaginary light from the top left.
+    /// </summary>
+    Groove,
+
+    /// <summary>A ridge raised from the canvas - the shades of <see cref="Groove"/> reversed.</summary>
+    Ridge,
+
+    /// <summary>A single bevel that presses the box in: the top and left darken, the bottom and right lighten.</summary>
+    Inset,
+
+    /// <summary>A single bevel that raises the box out - the shades of <see cref="Inset"/> reversed.</summary>
+    Outset,
+
+    /// <summary>Two unbroken lines in the border colour with a gap of the background between them.</summary>
+    Double,
 }
 
 /// <summary>The stroke each side of a border is drawn with.</summary>
@@ -54,6 +72,16 @@ public readonly struct BorderStyles : IEquatable<BorderStyles>
         Right == BorderLineStyle.Solid &&
         Bottom == BorderLineStyle.Solid &&
         Left == BorderLineStyle.Solid;
+
+    /// <summary>
+    /// Gets whether a stroke is one of the bevelled family that splits a side into light and dark
+    /// shades (or, for <see cref="BorderLineStyle.Double"/>, into two lines with a gap) rather than
+    /// laying down a single flat colour. Every such value sits after the flat strokes in the enum.
+    /// </summary>
+    public static Boolean IsBevel(BorderLineStyle style) => style >= BorderLineStyle.Groove;
+
+    /// <summary>Gets whether any side asks for a bevelled stroke, so the border cannot be filled flat.</summary>
+    public Boolean HasBevel => IsBevel(Top) || IsBevel(Right) || IsBevel(Bottom) || IsBevel(Left);
 
     /// <summary>
     /// Gets whether the four sides share one stroke, so that they can be drawn along a single outline
