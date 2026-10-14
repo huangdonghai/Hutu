@@ -569,6 +569,16 @@ public sealed class ListMarkerTests
             "the mark is laid out with the text but the reader never chose it, so a copy leaves it out");
     }
 
+    [Test]
+    public async Task ANonItemStepBetweenItemsMovesTheCountButIsNotNumbered()
+    {
+        var plainDiv = await Markers("",
+            "<ol reversed><li>three</li><div style='counter-increment:list-item -1'></div><li>one</li></ol>");
+
+        Assert.That(plainDiv, Is.EqualTo(new[] { "3. ", "1. " }),
+            "a non-item element moves the count the same way but is never numbered, so the first still sits at 3");
+    }
+
     private static async Task<List<String?>> Markers(String css, String body)
     {
         var items = new List<String?>();

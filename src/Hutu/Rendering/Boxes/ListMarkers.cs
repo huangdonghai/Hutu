@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 namespace Hutu.Rendering.Boxes;
 
@@ -35,27 +36,42 @@ internal static class ListMarkers
     /// </summary>
     public static void Mark(Box container)
     {
-        var items = new List<Box>();
+        // Every child that either is a list item or moves the list-item counter becomes a step, in tree
+        // order. A step that is not an item wears no marker but still advances the count - which is how a
+        // plain <div> given `counter-increment: list-item` between two items shifts the second's number.
+        var steps = new List<Step>();
 
         foreach (var child in container.Children)
         {
-            if (IsItem(child))
+            var isItem = IsItem(child);
+            var style = child.Style;
+            var anchor = style.ListItemSet ?? style.ListItemReset ?? (isItem ? Value(child) : null);
+            var increment = style.ListItemIncrement;
+
+            if (!isItem && anchor is null && increment is null)
             {
-                items.Add(child);
+                continue;
             }
+
+            steps.Add(new Step(child, isItem, anchor, increment));
         }
 
-        if (items.Count == 0)
+        if (steps.Count == 0)
         {
             return;
         }
 
-        var numbers = Number(items, container);
+        var numbers = Number(steps, container);
 
-        for (var i = 0; i < items.Count; i++)
+        foreach (var (step, index) in steps.Select((s, i) => (s, i)))
         {
-            var child = items[i];
-            var text = For(child.Style.ListStyleType, child.Style.ListStyleImage, numbers[i]);
+            if (!step.IsItem)
+            {
+                continue;
+            }
+
+            var child = step.Child;
+            var text = For(child.Style.ListStyleType, child.Style.ListStyleImage, numbers[index]);
 
             child.MarkerPosition = child.Style.ListStylePosition;
 
@@ -73,100 +89,138 @@ internal static class ListMarkers
     }
 
     /// <summary>
-    /// Works out the number each item wears, walking the list the way CSS counts it: an item that gives
-    /// the <c>list-item</c> counter an absolute value (its <c>value</c> attribute, or a
-    /// <c>counter-set</c>/<c>counter-reset</c>) is an anchor the count is taken from; any other item moves
-    /// the running count by its own <c>counter-increment</c>, or by the list's step when it says nothing.
-    /// A list that is <c>reversed</c> steps down, and the items before the first anchor are counted back
-    /// from it - the browser settles a reversed list's starting value at layout time from where the items
-    /// actually land, which is how a lone <c>value</c> in the middle lifts the ones above it. A plain list
-    /// with nothing written on any item runs from its start exactly as it always did.
+    /// Works out the number each step lands on, walking the list the way CSS counts its <c>list-item</c>
+    /// counter. A step that gives the counter an absolute value (an item's <c>value</c>, or a
+    /// <c>counter-set</c>/<c>counter-reset</c> on any child) anchors it; every other step moves the
+    /// running count by its own <c>counter-increment</c>, or by the list's step when it is an item that
+    /// says nothing. A reversed list steps down, and with no anchor its starting value is settled at
+    /// layout time so the last item lands on 1 - which is how an item, or a plain element, that steps by
+    /// more than one shifts every number after it. The items before the first anchor count back down from
+    /// it, so a value stated mid-list lifts the ones above it.
     /// </summary>
-    private static Int32[] Number(List<Box> items, Box container)
+    private static Int32[] Number(List<Step> steps, Box container)
     {
-        var count = items.Count;
+        var count = steps.Count;
         var reversed = container.Element?.HasAttribute("reversed") == true;
         var step = reversed ? -1 : 1;
-        var start = Start(container, count, reversed);
+        var items = steps.Count(s => s.IsItem);
+        var start = Start(container, items, reversed);
 
-        // Each item's absolute anchor, if it gives one: a `counter-set`/`counter-reset` on `list-item`, or
-        // its `value` attribute. The first of those to speak wins.
-        var anchor = new Int32?[count];
-        var increment = new Int32[count];
+        var value = new Int32[count];
         var firstAnchor = -1;
 
         for (var i = 0; i < count; i++)
         {
-            var style = items[i].Style;
-            anchor[i] = style.ListItemSet ?? style.ListItemReset ?? Value(items[i]);
-
-            if (anchor[i] is { } a)
+            if (steps[i].Anchor is not null)
             {
-                if (firstAnchor < 0)
-                {
-                    firstAnchor = i;
-                }
-
-                increment[i] = a;
-            }
-            else
-            {
-                increment[i] = style.ListItemIncrement ?? step;
+                firstAnchor = i;
+                break;
             }
         }
 
-        var numbers = new Int32[count];
+        // How far a step moves the count when it is not an anchor: its own increment, else the list's step
+        // for an item (a non-item step only exists because it named an increment or an anchor).
+        Int32 Eff(Int32 i) => steps[i].Increment ?? (steps[i].IsItem ? step : 0);
 
         if (firstAnchor < 0)
         {
-            // No anchor anywhere: the list's counter runs from its start, and each item moves it by its own
-            // `counter-increment` (or the list's step) before wearing the result - which is why an item
-            // that asks to jump by three shows that jump on itself, not on the one after.
-            var running = start - step;
+            // No absolute anchor. The count runs from the list's start, but a reversed list with no start
+            // stated settles its start at layout time so the last item reaches 1 - which is what lets an
+            // item, or a plain element, that steps by more than one shift every number after it. A list
+            // that did state a start (either direction), or a forward one, begins at that start; a
+            // forward list's first item is the start itself, so the run begins one step behind it.
+            var cum = new Int32[count];
+            var scan = 0;
 
             for (var i = 0; i < count; i++)
             {
-                running = Advance(running, increment[i]);
-                numbers[i] = running;
+                scan = Advance(scan, Eff(i));
+                cum[i] = scan;
             }
 
-            return numbers;
+            var hasStart = Int32.TryParse(container.Element?.GetAttribute("start"),
+                NumberStyles.Integer, CultureInfo.InvariantCulture, out var stated);
+            var startValue = hasStart ? stated : 1;
+            var baseValue = reversed && !hasStart
+                ? 1 - LastItem(cum, steps, count)
+                : reversed ? startValue - cum[FirstItem(steps)]
+                : startValue - 1;
+
+            var running = baseValue;
+
+            for (var i = 0; i < count; i++)
+            {
+                running = Advance(running, Eff(i));
+                value[i] = running;
+            }
+
+            return value;
         }
 
-        // Forward from the first anchor: it sets the count, and each later item either re-anchors or moves
+        // Forward from the first anchor: it sets the count, and each later step either re-anchors or moves
         // the running count along.
-        var current = increment[firstAnchor];
-        numbers[firstAnchor] = current;
+        var current = steps[firstAnchor].Anchor!.Value;
+        value[firstAnchor] = current;
 
         for (var i = firstAnchor + 1; i < count; i++)
         {
-            current = anchor[i] is { } a ? a : Advance(current, increment[i]);
-            numbers[i] = current;
+            current = steps[i].Anchor is { } a ? a : Advance(current, Eff(i));
+            value[i] = current;
         }
 
-        // The items above the first anchor. A reversed list counts them back down from the anchor (so a
-        // value in the middle pulls the ones above it up); a forward list runs them from its start, which
-        // is where an unnumbered head of the list begins.
+        // The steps above the first anchor. A reversed list counts them back down toward the anchor, so a
+        // value stated mid-list lifts the ones above it; a forward list runs them from its own start.
         if (reversed)
         {
             for (var i = firstAnchor - 1; i >= 0; i--)
             {
-                numbers[i] = numbers[i + 1] - step;
+                value[i] = value[i + 1] - (steps[i + 1].IsItem || steps[i + 1].Increment is not null ? Eff(i + 1) : step);
             }
         }
         else
         {
-            var running = start - step;
+            var forward = start - step;
 
             for (var i = 0; i < firstAnchor; i++)
             {
-                running = Advance(running, increment[i]);
-                numbers[i] = running;
+                forward = Advance(forward, Eff(i));
+                value[i] = forward;
             }
         }
 
-        return numbers;
+        return value;
     }
+
+    private static Int32 FirstItem(List<Step> steps)
+    {
+        for (var i = 0; i < steps.Count; i++)
+        {
+            if (steps[i].IsItem)
+            {
+                return i;
+            }
+        }
+
+        return 0;
+    }
+
+    private static Int32 LastItem(Int32[] cum, List<Step> steps, Int32 count)
+    {
+        var last = 0;
+
+        for (var i = 0; i < count; i++)
+        {
+            if (steps[i].IsItem)
+            {
+                last = cum[i];
+            }
+        }
+
+        return last;
+    }
+
+    /// <summary>One child that takes part in the list's counting: an item, or a step that moves it.</summary>
+    private readonly record struct Step(Box Child, Boolean IsItem, Int32? Anchor, Int32? Increment);
 
     /// <summary>
     /// Moves a counter by one step without wrapping over the edge of what it holds: a count that reaches
