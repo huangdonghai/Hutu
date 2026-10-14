@@ -55,11 +55,18 @@ internal sealed partial class TableFormattingContext
             basisWidth,
             constraints);
 
-        CompleteGrid(build, contentWidth, context);
+        // The captions are measured first because the height the table declared covers them too; what is
+        // left of it once they have taken their share is the height the rows have to fill.
         MeasureCaptions(build, contentWidth, context);
 
-        var contentHeight = build.Grid.Height + build.CaptionTop + build.CaptionBottom;
         var declared = BoxModel.DeclaredHeight(style, basisHeight, build.InsetsV);
+        var gridHeight = declared is { } tableHeight
+            ? tableHeight - build.CaptionTop - build.CaptionBottom
+            : (Double?)null;
+
+        CompleteGrid(build, contentWidth, context, gridHeight);
+
+        var contentHeight = build.Grid.Height + build.CaptionTop + build.CaptionBottom;
         var usedHeight = BoxModel.ClampHeight(style, declared ?? contentHeight, basisHeight, build.InsetsV);
 
         return new Size(contentWidth + build.InsetsH, usedHeight + build.InsetsV);
@@ -88,8 +95,12 @@ internal sealed partial class TableFormattingContext
         var build = Build(box, basis, context);
         var contentWidth = Math.Max(0, borderBox.Width - build.InsetsH);
 
-        CompleteGrid(build, contentWidth, context);
         MeasureCaptions(build, contentWidth, context);
+
+        // The box the table was given already accounts for the height it declared, so whatever the
+        // captions do not claim is the height the rows have to fill.
+        var gridHeight = Math.Max(0, borderBox.Height - build.InsetsV - build.CaptionTop - build.CaptionBottom);
+        CompleteGrid(build, contentWidth, context, gridHeight);
 
         var layout = new LayoutBox(box, LayoutKind.Table)
         {
@@ -136,6 +147,13 @@ internal sealed partial class TableFormattingContext
     private LayoutBox ArrangeCaption(CaptionEntry caption, Double x, Double y, Double width, LayoutContext context)
     {
         var captionContext = context.ForContainingBlock(new Size(width, 0));
+
+        // A positioned caption anchors its own absolutely positioned descendants, as a block would.
+        if (PositionedLayout.IsPositioned(caption.Box))
+        {
+            captionContext = captionContext.WithAbsoluteContainingBlock(new Rect(x, y, width, caption.Height));
+        }
+
         return _engine.Arrange(caption.Box, new Rect(x, y, width, caption.Height), captionContext);
     }
 
@@ -183,9 +201,41 @@ internal sealed partial class TableFormattingContext
                 ExpandGroup(group, gridY + row.Y, row.Height, spacing);
             }
 
+            // A positioned row - or, failing that, the row group around it - is what an absolutely
+            // positioned descendant anchors to. What `position` does to a table part is left undefined by
+            // CSS 2.1, and a suite that keeps its green square inside the row is saying it means the row:
+            // left unset, such a descendant falls all the way back to the initial containing block and is
+            // drawn wherever the page starts, rather than beside the content it belongs to.
+            //
+            // The box used is the row's content box - the span its cells cover - rather than its border
+            // box. A row is laid out across the table's grid, and under the separate model its cells begin
+            // a spacing in from either edge; anchoring to the outer edge would put a descendant two pixels
+            // out from the content it belongs beside.
+            var inset = grid.ColumnX.Length > 0 ? grid.ColumnX[0] : 0.0;
+            Rect? anchored = null;
+
+            if (PositionedLayout.IsPositioned(row.Box))
+            {
+                anchored = new Rect(
+                    gridX + inset,
+                    gridY + row.Y,
+                    Math.Max(0, grid.Width - 2 * inset),
+                    row.Height);
+            }
+            else if (group is { } around && PositionedLayout.IsPositioned(groupBox!))
+            {
+                anchored = new Rect(
+                    around.BorderBox.X + inset,
+                    around.BorderBox.Y,
+                    Math.Max(0, around.BorderBox.Width - 2 * inset),
+                    around.BorderBox.Height);
+            }
+
+            var rowContext = anchored is { } at ? context.WithAbsoluteContainingBlock(at) : context;
+
             foreach (var cell in row.Cells)
             {
-                rowLayout.Children.Add(ArrangeCell(build, cell, gridX, gridY, spacing, context));
+                rowLayout.Children.Add(ArrangeCell(build, cell, gridX, gridY, spacing, rowContext));
             }
         }
     }
@@ -221,6 +271,17 @@ internal sealed partial class TableFormattingContext
         var contentHeight = Math.Max(0, height - cell.Insets.Vertical);
         var cellContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
+        // A positioned cell anchors its own absolutely positioned descendants, the same way a positioned
+        // block does: without this they look past the cell to whatever encloses the table.
+        if (PositionedLayout.IsPositioned(cell.Box))
+        {
+            cellContext = cellContext.WithAbsoluteContainingBlock(new Rect(
+                x + cell.UsedBorder.Left,
+                y + cell.UsedBorder.Top,
+                Math.Max(0, width - cell.UsedBorder.Horizontal),
+                Math.Max(0, height - cell.UsedBorder.Vertical)));
+        }
+
         var layout = _engine.Arrange(cell.Box, rect, cellContext);
 
         // The used border replaces whatever the cell's own style asked for: under the collapsing model
@@ -248,6 +309,11 @@ internal sealed partial class TableFormattingContext
     /// bottom alignment. The height comes from the row, so a one-line cell in a tall row has to be
     /// moved rather than stretched.
     /// </summary>
+    /// <remarks>
+    /// A box that left the flow is none of this method's business: it is measured against its own
+    /// containing block rather than stacked with the cell's content, so it neither says how tall that
+    /// content is nor moves when it is aligned. Only the in-flow children are counted and shifted.
+    /// </remarks>
     private static void AlignContent(LayoutBox cell, CellVerticalAlignment align, Double contentHeight)
     {
         if (cell.Children.Count == 0 || align == CellVerticalAlignment.Top)
@@ -260,6 +326,11 @@ internal sealed partial class TableFormattingContext
 
         foreach (var child in cell.Children)
         {
+            if (child.IsOutOfFlow)
+            {
+                continue;
+            }
+
             bottom = Math.Max(bottom, child.BorderBox.Bottom + child.Margin.Bottom);
         }
 
@@ -285,18 +356,26 @@ internal sealed partial class TableFormattingContext
 
         foreach (var child in cell.Children)
         {
-            Shift(child, shift);
+            if (!child.IsOutOfFlow)
+            {
+                Shift(child, shift);
+            }
         }
     }
 
-    /// <summary>Moves a box and its whole subtree down by the given distance.</summary>
+    /// <summary>Moves a box and its whole in-flow subtree down by the given distance.</summary>
     private static void Shift(LayoutBox box, Double dy)
     {
         box.BorderBox = new Rect(box.BorderBox.X, box.BorderBox.Y + dy, box.BorderBox.Width, box.BorderBox.Height);
 
         foreach (var child in box.Children)
         {
-            Shift(child, dy);
+            // An out-of-flow descendant inside the content - an absolutely positioned box in a line,
+            // say - was placed against its own containing block and is not part of what was aligned.
+            if (!child.IsOutOfFlow)
+            {
+                Shift(child, dy);
+            }
         }
     }
 

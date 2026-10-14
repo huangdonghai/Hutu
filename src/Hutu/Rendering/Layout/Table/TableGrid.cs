@@ -73,6 +73,13 @@ internal sealed class TableRowInfo
     /// <summary>Gets or sets the used border-box height.</summary>
     public Double Height;
 
+    /// <summary>
+    /// Gets or sets the height the row itself declared, as opposed to the one its cells ask for. A row
+    /// is as tall as the larger of the two, which is what CSS 2.1 §17.5.3 says: a declared height is a
+    /// floor under the cells, not a cap over them.
+    /// </summary>
+    public Double Declared;
+
     /// <summary>Gets or sets the border-box offset from the grid origin.</summary>
     public Double Y;
 }
@@ -320,14 +327,15 @@ internal sealed class TableGrid
     }
 
     /// <summary>
-    /// Gives the rows their heights: each row is as tall as its tallest single-row cell, and a cell
-    /// that spans several rows then pushes any deficit onto them.
+    /// Gives the rows their heights: each row is as tall as the larger of what it declared and what its
+    /// tallest single-row cell asks for, and a cell that spans several rows then pushes any deficit onto
+    /// them.
     /// </summary>
     public void SizeRows()
     {
         foreach (var row in Rows)
         {
-            var height = 0.0;
+            var height = row.Declared;
 
             foreach (var cell in row.Cells)
             {
@@ -371,6 +379,26 @@ internal sealed class TableGrid
                     SpreadRows(cell.Row, span, cell.Height - current);
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Raises the rows by a surplus height. A table that declared a height taller than its cells wanted
+    /// is that tall, and CSS 2.1 §17.5.3 leaves how the surplus is shared unspecified; an equal share
+    /// over the rows is what keeps a table of empty cells even, which is the shape the suite tests.
+    /// </summary>
+    public void StretchRows(Double surplus)
+    {
+        if (Rows.Count == 0 || surplus <= 0.0001)
+        {
+            return;
+        }
+
+        var share = surplus / Rows.Count;
+
+        foreach (var row in Rows)
+        {
+            row.Height += share;
         }
     }
 

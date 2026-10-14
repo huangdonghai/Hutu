@@ -84,17 +84,33 @@ internal sealed partial class TableFormattingContext
         return build;
     }
 
-    /// <summary>Shares out the columns and measures the rows at the width the table settled on.</summary>
-    private void CompleteGrid(TableBuild build, Double contentWidth, LayoutContext context)
+    /// <summary>
+    /// Shares out the columns and measures the rows at the width the table settled on. When the table
+    /// declared a height greater than its rows need, the grid is grown to that height so the rows fill
+    /// the box rather than leaving it empty below them (CSS 2.1 §17.5.3).
+    /// </summary>
+    private void CompleteGrid(TableBuild build, Double contentWidth, LayoutContext context, Double? targetHeight = null)
     {
         var tableStyle = build.Style;
         var spacing = tableStyle.Collapse ? 0.0 : tableStyle.HorizontalSpacing;
+        var rowSpacing = tableStyle.Collapse ? 0.0 : tableStyle.VerticalSpacing;
 
         build.Grid.SizeColumns(Math.Max(0, contentWidth - HorizontalSpacingTotal(build)), tableStyle.Fixed);
-        MeasureCellHeights(build, context, spacing);
+        MeasureCellHeights(build, context, spacing, targetHeight);
         build.Grid.SizeRows();
         build.Grid.PlaceColumns(spacing, tableStyle.Collapse);
-        build.Grid.PlaceRows(tableStyle.Collapse ? 0.0 : tableStyle.VerticalSpacing, tableStyle.Collapse);
+        build.Grid.PlaceRows(rowSpacing, tableStyle.Collapse);
+
+        if (targetHeight is { } target)
+        {
+            var surplus = target - build.Grid.Height;
+
+            if (surplus > Epsilon)
+            {
+                build.Grid.StretchRows(surplus);
+                build.Grid.PlaceRows(rowSpacing, tableStyle.Collapse);
+            }
+        }
     }
 
     /// <summary>
@@ -307,12 +323,24 @@ internal sealed partial class TableFormattingContext
     }
 
     /// <summary>Measures each cell's height at the width its column ended up with.</summary>
-    private void MeasureCellHeights(TableBuild build, LayoutContext context, Double spacing)
+    private void MeasureCellHeights(TableBuild build, LayoutContext context, Double spacing, Double? tableHeight)
     {
         var basis = build.Basis;
 
         foreach (var row in build.Grid.Rows)
         {
+            // A row may declare a height of its own, and CSS 2.1 §17.5.3 makes it a floor rather than a
+            // cap: the row ends up the taller of what it asked for and what its cells need. A per cent is
+            // relative to the table's own height, so it can only be read when the table declared one;
+            // against an auto height the per cent says nothing and the row takes its content instead.
+            var declared = row.Box.Style.Height;
+
+            row.Declared = declared.Kind == StyleLengthKind.Percent
+                ? tableHeight is { } height ? Math.Max(0, declared.Resolve(height)) : 0
+                : declared.HasValue
+                    ? Math.Max(0, declared.Resolve(context.ContainingBlock.Height))
+                    : 0;
+
             foreach (var cell in row.Cells)
             {
                 var width = ColumnSpanWidth(build.Grid, cell, spacing);
