@@ -1,5 +1,6 @@
 using Hutu.Rendering;
 using Hutu.Rendering.Layout;
+using Hutu.Rendering.Paint;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
@@ -98,6 +99,21 @@ public sealed class TextStrokeAndClipTests
 
         Assert.That(BoxNamed(view, "p").Source.Style.TextFillColor, Is.EqualTo(0xFF00FF00u));
         Assert.That(BoxNamed(view, "b").Source.Style.TextFillColor, Is.EqualTo(0xFF00FF00u), "inherited");
+    }
+
+    [Test]
+    public async Task MozDefaultColourOverridesWhatCameBefore()
+    {
+        using var view = CreateView();
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='color:green;color:-moz-default-color;background-color:red;background-color:-moz-default-background-color'>hi</p></body></html>");
+
+        var ink = view.Paint!.Commands.OfType<TextCommand>().First(command => command.Text == "hi").Color;
+        Assert.That(ink, Is.EqualTo(0xFF000000u),
+            "the -moz-default- colour keyword stands for the user's default ink, overriding the green before it");
+        Assert.That(view.Paint!.Commands.OfType<FillCommand>().Any(fill => fill.Color == 0xFFFF0000u), Is.False,
+            "the -moz-default- background stands for no colour of its own, so the red is overridden");
     }
 
     private static HutuViewInternal CreateView()

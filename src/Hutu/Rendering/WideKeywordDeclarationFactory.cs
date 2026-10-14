@@ -49,6 +49,20 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         "-webkit-text-fill-color",
     };
 
+    /// <summary>
+    /// The keywords a known property's own grammar rejects but the requirements accept, gathered per
+    /// property. <c>background-clip</c> takes <c>text</c>; the colour properties take the <c>-moz-</c>
+    /// system colours standing for the user's default page ink and canvas, which the renderer resolves to
+    /// its own defaults. They are kept as raw text so the declaration survives and - being the one the
+    /// page wrote last - overrides what came before it, which is what a "default" keyword is for.
+    /// </summary>
+    private static readonly Dictionary<String, String[]> KeywordExtraValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["background-clip"] = ["text"],
+        ["color"] = ["-moz-default-color"],
+        ["background-color"] = ["-moz-default-background-color"],
+    };
+
     /// <param name="inner">
     /// The factory whose grammar every declaration keeps. Without one, the reader reads declarations
     /// the way AngleSharp's own factory does.
@@ -82,12 +96,12 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
 
         var info = _inner.Create(propertyName);
 
-        // background-clip is one AngleSharp knows, yet its grammar stops short of the "text" the
-        // requirements accept. Only that keyword is taken aside and every other value handed to AngleSharp
-        // as before, so a background shorthand's own decomposition - which writes the box values here - is
-        // left untouched.
-        var converter = propertyName.Equals("background-clip", StringComparison.OrdinalIgnoreCase)
-            ? (IValueConverter)new TextAlsoPassesThrough(info.Converter)
+        // A known property whose grammar stops short of a keyword the requirements accept is wrapped so
+        // only that keyword is taken aside - every other value goes to AngleSharp as before, leaving its
+        // own grammar and a shorthand's decomposition through it untouched. The rest keep their wide-keyword
+        // reading.
+        IValueConverter converter = KeywordExtraValues.TryGetValue(propertyName, out var extra)
+            ? new ExtraKeywords(info.Converter, extra)
             : new KeywordsFirst(info.Converter, info.Aggregator);
 
         var wrapped = new DeclarationInfo(
@@ -183,41 +197,51 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
     }
 
     /// <summary>
-    /// Hands <c>background-clip</c> the one value AngleSharp's own grammar rejects - <c>text</c> - while
-    /// leaving every value it does know to be read as it always was.
+    /// Reads a known property's value, accepting a short list of keywords its own grammar does not and
+    /// keeping each as raw text for the reader to resolve; a wide keyword still reads as one.
     /// </summary>
     /// <remarks>
-    /// The keyword is read and then put back when it is not one of the two this converter claims, so the
-    /// wrapped converter sees exactly what it would have seen had this never stood in front of it - the
-    /// same discipline <see cref="KeywordsFirst"/> keeps for the wide keywords.
+    /// The whole value is looked at before anything is consumed, so a value that is none of the accepted
+    /// keywords is still sitting at its start for AngleSharp's own converter - the same discipline
+    /// <see cref="KeywordsFirst"/> keeps, and the reason a background shorthand's decomposition is not
+    /// disturbed by a keyword read here.
     /// </remarks>
-    private sealed class TextAlsoPassesThrough : IValueConverter
+    private sealed class ExtraKeywords : IValueConverter
     {
         private readonly IValueConverter _inner;
+        private readonly String[] _extra;
 
-        public TextAlsoPassesThrough(IValueConverter inner) => _inner = inner;
+        public ExtraKeywords(IValueConverter inner, String[] extra)
+        {
+            _inner = inner;
+            _extra = extra;
+        }
 
         public ICssValue? Convert(StringSource source)
         {
-            var start = source.Index;
-            var ident = source.ParseIdent();
+            var whole = source.Content.Substring(source.Index).Trim();
 
-            if (CssWideKeyword.Is(ident))
+            if (CssWideKeyword.Is(whole))
             {
-                return new CssWideKeyword(ident!);
+                Consume(source);
+                return new CssWideKeyword(whole);
             }
 
-            if (!String.IsNullOrEmpty(ident) && ident!.Equals("text", StringComparison.OrdinalIgnoreCase))
+            if (Array.Exists(_extra, keyword => keyword.Equals(whole, StringComparison.OrdinalIgnoreCase)))
             {
-                return new CssRawValue("text");
-            }
-
-            while (source.Index > start)
-            {
-                source.Back();
+                Consume(source);
+                return new CssRawValue(whole);
             }
 
             return _inner.Convert(source);
+        }
+
+        private static void Consume(StringSource source)
+        {
+            while (!source.IsDone)
+            {
+                source.Next();
+            }
         }
     }
 }
