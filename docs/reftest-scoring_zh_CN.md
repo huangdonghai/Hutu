@@ -108,8 +108,8 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 
 ```
 gecko: 60 pairs — 48 通过 (80%)，12 不一致
-wpt:  60 pairs — 21 通过 (35%)，39 不一致
-合计: 120 pairs — 69 通过 (57.5%)
+wpt:  60 pairs — 29 通过 (48%)，31 不一致
+合计: 120 pairs — 77 通过 (64%)
 ```
 
 改完引擎跑一遍：**通过数往上走就是修好了，往下走就是弄坏了**。看通过数而不是 finding 条数——

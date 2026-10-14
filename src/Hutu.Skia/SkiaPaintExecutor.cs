@@ -208,8 +208,22 @@ public sealed class SkiaPaintExecutor
     private static void Fill(SKCanvas canvas, FillCommand command)
     {
         using var paint = new SKPaint { Color = new SKColor(command.Color), IsAntialias = true };
-        SkiaRounded.Fill(canvas, ToRect(command.Bounds), command.Radii, paint);
+
+        // A background covers whole pixels, the way a browser snaps the rectangle it fills. An edge
+        // that falls inside a pixel row is otherwise anti-aliased there, while the same edge reached
+        // as a clip boundary is not - a clip keeps the rows it partly covers - and so the two pictures
+        // of one box part over a single row of it. Snapping the edges puts both on the same terms.
+        var area = command.Radii.IsZero ? Snap(ToRect(command.Bounds)) : ToRect(command.Bounds);
+
+        SkiaRounded.Fill(canvas, area, command.Radii, paint);
     }
+
+    /// <summary>Moves each edge of an area onto the whole pixel it is nearest to.</summary>
+    private static SKRect Snap(SKRect rect) => new(
+        (Single)Math.Round(rect.Left),
+        (Single)Math.Round(rect.Top),
+        (Single)Math.Round(rect.Right),
+        (Single)Math.Round(rect.Bottom));
 
     /// <summary>
     /// Draws the border of a box.
