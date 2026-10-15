@@ -813,6 +813,39 @@ public sealed class SkiaRenderingTests
     }
 
     [Test]
+    public async Task AFixedBoxInsideAnOverflowHiddenAncestorIsNotClippedToIt()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(100, 100);
+
+        // A fixed box's containing block is the viewport, so a plain overflow:hidden wrapper that only
+        // happens to hold its static position must not clip it (CSS 2.1 11.1.1). The same rule is what
+        // kept a real page's fixed sidebar from being cut down to the height of such a wrapper; here the
+        // 60x60 box must reach past the 20x20 wrapper on both axes.
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='overflow:hidden;width:20px;height:20px'>x" +
+            "<div style='position:fixed;top:0;left:0;width:60px;height:60px;background:#00ff00'></div>" +
+            "</div>" +
+            "</body></html>");
+
+        var paint = view.Paint!;
+        var executor = new SkiaPaintExecutor(measurer);
+
+        using var surface = SKSurface.Create(new SKImageInfo(100, 100));
+        surface.Canvas.Clear(SKColors.White);
+        executor.Execute(paint, surface.Canvas, Offset.Zero);
+        using var bitmap = SKBitmap.FromImage(surface.Snapshot());
+
+        Assert.That(bitmap.GetPixel(10, 10).Green, Is.GreaterThan(200), "the fixed box paints inside the wrapper");
+        Assert.That(
+            bitmap.GetPixel(40, 40).Green,
+            Is.GreaterThan(200),
+            "past the 20px wrapper but inside the 60px fixed box: the wrapper's overflow must not clip it");
+    }
+
+    [Test]
     public async Task FormsSamplePageLaysTheFieldGridOutInColumns()
     {
         using var measurer = new SkiaTextMeasurer();

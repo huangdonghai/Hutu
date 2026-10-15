@@ -89,7 +89,10 @@ internal sealed class ElementHitTester
     private static IElement? Element(Box box) => box.Element ?? box.Source?.ParentElement;
 
     /// <summary>
-    /// Walks a box and its descendants, remembering the last one that contains the point.
+    /// Walks a box and its descendants, remembering the last one that contains the point. A transformed
+    /// box is drawn through its matrix, so the point is carried back through the inverse before the box
+    /// and its children are tested - and restored on the way out, so a sibling that the transform does
+    /// not cover is still measured against the unshifted point.
     /// </summary>
     private void Visit(LayoutBox box)
     {
@@ -98,33 +101,55 @@ internal sealed class ElementHitTester
             return;
         }
 
-        // A box that is not seen draws nothing, and a reader cannot be pointing at what is not there -
-        // the same rule the painter follows, and for the same reason that what is inside it may still be
-        // seen, so the walk goes on. A line box borrows the style of the text it carries and so does
-        // not answer for an element of its own.
-        if (box.Kind != LayoutKind.Line && box.Source.Style.IsHidden)
+        var savedX = _x;
+        var savedY = _y;
+
+        if (box.Transform is { } transform)
         {
+            var origin = box.TransformOrigin;
+            var inverse = transform.Inverse();
+            var ux = _x - origin.X;
+            var uy = _y - origin.Y;
+
+            _x = origin.X + inverse.A * ux + inverse.C * uy + inverse.E;
+            _y = origin.Y + inverse.B * ux + inverse.D * uy + inverse.F;
+        }
+
+        try
+        {
+            // A box that is not seen draws nothing, and a reader cannot be pointing at what is not there -
+            // the same rule the painter follows, and for the same reason that what is inside it may still be
+            // seen, so the walk goes on. A line box borrows the style of the text it carries and so does
+            // not answer for an element of its own.
+            if (box.Kind != LayoutKind.Line && box.Source.Style.IsHidden)
+            {
+                foreach (var child in box.Children)
+                {
+                    Visit(child);
+                }
+
+                return;
+            }
+
+            if (box.ClipsOverflow && !Contains(box.PaddingBox, _x, _y))
+            {
+                return;
+            }
+
+            if (Contains(box.BorderBox, _x, _y))
+            {
+                _box = box;
+            }
+
             foreach (var child in box.Children)
             {
                 Visit(child);
             }
-
-            return;
         }
-
-        if (box.ClipsOverflow && !Contains(box.PaddingBox, _x, _y))
+        finally
         {
-            return;
-        }
-
-        if (Contains(box.BorderBox, _x, _y))
-        {
-            _box = box;
-        }
-
-        foreach (var child in box.Children)
-        {
-            Visit(child);
+            _x = savedX;
+            _y = savedY;
         }
     }
 

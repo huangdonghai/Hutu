@@ -86,6 +86,24 @@ internal sealed class Painter
     /// </param>
     private void PaintBox(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred = null)
     {
+        // A box that carries a transform is painted - together with everything inside it - through the
+        // matrix, taken about its origin. The pair of commands is also what makes the box the layer its
+        // out-of-flow descendants belong to: the subtree is painted self-contained (it is not handed to
+        // an ancestor's deferred stack) so it lands under the same matrix, which is what CSS Transforms
+        // asks of an element whose transform is not none.
+        if (box.Transform is { } transform)
+        {
+            target.Add(new PushTransformCommand(box.BorderBox, transform, box.TransformOrigin));
+            PaintBoxContent(box, list, target, deferred: null);
+            target.Add(new PopTransformCommand(box.BorderBox));
+            return;
+        }
+
+        PaintBoxContent(box, list, target, deferred);
+    }
+
+    private void PaintBoxContent(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred)
+    {
         // A box that is not seen draws nothing of itself - no background, border, image, text, marker
         // or outline - and still lets what is inside it draw, because a descendant can ask to be seen
         // again and a hidden menu is a hundred boxes hidden by the one around them. The geometry is
@@ -139,7 +157,12 @@ internal sealed class Painter
                         continue;
                     }
 
-                    PaintBox(child, list, target, deferred);
+                    // Routed through PaintChild, not PaintBox, so a fixed child lands in the viewport
+                    // layer rather than the line's own commands: a fixed box is clipped only by an
+                    // ancestor that is its containing block, never by a plain overflow:hidden wrapper
+                    // that merely holds its static position (CSS 2.1 11.1.1). Painting it inline here
+                    // is what cut a fixed sidebar down to the height of such a wrapper.
+                    PaintChild(child, list, target, deferred);
                 }
 
                 break;

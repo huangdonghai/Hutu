@@ -587,6 +587,39 @@ internal sealed record LayoutProfile(
         layout.Position = position.Position;
         layout.ZIndex = position.HasZIndex ? position.ZIndex : 0;
 
+        // A transform (and a motion-path offset transform) changes only how the box is drawn, never
+        // where the layout put it, so the matrix is resolved here - once the border box has its size,
+        // which a translate percentage, the transform-origin and the offset position are measured
+        // against - and handed to the painter. The offset transform is applied before the transform
+        // property (CSS Transforms 2 §ctm), so it is the inner factor of the product.
+        var transformText = box.Style.TransformText;
+        var offsetPath = box.Style.OffsetValue("offset-path");
+        var hasTransform = transformText is { Length: > 0 } && !transformText.Equals("none", StringComparison.OrdinalIgnoreCase);
+        var hasOffset = offsetPath is { Length: > 0 } && !offsetPath.Equals("none", StringComparison.OrdinalIgnoreCase);
+
+        if (hasTransform || hasOffset)
+        {
+            var frame = layout.BorderBox;
+            var dimensions = box.Style.Dimensions;
+            var fontSize = box.Style.FontSize;
+            var (originX, originY) = TransformValue.ResolveOrigin(box.Style.TransformOriginText, frame.Width, frame.Height, dimensions, fontSize);
+
+            Affine? matrix = hasTransform && TransformValue.Parse(transformText) is { } transformValue
+                ? transformValue.Resolve(frame.Width, frame.Height, dimensions, fontSize)
+                : null;
+
+            if (MotionTransform.Compute(box.Style, frame, context.ContainingBlockRect, dimensions, fontSize, originX, originY) is { } motion)
+            {
+                matrix = matrix is { } m ? m.Then(motion) : motion;
+            }
+
+            // Any non-none transform or offset path makes the box a stacking context and a containing
+            // block, so it is marked for the painter even when the matrix is an identity (a
+            // translate(0,0)): the wrapping is what keeps its out-of-flow descendants inside it.
+            layout.Transform = matrix ?? Affine.Identity;
+            layout.TransformOrigin = new Offset(frame.X + originX, frame.Y + originY);
+        }
+
         _positioned.Finish(layout, position, context);
         return layout;
     }

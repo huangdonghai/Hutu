@@ -18,6 +18,12 @@ namespace Hutu.Rendering.Layout;
 /// own rectangle (a sticky box is confined to it) and the rectangle an <c>absolute</c> descendant
 /// resolves against (its nearest positioned ancestor's padding box, or the viewport).
 /// </para>
+/// <para>
+/// <see cref="TransformContainingBlock"/> is a second, narrower channel: the border box of the
+/// nearest ancestor with a <c>transform</c> or <c>offset-path</c>. CSS Transforms makes such an
+/// ancestor the containing block for <c>fixed</c> descendants too (not just <c>absolute</c>), which
+/// is why fixed cannot simply reuse <see cref="AbsoluteContainingBlock"/>.
+/// </para>
 /// </remarks>
 internal readonly struct LayoutContext
 {
@@ -54,7 +60,8 @@ internal readonly struct LayoutContext
         Rect absoluteContainingBlock,
         ITextMeasurer measurer,
         FloatBand? floats,
-        Boolean hypothetical)
+        Boolean hypothetical,
+        Rect? transformContainingBlock = null)
     {
         ContainingBlock = containingBlock;
         ContainingBlockRect = containingBlockRect;
@@ -65,6 +72,7 @@ internal readonly struct LayoutContext
         Measurer = measurer;
         Floats = floats;
         BasisIsHypothetical = hypothetical;
+        TransformContainingBlock = transformContainingBlock;
     }
 
     /// <summary>Gets the box percentages, auto widths and relative positioning resolve against.</summary>
@@ -86,6 +94,12 @@ internal readonly struct LayoutContext
     /// of the nearest positioned ancestor, or the viewport when there is none.
     /// </summary>
     public Rect AbsoluteContainingBlock { get; }
+
+    /// <summary>
+    /// Gets the border box of the nearest ancestor with a transform or offset path, or null when there
+    /// is none. A fixed descendant resolves against this in preference to the viewport.
+    /// </summary>
+    public Rect? TransformContainingBlock { get; }
 
     public ITextMeasurer Measurer { get; }
 
@@ -121,7 +135,8 @@ internal readonly struct LayoutContext
         AbsoluteContainingBlock,
         Measurer,
         Floats,
-        true);
+        true,
+        TransformContainingBlock);
 
     /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
@@ -137,7 +152,8 @@ internal readonly struct LayoutContext
         AbsoluteContainingBlock,
         Measurer,
         floats,
-        BasisIsHypothetical);
+        BasisIsHypothetical,
+        TransformContainingBlock);
 
     /// <summary>Gets the context a box's children see, with its content box as their containing block.</summary>
     /// <remarks>
@@ -155,7 +171,8 @@ internal readonly struct LayoutContext
         AbsoluteContainingBlock,
         Measurer,
         Floats,
-        BasisIsHypothetical);
+        BasisIsHypothetical,
+        TransformContainingBlock);
 
     /// <summary>
     /// Gets the context a box's children see when the content box's position is known, which is what
@@ -170,7 +187,8 @@ internal readonly struct LayoutContext
         AbsoluteContainingBlock,
         Measurer,
         Floats,
-        BasisIsHypothetical);
+        BasisIsHypothetical,
+        TransformContainingBlock);
 
     /// <summary>
     /// Gets the context a positioned box's children see: the absolute containing block becomes this
@@ -186,5 +204,23 @@ internal readonly struct LayoutContext
         paddingBox,
         Measurer,
         Floats,
-        BasisIsHypothetical);
+        BasisIsHypothetical,
+        TransformContainingBlock);
+
+    /// <summary>
+    /// Gets the context a transformed box's children see. A <c>transform</c> or <c>offset-path</c> makes
+    /// the box the containing block for <c>absolute</c> descendants (like a positioned ancestor) and, in
+    /// addition, for <c>fixed</c> ones - which is what <see cref="TransformContainingBlock"/> carries.
+    /// </summary>
+    public LayoutContext WithTransformedContainingBlock(Rect borderBox) => new(
+        ContainingBlock,
+        ContainingBlockRect,
+        Viewport,
+        ViewportRect,
+        Scroll,
+        borderBox,
+        Measurer,
+        Floats,
+        BasisIsHypothetical,
+        borderBox);
 }

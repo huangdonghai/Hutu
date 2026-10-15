@@ -59,9 +59,10 @@ internal sealed class PositionedLayout
         var position = box.Style.Position;
 
         // `fixed` always resolves against the viewport; `absolute` against the nearest positioned
-        // ancestor, which the context already carries as its padding box.
+        // ancestor, which the context already carries as its padding box. A transform or offset path
+        // on an ancestor is the exception that pulls `fixed` in too (CSS Transforms 1 5.5).
         var containingBlock = position.Position == PositionMode.Fixed
-            ? context.ViewportRect
+            ? context.TransformContainingBlock ?? context.ViewportRect
             : context.AbsoluteContainingBlock;
 
         var childContext = context.ForContainingBlock(containingBlock);

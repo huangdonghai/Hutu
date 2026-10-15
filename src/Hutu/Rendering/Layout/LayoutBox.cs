@@ -171,6 +171,19 @@ internal sealed class LayoutBox
     public CornerRadii Radii { get; set; }
 
     /// <summary>
+    /// Gets or sets the box's resolved 2D transform, or null when it carries none. It is filled in once
+    /// the box is sized, because a <c>translate</c> percentage and the transform origin are relative to
+    /// the border box. It changes only how the box is drawn, never where the layout put it.
+    /// </summary>
+    public Affine? Transform { get; set; }
+
+    /// <summary>
+    /// Gets or sets the point the <see cref="Transform"/> is taken about, in document coordinates: the
+    /// border box's origin plus the resolved <c>transform-origin</c>.
+    /// </summary>
+    public Offset TransformOrigin { get; set; }
+
+    /// <summary>
     /// Gets the corner radii of the padding box, which is where the background stops once the border
     /// has eaten into the curve and where descendants are clipped.
     /// </summary>

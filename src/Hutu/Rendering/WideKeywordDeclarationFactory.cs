@@ -50,6 +50,15 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // The grid-lanes axis/packing descriptor, which AngleSharp has no grammar for at all; the lanes
         // formatting context reads it as text.
         "grid-lanes-direction",
+        // CSS Motion Path (offset-*). AngleSharp has no grammar for these, so without this the whole
+        // declaration is dropped and an element positioned along a path would never be moved. The motion
+        // path reader keeps each value as text and computes the offset transform from it.
+        "offset-path",
+        "offset-distance",
+        "offset-rotate",
+        "offset-anchor",
+        "offset-position",
+        "offset",
     };
 
     /// <summary>

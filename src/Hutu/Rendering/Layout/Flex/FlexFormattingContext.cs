@@ -96,7 +96,11 @@ internal sealed partial class FlexFormattingContext
         var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
         // A positioned flex container is what an absolutely positioned child anchors to.
-        if (PositionedLayout.IsPositioned(box))
+        if (box.Style.IsTransformed)
+        {
+            itemContext = itemContext.WithTransformedContainingBlock(layout.BorderBox);
+        }
+        else if (PositionedLayout.IsPositioned(box))
         {
             itemContext = itemContext.WithAbsoluteContainingBlock(layout.PaddingBox);
         }

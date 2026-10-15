@@ -1900,6 +1900,21 @@ internal readonly struct ComputedStyle
         /// <summary>Gets the colour the glyph body is filled with, standing in for <c>color</c> where the
         /// page set <c>-webkit-text-fill-color</c>; null means it did not.</summary>
         internal UInt32? TextFillColor;
+
+        /// <summary>Gets the declared <c>transform</c>, or null when the box carries none.</summary>
+        internal String? Transform;
+
+        /// <summary>Gets the declared <c>transform-origin</c>, or null for the default centre.</summary>
+        internal String? TransformOrigin;
+
+        // CSS Motion Path longhands (and the <c>offset</c> shorthand), kept as raw text for the motion
+        // path reader; AngleSharp has no grammar for them.
+        internal String? OffsetPath;
+        internal String? OffsetDistance;
+        internal String? OffsetRotate;
+        internal String? OffsetAnchor;
+        internal String? OffsetPosition;
+        internal String? Offset;
     }
 
     /// <summary>
@@ -1911,6 +1926,46 @@ internal readonly struct ComputedStyle
         _values.Fused is not null
             ? _values.Position!.Value
             : _values.Position ??= PositionStyle.Read(this);
+
+    /// <summary>
+    /// Gets the declared <c>transform</c> text, or null/empty when the box carries none. Read as text on
+    /// both style paths and turned into a matrix later, once the box's own size is known (a translate
+    /// percentage and the origin are relative to the border box).
+    /// </summary>
+    public String? TransformText =>
+        _values.Fused is { } fused ? fused.Transform : _style.GetPropertyValue("transform");
+
+    /// <summary>Gets the declared <c>transform-origin</c> text, or null for the default centre.</summary>
+    public String? TransformOriginText =>
+        _values.Fused is { } fused ? fused.TransformOrigin : _style.GetPropertyValue("transform-origin");
+
+    /// <summary>
+    /// Gets whether the box carries a <c>transform</c> or an <c>offset-path</c> that is not <c>none</c>.
+    /// Such a box becomes the containing block for its absolute and fixed descendants and a stacking
+    /// context, whether or not the resulting matrix moves anything (CSS Transforms 1 §transform-rendering).
+    /// </summary>
+    public Boolean IsTransformed =>
+        (TransformText is { Length: > 0 } transform && !transform.Equals("none", StringComparison.OrdinalIgnoreCase)) ||
+        (OffsetValue("offset-path") is { Length: > 0 } path && !path.Equals("none", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Gets the declared text of a CSS Motion Path longhand (or the <c>offset</c> shorthand), or null
+    /// when the box says nothing. Read as text on both style paths; the motion path reader turns it into
+    /// an offset transform once the box is sized.
+    /// </summary>
+    public String? OffsetValue(String name) =>
+        _values.Fused is { } fused
+            ? name switch
+            {
+                "offset-path" => fused.OffsetPath,
+                "offset-distance" => fused.OffsetDistance,
+                "offset-rotate" => fused.OffsetRotate,
+                "offset-anchor" => fused.OffsetAnchor,
+                "offset-position" => fused.OffsetPosition,
+                "offset" => fused.Offset,
+                _ => null,
+            }
+            : _style.GetPropertyValue(name);
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
     public ICssStyleDeclaration Declaration => _style;

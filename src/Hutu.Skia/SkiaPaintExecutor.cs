@@ -150,6 +150,18 @@ public sealed class SkiaPaintExecutor
                     canvas.Restore();
                     break;
 
+                case PushTransformCommand transform:
+                    // Paint about the origin: shift it to the page corner, apply the matrix, shift back.
+                    canvas.Save();
+                    canvas.Translate((Single)transform.Origin.X, (Single)transform.Origin.Y);
+                    canvas.Concat(ToSkMatrix(transform.Matrix));
+                    canvas.Translate(-(Single)transform.Origin.X, -(Single)transform.Origin.Y);
+                    break;
+
+                case PopTransformCommand:
+                    canvas.Restore();
+                    break;
+
                 case TextCommand text:
                     DrawText(canvas, text);
                     break;
@@ -181,7 +193,7 @@ public sealed class SkiaPaintExecutor
     /// </remarks>
     public static Boolean IsVisible(PaintCommand command, Offset offset, Rect visible)
     {
-        if (command is PushClipCommand or PopClipCommand)
+        if (command is PushClipCommand or PopClipCommand or PushTransformCommand or PopTransformCommand)
         {
             return true;
         }
@@ -1002,4 +1014,10 @@ public sealed class SkiaPaintExecutor
 
     private static SKRect ToRect(Rect rect) =>
         new((Single)rect.X, (Single)rect.Y, (Single)rect.Right, (Single)rect.Bottom);
+
+    /// <summary>Folds the platform-neutral affine into a Skia matrix (CSS matrix(a, b, c, d, e, f)).</summary>
+    private static SKMatrix ToSkMatrix(Affine m) => new(
+        (Single)m.A, (Single)m.B, (Single)m.E,
+        (Single)m.C, (Single)m.D, (Single)m.F,
+        0, 0, 1);
 }

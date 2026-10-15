@@ -245,6 +245,42 @@ public sealed class PopClipCommand : PaintCommand
     }
 }
 
+/// <summary>
+/// Applies a 2D transform to everything that follows, until the matching <see cref="PopTransformCommand"/>:
+/// what a box with a <c>transform</c> asks of its own paint and its whole subtree. The matrix is taken
+/// about <see cref="Origin"/>, a point in document coordinates, so a rotate or scale pivots where the
+/// author set <c>transform-origin</c> rather than at the page corner.
+/// </summary>
+/// <remarks>
+/// Like a clip, the two commands are always a balanced pair inside one list, and the box is painted as
+/// a unit between them - which is also what makes a transformed box the layer its out-of-flow
+/// descendants belong to, since nothing from inside escapes to a list beyond the pair.
+/// </remarks>
+public sealed class PushTransformCommand : PaintCommand
+{
+    internal PushTransformCommand(Rect bounds, Affine matrix, Offset origin)
+        : base(bounds)
+    {
+        Matrix = matrix;
+        Origin = origin;
+    }
+
+    /// <summary>Gets the affine matrix, in CSS's <c>matrix(a, b, c, d, e, f)</c> terms.</summary>
+    public Affine Matrix { get; }
+
+    /// <summary>Gets the point the transform is taken about, in document coordinates.</summary>
+    public Offset Origin { get; }
+}
+
+/// <summary>Ends the transform the nearest preceding <see cref="PushTransformCommand"/> opened.</summary>
+public sealed class PopTransformCommand : PaintCommand
+{
+    internal PopTransformCommand(Rect bounds)
+        : base(bounds)
+    {
+    }
+}
+
 /// <summary>A run of text drawn on a single baseline.</summary>
 public sealed class TextCommand : PaintCommand
 {
