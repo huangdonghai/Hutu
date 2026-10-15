@@ -59,6 +59,11 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         "offset-anchor",
         "offset-position",
         "offset",
+        // `transform` is kept whole so a value written with var() - Tailwind's
+        // `translate(var(--tw-translate-x), …)` - survives to the VariableScope. AngleSharp's own
+        // transform grammar rejects an unresolved var() and discards the declaration to `none`, which
+        // would leave nothing for our substitution to resolve.
+        "transform",
     };
 
     /// <summary>

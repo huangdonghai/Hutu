@@ -60,6 +60,23 @@ public sealed class TransformTests
     }
 
     [Test]
+    public async Task ATransformWrittenWithVarResolvesTheCustomProperty()
+    {
+        // Tailwind writes `transform: translateX(var(--tw-translate-x))`. AngleSharp's own transform
+        // grammar rejects an unresolved var() and discards the declaration to `none`; keeping transform
+        // as raw text lets the VariableScope substitute the custom property, so the shift lands.
+        using var view = View(100, 100);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='box' style='--x:30px;position:absolute;left:0;top:0;width:20px;height:20px;background:#ff0000;transform:translateX(var(--x))'></div>" +
+            "</body></html>");
+
+        var transform = FirstTransform(view);
+
+        Assert.That(transform.Matrix.E, Is.EqualTo(30).Within(0.5), "the var() resolved to the declared 30px");
+    }
+
+    [Test]
     public async Task ATransformedAncestorIsTheContainingBlockOfAFixedDescendant()
     {
         using var view = View(300, 300);
