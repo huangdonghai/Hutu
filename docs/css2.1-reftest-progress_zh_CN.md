@@ -9,14 +9,24 @@
 
 | 语料 | 基线 | 备注 |
 |---|---:|---|
-| **wpt** | **2922** | 2026-10-15 全量重测（10152 对，4m12s）。含 Ahem +95、BFC 下移 +2、%-margin/匿名透明 +3、flow-root +2、list-item 计数器 +12、min/max-applies-to 族 +33 |
-| **gecko** | **1853** | 2026-10-15 全量重测（3776 对）。含定高 margin 修复 +19、裁剪感知上提 +1、min/max-applies-to 族连带 +2 |
-| 崩溃 / 画不出 | **0 / 0** | 13928 对全部画出，无超时放弃 |
+| **wpt** | **2259** | 2026-10-15 全量重测（**5835 对**，约 2 分钟）。历史增量：Ahem +95、BFC 下移 +2、%-margin/匿名透明 +3、flow-root +2、list-item 计数器 +12、min/max-applies-to 族 +33；**语料清理后**（见 §1.1），比率 38% |
+| **gecko** | **1300** | 2026-10-15 全量重测（**2471 对**）。历史增量：定高 margin +19、裁剪感知上提 +1、min/max-applies-to 族连带 +2；语料清理后比率 52% |
+| 崩溃 / 画不出 | **0 / 0** | **8306 对**全部画出，无超时放弃 |
 | 单测 | **565** | `0adcd50c` 起 +4 |
 
-**基准报告**：`build/reftest-baseline.md`（2026-10-15 全量，含完整通过/失败清单；`build/` 不入库，重跑即可再生——规程见 §4 第 5 步下方的全量跑法）。
+**基准报告**：`build/reftest-score.md`（2026-10-15 全量，含完整通过/失败清单；`build/` 不入库，重跑即可再生——规程见下方全量跑法）。
 
-**全量跑法（建基准用，平时回归仍用 60 样本）**：临时把 `ImportedCorpusTests.cs` 的 `Listed` 改成 200000 → 构建 → **不设** `HUTU_SCORE_LIMIT` 跑 `TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay` → 存报告 → **把 `Listed` 还原成 60** 并 `git diff` 确认干净。本机实测约 4 分钟（13928 对 / 27856 html，半核并行），远快于旧估的半小时；`build/score-<corpus>.log` 有逐页进度可轮询。
+### 1.1 语料清理（2026-10-15，规模大幅缩小 → 基线变化，非回归）
+
+语料经过两轮清理：
+1. **去 JS 依赖用例**：参考页含 `<script>`/`testharness`/`reftest-wait` 的 **42 对**（84 文件）整体删除。
+2. **严格 Chrome 校验**：用本机 Chrome（无头、800×600、抑制滚动条）逐对渲染 test/ref 做像素比对，凡不满足所声明 `match`/`mismatch` 的整对删除——**5581 对 / 11162 文件**（wpt 4290、gecko 1290）。判据=单个 Chrome 版本（用户口径：只兼容官方规范 + 本机 Chrome 实作）。
+
+- 合计移除 **5623 对**；剩余 **wpt 5835 对 / gecko 2471 对**（html 约 1.67 万，原 2.79 万）；删除后的空目录已清理（75 个）。
+- 校验器：`build/_chromecheck`（**多进程分片**并行，因单个 Playwright 驱动会串行化所有命令；gitignored 一次性工具）。
+- 记分从 wpt 2922 / gecko 1853 变到 wpt 2259 / gecko 1300，是**语料变小**造成的绝对数下降（比率：wpt 38%、gecko 52%）。
+
+**全量跑法（建基准用，平时回归仍用 60 样本）**：临时把 `ImportedCorpusTests.cs` 的 `Listed` 改成 200000 → 构建 → **不设** `HUTU_SCORE_LIMIT` 跑 `TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay` → 存报告 → **把 `Listed` 还原成 60** 并 `git diff` 确认干净。本机实测约 2 分钟（**8306 对 / 16694 html**，半核并行）；`build/score-<corpus>.log` 有逐页进度可轮询。
 
 复现方式（判定回归的唯一仲裁是这套浏览器真相）：
 

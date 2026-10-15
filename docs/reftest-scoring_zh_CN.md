@@ -28,9 +28,11 @@
 
 | 源 | 对数 | 上游 |
 |---|---|---|
-| WPT `css/` | 10152 | commit `2f57f45d21482f94b36123dfcec77ae7ab859bc1` |
-| Gecko `layout/reftests` | 3815 | commit `5836a062726f715fda621338a17b51aff30d0a8c` |
-| 合计 | 约 13900 | 约 2.8 万个 HTML 文件 |
+| WPT `css/` | 5835 | commit `2f57f45d21482f94b36123dfcec77ae7ab859bc1` |
+| Gecko `layout/reftests` | 2471 | commit `5836a062726f715fda621338a17b51aff30d0a8c` |
+| 合计 | 约 8300 | 约 1.67 万个 HTML 文件 |
+
+> 注：2026-10-15 做了语料清理（去 JS 依赖用例 + 严格 Chrome 校验），对数从原 10152 / 3815 减到 5835 / 2471；详见 `css2.1-reftest-progress_zh_CN.md` §1.1。
 
 明细见 `build/import-report-wpt.md` / `build/import-report-gecko.md`。
 
