@@ -83,6 +83,26 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 
 ## 5. CSS 2.1 族菜单与可胜性（post-Ahem）
 
+### 5.0 残余全景（2026-10-15 全量基准，9153 条 finding 按规范模块分桶）
+
+数据源：`build/reftest-baseline.md` 的 Findings 段；复算方式（按语料后第二段取模块名聚类）：
+
+```powershell
+Get-Content build/reftest-baseline.md -Encoding UTF8 |
+  Where-Object { $_ -match '^- `[^/]+/([^/]+)' } |
+  ForEach-Object { $Matches[1] } | Group-Object | Sort-Object Count -Descending
+```
+
+| 桶 | 数量 | 占比 |
+|---|---:|---:|
+| **CSS3+ 模块** | **7764** | **84.8%** |
+| CSS 2.1 时代（基础口径内） | 1195 | 13.1% |
+| 杂项 / 非 CSS（SVG、UI、harness、pixel-rounding 等） | 194 | 2.1% |
+
+- **CSS3+ Top**：css-grid 1203、css-break 927、css-text 576、css-gaps 482、css-overflow 345、flexbox 合计 454、css-sizing 244、css-shapes 203、css-transforms 合计 254、multicol 合计 230、text-decor 合计 252、css-color 161、css-contain 146、css-counter-styles 140、css-inline 121、css-masking 107、css-page 系 163、css-variables 101、css-anchor-position 99、writing-mode 合计 188。粗分族：Grid 系 ~1723（扣暂缓的 grid-lanes 656 后 ~1067）、分页/断框系 ~1320、文本系 ~1063、Flexbox 系 ~492、尺寸/溢出系 ~735、颜色/背景/边框系 ~525、计数器/列表系 ~239、书写模式系 ~192。
+- **分桶口径（判断项）**：`gecko/bugs`(462)、`gecko/text`(57)、`bidi`(59)、`counters`(70) 归 2.1 时代（内容是 §8/§9/§12/§16 规则，只是托管在 gecko 语料）；`css-counter-styles`/`css-lists` 是 L3 模块名，但失败主因是 CSS 2.1 §11/§12 的 `counter()/counters()` 生成内容引擎（见 §5.5），算在 CSS3+ 桶里、攻它时按 2.1 基础算。
+- **结论**：残余 84.8% 是现代 CSS，与"先弄 CSS 2.1 基础"一致；基础口径内可攻残余 ~1195，较同质的簇：表格 ~83（anonymous-boxes 34 + width 31 + bordercollapse 19）、float 78、计数器 70、margin 折叠 54、first-letter 35、forms 60、bugs 462（异构回归例，需逐条看）。
+
 ### 5.1 推荐先打（纯几何、同质、CSS 2.1 核心）
 - **`wpt/css-lists`（110 例，仅 ~172K px ≈ 平均 1.5K/例）**：全是**近失**，marker 定位用 Ahem 方格后应大面积翻绿；列表标记是 CSS 2.1 核心。最像"一处根因翻一片"的大族。**（下一个首选目标）**
 - **`wpt/CSS2/normal-flow`（16）+ `CSS2/tables`（9）+ `CSS2/visuren`（9）**：纯几何、最基础，很多已因字体对等而逼近。
