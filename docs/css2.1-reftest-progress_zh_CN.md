@@ -9,12 +9,14 @@
 
 | 语料 | 基线 | 备注 |
 |---|---:|---|
-| **wpt** | **2889** | 含 Ahem +95、BFC 下移 +2、%-margin/匿名透明 +3、flow-root +2、list-item 计数器 +6、全子节点计数 +6 |
-| **gecko** | **1851** | 含定高 margin 修复 +19、裁剪感知上提 +1 |
-| 崩溃 / 画不出 | **0 / 0** | |
+| **wpt** | **2922** | 2026-10-15 全量重测（10152 对，4m12s）。含 Ahem +95、BFC 下移 +2、%-margin/匿名透明 +3、flow-root +2、list-item 计数器 +12、min/max-applies-to 族 +33 |
+| **gecko** | **1853** | 2026-10-15 全量重测（3776 对）。含定高 margin 修复 +19、裁剪感知上提 +1、min/max-applies-to 族连带 +2 |
+| 崩溃 / 画不出 | **0 / 0** | 13928 对全部画出，无超时放弃 |
 | 单测 | **565** | `0adcd50c` 起 +4 |
 
-> 全量计数停在 `22c2ffa0`（未随 `0adcd50c` 重跑）：该提交的 min/max-applies-to 族 +3 经 `HUTU_SCORE_LOOK` deep-look 逐对确认，回归门禁按用户指示改用 60 样本（见 §4 第 5 步）。
+**基准报告**：`build/reftest-baseline.md`（2026-10-15 全量，含完整通过/失败清单；`build/` 不入库，重跑即可再生——规程见 §4 第 5 步下方的全量跑法）。
+
+**全量跑法（建基准用，平时回归仍用 60 样本）**：临时把 `ImportedCorpusTests.cs` 的 `Listed` 改成 200000 → 构建 → **不设** `HUTU_SCORE_LIMIT` 跑 `TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay` → 存报告 → **把 `Listed` 还原成 60** 并 `git diff` 确认干净。本机实测约 4 分钟（13928 对 / 27856 html，半核并行），远快于旧估的半小时；`build/score-<corpus>.log` 有逐页进度可轮询。
 
 复现方式（判定回归的唯一仲裁是这套浏览器真相）：
 
@@ -62,6 +64,7 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
   2. **百分比高度对错矩形 + 夹紧时序**（`max-height-applies-to-017`）：树显示 inline-block 父被 max-height 夹成 100 高，但子 `height:100%` 得 0。两个错误叠加——(a) `MeasureRow`/`Arrange` 把**父盒自己的 context**（包含块是祖父盒）传给行内布局，行内原子盒的百分比对到了祖父盒高度；(b) §10.7 的夹紧发生在测内容**之后**，子的百分比没对着夹紧后的 used height 解析。规范 §10.7：tentative 超 max-height 时**用 max-height 作为 computed height 重跑**"上面的规则"（§10.5 百分比对包含块高解析）→ used height 先定、内容对着它测。改：声明高先夹紧再测内容（clamp-before-measure，块子路与行内路都过）；`InlineContext` 新增 `Atomic` 字段——行内原子盒的包含块是**线所在的块容器**即父盒自身内容盒（§9.1.1），与 text-indent 等行内长度所对的"盒的包含块"（§16.1）分开传，两者在 shrink-to-fit 盒上不是同一个矩形。
   3. **行尾折叠空白计入 intrinsic 宽度**（017 的另一半）：剩余 400px 差异是绿方块右侧 4px 红条——源码里 `<span>` 后的换行空白把 shrink-to-fit 父盒撑宽了 4.38px。规范 §16.6.1 步 3：**行尾空格**（white-space: normal/nowrap/pre-line）与行首一样**移除**。行 builder 早有 `TrimTrailingSpaces`，只缺内在测量路径。改：`MeasureIntrinsicCore` 把可折叠空白宽度挂起（`trailing`），有内容跟随才计入 max-content；行首跳过（原 `sawContent` 门）与 preformatted 直出保持不变。
 - **门禁**：3 个目标 pair 全翻绿（deep-look "the two agree"）；**565 单测（+4，逐一用 stash 验证无修复即失败）**；60 样本回归与基线一致（gecko 54/60、wpt 45/60）；0 崩溃；0 linter。
+- **全量净效果**（2026-10-15 建基准时实测，见 §1）：**wpt 2889→2922（+33）、gecko 1851→1853（+2）**。+33 中 3 例是目标族，其余主要来自行尾空白修复——HTML 源码里行尾空白无处不在，任何含 trailing whitespace 的 shrink-to-fit 盒（浮动/inline-block/表格/绝对定位）此前都被撑宽一个空格。
 - **遗留**：`max-height-separates-margin` 等近亲仍属 §5.2.1 的"测量感知折叠"族，未动；`MeasureColumn` 的行内路仍是旧 context（写模式路径，本轮未碰）。
 
 ---
