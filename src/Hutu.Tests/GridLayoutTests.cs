@@ -43,6 +43,36 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task AGridOfFlexibleTracksShrinksToItsContainerInsideAFlexItem()
+    {
+        // A grid's min-content is the sum of its tracks' minima, and a `minmax(0, 1fr)` track's minimum
+        // is zero - so such a grid has essentially no min-content, and a `flex-grow` item holding it (the
+        // item's automatic minimum size is that min-content) shrinks to the container rather than being
+        // held open by the words inside. A Tailwind `grid-cols-*` bar over a `flex-grow` box leans on
+        // exactly this; reporting max-content as min-content made the item refuse to shrink and let a
+        // real page balloon past the viewport.
+        using var view = CreateView(200);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;width:200px'>" +
+            "<div id='item' style='flex-grow:1'>" +
+            "<div id='g' style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr))'>" +
+            "<div>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</div>" +
+            "<div>bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</div>" +
+            "</div>" +
+            "</div>" +
+            "</div>" +
+            "</body></html>");
+
+        // Thirty characters are 150 pixels each, so the grid's max-content is 300 - wider than the 200
+        // container - yet the flexible tracks let it come down to the container all the same.
+        Assert.That(
+            Find(view, "g").BorderBox.Width,
+            Is.EqualTo(200).Within(0.5),
+            "the grid shrinks to the container, not to what it holds");
+    }
+
+    [Test]
     public async Task GapIsLeftBetweenTheTracks()
     {
         using var view = CreateView(400);

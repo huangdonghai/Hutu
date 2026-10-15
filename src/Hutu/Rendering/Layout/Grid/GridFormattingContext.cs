@@ -99,7 +99,11 @@ internal sealed class GridFormattingContext
         var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
         // A positioned grid container is what an absolutely positioned child anchors to.
-        if (PositionedLayout.IsPositioned(box))
+        if (box.Style.IsTransformed)
+        {
+            itemContext = itemContext.WithTransformedContainingBlock(layout.BorderBox);
+        }
+        else if (PositionedLayout.IsPositioned(box))
         {
             itemContext = itemContext.WithAbsoluteContainingBlock(layout.PaddingBox);
         }
@@ -135,10 +139,12 @@ internal sealed class GridFormattingContext
     }
 
     /// <summary>
-    /// The intrinsic inline sizes. Sizing the tracks without a container size leaves every track as
-    /// big as what it holds, so the sum is the max-content size. The min-content size is reported as
-    /// the same number: narrowing a grid means letting its items wrap and re-running the track
-    /// sizing, which the caller can do by measuring under a width constraint instead.
+    /// The intrinsic inline sizes. The max-content size is what the tracks come to when each is as big
+    /// as what it holds; the min-content size is the sum of the tracks' base sizes before any of them
+    /// is grown - each one its min sizing function resolved, so a <c>minmax(0, 1fr)</c> track, whose
+    /// minimum is zero, contributes nothing. Reporting the max-content as the min-content (as this
+    /// once did) makes a grid refuse to shrink below what it holds, which is what let a wide grid inside
+    /// a <c>flex-grow</c> item balloon the whole document past the viewport.
     /// </summary>
     public IntrinsicSize MeasureIntrinsic(Box box, LayoutContext context)
     {
@@ -147,9 +153,10 @@ internal sealed class GridFormattingContext
         var insets = padding.Horizontal + border.Horizontal;
 
         var plan = Compute(box, 0, null, context, definiteWidth: false, sizeRows: false);
-        var width = plan.ContentWidth + insets;
+        var maxContent = plan.ContentWidth + insets;
+        var minContent = Math.Min(plan.MinWidth + insets, maxContent);
 
-        return new IntrinsicSize(width, width);
+        return new IntrinsicSize(minContent, maxContent);
     }
 
     /// <summary>Runs the whole algorithm and returns the content sizes plus the placed items.</summary>
@@ -211,7 +218,7 @@ internal sealed class GridFormattingContext
 
         // Columns first. A row can only be sized once its items' final widths are known, because the
         // row's own size is whatever height the content needs at that width.
-        var columnTracks = SizeColumns(grid, items, usedColumns, columnBasis, gapX, definiteWidth, itemContext);
+        var columnTracks = SizeColumns(grid, items, usedColumns, columnBasis, gapX, definiteWidth, itemContext, out var minContentWidth);
 
         var totalWidth = Total(columnTracks, gapX);
         var resolvedWidth = definiteWidth ? contentWidth : totalWidth;
@@ -221,7 +228,7 @@ internal sealed class GridFormattingContext
             // The inline size is the width the columns come to, and nothing below this point can
             // change it. The items are not carried out either: the caller asking for this is asking
             // for the width.
-            return new GridPlan { ContentWidth = resolvedWidth };
+            return new GridPlan { ContentWidth = resolvedWidth, MinWidth = minContentWidth };
         }
 
         foreach (var item in items)
@@ -256,6 +263,7 @@ internal sealed class GridFormattingContext
         {
             ContentWidth = resolvedWidth,
             ContentHeight = resolvedHeight,
+            MinWidth = minContentWidth,
         };
 
         plan.Items.AddRange(items);
@@ -587,12 +595,18 @@ internal sealed class GridFormattingContext
         Double basis,
         Double gap,
         Boolean definite,
-        LayoutContext context)
+        LayoutContext context,
+        out Double minTotal)
     {
         var tracks = Build(grid.Columns, grid.AutoColumn, used, basis, gap);
 
         Initialize(tracks, basis);
         ContributeWidths(tracks, items, context);
+
+        // The base sizes before any growth are the tracks' minima - a fixed length, or the largest
+        // min-content contribution for an intrinsic minimum - so their sum is the grid's min-content.
+        minTotal = Total(tracks, gap);
+
         Resolve(tracks, basis, gap, definite, grid.JustifyContent);
 
         return tracks;
@@ -641,7 +655,7 @@ internal sealed class GridFormattingContext
 
         var itemContext = context.ForContainingBlock(new Size(contentWidth, 0));
         var usedColumns = Used(items, true);
-        var columnTracks = SizeColumns(grid, items, usedColumns, columnBasis, gapX, definiteWidth, itemContext);
+        var columnTracks = SizeColumns(grid, items, usedColumns, columnBasis, gapX, definiteWidth, itemContext, out _);
 
         var layout = new CrossAxisLayout { GapX = gapX, GapY = gapY };
 
@@ -1331,6 +1345,9 @@ internal sealed class GridFormattingContext
         public Double ContentWidth;
 
         public Double ContentHeight;
+
+        /// <summary>The sum of the column base sizes before growth: the grid's min-content inline size.</summary>
+        public Double MinWidth;
 
         public List<GridCell> Items { get; } = new();
     }
