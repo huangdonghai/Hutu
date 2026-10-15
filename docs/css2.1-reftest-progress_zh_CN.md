@@ -10,9 +10,11 @@
 | 语料 | 基线 | 备注 |
 |---|---:|---|
 | **wpt** | **2889** | 含 Ahem +95、BFC 下移 +2、%-margin/匿名透明 +3、flow-root +2、list-item 计数器 +6、全子节点计数 +6 |
-| **gecko** | **1850** | 含定高 margin 修复 +19 |
+| **gecko** | **1851** | 含定高 margin 修复 +19、裁剪感知上提 +1 |
 | 崩溃 / 画不出 | **0 / 0** | |
-| 单测 | **560** | |
+| 单测 | **565** | `0adcd50c` 起 +4 |
+
+> 全量计数停在 `22c2ffa0`（未随 `0adcd50c` 重跑）：该提交的 min/max-applies-to 族 +3 经 `HUTU_SCORE_LOOK` deep-look 逐对确认，回归门禁按用户指示改用 60 样本（见 §4 第 5 步）。
 
 复现方式（判定回归的唯一仲裁是这套浏览器真相）：
 
@@ -54,6 +56,14 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 ### 3.3（前序，非本轮 CSS2.1，但在同一条线上）
 - `b87cd725`：grid-lanes 交叉轴对齐 + 定宽元素不再被拉伸（wpt +32，属先进排版，已按指示暂缓）。
 
+### 3.4 `0adcd50c` — min/max-applies-to 族：used height 百分比、浮动让位、行尾空格（三处耦合）
+- **背景**：交接文档把 `max-height/max-width-applies-to-017/018` 列为"可能静态可解，先查规范"。侦察发现 3 个失败 pair 其实是**三个独立小根因**，逐一查规范后修复：
+  1. **浮动不避让前兄弟的折叠底边距**（`max-height-applies-to-018`、`max-width-applies-to-018`）：deep-look 显示浮动盒尺寸**本来就夹紧对了**（100×100），只是位置高了 17.92px（`<p>` 的底边距）。`PlaceFloat` 两阶段都传裸 `cursor`，漏掉 `pending` 条。规范 §8.3.1：**浮动与任何盒不折叠边距** → 前兄弟折叠出的底边距条立在浮动之前，浮动外顶边落在其下（即下一个 in-flow 盒应占的位置）。改：两阶段均传 `cursor + pending`。
+  2. **百分比高度对错矩形 + 夹紧时序**（`max-height-applies-to-017`）：树显示 inline-block 父被 max-height 夹成 100 高，但子 `height:100%` 得 0。两个错误叠加——(a) `MeasureRow`/`Arrange` 把**父盒自己的 context**（包含块是祖父盒）传给行内布局，行内原子盒的百分比对到了祖父盒高度；(b) §10.7 的夹紧发生在测内容**之后**，子的百分比没对着夹紧后的 used height 解析。规范 §10.7：tentative 超 max-height 时**用 max-height 作为 computed height 重跑**"上面的规则"（§10.5 百分比对包含块高解析）→ used height 先定、内容对着它测。改：声明高先夹紧再测内容（clamp-before-measure，块子路与行内路都过）；`InlineContext` 新增 `Atomic` 字段——行内原子盒的包含块是**线所在的块容器**即父盒自身内容盒（§9.1.1），与 text-indent 等行内长度所对的"盒的包含块"（§16.1）分开传，两者在 shrink-to-fit 盒上不是同一个矩形。
+  3. **行尾折叠空白计入 intrinsic 宽度**（017 的另一半）：剩余 400px 差异是绿方块右侧 4px 红条——源码里 `<span>` 后的换行空白把 shrink-to-fit 父盒撑宽了 4.38px。规范 §16.6.1 步 3：**行尾空格**（white-space: normal/nowrap/pre-line）与行首一样**移除**。行 builder 早有 `TrimTrailingSpaces`，只缺内在测量路径。改：`MeasureIntrinsicCore` 把可折叠空白宽度挂起（`trailing`），有内容跟随才计入 max-content；行首跳过（原 `sawContent` 门）与 preformatted 直出保持不变。
+- **门禁**：3 个目标 pair 全翻绿（deep-look "the two agree"）；**565 单测（+4，逐一用 stash 验证无修复即失败）**；60 样本回归与基线一致（gecko 54/60、wpt 45/60）；0 崩溃；0 linter。
+- **遗留**：`max-height-separates-margin` 等近亲仍属 §5.2.1 的"测量感知折叠"族，未动；`MeasureColumn` 的行内路仍是旧 context（写模式路径，本轮未碰）。
+
 ---
 
 ## 4. 工作流（每个特性族一轮）
@@ -62,7 +72,7 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 2. 读代表例的 test/ref，精确反推规则。
 3. `HUTU_SCORE_LOOK=<子串>` 驱动 `LooksAtOnePairClosely` 做单对 deep-look：输出两侧布局树 + diff map，拿到**确切几何**再动手。
 4. 改代码 → 加/改单测（`src/Hutu.Tests`）→ `dotnet test src/Hutu.Tests`。
-5. **空载全量无回归门禁**：目标族净正、其它族不回退、0 崩溃，才允许提交。
+5. **回归门禁（用户明确指示，2026-10 起，覆盖旧的"空载全量"口径）**：只用**固定样本 60 条**——`$env:HUTU_SCORE_LIMIT='60'` 跑 `TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay`（约 6 秒，每个语料各画前 60 页，结果确定），与基线（gecko 54/60、wpt 45/60）比对，不得回退、0 画不出。**不要再跑全量计分**（13930 pair / 27940 html，约半小时，太慢）。目标族净正用 `HUTU_SCORE_LOOK` deep-look 逐对确认。也不要把 `StopsAtTheTenthFinding` 的 findings 当回归基线（队首样本，非确定）。
 6. 语义化 `fix(css):` / `feat(css):` 单独 commit。**永不主动 push**（远端推送由用户触发）。
 7. 门禁不过（净负或平局）→ `git checkout` 回退到干净基线，WIP 存 stash 备查，如实汇报。
 
