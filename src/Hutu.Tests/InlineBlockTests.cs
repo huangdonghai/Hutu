@@ -244,6 +244,49 @@ public sealed class InlineBlockTests
         Assert.That(block.BorderBox.Width, Is.EqualTo(20), "and the two columns it took set the box that wide");
     }
 
+    [Test]
+    public async Task APercentageHeightResolvesAgainstTheHeightMaxHeightClampedTo()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document(
+            "<span id='outer' style='display:inline-block;height:200px;max-height:100px'>" +
+            "<span id='inner' style='display:inline-block;width:50px;height:100%'></span>" +
+            "</span>"));
+
+        var outer = Boxes(view, "span").Single(box => box.Source.Element?.Id == "outer");
+        var inner = Boxes(view, "span").Single(box => box.Source.Element?.Id == "inner");
+
+        Assert.That(
+            outer.BorderBox.Height,
+            Is.EqualTo(100),
+            "max-height clamps the declared height: CSS 2.1 §10.7 works the tentative height out again with the constraint in its place");
+        Assert.That(
+            inner.BorderBox.Height,
+            Is.EqualTo(100),
+            "and the percentage inside resolves against the height the container came out at, not the one that was written down");
+    }
+
+    [Test]
+    public async Task ATrailingSpaceIsNotRoomTheBoxAsksFor()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document(
+            "<span id='outer' style='display:inline-block'>" +
+            "<span id='inner' style='display:inline-block;width:100px;height:20px'></span>" +
+            " " +
+            "</span>"));
+
+        // A space the line would end with is removed (CSS 2.1 §16.6.1), so it is not room the
+        // content asks for: it hangs off the edge of the line rather than widening the box that
+        // shrinks to fit what the line carries.
+        Assert.That(
+            Boxes(view, "span").Single(box => box.Source.Element?.Id == "outer").BorderBox.Width,
+            Is.EqualTo(100),
+            "the trailing space is dropped, so the box is as wide as the inline-block alone");
+    }
+
     /// <summary>
     /// Gets the document the content is set in: a paragraph with no margin of its own, set in a font
     /// the fake measurer gives a ten-pixel content area whatever the size.

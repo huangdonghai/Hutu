@@ -185,6 +185,22 @@ public sealed class BoxModelTests
     }
 
     [Test]
+    public async Task PercentHeightResolvesAgainstTheHeightMaxHeightClampedTo()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='height:200px;max-height:100px'>" +
+            "<div id='child' style='height:100%'></div>" +
+            "</div>" +
+            "</body></html>");
+
+        var child = FindAll(view, "div").Single(box => box.Source.Element?.GetAttribute("id") == "child");
+
+        Assert.That(child.BorderBox.Height, Is.EqualTo(100).Within(0.5));
+    }
+
+    [Test]
     public async Task PercentHeightBehavesAsAutoWithoutADefiniteContainingBlock()
     {
         using var view = CreateView(400);

@@ -64,6 +64,16 @@ internal sealed class BlockLayout
         var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insets.Vertical);
 
+        // CSS 2.1 §10.7: a tentative height above max-height (or below min-height) is worked out
+        // again with that constraint standing in for the computed height, so the height the box
+        // comes out at is settled before the content is measured - and the content is measured
+        // against it, because that height is the containing block a percentage inside resolves
+        // against (§10.5). A height the content decides stays zero, which is what makes such a
+        // percentage come to auto.
+        var childHeight = declaredHeight is { } declared
+            ? BoxModel.ClampHeight(style, declared, basisHeight, insets.Vertical)
+            : 0;
+
         Double contentHeight;
 
         if (box.Children.Count == 0)
@@ -72,11 +82,22 @@ internal sealed class BlockLayout
         }
         else if (HasBlockChildren(box))
         {
-            contentHeight = MeasureBlockChildren(box, contentWidth, declaredHeight ?? 0, context);
+            contentHeight = MeasureBlockChildren(box, contentWidth, childHeight, context);
         }
         else
         {
-            contentHeight = _inline.MeasureHeight(box, contentWidth, new InlineContext(_engine, context));
+            // The line's own boxes - an atomic inline-block among them - stand in a containing
+            // block that is this box's content box, the same one the block children are measured
+            // against, so a percentage among them resolves against the height this box comes out
+            // at rather than against the one its parent was given.
+            contentHeight = _inline.MeasureHeight(
+                box,
+                contentWidth,
+                new InlineContext(
+                    _engine,
+                    context,
+                    null,
+                    context.ForContainingBlock(new Size(contentWidth, childHeight))));
         }
 
         var height = BoxModel.ClampHeight(style, declaredHeight ?? contentHeight, basisHeight, insets.Vertical);
@@ -394,18 +415,28 @@ internal sealed class BlockLayout
         // the content is not, which is why it is passed as zero there. A column swaps the two: the
         // children's containing block is bounded by the declared width, and its inline extent is the
         // content box's own height, which the box was given rather than derived from the content.
+        // Either way the height handed down is the used one: CSS 2.1 §10.7 works a tentative height
+        // above max-height (or below min-height) out again with the constraint in its place, so the
+        // height the box comes out at is what the children are laid out against, not the height that
+        // was written down.
+        var insetsV = padding.Vertical + border.Vertical;
+        var declaredHeight = BoxModel.DeclaredHeight(style, context.ContainingBlock.Height, insetsV);
+        var usedHeight = declaredHeight is { } declared
+            ? BoxModel.ClampHeight(style, declared, context.ContainingBlock.Height, insetsV)
+            : (Double?)null;
+
         var childBox = flow.IsVertical
             ? new Rect(
                 contentX,
                 contentY,
                 BoxModel.DeclaredWidth(style, context.ContainingBlock.Width, padding.Horizontal + border.Horizontal)
                     ?? context.ContainingBlock.Width,
-                BoxModel.DeclaredHeight(style, context.ContainingBlock.Height, padding.Vertical + border.Vertical) ?? contentHeight)
+                usedHeight ?? contentHeight)
             : new Rect(
                 contentX,
                 contentY,
                 contentWidth,
-                BoxModel.DeclaredHeight(style, context.ContainingBlock.Height, padding.Vertical + border.Vertical) ?? 0);
+                usedHeight ?? 0);
 
         var childContext = context.ForContainingBlock(childBox);
 
@@ -435,7 +466,17 @@ internal sealed class BlockLayout
             // that left the flow anchors to the nearest positioned ancestor - which is this box's padding
             // box when this box is the one that is positioned. Handing that along separately keeps the
             // two questions from being answered by the same context.
-            _inline.Layout(box, layout, content, flow, new InlineContext(_engine, context, childContext));
+            //
+            // An atomic box on the line is measured and arranged against this box's own content box,
+            // the containing block an inline-level box stands in (CSS 2.1 §9.1.1) - at the height the
+            // measuring pass settled on, so the two passes answer the same question the same way. A
+            // column keeps the context its own measuring pass hands the line, which is the pair the
+            // two axes are swapped into.
+            var atomic = flow.IsVertical
+                ? context
+                : context.ForContainingBlock(new Rect(contentX, contentY, contentWidth, usedHeight ?? 0));
+
+            _inline.Layout(box, layout, content, flow, new InlineContext(_engine, context, childContext, atomic));
         }
 
         return layout;
@@ -483,8 +524,13 @@ internal sealed class BlockLayout
                 // The float is sized and put on its edge, and the cursor is left exactly where it
                 // was: a float takes no room in the stack, which is the whole reason the container
                 // has to be measured with the tracks rather than with the cursor alone. A float
-                // also seals the margin run - it does not join the collapse on either side.
-                PlaceFloat(child, floats, cursor, contentWidth, childContext);
+                // also seals the margin run - it does not join the collapse on either side - but
+                // the strip the run has built up still stands between it and the box above it:
+                // CSS 2.1 §8.3.1 keeps a float's margins from collapsing with any other box, so
+                // the collapsed bottom margin of the sibling before it is not folded into the
+                // float's top, and the float's outer edge goes below that strip - where the next
+                // box in flow would have gone.
+                PlaceFloat(child, floats, cursor + pending, contentWidth, childContext);
                 continue;
             }
 
@@ -795,8 +841,11 @@ internal sealed class BlockLayout
                 // The same walk the measuring phase ran, at the same numbers: the width it reads out
                 // of the cache is the one the container's height was answered from, and the place it
                 // reserves is the one a clearing box below it is measured against. A float stands
-                // outside the margin collapse on either side.
-                var placed = PlaceFloat(child, floats, cursor, contentWidth, context);
+                // outside the margin collapse on either side, but the collapsed margin the run above
+                // has built up still stands between it and that box - CSS 2.1 §8.3.1 folds no margin
+                // into a float's - so the float's outer edge starts below the strip, at the place
+                // the next box in flow would have taken.
+                var placed = PlaceFloat(child, floats, cursor + pending, contentWidth, context);
                 parent.Children.Add(_engine.Arrange(child, placed.BorderBox, context));
                 continue;
             }

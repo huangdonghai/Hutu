@@ -437,6 +437,27 @@ public sealed class FloatLayoutTests
     }
 
     [Test]
+    public async Task AFloatStandsBelowTheMarginTheBoxBeforeItLeft()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='area' style='width:300px'>" +
+            "<p id='before' style='margin:0 0 20px;height:10px'>before</p>" +
+            "<div id='f' style='float:left;width:50px;height:50px'></div>" +
+            "</div>"));
+
+        // The paragraph's bottom margin does not collapse with the float: CSS 2.1 §8.3.1 keeps a
+        // float's margins from collapsing with any other box, so the strip the run above has built
+        // up stands between the two and the float's outer top goes below it - the place the next
+        // box in flow would have taken, which is where the box it stands beside would put it.
+        Assert.That(
+            Bounds(view, "f"),
+            Is.EqualTo(new Rect(0, 30, 50, 50)),
+            "the float starts below the margin the box before it left, not on top of it");
+    }
+
+    [Test]
     public async Task AFloatWithAPercentageMarginShrinksToItsContent()
     {
         using var view = CreateView();

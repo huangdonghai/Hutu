@@ -204,6 +204,11 @@ internal sealed class InlineLayout
         // no room, because the line it would begin is the one line that does not draw it.
         var sawContent = false;
 
+        // The width of a collapsible run held back until something is drawn after it. CSS 2.1 §16.6.1
+        // removes a space at the end of a line just as it removes one at the beginning, so a trailing
+        // space is only room the content asks for once the line turns out to carry something past it.
+        var trailing = 0.0;
+
         // Nothing here is broken into lines, so an element is opened once and stays open: the padding
         // it brings with it is charged to the run that enters it, wherever in the stream that is.
         var open = new List<OpenInline>();
@@ -235,7 +240,8 @@ internal sealed class InlineLayout
                 var (width, height) = ReplacedSizing.Resolve(item.Box, basis, 0);
                 var extent = flow.InlineExtent(width, height);
                 minContent = Math.Max(minContent, extent);
-                maxContent += extent;
+                maxContent += trailing + extent;
+                trailing = 0;
                 unbreakable += extent;
                 sawContent = true;
                 continue;
@@ -249,7 +255,8 @@ internal sealed class InlineLayout
                 var (start, end) = flow.InlineMargins(item.Box.Style.Margin.Resolve(basis));
                 var extent = intrinsic.MaxContent + start + end;
 
-                maxContent += extent;
+                maxContent += trailing + extent;
+                trailing = 0;
                 unbreakable += extent;
                 sawContent = true;
                 minContent = Math.Max(minContent, intrinsic.MinContent + start + end);
@@ -264,7 +271,8 @@ internal sealed class InlineLayout
                     Measure(item.Style, item.Text!, flow),
                     Measure(item.AnnotationStyle, item.AnnotationText!, flow));
 
-                maxContent += extent;
+                maxContent += trailing + extent;
+                trailing = 0;
                 unbreakable += extent;
                 sawContent = true;
                 continue;
@@ -277,27 +285,48 @@ internal sealed class InlineLayout
             foreach (var chunk in TextChunker.Ranges(source))
             {
                 var width = Measure(item.Style, source, chunk.Start, chunk.Length, flow);
+                var space = TextChunker.IsWhiteSpace(source, chunk.Start, chunk.Length);
+                var collapsible = space && !item.Style.IsPreformatted;
 
                 // A collapsible space the line would begin with is not drawn, so it asks for no room in
                 // either extent and leaves the break it stands at uncounted as well.
-                if (!sawContent && !item.Style.IsPreformatted
-                    && TextChunker.IsWhiteSpace(source, chunk.Start, chunk.Length))
+                if (collapsible && !sawContent)
                 {
                     continue;
                 }
 
-                maxContent += width;
-
-                if (TextChunker.IsWhiteSpace(source, chunk.Start, chunk.Length))
+                if (space)
                 {
-                    // A collapsible space is a break opportunity: the run before it can be split.
+                    // White space is a break opportunity: the run before it can be split, and the space
+                    // itself belongs to neither side of that break.
                     minContent = Math.Max(minContent, unbreakable);
                     unbreakable = 0;
-                }
-                else if (TextChunker.IsCjk(source[chunk.Start]))
-                {
-                    sawContent = true;
 
+                    if (collapsible)
+                    {
+                        // A collapsible space the line would end with is not drawn either (§16.6.1), so
+                        // its width waits here until something is drawn after it: only a space the line
+                        // carries between two runs is room the content asks for.
+                        trailing += width;
+                        continue;
+                    }
+
+                    // A preformatted space is drawn wherever it stands, so it is room the content asks
+                    // for on the one line - but it is still not part of the narrowest break.
+                    maxContent += trailing + width;
+                    trailing = 0;
+                    sawContent = true;
+                    continue;
+                }
+
+                // Something the line draws follows whatever space was held back, so the space between
+                // the two runs is room the content asks for after all.
+                maxContent += trailing + width;
+                trailing = 0;
+                sawContent = true;
+
+                if (TextChunker.IsCjk(source[chunk.Start]))
+                {
                     // A line may break on either side of a CJK character, so the character stands
                     // alone rather than joining the run around it, and it is the run beside it - the
                     // Latin word, say - that decides how narrow the content can go.
@@ -306,7 +335,6 @@ internal sealed class InlineLayout
                 }
                 else
                 {
-                    sawContent = true;
                     unbreakable += width;
                 }
             }
@@ -508,7 +536,7 @@ internal sealed class InlineLayout
                     atomic.InlineSize - atomic.InlineStartMargin - atomic.InlineEndMargin,
                     cursor + line.Ascent - atomic.Ascent,
                     atomic.BlockSize),
-                context.Containing));
+                context.Atomic));
 
             return;
         }
@@ -1219,7 +1247,7 @@ internal sealed class InlineLayout
     /// </remarks>
     private AtomicInline MeasureInlineBlock(Box box, Double basis, Double room, WritingModeInfo flow, InlineContext context)
     {
-        var intrinsic = context.Engine.MeasureIntrinsic(box, context.Containing);
+        var intrinsic = context.Engine.MeasureIntrinsic(box, context.Atomic);
 
         // The margins are kept in both directions: along the line they are part of what the line
         // reserves, and across it they are part of what the line grows by.
@@ -1241,7 +1269,7 @@ internal sealed class InlineLayout
             ? MeasureConstraints.Unconstrained.WithHeight(shrink)
             : MeasureConstraints.FitWidth(shrink);
 
-        var size = context.Engine.Measure(box, constraints, context.Containing);
+        var size = context.Engine.Measure(box, constraints, context.Atomic);
 
         return new AtomicInline(
             flow.InlineExtent(size.Width, size.Height) + margins,
