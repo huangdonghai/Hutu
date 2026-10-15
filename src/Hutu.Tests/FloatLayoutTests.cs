@@ -474,6 +474,90 @@ public sealed class FloatLayoutTests
         Assert.That(Bounds(view, "f").Width, Is.EqualTo(10).Within(0.5), "shrinks to its content, margin measured against the containing block");
     }
 
+    [Test]
+    public async Task AFloatHeldByAPlainContainerReachesTheContainerItBelongsTo()
+    {
+        using var view = CreateView();
+
+        // The float sits in a plain block that establishes no formatting context of its own, so
+        // CSS 2.1 §9.4.1 puts it in the block formatting context of the nearest ancestor that
+        // does - the page's own - and it reaches out of the ten-pixel box that holds it, standing
+        // twenty pixels tall over the boxes below. The block under it stands aside for the float,
+        // which is the difference between a float beside a picture and a float that only
+        // shortens the lines of the box it was written in.
+        await view.SetHtml(Page(
+            "<div id='hold' style='height:10px'>" +
+            "<div id='f' style='float:left;width:100px;height:20px'></div>" +
+            "</div>" +
+            "<div id='after' style='margin-left:40px;width:70px'>" +
+            "<span id='wide' style='display:inline-block;width:60px;height:10px'></span>" +
+            "</div>"));
+
+        // The block below starts beside the float's lower half, where the float leaves it ten
+        // pixels of the seventy it asked for - too little for the sixty the inline-block needs,
+        // so CSS 2.1 §9.5 shifts the line holding it below the float rather than overflowing
+        // the room the float left.
+        Assert.That(
+            Bounds(view, "wide"),
+            Is.EqualTo(new Rect(40, 20, 60, 10)),
+            "the line holding the inline-block drops below the float the plain container let out");
+    }
+
+    [Test]
+    public async Task AFloatHeldByAPlainContainerIsNotMovedTwiceOnTheWayUp()
+    {
+        using var view = CreateView();
+
+        // Three plain blocks in a row, each holding a float as wide as itself. The arranging
+        // pass works in document coordinates from end to end, so the floats a container's walk
+        // hands up are already written in the frame of the container above and owe it no
+        // distance on the way in. Asking for that distance anyway - the measuring pass's own
+        // arithmetic, where the walk counts from its content top - moved every float a second
+        // time and left the last container reading a float standing below its own content,
+        // which pushed the float's own line out of the float.
+        await view.SetHtml(Page(
+            "<div id='row1' style='width:200px;height:20px'>" +
+            "<div id='f1' style='float:left;width:200px;height:20px'>a</div></div>" +
+            "<div id='row2' style='width:200px;height:20px'>" +
+            "<div id='f2' style='float:left;width:200px;height:20px'>b</div></div>" +
+            "<div id='row3' style='width:200px;height:20px'>" +
+            "<div id='f3' style='float:left;width:200px;height:20px'>c</div></div>"));
+
+        var line = Walk(view.Layout!.Root!)
+            .Where(node => node.Kind == LayoutKind.Line)
+            .Last();
+
+        Assert.That(
+            line.BorderBox.Y,
+            Is.EqualTo(Bounds(view, "f3").Y),
+            "the last float's own line sits at the float's top, not below the floats above it");
+    }
+
+    [Test]
+    public async Task ALineThatHoldsNothingBesideAFloatDropsBelowIt()
+    {
+        using var view = CreateView();
+
+        // The other half of the rule the test above holds: a line whose first piece is wider
+        // than the room the float leaves holds nothing at all, and CSS 2.1 §9.5 shifts it down
+        // until some content fits - the wide picture goes below the floated one rather than
+        // overflowing the strip beside it. A line that already holds something broke the
+        // ordinary way and keeps its place beside the float.
+        await view.SetHtml(Page(
+            "<div id='area' style='width:200px'>" +
+            "<div id='f' style='float:left;width:120px;height:20px'></div>" +
+            "<span id='wide' style='display:inline-block;width:150px;height:10px'></span>" +
+            "</div>"));
+
+        // The line drops below the float and takes the block's whole width again, so the
+        // inline-block stands at the container's left edge under the float - not squeezed into
+        // the strip beside it, and not hanging off the float's far edge.
+        Assert.That(
+            Bounds(view, "wide"),
+            Is.EqualTo(new Rect(0, 20, 150, 10)),
+            "the inline-block too wide for the room beside the float stands below it");
+    }
+
     private static Rect Bounds(HutuViewInternal view, String id)
     {
         var element = view.Document!.GetElementById(id);
@@ -494,5 +578,18 @@ public sealed class FloatLayoutTests
         var view = new HutuViewInternal(new FakeTextMeasurer());
         view.SetViewportSize(viewportWidth, 600);
         return view;
+    }
+
+    private static IEnumerable<LayoutBox> Walk(LayoutBox node)
+    {
+        yield return node;
+
+        foreach (var child in node.Children)
+        {
+            foreach (var descendant in Walk(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 }

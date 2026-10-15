@@ -49,10 +49,14 @@ internal readonly struct ChunkRange
         }
     }
 
-    public static Boolean IsWhiteSpace(String chunk) => IsWhiteSpace(chunk, 0, chunk.Length);
+    /// <summary>
+    /// Gets whether the string is nothing but collapsible white space, which is what a line may break
+    /// at and what the line rules collapse and trim.
+    /// </summary>
+    public static Boolean IsCollapsible(String chunk) => IsCollapsible(chunk, 0, chunk.Length);
 
-    /// <summary>Gets whether the range is nothing but white space, which is what a line may break at.</summary>
-    public static Boolean IsWhiteSpace(String text, Int32 start, Int32 length)
+    /// <summary>Gets whether the range is nothing but collapsible white space, which is what a line may break at.</summary>
+    public static Boolean IsCollapsible(String text, Int32 start, Int32 length)
     {
         if (length == 0)
         {
@@ -61,7 +65,7 @@ internal readonly struct ChunkRange
 
         for (var index = start; index < start + length; index++)
         {
-            if (!Char.IsWhiteSpace(text[index]))
+            if (!IsCollapsible(text[index]))
             {
                 return false;
             }
@@ -69,6 +73,22 @@ internal readonly struct ChunkRange
 
         return true;
     }
+
+    /// <summary>
+    /// Gets whether the character is white space the line rules may collapse and break at.
+    /// </summary>
+    /// <remarks>
+    /// CSS Text 3 §4 puts white space processing on the document white space characters and nothing
+    /// else: the space (U+0020), the tab (U+0009) and the segment breaks (the line feed U+000A, with
+    /// the carriage return U+000D standing in for a space in all respects). A no-break space
+    /// (U+00A0), the ideographic space (U+3000) and the rest of the Unicode Zs spaces are "other
+    /// space separators": white space to the eye, but never collapsed into a neighbour, never
+    /// trimmed off either end of a line and never a place a line may break - which is the whole
+    /// point of writing one. Treating them as collapsible folds five no-break spaces into one and
+    /// hangs the end of a line with a space that was written to stay.
+    /// </remarks>
+    public static Boolean IsCollapsible(Char c) =>
+        c == ' ' || c == '\t' || c == '\n' || c == '\r';
 
     /// <summary>
     /// Gets whether a character may start a new line without a space, which is how CJK text wraps.
@@ -134,11 +154,11 @@ internal struct Enumerator
                 var index = _index;
                 var current = text[index];
 
-                if (Char.IsWhiteSpace(current))
+                if (IsCollapsible(current))
                 {
                     var end = index;
 
-                    while (end < text.Length && Char.IsWhiteSpace(text[end]))
+                    while (end < text.Length && IsCollapsible(text[end]))
                     {
                         end++;
                     }
@@ -159,7 +179,7 @@ internal struct Enumerator
 
                 var wordEnd = index + length;
 
-                while (wordEnd < text.Length && !Char.IsWhiteSpace(text[wordEnd]) && !IsCjk(text[wordEnd]))
+                while (wordEnd < text.Length && !IsCollapsible(text[wordEnd]) && !IsCjk(text[wordEnd]))
                 {
                     wordEnd++;
                 }

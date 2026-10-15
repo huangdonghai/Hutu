@@ -53,6 +53,15 @@ internal sealed class LayoutEngine
     /// <summary>The same, for the content-intrinsic cache.</summary>
     private readonly Dictionary<Box, IntrinsicSize> _contentIntrinsicFree = new();
 
+    /// <summary>
+    /// The floats each container's walk placed, published for the container above it. A container
+    /// that establishes no block formatting context of its own does not hold the floats inside it
+    /// (CSS 2.1 §9.4.1): they take part in the context of the nearest ancestor that does, so the
+    /// walk that placed them hands them up to be absorbed there. The tracks are kept in the frame
+    /// of the pass that filled them, which is why the record is dropped between the two passes.
+    /// </summary>
+    private readonly Dictionary<Box, FloatTracks> _floats = new();
+
     /// <summary>The engine the assertion measures against, made on first use.</summary>
     private LayoutEngine? _reference;
 
@@ -106,6 +115,7 @@ internal sealed class LayoutEngine
         _intrinsicFree.Clear();
         _contentIntrinsicFree.Clear();
         _inline.ResetPlanCache();
+        _floats.Clear();
 
         var size = Measure(root, MeasureConstraints.FitWidth(width), context);
         var margin = BoxModel.UsedMargin(root.Style, width, size.Width);
@@ -122,6 +132,11 @@ internal sealed class LayoutEngine
         var flow = root.Flow;
         var (inlineStart, _) = flow.InlineMargins(margin);
         var (blockStart, _) = flow.BlockMargins(margin);
+
+        // The arranging pass works in document coordinates where the measuring one worked in each
+        // box's own frame, so the floats published while measuring are of no use to it: the record
+        // is dropped here and every walk publishes its own again as it goes.
+        _floats.Clear();
 
         var rootBox = Arrange(
             root,
@@ -319,6 +334,7 @@ internal sealed record LayoutProfile(
         _intrinsicFree.Clear();
         _contentIntrinsicFree.Clear();
         _inline.ResetPlanCache();
+        _floats.Clear();
     }
 
     /// <summary>The root's border box, exactly as <see cref="Layout"/> computes it.</summary>
@@ -419,9 +435,9 @@ internal sealed record LayoutProfile(
                 var upward = box.Flow.InlineSign < 0;
 
                 // The column the marker stands over: the first line's, where the item reaches a line, and
-                // its own content box where it does not - an empty item is still marked, the way a
-                // browser marks one.
-                var column = line is { } standing ? standing.BorderBox : content;
+                // its own border box where it does not - an empty item is still marked, the way a
+                // browser marks one, and §12.5.1 fixes the marker with respect to the border.
+                var column = line is { } standing ? standing.BorderBox : box.BorderBox;
 
                 // The edge the column begins at, which is its head where the line runs down and its foot
                 // where a mode reads up the page. The marker ends there, so the space it carries is what
@@ -448,13 +464,14 @@ internal sealed record LayoutProfile(
                     ? first.BorderBox.Y + first.Baseline
                     : content.Y + metrics.Ascent;
 
-                // The edge the content begins at is the one the line starts reading from, which a page
-                // that reads right to left puts on the other side - and the marker ends there rather than
-                // starting there, since it is the item's text that keeps its edge and the marker that
-                // hangs out.
+                // The edge the marker hangs outside is the principal box's border edge: CSS 2.1
+                // §12.5.1 fixes an outside marker with respect to the principal block box's border,
+                // not to the content inside its padding. A page that reads right to left puts the
+                // edge on the other side - and the marker ends there rather than starting there,
+                // since it is the item's text that keeps its edge and the marker that hangs out.
                 var start = box.Flow.InlineSign > 0
-                    ? box.ContentBox.X - advance
-                    : box.ContentBox.Right;
+                    ? box.BorderBox.X - advance
+                    : box.BorderBox.Right;
 
                 box.MarkerBounds = new Rect(start, standing - metrics.Ascent, advance, metrics.Ascent + metrics.Descent);
                 box.MarkerBaseline = metrics.Ascent;
@@ -573,6 +590,26 @@ internal sealed record LayoutProfile(
         _positioned.Finish(layout, position, context);
         return layout;
     }
+
+    /// <summary>
+    /// Records the floats a container's walk placed, for the container above it to absorb when it
+    /// establishes no formatting context of its own. A null record takes a stale one back: a walk
+    /// that placed no floats must not leave the record an earlier walk at another extent made.
+    /// </summary>
+    internal void PublishFloats(Box box, FloatTracks? tracks)
+    {
+        if (tracks is null)
+        {
+            _floats.Remove(box);
+        }
+        else
+        {
+            _floats[box] = tracks;
+        }
+    }
+
+    /// <summary>Gets the floats a box's own walk placed, or null when it placed none.</summary>
+    internal FloatTracks? FloatsOf(Box box) => _floats.TryGetValue(box, out var tracks) ? tracks : null;
 
     /// <summary>
     /// Lays an out-of-flow box out against its containing block. It is the block context that calls

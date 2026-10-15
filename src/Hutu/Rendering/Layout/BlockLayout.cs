@@ -503,6 +503,12 @@ internal sealed class BlockLayout
         var tracks = TracksFor(box, contentWidth, 0);
         var topEscapes = throughTop;
 
+        // How deep the floats this container holds directly reach, margin boxes included. The
+        // height counts these and not the ones absorbed from a container below: only a block
+        // formatting context root grows for the floats taking part in it (CSS 2.1 §10.6.7), and
+        // the engine's answer for the direct ones is the one the corpus was measured against.
+        var directBottom = 0.0;
+
         foreach (var child in box.Children)
         {
             if (!child.IsBlockLevel)
@@ -530,7 +536,8 @@ internal sealed class BlockLayout
                 // the collapsed bottom margin of the sibling before it is not folded into the
                 // float's top, and the float's outer edge goes below that strip - where the next
                 // box in flow would have gone.
-                PlaceFloat(child, floats, cursor + pending, contentWidth, childContext);
+                var (placed, _) = PlaceFloat(child, floats, cursor + pending, contentWidth, childContext);
+                directBottom = Math.Max(directBottom, placed.Bottom + margin.Bottom);
                 continue;
             }
 
@@ -593,6 +600,26 @@ internal sealed class BlockLayout
 
             var size = _engine.Measure(child, childConstraints, passContext);
 
+            // A container that establishes no formatting context of its own does not hold the floats
+            // inside it: CSS 2.1 §9.4.1 puts them in the block formatting context of the nearest
+            // ancestor that does, so they are absorbed here - moved into this container's frame by
+            // the child's content corner, the same corner the child's own rectangle is placed at -
+            // where the boxes that follow stand aside for them (§9.5) and where the next container
+            // up absorbs them in turn. A container that does establish one keeps its floats to
+            // itself, and so does anything floated or taken out of the flow.
+            if (!EstablishesContext(child) && _engine.FloatsOf(child) is { } held)
+            {
+                var usedMargin = BoxModel.UsedMargin(child.Style, contentWidth, size.Width);
+                var childBorder = BorderOf(child);
+                var childPadding = child.Style.Padding.Resolve(contentWidth);
+
+                tracks ??= new FloatTracks(0, contentWidth);
+                tracks.Absorb(
+                    held,
+                    usedMargin.Left + shift + childBorder.Left + childPadding.Left,
+                    cursor + pending + drop + childBorder.Top + childPadding.Top);
+            }
+
             cursor += pending + drop + size.Height;
             pending = childBottom;
         }
@@ -603,7 +630,11 @@ internal sealed class BlockLayout
         // says about the last box in it.
         var stacked = throughBottom ? cursor : cursor + pending;
 
-        return Math.Max(stacked, tracks?.Bottom ?? 0);
+        // Published for the container above, which absorbs these when it holds no formatting
+        // context of its own - the floats belong to the nearest ancestor that does.
+        _engine.PublishFloats(box, tracks);
+
+        return Math.Max(stacked, directBottom);
     }
 
     /// <summary>Gets whether the child is pinned to an edge of its container instead of stacked in it.</summary>
@@ -931,9 +962,31 @@ internal sealed class BlockLayout
 
             parent.Children.Add(_engine.Arrange(child, rect, passContext));
 
+            // A container that establishes no formatting context of its own does not hold the floats
+            // inside it: CSS 2.1 §9.4.1 puts them in the block formatting context of the nearest
+            // ancestor that does, so they are absorbed here, exactly as the measuring pass did.
+            //
+            // No distance is added on the way in, and that is not an omission: the arranging pass
+            // works in document coordinates from end to end - the tracks a container's walk fills
+            // are opened at its content corner in that frame and the floats are placed where they
+            // stand in it - so the floats a child's walk hands up are already written in this
+            // container's frame, at the very places they occupy. The measuring pass, whose walk
+            // counts from its own content top, is the one that owes the distance between the two
+            // frames; asking for it here as well would move every float a second time and leave
+            // the container reading floats that stand nowhere.
+            if (!EstablishesContext(child) && _engine.FloatsOf(child) is { } held)
+            {
+                tracks ??= new FloatTracks(contentX, contentX + contentWidth);
+                tracks.Absorb(held, 0, 0);
+            }
+
             cursor = rect.Bottom;
             pending = childBottom;
         }
+
+        // Published for the container above, which absorbs these when it holds no formatting
+        // context of its own - the floats belong to the nearest ancestor that does.
+        _engine.PublishFloats(box, tracks);
     }
 
     /// <summary>

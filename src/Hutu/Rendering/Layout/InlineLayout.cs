@@ -285,7 +285,7 @@ internal sealed class InlineLayout
             foreach (var chunk in TextChunker.Ranges(source))
             {
                 var width = Measure(item.Style, source, chunk.Start, chunk.Length, flow);
-                var space = TextChunker.IsWhiteSpace(source, chunk.Start, chunk.Length);
+                var space = TextChunker.IsCollapsible(source, chunk.Start, chunk.Length);
                 var collapsible = space && !item.Style.IsPreformatted;
 
                 // A collapsible space the line would begin with is not drawn, so it asks for no room in
@@ -897,10 +897,21 @@ internal sealed class InlineLayout
                 var inlineSize = flow.InlineExtent(width, height);
                 var blockSize = flow.BlockExtent(width, height);
 
-                if (builder.HasContent && room.Room > 0 && builder.ExtentFor(item.Inline) + inlineSize > room.Room)
+                if (room.Room > 0 && builder.ExtentFor(item.Inline) + inlineSize > room.Room)
                 {
-                    Close(builder);
-                    builder = new LineBuilder(item.Style, carried);
+                    if (builder.HasContent)
+                    {
+                        Close(builder);
+                        builder = new LineBuilder(item.Style, carried);
+                    }
+                    else if (room.Shortened)
+                    {
+                        // CSS 2.1 §9.5: a line box a float has shortened, too small for the content
+                        // standing on it, is shifted downward until some content fits or no floats
+                        // are left - the wide picture beside the floated one goes below it rather
+                        // than overflowing the room the float left.
+                        room.Drop();
+                    }
                 }
 
                 builder.AddReplaced(item.Box, inlineSize, blockSize, item.Inline);
@@ -919,10 +930,20 @@ internal sealed class InlineLayout
 
                 var atomic = MeasureInlineBlock(item.Box, maxInline, spare, flow, context);
 
-                if (builder.HasContent && room.Room > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > room.Room)
+                if (room.Room > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > room.Room)
                 {
-                    Close(builder);
-                    builder = new LineBuilder(item.Style, carried);
+                    if (builder.HasContent)
+                    {
+                        Close(builder);
+                        builder = new LineBuilder(item.Style, carried);
+                    }
+                    else if (room.Shortened)
+                    {
+                        // CSS 2.1 §9.5: a line box a float has shortened, too small for the content
+                        // standing on it, is shifted downward until some content fits or no floats
+                        // are left.
+                        room.Drop();
+                    }
                 }
 
                 builder.AddAtomic(item.Box, atomic, item.Inline);
@@ -943,10 +964,20 @@ internal sealed class InlineLayout
                 var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
                 var extent = Math.Max(baseWidth, annotation.Width);
 
-                if (builder.HasContent && room.Room > 0 && builder.ExtentFor(item.Inline) + extent > room.Room)
+                if (room.Room > 0 && builder.ExtentFor(item.Inline) + extent > room.Room)
                 {
-                    Close(builder);
-                    builder = new LineBuilder(item.Style, carried);
+                    if (builder.HasContent)
+                    {
+                        Close(builder);
+                        builder = new LineBuilder(item.Style, carried);
+                    }
+                    else if (room.Shortened)
+                    {
+                        // CSS 2.1 §9.5: a line box a float has shortened, too small for the content
+                        // standing on it, is shifted downward until some content fits or no floats
+                        // are left.
+                        room.Drop();
+                    }
                 }
 
                 builder.AddRuby(item.Text!, extent, item.Style, item.Box, baseFlow, annotation, baseWidth, item.Inline);
@@ -974,15 +1005,27 @@ internal sealed class InlineLayout
                         continue;
                     }
 
-                    if (builder.HasContent && room.Room > 0 && builder.ExtentFor(item.Inline) + piece.Width > room.Room)
+                    if (room.Room > 0 && builder.ExtentFor(item.Inline) + piece.Width > room.Room)
                     {
-                        Close(builder);
-                        builder = new LineBuilder(item.Style, carried);
-
-                        // The space that triggered the break is consumed by it.
-                        if (piece.IsWhiteSpace)
+                        if (builder.HasContent)
                         {
-                            continue;
+                            Close(builder);
+                            builder = new LineBuilder(item.Style, carried);
+
+                            // The space that triggered the break is consumed by it.
+                            if (piece.IsWhiteSpace)
+                            {
+                                continue;
+                            }
+                        }
+                        else if (room.Shortened)
+                        {
+                            // CSS 2.1 §9.5: a line box a float has shortened, too small for the
+                            // content standing on it, is shifted downward until some content fits
+                            // or no floats are left - the long word beside the floated picture goes
+                            // below it rather than overflowing the room the float left, which is
+                            // the specification's own example of the rule.
+                            room.Drop();
                         }
                     }
 
@@ -1571,7 +1614,7 @@ internal sealed class InlineLayout
                 ? run.Advance(font, _measurer, style.FontSize, flow) + spacing
                 : _measurer.MeasureWidth(run.Source.Substring(run.Start, run.Length), font) + spacing,
             PinOrientation(flow, run),
-            TextChunker.IsWhiteSpace(run.Source, run.Start, run.Length));
+            TextChunker.IsCollapsible(run.Source, run.Start, run.Length));
     }
 
     /// <summary>
@@ -2291,6 +2334,45 @@ internal sealed class InlineLayout
                 Inset = 0;
             }
         }
+
+        /// <summary>
+        /// Gets whether a float is standing in the line's way, so the room it has is less than the
+        /// block's own extent - the case the specification's shift-down rule is about.
+        /// </summary>
+        public Boolean Shortened => Inset > 0 || Room < _max;
+
+        /// <summary>
+        /// Shifts the open line below every float in its band, which is what CSS 2.1 §9.5 asks of a
+        /// shortened line box too small to hold the content standing on it: it moves downward, and
+        /// its width is recomputed, until some content fits or no floats are left. The descent is
+        /// added to the gap, the room the block's stack owes the line for getting there.
+        /// </summary>
+        public void Drop()
+        {
+            if (_band is not { } band)
+            {
+                return;
+            }
+
+            var below = band.Below(Top);
+
+            if (below <= Top)
+            {
+                return;
+            }
+
+            Gap = below - Top;
+            Top = below;
+
+            Room = band.Room(Top, _max, out var inset);
+            Inset = inset;
+
+            if (Room <= 0)
+            {
+                Room = _max;
+                Inset = 0;
+            }
+        }
     }
 
     private sealed class Line
@@ -2613,7 +2695,7 @@ internal sealed class InlineLayout
             WritingModeInfo flow,
             InlineAncestor? inline)
         {
-            var isSpace = TextChunker.IsWhiteSpace(source, start, length);
+            var isSpace = TextChunker.IsCollapsible(source, start, length);
 
             // White space that follows white space across an element's edge collapses into the space
             // already on the line: the pieces come from two nodes, so no node's own collapse saw them
@@ -2666,7 +2748,7 @@ internal sealed class InlineLayout
             fragment.Ruby is null &&
             fragment.Length > 0 &&
             !fragment.Style.IsPreformatted &&
-            TextChunker.IsWhiteSpace(fragment.Source, fragment.Start + fragment.Length - 1, 1);
+            TextChunker.IsCollapsible(fragment.Source, fragment.Start + fragment.Length - 1, 1);
 
         /// <summary>
         /// Adds a ruby pair, which never joins the run before it: the base has an annotation of its own
@@ -2855,7 +2937,7 @@ internal sealed class InlineLayout
                     break;
                 }
 
-                if (TextChunker.IsWhiteSpace(last.Source, last.Start, last.Length))
+                if (TextChunker.IsCollapsible(last.Source, last.Start, last.Length))
                 {
                     _fragments.RemoveAt(_fragments.Count - 1);
                     continue;

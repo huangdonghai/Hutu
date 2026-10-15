@@ -286,6 +286,63 @@ public sealed class InlineBoxTests
         Assert.That(alongBand.BorderBox.Height, Is.EqualTo(alongRun.BorderBox.Height + 8));
     }
 
+    [Test]
+    public async Task ANoBreakSpaceAtTheStartOfALineIsNotSkipped()
+    {
+        using var view = CreateView();
+
+        // CSS Text 3 §4 puts white space processing on the document white space characters and
+        // nothing else: the space, the tab and the segment breaks. A no-break space is an "other
+        // space separator" - never collapsed into a neighbour, never trimmed off either end of a
+        // line and never a place a line may break, which is the whole point of writing one. The
+        // line's own rules skip the white space a line begins with; a no-break space is content
+        // that stands there, and a line that drops it for being white space loses the room it
+        // takes - which is how five of them beside a float came to fit where they do not.
+        await view.SetHtml(Document("\u00a0ab"));
+
+        Assert.That(
+            Text(view, "\u00a0ab").BorderBox.Width,
+            Is.EqualTo(15),
+            "the no-break space the line starts with keeps its advance");
+    }
+
+    [Test]
+    public async Task ANoBreakSpaceAtTheEndOfARunIsNotCutFromItsWidth()
+    {
+        using var view = CreateView();
+
+        // The same rule on the other side of measuring: a run that shrinks to fit its content
+        // holds back the collapsible white space at its end, and a no-break space is not that -
+        // it is part of the content the box is sized by.
+        await view.SetHtml(Document("<span id='run' style='display:inline-block'>ab\u00a0</span>"));
+
+        var run = view.Document!.GetElementById("run")!;
+        var bounds = view.GetElementBounds(run);
+
+        Assert.That(bounds, Is.Not.Null, "the run generated no box to measure");
+        Assert.That(
+            bounds!.Value.Width,
+            Is.EqualTo(15),
+            "the no-break space the run ends with is part of what it is sized by");
+    }
+
+    [Test]
+    public async Task ANoBreakSpaceIsNotAPlaceALineMayBreak()
+    {
+        using var view = CreateView();
+
+        // A soft wrap opportunity is what white space gives a line, and a no-break space gives
+        // none: the run either fits or it overflows whole, and it does not come apart at the
+        // space that was written to hold together.
+        await view.SetHtml(Document("aaaa\u00a0bbbb", width: 25));
+
+        Assert.That(Lines(view).Count(), Is.EqualTo(1), "the run does not break at the no-break space");
+        Assert.That(
+            Text(view, "aaaa\u00a0bbbb").BorderBox.Width,
+            Is.EqualTo(45),
+            "and it overflows the paragraph rather than wrapping");
+    }
+
     /// <summary>
     /// Gets the document the inline box is asserted in: a paragraph with no margin of its own, set in a
     /// font the fake measurer gives a ten-pixel content area whatever the size.

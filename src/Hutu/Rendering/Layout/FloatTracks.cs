@@ -213,6 +213,33 @@ internal sealed class FloatTracks
             height);
     }
 
+    /// <summary>
+    /// Absorbs the floats standing in another set of tracks, moved by the given distances, as
+    /// though they had been placed here.
+    /// </summary>
+    /// <remarks>
+    /// This is how a float held by a container that establishes no formatting context of its own
+    /// reaches the container it belongs to. CSS 2.1 §9.4.1 lists what establishes a block
+    /// formatting context, and a plain block is not among them: such a float takes part in the
+    /// context of the nearest ancestor that does establish one, so §9.5 lets it shorten the line
+    /// boxes of every later box in that context - including the container's own later siblings,
+    /// whose lines are the ones the ordinary band never told. The distances are the holding
+    /// container's content-box corner in this container's frame, which is what the walk that
+    /// places a child already works out.
+    /// </remarks>
+    public void Absorb(FloatTracks other, Double dx, Double dy)
+    {
+        foreach (var track in other._left)
+        {
+            _left.Add(new Rect(track.X + dx, track.Y + dy, track.Width, track.Height));
+        }
+
+        foreach (var track in other._right)
+        {
+            _right.Add(new Rect(track.X + dx, track.Y + dy, track.Width, track.Height));
+        }
+    }
+
     /// <summary>Gets whether the track stands in the band the float would occupy.</summary>
     private static Boolean Intersects(Rect track, Double top, Double height) =>
         track.Bottom > top && track.Y < top + Math.Max(height, 0.001);
