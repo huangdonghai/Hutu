@@ -1278,9 +1278,15 @@ internal readonly struct ComputedStyle
 
         return BackgroundLayerParser.Parse(
             image,
-            find("background-position")?.Value,
+            BackgroundLayerParser.CombineAxes(
+                find("background-position")?.Value,
+                find("background-position-x")?.Value,
+                find("background-position-y")?.Value),
             find("background-size")?.Value,
-            find("background-repeat")?.Value,
+            BackgroundLayerParser.CombineAxes(
+                find("background-repeat")?.Value,
+                find("background-repeat-x")?.Value,
+                find("background-repeat-y")?.Value),
             dimensions,
             fontSize,
             element is null ? null : url => ImageUrlResolver.Resolve(element, url));
@@ -2328,9 +2334,15 @@ internal readonly struct ComputedStyle
 
         return BackgroundLayerParser.Parse(
             declaration.GetPropertyValue("background-image"),
-            declaration.GetPropertyValue("background-position"),
+            BackgroundLayerParser.CombineAxes(
+                declaration.GetPropertyValue("background-position"),
+                declaration.GetPropertyValue("background-position-x"),
+                declaration.GetPropertyValue("background-position-y")),
             declaration.GetPropertyValue("background-size"),
-            declaration.GetPropertyValue("background-repeat"),
+            BackgroundLayerParser.CombineAxes(
+                declaration.GetPropertyValue("background-repeat"),
+                declaration.GetPropertyValue("background-repeat-x"),
+                declaration.GetPropertyValue("background-repeat-y")),
             _dimensions,
             FontSize,
             element is null ? null : url => ImageUrlResolver.Resolve(element, url));

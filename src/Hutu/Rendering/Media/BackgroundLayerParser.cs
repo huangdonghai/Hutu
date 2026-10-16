@@ -87,6 +87,39 @@ internal static class BackgroundLayerParser
     private static String At(List<String> values, Int32 index) =>
         values.Count == 0 ? String.Empty : values[Math.Min(index, values.Count - 1)];
 
+    /// <summary>
+    /// The per-layer value of an axis-pairing longhand such as <c>background-repeat</c> or
+    /// <c>background-position</c>. AngleSharp expands a <c>background</c> shorthand into the
+    /// <c>-x</c>/<c>-y</c> sub-longhands but leaves the aggregate empty, so when the aggregate is blank
+    /// the pair is rebuilt from its axes ("x y" per layer, zipped by index) - otherwise a
+    /// <c>… no-repeat</c> background tiles and one with a position lands at the top left.
+    /// </summary>
+    public static String? CombineAxes(String? aggregate, String? x, String? y)
+    {
+        if (!String.IsNullOrWhiteSpace(aggregate))
+        {
+            return aggregate;
+        }
+
+        var xs = CssValueList.SplitTopLevel(x);
+        var ys = CssValueList.SplitTopLevel(y);
+
+        if (xs.Count == 0 && ys.Count == 0)
+        {
+            return aggregate;
+        }
+
+        var count = Math.Max(xs.Count, ys.Count);
+        var layers = new List<String>(count);
+
+        for (var i = 0; i < count; i++)
+        {
+            layers.Add(($"{At(xs, i)} {At(ys, i)}").Trim());
+        }
+
+        return String.Join(", ", layers);
+    }
+
     // --- position -------------------------------------------------------
 
     private static (BackgroundOffset X, BackgroundOffset Y) ParsePosition(String value, IRenderDimensions dimensions, Double fontSize)
