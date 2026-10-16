@@ -68,6 +68,8 @@ internal static class BackgroundLayerParser
             var position = ParsePosition(At(positionList, index), dimensions, fontSize);
             var size = ParseSize(At(sizeList, index), dimensions, fontSize);
 
+            var repeat = RepeatOf(At(repeatList, index));
+
             layers.Add(new BackgroundLayer
             {
                 Url = urls.Count > 0 ? resolveUrl?.Invoke(urls[0]) ?? urls[0] : null,
@@ -77,11 +79,44 @@ internal static class BackgroundLayerParser
                 SizeHeight = size.Height,
                 PositionX = position.X,
                 PositionY = position.Y,
-                Repeat = !At(repeatList, index).Contains("no-repeat", StringComparison.OrdinalIgnoreCase),
+                RepeatX = repeat.X,
+                RepeatY = repeat.Y,
             });
         }
 
         return layers;
+    }
+
+    /// <summary>
+    /// Reads one layer's <c>background-repeat</c> as the two axes it states.
+    /// </summary>
+    /// <remarks>
+    /// CSS Backgrounds 3 §2.6: the value names the inline axis first and the block axis second, a
+    /// single name stands for both (<c>repeat-x</c> and <c>repeat-y</c> being the two shorthands for
+    /// "repeat in one, no-repeat in the other"), and <c>space</c> and <c>round</c> are read as
+    /// <c>repeat</c> here - a tile that is spread out or scaled to fit a whole number of times is a
+    /// refinement of the same tiling, and reading them as <c>no-repeat</c> would drop the picture.
+    /// </remarks>
+    private static (Boolean X, Boolean Y) RepeatOf(String value)
+    {
+        var parts = CssValueList.SplitWhitespace(value);
+
+        if (parts.Count == 0)
+        {
+            return (true, true);
+        }
+
+        Boolean Tiles(String part) => !part.Equals("no-repeat", StringComparison.OrdinalIgnoreCase);
+
+        return parts.Count == 1
+            ? parts[0].Trim().ToLowerInvariant() switch
+            {
+                "repeat-x" => (true, false),
+                "repeat-y" => (false, true),
+                "no-repeat" => (false, false),
+                _ => (true, true),
+            }
+            : (Tiles(parts[0]), Tiles(parts[1]));
     }
 
     private static String At(List<String> values, Int32 index) =>

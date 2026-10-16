@@ -160,6 +160,21 @@ internal sealed class Box
     /// <summary>Gets the source element, or null for a text or anonymous box.</summary>
     public IElement? Element { get; init; }
 
+    /// <summary>
+    /// Gets whether a flex, grid or grid-lanes container lays this box out as an item. An item
+    /// establishes an independent formatting context of its own (CSS Flexbox 1 §4, CSS Grid 1 §6.1),
+    /// which is what its margins collapse against: a child's margin never escapes through the item,
+    /// and the item's own margins never fold into its children's.
+    /// </summary>
+    /// <remarks>
+    /// Only the container's own display settles this, so it is marked on the way in rather than
+    /// derived from the style. A page that hands its layout to a grid keeps the room the boxes in it
+    /// ask for: Wikipedia's sitenotice holds a `margin: 24px 0` inside the item that carries it, and
+    /// without this the margin folded out of the page's header grid and took everything below it up
+    /// with it.
+    /// </remarks>
+    public Boolean IsItem { get; internal set; }
+
     /// <summary>Gets the source text node, or null for an element box.</summary>
     public IText? Source { get; init; }
 
@@ -294,6 +309,7 @@ internal sealed class Box
         if (Kind != fresh.Kind ||
             IsAnonymous != fresh.IsAnonymous ||
             IsMarker != fresh.IsMarker ||
+            IsItem != fresh.IsItem ||
             IsReplaced != fresh.IsReplaced ||
             IsInlineSvg != fresh.IsInlineSvg ||
             !String.Equals(Text, fresh.Text, StringComparison.Ordinal) ||

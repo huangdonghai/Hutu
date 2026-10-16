@@ -344,7 +344,7 @@ public sealed class WikipediaPortalProbeTests
                 {
                     Line($"  engine    layer      {(layer.Url is null ? "gradient" : Path.GetFileName(layer.Url))} " +
                          $"{layer.SizeKind} {layer.SizeWidth.Value}x{layer.SizeHeight.Value} " +
-                         $"at {layer.PositionX.Value:F0},{layer.PositionY.Value:F0} repeat={layer.Repeat}");
+                         $"at {layer.PositionX.Value:F0},{layer.PositionY.Value:F0} repeat={layer.RepeatX}/{layer.RepeatY}");
                 }
             }
         }

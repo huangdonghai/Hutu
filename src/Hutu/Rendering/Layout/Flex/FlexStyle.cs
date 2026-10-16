@@ -223,17 +223,18 @@ internal readonly struct FlexStyle
     }
 
     /// <summary>
-    /// Reads the two gaps from the cascaded declarations: whichever axis carries a number is read,
-    /// and the other takes the same value. A two-value <c>gap</c> is the only case that sets them
-    /// apart, and it is the only case that needs to be.
+    /// Reads the two gaps from the cascaded declarations, one axis at a time.
     /// </summary>
     /// <remarks>
-    /// A lone <c>row-gap</c> and a single-value <c>gap</c> are the same thing by the time either
-    /// path can read them. The declaration carries the shorthand as its two longhands and leaves the
-    /// one that was not written empty, so no reader of it can tell which of the two was meant - and
-    /// the render-tree path, which is the incumbent here, reads them as one value on both axes. The
-    /// cascade could tell them apart, but answering differently is a change in what a page looks
-    /// like, and being right about the gap is not worth a page that renders two ways.
+    /// Each axis stands on its own: <c>row-gap</c> and <c>column-gap</c> are separate longhands whose
+    /// initial value <c>normal</c> is a used 0px in everything but a multi-column container (CSS Gaps 1
+    /// §2.1), and only the <c>gap</c> shorthand sets both - by giving the column the row's value when
+    /// the second one is omitted (§2.2). It used to be read the other way round here: the two axes
+    /// were answered with whichever of them carried a number, because a single-value <c>gap</c> left
+    /// its column longhand holding nothing at all and that was indistinguishable from a lone
+    /// <c>row-gap</c>. The split no longer leaves it empty, so a page that sets only <c>column-gap</c>
+    /// keeps its zero row gap - and Wikipedia's <c>column-gap: 24px</c> no longer opens a 24px band
+    /// between every pair of rows.
     /// </remarks>
     private static (Double Row, Double Column) ReadGapsFused(
         Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
@@ -252,10 +253,18 @@ internal readonly struct FlexStyle
     private static (Double Row, Double Column) Gaps(
         Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
     {
-        var row = ReadGapFused(find("row-gap"), ownSize, dimensions);
-        var column = ReadGapFused(find("column-gap"), ownSize, dimensions);
+        // The grid-prefixed names are the legacy aliases of the two longhands (CSS Gaps 1 §2.4:
+        // "grid-row-gap as a legacy name alias of the row-gap property"), and a page that writes only
+        // those is otherwise read as having no gap at all. They are tried when the standard name
+        // answers nothing; a page that declares both lets the standard one win, whichever order the
+        // two were written in, because only the declaration list could weigh the alias against the
+        // name and the fused path reads one declaration at a time.
+        var row = ReadGapFused(find("row-gap"), ownSize, dimensions) ??
+            ReadGapFused(find("grid-row-gap"), ownSize, dimensions);
+        var column = ReadGapFused(find("column-gap"), ownSize, dimensions) ??
+            ReadGapFused(find("grid-column-gap"), ownSize, dimensions);
 
-        return (row ?? column ?? 0, column ?? row ?? 0);
+        return (row ?? 0, column ?? 0);
     }
 
     private static Double? ReadGapFused(ICssProperty? declared, Double ownSize, IRenderDimensions dimensions) =>
@@ -344,38 +353,18 @@ internal readonly struct FlexStyle
         declared?.Value?.Trim().ToLowerInvariant() ?? String.Empty;
 
     /// <summary>
-    /// Reads the two gaps together, because neither source has both. AngleSharp.Css expands the
-    /// <c>gap</c> shorthand into <c>row-gap</c> and leaves <c>column-gap</c> in the computed
-    /// declaration with no value at all, so the shorthand - a two-item tuple - is the only place the
-    /// column gap can be found. A single-value <c>gap</c> applies to both axes; a two-value one is
-    /// <c>row</c> then <c>column</c>, in that order.
+    /// Reads the two gaps from the element's declaration, one axis at a time - the render-tree
+    /// counterpart of <see cref="Gaps"/>, and answerable the same way ever since the <c>gap</c>
+    /// shorthand stopped leaving its column longhand empty when only one value was written. A
+    /// two-value <c>gap</c> is <c>row</c> then <c>column</c>, in that order.
     /// </summary>
     private static (Double Row, Double Column) ReadGaps(ComputedStyle style)
     {
-        var row = ReadGap(style, "row-gap");
-        var column = ReadGap(style, "column-gap");
-
-        // A single-value `gap` is carried as its two longhands, the column one present but carrying
-        // no value; a `row-gap` written on its own leaves the column one out altogether, and the
-        // column gap is then the initial zero. Only the first of those asks for the row's value on
-        // both axes. Rebuilding the shorthand answered the same for both, which gave a lone
-        // `row-gap: 20px` a column gap nobody had asked for.
-        if (row is { } shared && column is null && IsEmpty(style, "column-gap"))
-        {
-            column = shared;
-        }
-
-        if (column is { } other && row is null && IsEmpty(style, "row-gap"))
-        {
-            row = other;
-        }
+        var row = ReadGap(style, "row-gap") ?? ReadGap(style, "grid-row-gap");
+        var column = ReadGap(style, "column-gap") ?? ReadGap(style, "grid-column-gap");
 
         return (row ?? 0, column ?? 0);
     }
-
-    /// <summary>Gets whether the longhand is there but carries no value, rather than not being there.</summary>
-    private static Boolean IsEmpty(ComputedStyle style, String name) =>
-        style.Specified?.GetProperty(name) is { } property && String.IsNullOrWhiteSpace(property.Value);
 
     private static Double? ReadGap(ComputedStyle style, String name) =>
         LengthReader.TryRead(style.Specified, style.Declaration, name, RenderMode.Horizontal, style.Dimensions, style.FontSize, out var gap) &&

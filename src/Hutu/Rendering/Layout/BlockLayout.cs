@@ -944,7 +944,16 @@ internal sealed class BlockLayout
                 // here. The size it was measured to already agrees with the pass above.
                 var size0 = _engine.Measure(child, constraints, context);
                 var used0 = BoxModel.UsedMargin(child.Style, contentWidth, size0.Width);
-                var rect0 = new Rect(contentX + used0.Left, cursor, size0.Width, size0.Height);
+
+                // CSS 2.1 §8.3.1 gives a self-collapsing box one of two places: its top border edge
+                // is the parent's own when its top margin collapses with the parent's (the escape
+                // this walk has already stopped combining for, which leaves the strip empty), and
+                // otherwise - the parent seals a formatting context and takes no part in it - the
+                // place it would have had with a non-zero bottom border, which is after its own top
+                // margin. Standing it at the cursor either way puts it at the parent's edge in the
+                // second case too: a `margin-top` box that opens a grid item sat 24 pixels above
+                // where a browser draws it.
+                var rect0 = new Rect(contentX + used0.Left, cursor + pending, size0.Width, size0.Height);
                 parent.Children.Add(_engine.Arrange(child, rect0, context));
                 continue;
             }
@@ -1249,9 +1258,18 @@ internal sealed class BlockLayout
     /// inside the root rather than escaping above it and being lost to the viewport. That is what
     /// begins a page a body's worth of margin down from the top edge.
     /// </para>
+    /// <para>
+    /// A grid or flex item is one of these too, though nothing in its own style says so: the box a
+    /// container lays out as an item establishes an independent formatting context for its contents
+    /// (CSS Flexbox 1 §4, CSS Grid 1 §6.1), so the margins inside it are its own to hold. Folding
+    /// them out instead loses the room a page asked for: Wikipedia's sitenotice is a `margin: 24px 0`
+    /// box inside a grid item, and collapsing that margin out of the page's header grid took the
+    /// whole page up by 24 pixels.
+    /// </para>
     /// </remarks>
     private static Boolean EstablishesContext(Box box) =>
         box.Element?.LocalName == "html" ||
+        box.IsItem ||
         box.Style.ClipsOverflow ||
         box.Style.Display.Contains("flow-root", StringComparison.OrdinalIgnoreCase) ||
         box.Kind is BoxKind.InlineBlock or BoxKind.HorizontalRule or BoxKind.Flex or BoxKind.Grid or

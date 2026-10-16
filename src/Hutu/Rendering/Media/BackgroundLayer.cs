@@ -108,6 +108,18 @@ public sealed class BackgroundLayer
 
     public BackgroundOffset PositionY { get; internal init; }
 
-    /// <summary>Gets whether the layer tiles. The initial value is <c>repeat</c>.</summary>
-    public Boolean Repeat { get; internal init; }
+    /// <summary>
+    /// Gets whether the layer tiles along the inline axis. The initial value of
+    /// <c>background-repeat</c> is <c>repeat</c>, so that is the default for both axes.
+    /// </summary>
+    /// <remarks>
+    /// The two axes are separate because CSS Backgrounds 3 §2.6 makes them so: <c>repeat-x</c> is
+    /// "repeat" in one and "no-repeat" in the other, and a single flag cannot say it. A one-pixel
+    /// column that is repeated across a banner is the usual way a page draws a rule or a gradient
+    /// band, and read as "does not repeat" it drew one pixel of it and nothing else.
+    /// </remarks>
+    public Boolean RepeatX { get; internal init; } = true;
+
+    /// <summary>Gets whether the layer tiles along the block axis. See <see cref="RepeatX"/>.</summary>
+    public Boolean RepeatY { get; internal init; } = true;
 }

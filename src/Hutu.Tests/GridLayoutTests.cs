@@ -95,6 +95,69 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task ASpanAcrossAFlexibleRowLeavesTheContentRowsAtNothing()
+    {
+        // CSS Grid 1 §11.5 considers "the items with a span of 2 that do not span a track with a
+        // flexible sizing function" for the intrinsic track sizes, and leaves the rest to the step
+        // after: "distributing space only to flexible tracks (i.e. treating all other tracks as having
+        // a fixed sizing function of their current base size)". Sharing the spanning item's demand
+        // with the content-sized rows it also covers stands those rows open on a definite-height grid
+        // - and a band of white space with them. This is the shape of the Wikipedia page body grid,
+        // where that band stood above the page's tabs.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='g' style='display:grid;height:300px;grid-template-columns:1fr 100px;" +
+            "grid-template-rows:min-content min-content min-content 1fr'>" +
+            "<div id='a' style='grid-area:1/1'></div>" +
+            "<div id='b' style='grid-area:2/1;height:32px'></div>" +
+            "<div id='tall' style='grid-area:2/2/5/3;height:61.8px'></div>" +
+            "<div id='content' style='grid-area:4/1;height:200px'></div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.Height, Is.EqualTo(0).Within(0.5), "a min-content row holding nothing");
+        Assert.That(Find(view, "a").BorderBox.Y, Is.EqualTo(0).Within(0.5), "no room opened above it");
+        Assert.That(Find(view, "b").BorderBox.Height, Is.EqualTo(32).Within(0.5), "a min-content row holding its own item");
+        Assert.That(Find(view, "g").BorderBox.Height, Is.EqualTo(300).Within(0.5));
+    }
+
+    [Test]
+    public async Task ASpanAcrossAFlexibleRowGivesItsDemandToTheFlexibleRow()
+    {
+        // The same clause from the other side: where the spanning item's demand has somewhere to go,
+        // it is the flexible track that takes it, "according to the ratios of their flexible sizing
+        // functions", and the content-sized track it also covers is left where it is.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='g' style='display:grid;height:200px;grid-template-columns:1fr 1fr;" +
+            "grid-template-rows:auto 1fr'>" +
+            "<div id='tall' style='grid-area:1/1/3/2;height:120px'></div>" +
+            "<div id='first' style='grid-area:1/2'></div>" +
+            "<div id='second' style='grid-area:2/2'></div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "first").BorderBox.Height, Is.EqualTo(0).Within(0.5), "the content-sized row is not opened");
+        Assert.That(Find(view, "second").BorderBox.Height, Is.EqualTo(200).Within(0.5), "the flexible row holds the demand and the rest");
+    }
+
+    [Test]
+    public async Task ASpanAcrossAFlexibleColumnLeavesTheContentColumnsAtNothing()
+    {
+        // The same rule on the inline axis: the content-sized columns beside a 1fr column keep the
+        // size of what stands in them.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='g' style='display:grid;grid-template-columns:min-content min-content 1fr'>" +
+            "<div id='long' style='grid-area:1/1/2/4'>" + new String('a', 40) + "</div>" +
+            "<div id='a' style='grid-area:2/1'>A</div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(5).Within(0.5), "the column keeps its own item's width");
+    }
+
+    [Test]
     public async Task GapIsLeftBetweenTheTracks()
     {
         using var view = CreateView(400);

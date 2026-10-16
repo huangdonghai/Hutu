@@ -174,22 +174,19 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
         canvas.Save();
         SkiaRounded.Clip(canvas, area, radii);
 
-        if (layer.Repeat)
-        {
-            var startX = Start(left, area.Left, tile.Width);
-            var startY = Start(top, area.Top, tile.Height);
+        // Each axis tiles on its own: `repeat-x` runs the tile across and leaves one row of it where
+        // the position puts it, which is what a one-pixel column is repeated for.
+        var firstX = layer.RepeatX ? Start(left, area.Left, tile.Width) : left;
+        var lastX = layer.RepeatX ? area.Right : left + tile.Width;
+        var firstY = layer.RepeatY ? Start(top, area.Top, tile.Height) : top;
+        var lastY = layer.RepeatY ? area.Bottom : top + tile.Height;
 
-            for (var y = startY; y < area.Bottom; y += tile.Height)
-            {
-                for (var x = startX; x < area.Right; x += tile.Width)
-                {
-                    DrawTile(canvas, entry, new SKRect(x, y, x + tile.Width, y + tile.Height));
-                }
-            }
-        }
-        else
+        for (var y = firstY; y < lastY; y += tile.Height)
         {
-            DrawTile(canvas, entry, new SKRect(left, top, left + tile.Width, top + tile.Height));
+            for (var x = firstX; x < lastX; x += tile.Width)
+            {
+                DrawTile(canvas, entry, new SKRect(x, y, x + tile.Width, y + tile.Height));
+            }
         }
 
         canvas.Restore();

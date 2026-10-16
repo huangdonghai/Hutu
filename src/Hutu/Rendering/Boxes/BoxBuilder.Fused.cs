@@ -323,6 +323,7 @@ internal static partial class BoxBuilder
             case BoxKind.Grid:
             case BoxKind.Masonry:
                 GroupChildren(box, children, true);
+                MarkItems(box);
                 break;
 
             case BoxKind.Block:
@@ -348,6 +349,24 @@ internal static partial class BoxBuilder
         ListMarkers.Mark(box);
 
         return box;
+    }
+
+    /// <summary>
+    /// Marks what a flex, grid or grid-lanes container lays out as its items. An item establishes an
+    /// independent formatting context of its own (CSS Flexbox 1 §4, CSS Grid 1 §6.1) - the outer edge
+    /// of the context it holds - so a margin inside it stays inside it.
+    /// </summary>
+    private static void MarkItems(Box container)
+    {
+        foreach (var child in container.Children)
+        {
+            // A child that left the flow is not an item: it is laid out against a containing block of
+            // its own, and it seals a formatting context of its own anyway.
+            if (!PositionedLayout.IsOutOfFlow(child))
+            {
+                child.IsItem = true;
+            }
+        }
     }
 
     internal static List<ICssStyleSheet> SheetsOf(IDocument document)

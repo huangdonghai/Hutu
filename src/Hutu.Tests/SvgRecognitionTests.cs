@@ -1,3 +1,5 @@
+using Hutu.Rendering;
+using Hutu.Rendering.Media;
 using Hutu.Skia;
 using NUnit.Framework;
 using System;
@@ -39,6 +41,32 @@ public sealed class SvgRecognitionTests
         Assert.That(SkiaImageLoader.LooksLikeSvg(new Byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }), Is.False, "JPEG");
         Assert.That(SkiaImageLoader.LooksLikeSvg(Bytes("GIF89a")), Is.False, "GIF");
         Assert.That(SkiaImageLoader.LooksLikeSvg(Array.Empty<Byte>()), Is.False, "nothing at all");
+    }
+
+    [Test]
+    public void BackgroundRepeatIsReadAxisByAxis()
+    {
+        var dimensions = new HutuRenderDevice(800, 600);
+
+        foreach (var (value, x, y) in new (String, Boolean, Boolean)[]
+        {
+            ("repeat-x", true, false),
+            ("repeat-y", false, true),
+            ("repeat", true, true),
+            ("no-repeat", false, false),
+            ("repeat no-repeat", true, false),
+            ("no-repeat repeat", false, true),
+            ("round", true, true),
+            ("space", true, true),
+        })
+        {
+            var layers = BackgroundLayerParser.Parse(
+                "url(a.png)", null, null, value, dimensions, 16, resolveUrl: null);
+
+            Assert.That(layers, Has.Count.EqualTo(1), value);
+            Assert.That(layers[0].RepeatX, Is.EqualTo(x), $"{value} along the inline axis");
+            Assert.That(layers[0].RepeatY, Is.EqualTo(y), $"{value} along the block axis");
+        }
     }
 
     private static Byte[] Bytes(String text) => Encoding.UTF8.GetBytes(text);

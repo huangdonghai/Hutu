@@ -830,56 +830,143 @@ internal sealed class GridFormattingContext
     }
 
     /// <summary>
-    /// Raises the base sizes and growth limits of the tracks an item covers. For a single track that
-    /// is a plain maximum; for a span the demand is shared out evenly, which is where the deficit
-    /// against what the tracks already hold goes.
+    /// Raises the base sizes and growth limits of the tracks the items cover, in the order the
+    /// specification considers them: the items wholly inside one track first, then the spanning ones
+    /// by increasing span. For a single track the contribution is a plain maximum; for a span the
+    /// demand is shared out evenly, which is where the deficit against what the tracks already hold
+    /// goes.
     /// </summary>
+    /// <remarks>
+    /// CSS Grid 1 §11.5 resolves intrinsic track sizes "first ... based on items that are contained
+    /// wholly within a single track", and only "then ... gradually adds in the space requirements of
+    /// items that span multiple tracks", those being taken in increasing span order. Reading the
+    /// items in document order instead gives a spanning item a share of a deficit that does not
+    /// exist, because the tracks it covers have not been sized by their own items yet: Wikipedia's
+    /// page body grid puts one item across its three content rows beside the 2515px row that item
+    /// covers, and the 9.93px share the two small rows were handed stood the empty page title bar
+    /// and the page toolbar off the top of the page as a band of white space.
+    /// </remarks>
     private static void Contribute(List<Track> tracks, List<GridCell> items, Boolean horizontal)
     {
+        var widest = 1;
+
         foreach (var item in items)
         {
-            var index = horizontal ? item.Column : item.Row;
-            var span = horizontal ? item.ColumnSpan : item.RowSpan;
-            var min = horizontal ? item.MinWidth : item.MinHeight;
-            var max = horizontal ? item.MaxWidth : item.MaxHeight;
-            var last = Math.Min(index + span, tracks.Count);
+            widest = Math.Max(widest, SpanOf(item, horizontal));
+        }
 
-            if (last <= index)
+        for (var span = 1; span <= widest; span++)
+        {
+            foreach (var item in items)
             {
-                continue;
-            }
-
-            var count = last - index;
-
-            if (count == 1)
-            {
-                var track = tracks[index];
-
-                if (track.IntrinsicMin)
+                if (SpanOf(item, horizontal) == span)
                 {
-                    track.Base = Math.Max(track.Base, min);
+                    ContributeItem(tracks, item, horizontal);
                 }
-
-                if (track.IntrinsicMax)
-                {
-                    track.Growth = Math.Max(track.Growth, max);
-                }
-
-                track.ContentMin = Math.Max(track.ContentMin, min);
-                track.ContentMax = Math.Max(track.ContentMax, max);
-                continue;
             }
+        }
+    }
 
-            var held = 0.0;
-            var limit = 0.0;
+    private static Int32 SpanOf(GridCell item, Boolean horizontal) =>
+        horizontal ? item.ColumnSpan : item.RowSpan;
 
-            for (var i = index; i < last; i++)
+    private static void ContributeItem(List<Track> tracks, GridCell item, Boolean horizontal)
+    {
+        var index = horizontal ? item.Column : item.Row;
+        var span = SpanOf(item, horizontal);
+        var min = horizontal ? item.MinWidth : item.MinHeight;
+        var max = horizontal ? item.MaxWidth : item.MaxHeight;
+        var last = Math.Min(index + span, tracks.Count);
+
+        if (last <= index)
+        {
+            return;
+        }
+
+        var count = last - index;
+
+        if (count == 1)
+        {
+            var track = tracks[index];
+
+            if (track.IntrinsicMin)
             {
-                held += tracks[i].Base;
-                limit += tracks[i].Growth;
+                track.Base = Math.Max(track.Base, min);
             }
 
-            if (min > held)
+            if (track.IntrinsicMax)
+            {
+                track.Growth = Math.Max(track.Growth, max);
+            }
+
+            track.ContentMin = Math.Max(track.ContentMin, min);
+            track.ContentMax = Math.Max(track.ContentMax, max);
+            return;
+        }
+
+        // An item that spans a flexible track is measured against a set of tracks the specification
+        // calls fixed - "distributing space only to flexible tracks (i.e. treating all other tracks as
+        // having a fixed sizing function of their current base size)", with a flexible track itself
+        // "having a max track sizing function equal to their min" (§11.5, Increase sizes to
+        // accommodate spanning items crossing flexible tracks). So the demand of such an item is
+        // shared out among the flexible tracks it spans, by their factors, and the content-sized
+        // tracks it also covers are left at the size they hold. Sharing it with them instead is what
+        // opened the two content-sized rows of Wikipedia's page body grid: one item is placed across
+        // all three of its content rows beside a 1fr row that takes the page's whole height, and the
+        // 9.93px each content-sized row was handed for it stood the empty page title bar, and the page
+        // toolbar after it, off the top of the page as a band of white space.
+        var flexible = 0;
+        var receivers = 0;
+        var factors = 0.0;
+
+        for (var i = index; i < last; i++)
+        {
+            if (tracks[i].Flexible)
+            {
+                flexible++;
+
+                // A flexible track takes the item's demand only where its own minimum is intrinsic:
+                // `1fr` stands for `minmax(auto, 1fr)` and takes it, while `minmax(0, 1fr)` has a
+                // definite minimum of zero that no content may raise - the rule that keeps a grid of
+                // `minmax(0, 1fr)` columns from being blown out by a wide spanning item.
+                if (tracks[i].IntrinsicMin)
+                {
+                    receivers++;
+                    factors += tracks[i].Factor;
+                }
+            }
+        }
+
+        var held = 0.0;
+        var limit = 0.0;
+
+        for (var i = index; i < last; i++)
+        {
+            held += tracks[i].Base;
+            limit += flexible > 0 ? tracks[i].Base : tracks[i].Growth;
+        }
+
+        if (min > held)
+        {
+            if (flexible > 0)
+            {
+                // The flexible tracks take it between them in proportion to their factors, which is
+                // what the specification means by distributing "according to the ratios of their
+                // flexible sizing functions rather than distributing space equally".
+                if (receivers > 0 && factors > 0)
+                {
+                    var each = (min - held) / factors;
+
+                    for (var i = index; i < last; i++)
+                    {
+                        if (tracks[i].Flexible && tracks[i].IntrinsicMin)
+                        {
+                            tracks[i].Base += each * tracks[i].Factor;
+                        }
+                    }
+                }
+            }
+            else
             {
                 // The extra a spanning item needs is shared only among the spanned tracks with an
                 // intrinsic minimum (CSS Grid 12.6): a track whose minimum is a definite length -
@@ -910,25 +997,35 @@ internal sealed class GridFormattingContext
                     }
                 }
             }
+        }
 
-            if (max > limit)
-            {
-                var share = (max - limit) / count;
-
-                for (var i = index; i < last; i++)
-                {
-                    if (tracks[i].IntrinsicMax)
-                    {
-                        tracks[i].Growth += share;
-                    }
-                }
-            }
+        // A maximum needs nothing from an item that spans a flexible track: the flexible track it
+        // would raise is one whose max is its own min, and the content-sized tracks it covers are
+        // fixed against it - so there is nowhere for the room to go, and opening their growth limits
+        // is what gives the free space of a definite-height grid somewhere to land that it should
+        // never have had.
+        if (max > limit && flexible == 0)
+        {
+            var share = (max - limit) / count;
 
             for (var i = index; i < last; i++)
             {
-                tracks[i].ContentMin = Math.Max(tracks[i].ContentMin, min / count);
-                tracks[i].ContentMax = Math.Max(tracks[i].ContentMax, max / count);
+                if (tracks[i].IntrinsicMax)
+                {
+                    tracks[i].Growth += share;
+                }
             }
+        }
+
+        for (var i = index; i < last; i++)
+        {
+            if (flexible > 0 && !tracks[i].Flexible)
+            {
+                continue;
+            }
+
+            tracks[i].ContentMin = Math.Max(tracks[i].ContentMin, min / count);
+            tracks[i].ContentMax = Math.Max(tracks[i].ContentMax, max / count);
         }
     }
 

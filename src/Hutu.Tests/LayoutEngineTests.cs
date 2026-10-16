@@ -78,6 +78,62 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task AGridItemHoldsTheMarginsOfTheBoxesInIt()
+    {
+        // CSS Grid 1 §6.1: a grid item establishes an independent formatting context for its
+        // contents, so a child's margin is the item's to hold - the same rule as a box with
+        // `overflow: hidden`. Folding it out of the item instead loses the room the page asked for
+        // and carries everything after it up: Wikipedia's sitenotice is a `margin: 24px 0` box inside
+        // a grid item, and the page's whole header grid followed it.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid'>" +
+            "<div id='item'><div id='note' style='margin:24px 0'></div></div>" +
+            "<div id='after' style='height:10px'></div>" +
+            "</div></body></html>");
+
+        var item = ById(view, "item");
+        var note = ById(view, "note");
+
+        Assert.That(item.BorderBox.Height, Is.EqualTo(24).Within(0.5), "the item is as tall as the margin inside it");
+        Assert.That(note.BorderBox.Y - item.BorderBox.Y, Is.EqualTo(24).Within(0.5), "the note stands after its own top margin (CSS 2.1 §8.3.1)");
+        Assert.That(ById(view, "after").BorderBox.Y - item.BorderBox.Y, Is.EqualTo(24).Within(0.5), "nothing below is pulled up");
+    }
+
+    [Test]
+    public async Task AFlexItemHoldsTheMarginsOfTheBoxesInIt()
+    {
+        // The same clause for a flex item (CSS Flexbox 1 §4).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex'>" +
+            "<div id='item'><div id='note' style='margin:24px 0'></div></div>" +
+            "</div></body></html>");
+
+        var item = ById(view, "item");
+
+        Assert.That(item.BorderBox.Height, Is.EqualTo(24).Within(0.5));
+        Assert.That(ById(view, "note").BorderBox.Y - item.BorderBox.Y, Is.EqualTo(24).Within(0.5));
+    }
+
+    [Test]
+    public async Task APlainBlockStillLetsAMarginEscapeThroughIt()
+    {
+        // The control for the two above: a box that establishes no formatting context of its own
+        // takes no part in the collapse, so the margin inside it passes straight through and the
+        // box itself is nothing tall.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='item'><div id='note' style='margin:24px 0'></div></div>" +
+            "</body></html>");
+
+        Assert.That(ById(view, "item").BorderBox.Height, Is.EqualTo(0).Within(0.5));
+    }
+
+    [Test]
     public async Task AFixedHeightParentAbsorbsItsLastChildsBottomMargin()
     {
         using var view = CreateView(400);
@@ -194,6 +250,9 @@ public sealed class LayoutEngineTests
     }
 
     private static LayoutBox? Find(HutuViewInternal view, String tag) => FindAll(view, tag).FirstOrDefault();
+
+    private static LayoutBox ById(HutuViewInternal view, String id) =>
+        FindAll(view, "div").First(box => box.Source.Element?.GetAttribute("id") == id);
 
     private static IEnumerable<LayoutBox> FindAll(HutuViewInternal view, String tag)
     {
