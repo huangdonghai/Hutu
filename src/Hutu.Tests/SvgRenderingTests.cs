@@ -55,6 +55,34 @@ public sealed class SvgRenderingTests
         Assert.That(bitmap.GetPixel(30, 5).Red, Is.GreaterThan(200), "above the triangle is untouched");
     }
 
+    [Test]
+    public async Task AnSvgSizedInEmPaintsThroughItsViewBox()
+    {
+        // The width and height attributes on the outermost <svg> are presentation hints for the CSS
+        // width/height properties, and the sheet overrides them here, so they never decide the layout.
+        // They do travel into the standalone document the backend renders, though, and a font-relative
+        // length there has no font to be a multiple of: the renderer reads the number and drops the
+        // unit, leaving a one-unit viewport that clips the whole icon away. The viewBox is the
+        // coordinate space to keep, and dropping the attribute lets it stand.
+        using var measurer = new SkiaTextMeasurer();
+        using var images = new SkiaImageLoader();
+        using var view = new HutuViewInternal(measurer, images);
+        view.SetViewportSize(100, 100);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<svg width='1em' height='1em' viewBox='0 0 48 48' style='display:block;width:60px;height:60px'>" +
+            "<rect x='0' y='0' width='48' height='48' fill='#00cc00'/></svg>" +
+            "</body></html>");
+
+        using var bitmap = Render(view, measurer, images);
+
+        var centre = bitmap.GetPixel(30, 30);
+
+        Assert.That(centre.Green, Is.GreaterThan(150), "an icon sized in em still paints through its viewBox");
+        Assert.That(centre.Red, Is.LessThan(150), "and it is the icon's green, not the page's white");
+    }
+
     private static SKBitmap Render(HutuViewInternal view, SkiaTextMeasurer measurer, SkiaImageLoader images)
     {
         using var surface = SKSurface.Create(new SKImageInfo(100, 100))!;

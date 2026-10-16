@@ -1,6 +1,7 @@
 using AngleSharp.Dom;
 using System;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Hutu.Rendering.Boxes;
 
@@ -14,6 +15,11 @@ internal static class SvgSerializer
 {
     private const String SvgNamespace = "http://www.w3.org/2000/svg";
     private const String XLinkNamespace = "http://www.w3.org/1999/xlink";
+
+    /// <summary>A <c>width</c> or <c>height</c> attribute together with its value, quoted or not.</summary>
+    private static readonly Regex SizeAttribute = new(
+        "(?<![\\w-])(?:width|height)\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s>]+)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>Serializes one <c>&lt;svg&gt;</c> root to standalone markup, or null when it has nothing.</summary>
     public static String? Serialize(IElement svg)
@@ -33,7 +39,7 @@ internal static class SvgSerializer
             return markup;
         }
 
-        var open = markup[..close];
+        var open = DropFontRelativeSize(markup[..close]);
 
         if (!open.Contains("xmlns=", StringComparison.Ordinal))
         {
@@ -48,6 +54,52 @@ internal static class SvgSerializer
         var head = defs.Length > 0 ? open + "><defs>" + defs + "</defs>" : open + ">";
 
         return head + markup[(close + 1)..];
+    }
+
+    /// <summary>
+    /// Drops the root <c>width</c>/<c>height</c> attributes whose value is a font-relative length, which
+    /// a standalone document has no font to resolve.
+    /// </summary>
+    /// <remarks>
+    /// <c>em</c>, <c>ex</c>, <c>ch</c> and <c>rem</c> are multiples of a font size, and the document
+    /// handed to the picture renderer carries no computed font size for its root - that is a fact of the
+    /// page's cascade, not of the markup - so the renderer reads the number and lets the unit fall:
+    /// <c>width="1em" height="1em"</c> comes out as a one-unit viewport. Such a viewport does not merely
+    /// make a small picture, it clips every shape in the picture away, which is how an icon whose box
+    /// and <c>viewBox</c> were both right still drew nothing. Omitting the attribute leaves the
+    /// <c>viewBox</c> to establish the coordinate space, which is the space the box was sized from
+    /// anyway, and the picture is scaled onto the box regardless of the size it reports.
+    /// </remarks>
+    private static String DropFontRelativeSize(String open) =>
+        SizeAttribute.Replace(open, match => IsFontRelative(AttributeValue(match.Value)) ? String.Empty : match.Value);
+
+    /// <summary>Gets the value of an attribute <c>name="value"</c> spelling, without its quotes.</summary>
+    private static String AttributeValue(String attribute)
+    {
+        var text = attribute[(attribute.IndexOf('=') + 1)..].Trim();
+
+        return text.Length > 1 && (text[0] == '"' || text[0] == '\'') && text[^1] == text[0]
+            ? text[1..^1].Trim()
+            : text;
+    }
+
+    /// <summary>Gets whether a length is a multiple of a font size rather than a length in user units.</summary>
+    private static Boolean IsFontRelative(String length)
+    {
+        var text = length.Trim();
+        var end = 0;
+
+        while (end < text.Length && (Char.IsDigit(text[end]) || text[end] is '.' or '+' or '-'))
+        {
+            end++;
+        }
+
+        var unit = text[end..].Trim();
+
+        return unit.Equals("em", StringComparison.OrdinalIgnoreCase) ||
+               unit.Equals("ex", StringComparison.OrdinalIgnoreCase) ||
+               unit.Equals("ch", StringComparison.OrdinalIgnoreCase) ||
+               unit.Equals("rem", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
