@@ -677,11 +677,21 @@ internal static class GeneratedContent
     /// block container whose children are blocks - the same fixup
     /// <see cref="ListMarkers"/> makes for a marker it places inside its item.
     /// </summary>
+    /// <remarks>
+    /// Only a run of inline generated content is ever wrapped, and only to stand among block-level
+    /// siblings: §9.2.1.1 gives a block container that holds a block-level box anonymous block boxes
+    /// around the inline runs beside it, and that is the whole of what the wrap is for. Anywhere else
+    /// the run is already the right content for its parent. An inline box holds inline-level content
+    /// and nothing else (§9.2.1), and a block container whose content is inline-level - including the
+    /// empty one a generated box is about to fill - establishes an inline formatting context that the
+    /// run simply joins. Wrapping <c>::before</c> for an empty inline host used to put a block-level
+    /// box inside an inline one, which cost the host element its own box and with it the glyph.
+    /// </remarks>
     private static void InsertFirst(Box host, List<Box> generated)
     {
         // A generated box that is itself block-level sits among the blocks; only a run of inline
         // content has to be wrapped to stand in a block container.
-        if (!generated[0].IsInlineLevel || (host.Children.Count > 0 && host.Children[0].IsInlineLevel))
+        if (!generated[0].IsInlineLevel || host.Children.Count == 0 || host.Children[0].IsInlineLevel)
         {
             host.Children.InsertRange(0, generated);
             return;
@@ -692,11 +702,12 @@ internal static class GeneratedContent
         host.Children.Insert(0, line);
     }
 
+    /// <summary>Puts generated boxes at the tail of the element's children, on the same terms as <see cref="InsertFirst"/>.</summary>
     private static void InsertLast(Box host, List<Box> generated)
     {
         var last = host.Children.Count - 1;
 
-        if (!generated[0].IsInlineLevel || (last >= 0 && host.Children[last].IsInlineLevel))
+        if (!generated[0].IsInlineLevel || last < 0 || host.Children[last].IsInlineLevel)
         {
             host.Children.AddRange(generated);
             return;

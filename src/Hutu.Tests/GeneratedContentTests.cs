@@ -155,6 +155,25 @@ public sealed class GeneratedContentTests
     }
 
     [Test]
+    public async Task AnEmptyElementKeepsTheBoxItsPseudoElementWasGiven()
+    {
+        // CSS 2.1 §9.2.1: an inline box holds inline-level content and nothing else, so the run
+        // ::before generates inside an empty <i> is content the <i> can hold as it stands. Wrapped in
+        // the anonymous block §9.2.1.1 wants only for a block-level sibling, it would put a block-level
+        // box inside an inline one, and the inline box loses its own box - which is how a font icon,
+        // an empty element whose ::before carries the glyph, went missing altogether.
+        var view = await Build("i { font-family: 'Icon' } i::before { content: '\\50' }", "<p>a<i></i>b</p>");
+
+        var element = Walk(view.Layout!.Root).First(box => box.Source.Element?.LocalName == "i");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(element.Source.Kind, Is.EqualTo(BoxKind.Inline), "the empty element keeps its own box");
+            Assert.That(Painted(view), Does.Contain("P"), "and the glyph its ::before generates is drawn");
+        });
+    }
+
+    [Test]
     public async Task AnImageContentMakesThePseudoElementTheReplacedBox()
     {
         var view = await Build("p::before { content: url('icon.png') }", "<p>text</p>");
