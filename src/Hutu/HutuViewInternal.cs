@@ -33,6 +33,9 @@ public sealed class HutuViewInternal : IDisposable
     private IBrowsingContext? _context;
     private TextSelector? _selector;
     private ElementHitTester? _hitTester;
+
+    /// <summary>The layout the selector and the hit tester were built against.</summary>
+    private LayoutResult? _answered;
     private TextSelection? _selection;
 
     /// <summary>
@@ -698,12 +701,19 @@ public sealed class HutuViewInternal : IDisposable
         _pipeline.Build(Document);
 
         // The selector and the hit tester answer against the boxes of the layout they were built
-        // from, so they are rebuilt with the new one.
-        _selector = _pipeline.Layout is { } layout && _textMeasurer is not null
-            ? new TextSelector(layout, _textMeasurer)
-            : null;
+        // from, so they are rebuilt with a new one. A rebuild that only moved the colours leaves the
+        // layout in hand untouched - the pipeline keeps the very instance it had - so they still
+        // answer against it and stand.
+        if (!ReferenceEquals(_pipeline.Layout, _answered))
+        {
+            _answered = _pipeline.Layout;
 
-        _hitTester = _pipeline.Layout is { } measured ? new ElementHitTester(measured) : null;
+            _selector = _pipeline.Layout is { } layout && _textMeasurer is not null
+                ? new TextSelector(layout, _textMeasurer)
+                : null;
+
+            _hitTester = _pipeline.Layout is { } measured ? new ElementHitTester(measured) : null;
+        }
 
         var had = _selection is not null;
         _selection = restore is { } snapshot ? Restore(snapshot) : null;

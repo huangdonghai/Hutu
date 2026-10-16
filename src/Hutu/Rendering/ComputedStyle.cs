@@ -101,7 +101,7 @@ internal readonly struct ComputedStyle
         {
             Border = BorderArea.Default,
             BoxModel = BoxModelArea.Default,
-            DisplayPositioning = new DisplayPositioningArea { Display = "block" },
+            DisplayPositioning = DisplayPositioningArea.Block,
             VisualEffects = VisualEffectsArea.Default,
             Font = _values.Font,
             Text = _values.Text,
@@ -2024,6 +2024,45 @@ internal readonly struct ComputedStyle
     /// which hands it to the children the way it hands the font and the text.
     /// </summary>
     internal ListArea ResolvedList => _values.List;
+
+    /// <summary>Gets the box model area this style answers from, shared with every style whose lengths agree.</summary>
+    internal BoxModelArea ResolvedBoxModel => _values.BoxModel;
+
+    /// <summary>
+    /// Gets the display and positioning area this style answers from, shared with every style whose
+    /// display, float, clear and overflow agree.
+    /// </summary>
+    internal DisplayPositioningArea ResolvedDisplayPositioning => _values.DisplayPositioning;
+
+    /// <summary>
+    /// Gets whether this style lays a box out exactly the way <paramref name="other"/> does: every area
+    /// the layout pass reads is the very same one.
+    /// </summary>
+    /// <remarks>
+    /// The areas are compared by reference rather than by value because they are interned - two styles
+    /// that set the same box model hold the same instance, and a rebuild that only moved the colours
+    /// hands every untouched box back the object it already had. That is what makes the question cheap
+    /// enough to ask of every box of the document on every state change.
+    /// <para>
+    /// What is deliberately not here is what only the painter reads: the colours, the background layers,
+    /// the cursor, the outline and the text decoration. A style that differs in those alone lays its box
+    /// out the same way and paints it differently, which is the case a restyle-in-place exists for.
+    /// </para>
+    /// <para>
+    /// What this cannot answer is what is not an area: the positioning, the flex, grid and table values,
+    /// the transform, the background clip and the overflow are built on demand and share nothing, so two
+    /// styles that agree on every area can still lay a box out differently. Those are settled once for
+    /// the whole document instead - see <see cref="Boxes.StyleResolution.RestylesWithoutRelayout"/> -
+    /// and a box is only ever asked this question when that gate is open.
+    /// </para>
+    /// </remarks>
+    internal Boolean SameLayoutAreas(ComputedStyle other) =>
+        ReferenceEquals(_values.BoxModel, other._values.BoxModel) &&
+        ReferenceEquals(_values.Font, other._values.Font) &&
+        ReferenceEquals(_values.Text, other._values.Text) &&
+        ReferenceEquals(_values.Border, other._values.Border) &&
+        ReferenceEquals(_values.DisplayPositioning, other._values.DisplayPositioning) &&
+        ReferenceEquals(_values.List, other._values.List);
 
     /// <summary>Gets what an item of this element's list is marked with, as the name or string written.</summary>
     public String ListStyleType => _values.List.Type;

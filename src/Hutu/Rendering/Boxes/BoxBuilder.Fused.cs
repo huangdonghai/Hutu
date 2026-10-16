@@ -28,11 +28,17 @@ internal static partial class BoxBuilder
     /// Builds the box tree from the document's own DOM, or null when the document uses
     /// something the fused path does not reproduce and the caller should fall back.
     /// </summary>
+    /// <param name="carried">
+    /// The style resolution state of an earlier build, reused when it still describes this document
+    /// and this device. Null builds everything from scratch, which is what a document or a viewport
+    /// that changed asks for.
+    /// </param>
     public static Box? TryBuildFused(
         IDocument document,
         HutuRenderDevice device,
         IImageProvider? images = null,
-        FontFaceTable? faces = null)
+        FontFaceTable? faces = null,
+        StyleResolution? carried = null)
     {
         if (document.DocumentElement is not { } root)
         {
@@ -45,11 +51,18 @@ internal static partial class BoxBuilder
         // device as soon as it has it; see <see cref="FusedStyleFactory.Build"/>.
         device.RootFontSize = HutuRenderDevice.InitialFontSize;
 
-        var sheets = SheetsOf(document);
-        var index = RuleBucketIndex.Build(sheets, device);
-        var pool = new StyleIntern();
-        var cache = new FusedAreaCache();
+        // The sheets are only read to build an index, so a carried one spares the walk over them
+        // entirely - and with it the cascade matches and the interned areas behind them. A build
+        // with nothing carried starts from a fresh state, which is what a document that has just
+        // been loaded pays.
+        var state = carried ?? new StyleResolution();
+        var index = state.Index;
         var supported = true;
+
+        if (index is null)
+        {
+            index = RuleBucketIndex.Build(SheetsOf(document), device);
+        }
 
         // A custom property is read by parsing its substituted text back into a declaration, which is
         // the parser's job. A document that declares none never asks, and one that does without a parser
@@ -58,7 +71,7 @@ internal static partial class BoxBuilder
         var parser = document.Context.GetService<ICssParser>();
 
         var box = BuildFusedElement(
-            root, index, FusedParent.Root, device, images, faces, pool, cache, parser, WritingModeInfo.Horizontal, false, ref supported);
+            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, false, ref supported);
 
         if (!supported || box is null)
         {
@@ -68,6 +81,11 @@ internal static partial class BoxBuilder
         var rootCascade = MatchedCascade.ForElement(index, root);
         AdoptBodyFlow(box, rootCascade.Find("writing-mode") is not null);
         MarkBasisUse(box);
+
+        // Remembered only now that the walk has agreed to describe the document: a build that
+        // abstained has proved nothing about the sheets, so the next one starts again.
+        state.Keep(index);
+
         return box;
     }
 
@@ -78,8 +96,7 @@ internal static partial class BoxBuilder
         HutuRenderDevice device,
         IImageProvider? images,
         FontFaceTable? faces,
-        StyleIntern pool,
-        FusedAreaCache cache,
+        StyleResolution state,
         ICssParser? parser,
         WritingModeInfo inheritedFlow,
         Boolean inItemContainer,
@@ -104,7 +121,37 @@ internal static partial class BoxBuilder
             return null;
         }
 
-        var style = FusedStyleFactory.Build(element, cascade, parent, device, faces, pool, cache, variables);
+        // A style is a function of the element's own match, the values it inherits, the scope its
+        // var() references are read through and the marks the engine answers to off the element
+        // itself. All four are held - three by reference and the marks as a small number - so when
+        // each is what the last build used the answer is the one already in hand and the whole
+        // resolution stands down. That is what keeps a pointer moving across a link from resolving
+        // several thousand styles to change one of them.
+        var marks = StyleRecord.MarksOf(element);
+        var stands = false;
+        ComputedStyle style;
+
+        if (state.RecordFor(element) is { } previous &&
+            ReferenceEquals(previous.Cascade, cascade) &&
+            ReferenceEquals(previous.Variables, variables) &&
+            previous.Marks == marks &&
+            parent.Stands)
+        {
+            style = previous.Style;
+            stands = true;
+
+            // The root's size is the number every rem below it is a share of, and the build that
+            // would have handed it to the device is the one being stood down.
+            if (ReferenceEquals(parent, FusedParent.Root))
+            {
+                device.RootFontSize = style.FontSize;
+            }
+        }
+        else
+        {
+            style = FusedStyleFactory.Build(element, cascade, parent, device, faces, state.Pool, state.Cache, variables);
+            state.Remember(element, new StyleRecord(cascade, variables, style, marks));
+        }
 
         if (style.IsDisplayNone)
         {
@@ -155,7 +202,7 @@ internal static partial class BoxBuilder
                     // The parent's own tag name travels down with it: a box model needs it, because the
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
-                        elementChild, index, parent.Next(style, cascade, variables, cache.Tag(element.LocalName)), device, images, faces, pool, cache, parser, flow,
+                        elementChild, index, parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands), device, images, faces, state, parser, flow,
                         kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry, ref supported);
 
                     if (childBox is not null)
@@ -231,7 +278,7 @@ internal static partial class BoxBuilder
         return box;
     }
 
-    private static List<ICssStyleSheet> SheetsOf(IDocument document)
+    internal static List<ICssStyleSheet> SheetsOf(IDocument document)
     {
         var sheets = new List<ICssStyleSheet>();
 

@@ -243,4 +243,77 @@ internal sealed class Box
 
     /// <summary>Gets whether the box generates no geometry of its own and only carries a width hint.</summary>
     public Boolean IsTableColumnHint => Kind is BoxKind.TableColumn or BoxKind.TableColumnGroup;
+
+    /// <summary>
+    /// Gets whether this box and its whole subtree would be laid out exactly the way
+    /// <paramref name="fresh"/> does: the same shape, the same replaced content, and the same style as
+    /// far as the layout pass reads it.
+    /// </summary>
+    /// <remarks>
+    /// This is the question a restyle-in-place asks. A box that answers yes keeps the geometry the
+    /// layout already gave it and takes the styles the fresh build computed, which is what keeps a
+    /// pointer moving across a link from laying the document out again.
+    /// <para>
+    /// The style half is <see cref="SameLayoutAreas"/>, which compares the areas by reference - they
+    /// are interned, so two styles that set the same box model hold the same object. What that cannot
+    /// answer is what is not an area: the positioning, the flex, grid and table values, the transform,
+    /// the background clip and the overflow. Those are settled once for the whole document by
+    /// <see cref="StyleResolution.RestylesWithoutRelayout"/>, and a box is only ever asked this
+    /// question when that gate is open.
+    /// </para>
+    /// <para>
+    /// Everything else here is compared by value, because it is what the two trees are built from and
+    /// some of it moves without the document moving: a picture that has arrived since the last build
+    /// gives its box another intrinsic size, and a box laid out from the old one is a box the page
+    /// never asked for. The children are walked rather than counted, because a tree that agrees at the
+    /// root and disagrees underneath is still a different document.
+    /// </para>
+    /// </remarks>
+    internal Boolean SameLayout(Box fresh)
+    {
+        if (Kind != fresh.Kind ||
+            IsAnonymous != fresh.IsAnonymous ||
+            IsMarker != fresh.IsMarker ||
+            IsReplaced != fresh.IsReplaced ||
+            IsInlineSvg != fresh.IsInlineSvg ||
+            !String.Equals(Text, fresh.Text, StringComparison.Ordinal) ||
+            !String.Equals(SourceUrl, fresh.SourceUrl, StringComparison.Ordinal) ||
+            !String.Equals(SvgMarkup, fresh.SvgMarkup, StringComparison.Ordinal) ||
+            !ReferenceEquals(Element, fresh.Element) ||
+            !IntrinsicSize.Equals(fresh.IntrinsicSize) ||
+            !AttributeSize.Equals(fresh.AttributeSize) ||
+            !SameFlow(fresh) ||
+            !String.Equals(Marker, fresh.Marker, StringComparison.Ordinal) ||
+            MarkerPosition != fresh.MarkerPosition ||
+            IntrinsicIgnoresBasis != fresh.IntrinsicIgnoresBasis ||
+            !Style.SameLayoutAreas(fresh.Style))
+        {
+            return false;
+        }
+
+        var mine = Children;
+        var theirs = fresh.Children;
+
+        if (mine.Count != theirs.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < mine.Count; i++)
+        {
+            if (!mine[i].SameLayout(theirs[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Gets whether the box lays its content out in the same writing mode and direction.</summary>
+    private Boolean SameFlow(Box fresh) =>
+        Flow.Mode == fresh.Flow.Mode &&
+        Flow.Orientation == fresh.Flow.Orientation &&
+        Flow.CombinesUpright == fresh.Flow.CombinesUpright &&
+        Flow.Direction == fresh.Flow.Direction;
 }

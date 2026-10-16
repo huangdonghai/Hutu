@@ -159,6 +159,14 @@ internal sealed record DisplayPositioningArea
 {
     internal static readonly DisplayPositioningArea Default = new();
 
+    /// <summary>
+    /// What a box that stands for a run of inline content the author never wrapped shares:
+    /// block-level, in flow, clipping nothing. Such a box has no presentation of its own, so it takes
+    /// this rather than anything its parent declared - and takes the same instance every time, the
+    /// way every other area is shared between the boxes that agree on it.
+    /// </summary>
+    internal static readonly DisplayPositioningArea Block = new() { Display = "block" };
+
     internal String Display { get; init; } = CssInitialValues.Display;
 
     /// <summary>

@@ -35,6 +35,33 @@ internal sealed class StylePseudoIndex
 
     private static readonly string[] Names = { "hover", "visited", "target", "active" };
 
+    /// <summary>
+    /// Gets whether a selector answers to one of the marks a reading gesture places - the four this
+    /// index tracks - and so can change what matches without the document changing.
+    /// </summary>
+    /// <remarks>
+    /// A selector that cannot be read as text answers yes, because nothing was learned from it: the
+    /// same fail-open the index itself promises. Used by the style resolution to decide whether a
+    /// rebuild under an unchanged viewport may keep the layout it has.
+    /// </remarks>
+    internal static Boolean NamesATrackedPseudo(string? selector)
+    {
+        if (selector is null)
+        {
+            return true;
+        }
+
+        for (var name = 0; name < Names.Length; name++)
+        {
+            if (ContainsPseudo(selector, Names[name]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     // Everything set until the first scan: asking before anything was scanned rebuilds, which is
     // what not having the index at all would do.
     private Found _found = Found.All;

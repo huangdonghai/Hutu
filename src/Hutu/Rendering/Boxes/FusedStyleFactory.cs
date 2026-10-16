@@ -15,7 +15,16 @@ namespace Hutu.Rendering.Boxes;
 /// </summary>
 internal sealed class FusedParent
 {
-    public static readonly FusedParent Root = new();
+    /// <summary>
+    /// What the root inherits from: the initial values, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// It stands, because what a root inherits is the same on every build of the same document - the
+    /// device's root font size is put back to the initial value before each walk, and every other
+    /// value here is a constant. Were it not, the root could never take its style from the one it
+    /// already had, and neither could anything under it.
+    /// </remarks>
+    public static readonly FusedParent Root = new() { Stands = true };
 
     public Double FontSize { get; init; }
     public CssColorValue? Color { get; init; }
@@ -115,9 +124,32 @@ internal sealed class FusedParent
     public Boolean? CombinesUpright { get; init; }
     public CursorKind Cursor { get; init; }
 
+    /// <summary>
+    /// Gets whether the values a child inherits from this parent are the same instances the previous
+    /// build computed, so the child may take its style from the one it already has.
+    /// </summary>
+    /// <remarks>
+    /// A style is a function of the element's own match, the values it inherits and the scope its
+    /// <c>var()</c> references are read through. The last two travel down from here, so a parent
+    /// whose style, match and scope all stand is a parent a child can be resolved against without
+    /// resolving anything - which is what keeps a gesture that moves one mark from resolving every
+    /// style in the document.
+    /// </remarks>
+    internal Boolean Stands { get; init; }
+
     /// <summary>The values a parent hands down to its children.</summary>
-    public FusedParent Next(ComputedStyle style, MatchedCascade cascade, VariableScope? variables, String? tag = null) => new()
+    /// <param name="stands">
+    /// Whether this parent's own style, match and scope are the instances the previous build
+    /// computed. False for a parent that was resolved again, whatever the answer came to.
+    /// </param>
+    public FusedParent Next(
+        ComputedStyle style,
+        MatchedCascade cascade,
+        VariableScope? variables,
+        String? tag = null,
+        Boolean stands = false) => new()
     {
+        Stands = stands,
         FontSize = style.FontSize,
         Color = style.Color,
         FontFamily = style.FontFamily,

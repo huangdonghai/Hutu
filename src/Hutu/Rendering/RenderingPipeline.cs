@@ -14,7 +14,8 @@ namespace Hutu.Rendering;
 /// <remarks>
 /// The renderer is pull-based. AngleSharp never signals that drawing is required, so the host
 /// drives the pipeline explicitly after a document is loaded and again whenever the viewport
-/// changes (both feed the style computation, which is why a resize needs a full rerun).
+/// changes. A viewport change feeds the style computation only insofar as the styles read it, so
+/// <see cref="Build"/> decides on each run how much of the pipeline has to be walked again.
 /// <para>
 /// Layout needs a text measurer, which is a backend concern; when none is supplied the pipeline
 /// stops at the box tree and <see cref="Layout"/> stays null.
@@ -26,6 +27,19 @@ internal sealed class RenderingPipeline
     private readonly LayoutEngine? _layout;
     private readonly IImageProvider? _images;
     private readonly Painter _painter = new();
+    private readonly StyleResolution _styles = new();
+
+    /// <summary>The document the box tree in hand was built from.</summary>
+    private IDocument? _built;
+
+    /// <summary>The viewport the styles in hand were computed against.</summary>
+    private (Int32 Width, Int32 Height, Double Zoom) _viewport;
+
+    /// <summary>
+    /// Whether the styles in hand read the viewport while they were being resolved. It is what
+    /// decides whether a viewport that has since moved could have moved them with it.
+    /// </summary>
+    private Boolean _stylesReadViewport;
 
     public RenderingPipeline(HutuRenderDevice device, ITextMeasurer? textMeasurer = null, IImageProvider? images = null)
     {
@@ -58,6 +72,9 @@ internal sealed class RenderingPipeline
         Layout = null;
         Paint = null;
         _painter.Highlight = null;
+        _styles.Reset();
+        _built = null;
+        _stylesReadViewport = false;
     }
 
     /// <summary>
@@ -120,16 +137,93 @@ internal sealed class RenderingPipeline
     /// Rebuilds the box tree and the layout for the document using the current device.
     /// A document without a window yields null.
     /// </summary>
+    /// <remarks>
+    /// A document or a viewport that has not changed is not necessarily a full run either. The
+    /// styles are a function of the document, the device and the marks the interaction state has
+    /// placed, so a rebuild that only moves the marks reuses the rule index and the caches behind
+    /// it; a viewport that moved under an unchanged document lays the tree out again without
+    /// computing it over, provided the styles never read the viewport and no media query moved; and
+    /// a rebuild that only moved the colours leaves every box where the layout put it, so the tree
+    /// in hand takes the new styles and only the paint list is built again.
+    /// </remarks>
     public void Build(IDocument document)
     {
+        var viewport = (_device.ViewPortWidth, _device.ViewPortHeight, _device.Zoom);
+        var sameDocument = ReferenceEquals(_built, document);
+        var movedViewport = viewport != _viewport;
+
+        if (sameDocument && movedViewport && BoxTree is not null &&
+            !_stylesReadViewport && _styles.StillDescribes(document, _device))
+        {
+            _viewport = viewport;
+            LayOut();
+            return;
+        }
+
+        if (!sameDocument || movedViewport)
+        {
+            // A different document brings different rules and different declarations, and an index
+            // is built against a device: either way what is remembered no longer describes what is
+            // about to be read.
+            _styles.Reset();
+        }
+
+        _built = document;
+        _viewport = viewport;
+
+        // Taken before the walk rather than after it, so what is answered is what this build did
+        // and not what the one before it left behind.
+        _device.TakeViewportRead();
+
         // The fused path matches, cascades and computes from the DOM directly, with no render
         // tree and no per-element declaration.
         var faces = FontFaceTable.From(document);
-        BoxTree = BoxBuilder.TryBuildFused(document, _device, _images, faces);
+        var fresh = BoxBuilder.TryBuildFused(document, _device, _images, faces, _styles);
 
-        // A highlight names boxes of the layout it was measured against, so a new layout always drops
-        // it: keeping it would leave the painter looking up runs that no longer exist. The host points
-        // the selection at the new boxes after the build, which is what carries it across.
+        _stylesReadViewport = _device.TakeViewportRead();
+
+        // The marks are the only thing that moved, the sheets say so in paint alone, and the fresh
+        // tree lays every box out exactly the way the one in hand does: the geometry stands and the
+        // styles are handed over. The highlight is kept rather than dropped, because it names runs
+        // of the layout in hand and that layout has not been replaced.
+        if (sameDocument && !movedViewport && _styles.RestylesWithoutRelayout &&
+            BoxTree is not null && fresh is not null && BoxTree.SameLayout(fresh))
+        {
+            AdoptStyles(BoxTree, fresh);
+            Paint = _painter.Paint(Layout!);
+            return;
+        }
+
+        BoxTree = fresh;
+        LayOut();
+    }
+
+    /// <summary>
+    /// Hands the tree in hand the styles a fresh build computed for it, keeping its geometry.
+    /// </summary>
+    /// <remarks>
+    /// The two trees are known to correspond box for box - <see cref="Box.SameLayout"/> has just
+    /// said so - so the walk is a straight pairing of the children.
+    /// </remarks>
+    private static void AdoptStyles(Box kept, Box fresh)
+    {
+        kept.Style = fresh.Style;
+
+        var mine = kept.Children;
+        var theirs = fresh.Children;
+
+        for (var i = 0; i < mine.Count; i++)
+        {
+            AdoptStyles(mine[i], theirs[i]);
+        }
+    }
+
+    /// <summary>
+    /// Lays the box tree out at the viewport the device now reports and paints it. The highlight is
+    /// dropped, because it names runs of the layout it was measured against.
+    /// </summary>
+    private void LayOut()
+    {
         _painter.Highlight = null;
 
         // The viewport is the initial containing block, so both of its dimensions matter: the height

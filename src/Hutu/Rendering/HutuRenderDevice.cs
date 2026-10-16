@@ -40,11 +40,46 @@ internal sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
     /// <inheritdoc />
     public Int32 ViewPortHeight { get; private set; }
 
-    /// <inheritdoc />
-    public Double RenderWidth => ViewPortWidth / Zoom;
+    /// <summary>
+    /// Takes whether the render width or height has been read since the last call, and clears the
+    /// mark.
+    /// </summary>
+    /// <remarks>
+    /// The two dimensions are the only viewport-relative input a style resolution has. Every other
+    /// unit is absolute or font-relative, and a percentage is deliberately left unresolved by
+    /// <see cref="LengthReader"/> so that layout can resolve it against the containing block - a
+    /// <c>calc()</c> that folds to a percentage being the one exception, which reads them here too.
+    /// So a build that never touched them produced styles that cannot move when the viewport does,
+    /// which is what lets a resize lay the tree out again without computing it over.
+    /// </remarks>
+    internal Boolean TakeViewportRead()
+    {
+        var read = _readViewport;
+        _readViewport = false;
+        return read;
+    }
+
+    private Boolean _readViewport;
 
     /// <inheritdoc />
-    public Double RenderHeight => ViewPortHeight / Zoom;
+    public Double RenderWidth
+    {
+        get
+        {
+            _readViewport = true;
+            return ViewPortWidth / Zoom;
+        }
+    }
+
+    /// <inheritdoc />
+    public Double RenderHeight
+    {
+        get
+        {
+            _readViewport = true;
+            return ViewPortHeight / Zoom;
+        }
+    }
 
     /// <summary>How much the page is scaled for display, 1 meaning no scaling.</summary>
     private Double _zoom = 1;
