@@ -121,6 +121,52 @@ public sealed class SvgImageTests
             "the background url from the stylesheet should be collected too");
     }
 
+    [Test]
+    public async Task DataUrlPictureLaysOutAtTheSizeItStates()
+    {
+        // A page that bakes a square placeholder into its markup is asking for a square box. Nothing
+        // is fetched, so the only thing that can answer is the URL itself; a box sized to the
+        // specification's default object size instead would be 2:1 and the page would jump the moment
+        // the picture it stood in for arrived.
+        using var images = new SkiaImageLoader();
+        using var view = new HutuViewInternal(new FakeTextMeasurer(), images);
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<img src='data:image/svg+xml;utf-8," +
+            "%3Csvg width=%2240%22 height=%2240%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3C/svg%3E'>" +
+            "</body></html>");
+
+        var image = view.Layout!.FindBox(view.Document!.QuerySelector("img")!);
+
+        Assert.That(image, Is.Not.Null, "the data URL should decode into a box");
+        Assert.That(image!.BorderBox.Width, Is.EqualTo(40).Within(0.5));
+        Assert.That(image.BorderBox.Height, Is.EqualTo(40).Within(0.5));
+    }
+
+    [Test]
+    public async Task Base64DataUrlPictureLaysOutAtItsPixelSize()
+    {
+        // Base64 is the spelling a bitmap needs, and the only one that can carry bytes that are not
+        // text at all.
+        var png = CreatePng(12, 7);
+        using var images = new SkiaImageLoader();
+        using var view = new HutuViewInternal(new FakeTextMeasurer(), images);
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><img src='data:image/png;base64," +
+            Convert.ToBase64String(png) +
+            "'></body></html>");
+
+        var image = view.Layout!.FindBox(view.Document!.QuerySelector("img")!);
+
+        Assert.That(image, Is.Not.Null, "the base64 data URL should decode into a box");
+        Assert.That(image!.BorderBox.Width, Is.EqualTo(12).Within(0.5));
+        Assert.That(image.BorderBox.Height, Is.EqualTo(7).Within(0.5));
+    }
+
     private static Byte[] CreatePng(Int32 width, Int32 height)
     {
         using var bitmap = new SKBitmap(width, height);

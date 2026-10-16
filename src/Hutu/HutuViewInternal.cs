@@ -986,7 +986,14 @@ public sealed class HutuViewInternal : IDisposable
     /// The requesters the browsing context uses, in the order they are consulted.
     /// </summary>
     private List<IRequester> CreateRequesterChain() =>
-        new(_resourceRequesters) { new FileRequester(), new HookHttpRequest(_resourceRequesters, UserAgent) };
+        new(_resourceRequesters)
+        {
+            // Consulted before the ones that go looking outside the machine: a data URL is answered
+            // from the page itself, and is the one kind of picture that a deterministic drawing has.
+            new DataRequester(),
+            new FileRequester(),
+            new HookHttpRequest(_resourceRequesters, UserAgent),
+        };
 
     /// <summary>
     /// Fetches and decodes the images the document refers to, then lays the document out again so the
