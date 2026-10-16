@@ -265,13 +265,9 @@ internal sealed class BlockLayout
         // answer as `auto` and be measured from its content, as the specification has a percentage
         // against an indefinite block come to.
         if (!box.Flow.IsVertical &&
-            style.Width.HasValue &&
-            !(style.Width.ReadsContainingBlock && context.BasisIsHypothetical) &&
-            !(style.Width.Kind == StyleLengthKind.Percent && basis <= 0))
+            BoxModel.SettledInlineExtent(style, basis, insets, context.BasisIsHypothetical) is { } settled)
         {
-            var specified = Math.Max(0, style.Width.Resolve(basis));
-            var borderBox = BoxModel.IsBorderBox(style) ? specified : specified + insets;
-            return new IntrinsicSize(borderBox, borderBox);
+            return new IntrinsicSize(settled, settled);
         }
 
         return ContentIntrinsic(box, basis, insets, context);

@@ -575,11 +575,19 @@ internal readonly struct ComputedStyle
     }
 
     /// <summary>
-    /// Resolves the line height from the element's own cascaded declaration, for the fused
-    /// path. A number or percentage re-resolves against each element's own size - including
-    /// an inherited one, which is why the parent's cascaded declaration travels with its
-    /// resolved value. Anything else inherited is taken as resolved.
+    /// Resolves the line height from the element's own cascaded declaration, for the fused path, and
+    /// from the declaration an ancestor stated when this element states none of its own.
     /// </summary>
+    /// <remarks>
+    /// The three forms inherit differently, and CSS 2.2 §10.8.1 is what tells them apart. A
+    /// <c>&lt;number&gt;</c> computes to the number itself - "the used value is this number multiplied
+    /// by the element's font size" - so it travels as a number and is multiplied again at every
+    /// element that ends up using it. A percentage "computes to the specified value multiplied by the
+    /// element's computed font size", which is the element that *declared* it: what reaches a descendant
+    /// is the length it came to, and a descendant's own font size has nothing to do with it. A length
+    /// and <c>normal</c> inherit as themselves, <c>normal</c> being measured against the fonts each
+    /// element ends up using.
+    /// </remarks>
     public static Double? ResolveLineHeightFused(
         ICssProperty? declared,
         ICssProperty? parentDeclared,
@@ -587,28 +595,26 @@ internal readonly struct ComputedStyle
         Double? parentResolved,
         IRenderDimensions dimensions)
     {
-        if (declared is not null)
+        // `inherit` (and `unset`) is a wide keyword the cascade leaves as written: it asks for the
+        // value the parent computed rather than one of its own, which is the answer the branch below
+        // gives - the declaration behind that value is what is read again, not the value itself.
+        if (declared is not null && !IsInherit(declared))
         {
-            // `inherit` is a wide keyword the cascade leaves as written, and it asks for the value
-            // the parent resolved rather than for a number of its own.
-            return IsInherit(declared) ? parentResolved : ResolveLineHeightValue(declared, ownSize, dimensions);
+            return ResolveLineHeightValue(declared, ownSize, dimensions);
         }
 
-        if (parentDeclared?.RawValue is CssLengthValue share &&
-            share.Type == CssLengthValue.Unit.Percent)
+        if (parentResolved is null)
         {
-            return share.Value * 0.01 * ownSize;
+            // `normal`, which every element measures against its own fonts.
+            return null;
         }
 
         var text = parentDeclared?.Value?.Trim();
 
-        if (!String.IsNullOrWhiteSpace(text) &&
-            Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
-        {
-            return factor * ownSize;
-        }
-
-        return parentResolved;
+        return !String.IsNullOrWhiteSpace(text) &&
+            Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor)
+            ? factor * ownSize
+            : parentResolved;
     }
 
     /// <summary>
@@ -1523,7 +1529,7 @@ internal readonly struct ComputedStyle
     /// Gets whether the declaration is the wide keyword <c>inherit</c>, which the cascade leaves
     /// unresolved and which asks for the value its parent computed rather than one of its own.
     /// </summary>
-    private static Boolean IsInherit(ICssProperty? declared) =>
+    internal static Boolean IsInherit(ICssProperty? declared) =>
         declared is not null &&
         ((declared.RawValue is { } raw && IsInheritKeyword(raw)) ||
          declared.Value?.Trim().Equals("inherit", StringComparison.OrdinalIgnoreCase) == true);
@@ -2164,6 +2170,22 @@ internal readonly struct ComputedStyle
 
     public Boolean IsPreformatted =>
         WhiteSpace.StartsWith("pre", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets whether a line may break inside this element's text where the text itself offers an
+    /// opportunity to - between words, beside a boundary a script allows, or around an atomic inline.
+    /// </summary>
+    /// <remarks>
+    /// CSS 2.1 §16.6 and CSS Text 3 §5.1 give two values that suppress those breaks: <c>nowrap</c>,
+    /// which collapses white space exactly as <c>normal</c> does but keeps the text on one line, and
+    /// <c>pre</c>, which breaks only where the author wrote a newline and preserves the spaces around
+    /// it. Text under either overflows its line rather than taking a second one - and with
+    /// <c>overflow: hidden</c> the overflowing text is what the box clips, which is how a browser
+    /// shows a long label cut off instead of a paragraph the page never asked for.
+    /// </remarks>
+    public Boolean WrapsLines =>
+        !WhiteSpace.Equals("nowrap", StringComparison.OrdinalIgnoreCase) &&
+        !WhiteSpace.Equals("pre", StringComparison.OrdinalIgnoreCase);
 
     // --- Text -----------------------------------------------------------
 

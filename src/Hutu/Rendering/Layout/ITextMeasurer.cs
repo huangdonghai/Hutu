@@ -16,6 +16,25 @@ public interface ITextMeasurer
     /// <summary>Gets the vertical metrics of the font the style resolves to.</summary>
     FontMetrics GetMetrics(FontStyle style);
 
+    /// <summary>
+    /// Gets the vertical metrics a stretch of text is set with: the tallest ascent and descent among
+    /// the fonts its glyphs resolve to, which is the font the style names where that font carries them.
+    /// </summary>
+    /// <remarks>
+    /// CSS 2.2 §10.8.1 gives every glyph the metrics of the font it comes from - "glyphs in a single
+    /// element may come from different fonts and thus need not all have the same A and D" - and a run
+    /// is as tall as the tallest of them. A face that carries no CJK glyph sends those characters to a
+    /// fallback, and it is the fallback's metrics a line of Chinese follows: measured from the
+    /// requested font alone, a line of 16px Chinese comes out 21.3px tall where a browser gives 24,
+    /// and every line of such a page is short by that much.
+    /// <para>
+    /// The default answers with the requested font's metrics, which is right for a backend whose fonts
+    /// carry everything they are asked to set, and is what the line rules want for the strut - an
+    /// invisible glyph of zero width, which the specification gives the first available font's metrics.
+    /// </para>
+    /// </remarks>
+    FontMetrics GetRunMetrics(String text, FontStyle style) => GetMetrics(style);
+
     /// <summary>Gets the advance width of the text, in pixels, without breaking it.</summary>
     Double MeasureWidth(String text, FontStyle style);
 

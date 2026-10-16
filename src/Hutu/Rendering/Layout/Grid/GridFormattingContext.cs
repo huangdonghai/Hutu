@@ -812,8 +812,16 @@ internal sealed class GridFormattingContext
                 }
             }
 
-            item.MinHeight = height + margin;
-            item.MaxHeight = item.MinHeight;
+            // CSS Grid 6.6 gives an item whose block overflow is a scroll axis an automatic minimum
+            // size of zero - the same rule ContributeWidths applies along the inline axis - so a cell
+            // that clips what it holds does not push its row open with it. A row then keeps the height
+            // the grid itself was given, and the content taller than that is clipped, which is what a
+            // page stating a height on a grid of fixed-size cells asks for: the engine used to size the
+            // row from the content and show a second line of it over whatever the grid covered.
+            var floor = style.ScrollsBlock ? 0 : height;
+
+            item.MinHeight = floor + margin;
+            item.MaxHeight = height + margin;
         }
 
         Contribute(tracks, items, false);

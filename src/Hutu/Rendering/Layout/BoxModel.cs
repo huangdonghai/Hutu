@@ -146,6 +146,39 @@ internal static class BoxModel
         return content + insets;
     }
 
+    /// <summary>
+    /// Gets the border-box inline extent a box's own declared width settles it to, or null when the
+    /// width settles nothing: it is absent, it is a share of a containing block that is itself the
+    /// thing being asked about, or it is a share of a block that has no width. The extent is put
+    /// through the min and max constraints, because the width of a box that states all three is what
+    /// the three come to.
+    /// </summary>
+    /// <remarks>
+    /// A declared width settles how wide a box contributes to what contains it, not only how wide it
+    /// is used: a box's min-content and max-content contribution is the content-box size of a
+    /// hypothetical auto-sized float that holds it (CSS Sizing 3 §5.2), and a float holding a box with
+    /// a stated width comes to that width however little its content wants. That is the same answer
+    /// flexbox gives for an item, whose main-size contribution is "the larger of its outer max-content
+    /// size and outer preferred size if that is not auto, clamped by its min/max main size"
+    /// (CSS Flexbox 1 §9.9.3).
+    /// </remarks>
+    public static Double? SettledInlineExtent(ComputedStyle style, Double basis, Double insets, Boolean basisIsHypothetical)
+    {
+        var width = style.Width;
+
+        if (!width.HasValue ||
+            (width.ReadsContainingBlock && basisIsHypothetical) ||
+            (width.Kind == StyleLengthKind.Percent && basis <= 0))
+        {
+            return null;
+        }
+
+        var specified = Math.Max(0, width.Resolve(basis));
+        var borderBox = IsBorderBox(style) ? specified : specified + insets;
+
+        return ClampWidth(style, borderBox, basis, insets);
+    }
+
     /// <summary>Applies the height constraints to an already resolved content height.</summary>
     public static Double ClampHeight(ComputedStyle style, Double contentHeight, Double containingBlockHeight, Double insets)
     {
@@ -221,5 +254,39 @@ internal static class BoxModel
         return isLeftAuto
             ? new Thickness(used.Top, used.Right, used.Bottom, available)
             : new Thickness(used.Top, available, used.Bottom, used.Left);
+    }
+
+    /// <summary>
+    /// Hands the space the used height did not take to the vertical margins declared as <c>auto</c>,
+    /// the rule CSS 2.1 §10.6.4 states for an out-of-flow box whose top, height and bottom are all
+    /// definite: a pair of auto margins shares the slack, which is what centres the box between them,
+    /// and a single one takes the lot.
+    /// </summary>
+    public static Thickness DistributeAutoVerticalMargins(StyleThickness declared, Thickness used, Double space)
+    {
+        var isTopAuto = declared.Top.IsAuto;
+        var isBottomAuto = declared.Bottom.IsAuto;
+
+        if (!isTopAuto && !isBottomAuto)
+        {
+            return used;
+        }
+
+        var available = space - (isTopAuto ? 0 : used.Top) - (isBottomAuto ? 0 : used.Bottom);
+
+        if (available <= 0)
+        {
+            return used;
+        }
+
+        if (isTopAuto && isBottomAuto)
+        {
+            var half = available / 2;
+            return new Thickness(half, used.Right, half, used.Left);
+        }
+
+        return isTopAuto
+            ? new Thickness(available, used.Right, used.Bottom, used.Left)
+            : new Thickness(used.Top, used.Right, available, used.Left);
     }
 }

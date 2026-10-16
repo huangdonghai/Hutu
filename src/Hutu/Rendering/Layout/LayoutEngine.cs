@@ -770,7 +770,10 @@ internal sealed record LayoutProfile(
     private IntrinsicSize MeasureContentIntrinsicCore(Box box, LayoutContext context) =>
         box.Kind switch
         {
-            BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
+            // A flex container's content is what its items want, and the declared width of the
+            // container is exactly what the callers of this path are setting aside - so the flex
+            // context answers here with the measurement that does not read it.
+            BoxKind.Flex => _flex.MeasureContentIntrinsic(box, context),
             BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
             BoxKind.Masonry => _masonry.MeasureIntrinsic(box, context),
             BoxKind.Table => _table.MeasureIntrinsic(box, context),

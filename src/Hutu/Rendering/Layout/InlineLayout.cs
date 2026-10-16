@@ -298,9 +298,21 @@ internal sealed class InlineLayout
                 if (space)
                 {
                     // White space is a break opportunity: the run before it can be split, and the space
-                    // itself belongs to neither side of that break.
-                    minContent = Math.Max(minContent, unbreakable);
-                    unbreakable = 0;
+                    // itself belongs to neither side of that break. A style that suppresses soft breaks -
+                    // `nowrap` or `pre` - offers none, and then the space reads as part of the one piece
+                    // the text is, so it joins that piece instead of ending it (CSS Text 3 §5.1). That is
+                    // what makes a row of `nowrap` labels measure as wide as it reads: the minimum was
+                    // being taken as the widest single character, and a flex container was free to shrink
+                    // every label down to one of them.
+                    if (item.Style.WrapsLines)
+                    {
+                        minContent = Math.Max(minContent, unbreakable);
+                        unbreakable = 0;
+                    }
+                    else
+                    {
+                        unbreakable += trailing;
+                    }
 
                     if (collapsible)
                     {
@@ -309,6 +321,11 @@ internal sealed class InlineLayout
                         // carries between two runs is room the content asks for.
                         trailing += width;
                         continue;
+                    }
+
+                    if (!item.Style.WrapsLines)
+                    {
+                        unbreakable += width;
                     }
 
                     // A preformatted space is drawn wherever it stands, so it is room the content asks
@@ -320,12 +337,19 @@ internal sealed class InlineLayout
                 }
 
                 // Something the line draws follows whatever space was held back, so the space between
-                // the two runs is room the content asks for after all.
+                // the two runs is room the content asks for after all - and room inside the piece, where
+                // the style offers no break for it to be left at.
                 maxContent += trailing + width;
+
+                if (!item.Style.WrapsLines)
+                {
+                    unbreakable += trailing;
+                }
+
                 trailing = 0;
                 sawContent = true;
 
-                if (TextChunker.IsCjk(source[chunk.Start]))
+                if (TextChunker.IsCjk(source[chunk.Start]) && item.Style.WrapsLines)
                 {
                     // A line may break on either side of a CJK character, so the character stands
                     // alone rather than joining the run around it, and it is the run beside it - the
@@ -410,15 +434,18 @@ internal sealed class InlineLayout
 
                 // An element the run leaves is never cut: a cut is what carrying on to the next line
                 // is, and an element that ends in the middle of one ends for good. Its box runs to the
-                // far side of its own end edge, which is the edge the run it holds stops short of.
+                // far side of its own end edge, which is the edge the run it holds stops short of - and
+                // its end margin then takes its room on the line, after that box.
                 foreach (var left in step.Closed)
                 {
                     origin += left.Ancestor.InlineEndInset;
                     CloseBox(left, origin, contentBox, flow, line, cursor);
+                    origin += left.Ancestor.InlineEndMargin;
                 }
 
                 foreach (var entered in step.Opened)
                 {
+                    origin += entered.Ancestor.InlineStartMargin;
                     OpenBox(entered, open, lineBox, flow, line);
                     origin += entered.Inset;
                 }
@@ -436,6 +463,11 @@ internal sealed class InlineLayout
 
                 origin += cut ? 0 : left.Ancestor.InlineEndInset;
                 CloseBox(left, origin, contentBox, flow, line, cursor);
+
+                if (!cut)
+                {
+                    origin += left.Ancestor.InlineEndMargin;
+                }
             }
 
             parent.Children.Add(lineBox);
@@ -948,7 +980,8 @@ internal sealed class InlineLayout
 
                 var atomic = MeasureInlineBlock(item.Box, maxInline, line, flow, context);
 
-                if (room.Room > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > room.Room)
+                if (room.Room > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > room.Room &&
+                    item.Style.WrapsLines)
                 {
                     if (builder.HasContent)
                     {
@@ -986,7 +1019,8 @@ internal sealed class InlineLayout
                 var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
                 var extent = Math.Max(baseWidth, annotation.Width);
 
-                if (room.Room > 0 && builder.ExtentFor(item.Inline) + extent > room.Room)
+                if (room.Room > 0 && builder.ExtentFor(item.Inline) + extent > room.Room &&
+                    item.Style.WrapsLines)
                 {
                     if (builder.HasContent)
                     {
@@ -1027,7 +1061,8 @@ internal sealed class InlineLayout
                         continue;
                     }
 
-                    if (room.Room > 0 && builder.ExtentFor(item.Inline) + piece.Width > room.Room)
+                    if (room.Room > 0 && builder.ExtentFor(item.Inline) + piece.Width > room.Room &&
+                        item.Style.WrapsLines)
                     {
                         if (builder.HasContent)
                         {
@@ -1190,7 +1225,9 @@ internal sealed class InlineLayout
         var position = origin;
 
         // The elements the run leaves are closed from the inside out, so that the edge of the one
-        // wrapped around the others is drawn outside theirs.
+        // wrapped around the others is drawn outside theirs. Each ends its box at the padding and
+        // border it was measured with, and then takes its end margin, which is room on the line rather
+        // than part of the box - the edge the next run starts after.
         for (var index = open.Count - 1; index >= shared; index--)
         {
             var item = open[index];
@@ -1198,6 +1235,8 @@ internal sealed class InlineLayout
             step?.Closed.Add(item);
             added += item.Ancestor.InlineEndInset;
             position += item.Ancestor.InlineEndInset;
+            added += item.Ancestor.InlineEndMargin;
+            position += item.Ancestor.InlineEndMargin;
         }
 
         if (apply)
@@ -1210,9 +1249,13 @@ internal sealed class InlineLayout
             var ancestor = target[index];
 
             // An element the line resumed inside was cut at its start edge, which was drawn before the
-            // break; only an element a line begins inside pays nothing for that edge here.
-            var inset = carried?.Contains(ancestor) == true ? 0 : ancestor.InlineStartInset;
-            var item = new OpenInline(ancestor, position, inset);
+            // break; only an element a line begins inside pays nothing for that edge here. Its margin
+            // was charged at the start of the fragment the element began in too - a margin belongs to
+            // the ends of the whole element, not to each piece a break cut it into.
+            var resumed = carried?.Contains(ancestor) == true;
+            var inset = resumed ? 0 : ancestor.InlineStartInset;
+            var margin = resumed ? 0 : ancestor.InlineStartMargin;
+            var item = new OpenInline(ancestor, position + margin, inset);
 
             step?.Opened.Add(item);
 
@@ -1221,8 +1264,8 @@ internal sealed class InlineLayout
                 open.Add(item);
             }
 
-            added += inset;
-            position += inset;
+            added += margin + inset;
+            position += margin + inset;
         }
 
         return added;
@@ -2484,6 +2527,7 @@ internal sealed class InlineLayout
 
             Padding = box.Style.Padding.Resolve(basis);
             Border = BlockLayout.BorderOf(box);
+            Margin = box.Style.Margin.Resolve(basis);
 
             var metrics = measurer.GetMetrics(box.Style.GetFont());
             Ascent = metrics.Ascent;
@@ -2498,6 +2542,14 @@ internal sealed class InlineLayout
 
             InlineStartInset = Insets(_inlineStartSide);
             InlineEndInset = Insets(_inlineEndSide);
+
+            // The margins the element takes along the axis its text runs, which is room the line gives
+            // it rather than part of the box it draws: an inline element's horizontal margins take their
+            // place on the line like any other horizontal margin (CSS 2.1 §8.1), while the vertical ones
+            // never grow the line box. They are held apart from the insets above, which describe the
+            // border box the element's edges are drawn at.
+            InlineStartMargin = Read(Margin, _inlineStartSide);
+            InlineEndMargin = Read(Margin, _inlineEndSide);
             BlockStartInset = Insets(BlockSide(flow, start: true));
             BlockEndInset = Insets(BlockSide(flow, start: false));
         }
@@ -2513,6 +2565,15 @@ internal sealed class InlineLayout
 
         /// <summary>Gets the border widths the element resolved to, all four sides.</summary>
         public Thickness Border { get; }
+
+        /// <summary>Gets the margins the element resolved to, all four sides.</summary>
+        public Thickness Margin { get; }
+
+        /// <summary>Gets the room the element's margin takes at the start of the inline axis.</summary>
+        public Double InlineStartMargin { get; }
+
+        /// <summary>Gets the room the element's margin takes at the end of the inline axis.</summary>
+        public Double InlineEndMargin { get; }
 
         /// <summary>Gets the extent the element's padding and border add at the start of the inline axis.</summary>
         public Double InlineStartInset { get; }
@@ -2832,10 +2893,7 @@ internal sealed class InlineLayout
             var used = 0.0;
 
             // Gathered from nothing rather than from zero: a face set on a line shorter than itself has a
-            // negative descent as well as a negative ascent, and starting at zero would hold every line
-            // to at least the height of the tallest font on it.
-            // Gathered from nothing rather than from zero: a face set on a line shorter than itself has a
-            // negative descent as well as a negative ascent, and starting at zero would hold every line
+            // negative descent as well as a negative ascent, and starting from zero would hold every line
             // to at least the height of the tallest font on it.
             var ascent = Double.NegativeInfinity;
             var descent = Double.NegativeInfinity;
@@ -2875,7 +2933,10 @@ internal sealed class InlineLayout
                     continue;
                 }
 
-                var metrics = measurer.GetMetrics(fragment.Style.GetFont());
+                // The glyphs of one element may come from several fonts, so the metrics are the ones the
+                // run is really set with rather than the ones the requested font would give: a line whose
+                // characters fell to a fallback is as tall as that fallback (CSS 2.2 §10.8.1).
+                var metrics = measurer.GetRunMetrics(fragment.Text, fragment.Style.GetFont());
                 var fragmentAscent = metrics.Ascent;
                 var fragmentDescent = metrics.Descent;
                 var lineHeight = fragment.Style.LineHeight;

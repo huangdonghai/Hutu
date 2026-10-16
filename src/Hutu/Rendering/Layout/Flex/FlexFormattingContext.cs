@@ -374,8 +374,15 @@ internal sealed partial class FlexFormattingContext
         return Math.Max(0, size.Height - item.InsetMain);
     }
 
-    private static Double MaxLineMain(List<FlexLine> lines)
+    /// <summary>Gets the horizontal padding and border of a box, which a constraint describes.</summary>
+    private static Double InlineInsets(Box box, Double basis)
     {
+        var border = BlockLayout.BorderOf(box);
+
+        return box.Style.Padding.Resolve(basis).Horizontal + border.Horizontal;
+    }
+
+    private static Double MaxLineMain(List<FlexLine> lines)    {
         var maximum = 0.0;
 
         foreach (var line in lines)
@@ -392,14 +399,39 @@ internal sealed partial class FlexFormattingContext
     /// so the widest item wins either way rather than the sum. A flex item whose basis is automatic
     /// asks for this before anything has been decided.
     /// </summary>
+    /// <remarks>
+    /// A container with a width of its own answers with that width: a box that states how wide it is
+    /// contributes that width to whatever holds it, whether its content would have come to more or to
+    /// less. The content only speaks when the width is left to it - which is the state
+    /// <see cref="MeasureContentIntrinsic"/> answers in for the callers that have to set a declared
+    /// width aside.
+    /// </remarks>
     public IntrinsicSize MeasureIntrinsic(Box box, LayoutContext context)
+    {
+        var basis = context.ContainingBlock.Width;
+        var insets = InlineInsets(box, basis);
+
+        if (!box.Flow.IsVertical &&
+            BoxModel.SettledInlineExtent(box.Style, basis, insets, context.BasisIsHypothetical) is { } settled)
+        {
+            return new IntrinsicSize(settled, settled);
+        }
+
+        return MeasureContentIntrinsic(box, context);
+    }
+
+    /// <summary>
+    /// The sizes the container's items want, with the container's own declared width set aside. It is
+    /// what a basis of <c>content</c> asks for, and what the automatic minimum size of a flex item is
+    /// built from - a content size suggestion is the size of the content and nothing else
+    /// (CSS Flexbox 1 §4.5), so the declared width must not be consulted here.
+    /// </summary>
+    public IntrinsicSize MeasureContentIntrinsic(Box box, LayoutContext context)
     {
         var style = box.Style;
         var flex = style.Flex;
         var basis = context.ContainingBlock.Width;
-        var padding = style.Padding.Resolve(basis);
-        var border = BlockLayout.BorderOf(box);
-        var insets = padding.Horizontal + border.Horizontal;
+        var insets = InlineInsets(box, basis);
         var mainGap = Math.Max(0, flex.IsRow ? flex.ColumnGap : flex.RowGap);
 
         var min = 0.0;
@@ -414,18 +446,37 @@ internal sealed partial class FlexFormattingContext
                 continue;
             }
 
-            var childIntrinsic = _engine.MeasureIntrinsic(child, context);
+            // An item's contribution along the container's main axis is the larger of what its content
+            // wants and the size it states, clamped by its own min and max main size, so an item told
+            // to be 14 wide contributes 14 however little its content comes to (CSS Flexbox 1 §9.9.3).
+            // Across the axis a stated size is not read here: the item's outer content size is what the
+            // line has to hold, and a definite cross size is honoured when the item is laid out.
+            var childIntrinsic = _engine.MeasureContentIntrinsic(child, context);
             var margin = child.Style.Margin.Resolve(basis).Horizontal;
 
-            min = Math.Max(min, childIntrinsic.MinContent + margin);
-            widest = Math.Max(widest, childIntrinsic.MaxContent + margin);
+            var childMin = childIntrinsic.MinContent + margin;
+            var childMax = childIntrinsic.MaxContent + margin;
+
+            if (flex.IsRow &&
+                BoxModel.SettledInlineExtent(
+                    child.Style,
+                    basis,
+                    InlineInsets(child, basis),
+                    context.BasisIsHypothetical) is { } settled)
+            {
+                childMin = Math.Max(childMin, settled + margin);
+                childMax = Math.Max(childMax, settled + margin);
+            }
+
+            min = Math.Max(min, childMin);
+            widest = Math.Max(widest, childMax);
 
             if (!first)
             {
                 max += mainGap;
             }
 
-            max += childIntrinsic.MaxContent + margin;
+            max += childMax;
             first = false;
         }
 
@@ -475,13 +526,18 @@ internal sealed partial class FlexFormattingContext
                 }
             }
 
-            var free = Math.Max(0, contentMain - used);
+            // What the line has left over, which is negative when its items overflow it. The sign is
+            // kept: `center` and `flex-end` answer for that case themselves - the specification has the
+            // items of a centred line overflow "equally in both directions" when the free space is
+            // negative - while the auto margins below only ever take space that is really there, and
+            // the keyword that distributes space falls back rather than sharing a space that is not.
+            var free = contentMain - used;
             Double offset = 0;
             Double extra = 0;
 
             if (autoMargins > 0)
             {
-                ApplyAutoMainMargins(items, free / autoMargins);
+                ApplyAutoMainMargins(items, Math.Max(0, free) / autoMargins);
             }
             else
             {
@@ -548,8 +604,31 @@ internal sealed partial class FlexFormattingContext
     }
 
     /// <summary>Splits the free main-axis space according to <c>justify-content</c>.</summary>
-    private static (Double Offset, Double Extra) Justify(FlexAlignment justify, Double free, Int32 count) =>
-        justify switch
+    /// <summary>
+    /// Gets where the line's first item starts and how much goes between the items, by the
+    /// <c>justify-content</c> keyword the container states.
+    /// </summary>
+    /// <remarks>
+    /// A space that is not there cannot be distributed: with the items overflowing the line, the three
+    /// keywords that share space each fall back to the keyword the specification names for them -
+    /// <c>space-between</c> to <c>safe flex-start</c>, and <c>space-around</c> and <c>space-evenly</c>
+    /// to <c>safe center</c>, which is <c>flex-start</c> again once the box overflows. <c>center</c>
+    /// and <c>flex-end</c> are not among them: a centred line's items "overflow equally in both
+    /// directions" when the leftover space is negative, and an end-packed line keeps its last item's
+    /// edge on the line's end edge, which puts the overflow on the start side.
+    /// </remarks>
+    private static (Double Offset, Double Extra) Justify(FlexAlignment justify, Double free, Int32 count)
+    {
+        if (free < 0)
+        {
+            justify = justify switch
+            {
+                FlexAlignment.SpaceBetween or FlexAlignment.SpaceAround or FlexAlignment.SpaceEvenly => FlexAlignment.Start,
+                _ => justify,
+            };
+        }
+
+        return justify switch
         {
             FlexAlignment.End => (free, 0.0),
             FlexAlignment.Center => (free / 2, 0.0),
@@ -558,6 +637,7 @@ internal sealed partial class FlexFormattingContext
             FlexAlignment.SpaceEvenly when count > 0 => (free / (count + 1), free / (count + 1)),
             _ => (0.0, 0.0),
         };
+    }
 
     /// <summary>
     /// Gets the distance from the line's cross start to the item's border box, letting the item's own
@@ -566,12 +646,14 @@ internal sealed partial class FlexFormattingContext
     /// </summary>
     private static Double CrossOffset(FlexItem item, FlexAlignment alignItems, Double space, Double baseline)
     {
-        var free = Math.Max(0, space);
-
         if (item.AutoMarginCrossStart || item.AutoMarginCrossEnd)
         {
+            // Auto margins take the space that is left over and none that is not, so an item too tall
+            // for its line keeps its edge on the line's start rather than being pulled above it.
+            var share = Math.Max(0, space);
+
             return item.AutoMarginCrossStart
-                ? (item.AutoMarginCrossEnd ? free / 2 : free)
+                ? (item.AutoMarginCrossEnd ? share / 2 : share)
                 : 0;
         }
 
@@ -585,10 +667,13 @@ internal sealed partial class FlexFormattingContext
             return Math.Max(0, baseline - item.FirstBaseline);
         }
 
+        // Centred and end-packed items answer for their own overflow the same way the main axis does:
+        // an item taller than its line is centred on it, hanging as far above the line's start as below
+        // its end.
         return align switch
         {
-            FlexAlignment.End => free,
-            FlexAlignment.Center => free / 2,
+            FlexAlignment.End => space,
+            FlexAlignment.Center => space / 2,
             _ => 0,
         };
     }

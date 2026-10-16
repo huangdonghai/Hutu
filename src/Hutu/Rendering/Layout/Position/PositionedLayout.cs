@@ -71,8 +71,16 @@ internal sealed class PositionedLayout
         var margin = style.Margin.Resolve(containingBlock.Width);
         var measured = Measure(box, position, style, containingBlock, margin, childContext);
 
-        var (width, x) = Horizontal(position, style, containingBlock, staticPosition.X, measured.Width, margin);
-        var (height, y) = Vertical(position, style, containingBlock, staticPosition.Y, measured.Height, margin);
+        // The box's own padding and border, which the constraints are worked out against: the sizes
+        // measured below are border-box ones, and ClampWidth speaks in those, while ClampHeight speaks
+        // in the content box the rest of the sizing works in.
+        var padding = style.Padding.Resolve(containingBlock.Width);
+        var border = BlockLayout.BorderOf(box);
+        var insetWidth = padding.Horizontal + border.Horizontal;
+        var insetHeight = padding.Vertical + border.Vertical;
+
+        var (width, x) = Horizontal(position, style, containingBlock, staticPosition.X, measured.Width, margin, insetWidth);
+        var (height, y) = Vertical(position, style, containingBlock, staticPosition.Y, measured.Height, margin, insetHeight);
 
         var placed = _engine.Arrange(box, new Rect(x, y, width, height), childContext);
 
@@ -188,13 +196,19 @@ internal sealed class PositionedLayout
     /// and both edges are set, the box fills the space between them; otherwise the measured width is
     /// kept and the declared edge - or, failing that, the static position - decides the edge.
     /// </summary>
+    /// <param name="insets">
+    /// The box's own horizontal padding and border, which the width constraints are worked out against.
+    /// They are the box's, not its margins': a constraint describes the box, while the margins are the
+    /// space the constraint equation leaves around it.
+    /// </param>
     private static (Double Width, Double X) Horizontal(
         PositionStyle position,
         ComputedStyle style,
         Rect containingBlock,
         Double staticX,
         Double measuredWidth,
-        Thickness margin)
+        Thickness margin,
+        Double insets)
     {
         var hasLeft = position.Left.HasValue;
         var hasRight = position.Right.HasValue;
@@ -204,13 +218,23 @@ internal sealed class PositionedLayout
         var declared = style.Width.HasValue &&
             !(style.Width.Kind == StyleLengthKind.Percent && containingBlock.Width <= 0);
 
-        var width = !declared && hasLeft && hasRight
+        var tentative = !declared && hasLeft && hasRight
             ? Math.Max(0, containingBlock.Width - left - right - margin.Horizontal)
             : measuredWidth;
 
+        // CSS 2.1 §10.4: the tentative width is worked out without the constraints first, and a width
+        // that falls outside them is worked out again with the bound standing in for the computed
+        // width. Running the rules of §10.3.7 a second time is what decides which margin rule the box
+        // falls under, because the bound has just made the width definite: a pair of auto margins only
+        // shares the slack for a definite width, which is what centres a box stated
+        // `left: 0; right: 0; width: auto; max-width: 1920px; margin: auto` rather than letting it fill
+        // the containing block.
+        var width = BoxModel.ClampWidth(style, tentative, containingBlock.Width, insets);
+        var settled = declared || width != tentative;
+
         Double x;
 
-        if (hasLeft && hasRight && declared)
+        if (hasLeft && hasRight && settled)
         {
             // Both edges and the width are definite, so a pair of `auto` margins share the slack and
             // centre the box, the same rule `margin: 0 auto` follows in normal flow.
@@ -235,13 +259,15 @@ internal sealed class PositionedLayout
     }
 
     /// <summary>Resolves the used height and the top edge of an out-of-flow box.</summary>
+    /// <inheritdoc cref="Horizontal" path="/param[@name='insets']"/>
     private static (Double Height, Double Y) Vertical(
         PositionStyle position,
         ComputedStyle style,
         Rect containingBlock,
         Double staticY,
         Double measuredHeight,
-        Thickness margin)
+        Thickness margin,
+        Double insets)
     {
         var hasTop = position.Top.HasValue;
         var hasBottom = position.Bottom.HasValue;
@@ -251,13 +277,29 @@ internal sealed class PositionedLayout
         var declared = style.Height.HasValue &&
             !(style.Height.Kind == StyleLengthKind.Percent && containingBlock.Height <= 0);
 
-        var height = !declared && hasTop && hasBottom
+        var tentative = !declared && hasTop && hasBottom
             ? Math.Max(0, containingBlock.Height - top - bottom - margin.Vertical)
             : measuredHeight;
 
+        // The same second run of the rules as the width gets, against the vertical constraints: CSS 2.1
+        // §10.7 clamps the tentative height against min-height and max-height, and a box the bound has
+        // just made definite is one whose auto margins share the space left over (§10.6.4).
+        var height = BoxModel.ClampHeight(
+            style,
+            Math.Max(0, tentative - insets),
+            containingBlock.Height,
+            insets) + insets;
+        var settled = declared || height != tentative;
+
         Double y;
 
-        if (hasTop)
+        if (hasTop && hasBottom && settled)
+        {
+            var slack = containingBlock.Height - top - bottom - height;
+            var distributed = BoxModel.DistributeAutoVerticalMargins(style.Margin, margin, slack);
+            y = containingBlock.Y + top + distributed.Top;
+        }
+        else if (hasTop)
         {
             y = containingBlock.Y + top + margin.Top;
         }

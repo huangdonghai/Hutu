@@ -90,6 +90,50 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     public FontMetrics GetMetrics(FontStyle style) => _metrics.GetOrAdd(style, Measure);
 
     /// <summary>
+    /// Gets the metrics a stretch of text is set with: the tallest ascent and descent among the fonts
+    /// its glyphs resolve to. The decomposition already knows which face each stretch lands in, so this
+    /// is the same answer the painter draws with rather than a second guess about the fallback.
+    /// </summary>
+    /// <remarks>
+    /// The primary font's metrics are the floor - they are what a run of characters it carries is set
+    /// with, and what an empty or font-less stretch answers with - and every run the shaper handed to
+    /// another face can only raise the line the text stands on.
+    /// </remarks>
+    public FontMetrics GetRunMetrics(String text, FontStyle style)
+    {
+        var primary = GetMetrics(style);
+        var ascent = primary.Ascent;
+        var descent = primary.Descent;
+        var gap = primary.LineGap;
+
+        // Every run is read, a lone one included: a text the primary font cannot set at all comes back
+        // as a single run in the fallback face, and that face's metrics are the ones the line follows.
+        foreach (var run in Decompose(text, style))
+        {
+            run.Font.GetFontMetrics(out var metrics);
+            ascent = Math.Max(ascent, -metrics.Ascent);
+            descent = Math.Max(descent, metrics.Descent);
+            gap = Math.Max(gap, metrics.Leading);
+        }
+
+        if (ascent == primary.Ascent && descent == primary.Descent && gap == primary.LineGap)
+        {
+            return primary;
+        }
+
+        // The decoration offsets stay the primary font's: they describe how the painter underlines the
+        // text, which is one line drawn across the run and not one per face it was set in.
+        return new FontMetrics(
+            ascent,
+            descent,
+            gap,
+            primary.UnderlineOffset,
+            primary.UnderlineThickness,
+            primary.StrikeoutOffset,
+            primary.StrikeoutThickness);
+    }
+
+    /// <summary>
     /// Decomposes a stretch of text into the runs a single font draws, one per font change, each
     /// with the glyphs the shaper set it in and the advance it was measured to.
     /// </summary>

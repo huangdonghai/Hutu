@@ -161,13 +161,22 @@ internal sealed class FusedParent
         TextStrokeColor = style.TextStrokeColor,
         TextFillColor = style.TextFillColor,
 
-        // The nearest declaration at or above this element, not merely its own. A number or a
-        // share is re-resolved against every element's own size, so it has to keep travelling
-        // down: taken from the element alone it survived one level and no more, and a grandchild
-        // fell back to the pixels its parent had already resolved - a body's 1.3333 reached a
-        // 12.8px note as 21.3px instead of 17.1px. A length is unaffected: it does not parse
-        // as a number in the resolver, which then takes the resolved value as it always did.
-        LineHeightHit = cascade.Find("line-height") ?? LineHeightHit,
+        // The nearest declaration at or above this element, not merely its own. A number is the form
+        // that is re-read at every element - its computed value is the number, and each element it
+        // reaches multiplies it by its own size - so it has to keep travelling down: taken from the
+        // element alone it survived one level and no more, and a grandchild fell back to the pixels
+        // its parent had already resolved - a body's 1.3333 reached a 12.8px note as 21.3px instead of
+        // 17.1px. A share does not re-read that way (CSS 2.2 §10.8.1 computes it once, against the font
+        // size of the element that declared it), and the resolver takes the parent's own resolved value
+        // for it; a length is unaffected either way.
+        //
+        // `inherit` is left out on purpose: it states no value of its own, so what it asks for - and
+        // what everything under it asks for - is the declaration it inherited. Storing it here would
+        // bury that declaration, and a `line-height: inherit` on a wrapper would stop the number behind
+        // it from ever being read again.
+        LineHeightHit = cascade.Find("line-height") is { } lineHeight && !ComputedStyle.IsInherit(lineHeight)
+            ? lineHeight
+            : LineHeightHit,
         WhiteSpace = style.WhiteSpace,
         Align = style.TextAlign,
         Visibility = style.Visibility,

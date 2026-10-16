@@ -741,11 +741,13 @@ public sealed class SkiaRenderingTests
         Assert.That(content.BorderBox.X, Is.EqualTo(14).Within(1), "the padding");
         Assert.That(content.BorderBox.Right, Is.EqualTo(900 - 14).Within(1), "the column takes the whole width");
 
-        // The single item stretches to the grid's one implicit row - an `auto` track sized by the list
-        // of sample links - so it is taller than the workspace's own box, which overflows exactly as
-        // it does in a browser.
+        // The workspace's one implicit row is filled by the space the top row leaves rather than by the
+        // list the panel holds: the panel clips its overflow, and CSS Grid 6.6 gives an item whose block
+        // overflow is a scroll axis an automatic minimum size of zero - so a list taller than the panel
+        // overflows inside it and is cut off there, as it is in a browser, instead of stretching the
+        // grid past the viewport.
         Assert.That(content.BorderBox.Y, Is.EqualTo(workspace.BorderBox.Y + 14).Within(1), "the workspace padding");
-        Assert.That(content.BorderBox.Height, Is.GreaterThan(workspace.BorderBox.Height - 28), "the row is as tall as the list of links");
+        Assert.That(content.BorderBox.Height, Is.EqualTo(workspace.BorderBox.Height - 28).Within(1), "the panel fills the workspace");
 
         Assert.That(CountNonWhitePixels(view.Paint!, measurer), Is.GreaterThan(1000));
     }
