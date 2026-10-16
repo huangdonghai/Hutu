@@ -53,6 +53,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     {
         _resolver = resolver ?? new SkiaFontResolver();
         _blobs = new SkiaTextBlobCache(this);
+        _resolver.Registered += Invalidate;
     }
 
     /// <summary>Gets the resolver this measurer shares its typefaces with.</summary>
@@ -170,6 +171,32 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         return _charAdvances.GetOrAdd(
             new CharAdvanceKey(style, character),
             _ => MeasureWidth(character.ToString(), style));
+    }
+
+    /// <summary>
+    /// Lets go of every answer measured or drawn before a fetched face landed: the font, metrics,
+    /// decomposition, cell and advance tables, and the drawn blobs built from them.
+    /// </summary>
+    /// <remarks>
+    /// A family is asked for before its font is fetched - the first layout is built the moment the
+    /// document is parsed - and that earlier question is answered with a system or default face. The
+    /// typeface is thrown away by the resolver when the font registers, but the answers above it are
+    /// cached here and in the blob cache, and a relayout that read them would keep drawing the
+    /// placeholder the family was given while it was still on the wire.
+    /// <para>
+    /// The tables are emptied rather than disposed: a paint already underway may still be holding a
+    /// font or a blob it was handed, and the faces behind them are the resolver's to keep.
+    /// </para>
+    /// </remarks>
+    private void Invalidate()
+    {
+        _fonts.Clear();
+        _fallbackFonts.Clear();
+        _metrics.Clear();
+        _decompositions.Clear();
+        _uprightCells.Clear();
+        _charAdvances.Clear();
+        _blobs.Clear();
     }
 
     public void Dispose()

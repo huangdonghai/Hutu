@@ -65,6 +65,23 @@ internal sealed class SkiaTextBlobCache : IDisposable
         }
     }
 
+    /// <summary>
+    /// Empties the cache, so the next draw builds its blobs out of the glyphs of the faces that are
+    /// here now rather than the ones a face still on the wire was standing in for.
+    /// </summary>
+    /// <remarks>
+    /// What is dropped is not disposed: a paint already underway may still be drawing one of the
+    /// blobs, and each is native memory the next build lays down again anyway. The gate is taken so a
+    /// build racing the clear cannot put the blob it made back into the emptied cache.
+    /// </remarks>
+    public void Clear()
+    {
+        lock (_gate)
+        {
+            _blobs.Clear();
+        }
+    }
+
     public void Dispose()
     {
         foreach (var blob in _blobs.Values)

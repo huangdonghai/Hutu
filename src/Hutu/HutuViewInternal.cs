@@ -26,6 +26,7 @@ public sealed class HutuViewInternal : IDisposable
     private readonly HutuRenderDevice _renderDevice = new();
     private readonly RenderingPipeline _pipeline;
     private readonly IImageLoader? _imageLoader;
+    private readonly IFontLoader? _fontLoader;
     private readonly ITextMeasurer? _textMeasurer;
     private readonly InteractionState _state = new();
     private readonly StylePseudoIndex _pseudos = new();
@@ -39,14 +40,19 @@ public sealed class HutuViewInternal : IDisposable
     private TextSelection? _selection;
 
     /// <summary>
-    /// Creates the renderer. The text measurer and the image loader are supplied by the platform
-    /// backend: without the measurer the pipeline stops at the box tree, and without the loader
-    /// images are sized from their attributes alone.
+    /// Creates the renderer. The text measurer, the image loader and the font loader are supplied by
+    /// the platform backend: without the measurer the pipeline stops at the box tree, without the
+    /// image loader pictures are sized from their attributes alone, and without the font loader the
+    /// faces a page links to never arrive, so its own typefaces are asked for in vain.
     /// </summary>
-    public HutuViewInternal(ITextMeasurer? textMeasurer = null, IImageLoader? imageLoader = null)
+    public HutuViewInternal(
+        ITextMeasurer? textMeasurer = null,
+        IImageLoader? imageLoader = null,
+        IFontLoader? fontLoader = null)
     {
         _pipeline = new RenderingPipeline(_renderDevice, textMeasurer, imageLoader);
         _imageLoader = imageLoader;
+        _fontLoader = fontLoader;
         // Kept rather than only handed on: the selector that answers selection questions has to
         // measure against the same fonts the layout was placed with.
         _textMeasurer = textMeasurer;
@@ -403,6 +409,7 @@ public sealed class HutuViewInternal : IDisposable
         CancellationToken cancellationToken = default)
     {
         var document = await LoadDocumentAsync(url, cancellationToken).ConfigureAwait(false);
+        await PrefetchFontsAsync(cancellationToken).ConfigureAwait(false);
         await PrefetchImagesAsync(cancellationToken).ConfigureAwait(false);
         return document;
     }
@@ -448,6 +455,7 @@ public sealed class HutuViewInternal : IDisposable
     public async Task<IDocument> SetHtml(string html, string? url = null)
     {
         var document = await SetHtmlDocumentAsync(html, url).ConfigureAwait(false);
+        await PrefetchFontsAsync(CancellationToken.None).ConfigureAwait(false);
         await PrefetchImagesAsync(CancellationToken.None).ConfigureAwait(false);
         return document;
     }
@@ -1013,6 +1021,38 @@ public sealed class HutuViewInternal : IDisposable
     private static Boolean IsLocal(String url) =>
         url.StartsWith("file:", StringComparison.OrdinalIgnoreCase) ||
         url.StartsWith("data:", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Fetches the faces the document links to, and lays the page out again with them.
+    /// </summary>
+    /// <remarks>
+    /// A page is measured in the typeface it is going to be drawn in, so a face that arrives after the
+    /// first build changes every line of it - and the build cannot wait for a network call. This is the
+    /// second pass that makes the two agree, and it is why fonts are fetched before images rather than
+    /// with them: a picture that arrives late moves the boxes below it, a font moves every character.
+    /// </remarks>
+    public async Task PrefetchFontsAsync(CancellationToken cancellationToken)
+    {
+        if (_fontLoader is null || Document is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<FontRequest> faces = FontFaceTable.From(Document).Requests();
+
+        if (faces.Count == 0)
+        {
+            return;
+        }
+
+        var requesters = CreateRequesterChain();
+
+        await _fontLoader
+            .LoadAsync(faces, (url, token) => FetchResourceAsync(requesters, url, token), cancellationToken)
+            .ConfigureAwait(false);
+
+        UpdateRenderTree();
+    }
 
     private async Task PrefetchImagesAsync(Func<String, Boolean>? shouldFetch, CancellationToken cancellationToken)
     {

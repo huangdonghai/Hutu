@@ -1,3 +1,4 @@
+using Hutu.Rendering;
 using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
@@ -84,6 +85,66 @@ public sealed class FontFaceTests
 
         Assert.That(Text(view).Font.Family, Is.EqualTo("Some Face"));
     }
+
+    [Test]
+    public async Task AFormatThisReaderCannotDecodeIsSkippedForTheNextOne()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><head><style>" +
+            "@font-face { font-family: Icon; src: url(a.eot) format(\"embedded-opentype\"), " +
+            "url(b.woff) format(\"woff\"), url(c.ttf) format(\"truetype\") }" +
+            "</style></head><body></body></html>");
+
+        var files = FontFaceTable.From(view.Document).Files["Icon"];
+
+        Assert.That(
+            files.Select(file => Name(file.Url)),
+            Is.EqualTo(new[] { "b.woff", "c.ttf" }),
+            "CSS Fonts 3 §4.3: a format that is not supported is not even fetched, and the first " +
+            "reference that can be activated is the one used");
+    }
+
+    [Test]
+    public async Task ALocalSourceIsReadInThePlaceItStands()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><head><style>" +
+            "@font-face { font-family: Mine; src: local(\"Some Face\"), url(d.ttf) format(\"truetype\") }" +
+            "</style></head><body></body></html>");
+
+        var table = FontFaceTable.From(view.Document);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(table.Expand("Mine"), Is.EqualTo("Some Face"), "the local copy is what the name stands for");
+            Assert.That(table.Files["Mine"].Select(file => Name(file.Url)), Is.EqualTo(new[] { "d.ttf" }),
+                "and the file behind it is still there for when the machine has no such face");
+        });
+    }
+
+    [Test]
+    public async Task AnUnsupportedFormatAloneLeavesNothingToFetch()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><head><style>" +
+            "@font-face { font-family: Mine; src: url(e.eot) format(\"embedded-opentype\") }" +
+            "</style></head><body></body></html>");
+
+        Assert.That(
+            FontFaceTable.From(view.Document).Files.ContainsKey("Mine"),
+            Is.False,
+            "a face whose only source is a format this reader cannot decode has no file behind it");
+    }
+
+    /// <summary>Gets the file part of a font URL, which is resolved against the document before it is
+    /// handed to a fetch - and whose directory a test has no business depending on.</summary>
+    private static String Name(String url) => url[(url.LastIndexOf('/') + 1)..];
 
     private static HutuViewInternal CreateView()
     {

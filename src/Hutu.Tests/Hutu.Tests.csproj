@@ -22,6 +22,8 @@
   <ItemGroup>
     <!-- Served through the res: protocol by the embedded resource requester, exactly like the samples. -->
     <EmbeddedResource Include="TestImages\**\*" />
+    <!-- A real WOFF 2 file, kept so the decoder is tested against one without a network call. -->
+    <EmbeddedResource Include="Fonts\**\*" />
   </ItemGroup>
 
 </Project>

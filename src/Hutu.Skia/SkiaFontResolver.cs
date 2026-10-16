@@ -25,6 +25,17 @@ internal sealed class SkiaFontResolver : IDisposable
     private const Int32 Candidates = 12;
 
     private readonly ConcurrentDictionary<FaceKey, SKTypeface> _typefaces = new();
+
+    /// <summary>
+    /// The faces that came down the wire, by the family name the sheet asked for them under.
+    /// </summary>
+    /// <remarks>
+    /// A name an <c>@font-face</c> rule defines is not a name the platform knows - it is a name the
+    /// page made up, and the font that answers to it only exists because it was fetched. CSS Fonts 3
+    /// §5.2 has the agent look for the family "among fonts defined via @font-face rules and then among
+    /// available system fonts", so these are asked before the font manager is.
+    /// </remarks>
+    private readonly ConcurrentDictionary<String, SKTypeface> _fetched = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<FallbackKey, Fallback> _fallbacks = new();
     private readonly List<(String Name, String Path)> _files = new(FontFiles.All());
 
@@ -46,12 +57,76 @@ internal sealed class SkiaFontResolver : IDisposable
             new FallbackKey(codepoint, style.Weight, style.IsItalic),
             _ => FindFallback(codepoint, style)).Typeface;
 
+    /// <summary>
+    /// Raised when a fetched family lands, so the answers that were computed while it was still on the
+    /// wire - a resolved typeface, a font, a measured width, a drawn blob - can be let go and asked for
+    /// again against the face that finally answered.
+    /// </summary>
+    internal event Action? Registered;
+
+    /// <summary>
+    /// Hands the resolver a font that was fetched, under the family name the page gave it. The
+    /// resolver owns it from here, and disposes it when it is disposed.
+    /// </summary>
+    /// <remarks>
+    /// The family is very often asked for before its font arrives - the first layout is built the
+    /// moment the document is parsed, and the font is still on the wire - and that earlier question was
+    /// answered with a system font, or with the default one. That answer is cached, so it has to be
+    /// thrown away here: the relayout this registration is for would otherwise be handed the same
+    /// wrong face it was given before, and the font would have been fetched for nothing.
+    /// </remarks>
+    public void Register(String family, SKTypeface typeface)
+    {
+        var name = FontStyle.Unquote(family.Trim());
+        _fetched[name] = typeface;
+
+        // A key is built from the whole family list, so a face it resolved to goes stale when any one
+        // of the names in that list changes answer - not only when the list is that single name.
+        foreach (var key in _typefaces.Keys)
+        {
+            if (Names(key.Family, name))
+            {
+                _typefaces.TryRemove(key, out _);
+            }
+        }
+
+        // The last layout measured, and the last paint drew, with the face this family was standing in
+        // for, and those answers are cached higher up than the resolver can reach. Whoever holds them
+        // listens here, so the relayout that follows reads the face that actually arrived.
+        Registered?.Invoke();
+    }
+
+    /// <summary>Gets whether a family has already been fetched, so a relayout never asks twice.</summary>
+    public Boolean Holds(String family) => _fetched.ContainsKey(FontStyle.Unquote(family.Trim()));
+
+    /// <summary>
+    /// Gets whether a family list asks for a name, which is what makes a key built from that list go
+    /// stale when the name's answer changes.
+    /// </summary>
+    private static Boolean Names(String familyList, String name)
+    {
+        foreach (var family in FontStyle.Split(familyList))
+        {
+            if (String.Equals(family, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private SKTypeface CreateTypeface(FaceKey key)
     {
         var style = CreateStyle(key.Weight, key.Italic);
 
         foreach (var family in FontStyle.Split(key.Family))
         {
+            if (_fetched.TryGetValue(FontStyle.Unquote(family), out var fetched))
+            {
+                return fetched;
+            }
+
             var match = SKFontManager.Default.MatchFamily(family, style);
 
             if (match is not null)
@@ -184,8 +259,26 @@ internal sealed class SkiaFontResolver : IDisposable
     private static SKFontStyle CreateStyle(Int32 weight, Boolean italic) =>
         new(weight, (Int32)SKFontStyleWidth.Normal, italic ? SKFontStyleSlant.Italic : SKFontStyleSlant.Upright);
 
+    /// <summary>
+    /// Gets whether a code point sits in one of Unicode's three private use areas.
+    /// </summary>
+    private static Boolean IsPrivateUse(Int32 codepoint) =>
+        (codepoint >= 0xE000 && codepoint <= 0xF8FF) ||
+        (codepoint >= 0xF0000 && codepoint <= 0xFFFFD) ||
+        (codepoint >= 0x100000 && codepoint <= 0x10FFFD);
+
     private static Fallback FindFallback(Int32 codepoint, FontStyle style)
     {
+        // §5.4: a code point in a private use area "must only match font families named in the
+        // font-family list", and where none of them has it the page "must display some form of missing
+        // glyph symbol rather than attempting system font fallback". What a private use area holds is
+        // decided by whoever put the font there - an icon font's pictures - so a character taken from
+        // some other family's font would be a picture of the wrong thing, or a letter.
+        if (IsPrivateUse(codepoint))
+        {
+            return default;
+        }
+
         // The family is left unset so the platform searches its whole system for the character rather
         // than the one family that failed to have it.
         var match = SKFontManager.Default.MatchCharacter(null, CreateStyle(style.Weight, style.IsItalic), null, codepoint);
@@ -210,6 +303,13 @@ internal sealed class SkiaFontResolver : IDisposable
         }
 
         _fallbacks.Clear();
+
+        foreach (var fetched in _fetched.Values)
+        {
+            fetched.Dispose();
+        }
+
+        _fetched.Clear();
     }
 
     private readonly struct FaceKey : IEquatable<FaceKey>

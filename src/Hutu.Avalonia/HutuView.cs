@@ -33,6 +33,7 @@ public class HutuView : ScrollViewer
 
     private readonly SkiaTextMeasurer _measurer = new();
     private readonly SkiaImageLoader _images = new();
+    private readonly SkiaFontLoader _fonts;
     private readonly HutuViewInternal _internalView;
     private readonly HutuSurface _surface;
 
@@ -74,8 +75,10 @@ public class HutuView : ScrollViewer
     public HutuView()
     {
         // The same loader decodes the images for layout and draws them, so a run is never measured
-        // against one decode and painted from another.
-        _internalView = new HutuViewInternal(_measurer, _images);
+        // against one decode and painted from another. The font loader shares the measurer's resolver,
+        // so the faces a page links to are the very typefaces measurement and painting read.
+        _fonts = new SkiaFontLoader(_measurer);
+        _internalView = new HutuViewInternal(_measurer, _images, _fonts);
 
         // The renderer asks where the reader has been; the answer is this view's to give, and a view
         // that was never told anything answers that nothing has been read.
@@ -143,6 +146,11 @@ public class HutuView : ScrollViewer
     /// hang from needed a tenth of one of them: making a reader wait for the whole of it is how a
     /// page that is merely slow to fill looks as though nothing had happened at all.
     /// </para>
+    /// <para>
+    /// The faces the document links to are fetched before the pictures are, because a font moves every
+    /// character where a picture only moves what sits below it - so the text is relaid out in the
+    /// typeface it was meant to be read in before the images are allowed to shift it again.
+    /// </para>
     /// </remarks>
     public async Task<IDocument> LoadUrlAsync(
         string url,
@@ -152,6 +160,9 @@ public class HutuView : ScrollViewer
         _surface.Refresh();
         OpenAtTheStart();
 
+        // Fonts first: the text is relaid out in the faces it was meant to be read in before the
+        // pictures are allowed to shift the boxes around it.
+        await _internalView.PrefetchFontsAsync(cancellationToken);
         await _internalView.PrefetchImagesAsync(cancellationToken);
         RedrawWithThePictures();
         return document;
@@ -174,6 +185,9 @@ public class HutuView : ScrollViewer
         _surface.Refresh();
         OpenAtTheStart();
 
+        // Fonts first, for the same reason as LoadUrlAsync: the text is relaid out in its own faces
+        // before the pictures move anything below it.
+        await _internalView.PrefetchFontsAsync(CancellationToken.None);
         await _internalView.PrefetchImagesAsync(CancellationToken.None);
         RedrawWithThePictures();
         return document;
