@@ -902,6 +902,20 @@ internal readonly struct ComputedStyle
     public static Boolean ResolveClipsOverflowFused(ICssProperty? x, ICssProperty? y) =>
         !IsOverflowVisibleText(x?.Value) || !IsOverflowVisibleText(y?.Value);
 
+    /// <summary>
+    /// Which axes are scroll axes (hidden/scroll/auto) for the automatic minimum size of a flex or grid
+    /// item. <c>clip</c> is deliberately excluded - it is not a scroll container, and behaves like
+    /// <c>visible</c> for sizing (CSS Overflow 3, and the WPT <c>min-size-auto-overflow-clip</c>).
+    /// </summary>
+    public static (Boolean Inline, Boolean Block) ResolveScrollsFused(ICssProperty? x, ICssProperty? y) =>
+        (IsScrollOverflowText(x?.Value), IsScrollOverflowText(y?.Value));
+
+    private static Boolean IsScrollOverflowText(String? text) =>
+        text is not null &&
+        (text.Trim().Equals("hidden", StringComparison.OrdinalIgnoreCase) ||
+         text.Trim().Equals("scroll", StringComparison.OrdinalIgnoreCase) ||
+         text.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase));
+
     private static Boolean IsOverflowVisibleText(String? text) =>
         String.IsNullOrWhiteSpace(text) || text.Trim().Equals("visible", StringComparison.OrdinalIgnoreCase);
 
@@ -1652,6 +1666,8 @@ internal readonly struct ComputedStyle
             Float = ToFloat(Keyword("float", CssInitialValues.Float)),
             Clear = ToClear(Keyword("clear", CssInitialValues.Clear)),
             ClipsOverflow = !IsOverflowVisible("overflow-x") || !IsOverflowVisible("overflow-y"),
+            ScrollsInline = IsScrollOverflowText(ReadKeyword("overflow-x")),
+            ScrollsBlock = IsScrollOverflowText(ReadKeyword("overflow-y")),
             ObjectFit = value.ToLowerInvariant() switch
             {
                 "contain" => Layout.ObjectFit.Contain,
@@ -2663,6 +2679,13 @@ internal readonly struct ComputedStyle
     /// enough: with one axis <c>visible</c> and the other not, CSS makes the visible one <c>auto</c>.
     /// </remarks>
     public Boolean ClipsOverflow => _values.DisplayPositioning.ClipsOverflow;
+
+    /// <summary>Gets whether the inline (x) axis is a scroll axis, which zeroes a flex/grid item's
+    /// automatic minimum size on that axis. <c>clip</c> does not count (it sizes like <c>visible</c>).</summary>
+    public Boolean ScrollsInline => _values.DisplayPositioning.ScrollsInline;
+
+    /// <summary>Gets whether the block (y) axis is a scroll axis, by the same rule as <see cref="ScrollsInline"/>.</summary>
+    public Boolean ScrollsBlock => _values.DisplayPositioning.ScrollsBlock;
 
     /// <summary>
     /// Gets the four margins, with their units intact: <c>auto</c> survives, which is what makes

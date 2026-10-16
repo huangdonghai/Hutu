@@ -182,6 +182,14 @@ internal sealed record DisplayPositioningArea
     /// <summary>Gets whether either axis clips its overflow, which is all this engine does with
     /// <c>overflow</c>: it scrolls the document rather than the box.</summary>
     internal Boolean ClipsOverflow { get; init; }
+
+    /// <summary>Gets whether the inline (x) axis is a scroll axis - <c>hidden</c>/<c>scroll</c>/<c>auto</c>,
+    /// but not <c>visible</c> or <c>clip</c>. A scroll axis zeroes a flex/grid item's automatic minimum
+    /// size on that axis (CSS Flexbox 4.5); <c>clip</c> behaves like <c>visible</c> for sizing.</summary>
+    internal Boolean ScrollsInline { get; init; }
+
+    /// <summary>Gets whether the block (y) axis is a scroll axis, by the same rule as <see cref="ScrollsInline"/>.</summary>
+    internal Boolean ScrollsBlock { get; init; }
 }
 
 /// <summary>

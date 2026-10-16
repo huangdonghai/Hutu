@@ -69,6 +69,42 @@ public sealed class FlexLayoutTests
     }
 
     [Test]
+    public async Task AnOverflowHiddenFlexItemShrinksBelowItsWideContent()
+    {
+        // CSS Flexbox 4.5: a scroll-axis item's automatic minimum size is zero, so it gives up its
+        // 400-pixel child and shares the line. An identical `overflow: visible` item would keep
+        // min-width:auto at its content and refuse to shrink - the whole reason a `flex-grow` column
+        // with a wide (scrolling) child can otherwise balloon the page.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;width:200px'>" +
+            "<div id='a' style='flex:1;overflow:hidden'><div style='width:400px;height:10px'></div></div>" +
+            "<div id='b' style='flex:1;overflow:hidden'><div style='width:400px;height:10px'></div></div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(100).Within(0.5));
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(100).Within(0.5));
+    }
+
+    [Test]
+    public async Task AnOverflowClipFlexItemKeepsItsContentMinimum()
+    {
+        // `clip` is not a scroll container: for min-size it behaves like `visible`, so the item keeps
+        // its content floor and the two 400-pixel items do not shrink to the 200-pixel line.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;width:200px'>" +
+            "<div id='a' style='flex:1;overflow:clip'><div style='width:400px;height:10px'></div></div>" +
+            "<div id='b' style='flex:1;overflow:clip'><div style='width:400px;height:10px'></div></div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(400).Within(0.5));
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(400).Within(0.5));
+    }
+
+    [Test]
     public async Task PercentageBasisResolvesAgainstTheContainer()
     {
         using var view = CreateView(400);

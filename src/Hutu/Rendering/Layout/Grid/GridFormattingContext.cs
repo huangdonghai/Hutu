@@ -746,7 +746,14 @@ internal sealed class GridFormattingContext
             // anonymous wrapper, whose declared width belongs to the container.
             var intrinsic = _engine.MeasureContentIntrinsic(item.Box, context);
             var minimum = (BoxModel.ContentBound(style.MinWidth, basis, insetH, isBorderBox) ?? 0) + insetH;
-            var minContribution = Math.Max(intrinsic.MinContent, minimum) + margin;
+
+            // CSS Grid 4.5, like Flexbox 4.5: an item whose inline overflow is a scroll axis has an
+            // automatic minimum size of zero - its content scrolls, so it sets no floor - while an
+            // explicit min-width still applies. This is what lets a `col-span-full overflow:hidden`
+            // carousel shrink to its track instead of inflating the whole grid's min-content.
+            var contentMin = item.Box.Style.ScrollsInline ? 0 : intrinsic.MinContent;
+
+            var minContribution = Math.Max(contentMin, minimum) + margin;
             var maxContribution = Math.Max(intrinsic.MaxContent, minimum) + margin;
 
             if (BoxModel.ContentBound(style.MaxWidth, basis, insetH, isBorderBox) is { } cap)

@@ -398,6 +398,7 @@ internal static class FusedStyleFactory
         }
         else
         {
+            var scrolls = ComputedStyle.ResolveScrollsFused(find("overflow-x"), find("overflow-y"));
             var built = new DisplayPositioningArea
             {
                 Display = ComputedStyle.ResolveDisplayFused(find("display")),
@@ -405,6 +406,8 @@ internal static class FusedStyleFactory
                 Clear = ComputedStyle.ResolveClearFused(find("clear")),
                 ObjectFit = ComputedStyle.ResolveObjectFitFused(find("object-fit")),
                 ClipsOverflow = ComputedStyle.ResolveClipsOverflowFused(find("overflow-x"), find("overflow-y")),
+                ScrollsInline = scrolls.Inline,
+                ScrollsBlock = scrolls.Block,
             };
 
             display = pool is null ? built : pool.DisplayPositioning(built);

@@ -185,15 +185,26 @@ internal sealed partial class FlexFormattingContext
 
             if (item.MinMain is null && isRow)
             {
-                // The automatic minimum size keeps a flex item from shrinking below its content, but it
-                // is the *smaller* of the content suggestion and the declared size, so a `width: 200px`
-                // item whose content wants less still shrinks when the line is too short. Measuring the
-                // content with the width set aside is what makes that distinction.
-                var contentMin = Math.Max(
-                    0,
-                    _engine.MeasureContentIntrinsic(item.Box, context).MinContent - item.InsetMain);
-                var declared = DeclaredContentMain(item, isRow, mainSize);
-                item.MinMain = declared is { } specified ? Math.Min(specified, contentMin) : contentMin;
+                // CSS Flexbox 4.5: an item whose main-axis overflow is a scroll axis has an automatic
+                // minimum size of zero - its content scrolls, so it sets no floor - which is what lets a
+                // `flex-grow` item shrink below a wide (scrolling) child instead of ballooning the page.
+                // `visible` and `clip` are not scroll axes, so they keep the content-based floor.
+                if (item.Box.Style.ScrollsInline)
+                {
+                    item.MinMain = 0;
+                }
+                else
+                {
+                    // The automatic minimum size keeps a flex item from shrinking below its content, but it
+                    // is the *smaller* of the content suggestion and the declared size, so a `width: 200px`
+                    // item whose content wants less still shrinks when the line is too short. Measuring the
+                    // content with the width set aside is what makes that distinction.
+                    var contentMin = Math.Max(
+                        0,
+                        _engine.MeasureContentIntrinsic(item.Box, context).MinContent - item.InsetMain);
+                    var declared = DeclaredContentMain(item, isRow, mainSize);
+                    item.MinMain = declared is { } specified ? Math.Min(specified, contentMin) : contentMin;
+                }
             }
 
             item.HypotheticalMain = item.ClampMain(item.BaseMain);
