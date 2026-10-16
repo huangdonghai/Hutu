@@ -302,13 +302,21 @@ internal sealed class RuleBucketIndex
     /// </summary>
     private readonly Boolean[] _reaches;
 
+    /// <summary>
+    /// The origin of each flattened rule - user-agent or author - in the same order as
+    /// <see cref="_rules"/>. It is what lets an author declaration win over a user-agent one
+    /// regardless of specificity (see <see cref="MatchedCascade.Tier"/>).
+    /// </summary>
+    private readonly RuleOrigin[] _origins;
+
     private RuleBucketIndex(
         List<ICssStyleRule> rules,
         Dictionary<String, List<Int32>> idBuckets,
         Dictionary<String, List<Int32>> classBuckets,
         Dictionary<String, List<Int32>> tagBuckets,
         List<Int32> unkeyed,
-        Boolean[] reaches)
+        Boolean[] reaches,
+        RuleOrigin[] origins)
     {
         _rules = rules;
         _idBuckets = idBuckets;
@@ -316,6 +324,7 @@ internal sealed class RuleBucketIndex
         _tagBuckets = tagBuckets;
         _unkeyed = unkeyed;
         _reaches = reaches;
+        _origins = origins;
     }
 
     /// <summary>Gets the flattened rules in the order they are matched in.</summary>
@@ -329,24 +338,26 @@ internal sealed class RuleBucketIndex
     public static RuleBucketIndex Build(IEnumerable<ICssStyleSheet> sheets, IRenderDevice device)
     {
         var collected = new List<ICssStyleRule>();
+        var origins = new List<RuleOrigin>();
 
         foreach (var sheet in sheets)
         {
             if (!sheet.IsDisabled && SheetApplies(sheet, device))
             {
+                // A sheet the document authored carries an owner node; the reader's default
+                // (user-agent) sheet is parsed without one. Origin is the cascade's most
+                // significant sort key: an author declaration beats a user-agent one whatever
+                // the latter's specificity (see MatchedCascade.Tier).
+                var origin = sheet.OwnerNode is null ? RuleOrigin.UserAgent : RuleOrigin.Author;
+
                 foreach (var rule in sheet.Rules.GetMatchingStyles(device))
                 {
-                    collected.Add(rule);
+                    Flatten(rule, collected, origins, origin);
                 }
             }
         }
 
-        var flattened = new List<ICssStyleRule>(collected.Count);
-
-        for (var i = 0; i < collected.Count; i++)
-        {
-            Flatten(collected[i], flattened);
-        }
+        var flattened = collected;
 
         var idBuckets = new Dictionary<String, List<Int32>>(StringComparer.Ordinal);
         var classBuckets = new Dictionary<String, List<Int32>>(StringComparer.Ordinal);
@@ -391,7 +402,7 @@ internal sealed class RuleBucketIndex
             reaches[i] = ReachesOutside(flattened[i]);
         }
 
-        return new RuleBucketIndex(flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches);
+        return new RuleBucketIndex(flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches, origins.ToArray());
     }
 
     /// <summary>
@@ -542,7 +553,7 @@ internal sealed class RuleBucketIndex
 
         var candidates = CollectCandidates(element);
         var inline = InlineOf(element);
-        var matched = MatchedCascade.MatchRules(element, _rules, candidates);
+        var matched = MatchedCascade.MatchRules(element, _rules, candidates, _origins);
         var key = new CascadeKey(matched, inline?.CssText);
 
         // The match is what the key is built from, so it must run before the lookup; what the lookup
@@ -610,10 +621,10 @@ internal sealed class RuleBucketIndex
     /// </remarks>
     private readonly struct CascadeKey : IEquatable<CascadeKey>
     {
-        private readonly IReadOnlyList<ICssStyleRule> _rules;
+        private readonly List<MatchedRule> _rules;
         private readonly String? _inline;
 
-        public CascadeKey(IReadOnlyList<ICssStyleRule> rules, String? inline)
+        public CascadeKey(List<MatchedRule> rules, String? inline)
         {
             _rules = rules;
             _inline = inline;
@@ -629,7 +640,7 @@ internal sealed class RuleBucketIndex
 
             for (var i = 0; i < _rules.Count; i++)
             {
-                if (!ReferenceEquals(_rules[i], other._rules[i]))
+                if (!ReferenceEquals(_rules[i].Rule, other._rules[i].Rule))
                 {
                     return false;
                 }
@@ -647,7 +658,7 @@ internal sealed class RuleBucketIndex
 
             for (var i = 0; i < _rules.Count; i++)
             {
-                hash.Add(RuntimeHelpers.GetHashCode(_rules[i]));
+                hash.Add(RuntimeHelpers.GetHashCode(_rules[i].Rule));
             }
 
             return hash.ToHashCode();
@@ -715,9 +726,10 @@ internal sealed class RuleBucketIndex
         return String.IsNullOrWhiteSpace(sheet.Media.MediaText);
     }
 
-    private static void Flatten(ICssStyleRule rule, List<ICssStyleRule> flattened)
+    private static void Flatten(ICssStyleRule rule, List<ICssStyleRule> flattened, List<RuleOrigin> origins, RuleOrigin origin)
     {
         flattened.Add(rule);
+        origins.Add(origin);
 
         var subRules = rule.Rules;
 
@@ -725,7 +737,7 @@ internal sealed class RuleBucketIndex
         {
             if (subRules[i] is ICssStyleRule subRule)
             {
-                Flatten(subRule, flattened);
+                Flatten(subRule, flattened, origins, origin);
             }
         }
     }

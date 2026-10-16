@@ -19,9 +19,41 @@ namespace Hutu.Rendering.Boxes;
 /// accumulation exactly: the last important declaration wins, and only when nothing
 /// important is declared does the last normal one.
 /// </remarks>
+/// <summary>Where a matched declaration came from: the cascade's most significant sort key.</summary>
+/// <remarks>
+/// A declaration's origin decides more than its specificity does. An author (document) declaration
+/// beats a user-agent one no matter how specific the latter's selector is - which is why an author
+/// <c>a { text-decoration: none }</c> overrides the user-agent <c>:link { text-decoration: underline }</c>.
+/// User stylesheets are not supplied by the reader, so only user-agent and author occur in practice.
+/// </remarks>
+internal enum RuleOrigin : Byte
+{
+    UserAgent = 0,
+    User = 1,
+    Author = 2,
+}
+
+/// <summary>One rule an element matched, together with the three things that decide whether its
+/// declaration of a property wins: its origin, its specificity and its place in the document.</summary>
+internal readonly struct MatchedRule
+{
+    public MatchedRule(ICssStyleRule rule, RuleOrigin origin, Priority specificity, Int32 docOrder)
+    {
+        Rule = rule;
+        Origin = origin;
+        Specificity = specificity;
+        DocOrder = docOrder;
+    }
+
+    public ICssStyleRule Rule { get; }
+    public RuleOrigin Origin { get; }
+    public Priority Specificity { get; }
+    public Int32 DocOrder { get; }
+}
+
 internal sealed class MatchedCascade
 {
-    private readonly List<ICssStyleRule> _rules;
+    private readonly List<MatchedRule> _rules;
     private readonly ICssStyleDeclaration? _inline;
 
     /// <summary>
@@ -44,14 +76,26 @@ internal sealed class MatchedCascade
     /// </summary>
     private CascadeScan? _scan;
 
-    internal MatchedCascade(List<ICssStyleRule> rules, ICssStyleDeclaration? inline)
+    internal MatchedCascade(List<MatchedRule> rules, ICssStyleDeclaration? inline)
     {
         _rules = rules;
         _inline = inline;
     }
 
     /// <summary>Gets the rules that matched, in the order the cascade applies them.</summary>
-    internal IReadOnlyList<ICssStyleRule> Matched => _rules;
+    internal IReadOnlyList<ICssStyleRule> Matched
+    {
+        get
+        {
+            var rules = new ICssStyleRule[_rules.Count];
+            for (var i = 0; i < _rules.Count; i++)
+            {
+                rules[i] = _rules[i].Rule;
+            }
+
+            return rules;
+        }
+    }
 
     /// <summary>Gets the element's own inline style, which the cascade applies last of all.</summary>
     internal ICssStyleDeclaration? Inline => _inline;
@@ -78,22 +122,26 @@ internal sealed class MatchedCascade
     /// The rules that could match it, collected by the caller - the index needs them to key the
     /// result, and collecting them twice would pay for the bucketing twice.
     /// </param>
-    internal static List<ICssStyleRule> MatchRules(
+    internal static List<MatchedRule> MatchRules(
         IElement element,
         List<ICssStyleRule> rules,
-        List<Int32> candidates)
+        List<Int32> candidates,
+        RuleOrigin[] origins)
     {
         var scope = element.Owner?.DocumentElement;
 
         // Candidates arrive in ascending document order already. A stable insertion sort by
         // specificity keeps equal-specificity rules in that order, without the allocations a
-        // LINQ sort would cost on every element.
-        var matched = new List<ICssStyleRule>(candidates.Count);
+        // LINQ sort would cost on every element. The order is kept for the Matched view; the
+        // winner of each property is decided by origin, importance, specificity and document
+        // order together (see Scan), where origin outranks specificity.
+        var matched = new List<MatchedRule>(candidates.Count);
         var priorities = new List<Priority>(candidates.Count);
 
         for (var i = 0; i < candidates.Count; i++)
         {
-            var rule = rules[candidates[i]];
+            var index = candidates[i];
+            var rule = rules[index];
 
             if (rule.TryMatch(element, scope, out var specificity))
             {
@@ -104,7 +152,7 @@ internal sealed class MatchedCascade
                     at--;
                 }
 
-                matched.Insert(at, rule);
+                matched.Insert(at, new MatchedRule(rule, origins[index], specificity, index));
                 priorities.Insert(at, specificity);
             }
         }
@@ -131,39 +179,107 @@ internal sealed class MatchedCascade
     }
 
     /// <summary>The walk itself, over the matched rules in the order the cascade applies them.</summary>
+    /// <remarks>
+    /// The winner of a property is the declaration with the highest cascade precedence: origin first
+    /// (user-agent below author, user-agent !important above all but inline), then importance, then
+    /// specificity, then document order. The list order is not relied on here - each declaration is
+    /// weighed directly, because a single rule can mix normal and important declarations and so needs
+    /// a different effective origin for each.
+    /// </remarks>
     private ICssProperty? Scan(String name)
     {
-        ICssProperty? important = null;
-        ICssProperty? normal = null;
+        ICssProperty? best = null;
+        var bestTier = -1;
+        var bestSpecificity = default(Priority);
+        var bestOrder = -1;
 
         for (var i = 0; i < _rules.Count; i++)
         {
-            Accumulate(_rules[i].Style.TryGetProperty(name), ref important, ref normal);
+            var matched = _rules[i];
+            var property = matched.Rule.Style.TryGetProperty(name);
+
+            if (property is null)
+            {
+                continue;
+            }
+
+            var tier = Tier(matched.Origin, property.IsImportant, false);
+
+            if (Beats(tier, matched.Specificity, matched.DocOrder, bestTier, bestSpecificity, bestOrder))
+            {
+                best = property;
+                bestTier = tier;
+                bestSpecificity = matched.Specificity;
+                bestOrder = matched.DocOrder;
+            }
         }
 
         if (_inline is not null)
         {
-            Accumulate(_inline.TryGetProperty(name), ref important, ref normal);
+            var property = _inline.TryGetProperty(name);
+
+            if (property is not null)
+            {
+                // Inline style is applied last, so it outranks every normal declaration and, when
+                // important, every other declaration. A normal inline declaration still loses to any
+                // important one - matching the behaviour before origin was tracked.
+                var tier = Tier(RuleOrigin.Author, property.IsImportant, true);
+
+                if (Beats(tier, default, Int32.MaxValue, bestTier, bestSpecificity, bestOrder))
+                {
+                    best = property;
+                }
+            }
         }
 
-        return important ?? normal;
+        return best;
     }
 
-    private static void Accumulate(ICssProperty? property, ref ICssProperty? important, ref ICssProperty? normal)
+    /// <summary>Gets the cascade tier of a declaration: the most significant part of its precedence.</summary>
+    /// <remarks>
+    /// Low to high: user-agent normal (1), user normal (2), author normal (3), inline normal (4),
+    /// author !important (5), user !important (6), user-agent !important (7), inline !important (8).
+    /// So an author declaration beats a user-agent one regardless of specificity, and any important
+    /// declaration beats any normal one.
+    /// </remarks>
+    private static Int32 Tier(RuleOrigin origin, Boolean important, Boolean inline) => (inline, origin, important) switch
     {
-        if (property is null)
+        (true, _, true) => 8,   // inline !important: above everything
+        (true, _, false) => 4,  // inline normal: above author normal, below any important
+        (false, RuleOrigin.UserAgent, false) => 1,
+        (false, RuleOrigin.User, false) => 2,
+        (false, RuleOrigin.Author, false) => 3,
+        (false, RuleOrigin.Author, true) => 5,
+        (false, RuleOrigin.User, true) => 6,
+        (false, RuleOrigin.UserAgent, true) => 7,
+        _ => 3,
+    };
+
+    /// <summary>Gets whether the candidate declaration outranks the best held so far.</summary>
+    private static Boolean Beats(
+        Int32 tier,
+        Priority specificity,
+        Int32 order,
+        Int32 bestTier,
+        Priority bestSpecificity,
+        Int32 bestOrder)
+    {
+        if (tier != bestTier)
         {
-            return;
+            return tier > bestTier;
         }
 
-        if (property.IsImportant)
+        if (specificity > bestSpecificity)
         {
-            important = property;
+            return true;
         }
-        else
+
+        if (bestSpecificity > specificity)
         {
-            normal = property;
+            return false;
         }
+
+        return order > bestOrder;
     }
 
     /// <summary>
@@ -195,7 +311,7 @@ internal sealed class MatchedCascade
 
         for (var i = 0; i < _rules.Count; i++)
         {
-            Read(_rules[i].Style, ref names, ref environment, ref variable);
+            Read(_rules[i].Rule.Style, ref names, ref environment, ref variable);
         }
 
         if (_inline is not null)
