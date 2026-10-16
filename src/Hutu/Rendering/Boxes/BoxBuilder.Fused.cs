@@ -225,11 +225,16 @@ internal static partial class BoxBuilder
         // own, laid out as a block and carrying the style the page gave it. Left inline, a run of
         // `span` and `a` children would be wrapped into one anonymous block that carries the
         // container's style instead - and every flex property those children declared would be
-        // dropped, which is what collapses a card title or a nav row to nothing.
-        if (inItemContainer && kind is BoxKind.Inline or BoxKind.InlineBlock)
+        // dropped, which is what collapses a card title or a nav row to nothing. `inline-flex` and
+        // its fellows are blockified the same way, but only in their outer role: the kind keeps the
+        // container the display named, so an item written `inline-flex` is still a flex container,
+        // and only the inline that would have carried it on a line is taken away.
+        if (inItemContainer && (kind is BoxKind.Inline or BoxKind.InlineBlock))
         {
             kind = BoxKind.Block;
         }
+
+        var inlineOuter = !inItemContainer && HasInlineOuter(kind, style);
 
         // The substitution above is now the one thing that abandons a document. Every formatting
         // context has the readers it needs - `PositionStyle`, `TableStyle`, `FlexStyle`, `GridStyle`
@@ -288,7 +293,7 @@ internal static partial class BoxBuilder
             kind = BoxKind.Block;
         }
 
-        var box = new Box(kind, style) { Element = element, Flow = flow };
+        var box = new Box(kind, style) { Element = element, Flow = flow, IsInlineOuter = inlineOuter };
 
         switch (kind)
         {

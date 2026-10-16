@@ -66,10 +66,10 @@ internal sealed class PositionedLayout
             : context.AbsoluteContainingBlock;
 
         var childContext = context.ForContainingBlock(containingBlock);
-        var measured = _engine.Measure(box, MeasureConstraints.FitWidth(containingBlock.Width), childContext);
 
         var style = box.Style;
         var margin = style.Margin.Resolve(containingBlock.Width);
+        var measured = Measure(box, position, style, containingBlock, margin, childContext);
 
         var (width, x) = Horizontal(position, style, containingBlock, staticPosition.X, measured.Width, margin);
         var (height, y) = Vertical(position, style, containingBlock, staticPosition.Y, measured.Height, margin);
@@ -150,6 +150,38 @@ internal sealed class PositionedLayout
     /// <summary>Resolves an offset to pixels, or to <see cref="Double.NaN"/> for <c>auto</c>.</summary>
     private static Double Pixels(StyleLength length, Double basis) =>
         length.HasValue ? length.Resolve(basis) : Double.NaN;
+
+    /// <summary>
+    /// Measures the out-of-flow box. An automatic width fills the containing block only when both
+    /// horizontal edges are definite; with fewer than two, CSS 2.1 10.3.7 makes the box shrink to fit,
+    /// so a lone <c>left</c> leaves the box the width its content asks for rather than the whole block.
+    /// </summary>
+    private Size Measure(
+        Box box,
+        PositionStyle position,
+        ComputedStyle style,
+        Rect containingBlock,
+        Thickness margin,
+        LayoutContext childContext)
+    {
+        var declared = style.Width.HasValue &&
+            !(style.Width.Kind == StyleLengthKind.Percent && containingBlock.Width <= 0);
+        var fills = position.Left.HasValue && position.Right.HasValue;
+
+        if (declared || fills)
+        {
+            return _engine.Measure(box, MeasureConstraints.FitWidth(containingBlock.Width), childContext);
+        }
+
+        // The preferred width clamped between what the content cannot go below and the room the
+        // containing block leaves it - the same shrink-to-fit a float uses, since both size a box that
+        // the width constraint alone no longer solves for.
+        var intrinsic = _engine.MeasureIntrinsic(box, childContext);
+        var room = Math.Max(0, containingBlock.Width - margin.Horizontal);
+        var fit = Math.Max(intrinsic.MinContent, Math.Min(room, intrinsic.MaxContent));
+
+        return _engine.Measure(box, MeasureConstraints.FitWidth(fit + margin.Horizontal), childContext);
+    }
 
     /// <summary>
     /// Resolves the used width and the left edge of an out-of-flow box. When the width is automatic

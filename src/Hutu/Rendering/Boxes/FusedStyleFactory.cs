@@ -440,6 +440,11 @@ internal static class FusedStyleFactory
                 ClipsOverflow = ComputedStyle.ResolveClipsOverflowFused(find("overflow-x"), find("overflow-y")),
                 ScrollsInline = scrolls.Inline,
                 ScrollsBlock = scrolls.Block,
+
+                // A block container reads this to stand its content where it was asked to along the
+                // block axis, which is what centres a form control's label in the height the control
+                // was given (HTML §15.3.10).
+                AlignContent = FlexStyle.ReadAlignmentFused(find("align-content"), CssInitialValues.AlignContent),
             };
 
             display = pool is null ? built : pool.DisplayPositioning(built);

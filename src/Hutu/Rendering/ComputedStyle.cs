@@ -1645,7 +1645,7 @@ internal readonly struct ComputedStyle
             : null;
 
     /// <summary>The names a display, a clipping or a float property can begin with.</summary>
-    private static readonly String[] DisplayNames = { "display", "object-fit", "overflow", "float", "clear" };
+    private static readonly String[] DisplayNames = { "display", "object-fit", "overflow", "float", "clear", "align-content" };
 
     /// <summary>The name an outline property begins with. The colour matches too, and resolving the
     /// area for it alone is harmless - it reads the three that are here and finds nothing.</summary>
@@ -1668,6 +1668,7 @@ internal readonly struct ComputedStyle
             ClipsOverflow = !IsOverflowVisible("overflow-x") || !IsOverflowVisible("overflow-y"),
             ScrollsInline = IsScrollOverflowText(ReadKeyword("overflow-x")),
             ScrollsBlock = IsScrollOverflowText(ReadKeyword("overflow-y")),
+            AlignContent = FlexStyle.ReadAlignment(this, "align-content", CssInitialValues.AlignContent),
             ObjectFit = value.ToLowerInvariant() switch
             {
                 "contain" => Layout.ObjectFit.Contain,
@@ -2781,6 +2782,14 @@ internal readonly struct ComputedStyle
 
     /// <summary>Gets whether the block (y) axis is a scroll axis, by the same rule as <see cref="ScrollsInline"/>.</summary>
     public Boolean ScrollsBlock => _values.DisplayPositioning.ScrollsBlock;
+
+    /// <summary>
+    /// Gets where the content stands along the block axis, as <c>align-content</c> asks. A block
+    /// container lays its content out as one subject, so this moves it rather than sharing space out
+    /// between several (CSS Box Alignment 3 §5.4) - which is how a form control's label ends up in the
+    /// middle of the box the control was given (HTML §15.3.10).
+    /// </summary>
+    public FlexAlignment AlignContent => _values.DisplayPositioning.AlignContent;
 
     /// <summary>
     /// Gets the four margins, with their units intact: <c>auto</c> survives, which is what makes

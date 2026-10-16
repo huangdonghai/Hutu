@@ -383,9 +383,9 @@ internal static partial class BoxBuilder
             return BoxKind.Masonry;
         }
 
-        // A flex or grid container is a container whichever form it takes; the engine does not yet
-        // model the outer role of `inline-flex` or `inline-grid`, so both spellings of each produce
-        // the same kind.
+        // A flex or grid container is a container whichever form it takes: the two spellings of each
+        // share a kind, because the kind is the inner role - the outer one, block-level or
+        // inline-level, is what the caller reads back off the display and records separately.
         if (display.StartsWith("flex", StringComparison.OrdinalIgnoreCase) ||
             display.StartsWith("inline-flex", StringComparison.OrdinalIgnoreCase))
         {
@@ -430,14 +430,31 @@ internal static partial class BoxBuilder
             return BoxKind.InlineBlock;
         }
 
-        // Everything else that starts with "inline" (inline, inline-flex, inline-grid, inline-table)
-        // takes part in the surrounding line box as a run; of those, the container forms are still
-        // laid out as the block-level containers they are named after, which is a known gap. The rest
-        // is treated as block-level for now.
+        // Everything else that starts with "inline" takes part in the surrounding line box as a run.
+        // The container forms - inline-flex among them - were already claimed above, and reach the line
+        // as the atomic boxes their kinds name, so what is left here is plain inline content.
         return display.StartsWith("inline", StringComparison.OrdinalIgnoreCase)
             ? BoxKind.Inline
             : BoxKind.Block;
     }
+
+    /// <summary>
+    /// Gets whether the container kind a box resolved to carries an inline outer role - the
+    /// <c>inline-flex</c>, <c>inline-grid</c>, <c>inline-table</c> and inline masonry spellings.
+    /// </summary>
+    /// <remarks>
+    /// The inner role is what the kind records, so the outer one is read back off the <c>display</c>
+    /// the style computed to. Only a box still in normal flow can be inline-level: the specification
+    /// blockifies the inline-level outer roles before any box is generated, so a box that left the
+    /// flow - absolutely or fixed positioned, or floated - is block-level however its display was
+    /// written, and an item of a flex or grid container has its inline role taken away by the caller
+    /// that knows it is one.
+    /// </remarks>
+    internal static Boolean HasInlineOuter(BoxKind kind, ComputedStyle style) =>
+        kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry or BoxKind.Table &&
+        style.Display.StartsWith("inline", StringComparison.OrdinalIgnoreCase) &&
+        style.Position.Position is not (PositionMode.Absolute or PositionMode.Fixed) &&
+        style.Float == FloatSide.None;
 
     /// <summary>
     /// The heart of the text-building logic, shared with the fused walk that

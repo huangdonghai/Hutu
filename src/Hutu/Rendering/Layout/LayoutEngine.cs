@@ -570,17 +570,26 @@ internal sealed record LayoutProfile(
     /// Produces the geometry of a measured box inside the given border box and applies whatever its
     /// <c>position</c> then asks of it: a relative displacement, or the rule that pins a sticky box.
     /// </summary>
-    internal LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context)
+    internal LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context) =>
+        Arrange(box, borderBox, context, definiteHeight: false);
+
+    /// <summary>
+    /// Produces the geometry of a measured box inside the given border box, told whether the height the
+    /// border box carries is definite even though the box declares <c>height: auto</c> - which is the
+    /// case for a grid or flex item stretched to its area (CSS Sizing 3 §5.2), where a percentage inside
+    /// has to resolve against that stretched height rather than collapse.
+    /// </summary>
+    internal LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight)
     {
         // An anonymous box borrows its parent's style; honouring the positioning it inherits would
         // displace the wrapper a second time, because the parent's own displacement already took it
         // along.
         if (box.IsAnonymous)
         {
-            return ArrangeCore(box, borderBox, context);
+            return ArrangeCore(box, borderBox, context, definiteHeight);
         }
 
-        var layout = ArrangeCore(box, borderBox, context);
+        var layout = ArrangeCore(box, borderBox, context, definiteHeight);
 
         var position = box.Style.Position;
 
@@ -653,7 +662,7 @@ internal sealed record LayoutProfile(
         _positioned.Arrange(box, staticPosition, context);
 
     /// <summary>Produces the geometry of a measured box inside the given border box.</summary>
-    private LayoutBox ArrangeCore(Box box, Rect borderBox, LayoutContext context)
+    private LayoutBox ArrangeCore(Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight)
     {
         return box.Kind switch
         {
@@ -663,7 +672,7 @@ internal sealed record LayoutProfile(
             BoxKind.Table => _table.Arrange(box, borderBox, context),
             _ => box.IsReplaced
                 ? ArrangeReplaced(box, borderBox, context)
-                : _block.Arrange(box, borderBox, context),
+                : _block.Arrange(box, borderBox, context, definiteHeight),
         };
     }
 

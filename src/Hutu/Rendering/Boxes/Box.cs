@@ -238,11 +238,24 @@ internal sealed class Box
     public List<Box> Children { get; } = new();
 
     /// <summary>
+    /// Gets whether the box has an inline outer role: <c>inline-flex</c>, <c>inline-grid</c>,
+    /// <c>inline-table</c> and <c>inline</c> masonry keep the container they are named after inside,
+    /// but take part in the surrounding line box as one atomic piece rather than stacking as a block.
+    /// </summary>
+    /// <remarks>
+    /// The builder settles this, not the layout, because blockification has to happen first: a box
+    /// whose outer role the specification blockifies - an absolutely positioned or floated one, or an
+    /// item of a flex or grid container (Display 3 §2.7) - reaches here already carrying a block kind
+    /// and this flag unset, so the two never disagree.
+    /// </remarks>
+    public Boolean IsInlineOuter { get; init; }
+
+    /// <summary>
     /// Gets whether the box takes part in normal block flow. Every table part counts as block-level:
     /// the table algorithms arrange them, but if one ever leaks into normal flow - a stray <c>td</c>
     /// inside a <c>div</c>, say - it degrades to an empty block instead of joining a line box.
     /// </summary>
-    public Boolean IsBlockLevel => Kind is BoxKind.Block or BoxKind.HorizontalRule or BoxKind.Flex or
+    public Boolean IsBlockLevel => !IsInlineOuter && Kind is BoxKind.Block or BoxKind.HorizontalRule or BoxKind.Flex or
         BoxKind.Grid or BoxKind.Masonry or BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or BoxKind.TableCell or
         BoxKind.TableCaption or BoxKind.TableColumn or BoxKind.TableColumnGroup;
 

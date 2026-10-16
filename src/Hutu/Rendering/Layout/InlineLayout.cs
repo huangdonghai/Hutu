@@ -703,6 +703,22 @@ internal sealed class InlineLayout
                     items.Add(InlineItem.CreateAtomic(child, chain));
                     break;
 
+                // An inline-flex, inline-grid or inline-table box is atomic on the same terms: its
+                // outer role is inline, so the line carries it whole, while its inner role is the
+                // container its kind names and its own context lays the content out that way. Only the
+                // inline spellings reach here - a block-level container is not inline content, and its
+                // box never stands among the runs a line is built from.
+                case BoxKind.Flex:
+                case BoxKind.Grid:
+                case BoxKind.Masonry:
+                case BoxKind.Table:
+                    if (child.IsInlineOuter)
+                    {
+                        items.Add(InlineItem.CreateAtomic(child, chain));
+                    }
+
+                    break;
+
                 // A ruby pairs its base text with the annotation that goes over it, so the two are
                 // gathered into one item instead of being run together as ordinary text.
                 case BoxKind.Ruby:
@@ -923,12 +939,14 @@ internal sealed class InlineLayout
             // from the box's intrinsic one.
             if (item.IsAtomic)
             {
-                // The room the line has left is measured along the axis the line itself runs along, so
-                // it is a physical width in a row and a height in a column. Nothing is bounded when the
-                // line has no definite extent at all.
-                var spare = room.Room <= 0 ? Double.PositiveInfinity : room.Room - builder.Width;
+                // CSS 2.1 §10.3.9: an inline-block whose width is `auto` shrinks to fit the space its
+                // line offers - the whole line, not what is left of it. Handing it the room the cursor
+                // has left instead lets the box be squeezed into the last few pixels of a line it never
+                // fitted on: a news item that should have moved down to the next line wraps into a
+                // column a couple of characters wide and grows as tall as the block it sits in.
+                var line = room.Room <= 0 ? Double.PositiveInfinity : room.Room;
 
-                var atomic = MeasureInlineBlock(item.Box, maxInline, spare, flow, context);
+                var atomic = MeasureInlineBlock(item.Box, maxInline, line, flow, context);
 
                 if (room.Room > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > room.Room)
                 {
@@ -941,8 +959,12 @@ internal sealed class InlineLayout
                     {
                         // CSS 2.1 §9.5: a line box a float has shortened, too small for the content
                         // standing on it, is shifted downward until some content fits or no floats
-                        // are left.
+                        // are left. The box then stands on a wider line, so it is measured again
+                        // against the room that line has rather than against the one it left.
                         room.Drop();
+
+                        line = room.Room <= 0 ? Double.PositiveInfinity : room.Room;
+                        atomic = MeasureInlineBlock(item.Box, maxInline, line, flow, context);
                     }
                 }
 
@@ -1273,8 +1295,11 @@ internal sealed class InlineLayout
     /// padding and border resolves against.
     /// </param>
     /// <param name="room">
-    /// The room the line has left for the box's margin box - negative when there is less than none -
-    /// or positive infinity when the line has no definite extent to measure it against.
+    /// The room the box's line offers its margin box - negative when there is less than none - or
+    /// positive infinity when the line has no definite extent to measure it against. It is the line's
+    /// own room rather than what the cursor has left of it, because CSS 2.1 §10.3.9 shrinks the box to
+    /// what the line can hold and leaves the line breaking to move a box that does not fit where the
+    /// cursor stands down to the next line.
     /// </param>
     /// <remarks>
     /// The engine is handed the extent the box should come out at as the basis it is measured against,

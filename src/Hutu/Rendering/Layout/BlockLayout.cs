@@ -383,7 +383,15 @@ internal sealed class BlockLayout
     /// distance between the box and that rectangle is already carried by the caller, which owns the
     /// vertical stacking.
     /// </summary>
-    public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context)
+    /// <param name="definiteHeight">
+    /// Whether the height the border box was handed is definite even though the box declares
+    /// <c>height: auto</c>. A grid or flex item stretched to its area has such a height: CSS Sizing 3
+    /// §5.2 counts a size that can be resolved from a <c>stretch</c> self-alignment as definite, and a
+    /// definite size is what a percentage inside resolves against (CSS 2.1 §10.5). Without this the
+    /// box's own percentage chain collapses to nothing, because the height it comes out at is read as
+    /// one the content decided.
+    /// </param>
+    public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight = false)
     {
         var style = box.Style;
         var flow = box.Flow;
@@ -423,7 +431,9 @@ internal sealed class BlockLayout
         var declaredHeight = BoxModel.DeclaredHeight(style, context.ContainingBlock.Height, insetsV);
         var usedHeight = declaredHeight is { } declared
             ? BoxModel.ClampHeight(style, declared, context.ContainingBlock.Height, insetsV)
-            : (Double?)null;
+            : definiteHeight
+                ? contentHeight
+                : (Double?)null;
 
         var childBox = flow.IsVertical
             ? new Rect(
@@ -454,17 +464,13 @@ internal sealed class BlockLayout
         }
 
         var content = new Rect(contentX, contentY, contentWidth, contentHeight);
+        var used = 0.0;
 
         if (HasBlockChildren(box))
         {
-            if (flow.IsVertical)
-            {
-                ArrangeColumnChildren(box, layout, content, childContext, context.ContainingBlock.Width);
-            }
-            else
-            {
-                ArrangeBlockChildren(box, layout, contentX, contentY, contentWidth, childContext);
-            }
+            used = flow.IsVertical
+                ? ArrangeColumnChildren(box, layout, content, childContext, context.ContainingBlock.Width)
+                : ArrangeBlockChildren(box, layout, contentX, contentY, contentWidth, childContext);
         }
         else
         {
@@ -482,8 +488,13 @@ internal sealed class BlockLayout
                 ? context
                 : context.ForContainingBlock(new Rect(contentX, contentY, contentWidth, usedHeight ?? 0));
 
-            _inline.Layout(box, layout, content, flow, new InlineContext(_engine, context, childContext, atomic));
+            used = _inline.Layout(box, layout, content, flow, new InlineContext(_engine, context, childContext, atomic));
         }
+
+        // Where the content stands along the block axis is asked once the flow has put it somewhere:
+        // `align-content` moves the whole of it, and a box only has the slack to move it in when its
+        // own block size came from outside rather than from the content (CSS Box Alignment 3 §5.4).
+        AlignContent(box, layout, flow, flow.BlockExtent(contentWidth, contentHeight), used);
 
         return layout;
     }
@@ -849,7 +860,7 @@ internal sealed class BlockLayout
         return _engine.Measure(child, MeasureConstraints.FitWidth(fit + margin.Horizontal), childContext);
     }
 
-    private void ArrangeBlockChildren(
+    private Double ArrangeBlockChildren(
         Box box,
         LayoutBox parent,
         Double contentX,
@@ -993,6 +1004,14 @@ internal sealed class BlockLayout
         // Published for the container above, which absorbs these when it holds no formatting
         // context of its own - the floats belong to the nearest ancestor that does.
         _engine.PublishFloats(box, tracks);
+
+        // What the content occupied down the box, in the box's own coordinates. A strip that escapes
+        // through the end is not part of it - the box's automatic height left it out too
+        // (CSS 2.1 §8.3.1) - so a box that sized itself to its content reports no slack, and one that
+        // was handed a height reports the room the content left free.
+        var occupied = CollapsesThroughEnd(box, box.Flow, contentWidth) ? cursor : cursor + pending;
+
+        return Math.Max(0, occupied - contentY);
     }
 
     /// <summary>
@@ -1005,7 +1024,7 @@ internal sealed class BlockLayout
     /// used, or a child would be measured a second time under a different constraint and its geometry
     /// would no longer agree with the extent the parent sized itself to.
     /// </param>
-    private void ArrangeColumnChildren(
+    private Double ArrangeColumnChildren(
         Box box,
         LayoutBox parent,
         Rect content,
@@ -1081,6 +1100,76 @@ internal sealed class BlockLayout
         foreach (var (child, staticPosition) in outOfFlow)
         {
             parent.Children.Add(_engine.ArrangePositioned(child, staticPosition, context));
+        }
+
+        // The extent the children occupied along the column, in the same units the box states its own
+        // block size in, for the same reason as in a row.
+        return Math.Max(0, cursor + pending);
+    }
+
+    /// <summary>Moves the content along the block axis to where <c>align-content</c> asks it to stand.</summary>
+    /// <remarks>
+    /// A block container lays its content out as one subject, so this moves the whole of it rather than
+    /// sharing space out between several: <c>space-between</c> falls back to the start, and
+    /// <c>space-around</c> and <c>space-evenly</c> to the middle, as their fallback alignments say
+    /// (CSS Box Alignment 3 §5.4). <paramref name="room"/> is the content box's own extent along the
+    /// axis, so a box that sized itself to its content keeps the content where the flow put it - there
+    /// is no slack - while a box that was handed a height, either declared or stretched to it by a flex
+    /// or grid container, has the slack to move it in. That last case is the one the HTML rendering
+    /// rules use to centre a form control's label in the box the control was given (§15.3.10).
+    /// <para>
+    /// A box that left the flow is none of this method's business: it was placed against its own
+    /// containing block rather than stacked with the content, so it neither counts towards the extent
+    /// nor moves. The table context aligns a cell's content the same way.
+    /// </para>
+    /// </remarks>
+    private static void AlignContent(Box box, LayoutBox container, WritingModeInfo flow, Double room, Double used)
+    {
+        var free = room - used;
+
+        if (free <= 0)
+        {
+            return;
+        }
+
+        var shift = box.Style.AlignContent switch
+        {
+            FlexAlignment.Center or FlexAlignment.SpaceAround or FlexAlignment.SpaceEvenly => free / 2,
+            FlexAlignment.End => free,
+            _ => 0.0,
+        };
+
+        if (shift <= 0)
+        {
+            return;
+        }
+
+        // The axis the shift runs on: in a column the block axis is the physical x one, and it grows
+        // leftward in the two right-to-left modes.
+        var (dx, dy) = flow.IsVertical ? (flow.BlockSign * shift, 0.0) : (0.0, shift);
+
+        foreach (var child in container.Children)
+        {
+            if (!child.IsOutOfFlow)
+            {
+                Shift(child, dx, dy);
+            }
+        }
+    }
+
+    /// <summary>Moves a box and its whole in-flow subtree along the block axis by the given distance.</summary>
+    private static void Shift(LayoutBox box, Double dx, Double dy)
+    {
+        box.BorderBox = new Rect(box.BorderBox.X + dx, box.BorderBox.Y + dy, box.BorderBox.Width, box.BorderBox.Height);
+
+        foreach (var child in box.Children)
+        {
+            // An out-of-flow descendant inside the content - an absolutely positioned box in a line,
+            // say - was placed against its own containing block and is not part of what was aligned.
+            if (!child.IsOutOfFlow)
+            {
+                Shift(child, dx, dy);
+            }
         }
     }
 

@@ -116,7 +116,7 @@ internal sealed class GridFormattingContext
                 item.BorderBoxWidth,
                 item.BorderBoxHeight);
 
-            layout.Children.Add(_engine.Arrange(item.Box, rect, itemContext));
+            layout.Children.Add(_engine.Arrange(item.Box, rect, itemContext, item.HeightIsDefinite));
         }
 
         ArrangeOutOfFlow(box, layout, contentX, contentY, itemContext);
@@ -286,9 +286,13 @@ internal sealed class GridFormattingContext
     /// height is the container's own rather than anything about the text - and has to be arranged at
     /// zero height and read back from where its content ended instead.
     /// </summary>
-    private Double ContentHeight(Box box, Double width, LayoutContext context)
+    private Double ContentHeight(Box box, Double width, Double basis, LayoutContext context)
     {
         var available = Math.Max(0, width);
+
+        // The item's own percentages resolve against its grid area, so the measurement has to be told
+        // about that area rather than the grid's content box the shared context was built for.
+        context = context.ForContainingBlock(new Size(Math.Max(0, basis), context.ContainingBlock.Height));
 
         if (!box.IsAnonymous)
         {
@@ -777,8 +781,15 @@ internal sealed class GridFormattingContext
         foreach (var item in items)
         {
             var style = item.Box.Style;
-            var margin = style.Margin.Resolve(context.ContainingBlock.Width).Vertical;
-            var padding = style.Padding.Resolve(context.ContainingBlock.Width);
+
+            // A grid item's containing block is its own grid area (CSS Grid 1 §6.6), so a percentage on
+            // its margin or padding counts against that area's inline size and not the whole grid's.
+            // Padding is where this shows: `padding-bottom: 39.54%` is the classic way to give a box a
+            // fixed ratio, and charging it to the container instead doubles the height the item asks for,
+            // which stretches every row it lands in - and with them anything stretched inside a sibling.
+            var areaWidth = item.AreaWidth;
+            var margin = style.Margin.Resolve(areaWidth).Vertical;
+            var padding = style.Padding.Resolve(areaWidth);
             var insetV = padding.Vertical + BlockLayout.BorderOf(item.Box).Vertical;
             var declared = HasHeight(item.Box) ? BoxModel.DeclaredHeight(style, basis, insetV) : null;
             Double height;
@@ -793,7 +804,7 @@ internal sealed class GridFormattingContext
                 // here only for an anonymous wrapper, whose answer is its content alone. Adding them
                 // for both would size the row to the item twice over - a padded cell would stand
                 // taller than what it holds by its own padding again.
-                height = ContentHeight(item.Box, item.AreaWidth, context);
+                height = ContentHeight(item.Box, item.AreaWidth, areaWidth, context);
 
                 if (item.Box.IsAnonymous)
                 {
@@ -1122,7 +1133,10 @@ internal sealed class GridFormattingContext
         LayoutContext context)
     {
         var style = item.Box.Style;
-        var basis = context.ContainingBlock.Width;
+
+        // The area the item was placed in is its containing block (CSS Grid 1 §6.6), so percentages on
+        // its own margin and padding count against the area, not against the grid's content box.
+        var basis = areaWidth;
         var margin = style.Margin.Resolve(basis);
         var padding = style.Padding.Resolve(basis);
         var border = BlockLayout.BorderOf(item.Box);
@@ -1134,7 +1148,14 @@ internal sealed class GridFormattingContext
         var align = item.AlignSelf == FlexAlignment.Auto ? grid.AlignItems : item.AlignSelf;
 
         var width = ResolveWidth(style, item.Box, areaWidth, insetH, isBorderBox, justify, context);
-        var height = ResolveHeight(style, item.Box, areaHeight, insetV, isBorderBox, align, context);
+        var height = ResolveHeight(style, item.Box, areaHeight, basis, insetV, isBorderBox, align, context);
+
+        // A declared height is definite, and so is a stretch: CSS Sizing 3 §5.2 counts a size that can
+        // be resolved from a `stretch` self-alignment as definite, so a percentage inside the item has
+        // to resolve against the area it was stretched to rather than collapse to nothing.
+        item.HeightIsDefinite =
+            (HasHeight(item.Box) && !(style.Height.Kind == StyleLengthKind.Percent && areaHeight <= 0)) ||
+            align is FlexAlignment.Stretch or FlexAlignment.Auto;
 
         var outerX = width + margin.Left + margin.Right;
         var outerY = height + margin.Top + margin.Bottom;
@@ -1186,6 +1207,7 @@ internal sealed class GridFormattingContext
         ComputedStyle style,
         Box box,
         Double area,
+        Double basis,
         Double insets,
         Boolean isBorderBox,
         FlexAlignment align,
@@ -1205,7 +1227,7 @@ internal sealed class GridFormattingContext
             return space;
         }
 
-        var measured = ContentHeight(box, space, context) + insets;
+        var measured = ContentHeight(box, space, basis, context) + insets;
         return Math.Min(measured, space);
     }
 
@@ -1226,7 +1248,9 @@ internal sealed class GridFormattingContext
     internal (Double Offset, Double Width) AlignInline(Box box, Double areaWidth, FlexAlignment justifyItems, LayoutContext context)
     {
         var style = box.Style;
-        var basis = context.ContainingBlock.Width;
+
+        // Same as placement: the box's containing block is the area it is aligned inside.
+        var basis = areaWidth;
         var margin = style.Margin.Resolve(basis);
         var padding = style.Padding.Resolve(basis);
         var border = BlockLayout.BorderOf(box);
@@ -1341,6 +1365,9 @@ internal sealed class GridFormattingContext
         public Double BorderBoxWidth;
 
         public Double BorderBoxHeight;
+
+        /// <summary>Gets or sets whether that height is definite, so a percentage inside resolves against it.</summary>
+        public Boolean HeightIsDefinite;
     }
 
     /// <summary>One track's state while it is being sized.</summary>

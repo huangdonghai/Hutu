@@ -87,6 +87,44 @@ kbd, samp       { font-family: monospace }
 pre             { white-space: pre }
 button, textarea,
 input, select   { display: inline-block }
+
+/* HTML Standard §15.3.10. A form control is not aligned by what surrounds it: a field states its
+ * text at the head of the line, and the three pressable inputs and a button state their label at
+ * the middle of it. Without the pair, a page that centers a column - a header's search box, its
+ * sign-in button - would have the text inside them slide to the middle along with it.
+ *
+ * The same section states the label at the middle of the control's own box, with align-content, so
+ * that it keeps to the middle of whatever height a page gives the control: a search field that a
+ * flex header stretches to 44px holds one line of about 14, and the two lines left over are split
+ * above and below it. A control that sizes itself to its content has no room over and is left
+ * where it stands, which is what the property asks for. The four types the section leaves out -
+ * file, range, checkbox and radio - are left out here too, by naming the ones it keeps, as the
+ * selectors a user agent sheet is written in are the plain kind.
+ */
+input, select,
+textarea        { text-align: initial }
+input[type=reset],
+input[type=button],
+input[type=submit],
+button          { text-align: center }
+input[type=button],
+input[type=color],
+input[type=date],
+input[type=datetime-local],
+input[type=email],
+input[type=month],
+input[type=number],
+input[type=password],
+input[type=reset],
+input[type=search],
+input[type=submit],
+input[type=tel],
+input[type=text],
+input[type=time],
+input[type=url],
+input[type=week],
+button,
+select          { align-content: center }
 big             { font-size: 1.17em }
 small, sub, sup { font-size: .83em }
 sub             { vertical-align: sub }

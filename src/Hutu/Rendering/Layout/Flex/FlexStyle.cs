@@ -463,7 +463,26 @@ internal readonly struct FlexStyle
     /// </summary>
     internal static FlexAlignment ParseAlignment(String text, FlexAlignment fallback) => Parse(text, fallback);
 
-    private static FlexAlignment Parse(String text, FlexAlignment fallback) => text switch
+    private static FlexAlignment Parse(String text, FlexAlignment fallback)
+    {
+        // `safe` and `unsafe` are the overflow alignment modifier (CSS Box Alignment 3 §5.2). What
+        // they decide is what happens when the subject overflows the box, which is a question the
+        // reader leaves to the layout that carries the alignment out; the keyword they wrap still
+        // names the alignment that was asked for. The HTML rendering rules spell a form control's
+        // centring as `unsafe center`.
+        if (text.StartsWith("unsafe ", StringComparison.Ordinal))
+        {
+            text = text["unsafe ".Length..];
+        }
+        else if (text.StartsWith("safe ", StringComparison.Ordinal))
+        {
+            text = text["safe ".Length..];
+        }
+
+        return ParseKeyword(text, fallback);
+    }
+
+    private static FlexAlignment ParseKeyword(String text, FlexAlignment fallback) => text switch
     {
         "flex-start" or "start" => FlexAlignment.Start,
         "flex-end" or "end" => FlexAlignment.End,

@@ -560,7 +560,13 @@ internal static class GeneratedContent
 
         if (kind != BoxKind.Inline)
         {
-            var container = new Box(kind, pseudoStyle) { Element = element, Flow = flow, IsGenerated = true };
+            var container = new Box(kind, pseudoStyle)
+            {
+                Element = element,
+                Flow = flow,
+                IsGenerated = true,
+                IsInlineOuter = BoxBuilder.HasInlineOuter(kind, pseudoStyle),
+            };
 
             foreach (var item in items)
             {

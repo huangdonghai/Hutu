@@ -131,10 +131,21 @@ internal static class LengthReader
         switch (value)
         {
             case CssCalcValue calc:
-                // calc() expressions are evaluated by AngleSharp's own Compute pipeline, which
-                // folds every operand to pixels against the device and then combines them. The
-                // result is a plain pixel length - percentages inside calc() are resolved against
-                // the viewport at this point, which is what the old render-tree path did.
+                // A calc() written entirely in percentages is still a percentage, and has to stay
+                // one: CSS Values 4 §10.9 makes the computed value of a math function the function
+                // itself, so `height: calc(100% / 5)` is a fraction of the containing block, not a
+                // length. Folding it here would resolve that fraction against the viewport - which
+                // is how a news list five rows deep came out a quarter of the page tall, its box
+                // sized from the width of the window rather than from the block it sat in.
+                if (TryFoldPercentCalc(calc, out length))
+                {
+                    return true;
+                }
+
+                // Any other calc() is evaluated by AngleSharp's own Compute pipeline, which folds
+                // every operand to pixels against the device and then combines them. The result is
+                // a plain pixel length - the percentages inside it are resolved against the
+                // viewport at this point, which is what the old render-tree path did.
                 if (TryFoldCalc(calc, mode, dimensions, font, out length))
                 {
                     return true;
@@ -399,9 +410,94 @@ internal static class LengthReader
     }
 
     /// <summary>
-    /// A render box that is the caller's font size on every side, so a calc that resolves percentages
-    /// and font-relative units does so against that size rather than against the viewport or the root.
-    /// Only the font-relative and percentage fold reads it, which is exactly what a line height wants.
+    /// Folds a <c>calc()</c> that is written entirely in percentages to the percentage it comes to, so
+    /// the fraction survives to be resolved against the containing block the way a plain <c>20%</c> is.
+    /// </summary>
+    /// <remarks>
+    /// Every operand being a percentage makes the expression linear in the basis, so folding it once
+    /// against a basis of one hundred leaves the fraction itself: <c>calc(100% / 5)</c> comes to 20,
+    /// which is a fifth. The fold reads a basis of our own rather than the viewport, so the style
+    /// stays independent of the window - a resized window recomputes a percentage for free.
+    /// </remarks>
+    private static Boolean TryFoldPercentCalc(CssCalcValue calc, out StyleLength length)
+    {
+        length = default;
+
+        if (!IsPercentOnly(calc.CssText))
+        {
+            return false;
+        }
+
+        // Folded against a hundred the expression comes back in hundredths - as a percentage, or as
+        // the number of pixels a hundred of them are worth, depending on how the fold carried it.
+        if (!TryFoldCalcRaw(calc, 100, out var unit, out var value) ||
+            unit is not (CssLengthValue.Unit.Percent or CssLengthValue.Unit.None or CssLengthValue.Unit.Px))
+        {
+            return false;
+        }
+
+        var fraction = value / 100.0;
+
+        if (Double.IsNaN(fraction) || Double.IsInfinity(fraction))
+        {
+            return false;
+        }
+
+        length = StyleLength.FromPercent(fraction);
+        return true;
+    }
+
+    /// <summary>
+    /// Gets whether a math function's body is plain arithmetic over percentages and nothing else - no
+    /// length unit, no nested function. Anything else folds against the viewport or against a value
+    /// that is not known here, and has to take the path that resolves it against the device.
+    /// </summary>
+    private static Boolean IsPercentOnly(String? text)
+    {
+        var trimmed = text?.Trim();
+
+        if (String.IsNullOrEmpty(trimmed))
+        {
+            return false;
+        }
+
+        // Some spellings carry the function name and some are already just its body, so the body is
+        // taken either way rather than assumed.
+        var open = trimmed.IndexOf('(');
+
+        if (open >= 0)
+        {
+            if (trimmed[^1] != ')')
+            {
+                return false;
+            }
+
+            trimmed = trimmed[(open + 1)..^1];
+        }
+
+        var percent = false;
+
+        foreach (var c in trimmed)
+        {
+            if (c == '%')
+            {
+                percent = true;
+            }
+            else if (!(c is >= '0' and <= '9' || c == '.' || c == '+' || c == '-' || c == '*' || c == '/' ||
+                c == '(' || c == ')' || Char.IsWhiteSpace(c)))
+            {
+                return false;
+            }
+        }
+
+        return percent;
+    }
+
+    /// <summary>
+    /// A render box that is the caller's basis on every side, so a calc that resolves percentages and
+    /// font-relative units does so against that basis rather than against the viewport or the root.
+    /// The font-relative fold reads it against the font size, and a percentage-only calc reads it
+    /// against one hundred to leave the fraction behind.
     /// </summary>
     private sealed class FontBasis : IRenderDimensions
     {

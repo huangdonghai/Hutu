@@ -404,6 +404,7 @@ internal sealed partial class FlexFormattingContext
 
         var min = 0.0;
         var max = 0.0;
+        var widest = 0.0;
         var first = true;
 
         foreach (var child in box.Children)
@@ -417,6 +418,7 @@ internal sealed partial class FlexFormattingContext
             var margin = child.Style.Margin.Resolve(basis).Horizontal;
 
             min = Math.Max(min, childIntrinsic.MinContent + margin);
+            widest = Math.Max(widest, childIntrinsic.MaxContent + margin);
 
             if (!first)
             {
@@ -427,10 +429,11 @@ internal sealed partial class FlexFormattingContext
             first = false;
         }
 
-        if (!flex.IsRow)
-        {
-            max = min;
-        }
+        // Along a column the inline axis is the cross axis: it is as wide as the widest item, and the
+        // `max-content` there is that item's own `max-content` rather than, as the `min` half of the
+        // pair would give, its `min-content`. A column holding a short title above a longer subtitle
+        // is as wide as the subtitle wants to be, not as wide as one character.
+        max = flex.IsRow ? max : widest;
 
         return new IntrinsicSize(min + insets, max + insets);
     }

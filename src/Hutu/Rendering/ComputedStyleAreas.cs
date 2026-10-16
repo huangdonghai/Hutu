@@ -198,6 +198,18 @@ internal sealed record DisplayPositioningArea
 
     /// <summary>Gets whether the block (y) axis is a scroll axis, by the same rule as <see cref="ScrollsInline"/>.</summary>
     internal Boolean ScrollsBlock { get; init; }
+
+    /// <summary>
+    /// Gets where the content stands along the block axis, as <c>align-content</c> asks, which is how
+    /// a form control's label is centred in the box the control was given (HTML §15.3.10).
+    /// </summary>
+    /// <remarks>
+    /// A block container holds a single subject - its content - so this moves that content rather than
+    /// sharing space out between subjects (CSS Box Alignment 3 §5.4). The initial <c>normal</c> is
+    /// read as <c>stretch</c>, which asks a block container for nothing: the content stands where the
+    /// flow put it.
+    /// </remarks>
+    internal Layout.FlexAlignment AlignContent { get; init; } = CssInitialValues.AlignContent;
 }
 
 /// <summary>
