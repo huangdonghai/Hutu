@@ -147,6 +147,26 @@ public sealed class ImageCommand : PaintCommand
 }
 
 /// <summary>
+/// Draws an inline <c>&lt;svg&gt;</c> into its box. The backend parses the standalone markup and paints
+/// the resulting picture scaled to the box, so the vector stays crisp at any size.
+/// </summary>
+public sealed class SvgCommand : PaintCommand
+{
+    internal SvgCommand(Rect bounds, String markup, CornerRadii radii)
+        : base(bounds)
+    {
+        Markup = markup;
+        Radii = radii;
+    }
+
+    /// <summary>Gets the standalone SVG markup to render.</summary>
+    public String Markup { get; }
+
+    /// <summary>Gets the corner radii the graphic is clipped to.</summary>
+    public CornerRadii Radii { get; }
+}
+
+/// <summary>
 /// Draws one background image layer. A background brings its own size, position and repeat rules,
 /// which is a different placement model from <c>object-fit</c>, so it carries the parsed layer.
 /// </summary>

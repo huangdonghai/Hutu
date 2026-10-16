@@ -188,8 +188,22 @@ internal sealed class Box
     /// </summary>
     public Boolean IsReplaced { get; init; }
 
+    /// <summary>
+    /// Gets whether a replaced box is an inline <c>&lt;svg&gt;</c> rather than an image. It is laid out
+    /// the same way - a box sized by its own geometry, not by children - but painted from its own
+    /// vector content instead of a fetched resource, so it becomes a distinct kind in the layout tree.
+    /// </summary>
+    public Boolean IsInlineSvg { get; init; }
+
     /// <summary>Gets the absolute URL of the replaced content.</summary>
     public String? SourceUrl { get; init; }
+
+    /// <summary>
+    /// Gets the standalone SVG markup for an <see cref="IsInlineSvg"/> box - the element's own subtree
+    /// with any <c>&lt;use&gt;</c>-referenced symbols inlined - so the backend can render it without the
+    /// document. Null for anything but an inline SVG.
+    /// </summary>
+    public String? SvgMarkup { get; init; }
 
     /// <summary>
     /// Gets the intrinsic size of the replaced content. Always set for a replaced box: the declared

@@ -140,6 +140,11 @@ internal static partial class BoxBuilder
             return BuildReplaced(image, kind, style, flow, images);
         }
 
+        if (IsInlineSvgRoot(element))
+        {
+            return BuildInlineSvg(element, kind, style, flow);
+        }
+
         var children = new List<Box>();
 
         foreach (var child in element.ChildNodes)

@@ -842,7 +842,7 @@ internal sealed record LayoutProfile(
         var style = box.Style;
         var basis = context.ContainingBlock.Width;
 
-        return new LayoutBox(box, LayoutKind.Image)
+        return new LayoutBox(box, box.IsInlineSvg ? LayoutKind.Svg : LayoutKind.Image)
         {
             Margin = BoxModel.UsedMargin(style, basis, borderBox.Width),
             Padding = style.Padding.Resolve(basis),
@@ -853,6 +853,7 @@ internal sealed record LayoutProfile(
                 style.BorderLeftWidth),
             ImageUrl = box.SourceUrl,
             ImageFit = style.ObjectFit,
+            SvgMarkup = box.SvgMarkup,
             BorderBox = borderBox,
             Flow = box.Flow,
         };

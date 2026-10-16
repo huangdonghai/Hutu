@@ -5,6 +5,7 @@ using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 
 namespace Hutu.Rendering.Boxes;
@@ -197,6 +198,94 @@ internal static partial class BoxBuilder
         return width > 0 || height > 0
             ? new ImageSize(width, height)
             : null;
+    }
+
+    /// <summary>Gets whether the element is an inline <c>&lt;svg&gt;</c> root (not a child shape).</summary>
+    private static Boolean IsInlineSvgRoot(IElement element) =>
+        element.LocalName.Equals("svg", StringComparison.OrdinalIgnoreCase) &&
+        element.NamespaceUri.Equals("http://www.w3.org/2000/svg", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Builds the box for an inline <c>&lt;svg&gt;</c>: a replaced box sized by its own geometry whose
+    /// paintable content is the element serialized to standalone markup. The <c>width</c>/<c>height</c>
+    /// attributes give the intrinsic size, a <c>viewBox</c> supplies the ratio when only one axis is
+    /// stated, and the specification's default object size answers for a bare <c>&lt;svg&gt;</c>.
+    /// </summary>
+    private static Box BuildInlineSvg(IElement svg, BoxKind kind, ComputedStyle style, WritingModeInfo flow)
+    {
+        var width = AttributeLength(svg, "width");
+        var height = AttributeLength(svg, "height");
+        var stated = ViewBoxSize(svg);
+
+        ImageSize intrinsic = (width, height) switch
+        {
+            (not null, not null) => new ImageSize(width.Value, height.Value),
+            (not null, null) when stated is { } both => new ImageSize(width.Value, width.Value * both.Height / both.Width),
+            (null, not null) when stated is { } both => new ImageSize(height.Value * both.Width / both.Height, height.Value),
+            _ => new ImageSize(300, 150),
+        };
+
+        ImageSize? declared = width is not null || height is not null
+            ? new ImageSize(width ?? 0, height ?? 0)
+            : null;
+
+        return new Box(kind, style)
+        {
+            Element = svg,
+            IsReplaced = true,
+            IsInlineSvg = true,
+            IntrinsicSize = intrinsic,
+            AttributeSize = declared,
+            SvgMarkup = SvgSerializer.Serialize(svg),
+            Flow = flow,
+        };
+    }
+
+    /// <summary>A plain-number <c>width</c>/<c>height</c> attribute in user units; null for a percentage or a missing one.</summary>
+    private static Double? AttributeLength(IElement element, String name)
+    {
+        var text = element.GetAttribute(name);
+
+        if (String.IsNullOrWhiteSpace(text) || text.Contains('%'))
+        {
+            return null;
+        }
+
+        var end = 0;
+
+        while (end < text.Length && (Char.IsDigit(text[end]) || text[end] is '.' or '-' or '+'))
+        {
+            end++;
+        }
+
+        return end > 0 &&
+               Double.TryParse(text[..end], NumberStyles.Float, CultureInfo.InvariantCulture, out var value) &&
+               value > 0
+            ? value
+            : null;
+    }
+
+    /// <summary>The width and height a <c>viewBox</c> declares, or null when there is none to read.</summary>
+    private static (Double Width, Double Height)? ViewBoxSize(IElement element)
+    {
+        var text = element.GetAttribute("viewBox");
+
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var parts = text.Split(new[] { ' ', ',', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 4 &&
+            Double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var width) &&
+            Double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var height) &&
+            width > 0 && height > 0)
+        {
+            return (width, height);
+        }
+
+        return null;
     }
 
     /// <summary>

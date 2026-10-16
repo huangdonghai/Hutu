@@ -30,6 +30,12 @@ internal enum LayoutKind
     /// <summary>A replaced box - an image - whose content is drawn rather than laid out.</summary>
     Image,
 
+    /// <summary>
+    /// A replaced box holding an inline <c>&lt;svg&gt;</c>: sized like an image, but painted from its
+    /// own vector content (serialized to markup) rather than a fetched resource.
+    /// </summary>
+    Svg,
+
     /// <summary>A table wrapper box.</summary>
     Table,
 
@@ -163,6 +169,12 @@ internal sealed class LayoutBox
 
     /// <summary>Gets how the image content is fitted into its box.</summary>
     public ObjectFit ImageFit { get; set; }
+
+    /// <summary>
+    /// Gets or sets the standalone SVG markup drawn in a <see cref="LayoutKind.Svg"/> box: the element's
+    /// own subtree with any <c>&lt;use&gt;</c>-referenced symbols inlined, ready for the backend to parse.
+    /// </summary>
+    public String? SvgMarkup { get; set; }
 
     /// <summary>
     /// Gets or sets the resolved corner radii of the border box. They are filled in once, after the

@@ -2,8 +2,11 @@ using Hutu.Rendering;
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Paint;
 using SkiaSharp;
+using Svg.Skia;
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 
 namespace Hutu.Skia;
 
@@ -20,6 +23,9 @@ public sealed class SkiaPaintExecutor
     private readonly SkiaTextMeasurer _measurer;
     private readonly SkiaImageLoader? _images;
 
+    /// <summary>Parsed inline-SVG pictures, keyed by markup; a null is one that failed to parse.</summary>
+    private readonly Dictionary<String, SKSvg?> _svg = new(StringComparer.Ordinal);
+
     /// <param name="images">
     /// The loader that decoded the document's images. Without it image commands are skipped, which
     /// is the right degradation for a host that does not render images.
@@ -28,6 +34,62 @@ public sealed class SkiaPaintExecutor
     {
         _measurer = measurer;
         _images = images;
+    }
+
+    /// <summary>
+    /// Draws one inline SVG: parses its markup to a picture (cached, since the same icon repeats many
+    /// times) and maps the picture's own coordinate space onto the box, so it stays crisp at any size.
+    /// </summary>
+    private void DrawSvg(SKCanvas canvas, SvgCommand command)
+    {
+        if (!_svg.TryGetValue(command.Markup, out var svg))
+        {
+            svg = ParseSvg(command.Markup);
+            _svg[command.Markup] = svg;
+        }
+
+        if (svg?.Picture is not { } picture)
+        {
+            return;
+        }
+
+        var bounds = picture.CullRect;
+        var target = ToRect(command.Bounds);
+
+        if (bounds.Width <= 0 || bounds.Height <= 0 || target.Width <= 0 || target.Height <= 0)
+        {
+            return;
+        }
+
+        canvas.Save();
+        SkiaRounded.Clip(canvas, target, command.Radii);
+        canvas.Translate(target.Left, target.Top);
+        canvas.Scale(target.Width / bounds.Width, target.Height / bounds.Height);
+        canvas.Translate(-bounds.Left, -bounds.Top);
+        canvas.DrawPicture(picture);
+        canvas.Restore();
+    }
+
+    private static SKSvg? ParseSvg(String markup)
+    {
+        var svg = new SKSvg();
+
+        try
+        {
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(markup));
+
+            if (svg.Load(stream) is not null && svg.Picture is not null)
+            {
+                return svg;
+            }
+        }
+        catch (Exception)
+        {
+            // A graphic the renderer cannot parse is skipped, never fatal to the page.
+        }
+
+        svg.Dispose();
+        return null;
     }
 
     /// <param name="scroll">
@@ -127,6 +189,10 @@ public sealed class SkiaPaintExecutor
 
                 case ImageCommand image:
                     _images?.Draw(canvas, image.Url, ToRect(image.Bounds), image.Fit, image.Radii);
+                    break;
+
+                case SvgCommand svg:
+                    DrawSvg(canvas, svg);
                     break;
 
                 case BackgroundImageCommand background:

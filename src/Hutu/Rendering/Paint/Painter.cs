@@ -136,6 +136,14 @@ internal sealed class Painter
                 PaintImage(box, target);
                 break;
 
+            case LayoutKind.Svg:
+                // An inline SVG is a replaced box like an image: its own background and border paint
+                // under the vector content, which is drawn from the markup the box carries.
+                PaintBackground(box, box.Source.Style, target);
+                AddBorder(box, box.Source.Style, target);
+                PaintSvg(box, target);
+                break;
+
             case LayoutKind.Inline:
                 // An inline element draws what any block draws - background, border, then children -
                 // over the band its own runs take rather than over a whole line. It is given a box
@@ -563,6 +571,23 @@ internal sealed class Painter
             box.ContentBox,
             box.ImageUrl,
             box.ImageFit,
+            box.PaddingRadii.Shrink(box.Padding)));
+    }
+
+    /// <summary>
+    /// Emits an inline SVG's markup into its content box, the way an image is placed there - clipped to
+    /// the same rounded rectangle so a bordered or padded SVG keeps its shape.
+    /// </summary>
+    private static void PaintSvg(LayoutBox box, List<PaintCommand> target)
+    {
+        if (String.IsNullOrEmpty(box.SvgMarkup))
+        {
+            return;
+        }
+
+        target.Add(new SvgCommand(
+            box.ContentBox,
+            box.SvgMarkup!,
             box.PaddingRadii.Shrink(box.Padding)));
     }
 
