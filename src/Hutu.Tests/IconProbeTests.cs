@@ -21,7 +21,7 @@ namespace Hutu.Tests;
 public sealed class IconProbeTests
 {
     /// <summary>The class substrings to report on; change them for the element under the probe.</summary>
-    private static readonly String[] Needles = { "car-list_name__1hkGo", "icon_play_1", "side-nav_link-icon__q33ly" };
+    private static readonly String[] Needles = { "vector-page-titlebar", "vector-page-toolbar" };
 
     [Test]
     [NonParallelizable]
@@ -33,7 +33,7 @@ public sealed class IconProbeTests
         using var view = new HutuViewInternal(measurer, images);
         view.SetViewportSize(3840, 2160);
 
-        await view.LoadUrlAsync("https://www.dongchedi.com/", CancellationToken.None);
+        await view.LoadUrlAsync("https://zh.wikipedia.org/wiki/Wikipedia:%E9%A6%96%E9%A1%B5", CancellationToken.None);
 
         var document = view.Document!;
         var layout = view.Layout!;
@@ -76,7 +76,10 @@ public sealed class IconProbeTests
                         $" fs={style.FontSize} lh={style.LineHeight?.ToString("F1") ?? "-"}" +
                         $" H={(style.Height.HasValue ? style.Height.Resolve(600).ToString("F1") : "auto")}" +
                         $" W={(style.Width.HasValue ? style.Width.Resolve(1600).ToString("F1") : "auto")}" +
-                        $" disp={style.Display} of={style.ClipsOverflow}");
+                        $" disp={style.Display} of={style.ClipsOverflow}" +
+                        $" pos={style.Position.Position}" +
+                        $" mar={style.Margin.Resolve(3840).Top:F1}/{style.Margin.Resolve(3840).Bottom:F1}" +
+                        $" pad={style.Padding.Resolve(3840).Top:F1}/{style.Padding.Resolve(3840).Bottom:F1}");
 
                     foreach (var child in node.Children)
                     {

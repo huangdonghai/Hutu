@@ -228,6 +228,69 @@ public sealed class SpecConformanceTests
         Assert.That(Find(view, "cell").BorderBox.Height, Is.EqualTo(60).Within(0.5));
     }
 
+    [Test]
+    public async Task ALineHoldingOnlyABoxThatLeftTheFlowIsZeroTall()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><head><style>" +
+            "label{display:inline-flex;width:32px;height:32px}" +
+            "panel{position:absolute;top:100%;left:0;width:120px;height:40px;display:block}" +
+            "</style></head><body style='margin:0'>" +
+            "<div id='button' style='position:relative;width:22px'><label></label><panel></panel></div>" +
+            "</body></html>");
+
+        // The panel is out of flow, so the line that exists only to say where its static position is
+        // holds nothing in flow and is a zero-height line box (CSS 2.1 §9.4.2). A line's worth of room
+        // for it instead made the button taller than the label it holds.
+        Assert.That(Find(view, "button").BorderBox.Height, Is.EqualTo(32).Within(0.5), "the label's height and no more");
+    }
+
+    [Test]
+    public async Task AnIntrinsicSizeIsClampedByMinWidthAndMaxWidth()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><head><style>" +
+            "span{display:inline-flex;height:10px}" +
+            ".narrow{min-width:32px}" +
+            ".wide{max-width:24px}" +
+            "</style></head><body style='margin:0'>" +
+            "<div id='grow' style='display:inline-flex'><span id='a' class='narrow'></span></div><br>" +
+            "<div id='shrink' style='display:inline-flex'><span id='b' class='wide'>abcdefghij</span></div>" +
+            "</body></html>");
+
+        // What a box contributes to what holds it is clamped by its own constraints (CSS Sizing 3 §5.2;
+        // Flexbox 1 §9.9.3 says the same of an item's main-size contribution).
+        Assert.That(Find(view, "grow").BorderBox.Width, Is.EqualTo(32).Within(0.5), "the min-width, not the empty content");
+        Assert.That(Find(view, "shrink").BorderBox.Width, Is.EqualTo(24).Within(0.5), "the max-width, not the 50px of text");
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(24).Within(0.5), "and the box itself is that wide");
+    }
+
+    [Test]
+    public async Task AContentSizedWidthIsSettledByTheBoxsContent()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><head><style>" +
+            ".text{display:block}" +
+            "</style></head><body style='margin:0;font-size:10px'>" +
+            "<div id='parent' style='position:relative;width:30px'>" +
+            "<div id='max' class='text' style='position:absolute;top:100%;left:0;width:max-content'>abcd</div>" +
+            "<div id='min' class='text' style='position:absolute;top:200%;left:0;width:min-content'>ab cd ef</div>" +
+            "<div id='fit' class='text' style='position:absolute;top:300%;left:0;width:fit-content'>ab cd ef</div>" +
+            "</div></body></html>");
+
+        // max-content is the size the content wants on one line, min-content the narrowest word, and
+        // fit-content the narrower of the max-content size and the space there is (CSS Sizing 3 §4) -
+        // none of them the width of the box the element hangs from.
+        // The stand-in measurer gives every character 5px, so "abcd" wants 20 and "ab cd ef" breaks
+        // into words of two characters - 10 for the widest of them and 40 for the whole line.
+        Assert.That(Find(view, "max").BorderBox.Width, Is.EqualTo(20).Within(0.5), "the whole line of text");
+        Assert.That(Find(view, "min").BorderBox.Width, Is.EqualTo(10).Within(0.5), "the widest word");
+        Assert.That(Find(view, "fit").BorderBox.Width, Is.EqualTo(30).Within(0.5), "the parent's 30px, between the two");
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

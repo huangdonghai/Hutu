@@ -172,8 +172,12 @@ internal sealed class PositionedLayout
         Thickness margin,
         LayoutContext childContext)
     {
-        var declared = style.Width.HasValue &&
-            !(style.Width.Kind == StyleLengthKind.Percent && containingBlock.Width <= 0);
+        // A width stated as one of the content keywords is as definite as a length is - the box's own
+        // content is what settles it - so it is not a box that has to shrink to fit the room between
+        // its edges (CSS Sizing 3 §4).
+        var declared = style.Width.IsContentSized ||
+            (style.Width.HasValue &&
+                !(style.Width.Kind == StyleLengthKind.Percent && containingBlock.Width <= 0));
         var fills = position.Left.HasValue && position.Right.HasValue;
 
         if (declared || fills)
@@ -215,8 +219,9 @@ internal sealed class PositionedLayout
         var left = hasLeft ? position.Left.Resolve(containingBlock.Width) : 0;
         var right = hasRight ? position.Right.Resolve(containingBlock.Width) : 0;
 
-        var declared = style.Width.HasValue &&
-            !(style.Width.Kind == StyleLengthKind.Percent && containingBlock.Width <= 0);
+        var declared = style.Width.IsContentSized ||
+            (style.Width.HasValue &&
+                !(style.Width.Kind == StyleLengthKind.Percent && containingBlock.Width <= 0));
 
         var tentative = !declared && hasLeft && hasRight
             ? Math.Max(0, containingBlock.Width - left - right - margin.Horizontal)

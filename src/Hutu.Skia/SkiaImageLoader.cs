@@ -405,9 +405,40 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
     /// Gets whether the payload looks like SVG. The bytes are checked rather than the content type,
     /// because a document can be served from a scheme that carries no headers at all.
     /// </summary>
-    private static Boolean LooksLikeSvg(Byte[] data)
+    /// <remarks>
+    /// What is asked first is whether the payload is *markup* at all: every raster format starts with
+    /// a magic byte - PNG's 0x89, JPEG's 0xFF, GIF's letter, WebP's RIFF - and none of them is angle
+    /// bracket, so a payload that begins with one is XML or SVG and nothing else. The name is then
+    /// looked for over a window wide enough for the declaration and doctype that may stand in front of
+    /// the <c>&lt;svg&gt;</c> element: Wikipedia's own globe is a 165KB file whose doctype alone pushes
+    /// the element past 128 bytes, and a window that stopped there read it as a bitmap and failed to
+    /// decode it with "Parameter 'codec' cannot be null" - an image that never drew.
+    /// </remarks>
+    /// <summary>Gets whether the byte is white space a writer may leave before the first tag.</summary>
+    private static Boolean IsMarkupSpace(Byte value) =>
+        value == 32 || value == 9 || value == 13 || value == 10;
+
+    internal static Boolean LooksLikeSvg(Byte[] data)
     {
-        var limit = Math.Min(data.Length, 512);
+        var start = 0;
+
+        // A byte order mark, then whatever white space the writer left before the first tag.
+        if (data.Length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF)
+        {
+            start = 3;
+        }
+
+        while (start < data.Length && IsMarkupSpace(data[start]))
+        {
+            start++;
+        }
+
+        if (start < data.Length && data[start] == (Byte)'<')
+        {
+            return true;
+        }
+
+        var limit = Math.Min(data.Length, 4096);
         var head = Encoding.UTF8.GetString(data, 0, limit);
         return head.Contains("<svg", StringComparison.OrdinalIgnoreCase);
     }

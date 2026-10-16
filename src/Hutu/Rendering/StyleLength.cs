@@ -29,6 +29,15 @@ internal enum StyleLengthKind : byte
 
     /// <summary>The result of <c>min()</c>, <c>max()</c> or <c>clamp()</c> over other lengths.</summary>
     Math,
+
+    /// <summary>The <c>max-content</c> keyword: the size the content wants on one line.</summary>
+    MaxContent,
+
+    /// <summary>The <c>min-content</c> keyword: the narrowest the content can be laid out in.</summary>
+    MinContent,
+
+    /// <summary>The <c>fit-content</c> keyword: the narrowest of the two and what the block leaves.</summary>
+    FitContent,
 }
 
 /// <summary>Which of the length functions a <see cref="StyleLengthKind.Math"/> value is.</summary>
@@ -86,6 +95,22 @@ internal readonly struct StyleLength : IEquatable<StyleLength>
 
     /// <summary>Gets a zero pixel length.</summary>
     public static StyleLength Zero { get; } = new(0, StyleLengthKind.Pixels);
+
+    /// <summary>Gets the <c>max-content</c> keyword.</summary>
+    public static StyleLength MaxContent { get; } = new(0, StyleLengthKind.MaxContent);
+
+    /// <summary>Gets the <c>min-content</c> keyword.</summary>
+    public static StyleLength MinContent { get; } = new(0, StyleLengthKind.MinContent);
+
+    /// <summary>Gets the <c>fit-content</c> keyword.</summary>
+    public static StyleLength FitContent { get; } = new(0, StyleLengthKind.FitContent);
+
+    /// <summary>
+    /// Gets whether this is one of the content keywords, whose size is worked out from what the box
+    /// holds rather than from a containing block - so it is the layout engine, not this value, that
+    /// has the answer (CSS Sizing 3 §5.2).
+    /// </summary>
+    public Boolean IsContentSized => _kind is StyleLengthKind.MaxContent or StyleLengthKind.MinContent or StyleLengthKind.FitContent;
 
     public StyleLengthKind Kind => _kind;
 

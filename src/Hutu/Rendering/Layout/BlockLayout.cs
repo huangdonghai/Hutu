@@ -60,7 +60,11 @@ internal sealed class BlockLayout
             padding.Bottom + border.Bottom,
             padding.Left + border.Left);
 
-        var (borderBoxWidth, contentWidth) = BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insets.Horizontal);
+        // A width stated as one of the content keywords is settled by what the box holds rather than by
+        // the containing block, so it is asked for here, where both are in hand.
+        var (borderBoxWidth, contentWidth) = _engine.ContentSizedWidth(box, basisWidth, context) is { } contentSized
+            ? (contentSized, Math.Max(0, contentSized - insets.Horizontal))
+            : BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insets.Horizontal);
         var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insets.Vertical);
 

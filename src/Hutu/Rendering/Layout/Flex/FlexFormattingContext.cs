@@ -42,7 +42,9 @@ internal sealed partial class FlexFormattingContext
         var insetH = padding.Horizontal + border.Horizontal;
         var insetV = padding.Vertical + border.Vertical;
 
-        var (_, contentWidth) = BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insetH);
+        var (_, contentWidth) = _engine.ContentSizedWidth(box, basisWidth, context) is { } contentSized
+            ? (contentSized, Math.Max(0, contentSized - insetH))
+            : BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insetH);
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insetV);
 
         var insetMain = flex.IsRow ? insetH : insetV;

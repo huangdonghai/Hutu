@@ -3250,7 +3250,11 @@ internal readonly struct ComputedStyle
             return fallback;
         }
 
-        return LengthReader.TryReadProperty(declared, mode, dimensions, ownSize, out var length) && length.HasValue
+        // A length, or one of the content keywords: MaxContent is a size the box's content settles
+        // rather than a length the reader can resolve, so it travels as itself and the layout engine
+        // answers for it where it has the content in hand (CSS Sizing 3 §4).
+        return LengthReader.TryReadProperty(declared, mode, dimensions, ownSize, out var length) &&
+            (length.HasValue || length.IsContentSized)
             ? length
             : fallback;
     }

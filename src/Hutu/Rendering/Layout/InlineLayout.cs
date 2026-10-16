@@ -2989,12 +2989,18 @@ internal sealed class InlineLayout
 
             if (Double.IsNegativeInfinity(ascent))
             {
-                // Nothing on the line reaches above or below its baseline. That is an empty line, or one
-                // holding nothing but a box that left the flow; either way it is as tall as the fallback
-                // asks for and no taller.
+                // Nothing on the line reaches above or below its baseline. A line holding nothing in
+                // flow - one whose only content left the flow, and which exists only to say where that
+                // box's static position is - is a zero-height line box (CSS 2.1 §9.4.2). Giving it the
+                // fallback's height instead left a line's worth of room in the box the out-of-flow box
+                // hung from: an absolutely positioned panel added 21.3px to the 32px button above it,
+                // and every row below moved down with it.
+                //
+                // A line that carries content and still reaches nowhere is as tall as the fallback asks
+                // for and no taller - the container's own font standing in where no run does.
                 var metrics = _fallback is { } fallback ? measurer.GetMetrics(fallback.GetFont()) : default;
-                ascent = _fallback is null ? 0 : metrics.Ascent;
-                descent = _fallback is null ? 0 : metrics.Descent;
+                ascent = _fallback is null || !HasContent ? 0 : metrics.Ascent;
+                descent = _fallback is null || !HasContent ? 0 : metrics.Descent;
             }
 
             line.Ascent = ascent;

@@ -758,17 +758,17 @@ internal sealed record LayoutProfile(
     }
 
     private IntrinsicSize MeasureIntrinsicCore(Box box, LayoutContext context) =>
-        box.Kind switch
+        Bound(box, box.Kind switch
         {
             BoxKind.Flex => _flex.MeasureIntrinsic(box, context),
             BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
             BoxKind.Masonry => _masonry.MeasureIntrinsic(box, context),
             BoxKind.Table => _table.MeasureIntrinsic(box, context),
             _ => _block.MeasureIntrinsic(box, context),
-        };
+        }, context);
 
     private IntrinsicSize MeasureContentIntrinsicCore(Box box, LayoutContext context) =>
-        box.Kind switch
+        Bound(box, box.Kind switch
         {
             // A flex container's content is what its items want, and the declared width of the
             // container is exactly what the callers of this path are setting aside - so the flex
@@ -778,7 +778,59 @@ internal sealed record LayoutProfile(
             BoxKind.Masonry => _masonry.MeasureIntrinsic(box, context),
             BoxKind.Table => _table.MeasureIntrinsic(box, context),
             _ => _block.MeasureContentIntrinsic(box, context),
-        };
+        }, context);
+
+    /// <summary>
+    /// Clamps an intrinsic inline size by the box's own min-width and max-width.
+    /// </summary>
+    /// <remarks>
+    /// The size a box contributes to whatever holds it is the content-box size of a hypothetical
+    /// auto-sized float holding only that box, clamped by its constraints (CSS Sizing 3 §5.2); the same
+    /// rule stated for a flex item is that its main-size contribution is "the larger of its outer
+    /// max-content size and outer preferred size if that is not auto, clamped by its min/max main size"
+    /// (CSS Flexbox 1 §9.9.3). A Codex icon button states a 32px min-width over 22px of content, and
+    /// without the clamp every box above it - the dropdown it labels, that dropdown's panel, the menu -
+    /// measured 10px narrow, each menu label wrapped one character per line, and the page came out
+    /// 621px taller than a browser draws it.
+    /// <para>
+    /// A percentage resolves against the containing block, so one that is a share of a block that is
+    /// itself the thing being asked about is left out: the contribution of a box whose constraint is a
+    /// cyclic percentage is worked out as if that constraint were absent (CSS Sizing 3 §5.2.1).
+    /// </para>
+    /// </remarks>
+    private static IntrinsicSize Bound(Box box, IntrinsicSize size, LayoutContext context)
+    {
+        var style = box.Style;
+        var basis = context.ContainingBlock.Width;
+        var insets = style.Padding.Resolve(basis).Horizontal + BorderHorizontal(style);
+        var isBorderBox = BoxModel.IsBorderBox(style);
+
+        // Both halves of the pair are raised by the floor and cut down by the ceiling: the contribution
+        // is the size of that hypothetical float, which is a box the constraints bound like any other -
+        // so a 50px run of text in a box that states max-width: 24px contributes 24, not 50.
+        var min = Math.Max(size.MinContent, BorderBound(style.MinWidth) ?? 0);
+        var max = Math.Max(size.MaxContent, min);
+
+        if (BorderBound(style.MaxWidth) is { } ceiling)
+        {
+            min = Math.Min(min, ceiling);
+            max = Math.Min(max, ceiling);
+        }
+
+        return new IntrinsicSize(min, Math.Max(min, max));
+
+        Double? BorderBound(StyleLength length)
+        {
+            if (!length.HasValue ||
+                (length.ReadsContainingBlock && context.BasisIsHypothetical) ||
+                (length.Kind == StyleLengthKind.Percent && basis <= 0))
+            {
+                return null;
+            }
+
+            return BoxModel.ContentBound(length, basis, insets, isBorderBox) + insets;
+        }
+    }
 
     /// <summary>
     /// The sizes a box's content wants once its own declared width is set aside. It is what the
@@ -831,6 +883,33 @@ internal sealed record LayoutProfile(
     }
 
 
+
+    /// <summary>
+    /// Gets the border-box inline size a content-sized width asks for, or null when the width the box
+    /// states is a length rather than one of the content keywords.
+    /// </summary>
+    /// <remarks>
+    /// <c>max-content</c> is the size the content wants on one line and <c>min-content</c> the
+    /// narrowest it can be laid out in - both of which are what the intrinsic measurement already
+    /// answers - and <c>fit-content</c> is the narrower of the max-content size and the space the
+    /// containing block leaves, floored by the min-content size (CSS Sizing 3 §4, §5.2).
+    /// </remarks>
+    internal Double? ContentSizedWidth(Box box, Double available, LayoutContext context)
+    {
+        if (!box.Style.Width.IsContentSized)
+        {
+            return null;
+        }
+
+        var intrinsic = MeasureIntrinsic(box, context);
+
+        return box.Style.Width.Kind switch
+        {
+            StyleLengthKind.MaxContent => intrinsic.MaxContent,
+            StyleLengthKind.MinContent => intrinsic.MinContent,
+            _ => Math.Max(intrinsic.MinContent, Math.Min(available, intrinsic.MaxContent)),
+        };
+    }
 
     /// <summary>
     /// Measures a replaced box - an image. Its used size comes from the intrinsic size and the CSS

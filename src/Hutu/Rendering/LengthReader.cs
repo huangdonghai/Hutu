@@ -195,6 +195,27 @@ internal static class LengthReader
                 length = StyleLength.None;
                 return true;
 
+            // The content keywords are sizes the content settles rather than lengths a containing block
+            // settles, so they are carried as themselves and the layout engine reads them where it has
+            // the content in hand (CSS Sizing 3 §4).
+            case ICssValue keyword when keyword.CssText.Trim().Equals("max-content", StringComparison.OrdinalIgnoreCase):
+                length = StyleLength.MaxContent;
+                return true;
+
+            case ICssValue keyword when keyword.CssText.Trim().Equals("min-content", StringComparison.OrdinalIgnoreCase):
+                length = StyleLength.MinContent;
+                return true;
+
+            case ICssValue keyword when keyword.CssText.Trim().Equals("fit-content", StringComparison.OrdinalIgnoreCase):
+                length = StyleLength.FitContent;
+                return true;
+
+            // fit-content(<length>) is the same keyword with an argument that caps it, which the
+            // layout engine reads as a max-width would be read.
+            case ICssValue keyword when keyword.CssText.Trim().StartsWith("fit-content(", StringComparison.OrdinalIgnoreCase):
+                length = StyleLength.FitContent;
+                return true;
+
             default:
                 return false;
         }
