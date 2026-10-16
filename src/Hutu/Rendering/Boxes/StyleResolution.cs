@@ -23,17 +23,25 @@ internal readonly record struct StyleRecord(
     Byte Marks)
 {
     /// <summary>
-    /// The two marks the engine answers to off the element itself rather than through the cascade:
-    /// the link colour is resolved from them, and a style resolved under one of them is not the
-    /// style the element has now. A mark that was never forced and one forced off are different
-    /// answers, so each is read as it stands rather than as a boolean.
+    /// The four marks the engine answers to off the element itself: the link colour is resolved from
+    /// two of them and the rules a reading gesture places from all four, so a style - and a match -
+    /// resolved under one of them is not the one the element has now. A mark that was never forced
+    /// and one forced off are different answers, so each is read as it stands rather than as a
+    /// boolean.
     /// </summary>
+    /// <remarks>
+    /// Two bits each, four of them, one byte. The packing is arbitrary but fixed: it is compared, not
+    /// decoded, so all that matters is that the same element under the same marks packs the same
+    /// number every time.
+    /// </remarks>
     internal static Byte MarksOf(IElement? element)
     {
         var active = MarkOf(element, PseudoClassNames.Active);
         var visited = MarkOf(element, PseudoClassNames.Visited);
+        var hover = MarkOf(element, PseudoClassNames.Hover);
+        var target = MarkOf(element, PseudoClassNames.Target);
 
-        return (Byte)(active | (visited << 2));
+        return (Byte)(active | (visited << 2) | (hover << 4) | (target << 6));
     }
 
     private static Byte MarkOf(IElement? element, String name) => element?.GetPseudoClass(name) switch

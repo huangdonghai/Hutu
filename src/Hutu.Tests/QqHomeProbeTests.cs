@@ -532,7 +532,7 @@ public sealed class QqHomeProbeTests
         {
             foreach (var element in document.QuerySelectorAll("*"))
             {
-                MatchedCascade.ForElement(index!, element);
+                MatchedCascade.ForElement(index!, element, StyleRecord.MarksOf(element));
             }
 
             return true;

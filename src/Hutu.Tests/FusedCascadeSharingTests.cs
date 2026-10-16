@@ -44,9 +44,9 @@ public sealed class FusedCascadeSharingTests
 
         var index = IndexOf(document);
         var all = document.QuerySelectorAll("p");
-        var first = MatchedCascade.ForElement(index, all[0]);
-        var second = MatchedCascade.ForElement(index, all[1]);
-        var other = MatchedCascade.ForElement(index, all[2]);
+        var first = MatchedCascade.ForElement(index, all[0], StyleRecord.MarksOf(all[0]));
+        var second = MatchedCascade.ForElement(index, all[1], StyleRecord.MarksOf(all[1]));
+        var other = MatchedCascade.ForElement(index, all[2], StyleRecord.MarksOf(all[2]));
 
         Assert.That(
             ReferenceEquals(first, second),
@@ -73,8 +73,8 @@ public sealed class FusedCascadeSharingTests
 
         var index = IndexOf(document);
         var all = document.QuerySelectorAll("p");
-        var loud = MatchedCascade.ForElement(index, all[0]);
-        var quiet = MatchedCascade.ForElement(index, all[1]);
+        var loud = MatchedCascade.ForElement(index, all[0], StyleRecord.MarksOf(all[0]));
+        var quiet = MatchedCascade.ForElement(index, all[1], StyleRecord.MarksOf(all[1]));
 
         Assert.That(ReferenceEquals(loud, quiet), Is.False, "the attribute is part of what matched");
         Assert.That(loud.Find("color")?.Value, Is.EqualTo(Loud));
@@ -93,8 +93,8 @@ public sealed class FusedCascadeSharingTests
         var all = document.QuerySelectorAll("p");
         all[0].SetPseudoClass(PseudoClassNames.Hover);
 
-        var hovered = MatchedCascade.ForElement(index, all[0]);
-        var plain = MatchedCascade.ForElement(index, all[1]);
+        var hovered = MatchedCascade.ForElement(index, all[0], StyleRecord.MarksOf(all[0]));
+        var plain = MatchedCascade.ForElement(index, all[1], StyleRecord.MarksOf(all[1]));
 
         Assert.That(ReferenceEquals(hovered, plain), Is.False, "the hover mark is part of what matched");
         Assert.That(hovered.Find("color")?.Value, Is.EqualTo(Loud));
@@ -115,8 +115,8 @@ public sealed class FusedCascadeSharingTests
 
         Assert.That(((IHtmlElement)all[0]).IsFocused, Is.True, "the first control took the focus");
 
-        var focused = MatchedCascade.ForElement(index, all[0]);
-        var plain = MatchedCascade.ForElement(index, all[1]);
+        var focused = MatchedCascade.ForElement(index, all[0], StyleRecord.MarksOf(all[0]));
+        var plain = MatchedCascade.ForElement(index, all[1], StyleRecord.MarksOf(all[1]));
 
         Assert.That(ReferenceEquals(focused, plain), Is.False, "focus is part of what matched");
         Assert.That(focused.Find("color")?.Value, Is.EqualTo(Green));
@@ -134,8 +134,8 @@ public sealed class FusedCascadeSharingTests
 
         var index = IndexOf(document);
         var all = document.QuerySelectorAll("p");
-        var plain = MatchedCascade.ForElement(index, all[0]);
-        var styled = MatchedCascade.ForElement(index, all[1]);
+        var plain = MatchedCascade.ForElement(index, all[0], StyleRecord.MarksOf(all[0]));
+        var styled = MatchedCascade.ForElement(index, all[1], StyleRecord.MarksOf(all[1]));
 
         Assert.That(ReferenceEquals(styled, plain), Is.False, "the inline style is part of what matched");
         Assert.That(styled.Find("color")?.Value, Is.EqualTo(Blue), "the inline declaration wins");
@@ -152,8 +152,8 @@ public sealed class FusedCascadeSharingTests
 
         var index = IndexOf(document);
         var all = document.QuerySelectorAll("a");
-        var link = MatchedCascade.ForElement(index, all[0]);
-        var anchor = MatchedCascade.ForElement(index, all[1]);
+        var link = MatchedCascade.ForElement(index, all[0], StyleRecord.MarksOf(all[0]));
+        var anchor = MatchedCascade.ForElement(index, all[1], StyleRecord.MarksOf(all[1]));
 
         // `:link` is answered by the engine when nothing was forced, and what it reads is the
         // element's own attribute - which is why the two are not the same match, whatever the
@@ -171,8 +171,8 @@ public sealed class FusedCascadeSharingTests
 
         var index = IndexOf(document);
         var all = document.QuerySelectorAll("span");
-        var inside = MatchedCascade.ForElement(index, all[0]);
-        var outside = MatchedCascade.ForElement(index, all[1]);
+        var inside = MatchedCascade.ForElement(index, all[0], StyleRecord.MarksOf(all[0]));
+        var outside = MatchedCascade.ForElement(index, all[1], StyleRecord.MarksOf(all[1]));
 
         Assert.That(
             ReferenceEquals(inside, outside),
@@ -192,8 +192,8 @@ public sealed class FusedCascadeSharingTests
 
         var index = IndexOf(document);
         var all = document.QuerySelectorAll("li");
-        var first = MatchedCascade.ForElement(index, all[0]);
-        var second = MatchedCascade.ForElement(index, all[1]);
+        var first = MatchedCascade.ForElement(index, all[0], StyleRecord.MarksOf(all[0]));
+        var second = MatchedCascade.ForElement(index, all[1], StyleRecord.MarksOf(all[1]));
 
         Assert.That(ReferenceEquals(first, second), Is.False, "the position is part of what matched");
         Assert.That(first.Find("color")?.Value, Is.EqualTo(Loud));

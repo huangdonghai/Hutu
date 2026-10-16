@@ -2064,6 +2064,62 @@ internal readonly struct ComputedStyle
         ReferenceEquals(_values.DisplayPositioning, other._values.DisplayPositioning) &&
         ReferenceEquals(_values.List, other._values.List);
 
+    /// <summary>
+    /// Gets whether this style hands a descendant exactly what <paramref name="other"/> handed it:
+    /// every area a child reads off its parent is the very same instance, and every keyword that
+    /// travels down is the same value.
+    /// </summary>
+    /// <remarks>
+    /// A parent that was resolved again does not have to say so. The question that matters is not
+    /// "was I computed over" but "is the answer still the answer" - and a mark that moved very often
+    /// leaves it alone: a rule that paints a link red says nothing to the <c>html</c> above it, which
+    /// is recomputed and comes to every value it already had. A parent that says so lets its whole
+    /// subtree stand down; a parent that says nothing makes every descendant resolve again only to be
+    /// handed back what it had, which is what a pointer crossing one link costs today.
+    /// <para>
+    /// What is compared is exactly what the builder hands down, no more and no less: the four areas a
+    /// child's cached font, text, list and border are keyed on, the display area that says whether it
+    /// is a flex or grid item, and the keywords that are inherited or carried - the colour, the flow,
+    /// the annotation position, the cursor and the text stroke and fill. The rest of the keywords
+    /// belong to the box that holds them and travel nowhere, so a style that moved them hands its
+    /// subtree the inheritance it always had.
+    /// </para>
+    /// </remarks>
+    internal Boolean SameInheritance(ComputedStyle other)
+    {
+        var mine = _values;
+        var theirs = other._values;
+
+        return ReferenceEquals(mine.Font, theirs.Font) &&
+            ReferenceEquals(mine.Text, theirs.Text) &&
+            ReferenceEquals(mine.List, theirs.List) &&
+            ReferenceEquals(mine.Border, theirs.Border) &&
+            ReferenceEquals(mine.DisplayPositioning, theirs.DisplayPositioning) &&
+            SameInheritedKeywords(mine.Fused, theirs.Fused);
+    }
+
+    private static Boolean SameInheritedKeywords(FusedKeywords? mine, FusedKeywords? theirs)
+    {
+        if (mine is null || theirs is null)
+        {
+            return mine is null && theirs is null;
+        }
+
+        // The colour is compared by value rather than by reference because two declarations of the
+        // same colour are two instances of it, and the one that was not declared at all is the
+        // parent's instance. Either way the value is what a child inherits.
+        return mine.Color.Equals(theirs.Color) &&
+            mine.WritingMode == theirs.WritingMode &&
+            mine.Direction == theirs.Direction &&
+            mine.Orientation == theirs.Orientation &&
+            mine.CombinesUpright == theirs.CombinesUpright &&
+            mine.Ruby == theirs.Ruby &&
+            mine.Cursor == theirs.Cursor &&
+            mine.TextStrokeWidth == theirs.TextStrokeWidth &&
+            mine.TextStrokeColor == theirs.TextStrokeColor &&
+            mine.TextFillColor == theirs.TextFillColor;
+    }
+
     /// <summary>Gets what an item of this element's list is marked with, as the name or string written.</summary>
     public String ListStyleType => _values.List.Type;
 

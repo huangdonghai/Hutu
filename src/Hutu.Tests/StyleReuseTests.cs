@@ -185,6 +185,108 @@ public sealed class StyleReuseTests
         Assert.That(PaintedColour(view, "second"), Is.EqualTo(0xFFFF0000u), "while the second is");
     }
 
+    [Test]
+    public async Task AnInheritedValueStillReachesADescendant()
+    {
+        // The rule paints the ancestor, and the descendant below it inherits the colour. A subtree
+        // that stood down because its parent came to the same inheritance would leave the descendant
+        // painting the colour it had before.
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 600);
+        await view.SetHtml(
+            "<html><body style='margin:0'><style>" +
+            ".root:hover { color: #ff0000 }" +
+            "</style><div class='root'><p class='leaf'>leaf</p></div>" +
+            "<div class='root'><p class='leaf'>other</p></div></body></html>");
+
+        var first = TextRun(view, "leaf");
+        var second = TextRun(view, "other");
+
+        view.PointerMoved(first.BorderBox.X + 1, first.BorderBox.Y + 1);
+
+        Assert.That(PaintedColour(view, "leaf"), Is.EqualTo(0xFFFF0000u), "the hovered root's leaf takes the colour");
+        Assert.That(PaintedColour(view, "other"), Is.EqualTo(0xFF000000u), "and the other root's does not");
+
+        // And the reverse: moving off puts both back.
+        view.PointerMoved(second.BorderBox.X + 1, second.BorderBox.Y + 1);
+
+        Assert.That(PaintedColour(view, "leaf"), Is.EqualTo(0xFF000000u), "the first leaf is back to black");
+        Assert.That(PaintedColour(view, "other"), Is.EqualTo(0xFFFF0000u), "while the second one is red");
+    }
+
+    [Test]
+    public async Task APropertyThatDoesNotInheritLeavesTheSubtreeAlone()
+    {
+        // The other side of the same line: a hover rule that sets only what travels nowhere must not
+        // stop the subtree from standing down, or nothing would be saved.
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 600);
+        await view.SetHtml(
+            "<html><body style='margin:0'><style>" +
+            ".root:hover { background-color: #00ff00 }" +
+            "</style><div class='root'><p class='leaf'>leaf</p></div></body></html>");
+
+        var leaf = TextRun(view, "leaf");
+        var before = PaintedColour(view, "leaf");
+
+        view.PointerMoved(leaf.BorderBox.X + 1, leaf.BorderBox.Y + 1);
+
+        Assert.That(PaintedColour(view, "leaf"), Is.EqualTo(before), "the leaf is untouched: a background is not inherited");
+    }
+
+    [Test]
+    public async Task ACombinatorStillReachesADescendantOfTheHoveredElement()
+    {
+        // The rule names the descendant, and the mark lands on the ancestor. The descendant's own
+        // marks never move, so a cache that only looked at those would hand it the cascade it had -
+        // which is the one that does not match.
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 600);
+        await view.SetHtml(
+            "<html><body style='margin:0'><style>" +
+            ".root:hover .leaf { color: #ff0000 }" +
+            "</style><div class='root'><p class='leaf'>inside</p></div>" +
+            "<div><p class='leaf'>outside</p></div></body></html>");
+
+        var inside = TextRun(view, "inside");
+        var outside = TextRun(view, "outside");
+
+        view.PointerMoved(inside.BorderBox.X + 1, inside.BorderBox.Y + 1);
+
+        Assert.That(PaintedColour(view, "inside"), Is.EqualTo(0xFFFF0000u), "the leaf under the hovered root is red");
+        Assert.That(PaintedColour(view, "outside"), Is.EqualTo(0xFF000000u), "and the one outside it is not");
+
+        view.PointerMoved(outside.BorderBox.X + 1, outside.BorderBox.Y + 1);
+
+        Assert.That(PaintedColour(view, "inside"), Is.EqualTo(0xFF000000u), "moving off puts the first back");
+        Assert.That(PaintedColour(view, "outside"), Is.EqualTo(0xFF000000u), "and the second was never in it");
+    }
+
+    [Test]
+    public async Task ASiblingCombinatorStillReachesTheSiblingOfTheHoveredElement()
+    {
+        // The other direction the same rule can reach: the mark lands on the first sibling and the
+        // answer is the second one's.
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 600);
+        await view.SetHtml(
+            "<html><body style='margin:0'><style>" +
+            ".a:hover + .b { color: #ff0000 }" +
+            "</style><p class='a' style='margin:0'>first</p>" +
+            "<p class='b' style='margin:0'>second</p></body></html>");
+
+        var first = TextRun(view, "first");
+        var second = TextRun(view, "second");
+
+        view.PointerMoved(first.BorderBox.X + 1, first.BorderBox.Y + 1);
+
+        Assert.That(PaintedColour(view, "second"), Is.EqualTo(0xFFFF0000u), "the sibling after the hovered one is red");
+
+        view.PointerMoved(second.BorderBox.X + 1, second.BorderBox.Y + 1);
+
+        Assert.That(PaintedColour(view, "second"), Is.EqualTo(0xFF000000u), "and it is not once the hover moves on");
+    }
+
     /// <summary>What the view is currently showing, in the terms that would catch a wrong style.</summary>
     private sealed class Picture
     {

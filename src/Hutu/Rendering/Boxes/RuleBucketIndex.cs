@@ -275,18 +275,47 @@ internal sealed class RuleBucketIndex
     /// </remarks>
     private readonly Dictionary<CascadeKey, MatchedCascade> _cascades = new();
 
+    /// <summary>
+    /// What each element of this document was last matched against: the cascade it came to, the
+    /// marks it was matched under, the inline style text it was matched with, and whether any rule
+    /// that could match it reaches outside the element.
+    /// </summary>
+    /// <remarks>
+    /// A match is a function of the element's own name, attributes and marks, and of the marks on
+    /// its ancestors and siblings - the last two only because a selector with a combinator in it
+    /// reads them. So for an element no such rule could reach, the match is settled by the element
+    /// alone, and the only thing that can move it between two builds is a mark on the element
+    /// itself. That is the whole of what has to be checked to know the answer in hand is still the
+    /// answer, and it is checked instead of matching, which walks every candidate selector.
+    /// <para>
+    /// The inline style text is held because it is the other input the match is read with: it is
+    /// the attribute, compared by identity, which is enough because AngleSharp rewrites the
+    /// attribute whenever the declaration changes.
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<IElement, (MatchedCascade Cascade, Byte Marks, String? Inline, Boolean ReachesOutside)> _matches = new();
+
+    /// <summary>
+    /// Whether each rule's selector reaches outside the element it would match: a combinator in it,
+    /// or a relational pseudo-class. Such a rule's answer depends on the element's ancestors and
+    /// siblings, so a mark placed on any of them can move it.
+    /// </summary>
+    private readonly Boolean[] _reaches;
+
     private RuleBucketIndex(
         List<ICssStyleRule> rules,
         Dictionary<String, List<Int32>> idBuckets,
         Dictionary<String, List<Int32>> classBuckets,
         Dictionary<String, List<Int32>> tagBuckets,
-        List<Int32> unkeyed)
+        List<Int32> unkeyed,
+        Boolean[] reaches)
     {
         _rules = rules;
         _idBuckets = idBuckets;
         _classBuckets = classBuckets;
         _tagBuckets = tagBuckets;
         _unkeyed = unkeyed;
+        _reaches = reaches;
     }
 
     /// <summary>Gets the flattened rules in the order they are matched in.</summary>
@@ -323,6 +352,7 @@ internal sealed class RuleBucketIndex
         var classBuckets = new Dictionary<String, List<Int32>>(StringComparer.Ordinal);
         var tagBuckets = new Dictionary<String, List<Int32>>(StringComparer.OrdinalIgnoreCase);
         var unkeyed = new List<Int32>();
+        var reaches = new Boolean[flattened.Count];
 
         for (var i = 0; i < flattened.Count; i++)
         {
@@ -331,38 +361,185 @@ internal sealed class RuleBucketIndex
             if (keys is null || keys.Length == 0)
             {
                 unkeyed.Add(i);
+            }
+            else
+            {
+                for (var j = 0; j < keys.Length; j++)
+                {
+                    var key = keys[j];
+                    var buckets = key.Kind switch
+                    {
+                        RuleKeyKind.Id => idBuckets,
+                        RuleKeyKind.Class => classBuckets,
+                        _ => tagBuckets,
+                    };
+
+                    if (!buckets.TryGetValue(key.Value, out var indices))
+                    {
+                        indices = new List<Int32>();
+                        buckets.Add(key.Value, indices);
+                    }
+
+                    indices.Add(i);
+                }
+            }
+
+            // Asked of every rule, keyed or not: an unkeyed rule is one no key could be taken from -
+            // a bare `*`, or a selector list one of whose arms is - and that says nothing about
+            // whether it reads a mark off somebody else. It matters more here than anywhere, because
+            // an unkeyed rule is consulted for every element of the document.
+            reaches[i] = ReachesOutside(flattened[i]);
+        }
+
+        return new RuleBucketIndex(flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches);
+    }
+
+    /// <summary>
+    /// Gets whether a rule's answer depends on the marks of any element but the one it would match.
+    /// </summary>
+    /// <remarks>
+    /// A match is read off three things: the element's own name, attributes and marks, which are
+    /// either fixed for the life of the document or are marks the engine places on that element; the
+    /// shape of what is above and beside it, which is fixed too; and - only through a selector that
+    /// has both a combinator and a pseudo-class answering to a mark - the marks on those ancestors
+    /// and siblings. <c>div p</c> reads the shape and can never move; <c>.note:hover</c> reads the
+    /// element's own mark, which the stamp already carries; <c>div:hover p</c> and
+    /// <c>.a:hover + .b</c> read somebody else's, and those are what this is for.
+    /// <para>
+    /// The arms of a selector list are asked one at a time. The space that follows a comma is not a
+    /// combinator, and a sheet that states one rule for several places is nothing but spaces:
+    /// <c>:link, :visited</c>, <c>td, th</c>, and every stylesheet that opens with a list of the
+    /// elements it is about. Asking the whole text would find a descendant combinator in each of
+    /// them, and a rule that reaches outside is a rule that stands no element's match down - and a
+    /// rule with no key is consulted for every element of the document, so one such rule costs the
+    /// whole document a match on every pointer move.
+    /// </para>
+    /// <para>
+    /// Within an arm the test is on the text and errs towards yes: a <c>~</c> inside an attribute
+    /// value, a <c>+</c> inside <c>:nth-child()</c> and a <c>&gt;</c> inside <c>:not()</c> all read
+    /// as combinators, though only the last of those really is one. Each costs a match that was not
+    /// needed, which is the direction the engine errs in - the other way would serve an element a
+    /// cascade it no longer matches.
+    /// </para>
+    /// </remarks>
+    private static Boolean ReachesOutside(ICssStyleRule rule)
+    {
+        var selector = rule.SelectorText;
+
+        if (selector is null)
+        {
+            return true;
+        }
+
+        // No mark can move this rule, so nothing about it can have changed either.
+        if (!StylePseudoIndex.NamesATrackedPseudo(selector))
+        {
+            return false;
+        }
+
+        var depth = 0;
+        var start = 0;
+        var quote = '\0';
+
+        for (var i = 0; i < selector.Length; i++)
+        {
+            var c = selector[i];
+
+            if (quote != '\0')
+            {
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+
                 continue;
             }
 
-            for (var j = 0; j < keys.Length; j++)
+            switch (c)
             {
-                var key = keys[j];
-                var buckets = key.Kind switch
-                {
-                    RuleKeyKind.Id => idBuckets,
-                    RuleKeyKind.Class => classBuckets,
-                    _ => tagBuckets,
-                };
+                case '"' or '\'':
+                    quote = c;
+                    break;
+                case '(' or '[' or '{':
+                    depth++;
+                    break;
+                case ')' or ']' or '}':
+                    if (depth > 0)
+                    {
+                        depth--;
+                    }
 
-                if (!buckets.TryGetValue(key.Value, out var indices))
-                {
-                    indices = new List<Int32>();
-                    buckets.Add(key.Value, indices);
-                }
+                    break;
+                case ',' when depth == 0:
+                    if (ArmReachesOutside(selector, start, i))
+                    {
+                        return true;
+                    }
 
-                indices.Add(i);
+                    start = i + 1;
+                    break;
             }
         }
 
-        return new RuleBucketIndex(flattened, idBuckets, classBuckets, tagBuckets, unkeyed);
+        return ArmReachesOutside(selector, start, selector.Length);
+    }
+
+    /// <summary>
+    /// Gets whether one arm of a selector reads a mark off an element other than the one it would
+    /// match: a combinator in it, or a relational pseudo-class, which reaches anything at all and so
+    /// may name a mark with no combinator of its own anywhere in the arm.
+    /// </summary>
+    private static Boolean ArmReachesOutside(String selector, Int32 start, Int32 end)
+    {
+        // The space that followed the comma is now at the head of the arm, and the one before the
+        // next comma is at its tail. Neither is a combinator: a selector cannot begin or end with
+        // one. Trimming them is what makes the arms of `a , b` come out as `a` and `b`.
+        while (start < end && selector[start] is ' ' or '\t' or '\n' or '\r')
+        {
+            start++;
+        }
+
+        while (end > start && selector[end - 1] is ' ' or '\t' or '\n' or '\r')
+        {
+            end--;
+        }
+
+        var arm = selector.AsSpan(start, end - start);
+
+        for (var i = 0; i < arm.Length; i++)
+        {
+            if (arm[i] is ' ' or '\t' or '\n' or '\r' or '>' or '+' or '~')
+            {
+                return true;
+            }
+        }
+
+        return arm.Contains(":has(", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
     /// Gets the cascade of an element: the one already matched for an element that matched the
     /// same rules with the same inline style, or a match of its own.
     /// </summary>
-    internal MatchedCascade Cascade(IElement element)
+    /// <param name="marks">
+    /// The marks the engine has placed on the element, packed the way
+    /// <see cref="StyleRecord.MarksOf"/> packs them. They are the only input to the match that can
+    /// have moved since the last build.
+    /// </param>
+    internal MatchedCascade Cascade(IElement element, Byte marks)
     {
+        // What this element was matched against last time, when nothing about it can have moved.
+        // A rule that reaches outside the element is the one thing that rules this out: its answer
+        // reads the marks on the ancestors and the siblings, so a mark placed on any of them can
+        // move it, and there is no saying which without matching.
+        if (_matches.TryGetValue(element, out var held) &&
+            held.Marks == marks &&
+            !held.ReachesOutside &&
+            ReferenceEquals(held.Inline, InlineTextOf(element)))
+        {
+            return held.Cascade;
+        }
+
         var candidates = CollectCandidates(element);
         var inline = InlineOf(element);
         var matched = MatchedCascade.MatchRules(element, _rules, candidates);
@@ -373,13 +550,46 @@ internal sealed class RuleBucketIndex
         // and the freshly matched list is dropped - the wrapper is only built on a miss.
         if (_cascades.TryGetValue(key, out var known))
         {
-            return known;
+            return Remember(element, known, marks, candidates);
         }
 
         var cascade = new MatchedCascade(matched, inline);
         _cascades.Add(key, cascade);
+        return Remember(element, cascade, marks, candidates);
+    }
+
+    /// <summary>
+    /// Records what an element was matched against, so the next build can tell whether the answer in
+    /// hand still stands - and answers whether it does.
+    /// </summary>
+    private MatchedCascade Remember(
+        IElement element,
+        MatchedCascade cascade,
+        Byte marks,
+        List<Int32> candidates)
+    {
+        var reachesOutside = false;
+
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            if (_reaches[candidates[i]])
+            {
+                reachesOutside = true;
+                break;
+            }
+        }
+
+        _matches[element] = (cascade, marks, InlineTextOf(element), reachesOutside);
         return cascade;
     }
+
+    /// <summary>
+    /// Gets the element's inline style as the text the attribute holds, which is what the declaration
+    /// is built from and what AngleSharp rewrites whenever it changes. Null for an element that
+    /// cannot carry one, which is the same answer the declaration gives.
+    /// </summary>
+    private static String? InlineTextOf(IElement element) =>
+        element is IHtmlElement || element is ISvgElement ? element.GetAttribute("style") : null;
 
     /// <summary>
     /// Gets the element's inline style. Only the two element kinds that can carry a style attribute

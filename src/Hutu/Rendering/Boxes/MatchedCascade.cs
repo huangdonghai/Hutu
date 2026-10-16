@@ -60,8 +60,13 @@ internal sealed class MatchedCascade
     /// Gets the cascade an element matches, which the index may already have worked out for an
     /// element this one cannot differ from.
     /// </summary>
-    public static MatchedCascade ForElement(RuleBucketIndex index, IElement element) =>
-        index.Cascade(element);
+    /// <param name="marks">
+    /// The marks the engine has placed on the element, packed the way
+    /// <see cref="StyleRecord.MarksOf"/> packs them. The index needs them to know whether a match it
+    /// already holds can still be the answer.
+    /// </param>
+    public static MatchedCascade ForElement(RuleBucketIndex index, IElement element, Byte marks) =>
+        index.Cascade(element, marks);
 
     /// <summary>
     /// Matches an element against the index: the rules that could match it, ordered the way the

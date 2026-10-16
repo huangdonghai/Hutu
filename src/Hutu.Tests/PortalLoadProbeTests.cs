@@ -122,7 +122,7 @@ public sealed class PortalLoadProbeTests
 
                 foreach (INode node in full.QuerySelectorAll("*"))
                 {
-                    _ = MatchedCascade.ForElement(fresh, (IElement)node);
+                    _ = MatchedCascade.ForElement(fresh, (IElement)node, StyleRecord.MarksOf((IElement)node));
                     counted++;
                 }
 

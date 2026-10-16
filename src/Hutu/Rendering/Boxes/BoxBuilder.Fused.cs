@@ -78,7 +78,7 @@ internal static partial class BoxBuilder
             return null;
         }
 
-        var rootCascade = MatchedCascade.ForElement(index, root);
+        var rootCascade = MatchedCascade.ForElement(index, root, StyleRecord.MarksOf(root));
         AdoptBodyFlow(box, rootCascade.Find("writing-mode") is not null);
         MarkBasisUse(box);
 
@@ -102,7 +102,12 @@ internal static partial class BoxBuilder
         Boolean inItemContainer,
         ref Boolean supported)
     {
-        var cascade = MatchedCascade.ForElement(index, element);
+        // The marks come first because the index is asked for the cascade with them: they are the one
+        // input to a match that a reading gesture can move, and the index holds last build's answer
+        // for an element no rule reaches outside of - which is almost all of them - so the walk over
+        // every candidate selector is spared for every element whose own marks stand still.
+        var marks = StyleRecord.MarksOf(element);
+        var cascade = MatchedCascade.ForElement(index, element, marks);
 
         // An environment variable is the one substitution nothing here can answer - it is a value the
         // host has and the stylesheet does not - so the document is handed over rather than guessed at.
@@ -127,11 +132,11 @@ internal static partial class BoxBuilder
         // each is what the last build used the answer is the one already in hand and the whole
         // resolution stands down. That is what keeps a pointer moving across a link from resolving
         // several thousand styles to change one of them.
-        var marks = StyleRecord.MarksOf(element);
+        var record = state.RecordFor(element);
         var stands = false;
         ComputedStyle style;
 
-        if (state.RecordFor(element) is { } previous &&
+        if (record is { } previous &&
             ReferenceEquals(previous.Cascade, cascade) &&
             ReferenceEquals(previous.Variables, variables) &&
             previous.Marks == marks &&
@@ -151,6 +156,20 @@ internal static partial class BoxBuilder
         {
             style = FusedStyleFactory.Build(element, cascade, parent, device, faces, state.Pool, state.Cache, variables);
             state.Remember(element, new StyleRecord(cascade, variables, style, marks));
+
+            // Resolved again, and it came to the same answer: the mark that moved on this element -
+            // or the one that moved on its ancestor and left this one's inherited values alone -
+            // changed nothing a descendant reads. Its subtree is therefore handed what it was handed
+            // last time and stands down, even though this element itself was computed over.
+            //
+            // What a descendant reads is what the builder hands down, and all but one of it comes off
+            // the style: the areas, the colour, the flow, the cursor, the annotation. The exception is
+            // the line-height declaration, which a child re-resolves against its own size and so has
+            // to keep travelling down as the declaration rather than as the value - it is compared
+            // here, and it is the only reason the earlier cascade is still asked about at all.
+            stands = record is { } earlier &&
+                style.SameInheritance(earlier.Style) &&
+                ReferenceEquals(earlier.Cascade.Find("line-height"), cascade.Find("line-height"));
         }
 
         if (style.IsDisplayNone)
