@@ -181,6 +181,13 @@ internal sealed class Box
     public Boolean IsMarker { get; init; }
 
     /// <summary>
+    /// Gets whether this text box is the content a <c>::before</c> or <c>::after</c> generated rather
+    /// than something the document says. It is laid out and drawn with the rest of the element's
+    /// inline content, but it is not part of the document, so selecting across it skips it.
+    /// </summary>
+    public Boolean IsGenerated { get; init; }
+
+    /// <summary>
     /// Gets whether the element's content is replaced - an image - instead of being its children.
     /// Such a box never has children: its geometry comes from the intrinsic size and the CSS
     /// constraints. Whether it is block-level or inline-level is still decided by <c>display</c>,

@@ -1,0 +1,865 @@
+using AngleSharp.Css;
+using AngleSharp.Css.Dom;
+using AngleSharp.Css.Parser;
+using AngleSharp.Dom;
+using Hutu.Rendering.Layout;
+using Hutu.Rendering.Media;
+using System;
+using System.Collections.Generic;
+using System.Text;
+
+namespace Hutu.Rendering.Boxes;
+
+/// <summary>
+/// Which of the two generated-content pseudo-elements a rule is written for.
+/// </summary>
+internal enum PseudoSide
+{
+    Before,
+    After,
+}
+
+/// <summary>
+/// The arms of the sheet that are written for <c>::before</c> and <c>::after</c>, held apart from the
+/// rules they came from and matched against the element that originates the pseudo-element.
+/// </summary>
+/// <remarks>
+/// <para>
+/// An arm that names a pseudo-element matches no element of the document, which is why the index
+/// hands it to nobody: AngleSharp builds such an arm as a selector whose last step is
+/// <c>element is IPseudoElement</c>, and this engine's tree holds no such node. What the arm does
+/// select is a box the engine has to make itself - one that is, in the words of Pseudo-Elements 4
+/// §4.1, "as if [it] were immediate children of their originating element". So what is kept here is
+/// not the arm but the arm with the pseudo-element taken off, which is a selector for the element
+/// that owns the box.
+/// </para>
+/// <para>
+/// The arms are found by reading the selector's text rather than by walking the parsed selector:
+/// the parser will not hand a pseudo-element back as anything this engine can ask, and the text is
+/// what the sheet wrote. A rule is still indexed in full by <see cref="RuleBucketIndex"/>, so an arm
+/// that is written for an element and one written for a pseudo-element, listed in the same rule,
+/// each reach the cascade they belong to.
+/// </para>
+/// </remarks>
+internal sealed class PseudoRuleIndex
+{
+    private readonly ArmSet _before = new();
+    private readonly ArmSet _after = new();
+
+    /// <summary>
+    /// Gets whether no arm anywhere in the sheets is written for either pseudo-element. A page that
+    /// generates no content is every page this engine has rendered until now, and it must not pay
+    /// for the question - so this is the gate the box builder asks first, and it is answered from
+    /// the count of arms alone, with nothing parsed.
+    /// </summary>
+    internal Boolean IsEmpty => _before.Count == 0 && _after.Count == 0;
+
+    /// <summary>Reads the pseudo-element arms out of the flattened rules, in the order they cascade in.</summary>
+    internal static PseudoRuleIndex Build(List<ICssStyleRule> rules)
+    {
+        var index = new PseudoRuleIndex();
+
+        for (var i = 0; i < rules.Count; i++)
+        {
+            index.Add(rules[i], i);
+        }
+
+        return index;
+    }
+
+    private void Add(ICssStyleRule rule, Int32 order)
+    {
+        var text = rule.SelectorText;
+
+        if (text is null)
+        {
+            return;
+        }
+
+        // The arms of a selector list are read one at a time. `p::before, div` is two arms and only
+        // the first of them is written for a pseudo-element; the declarations belong to both.
+        var arm = 0;
+
+        for (var i = 0; i <= text.Length; i++)
+        {
+            if (i == text.Length)
+            {
+                Take(text, arm, i, order);
+                break;
+            }
+
+            var c = text[i];
+
+            if (c is '"' or '\'')
+            {
+                i = SkipString(text, i);
+            }
+            else if (c is '(' or '[')
+            {
+                i = SkipGroup(text, i);
+            }
+            else if (c == ',')
+            {
+                Take(text, arm, i, order);
+                arm = i + 1;
+            }
+        }
+    }
+
+    private void Take(String text, Int32 start, Int32 end, Int32 order)
+    {
+        if (!EndsWithPseudoElement(text, start, end, out var side, out var colon))
+        {
+            return;
+        }
+
+        // What is left when the pseudo-element is taken off selects the originating element. An arm
+        // written `::before` alone is written for every element, which is what `*` says.
+        var rest = text[Math.Min(colon, start)..colon].Trim();
+        (side == PseudoSide.Before ? _before : _after).Add(rest.Length == 0 ? "*" : rest, order);
+    }
+
+    /// <summary>
+    /// Gets whether an arm is written for <c>::before</c> or <c>::after</c>, and where the colon that
+    /// begins the pseudo-element stands.
+    /// </summary>
+    /// <remarks>
+    /// A pseudo-element is the last thing in a selector - Selectors 4 lets nothing follow it - so the
+    /// test is on the tail of the arm. Both spellings are taken: §8 of Pseudo-Elements 4 requires the
+    /// one-colon form CSS 2 wrote to keep working. The colon has to stand outside every bracket and
+    /// quote, or <c>[title="a:before"]</c> would read as a pseudo-element.
+    /// </remarks>
+    private static Boolean EndsWithPseudoElement(String text, Int32 start, Int32 end, out PseudoSide side, out Int32 colon)
+    {
+        side = PseudoSide.Before;
+        colon = -1;
+
+        var at = -1;
+
+        for (var i = start; i < end; i++)
+        {
+            var c = text[i];
+
+            if (c is '"' or '\'')
+            {
+                i = SkipString(text, i);
+            }
+            else if (c is '(' or '[')
+            {
+                i = SkipGroup(text, i);
+            }
+            else if (c == ':')
+            {
+                at = i;
+            }
+        }
+
+        if (at < 0)
+        {
+            return false;
+        }
+
+        while (at - 1 >= start && text[at - 1] == ':')
+        {
+            at--;
+        }
+
+        var name = text[(at + (text[at] == ':' ? 1 : 0))..end];
+        name = name.Trim();
+
+        // `::before` leaves one colon in the name once the first is stepped over; `:before` leaves
+        // none. Either way what has to follow is the name and nothing else.
+        while (name.Length > 0 && name[0] == ':')
+        {
+            name = name[1..];
+        }
+
+        if (name.Equals("before", StringComparison.OrdinalIgnoreCase))
+        {
+            side = PseudoSide.Before;
+            colon = at;
+            return true;
+        }
+
+        if (name.Equals("after", StringComparison.OrdinalIgnoreCase))
+        {
+            side = PseudoSide.After;
+            colon = at;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static Int32 SkipString(String text, Int32 at)
+    {
+        var quote = text[at];
+
+        for (var i = at + 1; i < text.Length; i++)
+        {
+            if (text[i] == '\\')
+            {
+                i++;
+            }
+            else if (text[i] == quote)
+            {
+                return i;
+            }
+        }
+
+        return text.Length - 1;
+    }
+
+    private static Int32 SkipGroup(String text, Int32 at)
+    {
+        var depth = 0;
+        var quote = '\0';
+
+        for (var i = at; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (quote != '\0')
+            {
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+
+                continue;
+            }
+
+            if (c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if (c is '(' or '[')
+            {
+                depth++;
+            }
+            else if (c is ')' or ']')
+            {
+                if (--depth == 0)
+                {
+                    return i;
+                }
+            }
+        }
+
+        return text.Length - 1;
+    }
+
+    /// <summary>
+    /// Gets the cascade the pseudo-element of <paramref name="side"/> matches on
+    /// <paramref name="element"/>, or null when no arm of the sheet is written for it.
+    /// </summary>
+    /// <remarks>
+    /// The pseudo-element itself is the last step of the arm and was taken off before the arm was
+    /// matched, so the specificity the cascade sorts by is the arm's own plus the one a
+    /// pseudo-element counts for - which Selectors 4 §17 puts in the same place as a type selector,
+    /// and which AngleSharp's own <c>PseudoElementSelector</c> also answers with.
+    /// </remarks>
+    internal MatchedCascade? Cascade(
+        PseudoSide side,
+        IElement element,
+        List<ICssStyleRule> rules,
+        RuleOrigin[] origins)
+    {
+        var arms = side == PseudoSide.Before ? _before : _after;
+
+        if (arms.Count == 0)
+        {
+            return null;
+        }
+
+        var candidates = arms.Candidates(element);
+        var matched = new List<MatchedRule>(candidates.Count);
+        var priorities = new List<Priority>(candidates.Count);
+        var scope = element.Owner?.DocumentElement;
+
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var arm = arms.Arms[candidates[i]];
+
+            if (arm.Selector is null || !arm.Selector.Match(element, scope))
+            {
+                continue;
+            }
+
+            var specificity = arm.Selector.Specificity + Priority.OneTag;
+            var at = matched.Count;
+
+            while (at > 0 && priorities[at - 1] > specificity)
+            {
+                at--;
+            }
+
+            matched.Insert(at, new MatchedRule(rules[arm.Rule], origins[arm.Rule], specificity, arm.Rule));
+            priorities.Insert(at, specificity);
+        }
+
+        return matched.Count == 0 ? null : new MatchedCascade(matched, null);
+    }
+
+    /// <summary>One arm, with the selector it was left as and the rule its declarations came from.</summary>
+    private sealed class Arm
+    {
+        internal Arm(String text, Int32 rule)
+        {
+            Text = text;
+            Rule = rule;
+        }
+
+        internal String Text { get; }
+
+        internal Int32 Rule { get; }
+
+        /// <summary>The parsed selector, or null when the parser would not take the text.</summary>
+        internal ISelector? Selector;
+    }
+
+    private sealed class ArmSet
+    {
+        internal readonly List<Arm> Arms = new();
+
+        private readonly Dictionary<String, List<Int32>> _ids = new(StringComparer.Ordinal);
+        private readonly Dictionary<String, List<Int32>> _classes = new(StringComparer.Ordinal);
+        private readonly Dictionary<String, List<Int32>> _tags = new(StringComparer.OrdinalIgnoreCase);
+        private readonly List<Int32> _unkeyed = new();
+        private Boolean _keyed;
+
+        internal Int32 Count => Arms.Count;
+
+        internal void Add(String selectorText, Int32 rule) => Arms.Add(new Arm(selectorText, rule));
+
+        /// <summary>
+        /// Parses the arms and files them by key. Nothing of this happens until an element asks, and
+        /// it happens once: a page that generates content is asked for every element it has, and a
+        /// page that does not never gets here at all.
+        /// </summary>
+        private void Key(IElement element)
+        {
+            if (_keyed)
+            {
+                return;
+            }
+
+            _keyed = true;
+
+            var parser = element.Owner?.Context.GetService<ICssSelectorParser>();
+
+            if (parser is null)
+            {
+                return;
+            }
+
+            for (var i = 0; i < Arms.Count; i++)
+            {
+                var arm = Arms[i];
+                arm.Selector = parser.ParseSelector(arm.Text);
+
+                var keys = arm.Selector is null ? null : SelectorKeyExtractor.Extract(arm.Selector);
+
+                if (keys is null || keys.Length == 0)
+                {
+                    _unkeyed.Add(i);
+                    continue;
+                }
+
+                for (var j = 0; j < keys.Length; j++)
+                {
+                    var key = keys[j];
+                    var buckets = key.Kind switch
+                    {
+                        RuleKeyKind.Id => _ids,
+                        RuleKeyKind.Class => _classes,
+                        _ => _tags,
+                    };
+
+                    if (!buckets.TryGetValue(key.Value, out var indices))
+                    {
+                        indices = new List<Int32>();
+                        buckets.Add(key.Value, indices);
+                    }
+
+                    indices.Add(i);
+                }
+            }
+        }
+
+        internal List<Int32> Candidates(IElement element)
+        {
+            Key(element);
+
+            var candidates = new List<Int32>();
+            var id = element.Id;
+
+            if (id is { Length: > 0 })
+            {
+                Append(_ids, id, candidates);
+            }
+
+            var classes = element.ClassList;
+
+            if (classes is not null)
+            {
+                for (var i = 0; i < classes.Length; i++)
+                {
+                    var name = classes[i];
+
+                    if (name is not null)
+                    {
+                        Append(_classes, name, candidates);
+                    }
+                }
+            }
+
+            var tag = element.LocalName;
+
+            if (tag is not null)
+            {
+                Append(_tags, tag, candidates);
+            }
+
+            for (var i = 0; i < _unkeyed.Count; i++)
+            {
+                candidates.Add(_unkeyed[i]);
+            }
+
+            if (candidates.Count > 1)
+            {
+                candidates.Sort();
+
+                for (var i = candidates.Count - 1; i > 0; i--)
+                {
+                    if (candidates[i] == candidates[i - 1])
+                    {
+                        candidates.RemoveAt(i);
+                    }
+                }
+            }
+
+            return candidates;
+        }
+
+        private static void Append(Dictionary<String, List<Int32>> buckets, String key, List<Int32> candidates)
+        {
+            if (buckets.TryGetValue(key, out var indices))
+            {
+                candidates.AddRange(indices);
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Makes the boxes <c>::before</c> and <c>::after</c> generate, and puts them where the spec puts
+/// them: first and last among the originating element's children.
+/// </summary>
+internal static class GeneratedContent
+{
+    /// <summary>
+    /// Puts the two generated boxes into <paramref name="box"/>, which has all of its other children
+    /// already.
+    /// </summary>
+    internal static void Place(
+        Box box,
+        IElement element,
+        RuleBucketIndex index,
+        ComputedStyle style,
+        MatchedCascade cascade,
+        VariableScope? variables,
+        FusedParent parent,
+        HutuRenderDevice device,
+        FontFaceTable? faces,
+        StyleResolution state,
+        IImageProvider? images,
+        WritingModeInfo flow)
+    {
+        if (index.Pseudo.IsEmpty)
+        {
+            return;
+        }
+
+        // §4.1: the two are "suppressed when their parent, the originating element, is replaced". A
+        // replaced element's contents are the thing it was replaced by, and there is no room in it
+        // for content this engine would have to draw.
+        if (IsReplaced(element) || box.Kind is BoxKind.LineBreak or BoxKind.HorizontalRule)
+        {
+            return;
+        }
+
+        Put(box, element, index, PseudoSide.Before, style, cascade, variables, parent, device, faces, state, images, flow);
+        Put(box, element, index, PseudoSide.After, style, cascade, variables, parent, device, faces, state, images, flow);
+    }
+
+    private static void Put(
+        Box box,
+        IElement element,
+        RuleBucketIndex index,
+        PseudoSide side,
+        ComputedStyle style,
+        MatchedCascade cascade,
+        VariableScope? variables,
+        FusedParent parent,
+        HutuRenderDevice device,
+        FontFaceTable? faces,
+        StyleResolution state,
+        IImageProvider? images,
+        WritingModeInfo flow)
+    {
+        var pseudo = index.Pseudo.Cascade(side, element, index.Rules, index.Origins);
+
+        if (pseudo is null)
+        {
+            return;
+        }
+
+        var items = Items(pseudo);
+
+        if (items is null)
+        {
+            return;
+        }
+
+        // §4: a tree-abiding pseudo-element inherits what its originating element inherited, and
+        // takes the initial value of everything else - which is what `Next` hands over, since it is
+        // the same hand an element's own children are dealt by.
+        var pseudoStyle = FusedStyleFactory.Build(
+            element,
+            pseudo,
+            parent.Next(style, pseudo, variables, state.Tag(element.LocalName), false),
+            device,
+            faces,
+            state.Pool,
+            state.Cache,
+            variables);
+
+        // `content: none`, and the `normal` it computes to when the sheet says nothing, inhibit the
+        // pseudo-element "as if it had display: none" (Content 3 §1); `display: none` says the same
+        // thing in so many words.
+        if (pseudoStyle.IsDisplayNone)
+        {
+            return;
+        }
+
+        // `display` is not inherited, so what the pseudo-element gets is the initial value unless a
+        // rule gives it one - and the initial value is `inline`, which is what §4.1 means by "since
+        // the initial value of display is inline, this will generate an inline box".
+        var declared = pseudo.Find("display")?.Value;
+        var kind = String.IsNullOrWhiteSpace(declared) ? BoxKind.Inline : KindOf(declared!.Trim());
+
+        // One image and nothing else replaces the contents rather than joining them: Content 3 §1
+        // reads a lone <image> as a <content-replacement>, and §2 makes that "an anonymous inline
+        // replaced element" - so the pseudo-element is the replaced box, not a box around one.
+        if (items.Count == 1 && items[0].Url is { } only)
+        {
+            Insert(side, box, new List<Box> { Replaced(only, element, kind, pseudoStyle, flow, images) });
+            return;
+        }
+
+        if (kind != BoxKind.Inline)
+        {
+            var container = new Box(kind, pseudoStyle) { Element = element, Flow = flow, IsGenerated = true };
+
+            foreach (var item in items)
+            {
+                if (item.Text is { Length: > 0 } inside)
+                {
+                    container.Children.Add(Run(inside, element, pseudoStyle, flow));
+                }
+            }
+
+            Insert(side, box, new List<Box> { container });
+            return;
+        }
+
+        var runs = new List<Box>(items.Count);
+
+        foreach (var item in items)
+        {
+            if (item.Text is { Length: > 0 } text)
+            {
+                runs.Add(Run(text, element, pseudoStyle, flow));
+            }
+        }
+
+        Insert(side, box, runs);
+    }
+
+    private static Box Run(String text, IElement element, ComputedStyle style, WritingModeInfo flow) =>
+        new Box(BoxKind.Text, style) { Element = element, Text = text, Flow = flow, IsGenerated = true };
+
+    /// <summary>
+    /// Gets the box a <c>content: url(...)</c> draws: an inline replaced element sized by the picture
+    /// it names.
+    /// </summary>
+    private static Box Replaced(
+        String url,
+        IElement element,
+        BoxKind kind,
+        ComputedStyle style,
+        WritingModeInfo flow,
+        IImageProvider? images)
+    {
+        var resolved = ImageUrlResolver.Resolve(element, url);
+        var intrinsic = resolved is null ? null : images?.GetSize(resolved);
+
+        // Nothing decoded to size from, so the specification's default object size answers for the
+        // picture - the same standing-in an <img> whose file never arrived gets.
+        return new Box(kind, style)
+        {
+            Element = element,
+            IsReplaced = true,
+            IsGenerated = true,
+            SourceUrl = resolved,
+            IntrinsicSize = intrinsic ?? new ImageSize(300, 150),
+            Flow = flow,
+        };
+    }
+
+    /// <summary>
+    /// Gets the kind of box a <c>display</c> the pseudo-element declares asks for.
+    /// </summary>
+    /// <remarks>
+    /// Both pseudo-elements are fully styleable (Pseudo-Elements 4 §4.1), so <c>display</c> is read
+    /// the way it is read for an element - the same table <see cref="BoxBuilder"/> walks, minus the
+    /// kinds only a tag can ask for. The outer role the engine does not model is dropped the same way
+    /// it is for an element: <c>inline-flex</c> is a flex container, <c>inline-table</c> a table.
+    /// </remarks>
+    private static BoxKind KindOf(String display)
+    {
+        if (display.Equals("inline-block", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.InlineBlock;
+        }
+
+        if (display.StartsWith("flex", StringComparison.OrdinalIgnoreCase) ||
+            display.StartsWith("inline-flex", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Flex;
+        }
+
+        if (display.StartsWith("grid", StringComparison.OrdinalIgnoreCase) ||
+            display.StartsWith("inline-grid", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Grid;
+        }
+
+        if (display.StartsWith("table", StringComparison.OrdinalIgnoreCase) ||
+            display.StartsWith("inline-table", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Table;
+        }
+
+        return display.StartsWith("inline", StringComparison.OrdinalIgnoreCase) ? BoxKind.Inline : BoxKind.Block;
+    }
+
+    private static void Insert(PseudoSide side, Box host, List<Box> generated)
+    {
+        if (generated.Count == 0)
+        {
+            return;
+        }
+
+        if (side == PseudoSide.Before)
+        {
+            InsertFirst(host, generated);
+        }
+        else
+        {
+            InsertLast(host, generated);
+        }
+    }
+
+    /// <summary>
+    /// Puts generated boxes at the head of the element's children, wrapping them when the element is a
+    /// block container whose children are blocks - the same fixup
+    /// <see cref="ListMarkers"/> makes for a marker it places inside its item.
+    /// </summary>
+    private static void InsertFirst(Box host, List<Box> generated)
+    {
+        // A generated box that is itself block-level sits among the blocks; only a run of inline
+        // content has to be wrapped to stand in a block container.
+        if (!generated[0].IsInlineLevel || (host.Children.Count > 0 && host.Children[0].IsInlineLevel))
+        {
+            host.Children.InsertRange(0, generated);
+            return;
+        }
+
+        var line = new Box(BoxKind.Block, host.Style.AsAnonymous()) { IsAnonymous = true, Flow = host.Flow };
+        line.Children.AddRange(generated);
+        host.Children.Insert(0, line);
+    }
+
+    private static void InsertLast(Box host, List<Box> generated)
+    {
+        var last = host.Children.Count - 1;
+
+        if (!generated[0].IsInlineLevel || (last >= 0 && host.Children[last].IsInlineLevel))
+        {
+            host.Children.AddRange(generated);
+            return;
+        }
+
+        var line = new Box(BoxKind.Block, host.Style.AsAnonymous()) { IsAnonymous = true, Flow = host.Flow };
+        line.Children.AddRange(generated);
+        host.Children.Add(line);
+    }
+
+    /// <summary>One thing a <c>content</c> value asks for: a run of text, or the picture a URL names.</summary>
+    private readonly struct Item
+    {
+        internal Item(String? text, String? url)
+        {
+            Text = text;
+            Url = url;
+        }
+
+        internal String? Text { get; }
+
+        internal String? Url { get; }
+    }
+
+    /// <summary>
+    /// Gets what a pseudo-element's <c>content</c> asks for, or null when it asks for nothing - whether
+    /// because the sheet named no content, or because it named content this engine does not draw yet.
+    /// </summary>
+    /// <remarks>
+    /// Content 3 §1 lets <c>content</c> hold strings, images, attribute values, counters and quotation
+    /// marks. Strings and images are drawn; the rest is left out rather than guessed at - an
+    /// <c>attr()</c> read as its own name, or a <c>counter()</c> read as zero, would put words on the
+    /// page the sheet never wrote. A value that holds something this engine cannot draw is left out
+    /// whole, because a half-read <c>content</c> would put up part of what the page asked for.
+    /// </remarks>
+    private static List<Item>? Items(MatchedCascade pseudo)
+    {
+        var property = pseudo.Find("content");
+
+        return property is null ? null : Read(property.Value);
+    }
+
+    /// <summary>
+    /// Reads a <c>content</c> value item by item, in CSS's own escaping. Null when it holds anything
+    /// this engine does not draw.
+    /// </summary>
+    private static List<Item>? Read(String? value)
+    {
+        if (String.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var items = new List<Item>();
+        var text = value!;
+        var i = 0;
+
+        while (i < text.Length)
+        {
+            if (Char.IsWhiteSpace(text[i]))
+            {
+                i++;
+                continue;
+            }
+
+            // A slash opens the alternative text, which is what is read aloud instead of what is
+            // drawn - it is not part of the content (Content 3 §1.2).
+            if (text[i] == '/')
+            {
+                break;
+            }
+
+            if (text[i] is '"' or '\'')
+            {
+                var run = new StringBuilder();
+                ReadRun(text, ref i, run);
+                items.Add(new Item(run.ToString(), null));
+                continue;
+            }
+
+            if (i + 4 < text.Length && text.AsSpan(i, 4).Equals("url(", StringComparison.OrdinalIgnoreCase))
+            {
+                var close = text.IndexOf(')', i + 4);
+
+                if (close < 0)
+                {
+                    return null;
+                }
+
+                items.Add(new Item(null, text[(i + 4)..close].Trim().Trim('"', '\'')));
+                i = close + 1;
+                continue;
+            }
+
+            return null;
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// Reads one quoted string into <paramref name="run"/>, leaving <paramref name="at"/> just past its
+    /// closing quote.
+    /// </summary>
+    private static void ReadRun(String text, ref Int32 at, StringBuilder run)
+    {
+        var quote = text[at++];
+
+        while (at < text.Length && text[at] != quote)
+        {
+            if (text[at] != '\\')
+            {
+                run.Append(text[at++]);
+                continue;
+            }
+
+            at++;
+
+            if (at >= text.Length)
+            {
+                break;
+            }
+
+            // `\A` is the escape CSS 2.1 §12.2 gives a generated line break. Every other escape names
+            // a character by its code point, in hex, with one space allowed after it.
+            if (text[at] == 'A' && (at + 1 >= text.Length || !Uri.IsHexDigit(text[at + 1])))
+            {
+                run.Append('\n');
+                at++;
+                continue;
+            }
+
+            var digits = 0;
+            var code = 0;
+
+            while (at < text.Length && digits < 6 && Uri.IsHexDigit(text[at]))
+            {
+                code = code * 16 + Convert.ToInt32(text[at].ToString(), 16);
+                digits++;
+                at++;
+            }
+
+            if (digits == 0)
+            {
+                run.Append(text[at++]);
+                continue;
+            }
+
+            run.Append((Char)code);
+
+            if (at < text.Length && text[at] == ' ')
+            {
+                at++;
+            }
+        }
+
+        if (at < text.Length)
+        {
+            at++;
+        }
+    }
+
+    private static Boolean IsReplaced(IElement element) =>
+        element.LocalName is "img" or "input" or "textarea" or "select" or "iframe" or
+            "video" or "audio" or "canvas" or "object" or "embed";
+}

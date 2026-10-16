@@ -101,11 +101,12 @@ ol, ul, dir,
 menu            { list-style-type: disc; list-style-position: outside }
 ol              { list-style-type: decimal }
 u, ins          { text-decoration: underline }
-br::before      { content: '\A'; white-space: pre-line }
 
-/* this will slow down css matching, so I disable it first, by HDH
-*::before, *::after { display: inline }
-*/
+/* CSS 2.1 §12.1 suggests a line break be drawn by giving br a generated newline; it is left out
+ * here on purpose, because this engine gives br a box of its own (BoxKind.LineBreak) and a
+ * generated newline beside it would break the line twice. The display: inline the same section
+ * gives the two pseudo-elements is left out for the same reason - it is their initial value.
+ */
 
 center          { text-align: center }
 :link, :visited { text-decoration: underline }

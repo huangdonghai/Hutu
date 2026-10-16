@@ -311,6 +311,13 @@ internal sealed class RuleBucketIndex
     private readonly RuleOrigin[] _origins;
 
     /// <summary>
+    /// The arms of the sheet that are written for <c>::before</c> and <c>::after</c>, which match no
+    /// element and so are held apart from the rules they came from. What they select is a box this
+    /// engine has to make itself.
+    /// </summary>
+    private readonly PseudoRuleIndex _pseudo;
+
+    /// <summary>
     /// How many elements were answered from the match the last build left, and how many had to be
     /// matched again, since <see cref="ResetMatchCounters"/>. Counted always - a pair of increments
     /// is nothing next to a match - and read only by the probes.
@@ -325,7 +332,8 @@ internal sealed class RuleBucketIndex
         Dictionary<String, List<Int32>> tagBuckets,
         List<Int32> unkeyed,
         Boolean[] reaches,
-        RuleOrigin[] origins)
+        RuleOrigin[] origins,
+        PseudoRuleIndex pseudo)
     {
         _rules = rules;
         _idBuckets = idBuckets;
@@ -334,10 +342,17 @@ internal sealed class RuleBucketIndex
         _unkeyed = unkeyed;
         _reaches = reaches;
         _origins = origins;
+        _pseudo = pseudo;
     }
 
     /// <summary>Gets the flattened rules in the order they are matched in.</summary>
     public List<ICssStyleRule> Rules => _rules;
+
+    /// <summary>Gets the origin of each flattened rule, in the same order as <see cref="Rules"/>.</summary>
+    internal RuleOrigin[] Origins => _origins;
+
+    /// <summary>Gets the arms written for the generated-content pseudo-elements.</summary>
+    internal PseudoRuleIndex Pseudo => _pseudo;
 
     /// <summary>Gets how many elements stood on the match of the last build since the counters were reset.</summary>
     internal Int32 HeldMatches => _heldMatches;
@@ -424,7 +439,8 @@ internal sealed class RuleBucketIndex
             reaches[i] = ReachesOutside(flattened[i]);
         }
 
-        return new RuleBucketIndex(flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches, origins.ToArray());
+        return new RuleBucketIndex(
+            flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches, origins.ToArray(), PseudoRuleIndex.Build(flattened));
     }
 
     /// <summary>

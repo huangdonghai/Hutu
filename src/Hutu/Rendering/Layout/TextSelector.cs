@@ -252,7 +252,7 @@ internal sealed class TextSelector
         // Text no one can see is left out for the same reason the painter skips it - a selection made
         // across a hidden menu would copy words the reader never read.
         if (!viewportAnchored && box.Kind == LayoutKind.Text && !String.IsNullOrEmpty(box.Text) &&
-            !box.Source.IsMarker && !box.Source.Style.IsHidden)
+            !box.Source.IsMarker && !box.Source.IsGenerated && !box.Source.Style.IsHidden)
         {
             _order[box] = _runs.Count;
             _runs.Add(box);
