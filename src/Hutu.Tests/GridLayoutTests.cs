@@ -73,6 +73,28 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task ASpanningItemDoesNotBlowOutFlexibleTracks()
+    {
+        // The same rule for an item that spans several tracks: the extra its min-content needs is shared
+        // only among tracks with an intrinsic minimum (CSS Grid 12.6). A `minmax(0, 1fr)` track has a
+        // definite minimum of zero, so a wide spanning item must not raise it - otherwise the spanning
+        // item's 300-pixel word blows the two flexible tracks out to 300 and the page overflows.
+        using var view = CreateView(200);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;width:200px'>" +
+            "<div style='flex-grow:1'>" +
+            "<div id='g' style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr))'>" +
+            "<div style='grid-column:1/span 2'>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</div>" +
+            "</div></div></div></body></html>");
+
+        Assert.That(
+            Find(view, "g").BorderBox.Width,
+            Is.EqualTo(200).Within(0.5),
+            "a spanning item's min-content does not blow out definite-minimum tracks");
+    }
+
+    [Test]
     public async Task GapIsLeftBetweenTheTracks()
     {
         using var view = CreateView(400);

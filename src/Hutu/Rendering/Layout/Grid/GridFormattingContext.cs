@@ -860,11 +860,33 @@ internal sealed class GridFormattingContext
 
             if (min > held)
             {
-                var share = (min - held) / count;
+                // The extra a spanning item needs is shared only among the spanned tracks with an
+                // intrinsic minimum (CSS Grid 12.6): a track whose minimum is a definite length -
+                // `minmax(0, 1fr)` - is never raised by an item's content. That is what lets a
+                // `grid-cols-*` of `minmax(0, 1fr)` tracks shrink instead of being blown out by a wide
+                // spanning item, which is the difference between a page fitting its viewport and
+                // ballooning past it.
+                var floors = 0;
 
                 for (var i = index; i < last; i++)
                 {
-                    tracks[i].Base += share;
+                    if (tracks[i].IntrinsicMin)
+                    {
+                        floors++;
+                    }
+                }
+
+                if (floors > 0)
+                {
+                    var share = (min - held) / floors;
+
+                    for (var i = index; i < last; i++)
+                    {
+                        if (tracks[i].IntrinsicMin)
+                        {
+                            tracks[i].Base += share;
+                        }
+                    }
                 }
             }
 
