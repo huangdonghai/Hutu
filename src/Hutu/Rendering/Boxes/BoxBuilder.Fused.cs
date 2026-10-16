@@ -7,6 +7,7 @@ using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 
 namespace Hutu.Rendering.Boxes;
@@ -33,12 +34,17 @@ internal static partial class BoxBuilder
     /// and this device. Null builds everything from scratch, which is what a document or a viewport
     /// that changed asks for.
     /// </param>
+    /// <param name="profile">
+    /// Filled with where the walk spent its time and how much of the document it had to look at
+    /// again, or null - which is what a renderer passes and what costs nothing.
+    /// </param>
     public static Box? TryBuildFused(
         IDocument document,
         HutuRenderDevice device,
         IImageProvider? images = null,
         FontFaceTable? faces = null,
-        StyleResolution? carried = null)
+        StyleResolution? carried = null,
+        FusedProfile? profile = null)
     {
         if (document.DocumentElement is not { } root)
         {
@@ -70,8 +76,22 @@ internal static partial class BoxBuilder
         // not read variables at all, and one no context built by WithCss() ever reaches.
         var parser = document.Context.GetService<ICssParser>();
 
+        if (profile is not null)
+        {
+            index.ResetMatchCounters();
+            VariableScope.ResetCounters();
+        }
+
         var box = BuildFusedElement(
-            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, false, ref supported);
+            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, false, profile, ref supported);
+
+        if (profile is not null)
+        {
+            profile.HeldMatches = index.HeldMatches;
+            profile.FreshMatches = index.FreshMatches;
+            profile.OpenedScopes = VariableScope.Opened;
+            profile.ReusedScopes = VariableScope.Reused;
+        }
 
         if (!supported || box is null)
         {
@@ -100,6 +120,7 @@ internal static partial class BoxBuilder
         ICssParser? parser,
         WritingModeInfo inheritedFlow,
         Boolean inItemContainer,
+        FusedProfile? profile,
         ref Boolean supported)
     {
         // The marks come first because the index is asked for the cascade with them: they are the one
@@ -107,7 +128,15 @@ internal static partial class BoxBuilder
         // for an element no rule reaches outside of - which is almost all of them - so the walk over
         // every candidate selector is spared for every element whose own marks stand still.
         var marks = StyleRecord.MarksOf(element);
+
+        var matchStart = FusedProfile.Stamp(profile);
         var cascade = MatchedCascade.ForElement(index, element, marks);
+
+        if (profile is not null)
+        {
+            profile.Matching += FusedProfile.Since(matchStart);
+            profile.Walked++;
+        }
 
         // An environment variable is the one substitution nothing here can answer - it is a value the
         // host has and the stylesheet does not - so the document is handed over rather than guessed at.
@@ -118,7 +147,13 @@ internal static partial class BoxBuilder
             return null;
         }
 
-        var variables = VariableScope.Open(cascade, parent.Variables, parser);
+        var variableStart = FusedProfile.Stamp(profile);
+        var variables = VariableScope.Open(cascade, parent.Variables, parser, state.Heads);
+
+        if (profile is not null)
+        {
+            profile.Cascading += FusedProfile.Since(variableStart);
+        }
 
         if (variables is null && parser is null && VariableScope.NeedsParser(cascade))
         {
@@ -154,8 +189,15 @@ internal static partial class BoxBuilder
         }
         else
         {
+            var buildStart = FusedProfile.Stamp(profile);
             style = FusedStyleFactory.Build(element, cascade, parent, device, faces, state.Pool, state.Cache, variables);
             state.Remember(element, new StyleRecord(cascade, variables, style, marks));
+
+            if (profile is not null)
+            {
+                profile.Cascading += FusedProfile.Since(buildStart);
+                profile.Computed++;
+            }
 
             // Resolved again, and it came to the same answer: the mark that moved on this element -
             // or the one that moved on its ancestor and left this one's inherited values alone -
@@ -222,7 +264,7 @@ internal static partial class BoxBuilder
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
                         elementChild, index, parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands), device, images, faces, state, parser, flow,
-                        kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry, ref supported);
+                        kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry, profile, ref supported);
 
                     if (childBox is not null)
                     {
@@ -309,4 +351,48 @@ internal static partial class BoxBuilder
         sheets.AddRange(document.GetStyleSheets().OfType<ICssStyleSheet>());
         return sheets;
     }
+}
+
+/// <summary>
+/// Where a fused build spent its time, split the way the build itself is: asking the index what
+/// matches each element, and turning that match into a computed style. It also carries the counts
+/// that say how much of the document had to be looked at again, which is what tells a rebuild that
+/// was slow apart from one that merely touched a lot.
+/// </summary>
+/// <remarks>
+/// Filled only when a caller asks for it. A renderer passes nothing, and the walk then reads one
+/// null check per element rather than a pair of clock readings.
+/// </remarks>
+internal sealed class FusedProfile
+{
+    /// <summary>Wall clock spent matching elements, summed over the walk.</summary>
+    public Double Matching;
+
+    /// <summary>Wall clock spent opening variable scopes and computing styles, summed over the walk.</summary>
+    public Double Cascading;
+
+    /// <summary>How many elements the walk visited.</summary>
+    public Int32 Walked;
+
+    /// <summary>How many elements had their style computed rather than handed what the last build had.</summary>
+    public Int32 Computed;
+
+    /// <summary>How many elements stood on the match the last build left.</summary>
+    public Int32 HeldMatches;
+
+    /// <summary>How many elements had to be matched again.</summary>
+    public Int32 FreshMatches;
+
+    /// <summary>How many variable-scope links the walk created.</summary>
+    public Int32 OpenedScopes;
+
+    /// <summary>How many variable-scope lookups were handed a link that was already open.</summary>
+    public Int32 ReusedScopes;
+
+    /// <summary>Takes a timestamp, or zero when there is no profile to fill.</summary>
+    public static Int64 Stamp(FusedProfile? profile) => profile is null ? 0L : Stopwatch.GetTimestamp();
+
+    /// <summary>Milliseconds since a timestamp, or zero when there is no profile to fill.</summary>
+    public static Double Since(Int64 start) =>
+        start == 0L ? 0d : Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 }

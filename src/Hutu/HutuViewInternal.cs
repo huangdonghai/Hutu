@@ -76,6 +76,45 @@ public sealed class HutuViewInternal : IDisposable
     /// </summary>
     public PaintList? Paint => _pipeline.Paint;
 
+    /// <summary>
+    /// Gets or sets whether the next builds time their stages, read back through
+    /// <see cref="LastBuildStages"/>. Off by default, so the renderer pays nothing for a measurement
+    /// nobody asked for.
+    /// </summary>
+    public Boolean MeasureBuildStages
+    {
+        get => _pipeline.MeasureStages;
+        set => _pipeline.MeasureStages = value;
+    }
+
+    /// <summary>
+    /// The stages of the last build - the style-and-box rebuild, the layout and the paint list, and
+    /// whether it took the restyle-without-relayout path - or null while <see cref="MeasureBuildStages"/>
+    /// is off. This is what tells a hover's cost apart from its path.
+    /// </summary>
+    public (Double Fused, Double Layout, Double Paint, Boolean Fast)? LastBuildStages => _pipeline.LastBuildStages;
+
+    /// <summary>
+    /// How the style half of the last build split: the wall clock spent matching, the wall clock spent
+    /// opening variable scopes and computing, and the counts that say how much of the document had to
+    /// be looked at again. Null while <see cref="MeasureBuildStages"/> is off. This is what tells a
+    /// slow rebuild apart from one that merely read a large document - and it is the pair a fix has to
+    /// move.
+    /// </summary>
+    public (Double Matching, Double Cascading, Int32 Walked, Int32 Computed, Int32 HeldMatches, Int32 FreshMatches)? LastStyleStages =>
+        _pipeline.LastFusedProfile is { } profile
+            ? (profile.Matching, profile.Cascading, profile.Walked, profile.Computed, profile.HeldMatches, profile.FreshMatches)
+            : null;
+
+    /// <summary>
+    /// How many variable-scope links the last build created, and how many lookups were handed a link that
+    /// was already open. A style stands down only when the scope it read through is the same object the
+    /// last build left, so a chain that has to be built again is a chain under which every style is
+    /// computed again. Null while <see cref="MeasureBuildStages"/> is off.
+    /// </summary>
+    public (Int32 Opened, Int32 Reused)? LastScopeLinks =>
+        _pipeline.LastFusedProfile is { } profile ? (profile.OpenedScopes, profile.ReusedScopes) : null;
+
     /// <summary>Gets the width the styles were last computed against.</summary>
     public int ViewportWidth => _renderDevice.ViewPortWidth;
 

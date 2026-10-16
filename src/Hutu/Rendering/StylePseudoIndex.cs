@@ -247,6 +247,10 @@ internal sealed class StylePseudoIndex
         return false;
     }
 
-    private static bool IsNameChar(char c) =>
+    /// <summary>
+    /// Gets whether a character can stand inside the name of a pseudo-class or pseudo-element, which
+    /// is what tells the name that follows a colon from the bracket of a functional one.
+    /// </summary>
+    internal static bool IsNameChar(char c) =>
         c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '-' or '_';
 }

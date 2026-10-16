@@ -4,6 +4,7 @@ using Hutu.Rendering.Boxes;
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using Hutu.Rendering.Paint;
+using System.Diagnostics;
 
 namespace Hutu.Rendering;
 
@@ -28,6 +29,10 @@ internal sealed class RenderingPipeline
     private readonly IImageProvider? _images;
     private readonly Painter _painter = new();
     private readonly StyleResolution _styles = new();
+
+    /// <summary>The layout and paint wall clock of the last <see cref="LayOut"/>, filled only while measuring.</summary>
+    private Double _laidMs;
+    private Double _paintedMs;
 
     /// <summary>The document the box tree in hand was built from.</summary>
     private IDocument? _built;
@@ -64,6 +69,27 @@ internal sealed class RenderingPipeline
     /// measurer is available.
     /// </summary>
     public PaintList? Paint { get; private set; }
+
+    /// <summary>
+    /// Whether <see cref="Build"/> times its stages and leaves them in <see cref="LastBuildStages"/>.
+    /// Off by default, and read from the timestamp clock rather than from a stopwatch, so a renderer
+    /// that never asks for it pays nothing: one branch that is always false.
+    /// </summary>
+    public Boolean MeasureStages { get; set; }
+
+    /// <summary>
+    /// The wall clock of the last build, split into the pieces a rebuild is made of, or null while
+    /// <see cref="MeasureStages"/> is off. <c>Fused</c> is the style-and-box rebuild, <c>Layout</c> is
+    /// the layout, and <c>Paint</c> is the paint list; <c>Fast</c> says the build took the
+    /// restyle-without-relayout path, where <c>Layout</c> is zero because no box was moved.
+    /// </summary>
+    public (Double Fused, Double Layout, Double Paint, Boolean Fast)? LastBuildStages { get; private set; }
+
+    /// <summary>
+    /// The breakdown of the last fused build's style half - matching against computing, and how much
+    /// of the document had to be looked at again - or null while <see cref="MeasureStages"/> is off.
+    /// </summary>
+    public FusedProfile? LastFusedProfile { get; private set; }
 
     /// <summary>Drops the derived trees so the next run recomputes styles from the document.</summary>
     public void Invalidate()
@@ -148,6 +174,7 @@ internal sealed class RenderingPipeline
     /// </remarks>
     public void Build(IDocument document)
     {
+        var measuring = MeasureStages;
         var viewport = (_device.ViewPortWidth, _device.ViewPortHeight, _device.Zoom);
         var sameDocument = ReferenceEquals(_built, document);
         var movedViewport = viewport != _viewport;
@@ -157,6 +184,7 @@ internal sealed class RenderingPipeline
         {
             _viewport = viewport;
             LayOut();
+            RecordStages(0d, _laidMs, _paintedMs, false);
             return;
         }
 
@@ -178,7 +206,12 @@ internal sealed class RenderingPipeline
         // The fused path matches, cascades and computes from the DOM directly, with no render
         // tree and no per-element declaration.
         var faces = FontFaceTable.From(document);
-        var fresh = BoxBuilder.TryBuildFused(document, _device, _images, faces, _styles);
+
+        var profile = measuring ? new FusedProfile() : null;
+        var fusedStart = measuring ? Stopwatch.GetTimestamp() : 0L;
+        var fresh = BoxBuilder.TryBuildFused(document, _device, _images, faces, _styles, profile);
+        var fusedMs = Elapsed(fusedStart);
+        LastFusedProfile = profile;
 
         _stylesReadViewport = _device.TakeViewportRead();
 
@@ -189,13 +222,19 @@ internal sealed class RenderingPipeline
         if (sameDocument && !movedViewport && _styles.RestylesWithoutRelayout &&
             BoxTree is not null && fresh is not null && BoxTree.SameLayout(fresh))
         {
+            var adoptStart = measuring ? Stopwatch.GetTimestamp() : 0L;
             AdoptStyles(BoxTree, fresh);
+            fusedMs += Elapsed(adoptStart);
+
+            var paintStart = measuring ? Stopwatch.GetTimestamp() : 0L;
             Paint = _painter.Paint(Layout!);
+            RecordStages(fusedMs, 0d, Elapsed(paintStart), true);
             return;
         }
 
         BoxTree = fresh;
         LayOut();
+        RecordStages(fusedMs, _laidMs, _paintedMs, false);
     }
 
     /// <summary>
@@ -226,11 +265,35 @@ internal sealed class RenderingPipeline
     {
         _painter.Highlight = null;
 
+        var measuring = MeasureStages;
+        var layoutStart = measuring ? Stopwatch.GetTimestamp() : 0L;
+
         // The viewport is the initial containing block, so both of its dimensions matter: the height
         // is what a percentage height on the root - and on everything it makes definite - resolves
         // against.
         Layout = _layout?.Layout(BoxTree, _device.RenderWidth, _device.RenderHeight);
 
+        var paintStart = measuring ? Stopwatch.GetTimestamp() : 0L;
+
         Paint = Layout is null ? null : _painter.Paint(Layout);
+
+        if (measuring)
+        {
+            _laidMs = Stopwatch.GetElapsedTime(layoutStart, paintStart).TotalMilliseconds;
+            _paintedMs = Stopwatch.GetElapsedTime(paintStart).TotalMilliseconds;
+        }
+    }
+
+    /// <summary>Milliseconds since a <see cref="Stopwatch"/> timestamp, or zero when nothing was timed.</summary>
+    private static Double Elapsed(Int64 start) =>
+        start == 0L ? 0d : Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+
+    /// <summary>Records a build's stages, unless nobody asked to measure them.</summary>
+    private void RecordStages(Double fused, Double layout, Double paint, Boolean fast)
+    {
+        if (MeasureStages)
+        {
+            LastBuildStages = (fused, layout, paint, fast);
+        }
     }
 }

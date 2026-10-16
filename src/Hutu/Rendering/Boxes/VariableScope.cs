@@ -38,6 +38,14 @@ internal sealed class VariableScope
     private readonly ICssParser _parser;
     private String[]? _names;
 
+    /// <summary>
+    /// How many links have been created and how many lookups were handed a link already open, since
+    /// <see cref="ResetCounters"/>. Counted always - two increments against a dictionary probe - and read
+    /// only by the probes, which use the pair to tell a chain a rebuild can stand on from one it builds again.
+    /// </summary>
+    private static Int32 _opened;
+    private static Int32 _reused;
+
     /// <summary>The value of each name this scope declares, substituted; a null is one that does not resolve.</summary>
     private Dictionary<String, String?>? _values;
 
@@ -68,13 +76,36 @@ internal sealed class VariableScope
     public static Boolean NeedsParser(MatchedCascade cascade) =>
         cascade.Scan() is { } scan && (scan.CustomProperties.Count > 0 || scan.UsesVariable);
 
+    /// <summary>Gets how many scope links were created since the counters were reset.</summary>
+    internal static Int32 Opened => _opened;
+
+    /// <summary>Gets how many lookups were handed a link already open since the counters were reset.</summary>
+    internal static Int32 Reused => _reused;
+
+    /// <summary>Starts the counters over, for a caller that means to read them after one build.</summary>
+    internal static void ResetCounters()
+    {
+        _opened = 0;
+        _reused = 0;
+    }
+
     /// <summary>
     /// Gets the scope an element reads through: a new link when its own cascade declares a custom
     /// property or asks for one, and the parent's link untouched when it does neither. Public because
     /// the walk that opens one is not the only code that assembles a style - the parity test builds
     /// styles of its own and has to thread the same chain through it.
     /// </summary>
-    public static VariableScope? Open(MatchedCascade cascade, VariableScope? parent, ICssParser? parser)
+    /// <param name="heads">
+    /// The head links of the document, by the cascade they were opened for, for a caller that means
+    /// them to outlive the build. A link whose parent is nothing has no parent object to be filed
+    /// under, which is why it cannot be held the way every other link is; null for a caller that
+    /// builds once and has nothing to carry over.
+    /// </param>
+    public static VariableScope? Open(
+        MatchedCascade cascade,
+        VariableScope? parent,
+        ICssParser? parser,
+        Dictionary<MatchedCascade, VariableScope>? heads = null)
     {
         if (parser is null || !NeedsParser(cascade))
         {
@@ -85,17 +116,37 @@ internal sealed class VariableScope
         // this a page whose boxes all sit under a single declaring root would hand every element its
         // own node, and the areas that are shared per cascade - most of a build's work - would stop
         // being shared at all, since a node is part of what keys them.
-        if (parent is not null)
+        //
+        // The head of a chain is the same reading with a parent of nothing at all, and it is the one
+        // link that cannot be held here: there is no parent object to file it under. It goes in the
+        // caller's table instead, and that table outliving the build is what keeps a chain from
+        // starting over - a head rebuilt is a head whose own _children is empty, and every link under
+        // it is rebuilt with it whatever the rest of the tree decided.
+        if (parent is null)
         {
-            if (parent._children is not null && parent._children.TryGetValue(cascade, out var known))
+            if (heads is not null && heads.TryGetValue(cascade, out var head))
             {
-                return known;
+                _reused++;
+                return head;
             }
+        }
+        else if (parent._children is not null && parent._children.TryGetValue(cascade, out var known))
+        {
+            _reused++;
+            return known;
         }
 
         var scope = new VariableScope(cascade, parent, parser);
+        _opened++;
 
-        if (parent is not null)
+        if (parent is null)
+        {
+            if (heads is not null)
+            {
+                heads[cascade] = scope;
+            }
+        }
+        else
         {
             (parent._children ??= new Dictionary<MatchedCascade, VariableScope>())[cascade] = scope;
         }

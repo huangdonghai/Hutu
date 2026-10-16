@@ -296,9 +296,10 @@ internal sealed class RuleBucketIndex
     private readonly Dictionary<IElement, (MatchedCascade Cascade, Byte Marks, String? Inline, Boolean ReachesOutside)> _matches = new();
 
     /// <summary>
-    /// Whether each rule's selector reaches outside the element it would match: a combinator in it,
-    /// or a relational pseudo-class. Such a rule's answer depends on the element's ancestors and
-    /// siblings, so a mark placed on any of them can move it.
+    /// Whether each rule's selector reads a mark off an element other than the one it would match: a
+    /// pseudo-class answering to a mark, written on a compound that stands in a relationship with
+    /// the subject, or inside <c>:has()</c>. Such a rule's answer depends on the element's ancestors
+    /// and siblings, so a mark placed on any of them can move it.
     /// </summary>
     private readonly Boolean[] _reaches;
 
@@ -308,6 +309,14 @@ internal sealed class RuleBucketIndex
     /// regardless of specificity (see <see cref="MatchedCascade.Tier"/>).
     /// </summary>
     private readonly RuleOrigin[] _origins;
+
+    /// <summary>
+    /// How many elements were answered from the match the last build left, and how many had to be
+    /// matched again, since <see cref="ResetMatchCounters"/>. Counted always - a pair of increments
+    /// is nothing next to a match - and read only by the probes.
+    /// </summary>
+    private Int32 _heldMatches;
+    private Int32 _freshMatches;
 
     private RuleBucketIndex(
         List<ICssStyleRule> rules,
@@ -329,6 +338,19 @@ internal sealed class RuleBucketIndex
 
     /// <summary>Gets the flattened rules in the order they are matched in.</summary>
     public List<ICssStyleRule> Rules => _rules;
+
+    /// <summary>Gets how many elements stood on the match of the last build since the counters were reset.</summary>
+    internal Int32 HeldMatches => _heldMatches;
+
+    /// <summary>Gets how many elements had to be matched again since the counters were reset.</summary>
+    internal Int32 FreshMatches => _freshMatches;
+
+    /// <summary>Starts the match counters over, for a caller that means to read them after one build.</summary>
+    internal void ResetMatchCounters()
+    {
+        _heldMatches = 0;
+        _freshMatches = 0;
+    }
 
     /// <summary>
     /// Collects the rules of the given sheets for the device and indexes them: sheets in
@@ -426,20 +448,42 @@ internal sealed class RuleBucketIndex
     /// whole document a match on every pointer move.
     /// </para>
     /// <para>
-    /// Within an arm the test is on the text and errs towards yes: a <c>~</c> inside an attribute
-    /// value, a <c>+</c> inside <c>:nth-child()</c> and a <c>&gt;</c> inside <c>:not()</c> all read
-    /// as combinators, though only the last of those really is one. Each costs a match that was not
-    /// needed, which is the direction the engine errs in - the other way would serve an element a
-    /// cascade it no longer matches.
+    /// What decides within an arm is which compound the pseudo-class is written on. A combinator is
+    /// "a condition of relationship between two elements represented by the compound selectors on
+    /// either side" (Selectors 4 §3.1), so a pseudo-class on the rightmost compound - the one the
+    /// arm matches - relates the element to nothing and is read off the element alone. That is the
+    /// compound a real sheet puts it on: <c>.nav .item:hover</c> asks for a shape above the element,
+    /// which is fixed, and for the element's own mark, which the stamp carries, while
+    /// <c>.nav:hover .item</c> asks for the mark of whatever is above it, which nothing in the
+    /// element's own stamp can speak for. Reading the arm for any combinator at all instead made
+    /// every one of the first kind reach outside, and a page whose rules mark their items - which is
+    /// every page with a hover rule on a list - then stood no element's match down at all.
+    /// </para>
+    /// <para>
+    /// Only a selector nested in the subject compound can reach past it. <c>:is()</c>, <c>:where()</c>
+    /// and <c>:not()</c> take a selector list of their own, and §4 of Selectors 4 lets a combinator
+    /// stand inside one, so <c>:is(.a:hover .b)</c> asks for an ancestor's mark exactly as the
+    /// written-out selector does; each argument is asked the same question in turn. A functional
+    /// pseudo-class whose shape is not known here - <c>:nth-child(2n of …)</c> is the one that takes
+    /// a selector list - answers yes when its argument names a tracked pseudo-class, which costs a
+    /// match that was not needed, the direction this errs in.
     /// </para>
     /// </remarks>
     private static Boolean ReachesOutside(ICssStyleRule rule)
     {
         var selector = rule.SelectorText;
 
+        // A rule the parser never gave a selector to matches no element at all: TryMatch asks the
+        // selector list and then the selector, and a rule whose selector failed to parse has
+        // neither, so it answers false every time. Nor can it move an element's answer, and a rule
+        // that reaches outside is one that stands no element's match down - so failing open here
+        // costs the whole document its hold. `::-webkit-scrollbar` and its track and thumb are what
+        // a real sheet writes once each and AngleSharp will not take, and since no key can be taken
+        // from a selector that is not there either, every one of them is consulted for every
+        // element of the page.
         if (selector is null)
         {
-            return true;
+            return rule.Selector is not null;
         }
 
         // No mark can move this rule, so nothing about it can have changed either.
@@ -448,13 +492,27 @@ internal sealed class RuleBucketIndex
             return false;
         }
 
-        var depth = 0;
-        var start = 0;
-        var quote = '\0';
+        return ListReachesOutside(selector, 0, selector.Length);
+    }
 
-        for (var i = 0; i < selector.Length; i++)
+    /// <summary>
+    /// Gets whether any arm of a selector list reads a mark off an element other than the one it
+    /// would match.
+    /// </summary>
+    /// <remarks>
+    /// The text is walked once, splitting at the commas that stand outside brackets and quotes, so
+    /// that the arms of a list are asked one at a time and a list written inside <c>:is()</c> is not
+    /// read as arms of the list it sits in.
+    /// </remarks>
+    private static Boolean ListReachesOutside(String text, Int32 start, Int32 end)
+    {
+        var depth = 0;
+        var quote = '\0';
+        var arm = start;
+
+        for (var i = start; i < end; i++)
         {
-            var c = selector[i];
+            var c = text[i];
 
             if (quote != '\0')
             {
@@ -482,50 +540,221 @@ internal sealed class RuleBucketIndex
 
                     break;
                 case ',' when depth == 0:
-                    if (ArmReachesOutside(selector, start, i))
+                    if (ArmReachesOutside(text, arm, i))
                     {
                         return true;
                     }
 
-                    start = i + 1;
+                    arm = i + 1;
                     break;
             }
         }
 
-        return ArmReachesOutside(selector, start, selector.Length);
+        return ArmReachesOutside(text, arm, end);
     }
 
     /// <summary>
     /// Gets whether one arm of a selector reads a mark off an element other than the one it would
-    /// match: a combinator in it, or a relational pseudo-class, which reaches anything at all and so
-    /// may name a mark with no combinator of its own anywhere in the arm.
+    /// match.
     /// </summary>
-    private static Boolean ArmReachesOutside(String selector, Int32 start, Int32 end)
+    /// <remarks>
+    /// The arm is asked in two halves: everything left of the subject, which is read through a
+    /// combinator, and the subject compound, which is the element itself.
+    /// </remarks>
+    private static Boolean ArmReachesOutside(String text, Int32 start, Int32 end)
     {
         // The space that followed the comma is now at the head of the arm, and the one before the
         // next comma is at its tail. Neither is a combinator: a selector cannot begin or end with
         // one. Trimming them is what makes the arms of `a , b` come out as `a` and `b`.
-        while (start < end && selector[start] is ' ' or '\t' or '\n' or '\r')
+        while (start < end && text[start] is ' ' or '\t' or '\n' or '\r')
         {
             start++;
         }
 
-        while (end > start && selector[end - 1] is ' ' or '\t' or '\n' or '\r')
+        while (end > start && text[end - 1] is ' ' or '\t' or '\n' or '\r')
         {
             end--;
         }
 
-        var arm = selector.AsSpan(start, end - start);
+        // Everything left of the subject stands in a relationship with it, so a pseudo-class in
+        // there answers to a mark on whatever is at the far end of that relationship, and so does a
+        // `:has()` of its own, which Selectors 4 §4.5 makes a relative selector list.
+        var subject = SubjectStart(text, start, end);
 
-        for (var i = 0; i < arm.Length; i++)
+        if (StylePseudoIndex.NamesATrackedPseudo(text[start..subject]))
         {
-            if (arm[i] is ' ' or '\t' or '\n' or '\r' or '>' or '+' or '~')
+            return true;
+        }
+
+        return SubjectReachesOutside(text, subject, end);
+    }
+
+    /// <summary>
+    /// Gets the offset the subject compound of an arm starts at: just past the last combinator that
+    /// stands outside every bracket and quote.
+    /// </summary>
+    /// <remarks>
+    /// Every character of a run of space is a descendant combinator, so the last of them is the one
+    /// that counts; the space a sheet writes around a <c>&gt;</c> is not a combinator of its own,
+    /// which the trim at the end of the walk is what leaves out. A <c>+</c> inside
+    /// <c>:nth-child()</c> and a <c>~</c> inside an attribute value stand inside a bracket and are
+    /// not combinators at all.
+    /// </remarks>
+    private static Int32 SubjectStart(String text, Int32 start, Int32 end)
+    {
+        var subject = start;
+        var depth = 0;
+        var quote = '\0';
+
+        for (var i = start; i < end; i++)
+        {
+            var c = text[i];
+
+            if (quote != '\0')
             {
-                return true;
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+
+                continue;
+            }
+
+            switch (c)
+            {
+                case '"' or '\'':
+                    quote = c;
+                    break;
+                case '(' or '[' or '{':
+                    depth++;
+                    break;
+                case ')' or ']' or '}':
+                    if (depth > 0)
+                    {
+                        depth--;
+                    }
+
+                    break;
+                case ' ' or '\t' or '\n' or '\r' or '>' or '+' or '~' when depth == 0:
+                    subject = i + 1;
+                    break;
             }
         }
 
-        return arm.Contains(":has(", StringComparison.OrdinalIgnoreCase);
+        while (subject < end && text[subject] is ' ' or '\t' or '\n' or '\r')
+        {
+            subject++;
+        }
+
+        return subject;
+    }
+
+    /// <summary>
+    /// Gets whether the subject compound of an arm reads a mark off something other than the element
+    /// it would match, which only a selector nested inside it can.
+    /// </summary>
+    /// <remarks>
+    /// A pseudo-class on the compound is the element's own, and a colon written inside an attribute
+    /// value is read the same way: no mark can move either. What is not the element's own is the
+    /// argument of <c>:is()</c>, <c>:where()</c> or <c>:not()</c>, which is a selector list that may
+    /// hold a combinator of its own and is asked the same question in turn; and the argument of
+    /// anything else that takes one - <c>:has()</c> above all - which answers yes as soon as a
+    /// tracked pseudo-class is named anywhere in it.
+    /// </remarks>
+    private static Boolean SubjectReachesOutside(String text, Int32 start, Int32 end)
+    {
+        var i = start;
+
+        while (i < end)
+        {
+            if (text[i] != ':')
+            {
+                i++;
+                continue;
+            }
+
+            var name = i + 1;
+            var nameEnd = name;
+
+            while (nameEnd < end && StylePseudoIndex.IsNameChar(text[nameEnd]))
+            {
+                nameEnd++;
+            }
+
+            if (nameEnd >= end || text[nameEnd] != '(')
+            {
+                // A pseudo-class of the compound, or the empty name a second colon leaves, which
+                // the next turn of the walk reads as the pseudo-element it is.
+                i = nameEnd > name ? nameEnd : i + 1;
+                continue;
+            }
+
+            var close = GroupEnd(text, nameEnd, end);
+            var function = text.AsSpan(name, nameEnd - name);
+
+            if (function.Equals("is", StringComparison.OrdinalIgnoreCase) ||
+                function.Equals("not", StringComparison.OrdinalIgnoreCase) ||
+                function.Equals("where", StringComparison.OrdinalIgnoreCase))
+            {
+                if (ListReachesOutside(text, nameEnd + 1, close))
+                {
+                    return true;
+                }
+            }
+            else if (StylePseudoIndex.NamesATrackedPseudo(text[(nameEnd + 1)..close]))
+            {
+                return true;
+            }
+
+            i = close + 1;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Gets the offset of the bracket closing the one at <paramref name="open"/>, or the end of the
+    /// text when nothing closes it - which leaves whatever was written inside it unanswered rather
+    /// than reading the rest of the selector as part of the argument.
+    /// </summary>
+    private static Int32 GroupEnd(String text, Int32 open, Int32 end)
+    {
+        var depth = 0;
+        var quote = '\0';
+
+        for (var i = open; i < end; i++)
+        {
+            var c = text[i];
+
+            if (quote != '\0')
+            {
+                if (c == quote)
+                {
+                    quote = '\0';
+                }
+
+                continue;
+            }
+
+            switch (c)
+            {
+                case '"' or '\'':
+                    quote = c;
+                    break;
+                case '(':
+                    depth++;
+                    break;
+                case ')':
+                    if (--depth == 0)
+                    {
+                        return i;
+                    }
+
+                    break;
+            }
+        }
+
+        return end;
     }
 
     /// <summary>
@@ -548,8 +777,11 @@ internal sealed class RuleBucketIndex
             !held.ReachesOutside &&
             ReferenceEquals(held.Inline, InlineTextOf(element)))
         {
+            _heldMatches++;
             return held.Cascade;
         }
+
+        _freshMatches++;
 
         var candidates = CollectCandidates(element);
         var inline = InlineOf(element);

@@ -69,9 +69,10 @@ internal readonly record struct StyleRecord(
 /// <para>
 /// What is held is the index together with the cascades it has already matched - the expensive
 /// half, since a cascade remembers every property name it was asked for - the two tables that
-/// keep a document from resolving the same area twice, and the style each element came to. The
-/// intern table holds the strings the declarations handed over, which is why it is dropped with
-/// the index rather than kept across documents.
+/// keep a document from resolving the same area twice, the style each element came to, and the
+/// head links of the variable scope chain, which have no parent to be filed under and so can be
+/// held nowhere else. The intern table holds the strings the declarations handed over, which is
+/// why it is dropped with the index rather than kept across documents.
 /// </para>
 /// </remarks>
 internal sealed class StyleResolution
@@ -82,6 +83,13 @@ internal sealed class StyleResolution
     private Boolean _restylesWithoutRelayout;
     private readonly Dictionary<IElement, StyleRecord> _records = new();
 
+    /// <summary>
+    /// The head links of the scope chain, by the cascade they were opened for. They are kept here
+    /// because a head link has no parent object to be filed under, and because a head rebuilt is a
+    /// head whose own children are empty - every link below it is built again with it.
+    /// </summary>
+    private readonly Dictionary<MatchedCascade, VariableScope> _heads = new();
+
     /// <summary>Gets the index of the last build, or null when the sheets have to be scanned again.</summary>
     internal RuleBucketIndex? Index => _index;
 
@@ -90,6 +98,9 @@ internal sealed class StyleResolution
 
     /// <summary>Gets the area cache the last build filled.</summary>
     internal FusedAreaCache Cache => _cache;
+
+    /// <summary>Gets the head links of the scope chain, which have no parent to be filed under.</summary>
+    internal Dictionary<MatchedCascade, VariableScope> Heads => _heads;
 
     /// <summary>Gets the one string this build stands a tag name by, lowering it the first time.</summary>
     internal String Tag(String name) => _cache.Tag(name);
@@ -148,6 +159,7 @@ internal sealed class StyleResolution
         _cache = new FusedAreaCache();
         _restylesWithoutRelayout = false;
         _records.Clear();
+        _heads.Clear();
     }
 
     /// <summary>
