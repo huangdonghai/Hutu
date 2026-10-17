@@ -582,11 +582,19 @@ internal static partial class BoxBuilder
         String.Equals(element.LocalName, name, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Collapses every run of ASCII white space to a single space, leaving the rest untouched. The
-    /// result may still be white space only; line layout decides whether it survives. A space at
-    /// either end of a node survives the collapse as well: whether it is a line's start or end, or
-    /// the one space an element's edge sits between, is a question for the line, not the node.
+    /// Collapses every run of the white space the line rules may collapse into a single space, leaving
+    /// the rest untouched. The result may still be white space only; line layout decides whether it
+    /// survives. A space at either end of a node survives the collapse as well: whether it is a line's
+    /// start or end, or the one space an element's edge sits between, is a question for the line, not
+    /// the node.
     /// </summary>
+    /// <remarks>
+    /// The predicate is the line's own, which CSS Text 3 §4.2 keeps to the space, the tab and the
+    /// segment breaks. A form feed is not among them: it is a control character, and a control
+    /// character is drawn as a glyph of its own and stands as content between two words rather than
+    /// folding into one of the spaces around it. Reading the document language's notion of an ASCII
+    /// space here instead is what made the node and the line disagree about what the text was made of.
+    /// </remarks>
     private static String CollapseWhitespace(String text)
     {
         var builder = new StringBuilder(text.Length);
@@ -594,7 +602,7 @@ internal static partial class BoxBuilder
 
         foreach (var character in text)
         {
-            if (character is ' ' or '\t' or '\n' or '\r' or '\f')
+            if (TextChunker.IsCollapsible(character))
             {
                 pendingSpace = true;
                 continue;

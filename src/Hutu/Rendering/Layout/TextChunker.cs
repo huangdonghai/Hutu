@@ -86,17 +86,60 @@ internal readonly struct ChunkRange
     /// trimmed off either end of a line and never a place a line may break - which is the whole
     /// point of writing one. Treating them as collapsible folds five no-break spaces into one and
     /// hangs the end of a line with a space that was written to stay.
+    /// <para>
+    /// The control characters are left out for the other half of the same rule: §4.2 asks that a
+    /// control character other than the tab, the line feed and the carriage return be drawn as a
+    /// visible glyph and otherwise treated as an ordinary character. So a form feed (U+000C) and a
+    /// vertical tabulation (U+000B) are content between two words - measured, kept at either end of a
+    /// line, and no place to break - and the node that folded one into a space was reading the
+    /// document language's list of spaces where the layout has its own.
+    /// </para>
     /// </remarks>
     public static Boolean IsCollapsible(Char c) =>
         c == ' ' || c == '\t' || c == '\n' || c == '\r';
 
     /// <summary>
-    /// Gets whether a character may start a new line without a space, which is how CJK text wraps.
+    /// Gets the code point at an index, joining a surrogate pair into the one character it stands for.
     /// </summary>
-    public static Boolean IsCjk(Char character) =>
-        (character >= '\u2E80' && character <= '\u9FFF') ||
-        (character >= '\uF900' && character <= '\uFAFF') ||
-        (character >= '\uFF00' && character <= '\uFFEF');
+    public static Int32 CodePointAt(String text, Int32 index)
+    {
+        var first = text[index];
+
+        return IsPair(text, index) ? Char.ConvertToUtf32(first, text[index + 1]) : first;
+    }
+
+    /// <summary>
+    /// Gets how many of the string's characters the code point at an index occupies.
+    /// </summary>
+    public static Int32 UnitsAt(String text, Int32 index) => IsPair(text, index) ? 2 : 1;
+
+    private static Boolean IsPair(String text, Int32 index) =>
+        Char.IsHighSurrogate(text[index]) &&
+        index + 1 < text.Length &&
+        Char.IsLowSurrogate(text[index + 1]);
+
+    /// <summary>
+    /// Gets whether a line may break on either side of the code point, which is how CJK and Hangul
+    /// text wraps.
+    /// </summary>
+    /// <remarks>
+    /// The break set is wider than the ideographic one and wider than the BMP. Hangul joins it because
+    /// a Korean line comes apart between syllables without any space to help it, and the extension
+    /// planes join it because the ideographs a name is written with live above U+FFFF. So the test is
+    /// on a code point and not on a character: a high surrogate on its own is nothing to break at, and
+    /// asking a character whether it is CJK is how an entire run of rare ideographs came to be treated
+    /// as one unbreakable word.
+    /// </remarks>
+    public static Boolean IsCjk(Int32 codePoint) =>
+        IsIdeographic(codePoint) ||
+        (codePoint >= 0x1100 && codePoint <= 0x11FF) ||
+        (codePoint >= 0xA960 && codePoint <= 0xA97F) ||
+        (codePoint >= 0xAC00 && codePoint <= 0xD7FF) ||
+        (codePoint >= 0x20000 && codePoint <= 0x2FFFD) ||
+        (codePoint >= 0x30000 && codePoint <= 0x3134A);
+
+    /// <summary>Gets whether the code point at an index may start a new line without a space.</summary>
+    public static Boolean IsCjk(String text, Int32 index) => IsCjk(CodePointAt(text, index));
 
     /// <summary>
     /// Gets whether a character keeps its own orientation when it is set in a column.
@@ -105,10 +148,17 @@ internal readonly struct ChunkRange
     /// The wide characters - CJK, kana, the fullwidth forms, and the vertical presentation forms of
     /// their punctuation - are already drawn the way a column wants them, so <c>text-orientation:
     /// mixed</c> leaves them upright. Everything else, Latin and digits above all, is turned a quarter
-    /// turn so that it reads down the column rather than one letter per em.
+    /// turn so that it reads down the column rather than one letter per em. Hangul is turned with the
+    /// rest of them: it breaks like an ideograph and is set like an alphabetic.
     /// </remarks>
     public static Boolean IsUpright(Char character) =>
-        IsCjk(character) || (character >= '\uFE10' && character <= '\uFE4F');
+        IsIdeographic(character) || (character >= '\uFE10' && character <= '\uFE4F');
+
+    /// <summary>Gets whether the code point is one of the wide ideographic forms of the BMP.</summary>
+    private static Boolean IsIdeographic(Int32 codePoint) =>
+        (codePoint >= 0x2E80 && codePoint <= 0x9FFF) ||
+        (codePoint >= 0xF900 && codePoint <= 0xFAFF) ||
+        (codePoint >= 0xFF00 && codePoint <= 0xFFEF);
 
     /// <summary>
     /// Gets whether a character may take part in a <c>text-combine-upright</c> run: the narrow
@@ -168,9 +218,9 @@ internal struct Enumerator
                     return true;
                 }
 
-                var length = Char.IsHighSurrogate(current) && index + 1 < text.Length ? 2 : 1;
+                var length = UnitsAt(text, index);
 
-                if (IsCjk(current))
+                if (IsCjk(text, index))
                 {
                     Current = new ChunkRange(index, length);
                     _index = index + length;
@@ -179,9 +229,9 @@ internal struct Enumerator
 
                 var wordEnd = index + length;
 
-                while (wordEnd < text.Length && !IsCollapsible(text[wordEnd]) && !IsCjk(text[wordEnd]))
+                while (wordEnd < text.Length && !IsCollapsible(text[wordEnd]) && !IsCjk(text, wordEnd))
                 {
-                    wordEnd++;
+                    wordEnd += UnitsAt(text, wordEnd);
                 }
 
                 Current = new ChunkRange(index, wordEnd - index);

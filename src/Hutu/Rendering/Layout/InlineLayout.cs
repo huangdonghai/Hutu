@@ -349,7 +349,7 @@ internal sealed class InlineLayout
                 trailing = 0;
                 sawContent = true;
 
-                if (TextChunker.IsCjk(source[chunk.Start]) && item.Style.WrapsLines)
+                if (TextChunker.IsCjk(source, chunk.Start) && item.Style.WrapsLines)
                 {
                     // A line may break on either side of a CJK character, so the character stands
                     // alone rather than joining the run around it, and it is the run beside it - the
@@ -519,7 +519,10 @@ internal sealed class InlineLayout
         // The band sits astride the line's shared baseline, offset by the element's own vertical
         // alignment, so a run that is raised or lowered takes the band around it with it while the
         // line's baseline stays where the rest of the line put it.
-        var blockOffset = cursor + line.Ascent + ancestor.BaselineShift - ancestor.Ascent - ancestor.BlockStartInset;
+        var shift = line.BandShifts is { } bands && bands.TryGetValue(ancestor, out var aligned)
+            ? aligned
+            : 0;
+        var blockOffset = cursor + line.Ascent + shift - ancestor.Ascent - ancestor.BlockStartInset;
         var blockSize = ancestor.Ascent + ancestor.Descent + ancestor.BlockStartInset + ancestor.BlockEndInset;
 
         item.Node!.BorderBox = flow.Map(contentBox, item.Start, end - item.Start, blockOffset, blockSize);
@@ -1511,7 +1514,16 @@ internal sealed class InlineLayout
         (flow.IsVertical
             ? MeasureColumn(source, start, length, style.GetFont(), style.FontSize, flow, measurer)
             : measurer.MeasureWidth(source.Substring(start, length), style.GetFont()))
-        + (style.LetterSpacing * length);
+        + (style.LetterSpacing * SpacingUnits(source, start, length, flow));
+
+    /// <summary>
+    /// Gets how many times the run's letter spacing is charged along a line, where the glyphs are set
+    /// from the characters they were shaped out of, so the character is the unit and not the half of an
+    /// encoding that stands for it. A column is left to its own count: it gives every character of the
+    /// text a cell of its own, and the cells are stepped by the same units the drawing steps by.
+    /// </summary>
+    private static Int32 SpacingUnits(String source, Int32 start, Int32 length, WritingModeInfo flow) =>
+        flow.IsVertical ? length : TextClusters.Count(source, start, length);
 
     /// <summary>
     /// Measures the annotation of a ruby item: how far it reaches along the inline axis, how much room
@@ -1672,7 +1684,7 @@ internal sealed class InlineLayout
     /// </summary>
     private MeasuredRun Measure(ComputedStyle style, FontStyle font, OrientedRun run, WritingModeInfo flow)
     {
-        var spacing = style.LetterSpacing * run.Length;
+        var spacing = style.LetterSpacing * SpacingUnits(run.Source, run.Start, run.Length, flow);
 
         return new MeasuredRun(
             run.Source,
@@ -2028,7 +2040,6 @@ internal sealed class InlineLayout
             Box = box;
             Flow = flow;
             Inline = inline;
-            BaselineShift = Shift(style);
             IsReplaced = isReplaced;
             ContentHeight = contentHeight;
             Ruby = ruby;
@@ -2124,29 +2135,110 @@ internal sealed class InlineLayout
         public Double ContentHeight { get; }
 
         /// <summary>
-        /// Gets the offset to apply to the run's baseline, which is how <c>&lt;sup&gt;</c> and
-        /// <c>&lt;sub&gt;</c> are raised and lowered.
+        /// Gets the offset the line's shared baseline is moved by for this fragment, which is where
+        /// <c>vertical-align</c> puts it. Set while the line is built, because the reference the
+        /// alignment is taken against - the line as it stands before anything is aligned - is not known
+        /// until the runs on it have been measured.
         /// </summary>
-        public Double BaselineShift { get; }
+        public Double BaselineShift { get; set; }
     }
 
     /// <summary>
-    /// Gets the offset <c>vertical-align</c> applies to a run's baseline: a superscript is raised above
-    /// it and a subscript lowered below, each by a fraction of the font size. Every other alignment is
-    /// the line's business rather than the run's and leaves the baseline where it is.
+    /// Gets the offset <c>vertical-align</c> gives a box's baseline against the one the line shares.
     /// </summary>
-    private static Double Shift(ComputedStyle style)
+    /// <remarks>
+    /// The box reaches <c>above</c> the baseline it is set on and <c>below</c> it; the line it stands in
+    /// reached <c>reach</c> above and <c>depth</c> below before anything was aligned, and that is the
+    /// frame CSS 2.1 §10.8.1 gives the alignments against - the line box is grown *from* the aligned
+    /// boxes rather than serving as their reference. The two extremes are why this is asked of the line
+    /// rather than of the box: <c>top</c> and <c>bottom</c> cannot be known while the box is alone.
+    /// <para>
+    /// <c>middle</c> asks for half the parent's x-height, which the engine does not have from the face
+    /// yet; it uses the half-em <c>ex</c> the style layer already stands in for that unit, so the two
+    /// agree. A <c>&lt;length&gt;</c> or a <c>&lt;percentage&gt;</c> is not carried to the layout as a
+    /// resolved number either, and is left on the baseline until the style layer sends one.
+    /// </para>
+    /// </remarks>
+    /// <summary>Gets whether the style leaves its box on the baseline the line shares.</summary>
+    private static Boolean IsBaseline(ComputedStyle style) =>
+        style.VerticalAlign.Equals("baseline", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets whether the alignment is taken against the line box itself rather than against the box the
+    /// element sits in, which is what makes it a place to stand instead of another step to climb.
+    /// </summary>
+    private static Boolean IsAtTheLineEdge(ComputedStyle style) =>
+        style.VerticalAlign.Equals("top", StringComparison.OrdinalIgnoreCase) ||
+        style.VerticalAlign.Equals("bottom", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Gets the chain of inline elements a run sits inside, innermost last.</summary>
+    private static List<InlineAncestor> Chain(InlineAncestor? inline)
+    {
+        var chain = new List<InlineAncestor>();
+
+        for (var ancestor = inline; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            chain.Add(ancestor);
+        }
+
+        return chain;
+    }
+
+    private static Double Alignment(
+        ITextMeasurer measurer,
+        ComputedStyle style,
+        ComputedStyle? parent,
+        Double above,
+        Double below,
+        Double reach,
+        Double depth)
     {
         var alignment = style.VerticalAlign;
+
+        if (alignment.Equals("baseline", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
 
         if (alignment.Equals("super", StringComparison.OrdinalIgnoreCase))
         {
             return -0.4 * style.FontSize;
         }
 
-        return alignment.Equals("sub", StringComparison.OrdinalIgnoreCase)
-            ? 0.2 * style.FontSize
-            : 0;
+        if (alignment.Equals("sub", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0.2 * style.FontSize;
+        }
+
+        if (alignment.Equals("top", StringComparison.OrdinalIgnoreCase))
+        {
+            return above - reach;
+        }
+
+        if (alignment.Equals("bottom", StringComparison.OrdinalIgnoreCase))
+        {
+            return depth - below;
+        }
+
+        // The parent's text, not the line's: the reference is the box this one sits in.
+        var reference = parent ?? style;
+
+        if (alignment.Equals("text-top", StringComparison.OrdinalIgnoreCase))
+        {
+            return above - measurer.GetMetrics(reference.GetFont()).Ascent;
+        }
+
+        if (alignment.Equals("text-bottom", StringComparison.OrdinalIgnoreCase))
+        {
+            return measurer.GetMetrics(reference.GetFont()).Descent - below;
+        }
+
+        if (alignment.Equals("middle", StringComparison.OrdinalIgnoreCase))
+        {
+            return ((above - below) / 2) - (0.25 * reference.FontSize);
+        }
+
+        return 0;
     }
 
     /// <summary>
@@ -2494,6 +2586,14 @@ internal sealed class InlineLayout
         /// mirror of <see cref="ContinuesFromPrevious"/> at the other end of the line.
         /// </summary>
         public HashSet<InlineAncestor>? ContinuesToNext { get; set; }
+
+        /// <summary>
+        /// Gets how each inline element that aligned its own box on this line moves the band it draws,
+        /// or null while none did. Held by the line rather than by the element because what an alignment
+        /// is taken against - <c>top</c> of the line, <c>bottom</c> of it - belongs to the line, and one
+        /// element's chain of them stands on several lines.
+        /// </summary>
+        public Dictionary<InlineAncestor, Double>? BandShifts { get; set; }
     }
 
     /// <summary>
@@ -2532,7 +2632,7 @@ internal sealed class InlineLayout
             var metrics = measurer.GetMetrics(box.Style.GetFont());
             Ascent = metrics.Ascent;
             Descent = metrics.Descent;
-            BaselineShift = Shift(box.Style);
+            AnyAlignment = !IsBaseline(box.Style) || (parent?.AnyAlignment ?? false);
 
             // The element's decoration is placed in the frame its line was laid out in, so it is the
             // container's writing mode - and not the element's own - that decides which physical side
@@ -2593,8 +2693,11 @@ internal sealed class InlineLayout
         /// <summary>Gets the distance from the element's baseline to the bottom of its font.</summary>
         public Double Descent { get; }
 
-        /// <summary>Gets the offset the element's own <c>vertical-align</c> applies to its band.</summary>
-        public Double BaselineShift { get; }
+        /// <summary>
+        /// Gets whether this element, or any element it sits inside, asks for an alignment of its own
+        /// box. Carried down the chain so a line with nothing aligned on it can skip the walk entirely.
+        /// </summary>
+        public Boolean AnyAlignment { get; }
 
         /// <summary>
         /// Gets the padding a fragment of this element draws. An edge the element was cut at carries
@@ -2898,8 +3001,16 @@ internal sealed class InlineLayout
             var ascent = Double.NegativeInfinity;
             var descent = Double.NegativeInfinity;
 
-            foreach (var fragment in line.Fragments)
+            // How far each fragment reaches above and below the baseline it stands on, kept because a
+            // box's alignment is worked out from it once the line knows how far it reached.
+            var above = new Double[line.Fragments.Count];
+            var below = new Double[line.Fragments.Count];
+            var inFlow = false;
+
+            for (var position = 0; position < line.Fragments.Count; position++)
             {
+                var fragment = line.Fragments[position];
+
                 used += Advance(open, fragment.Inline, carried, origin: 0, apply: true, step: null);
                 used += fragment.Width;
 
@@ -2911,6 +3022,8 @@ internal sealed class InlineLayout
                     continue;
                 }
 
+                inFlow = true;
+
                 // A replaced inline rests its bottom margin edge on the baseline, so it contributes
                 // its whole height as ascent and nothing as descent.
                 if (fragment.IsReplaced)
@@ -2918,8 +3031,10 @@ internal sealed class InlineLayout
                     // Its bottom margin edge rests on the baseline, so it reaches nothing below it - a
                     // descent of zero, which is not the same as leaving it out where the line gathers
                     // descents from nothing because a run of text may hang above the baseline.
-                    ascent = Math.Max(ascent, fragment.ContentHeight);
-                    descent = Math.Max(descent, 0);
+                    above[position] = fragment.ContentHeight;
+                    below[position] = 0;
+                    ascent = Math.Max(ascent, above[position]);
+                    descent = Math.Max(descent, below[position]);
                     continue;
                 }
 
@@ -2928,8 +3043,10 @@ internal sealed class InlineLayout
                 // across the line included, since those are part of the room it takes up there.
                 if (fragment.Atomic is { } atomic)
                 {
-                    ascent = Math.Max(ascent, atomic.BlockStartMargin + atomic.Ascent);
-                    descent = Math.Max(descent, atomic.BlockEndMargin + (atomic.BlockSize - atomic.Ascent));
+                    above[position] = atomic.BlockStartMargin + atomic.Ascent;
+                    below[position] = atomic.BlockEndMargin + (atomic.BlockSize - atomic.Ascent);
+                    ascent = Math.Max(ascent, above[position]);
+                    descent = Math.Max(descent, below[position]);
                     continue;
                 }
 
@@ -2966,6 +3083,8 @@ internal sealed class InlineLayout
                     }
                 }
 
+                above[position] = fragmentAscent;
+                below[position] = fragmentDescent;
                 ascent = Math.Max(ascent, fragmentAscent);
                 descent = Math.Max(descent, fragmentDescent);
             }
@@ -3003,8 +3122,83 @@ internal sealed class InlineLayout
                 descent = _fallback is null || !HasContent ? 0 : metrics.Descent;
             }
 
-            line.Ascent = ascent;
-            line.Height = ascent + descent;
+            // The line box is grown from the boxes as they end up standing (CSS 2.1 §10.8.1): a run
+            // raised by `super`, or aligned to the `top` of the line, lifts the height the line takes,
+            // and a lowered one reaches below it. The reference each alignment is taken against is the
+            // line as it was gathered above, before any box on it was moved.
+            var reach = ascent;
+            var depth = descent;
+            Dictionary<InlineAncestor, Double>? bands = null;
+
+            if (inFlow)
+            {
+                for (var position = 0; position < line.Fragments.Count; position++)
+                {
+                    var fragment = line.Fragments[position];
+
+                    if (fragment.OutOfFlow ||
+                        (IsBaseline(fragment.Style) && fragment.Inline?.AnyAlignment != true))
+                    {
+                        // Nothing asks for this box to stand anywhere but on the baseline the line
+                        // shares, and the extents gathered above counted it there already.
+                        continue;
+                    }
+
+                    // Each box on the chain stands on the baseline of the box around it, so an aligned
+                    // element carries both the text inside it and the bands of the elements within it -
+                    // and the innermost box is the one the run's own <c>vertical-align</c> was written
+                    // on, which is why it is counted once here rather than again for the run.
+                    // `top` and `bottom` are the exception: they are taken against the line box rather
+                    // than against the parent, so they say where the chain stands instead of adding.
+                    var parents = Chain(fragment.Inline);
+                    var running = 0.0;
+
+                    if (parents.Count == 0)
+                    {
+                        // Text sitting straight in the block has no box of its own to align.
+                        running = Alignment(
+                            measurer, fragment.Style, _fallback, above[position], below[position], ascent, descent);
+                    }
+
+                    for (var step = parents.Count - 1; step >= 0; step--)
+                    {
+                        var ancestor = parents[step];
+                        var own = Alignment(
+                            measurer,
+                            ancestor.Box.Style,
+                            ancestor.Parent?.Box.Style ?? _fallback,
+                            ancestor.Ascent,
+                            ancestor.Descent,
+                            ascent,
+                            descent);
+
+                        running = own == 0
+                            ? running
+                            : IsAtTheLineEdge(ancestor.Box.Style)
+                                ? own
+                                : running + own;
+
+                        if (running != 0)
+                        {
+                            bands ??= new Dictionary<InlineAncestor, Double>();
+                            bands[ancestor] = running;
+                        }
+                    }
+
+                    if (running == 0)
+                    {
+                        continue;
+                    }
+
+                    fragment.BaselineShift = running;
+                    reach = Math.Max(reach, above[position] - running);
+                    depth = Math.Max(depth, below[position] + running);
+                }
+            }
+
+            line.BandShifts = bands;
+            line.Ascent = reach;
+            line.Height = reach + depth;
             line.Used = used;
             line.Indent = _indent;
             line.Offset = Aligned(line, maxInline);

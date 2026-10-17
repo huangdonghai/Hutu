@@ -1,5 +1,6 @@
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Paint;
+using Hutu.Skia;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
@@ -85,6 +86,66 @@ public sealed class LetterSpacingTests
         var run = view.Paint!.Commands.OfType<TextCommand>().Single(command => command.Text == "ab");
 
         Assert.That(run.LetterSpacing, Is.EqualTo(3));
+    }
+
+    [Test]
+    public async Task AnIdeographOfTheExtensionPlanesIsSpacedAsOneCharacter()
+    {
+        using var view = CreateView();
+
+        // The fake measurer counts the units the string is stored in, so the ideograph is worth ten of
+        // its pixels and the letter after it five: fifteen of the encoding. The spacing is charged by
+        // the two characters they stand for, and not by the three units that spell them out.
+        var text = Char.ConvertFromUtf32(0x20000) + "x";
+
+        await view.SetHtml(Document("<p style='letter-spacing:2px'>" + text + "</p>"));
+
+        Assert.That(
+            Text(view, text).BorderBox.Width,
+            Is.EqualTo(19),
+            "fifteen of the encoding, and four for the two characters of it");
+    }
+
+    [Test]
+    public async Task ACharacterUnderAMarkIsSpacedOnce()
+    {
+        using var view = CreateView();
+
+        // A letter with a combining mark over it is two of the encoding and one to read: one space,
+        // not two, and the letter that follows it stands one space from the character it was written
+        // after rather than two.
+        var text = "e" + (Char)0x0301 + "z";
+
+        await view.SetHtml(Document("<p style='letter-spacing:3px'>" + text + "</p>"));
+
+        Assert.That(
+            Text(view, text).BorderBox.Width,
+            Is.EqualTo(21),
+            "fifteen of the encoding, and six for the two characters of it");
+    }
+
+    [Test]
+    public async Task ASpacedRunGrowsByTheCharactersOfIt()
+    {
+        // Against the real shaper, where no advance is known beforehand: the answer is the difference
+        // between the same text spaced and unspaced, which is one space per character of it whatever
+        // the font measured the characters at.
+        using var measurer = new SkiaTextMeasurer();
+
+        var text = Char.ConvertFromUtf32(0x20000) + Char.ConvertFromUtf32(0x20001);
+
+        using var plain = new HutuViewInternal(measurer);
+        using var spaced = new HutuViewInternal(measurer);
+        plain.SetViewportSize(200, 200);
+        spaced.SetViewportSize(200, 200);
+
+        await plain.SetHtml(Document("<p>" + text + "</p>"));
+        await spaced.SetHtml(Document("<p style='letter-spacing:20px'>" + text + "</p>"));
+
+        Assert.That(
+            Text(spaced, text).BorderBox.Width - Text(plain, text).BorderBox.Width,
+            Is.EqualTo(40).Within(0.001),
+            "two characters, one space after each, and no space for the units that stand for them");
     }
 
     /// <summary>Gets the document under test: a paragraph with no margin of its own.</summary>

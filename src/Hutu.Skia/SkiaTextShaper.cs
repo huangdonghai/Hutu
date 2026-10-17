@@ -81,6 +81,55 @@ internal sealed class SkiaTextShaper : IDisposable
             _ => ShapeVerticalRun(font, text));
     }
 
+    /// <summary>
+    /// Gets, for every glyph the font sets the run in, the place in the text of the character the glyph
+    /// was made from.
+    /// </summary>
+    /// <remarks>
+    /// Only the letter spacing asks for it, and only once per run, because it is the one question the
+    /// library's own answer cannot reply: the positions <see cref="Shape"/> hands back are scaled the
+    /// way that method scales them, and its result carries no character with it. The buffer does, and
+    /// the buffer is what says whether two glyphs stood together in one character - a ligature, a tone
+    /// mark, an ideograph of the extension planes - which is the fact the spacing has to fall by.
+    /// </remarks>
+    public Int32[] ShapeClusters(SKFont font, String text)
+    {
+        if (font.Typeface is not { } typeface || text.Length == 0)
+        {
+            return Array.Empty<Int32>();
+        }
+
+        try
+        {
+            lock (_shapeLock)
+            {
+                _buffer.Reset();
+                _buffer.AddUtf16(text);
+                _buffer.GuessSegmentProperties();
+
+                Shaper(typeface).Shape(_buffer, font);
+
+                var infos = _buffer.GlyphInfos;
+                var clusters = new Int32[infos.Length];
+
+                for (var index = 0; index < infos.Length; index++)
+                {
+                    clusters[index] = (Int32)infos[index].Cluster;
+                }
+
+                return clusters;
+            }
+        }
+        catch (Exception exception)
+        {
+            // The spacing then falls by the glyph rather than by the character, which is how it was
+            // drawn before anything asked: a shaper that will not answer is a page spaced slightly
+            // wrong, not a page that loses its text.
+            Debug.WriteLine($"Clustering '{text}' for {typeface.FamilyName} failed: {exception}");
+            return Array.Empty<Int32>();
+        }
+    }
+
     private ShapedRun ShapeRun(SKFont font, String text)
     {
         try

@@ -97,9 +97,11 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// positioned run of the glyphs its font set it in, starting where the stretches before it ended.
     /// </summary>
     /// <remarks>
-    /// The letter spacing is folded into each glyph's position and into the distance the next
-    /// stretch starts at, by the characters the layout counted, so the drawn text occupies exactly
-    /// the room the layout measured it into.
+    /// The letter spacing is folded into each glyph's position and into the distance the next stretch
+    /// starts at by the characters the stretch is made of - the same count the layout charged the line
+    /// for, which is what makes the drawn text occupy exactly the room it was measured into. Where a
+    /// glyph is set, though, is the shaper's knowledge: two glyphs welded out of one character are
+    /// still standing in it, and only the buffer says which glyphs came from where.
     /// </remarks>
     private SKTextBlob? BuildRunBlob(FontStyle style, String text, Double letterSpacing)
     {
@@ -108,22 +110,42 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
         foreach (var run in _measurer.Decompose(text, style))
         {
+            var characters = letterSpacing == 0
+                ? 0
+                : TextClusters.Count(run.Text, 0, run.Text.Length);
+
+            var clusters = letterSpacing != 0 && run.Shaped.Succeeded
+                ? _measurer.Shaper.ShapeClusters(run.Font, run.Text)
+                : null;
+
+            if (clusters is { Length: > 0 } && clusters.Length != run.Shaped.Glyphs.Length)
+            {
+                // A shaped answer and a clustered answer that disagree are not the same run twice
+                // told: the spacing then falls by the glyph, as it did before it was asked where.
+                clusters = null;
+            }
+
             if (run.Shaped.Succeeded)
             {
-                AddShaped(builder, run, pen, letterSpacing);
+                AddShaped(builder, run, pen, letterSpacing, clusters);
             }
             else
             {
                 AddMapped(builder, run, pen, letterSpacing);
             }
 
-            pen += (Single)(run.Advance + (letterSpacing * run.Text.Length));
+            pen += (Single)(run.Advance + (letterSpacing * characters));
         }
 
         return builder.Build();
     }
 
-    private static void AddShaped(SKTextBlobBuilder builder, SkiaTextRun run, Single pen, Double letterSpacing)
+    private static void AddShaped(
+        SKTextBlobBuilder builder,
+        SkiaTextRun run,
+        Single pen,
+        Double letterSpacing,
+        Int32[]? clusters)
     {
         var glyphs = run.Shaped.Glyphs;
         var points = run.Shaped.Points;
@@ -135,11 +157,19 @@ internal sealed class SkiaTextBlobCache : IDisposable
         }
 
         var positions = new SKPoint[count];
+        var crossed = 0;
 
         for (var index = 0; index < count; index++)
         {
+            // A space is owed for every character the pen has crossed on its way along the line, and
+            // a glyph standing in the same character as the one before it has crossed nothing.
+            if (index > 0 && (clusters is null || clusters[index] != clusters[index - 1]))
+            {
+                crossed++;
+            }
+
             positions[index] = new SKPoint(
-                pen + points[index].X + (Single)(letterSpacing * index),
+                pen + points[index].X + (Single)(letterSpacing * crossed),
                 points[index].Y);
         }
 
@@ -152,7 +182,11 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// Adds a run the shaper could not handle as the font's own mapping, one glyph per character,
     /// which is the way it was drawn before shaping answered for it.
     /// </summary>
-    private static void AddMapped(SKTextBlobBuilder builder, SkiaTextRun run, Single pen, Double letterSpacing)
+    private static void AddMapped(
+        SKTextBlobBuilder builder,
+        SkiaTextRun run,
+        Single pen,
+        Double letterSpacing)
     {
         if (run.Text.Length == 0)
         {

@@ -530,6 +530,13 @@ internal sealed class TextSelector
         // layout put it; without it a caret would drift further off with every character.
         var spacing = run.Source.Style.LetterSpacing;
 
+        // Along a line the spacing is charged per character, which is what the layout counted when it
+        // gave the run its width; the table has to be counted the same way or a caret lands short of
+        // the glyph by one space for every half of an encoding the text was stored in.
+        var ordinals = run.Flow.IsVertical || spacing == 0
+            ? null
+            : TextClusters.OrdinalByCharacter(text);
+
         // A column sets an upright character in its em box rather than at its natural width, so the
         // boundaries are stepped the way the layout stepped them: the table has to agree with the run
         // the characters were placed by, or a hit lands on a neighbour.
@@ -537,12 +544,17 @@ internal sealed class TextSelector
         {
             prefix[index] = run.Flow.IsVertical
                 ? prefix[index - 1] + ColumnStep(run, text[index - 1]) + spacing
-                : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow) + (spacing * index);
+                : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow)
+                    + (spacing * CharactersThrough(ordinals, index));
         }
 
         _prefixes[run] = prefix;
         return prefix;
     }
+
+    /// <summary>Gets how many characters the first stretch of the run's text is made of.</summary>
+    private static Int32 CharactersThrough(Int32[]? ordinals, Int32 through) =>
+        ordinals is null ? through : ordinals[through - 1] + 1;
 
     /// <summary>
     /// Gets how far one character of a column advances: a turned run by the width it would have had in

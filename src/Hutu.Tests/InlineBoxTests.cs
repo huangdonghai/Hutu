@@ -347,6 +347,48 @@ public sealed class InlineBoxTests
     /// Gets the document the inline box is asserted in: a paragraph with no margin of its own, set in a
     /// font the fake measurer gives a ten-pixel content area whatever the size.
     /// </summary>
+    [Test]
+    public async Task AControlCharacterIsContentRatherThanSpace([Values('\u000C', '\u000B')] Char control)
+    {
+        using var view = CreateView();
+
+        // CSS Text 3 §4.2 asks that a control character other than the tab, the line feed and the
+        // carriage return be drawn as a visible glyph and otherwise treated as an ordinary character.
+        // A form feed between two letters is therefore a character of the run - it keeps its advance,
+        // and the line does not come apart there - rather than a space the collapse would eat.
+        var text = "a" + control + "b";
+
+        await view.SetHtml(Document(text, width: 10));
+
+        Assert.That(
+            Text(view, text).BorderBox.Width,
+            Is.EqualTo(15),
+            "the control character is measured as the third character of the run");
+        Assert.That(
+            Lines(view).Count(),
+            Is.EqualTo(1),
+            "and the line does not break at it");
+    }
+
+    [Test]
+    public async Task AControlCharacterCollapsesNeitherWithItsNeighboursNorAway()
+    {
+        using var view = CreateView();
+
+        // A space and a control character side by side are two different things: the space is the one
+        // the line may drop at its end, and the control character stands where it was written.
+        var text = "a \u000C b";
+
+        await view.SetHtml(Document("<span id='run' style='display:inline-block'>" + text + "</span>"));
+
+        var run = view.Document!.GetElementById("run")!;
+
+        Assert.That(
+            view.GetElementBounds(run)!.Value.Width,
+            Is.EqualTo(25),
+            "the two spaces collapse to one and the control character keeps its own room");
+    }
+
     private static String Document(String content, String lineHeight = "2", Int32 width = 0) =>
         "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:" + lineHeight +
         (width > 0 ? ";width:" + width + "px" : String.Empty) +
