@@ -382,7 +382,9 @@ public sealed class TextCommand : PaintCommand
         Double letterSpacing,
         Double strokeWidth,
         UInt32 strokeColor,
-        DecorationShape decoration = DecorationShape.Solid)
+        DecorationShape decoration = DecorationShape.Solid,
+        Double justification = 0,
+        Int32 justifies = 0)
         : base(bounds)
     {
         Text = text;
@@ -397,6 +399,8 @@ public sealed class TextCommand : PaintCommand
         LetterSpacing = letterSpacing;
         StrokeWidth = strokeWidth;
         StrokeColor = strokeColor;
+        Justification = justification;
+        Justifies = justifies;
     }
 
     public String Text { get; }
@@ -431,4 +435,13 @@ public sealed class TextCommand : PaintCommand
 
     /// <summary>Gets the shape every one of the lines above is drawn in.</summary>
     public DecorationShape Decoration { get; }
+
+    /// <summary>
+    /// Gets the room a justified line owes after each place between this run's words, and how many of
+    /// those places the run holds: the width the layout gave the run already counts them, and the glyphs
+    /// have to be set out to match. Zero asks for nothing.
+    /// </summary>
+    public Double Justification { get; }
+
+    public Int32 Justifies { get; }
 }

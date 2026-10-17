@@ -32,8 +32,22 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// Gets the blob a run of horizontal text is drawn as, with its glyphs positioned relative to the
     /// run's own origin, so it is drawn at wherever the run starts.
     /// </summary>
-    public SKTextBlob? GetRunBlob(FontStyle style, String text, Double letterSpacing) =>
-        GetBlob(BlobKind.Run, style, text, letterSpacing);
+    /// <summary>
+    /// Gets the blob a run of horizontal text is drawn as, with its glyphs positioned relative to the
+    /// run's own origin, so it is drawn at wherever the run starts.
+    /// </summary>
+    /// <param name="justification">
+    /// The room a justified line owes after every place between the run's words, and how many of those
+    /// places the text holds: the glyphs set after each of them stand that much further along, which is
+    /// what makes the drawn text fill the room it was measured into rather than bunched at one end of it.
+    /// </param>
+    public SKTextBlob? GetRunBlob(
+        FontStyle style,
+        String text,
+        Double letterSpacing,
+        Double justification = 0,
+        Int32 justifies = 0) =>
+        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies);
 
     /// <summary>
     /// Gets the blob a column of upright characters is drawn as, with its glyphs positioned relative
@@ -44,11 +58,17 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// one blob answers a column of any width: the caller draws it where the column's width puts it.
     /// </remarks>
     public SKTextBlob? GetColumnBlob(FontStyle style, String text, Double letterSpacing) =>
-        GetBlob(BlobKind.Column, style, text, letterSpacing);
+        GetBlob(BlobKind.Column, style, text, letterSpacing, 0, 0);
 
-    private SKTextBlob? GetBlob(BlobKind kind, FontStyle style, String text, Double letterSpacing)
+    private SKTextBlob? GetBlob(
+        BlobKind kind,
+        FontStyle style,
+        String text,
+        Double letterSpacing,
+        Double justification,
+        Int32 justifies)
     {
-        var key = new TextBlobKey(kind, style, text, letterSpacing);
+        var key = new TextBlobKey(kind, style, text, letterSpacing, justification, justifies);
 
         lock (_gate)
         {
@@ -58,7 +78,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
             }
 
             var blob = kind == BlobKind.Run
-                ? BuildRunBlob(style, text, letterSpacing)
+                ? BuildRunBlob(style, text, letterSpacing, justification, justifies)
                 : BuildColumnBlob(style, text, letterSpacing);
             _blobs[key] = blob;
             return blob;
@@ -103,10 +123,19 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// glyph is set, though, is the shaper's knowledge: two glyphs welded out of one character are
     /// still standing in it, and only the buffer says which glyphs came from where.
     /// </remarks>
-    private SKTextBlob? BuildRunBlob(FontStyle style, String text, Double letterSpacing)
+    private SKTextBlob? BuildRunBlob(
+        FontStyle style,
+        String text,
+        Double letterSpacing,
+        Double justification,
+        Int32 justifies)
     {
         using var builder = new SKTextBlobBuilder();
         var pen = 0f;
+
+        // The places the line still owes a share to, paid out in the order the text runs: a stretch
+        // takes as many as it holds and the rest go to the stretches after it.
+        var owing = justifies;
 
         foreach (var run in _measurer.Decompose(text, style))
         {
@@ -114,7 +143,11 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 ? 0
                 : TextClusters.Count(run.Text, 0, run.Text.Length);
 
-            var clusters = letterSpacing != 0 && run.Shaped.Succeeded
+            var ends = justification == 0 ? Array.Empty<Int32>() : TextClusters.SpaceRunEnds(run.Text);
+            var places = Math.Min(ends.Length, owing);
+            owing -= places;
+
+            var clusters = (letterSpacing != 0 || justification != 0) && run.Shaped.Succeeded
                 ? _measurer.Shaper.ShapeClusters(run.Font, run.Text)
                 : null;
 
@@ -127,14 +160,14 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
             if (run.Shaped.Succeeded)
             {
-                AddShaped(builder, run, pen, letterSpacing, clusters);
+                AddShaped(builder, run, pen, letterSpacing, justification, places, ends, clusters);
             }
             else
             {
                 AddMapped(builder, run, pen, letterSpacing);
             }
 
-            pen += (Single)(run.Advance + (letterSpacing * characters));
+            pen += (Single)(run.Advance + (letterSpacing * characters) + (justification * places));
         }
 
         return builder.Build();
@@ -145,6 +178,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
         SkiaTextRun run,
         Single pen,
         Double letterSpacing,
+        Double justification,
+        Int32 places,
+        Int32[] ends,
         Int32[]? clusters)
     {
         var glyphs = run.Shaped.Glyphs;
@@ -158,18 +194,37 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
         var positions = new SKPoint[count];
         var crossed = 0;
+        var spread = 0;
+        var reached = 0;
+
+        // The pen walks the text in the order the glyphs are drawn in, which is the order the writing
+        // runs: a right-to-left run's characters count backwards from where they stand in the string, so
+        // the places it has left behind are the ones further along the string rather than earlier.
+        var backwards = clusters is { Length: > 1 } && clusters[0] > clusters[^1];
 
         for (var index = 0; index < count; index++)
         {
-            // A space is owed for every character the pen has crossed on its way along the line, and
-            // a glyph standing in the same character as the one before it has crossed nothing.
+            // A place between two words is paid for once the pen has gone past it, and a glyph made
+            // from the same character as the one before it has crossed nothing either way.
+            while (clusters is not null &&
+                   index < clusters.Length &&
+                   spread < places &&
+                   reached < ends.Length &&
+                   (backwards
+                        ? ends[reached] > clusters[index]
+                        : ends[reached] < clusters[index]))
+            {
+                reached++;
+                spread++;
+            }
+
             if (index > 0 && (clusters is null || clusters[index] != clusters[index - 1]))
             {
                 crossed++;
             }
 
             positions[index] = new SKPoint(
-                pen + points[index].X + (Single)(letterSpacing * crossed),
+                pen + points[index].X + (Single)((letterSpacing * crossed) + (justification * spread)),
                 points[index].Y);
         }
 
@@ -288,12 +343,20 @@ internal sealed class SkiaTextBlobCache : IDisposable
     {
         private readonly String _text;
 
-        public TextBlobKey(BlobKind kind, FontStyle style, String text, Double spacing)
+        public TextBlobKey(
+            BlobKind kind,
+            FontStyle style,
+            String text,
+            Double spacing,
+            Double justification,
+            Int32 justifies)
         {
             Kind = kind;
             Style = style;
             _text = text;
             Spacing = spacing;
+            Justification = justification;
+            Justifies = justifies;
         }
 
         public BlobKind Kind { get; }
@@ -302,10 +365,17 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
         public Double Spacing { get; }
 
+        /// <summary>Gets the justified room a place between the words is owed, and how many places.</summary>
+        public Double Justification { get; }
+
+        public Int32 Justifies { get; }
+
         public Boolean Equals(TextBlobKey other) =>
             Kind == other.Kind &&
             Style.Equals(other.Style) &&
             Spacing.Equals(other.Spacing) &&
+            Justification.Equals(other.Justification) &&
+            Justifies == other.Justifies &&
             String.Equals(_text, other._text, StringComparison.Ordinal);
 
         public override Boolean Equals(Object? obj) => obj is TextBlobKey other && Equals(other);
@@ -317,6 +387,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 var hash = Kind.GetHashCode();
                 hash = (hash * 397) ^ Style.GetHashCode();
                 hash = (hash * 397) ^ Spacing.GetHashCode();
+                hash = (hash * 397) ^ Justification.GetHashCode();
+                hash = (hash * 397) ^ Justifies;
                 return (hash * 397) ^ StringComparer.Ordinal.GetHashCode(_text);
             }
         }

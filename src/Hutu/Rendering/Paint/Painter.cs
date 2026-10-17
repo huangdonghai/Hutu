@@ -626,7 +626,9 @@ internal sealed class Painter
             style.LetterSpacing,
             style.TextStrokeWidth,
             style.TextStrokeColor,
-            style.Decoration));
+            style.Decoration,
+            box.Justification,
+            box.Justifies));
     }
 
     private static void AddBorder(LayoutBox box, ComputedStyle style, List<PaintCommand> target)

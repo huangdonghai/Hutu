@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 namespace Hutu.Rendering.Layout;
@@ -91,6 +92,39 @@ public static class TextClusters
         }
 
         return ordinals;
+    }
+
+    /// <summary>
+    /// Gets where each run of collapsible white space in the text ends, which is where a justified line
+    /// puts the room it owes: everything set after that place stands further along.
+    /// </summary>
+    public static Int32[] SpaceRunEnds(String text)
+    {
+        var ends = new List<Int32>();
+        var inside = false;
+
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (!TextChunker.IsCollapsible(text[index]))
+            {
+                if (inside)
+                {
+                    ends.Add(index - 1);
+                }
+
+                inside = false;
+                continue;
+            }
+
+            inside = true;
+        }
+
+        if (inside)
+        {
+            ends.Add(text.Length - 1);
+        }
+
+        return ends.ToArray();
     }
 
     private static Boolean IsAscii(String text, Int32 start, Int32 length)

@@ -910,7 +910,12 @@ public sealed class SkiaPaintExecutor
     /// </summary>
     private void DrawRunBlob(SKCanvas canvas, TextCommand command, Single baseline, SKPaint paint, Double letterSpacing)
     {
-        var blob = _measurer.Blobs.GetRunBlob(command.Font, command.Text, letterSpacing);
+        var blob = _measurer.Blobs.GetRunBlob(
+            command.Font,
+            command.Text,
+            letterSpacing,
+            command.Justification,
+            command.Justifies);
 
         if (blob is not null)
         {

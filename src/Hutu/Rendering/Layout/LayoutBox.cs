@@ -136,6 +136,16 @@ internal sealed class LayoutBox
     public Double Baseline { get; set; }
 
     /// <summary>
+    /// Gets or sets the room a justified line owed after each place between this run's words, and how
+    /// many of those places the run holds. The width the box was laid out at already counts them; the
+    /// painter needs the two apart because it has to put the room between the glyphs rather than behind
+    /// the whole run.
+    /// </summary>
+    internal Double Justification { get; set; }
+
+    internal Int32 Justifies { get; set; }
+
+    /// <summary>
     /// Gets or sets where a list item's marker is drawn, or null for a box that carries none.
     /// </summary>
     /// <remarks>

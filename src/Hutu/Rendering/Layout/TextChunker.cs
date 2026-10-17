@@ -50,6 +50,39 @@ internal readonly struct ChunkRange
     }
 
     /// <summary>
+    /// Gets how many runs of collapsible white space the range holds, which is how many places between
+    /// its words a justified line can put the room it did not use.
+    /// </summary>
+    public static Int32 Spaces(String text, Int32 start, Int32 length)
+    {
+        var runs = 0;
+        var inside = false;
+
+        for (var index = start; index < start + length; index++)
+        {
+            if (IsCollapsible(text[index]))
+            {
+                if (!inside)
+                {
+                    runs++;
+                }
+
+                inside = true;
+                continue;
+            }
+
+            inside = false;
+        }
+
+        return runs;
+    }
+
+    /// <summary>Gets whether the range ends in white space, which is what a line does not justify into.</summary>
+    public static Boolean EndsInSpace(String text, Int32 start, Int32 length) =>
+        length > 0 && IsCollapsible(text[start + length - 1]);
+
+
+    /// <summary>
     /// Gets whether the string is nothing but collapsible white space, which is what a line may break
     /// at and what the line rules collapse and trim.
     /// </summary>

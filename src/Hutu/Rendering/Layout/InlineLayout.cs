@@ -393,6 +393,11 @@ internal sealed class InlineLayout
         // block from the same arithmetic it measured against.
         var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context));
 
+        // Justification is the arrangement's business and not the breaking's: the same lines the
+        // measuring broke are spread across their spaces here, where the room they were given is
+        // settled and will not move again.
+        DistributeSpace(lines);
+
         var cursor = 0.0;
         var step = new InlineStep();
 
@@ -649,6 +654,8 @@ internal sealed class InlineLayout
             Font = fragment.Style.GetFont(),
             Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
             Flow = fragment.Flow,
+            Justification = fragment.Justify,
+            Justifies = fragment.Expansions,
             BorderBox = flow.Map(contentBox, origin, fragment.Width, cursor, line.Height),
         });
     }
@@ -909,13 +916,14 @@ internal sealed class InlineLayout
         // other line does, which is what leaving the indent behind on the first builder says.
         var builder = new LineBuilder(indent);
 
-        void Close(LineBuilder filled)
+        void Close(LineBuilder filled, Boolean forced = false)
         {
             var line = filled.Build(_measurer, room.Room, carried);
 
             line.Left = room.Inset;
             line.Extent = room.Room;
             line.GapBefore = room.Gap;
+            line.ForceEnded = forced;
 
             lines.Add(line);
             carried = line.ContinuesToNext;
@@ -926,7 +934,7 @@ internal sealed class InlineLayout
         {
             if (item.IsBreak)
             {
-                Close(builder);
+                Close(builder, forced: true);
                 builder = new LineBuilder(item.Style, carried);
                 continue;
             }
@@ -1757,6 +1765,89 @@ internal sealed class InlineLayout
                 line.Fragments[0].Flow) + line.Indent;
 
     /// <summary>
+    /// Spreads the room a justified line did not use across the spaces inside it, which is all
+    /// inter-word justification is (CSS Text 3 §5.7.1). The line that ends the block, and every line the
+    /// page broke by force, keeps its ragged edge; a line with no space left in it has nowhere honest to
+    /// put the room, and is left standing as it is - the engine does not space out letters.
+    /// </summary>
+    /// <remarks>
+    /// The room is owed out as steps of a running total rather than as one share repeated, so the
+    /// fractions fall on different spaces and the last of them lands exactly on the edge the line was
+    /// given. A plan is kept and asked again, so every line starts from nothing owed: the room it was
+    /// given can be different the next time round.
+    /// </remarks>
+    private static void DistributeSpace(List<Line> lines)
+    {
+        for (var position = 0; position < lines.Count; position++)
+        {
+            var line = lines[position];
+
+            // A plan is kept and asked again, and the room a line was given can be different the next
+            // time round: what was folded in last time comes back out before anything is folded in now.
+            foreach (var fragment in line.Fragments)
+            {
+                fragment.Expand(0, 0);
+            }
+
+            if (line.Fragments.Count == 0 ||
+                line.ForceEnded ||
+                position == lines.Count - 1 ||
+                !line.Fragments[0].Style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var places = 0;
+
+            for (var index = 0; index < line.Fragments.Count; index++)
+            {
+                places += Places(line.Fragments[index], endsLine: index == line.Fragments.Count - 1);
+            }
+
+            var free = (line.Extent - line.Indent) - line.Used;
+
+            if (places == 0 || free <= 0)
+            {
+                continue;
+            }
+
+            var share = free / places;
+            var owed = 0.0;
+            var given = 0.0;
+
+            for (var index = 0; index < line.Fragments.Count; index++)
+            {
+                var fragment = line.Fragments[index];
+                var count = Places(fragment, endsLine: index == line.Fragments.Count - 1);
+
+                if (count == 0)
+                {
+                    continue;
+                }
+
+                // The room is owed out on a running total, so the fractions of a share that does not
+                // divide evenly fall on the places one after another and the last word still lands
+                // exactly on the edge the line was given.
+                owed += share * count;
+
+                fragment.Expand((owed - given) / count, count);
+                given = owed;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets how many places between two words the fragment holds. A run of white space at the end of the
+    /// line's last fragment is the line trailing rather than two words standing apart, and a line is not
+    /// justified into the room past its own edge.
+    /// </summary>
+    private static Int32 Places(TextFragment fragment, Boolean endsLine) =>
+        TextChunker.Spaces(fragment.Source, fragment.Start, fragment.Length) -
+        (endsLine && TextChunker.EndsInSpace(fragment.Source, fragment.Start, fragment.Length)
+            ? 1
+            : 0);
+
+    /// <summary>
     /// Gets the distance the first line of a box is set in from the edge it begins at.
     /// </summary>
     /// <remarks>
@@ -2106,6 +2197,35 @@ internal sealed class InlineLayout
         }
 
         public Double Width { get; set; }
+
+        /// <summary>
+        /// Gets the width the fragment was measured at, before any justified room was folded into it, or
+        /// nothing until the first arrangement asks for it: a fragment joins its neighbours while the line
+        /// is being built, and only when the line is arranged is its own width settled.
+        /// </summary>
+        public Double? Measured { get; private set; }
+
+        /// <summary>
+        /// Gets the share of the line's unused room owed to every place between its words that this
+        /// fragment holds, which the width above is grown by and the painter repeats after each of
+        /// those places so that the glyphs land where the layout put them.
+        /// </summary>
+        public Double Justify { get; private set; }
+
+        /// <summary>
+        /// Gets how many places between its words the fragment holds a share for, which is how many times
+        /// the painter repeats the share: the place a line trails into is already left out of the count.
+        /// </summary>
+        public Int32 Expansions { get; private set; }
+
+        /// <summary>Folds this fragment's share of a justified line's room into the width it stands at.</summary>
+        public void Expand(Double share, Int32 places)
+        {
+            Measured ??= Width;
+            Justify = share;
+            Expansions = places;
+            Width = Measured.Value + (share * places);
+        }
 
         public ComputedStyle Style { get; }
 
@@ -2594,6 +2714,14 @@ internal sealed class InlineLayout
         /// element's chain of them stands on several lines.
         /// </summary>
         public Dictionary<InlineAncestor, Double>? BandShifts { get; set; }
+
+        /// <summary>
+        /// Gets whether the line ends where the page forced it to - a line feed in preformatted text, a
+        /// <c>&lt;br&gt;</c> - rather than being broken where the room ran out. A justified line keeps its
+        /// ragged edge at either end (CSS Text 3 §5.7.1), which is what <c>text-align-last: auto</c>
+        /// gives it, and the line that ends the block is the last of them all.
+        /// </summary>
+        public Boolean ForceEnded { get; set; }
     }
 
     /// <summary>
