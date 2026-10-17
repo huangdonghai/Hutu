@@ -775,12 +775,44 @@ public sealed class SkiaPaintExecutor
 
             if (command.Underline)
             {
-                DrawDecoration(canvas, command, baseline + (Single)Math.Abs(metrics.UnderlineOffset), metrics.UnderlineThickness, paint);
+                DrawLine(
+                    canvas,
+                    paint,
+                    command,
+                    (Single)(baseline + Math.Abs(metrics.UnderlineOffset)),
+                    Math.Max(1, metrics.UnderlineThickness),
+                    command.Decoration,
+                    alongLine: true);
+            }
+
+            // The face says where its overline goes; a face that will not is answered with the top of
+            // its own em box, which is the only other height the line could be taken from.
+            if (command.Overline)
+            {
+                DrawLine(
+                    canvas,
+                    paint,
+                    command,
+                    (Single)(baseline - (metrics.OverlineOffset > 0
+                        ? Math.Abs(metrics.OverlineOffset)
+                        : metrics.Ascent)),
+                    Math.Max(1, metrics.OverlineThickness > 0
+                        ? metrics.OverlineThickness
+                        : metrics.UnderlineThickness),
+                    command.Decoration,
+                    alongLine: true);
             }
 
             if (command.LineThrough)
             {
-                DrawDecoration(canvas, command, baseline - (Single)Math.Abs(metrics.StrikeoutOffset), metrics.StrikeoutThickness, paint);
+                DrawLine(
+                    canvas,
+                    paint,
+                    command,
+                    (Single)(baseline - Math.Abs(metrics.StrikeoutOffset)),
+                    Math.Max(1, metrics.StrikeoutThickness),
+                    command.Decoration,
+                    alongLine: true);
             }
 
             return;
@@ -803,12 +835,42 @@ public sealed class SkiaPaintExecutor
         // down the box at the distance from the baseline that the font asked for.
         if (command.Underline)
         {
-            DrawColumnDecoration(canvas, command, -Math.Abs(metrics.UnderlineOffset), metrics.UnderlineThickness, paint);
+            DrawLine(
+                canvas,
+                paint,
+                command,
+                (Single)(command.Bounds.X + command.Baseline - Math.Abs(metrics.UnderlineOffset)),
+                Math.Max(1, metrics.UnderlineThickness),
+                command.Decoration,
+                alongLine: false);
+        }
+
+        if (command.Overline)
+        {
+            DrawLine(
+                canvas,
+                paint,
+                command,
+                (Single)(command.Bounds.X + command.Baseline + (metrics.OverlineOffset > 0
+                    ? Math.Abs(metrics.OverlineOffset)
+                    : metrics.Ascent)),
+                Math.Max(1, metrics.OverlineThickness > 0
+                    ? metrics.OverlineThickness
+                    : metrics.UnderlineThickness),
+                command.Decoration,
+                alongLine: false);
         }
 
         if (command.LineThrough)
         {
-            DrawColumnDecoration(canvas, command, Math.Abs(metrics.StrikeoutOffset), metrics.StrikeoutThickness, paint);
+            DrawLine(
+                canvas,
+                paint,
+                command,
+                (Single)(command.Bounds.X + command.Baseline + Math.Abs(metrics.StrikeoutOffset)),
+                Math.Max(1, metrics.StrikeoutThickness),
+                command.Decoration,
+                alongLine: false);
         }
     }
 
@@ -856,18 +918,139 @@ public sealed class SkiaPaintExecutor
         }
     }
 
-    private static void DrawDecoration(SKCanvas canvas, TextCommand command, Single y, Double thickness, SKPaint paint)
+    /// <summary>
+    /// Draws one decoration line across the run in the shape the element asked for. A solid line is a
+    /// filled band; a dashed one is ink of three thicknesses with two of clear between, and a dotted one
+    /// is a row of round dots, which is what CSS Text Decoration 4 §3.3 asks of them; a double is two
+    /// bands with a band's width of clear between. The wave is the shape the specification leaves to the
+    /// engine: the line's own thickness swung from side to side as it goes.
+    /// </summary>
+    /// <param name="at">
+    /// Where the line sits across the text: the distance from the box's start edge along the axis the
+    /// decoration is offset by, which is down the box for a line and across it for a column.
+    /// </param>
+    /// <param name="alongLine">
+    /// Whether the run reads along a line, so the decoration runs with it, or down a column, so the
+    /// decoration runs beside the text it decorates.
+    /// </param>
+    private static void DrawLine(
+        SKCanvas canvas,
+        SKPaint paint,
+        TextCommand command,
+        Single at,
+        Double thickness,
+        DecorationShape shape,
+        Boolean alongLine)
     {
-        var height = (Single)Math.Max(1, thickness);
-        canvas.DrawRect(new SKRect((Single)command.Bounds.X, y, (Single)command.Bounds.Right, y + height), paint);
+        var height = (Single)thickness;
+        var start = (Single)(alongLine ? command.Bounds.X : command.Bounds.Y);
+        var end = (Single)(alongLine ? command.Bounds.Right : command.Bounds.Bottom);
+
+        if (end <= start)
+        {
+            return;
+        }
+
+        if (shape is DecorationShape.Solid or DecorationShape.Double)
+        {
+            Band(canvas, paint, start, end, at, height, alongLine);
+
+            if (shape == DecorationShape.Double)
+            {
+                Band(canvas, paint, start, end, at + (height * 2), height, alongLine);
+            }
+
+            return;
+        }
+
+        if (shape == DecorationShape.Wavy)
+        {
+            using var stroke = new SKPaint
+            {
+                Color = paint.Color,
+                IsAntialias = paint.IsAntialias,
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = height,
+            };
+
+            Swing(canvas, stroke, start, end, at, height, alongLine);
+            return;
+        }
+
+        // A dash is three thicknesses of ink with two of clear, and a dot is a round of the line's own
+        // thickness set twice its own thickness apart (CSS Text Decoration 4 §3.3). Both are laid down
+        // as the pieces themselves rather than as a dash pattern, which is the one thing a line has to
+        // have no opinion about: the pieces run along the text whichever way the text runs.
+        var pitch = shape == DecorationShape.Dotted ? height * 2 : height * 5;
+
+        for (var position = start; position < end; position += pitch)
+        {
+            if (shape == DecorationShape.Dotted)
+            {
+                var dot = Place(position + height, at + (height / 2), alongLine);
+
+                canvas.DrawCircle(dot, height / 2, paint);
+                continue;
+            }
+
+            var room = Math.Min(position + (height * 3), end);
+
+            Band(canvas, paint, position, room, at, height, alongLine);
+        }
     }
 
-    private static void DrawColumnDecoration(SKCanvas canvas, TextCommand command, Double offset, Double thickness, SKPaint paint)
+    private static void Band(
+        SKCanvas canvas,
+        SKPaint paint,
+        Single start,
+        Single end,
+        Single at,
+        Single height,
+        Boolean alongLine) =>
+        canvas.DrawRect(alongLine
+            ? new SKRect(start, at, end, at + height)
+            : new SKRect(at, start, at + height, end), paint);
+
+    /// <summary>
+    /// Swings the decoration from side to side of the height it sits at, a half turn to a length of
+    /// twice its own thickness.
+    /// </summary>
+    private static void Swing(
+        SKCanvas canvas,
+        SKPaint stroke,
+        Single start,
+        Single end,
+        Single at,
+        Single height,
+        Boolean alongLine)
     {
-        var width = (Single)Math.Max(1, thickness);
-        var x = (Single)(command.Bounds.X + command.Baseline + offset);
-        canvas.DrawRect(new SKRect(x, (Single)command.Bounds.Y, x + width, (Single)command.Bounds.Bottom), paint);
+        var step = Math.Max(height * 2, 2);
+
+        using var path = new SKPath();
+        path.MoveTo(Place(start, at, alongLine));
+
+        var above = true;
+
+        for (var position = start; position < end; position += step)
+        {
+            var next = Math.Min(position + step, end);
+            var control = position + (step / 2);
+            var swung = at + (above ? -height : height);
+
+            path.QuadTo(
+                alongLine ? control : swung,
+                alongLine ? swung : control,
+                alongLine ? next : at,
+                alongLine ? at : next);
+
+            above = !above;
+        }
+
+        canvas.DrawPath(path, stroke);
     }
+
+    private static SKPoint Place(Single along, Single across, Boolean alongLine) =>
+        alongLine ? new SKPoint(along, across) : new SKPoint(across, along);
 
     /// <summary>
     /// Draws a run whose glyphs are all turned the same quarter turn, which is what Latin text and

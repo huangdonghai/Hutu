@@ -312,7 +312,12 @@ internal sealed record TextDecorationArea
 {
     internal Boolean Underline { get; init; }
 
+    internal Boolean Overline { get; init; }
+
     internal Boolean LineThrough { get; init; }
+
+    /// <summary>Gets the shape every line the element asks for is drawn in.</summary>
+    internal DecorationShape Style { get; init; }
 }
 
 /// <summary>

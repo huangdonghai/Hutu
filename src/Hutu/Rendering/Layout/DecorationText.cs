@@ -1,0 +1,93 @@
+using System;
+
+namespace Hutu.Rendering.Layout;
+
+/// <summary>
+/// The shape a text decoration is drawn in, as CSS Text Decoration 4 §3.3 puts it.
+/// </summary>
+public enum DecorationShape : Byte
+{
+    /// <summary>An unbroken line.</summary>
+    Solid,
+
+    /// <summary>Two lines with a gap between them.</summary>
+    Double,
+
+    /// <summary>A line broken into round dots.</summary>
+    Dotted,
+
+    /// <summary>A line broken into dashes.</summary>
+    Dashed,
+
+    /// <summary>A line that runs up and down as it goes.</summary>
+    Wavy,
+}
+
+/// <summary>
+/// Reads the words a decoration was declared with: which lines the element asks for, and in what shape.
+/// </summary>
+internal static class DecorationText
+{
+    private static readonly Char[] Separators = [' ', ',', '\t', '\n', '/'];
+
+    /// <summary>
+    /// Gets whether the declared text names the given line kind. The kinds are matched as words and
+    /// not as fragments of the text, because <c>overline</c> is not an <c>underline</c> and the two
+    /// share the <c>line</c> a fragment match would stop at.
+    /// </summary>
+    public static Boolean Names(String? line, String? shorthand, String kind) =>
+        Mentions(String.IsNullOrWhiteSpace(line) ? shorthand : line, kind);
+
+    /// <summary>
+    /// Gets the shape the decoration is drawn in, from its own longhand where that was declared and
+    /// from the shorthand otherwise - which is how <c>text-decoration: underline wavy</c> says both at
+    /// once. A page that names no shape gets a solid line, the initial value.
+    /// </summary>
+    public static DecorationShape Shape(String? declared, String? shorthand)
+    {
+        var text = String.IsNullOrWhiteSpace(declared) ? shorthand : declared;
+
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            return DecorationShape.Solid;
+        }
+
+        foreach (var token in Split(text))
+        {
+            switch (token)
+            {
+                case "double":
+                    return DecorationShape.Double;
+                case "dotted":
+                    return DecorationShape.Dotted;
+                case "dashed":
+                    return DecorationShape.Dashed;
+                case "wavy":
+                    return DecorationShape.Wavy;
+            }
+        }
+
+        return DecorationShape.Solid;
+    }
+
+    private static Boolean Mentions(String? text, String kind)
+    {
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        foreach (var token in Split(text))
+        {
+            if (token.Equals(kind, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static String[] Split(String? text) =>
+        text!.Split(Separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+}

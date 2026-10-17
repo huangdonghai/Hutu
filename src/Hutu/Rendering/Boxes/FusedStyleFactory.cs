@@ -492,12 +492,7 @@ internal static class FusedStyleFactory
         }
         else
         {
-            var decoration = ComputedStyle.ResolveDecorationFused(find);
-            var built = new TextDecorationArea
-            {
-                Underline = decoration.Underline,
-                LineThrough = decoration.LineThrough,
-            };
+            var built = ComputedStyle.ResolveDecorationFused(find);
 
             textDecoration = pool is null ? built : pool.Decoration(built);
 

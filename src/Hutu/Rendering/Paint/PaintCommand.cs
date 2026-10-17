@@ -315,8 +315,11 @@ public sealed class TextCommand : PaintCommand
         FontStyle font,
         UInt32 color,
         Boolean underline,
+        Boolean overline,
         Boolean lineThrough)
-        : this(bounds, text, baseline, font, color, underline, lineThrough, WritingModeInfo.Horizontal, 0)
+        : this(
+            bounds, text, baseline, font, color, underline, overline, lineThrough,
+            WritingModeInfo.Horizontal, 0)
     {
     }
 
@@ -332,9 +335,10 @@ public sealed class TextCommand : PaintCommand
         FontStyle font,
         UInt32 color,
         Boolean underline,
+        Boolean overline,
         Boolean lineThrough,
         WritingModeInfo flow)
-        : this(bounds, text, baseline, font, color, underline, lineThrough, flow, 0)
+        : this(bounds, text, baseline, font, color, underline, overline, lineThrough, flow, 0)
     {
     }
 
@@ -350,10 +354,13 @@ public sealed class TextCommand : PaintCommand
         FontStyle font,
         UInt32 color,
         Boolean underline,
+        Boolean overline,
         Boolean lineThrough,
         WritingModeInfo flow,
         Double letterSpacing)
-        : this(bounds, text, baseline, font, color, underline, lineThrough, flow, letterSpacing, 0, 0)
+        : this(
+            bounds, text, baseline, font, color, underline, overline, lineThrough, flow,
+            letterSpacing, 0, 0, DecorationShape.Solid)
     {
     }
 
@@ -369,11 +376,13 @@ public sealed class TextCommand : PaintCommand
         FontStyle font,
         UInt32 color,
         Boolean underline,
+        Boolean overline,
         Boolean lineThrough,
         WritingModeInfo flow,
         Double letterSpacing,
         Double strokeWidth,
-        UInt32 strokeColor)
+        UInt32 strokeColor,
+        DecorationShape decoration = DecorationShape.Solid)
         : base(bounds)
     {
         Text = text;
@@ -381,7 +390,9 @@ public sealed class TextCommand : PaintCommand
         Font = font;
         Color = color;
         Underline = underline;
+        Overline = overline;
         LineThrough = lineThrough;
+        Decoration = decoration;
         Flow = flow;
         LetterSpacing = letterSpacing;
         StrokeWidth = strokeWidth;
@@ -414,5 +425,10 @@ public sealed class TextCommand : PaintCommand
 
     public Boolean Underline { get; }
 
+    public Boolean Overline { get; }
+
     public Boolean LineThrough { get; }
+
+    /// <summary>Gets the shape every one of the lines above is drawn in.</summary>
+    public DecorationShape Decoration { get; }
 }

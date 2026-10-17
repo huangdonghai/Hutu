@@ -18,7 +18,9 @@ public readonly struct FontMetrics
         Double underlineOffset,
         Double underlineThickness,
         Double strikeoutOffset,
-        Double strikeoutThickness)
+        Double strikeoutThickness,
+        Double overlineOffset = 0,
+        Double overlineThickness = 0)
     {
         Ascent = ascent;
         Descent = descent;
@@ -27,6 +29,8 @@ public readonly struct FontMetrics
         UnderlineThickness = underlineThickness;
         StrikeoutOffset = strikeoutOffset;
         StrikeoutThickness = strikeoutThickness;
+        OverlineOffset = overlineOffset;
+        OverlineThickness = overlineThickness;
     }
 
     /// <summary>Gets the distance from the baseline to the top of the em box, as a positive value.</summary>
@@ -50,4 +54,14 @@ public readonly struct FontMetrics
     public Double StrikeoutOffset { get; }
 
     public Double StrikeoutThickness { get; }
+
+    /// <summary>
+    /// Gets the distance above the baseline at which an overline is drawn, or zero when the face does
+    /// not say. A face that does not ask gets the top of its own em box, which is the only other height
+    /// the line could sensibly be taken from.
+    /// </summary>
+    public Double OverlineOffset { get; }
+
+    /// <summary>Gets the thickness an overline is drawn at, or zero to use the underline's own.</summary>
+    public Double OverlineThickness { get; }
 }

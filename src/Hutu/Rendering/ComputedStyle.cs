@@ -344,7 +344,11 @@ internal readonly struct ComputedStyle
         var decoration = new TextDecorationArea
         {
             Underline = HasDecoration("underline"),
+            Overline = HasDecoration("overline"),
             LineThrough = HasDecoration("line-through"),
+            Style = DecorationText.Shape(
+                _style.GetPropertyValue("text-decoration-style"),
+                _style.GetPropertyValue("text-decoration")),
         };
 
         _values.Decoration = pool is null ? decoration : pool.Decoration(decoration);
@@ -1120,24 +1124,18 @@ internal readonly struct ComputedStyle
     /// Resolves the text decoration flags from the element's own cascaded declarations, for
     /// the fused path.
     /// </summary>
-    public static (Boolean Underline, Boolean LineThrough) ResolveDecorationFused(
-        Func<String, ICssProperty?> find) =>
-    (
-        HasDecorationText(find("text-decoration-line")?.Value, find("text-decoration")?.Value, "underline"),
-        HasDecorationText(find("text-decoration-line")?.Value, find("text-decoration")?.Value, "line-through")
-    );
-
-    private static Boolean HasDecorationText(String? line, String? shorthand, String kind)
+    internal static TextDecorationArea ResolveDecorationFused(Func<String, ICssProperty?> find)
     {
-        var text = line;
+        var line = find("text-decoration-line")?.Value;
+        var shorthand = find("text-decoration")?.Value;
 
-        if (String.IsNullOrWhiteSpace(text))
+        return new TextDecorationArea
         {
-            text = shorthand;
-        }
-
-        return !String.IsNullOrWhiteSpace(text) &&
-               text.Contains(kind, StringComparison.OrdinalIgnoreCase);
+            Underline = DecorationText.Names(line, shorthand, "underline"),
+            Overline = DecorationText.Names(line, shorthand, "overline"),
+            LineThrough = DecorationText.Names(line, shorthand, "line-through"),
+            Style = DecorationText.Shape(find("text-decoration-style")?.Value, shorthand),
+        };
     }
 
     /// <summary>
@@ -2484,7 +2482,12 @@ internal readonly struct ComputedStyle
 
     public Boolean HasUnderline => _values.Decoration.Underline;
 
+    public Boolean HasOverline => _values.Decoration.Overline;
+
     public Boolean HasLineThrough => _values.Decoration.LineThrough;
+
+    /// <summary>Gets the shape the element's decoration lines are drawn in.</summary>
+    public DecorationShape Decoration => _values.Decoration.Style;
 
     // --- Pointer --------------------------------------------------------
 
@@ -3474,18 +3477,11 @@ internal readonly struct ComputedStyle
         _ => BorderLineStyle.Solid,
     };
 
-    private Boolean HasDecoration(String kind)
-    {
-        var text = _style.GetPropertyValue("text-decoration-line");
-
-        if (String.IsNullOrWhiteSpace(text))
-        {
-            text = _style.GetPropertyValue("text-decoration");
-        }
-
-        return !String.IsNullOrWhiteSpace(text) &&
-               text.Contains(kind, StringComparison.OrdinalIgnoreCase);
-    }
+    private Boolean HasDecoration(String kind) =>
+        DecorationText.Names(
+            _style.GetPropertyValue("text-decoration-line"),
+            _style.GetPropertyValue("text-decoration"),
+            kind);
 
     private CssColorValue? ColorValue(String name)
     {

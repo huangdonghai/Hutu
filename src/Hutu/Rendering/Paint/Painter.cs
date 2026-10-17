@@ -197,6 +197,7 @@ internal sealed class Painter
                 ToArgb(marked.Color),
                 false,
                 false,
+                false,
                 box.Flow,
                 0));
         }
@@ -543,6 +544,7 @@ internal sealed class Painter
                 0xFF00_0000,
                 false,
                 false,
+                false,
                 node.Flow,
                 style.LetterSpacing,
                 style.TextStrokeWidth,
@@ -618,11 +620,13 @@ internal sealed class Painter
             box.Font,
             fill,
             style.HasUnderline,
+            style.HasOverline,
             style.HasLineThrough,
             box.Flow,
             style.LetterSpacing,
             style.TextStrokeWidth,
-            style.TextStrokeColor));
+            style.TextStrokeColor,
+            style.Decoration));
     }
 
     private static void AddBorder(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
