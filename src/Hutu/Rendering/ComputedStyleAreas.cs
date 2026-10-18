@@ -286,6 +286,13 @@ internal sealed record TextArea
 
     internal String Align { get; init; } = CssInitialValues.TextAlign;
 
+    /// <summary>
+    /// Gets how the last line of a block, and a line a forced break ended, are aligned. <c>auto</c> leaves
+    /// them to <c>Align</c> unless that justifies them, in which case they stand at their start edge
+    /// (CSS Text 3 §6.3).
+    /// </summary>
+    internal String AlignLast { get; init; } = CssInitialValues.TextAlignLast;
+
     /// <summary>Gets where the room of a justified line may be put: between words, between characters, or both.</summary>
     internal String TextJustify { get; init; } = CssInitialValues.TextJustify;
 

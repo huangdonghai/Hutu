@@ -116,10 +116,24 @@ internal readonly struct ComputedStyle
 
     /// <summary>The names a font property can begin with, the <c>font</c> shorthand included.</summary>
     private static readonly String[] FontNames =
-        { "font-size", "font-family", "font-weight", "font-style", "letter-spacing", "line-height" };
+        {
+            "font-size", "font-family", "font-weight", "font-style", "letter-spacing", "word-spacing",
+            "line-height",
+        };
 
-    /// <summary>The names a text property can begin with.</summary>
-    private static readonly String[] TextNames = { "white-space", "text-align", "vertical-align", "text-indent", "visibility" };
+    /// <summary>
+    /// The names a text property can begin with.
+    /// </summary>
+    /// <remarks>
+    /// Every longhand the area holds has to be named here: the test asks whether this element authored
+    /// none of them, and a property left out is a property whose declaration the area would throw away
+    /// by taking the parent's whole area instead of resolving its own.
+    /// </remarks>
+    private static readonly String[] TextNames =
+        {
+            "white-space", "text-align", "text-align-last", "text-justify", "vertical-align",
+            "text-indent", "visibility",
+        };
 
     /// <summary>
     /// The names a list marker property can begin with. The three longhands, not the <c>list-style</c>
@@ -195,10 +209,15 @@ internal readonly struct ComputedStyle
             return;
         }
 
+        var (align, alignLast) = Alignments(
+            Keyword("text-align", CssInitialValues.TextAlign),
+            Keyword("text-align-last", CssInitialValues.TextAlignLast));
+
         var text = new TextArea
         {
             WhiteSpace = Keyword("white-space", CssInitialValues.WhiteSpace),
-            Align = Keyword("text-align", CssInitialValues.TextAlign),
+            Align = align,
+            AlignLast = alignLast,
             TextJustify = Keyword("text-justify", CssInitialValues.TextJustify),
             VerticalAlign = Keyword("vertical-align", CssInitialValues.VerticalAlign),
             Indent = ReadLength("text-indent", RenderMode.Horizontal, StyleLength.Zero),
@@ -207,6 +226,16 @@ internal readonly struct ComputedStyle
 
         _values.Text = pool is null ? text : pool.Text(text);
     }
+
+    /// <summary>
+    /// Settles the two alignments a block's text is read with: <c>text-align</c> says how the lines stand
+    /// and <c>text-align-last</c> how the affected ones do, and the one value that speaks for both is
+    /// <c>justify-all</c> - every line justified, the last of them included (CSS Text 3 §6.1).
+    /// </summary>
+    internal static (String All, String Last) Alignments(String align, String alignLast) =>
+        align.Equals("justify-all", StringComparison.OrdinalIgnoreCase)
+            ? ("justify", "justify")
+            : (align, alignLast);
 
     /// <summary>
     /// Resolves the list marker style, taking the parent's where the element authored none of it.
@@ -648,6 +677,14 @@ internal readonly struct ComputedStyle
     /// </summary>
     public static String ResolveTextAlignFused(ICssProperty? declared, String parentValue) =>
         ResolveKeywordFused(declared, parentValue, CssInitialValues.TextAlign, inherited: true);
+
+    /// <summary>
+    /// Resolves how the last line of a block, and a line a forced break ended, stand, for the fused
+    /// path. The property is inherited: a miss takes the parent's resolved value, which is how a
+    /// paragraph under a block that chose its last line's alignment keeps that choice.
+    /// </summary>
+    public static String ResolveTextAlignLastFused(ICssProperty? declared, String parentValue) =>
+        ResolveKeywordFused(declared, parentValue, CssInitialValues.TextAlignLast, inherited: true);
 
     /// <summary>
     /// Resolves where a justified line may put its room, for the fused path. The property is inherited,
@@ -2277,6 +2314,13 @@ internal readonly struct ComputedStyle
     public Double? LineHeight => _values.Font.LineHeight;
 
     public String TextAlign => _values.Text.Align;
+
+    /// <summary>
+    /// Gets how the last line of a block, and a line a forced break ended, are aligned. <c>auto</c> says
+    /// the line takes <c>TextAlign</c> unless that justifies it, in which case the line keeps its ragged
+    /// edge at the start (CSS Text 3 §6.3).
+    /// </summary>
+    public String TextAlignLast => _values.Text.AlignLast;
 
     /// <summary>
     /// Gets where a justified line may put its room. <c>auto</c>, the initial value, is not a method of

@@ -66,6 +66,13 @@ internal static class CssInitialValues
     internal const String TextAlign = "start";
 
     /// <summary>
+    /// The initial <c>text-align-last</c>, which is not a method of its own either: <c>auto</c> hands the
+    /// affected line back to <c>text-align</c>, except when that asks for justification - a line that is
+    /// not spread keeps its ragged edge at the start (CSS Text 3 §6.3).
+    /// </summary>
+    internal const String TextAlignLast = "auto";
+
+    /// <summary>
     /// The initial <c>text-justify</c>, which is not a fixed method but a delegation: the user agent
     /// expands at spaces and, for a script that writes no word separators, between its characters too
     /// (CSS Text 3 §3.3.1).

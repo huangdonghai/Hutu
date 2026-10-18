@@ -45,6 +45,9 @@ internal sealed class FusedParent
     public String WhiteSpace { get; init; } = "normal";
     public String Align { get; init; } = "start";
 
+    /// <summary>Gets how the parent's affected lines stand, which is what an element that says nothing gives its own.</summary>
+    public String AlignLast { get; init; } = CssInitialValues.TextAlignLast;
+
     public String TextJustify { get; init; } = "auto";
 
     /// <summary>
@@ -183,6 +186,7 @@ internal sealed class FusedParent
             : LineHeightHit,
         WhiteSpace = style.WhiteSpace,
         Align = style.TextAlign,
+        AlignLast = style.TextAlignLast,
         TextJustify = style.TextJustify,
         Visibility = style.Visibility,
         VerticalAlign = style.VerticalAlign,
@@ -332,10 +336,15 @@ internal static class FusedStyleFactory
         }
         else
         {
+            var (all, last) = ComputedStyle.Alignments(
+                ComputedStyle.ResolveTextAlignFused(find("text-align"), parent.Align),
+                ComputedStyle.ResolveTextAlignLastFused(find("text-align-last"), parent.AlignLast));
+
             var built = new TextArea
             {
                 WhiteSpace = ComputedStyle.ResolveWhiteSpaceFused(find("white-space"), parent.WhiteSpace),
-                Align = ComputedStyle.ResolveTextAlignFused(find("text-align"), parent.Align),
+                Align = all,
+                AlignLast = last,
                 TextJustify = ComputedStyle.ResolveTextJustifyFused(find("text-justify"), parent.TextJustify),
                 VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign),
                 Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, face, dimensions),

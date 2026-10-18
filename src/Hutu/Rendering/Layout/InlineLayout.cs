@@ -393,6 +393,11 @@ internal sealed class InlineLayout
         // block from the same arithmetic it measured against.
         var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context));
 
+        // Which lines the block's alignment reaches is settled before the room is spread: the last line
+        // and the ones a forced break ended are the block's `text-align-last` to align, and a line it
+        // leaves justified is spread like any other.
+        AlignLastLines(lines, maxInline);
+
         // Justification is the arrangement's business and not the breaking's: the same lines the
         // measuring broke are spread across their spaces here, where the room they were given is
         // settled and will not move again.
@@ -1769,16 +1774,61 @@ internal sealed class InlineLayout
         line.Fragments.Count == 0
             ? 0
             : AlignmentOffset(
-                line.Fragments[0].Style.TextAlign,
+                line.Alignment,
                 maxInline - line.Indent,
                 line.Used,
                 line.Fragments[0].Flow) + line.Indent;
 
     /// <summary>
+    /// Gives the lines the block's <c>text-align-last</c> speaks for - the one that ends the block and
+    /// every one a forced break ended - the alignment that property states, and takes the offset they
+    /// stand at with it (CSS Text 3 §6.3).
+    /// </summary>
+    /// <remarks>
+    /// <c>auto</c> is not a fifth way of aligning a line but a delegation: the affected line takes
+    /// <c>text-align</c> as it is, unless that asks for justification. A justified line the room was not
+    /// spread across does not keep the offset its spread neighbours were given - it stands at its start
+    /// edge, which is what <c>text-align-last: auto</c> comes to.
+    /// </remarks>
+    private static void AlignLastLines(List<Line> lines, Double maxInline)
+    {
+        // Walked from the end, because the line that ends the block is the one the property is named for
+        // and the rest it speaks for are only those the page was told to break.
+        for (var position = lines.Count - 1; position >= 0; position--)
+        {
+            var line = lines[position];
+
+            if (line.Fragments.Count == 0 ||
+                (!line.ForceEnded && position != lines.Count - 1))
+            {
+                continue;
+            }
+
+            var style = line.Fragments[0].Style;
+            var alignLast = style.TextAlignLast;
+            var aligned = alignLast.Equals("auto", StringComparison.OrdinalIgnoreCase)
+                ? (style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase)
+                    ? "start"
+                    : style.TextAlign)
+                : alignLast;
+
+            if (aligned.Equals(line.Alignment, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            line.Alignment = aligned;
+            line.Offset = Aligned(line, maxInline);
+        }
+    }
+
+    /// <summary>
     /// Spreads the room a justified line did not use across the spaces inside it, which is all
-    /// inter-word justification is (CSS Text 3 §5.7.1). The line that ends the block, and every line the
-    /// page broke by force, keeps its ragged edge; a line with no space left in it has nowhere honest to
-    /// put the room, and is left standing as it is - the engine does not space out letters.
+    /// inter-word justification is (CSS Text 3 §5.7.1). Which lines are justified is the alignment the
+    /// line was given by the pass above, so the line that ends the block and the ones a forced break
+    /// ended are spread only when <c>text-align-last</c> says so. A line with no space left in it has
+    /// nowhere honest to put the room, and is left standing as it is - the engine does not space out
+    /// letters.
     /// </summary>
     /// <remarks>
     /// The room is owed out as steps of a running total rather than as one share repeated, so the
@@ -1800,9 +1850,7 @@ internal sealed class InlineLayout
             }
 
             if (line.Fragments.Count == 0 ||
-                line.ForceEnded ||
-                position == lines.Count - 1 ||
-                !line.Fragments[0].Style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase))
+                !line.Alignment.Equals("justify", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -1856,8 +1904,7 @@ internal sealed class InlineLayout
     /// </summary>
     /// <remarks>
     /// The place a line trails into is left out: a line is not justified into the room past its own edge
-    /// (CSS Text 3 §5.7.1), and the last line of a block is not justified at all, which the caller asks
-    /// for by never reaching here for it.
+    /// (CSS Text 3 §5.7.1), whichever lines the block ends up spreading.
     /// </remarks>
     private static Int32 Places(Line line, Int32 index)
     {
@@ -2769,6 +2816,13 @@ internal sealed class InlineLayout
         public Double Offset { get; set; }
 
         /// <summary>
+        /// Gets or sets the keyword the line is aligned by: what <c>text-align</c> gave it, unless the
+        /// block's <c>text-align-last</c> speaks for this line - which it does for the line that ends the
+        /// block and for every line a forced break ended (CSS Text 3 §6.3).
+        /// </summary>
+        public String Alignment { get; set; } = CssInitialValues.TextAlign;
+
+        /// <summary>
         /// Gets the inline elements this line carries on from an earlier one, or null when nothing was
         /// cut. Their start edges belong to the line the element began on, so this line shows neither
         /// the padding nor the border nor the curve of that side.
@@ -2791,9 +2845,9 @@ internal sealed class InlineLayout
 
         /// <summary>
         /// Gets whether the line ends where the page forced it to - a line feed in preformatted text, a
-        /// <c>&lt;br&gt;</c> - rather than being broken where the room ran out. A justified line keeps its
-        /// ragged edge at either end (CSS Text 3 §5.7.1), which is what <c>text-align-last: auto</c>
-        /// gives it, and the line that ends the block is the last of them all.
+        /// <c>&lt;br&gt;</c> - rather than being broken where the room ran out. The block's
+        /// <c>text-align-last</c> speaks for such a line as it does for the one that ends the block
+        /// (CSS Text 3 §6.3).
         /// </summary>
         public Boolean ForceEnded { get; set; }
     }
@@ -3403,6 +3457,9 @@ internal sealed class InlineLayout
             line.Height = reach + depth;
             line.Used = used;
             line.Indent = _indent;
+            line.Alignment = line.Fragments.Count == 0
+                ? CssInitialValues.TextAlign
+                : line.Fragments[0].Style.TextAlign;
             line.Offset = Aligned(line, maxInline);
 
             return line;

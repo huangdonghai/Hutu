@@ -394,6 +394,34 @@ public sealed class VerticalLayoutTests
         Assert.That(spread, Is.EqualTo(upright), "and so is a column of Chinese");
     }
 
+    [Test]
+    public void AJustifiedColumnSpreadsTheLineThatEndsItAsSoonAsTheBlockAsks()
+    {
+        // The same arithmetic a row shows, measured in Chromium on a column of five cells whose last line
+        // is four: left to `auto` the line that ends the block keeps its ragged end, and `justify` puts
+        // the room it left - thirty of a hundred and ten - whole into the one place inside it. The ink of
+        // the last word stands at fifty-six unspread and eighty-six spread, and the column above it is
+        // spread either way.
+        var ragged = InkLastColumn("ab cd ef g", "auto");
+        var spread = InkLastColumn("ab cd ef g", "justify");
+
+        Assert.That(ragged, Is.EqualTo(new[] { (0, 35), (56, 75) }), "the line that ends the column is left ragged");
+        Assert.That(spread, Is.EqualTo(new[] { (0, 35), (86, 105) }), "and reaches its edge once it is spread");
+    }
+
+    [Test]
+    public void AColumnMovesItsLastLineWhereTheBlockTellsIt()
+    {
+        // A positional value is not an addition to the spread but a replacement for it, and along a
+        // column `right` is the bottom the text runs out to: the thirty of room the line leaves is
+        // shared before and after it for `center`, and given whole to the front of it for `right`.
+        var centered = InkLastColumn("ab cd ef g", "center");
+        var ended = InkLastColumn("ab cd ef g", "right");
+
+        Assert.That(centered, Is.EqualTo(new[] { (11, 50), (71, 90) }), "fifteen of the room behind the line");
+        Assert.That(ended, Is.EqualTo(new[] { (26, 65), (86, 105) }), "and all thirty, with the ink on the edge");
+    }
+
     /// <summary>The ideographs the tests below are written with, named by their code points.</summary>
     private static readonly String Han = Char.ConvertFromUtf32(0x6F22);
 
@@ -401,7 +429,21 @@ public sealed class VerticalLayoutTests
 
     /// <summary>Draws five cells' worth of text in a column of a hundred and ten, and reads its ink.</summary>
     private static List<(Int32 Start, Int32 End)> InkColumn(
-        String content, Int32 height = 110, String align = "justify", String expand = "auto")
+        String content, Int32 height = 110, String align = "justify", String expand = "auto",
+        String last = "auto") => InkBand(content, height, align, expand, last, 0, 120);
+
+    /// <summary>Draws the same page and reads the ink of the column the content ends in, and no other.</summary>
+    /// <remarks>
+    /// A block a hundred and twenty across fills its columns from the right, so the second of two stands
+    /// eighty pixels along. The line that ends the block is the one <c>text-align-last</c> speaks for,
+    /// and its ink is what has to be looked at - the column above it is spread whatever the property says.
+    /// </remarks>
+    private static List<(Int32 Start, Int32 End)> InkLastColumn(
+        String content, String last, String align = "justify") =>
+        InkBand(content, 110, align, "auto", last, 80, 100);
+
+    private static List<(Int32 Start, Int32 End)> InkBand(
+        String content, Int32 height, String align, String expand, String last, Int32 left, Int32 right)
     {
         using var measurer = new Hutu.Skia.SkiaTextMeasurer();
         using var view = new HutuViewInternal(measurer);
@@ -410,14 +452,15 @@ public sealed class VerticalLayoutTests
         view.SetHtml(
             "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:120px;height:" + height +
             "px;font-family:Ahem;font-size:20px;line-height:1;text-align:" + align +
-            ";text-justify:" + expand + "'>" + content +
+            ";text-justify:" + expand + ";text-align-last:" + last + "'>" + content +
             "</div></body></html>").GetAwaiter().GetResult();
 
-        return InkedRows(view, measurer);
+        return InkedRows(view, measurer, left, right);
     }
 
-    /// <summary>Gets the rows of the first column that carry ink, as the runs they fall into.</summary>
-    private static List<(Int32 Start, Int32 End)> InkedRows(HutuViewInternal view, Hutu.Skia.SkiaTextMeasurer measurer)
+    /// <summary>Gets the rows that carry ink between two edges of the block, as the runs they fall into.</summary>
+    private static List<(Int32 Start, Int32 End)> InkedRows(
+        HutuViewInternal view, Hutu.Skia.SkiaTextMeasurer measurer, Int32 left, Int32 right)
     {
         var paint = view.Paint!;
         using var surface = SkiaSharp.SKSurface.Create(
@@ -434,7 +477,7 @@ public sealed class VerticalLayoutTests
         {
             var inked = false;
 
-            for (var x = 0; x < Math.Min(120, bitmap.Width); x++)
+            for (var x = left; x < Math.Min(right, bitmap.Width); x++)
             {
                 if (bitmap.GetPixel(x, y) != SkiaSharp.SKColors.White)
                 {
