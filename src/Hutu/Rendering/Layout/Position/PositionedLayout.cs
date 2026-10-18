@@ -120,7 +120,7 @@ internal sealed class PositionedLayout
     /// over-constrain it; in a left-to-right writing mode the leading edge wins and the other is
     /// dropped, which is the rule the specification calls for.
     /// </summary>
-    private static Offset RelativeOffset(PositionStyle position, Size containingBlock)
+    internal static Offset RelativeOffset(PositionStyle position, Size containingBlock)
     {
         var dx = 0.0;
         var dy = 0.0;

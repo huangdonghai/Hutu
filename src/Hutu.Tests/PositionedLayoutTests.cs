@@ -36,6 +36,66 @@ public sealed class PositionedLayoutTests
     }
 
     [Test]
+    public async Task RelativeMovesEveryFragmentOfAnInlineBox()
+    {
+        // A relative element keeps the place it had in the flow and is drawn where its offset puts it.
+        // An inline element is drawn as one fragment on every line it reaches, so each of them is moved
+        // - and the text, background and line drawn through the fragment go with it (CSS 2.1 §9.4.3).
+        var moved = await Fragments("position:relative;top:10px;left:6px;");
+        var plain = await Fragments("");
+
+        Assert.That(moved.Count, Is.GreaterThan(1), "the element was broken across lines");
+        Assert.That(
+            moved.Select(box => box.Y),
+            Is.EqualTo(plain.Select(box => box.Y + 10)),
+            "every fragment stands ten pixels lower than the place it had");
+        Assert.That(
+            moved.Select(box => box.X),
+            Is.EqualTo(plain.Select(box => box.X + 6)),
+            "and six pixels along from where it stood");
+    }
+
+    [Test]
+    public async Task RelativeMovesTheFragmentsOfAColumnToo()
+    {
+        // The offsets are physical, so the same ten pixels move a fragment down the page whether the
+        // text reads along a row or runs down a column.
+        var moved = await Fragments("position:relative;top:10px;left:6px;", column: true);
+        var plain = await Fragments("", column: true);
+
+        Assert.That(
+            moved.Select(box => box.Y),
+            Is.EqualTo(plain.Select(box => box.Y + 10)),
+            "the fragments run down the page ten pixels further along");
+        Assert.That(
+            moved.Select(box => box.X),
+            Is.EqualTo(plain.Select(box => box.X + 6)),
+            "and six pixels across from where they stood");
+    }
+
+    /// <summary>
+    /// Lays one page out with the given style on an inline element broken over two lines, and returns
+    /// where each of its fragments was drawn.
+    /// </summary>
+    private static async Task<List<(Double X, Double Y)>> Fragments(String style, Boolean column = false)
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin:0;width:120px;font-family:Segoe UI;" +
+            "font-size:40px;" + (column ? "writing-mode:vertical-rl;" : "") + "'>aa<span id='s' style='" +
+            style + "'>bbee<br/>ffoo</span>cc</p></body></html>");
+
+        var fragments = Walk(view.Layout!.Root)
+            .Where(node => node.Source.Element?.Id == "s")
+            .Select(node => (node.BorderBox.X, node.BorderBox.Y))
+            .ToList();
+
+        Assert.That(fragments, Is.Not.Empty, "the element was laid out");
+        return fragments;
+    }
+
+    [Test]
     public async Task AbsoluteAnchorsToTheNearestPositionedAncestor()
     {
         using var view = CreateView(400);

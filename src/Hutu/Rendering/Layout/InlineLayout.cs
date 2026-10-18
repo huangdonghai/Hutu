@@ -1,4 +1,5 @@
-﻿using Hutu.Rendering.Boxes;
+﻿using AngleSharp.Css.Dom;
+using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
@@ -449,7 +450,7 @@ internal sealed class InlineLayout
                 foreach (var left in step.Closed)
                 {
                     origin += left.Ancestor.InlineEndInset;
-                    CloseBox(left, origin, contentBox, flow, line, cursor);
+                    CloseBox(left, origin, contentBox, flow, line, cursor, context);
                     origin += left.Ancestor.InlineEndMargin;
                 }
 
@@ -472,7 +473,7 @@ internal sealed class InlineLayout
                 var cut = line.ContinuesToNext?.Contains(left.Ancestor) == true;
 
                 origin += cut ? 0 : left.Ancestor.InlineEndInset;
-                CloseBox(left, origin, contentBox, flow, line, cursor);
+                CloseBox(left, origin, contentBox, flow, line, cursor, context);
 
                 if (!cut)
                 {
@@ -522,7 +523,14 @@ internal sealed class InlineLayout
     /// Closes the box an inline element drew through on this line, spanning it from where the element
     /// began to where it ends.
     /// </summary>
-    private static void CloseBox(OpenInline item, Double end, Rect contentBox, WritingModeInfo flow, Line line, Double cursor)
+    private static void CloseBox(
+        OpenInline item,
+        Double end,
+        Rect contentBox,
+        WritingModeInfo flow,
+        Line line,
+        Double cursor,
+        InlineContext context)
     {
         var ancestor = item.Ancestor;
 
@@ -536,6 +544,18 @@ internal sealed class InlineLayout
         var blockSize = ancestor.Ascent + ancestor.Descent + ancestor.BlockStartInset + ancestor.BlockEndInset;
 
         item.Node!.BorderBox = flow.Map(contentBox, item.Start, end - item.Start, blockOffset, blockSize);
+
+        // A relative element keeps the place it had in the flow - the lines and the boxes around it are
+        // measured as though it never moved - and is drawn where its offset puts it. Its fragments are
+        // made one per line here rather than by the pass that arranges every other kind of box, so this
+        // is where each of them is moved, and what is drawn through the fragment goes with it: the text,
+        // the line under it, whatever background the element asks for (CSS 2.1 §9.4.3).
+        var position = ancestor.Box.Style.Position;
+
+        if (position.Position == PositionMode.Relative)
+        {
+            PositionedLayout.Translate(item.Node, PositionedLayout.RelativeOffset(position, context.Containing.ContainingBlock));
+        }
     }
 
     /// <summary>Builds the node a run is drawn through and puts it in the innermost box open around it.</summary>
