@@ -355,6 +355,94 @@ public sealed class VerticalLayoutTests
             "the pair of characters above the BMP is asked of the font as the one character it is");
     }
 
+    [Test]
+    public async Task AJustifiedColumnSpreadsTheWordsItStandsBetween()
+    {
+        // Ahem sets Latin at one em and carries no CJK glyph, so the ideographs go to a face that does
+        // and stand upright in cells of the em: the turned run has to spread by the glyph positions it
+        // is drawn at, and the upright cells by the step between them. A column of a hundred and ten
+        // takes five cells of twenty, so the ten left over go into the one place between the words and
+        // what stands after it is drawn ten rows further down.
+        var turned = InkColumn("ab cd ef");
+        var upright = InkColumn(Char.ConvertFromUtf32(0x6F22) + Char.ConvertFromUtf32(0x5B57) + " " +
+            Char.ConvertFromUtf32(0x6F22) + Char.ConvertFromUtf32(0x5B57) + " " + Char.ConvertFromUtf32(0x6F22));
+
+        Assert.That(turned, Is.EqualTo(new[] { (0, 35), (66, 105) }), "the turned run stands at 66");
+        Assert.That(upright, Is.EqualTo(new[] { (1, 18), (20, 37), (71, 88), (90, 107) }), "and the cells at 71");
+    }
+
+    [Test]
+    public async Task AJustifiedColumnLeavesTheLineThatEndsTheBlockAlone()
+    {
+        // The line that ends the block is not spread (CSS Text 3 §5.7.1), so a column given room for the
+        // whole of the text draws the same whether it asks for justification or not - which is the
+        // control that keeps the first case honest: the shift there is the spread, and not the page.
+        var plain = InkColumn("ab cd ef", height: 200, align: "left");
+        var justified = InkColumn("ab cd ef", height: 200, align: "justify");
+
+        Assert.That(justified, Is.EqualTo(plain), "the last line is left as it was written");
+    }
+
+    /// <summary>Draws five cells' worth of text in a column of a hundred and ten, and reads its ink.</summary>
+    private static List<(Int32 Start, Int32 End)> InkColumn(String content, Int32 height = 110, String align = "justify")
+    {
+        using var measurer = new Hutu.Skia.SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(300, 300);
+
+        view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:120px;height:" + height +
+            "px;font-family:Ahem;font-size:20px;line-height:1;text-align:" + align + "'>" + content +
+            "</div></body></html>").GetAwaiter().GetResult();
+
+        return InkedRows(view, measurer);
+    }
+
+    /// <summary>Gets the rows of the first column that carry ink, as the runs they fall into.</summary>
+    private static List<(Int32 Start, Int32 End)> InkedRows(HutuViewInternal view, Hutu.Skia.SkiaTextMeasurer measurer)
+    {
+        var paint = view.Paint!;
+        using var surface = SkiaSharp.SKSurface.Create(
+            new SkiaSharp.SKImageInfo((Int32)paint.Bounds.Width, (Int32)paint.Bounds.Height));
+        surface.Canvas.Clear(SkiaSharp.SKColors.White);
+        new Hutu.Skia.SkiaPaintExecutor(measurer).Execute(paint, surface.Canvas);
+
+        using var image = surface.Snapshot();
+        using var bitmap = SkiaSharp.SKBitmap.FromImage(image);
+
+        var rows = new List<(Int32 Start, Int32 End)>();
+
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            var inked = false;
+
+            for (var x = 0; x < Math.Min(120, bitmap.Width); x++)
+            {
+                if (bitmap.GetPixel(x, y) != SkiaSharp.SKColors.White)
+                {
+                    inked = true;
+                    break;
+                }
+            }
+
+            if (!inked)
+            {
+                continue;
+            }
+
+            if (rows.Count > 0 && rows[^1].End == y - 1)
+            {
+                rows[^1] = (rows[^1].Start, y);
+            }
+            else
+            {
+                rows.Add((y, y));
+            }
+        }
+
+        return rows;
+    }
+
     private static Double ColumnLine(LayoutBox box) => box.BorderBox.X + box.Baseline;
 
     [Test]
