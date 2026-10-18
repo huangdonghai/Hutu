@@ -686,6 +686,7 @@ internal sealed class InlineLayout
             Text = annotation.Text,
             Font = annotation.Style.GetFont(),
             Flow = annotation.Flow,
+            IsRubyAnnotation = true,
             Baseline = flow.BlockOffsetFromLeft(annotation.Block, annotation.Ascent),
             BorderBox = flow.Map(
                 contentBox,

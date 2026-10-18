@@ -399,20 +399,30 @@ internal sealed record LayoutProfile(
         // also why only an element box can interrupt: the line and the runs inside an atomic box borrow
         // that box's style, and they are the text the box's own decoration is drawn across, not a fresh
         // context that starts over.
-        var element = box.Kind is not (LayoutKind.Line or LayoutKind.Text) && !box.Source.IsAnonymous;
+        // Only an element box can interrupt a line: the line boxes and the runs inside an atomic box
+        // borrow that box's style, and they are the text its own decoration is drawn across rather than
+        // a fresh context starting over. A ruby annotation is apart in its own right, being set above the
+        // base the line under it decorates.
+        var element = box.Kind != LayoutKind.Line && !box.Source.IsAnonymous;
 
-        if (element && StandsApart(box))
+        if (element && StandsApart(box) || box.IsRubyAnnotation)
         {
             around = null;
         }
 
-        var lines = element ? SourceOf(style) : null;
+        // A run of text asks for the decoration of the element it belongs to even where that element
+        // was given no box of its own to say it with - a ruby base and its annotation are laid out as
+        // runs - and asks for it once: the record is compared by value, so a run whose element already
+        // spoke from the box above it adds nothing.
+        var lines = element || box.Kind == LayoutKind.Text ? SourceOf(style) : null;
 
         box.Decorations = lines is null
             ? around
             : around is null
                 ? new List<DecorationSource> { lines }
-                : [.. around, lines];
+                : around[^1] == lines
+                    ? around
+                    : [.. around, lines];
 
         foreach (var child in box.Children)
         {
@@ -456,7 +466,7 @@ internal sealed record LayoutProfile(
         // it sits in a line or stacks - takes no part in the line its ancestors are drawn on
         // (CSS Text Decoration 4 §2.5).
         box.Source.Kind is BoxKind.InlineBlock or BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry
-            or BoxKind.Table;
+            or BoxKind.Table or BoxKind.RubyText;
 
     /// <summary>
     /// Works out where each list item's marker is drawn.

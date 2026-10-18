@@ -90,7 +90,44 @@ public sealed class TextDecorationPropagationTests
         }
     }
 
-    /// <summary>Draws the page and reports how much ink stands under each run's baseline.</summary>
+    [Test]
+    public async Task ARubyBaseTakesTheLineAndItsAnnotationAboveItDoesNot()
+    {
+        // A ruby base and its annotation are laid out as runs of text rather than as boxes of their own,
+        // so a decoration has to reach them where they actually stand: the line the paragraph asked for
+        // runs under its base and leaves the annotation above it alone, and a line asked for by the ruby
+        // itself still lands on the base even though no box of the ruby's own was ever laid out.
+        var fromTheParagraph = await Ruby("underline", "none");
+        var fromTheRuby = await Ruby("none", "underline");
+        var plain = await Ruby("none", "none");
+
+        Assert.That(fromTheParagraph["base"].Rows, Is.GreaterThan(plain["base"].Rows), "the base is lined");
+        Assert.That(fromTheParagraph["text"].Rows, Is.EqualTo(plain["text"].Rows), "the annotation is not");
+        Assert.That(fromTheRuby["base"].Rows, Is.GreaterThan(plain["base"].Rows), "the ruby's own line");
+    }
+
+    /// <summary>Draws one ruby pair - a base and its annotation - with the decorations asked for.</summary>
+    private static async Task<Dictionary<String, Band>> Ruby(String onParagraph, String onRuby)
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(400, 240);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin:0;line-height:4;font-family:" + Family +
+            ";font-size:40px;text-decoration:" + onParagraph + "'>" +
+            "<ruby style='text-decoration:" + onRuby + "'><rb>base</rb><rt>text</rt></ruby></p></body></html>");
+
+        var bands = new Dictionary<String, Band>();
+
+        foreach (var run in Walk(view.Layout!.Root).Where(node => node.Kind == LayoutKind.Text))
+        {
+            bands[run.Text!] = Band.Of(view, run);
+        }
+
+        return bands;
+    }
+
     private static async Task<Dictionary<String, Band>> Read(String content, String decoration)
     {
         using var view = await Loaded(

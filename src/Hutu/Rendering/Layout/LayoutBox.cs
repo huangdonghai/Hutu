@@ -154,6 +154,14 @@ internal sealed class LayoutBox
     internal List<DecorationSource>? Decorations { get; set; }
 
     /// <summary>
+    /// Gets or sets whether this run is a ruby annotation, set above its base rather than text the line
+    /// under the base decorates. The annotation is laid out as a box of its own and never as an element
+    /// box, so the pass that hands the decorations down cannot tell it apart from the base's text by
+    /// looking at the tree alone.
+    /// </summary>
+    internal Boolean IsRubyAnnotation { get; set; }
+
+    /// <summary>
     /// Gets or sets where a list item's marker is drawn, or null for a box that carries none.
     /// </summary>
     /// <remarks>
