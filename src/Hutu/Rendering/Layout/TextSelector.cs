@@ -1,5 +1,6 @@
 using AngleSharp.Css.Dom;
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.Text;
 
@@ -542,18 +543,36 @@ internal sealed class TextSelector
         // A column sets an upright character in its em box rather than at its natural width, so the
         // boundaries are stepped the way the layout stepped them: the table has to agree with the run
         // the characters were placed by, or a hit lands on a neighbour.
+        // The room a justified line owes after each of its places belongs to these boundaries as much
+        // as to the glyphs: the characters after a place stand that much further along, so a caret asked
+        // of one of them is answered at the place the layout gave it and not the one the text would
+        // have had untouched. The places are found the way the layout and the painter find them, so the
+        // three agree on where they are.
+        var justification = run.Justification;
+        var points = justification == 0
+            ? Array.Empty<Int32>()
+            : TextClusters.ExpansionPoints(text, 0, text.Length, run.Source.Style.TextJustify);
+
         for (var index = 1; index <= text.Length; index++)
         {
             prefix[index] = run.Flow.IsVertical
                 ? prefix[index - 1] + ColumnStep(run, text, index) + spacing
+                    + (justification * PlacesAt(points, index - 1))
                 : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow)
                     + (spacing * CharactersThrough(ordinals, index))
-                    + (words * TextChunker.WordSeparators(text, 0, index));
+                    + (words * TextChunker.WordSeparators(text, 0, index))
+                    + (justification * PlacesBefore(points, index));
         }
 
         _prefixes[run] = prefix;
         return prefix;
     }
+
+    /// <summary>Gets how many of the justified room's places have been left behind by a boundary.</summary>
+    private static Int32 PlacesBefore(Int32[] points, Int32 index) => points.Count(point => point < index);
+
+    /// <summary>Gets whether a place falls on the character a boundary was drawn from.</summary>
+    private static Int32 PlacesAt(Int32[] points, Int32 index) => points.Count(point => point == index);
 
     /// <summary>Gets how many characters the first stretch of the run's text is made of.</summary>
     private static Int32 CharactersThrough(Int32[]? ordinals, Int32 through) =>

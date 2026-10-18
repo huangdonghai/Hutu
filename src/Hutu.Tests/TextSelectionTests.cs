@@ -317,6 +317,25 @@ public sealed class TextSelectionTests
     private static TextSelection Selection(LayoutBox run, Int32 from, Int32 to) =>
         new(new TextPosition(run, from), new TextPosition(run, to));
 
+    [Test]
+    public async Task AJustifiedLineSelectsItsWordsWhereTheyWerePut()
+    {
+        using var document = await LoadAsync(
+            "<html><body style='margin:0'><div style='width:65px;text-align:justify'>aa bb cc dd ee</div></body></html>");
+
+        var run = document.Selector.Runs[0];
+
+        // The line was given sixty-five of the measurer's pixels and holds fifty-five, so ten go into
+        // the three places between its words - and the last word, which would have stood at forty-five,
+        // stands at fifty-five. The rectangle has to cover where the reader sees it, which is where the
+        // layout put it, rather than where the text alone would have reached.
+        var rects = document.Selector.Rects(Selection(run, 9, 11));
+
+        Assert.That(rects, Has.Count.EqualTo(1));
+        Assert.That(rects[0].X, Is.EqualTo(55), "the word stands past the room its line was owed");
+        Assert.That(rects[0].Right, Is.EqualTo(65), "and the selection ends on the edge the line was given");
+    }
+
     private static Double Centre(LayoutBox run) => run.BorderBox.Y + run.BorderBox.Height / 2;
 
     /// <summary>
