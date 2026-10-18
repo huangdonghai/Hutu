@@ -4,12 +4,16 @@ using System.Collections.Generic;
 namespace Hutu.Rendering.Layout;
 
 /// <summary>
-/// Splits text into the smallest units line breaking may separate: runs of white space, single CJK
-/// characters, and everything else up to the next space or CJK character.
+/// Splits text into the pieces line breaking may not separate: a run of white space, which the document's
+/// own rules collapse and the line breaks beside, and everything else, which <see cref="LineBreaks"/>
+/// comes apart where the Unicode rules say a line may end.
 /// </summary>
 /// <remarks>
-/// This lives in the platform-neutral layer because line breaking itself does: the measurer only
-/// supplies advance widths, while the decision of where a line may break is script logic.
+/// This lives in the platform-neutral layer because line breaking itself does: the measurer only supplies
+/// advance widths, while the decision of where a line may break is script logic. The pieces are cut rather
+/// than the breaks recorded because the line builds itself out of whole pieces - it takes a piece or
+/// leaves it for the next line, and never splits one - which is also what makes the narrowest width a run
+/// of text can be given be the widest of the pieces it is made of.
 /// </remarks>
 internal static class TextChunker
 {
@@ -251,25 +255,27 @@ internal struct Enumerator
                     return true;
                 }
 
-                var length = UnitsAt(text, index);
+                // A chunk runs to the next place a line may end: the decision is the Unicode rules', and
+                // the walk stops where they say. The white space a run of text is written between is not
+                // asked of them, because the document's own rules make that run a piece of its own above.
+                var start = index;
 
-                if (IsCjk(text, index))
+                while (true)
                 {
-                    Current = new ChunkRange(index, length);
-                    _index = index + length;
-                    return true;
+                    var length = UnitsAt(text, index);
+                    var next = index + length;
+
+                    if (next >= text.Length ||
+                        IsCollapsible(text[next]) ||
+                        (next > start && LineBreaks.MayBreak(text, index, next)))
+                    {
+                        _index = next;
+                        Current = new ChunkRange(start, next - start);
+                        return true;
+                    }
+
+                    index = next;
                 }
-
-                var wordEnd = index + length;
-
-                while (wordEnd < text.Length && !IsCollapsible(text[wordEnd]) && !IsCjk(text, wordEnd))
-                {
-                    wordEnd += UnitsAt(text, wordEnd);
-                }
-
-                Current = new ChunkRange(index, wordEnd - index);
-                _index = wordEnd;
-                return true;
             }
         }
     }

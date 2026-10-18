@@ -154,8 +154,9 @@ internal sealed class TextSelector
     }
 
     /// <summary>
-    /// Gets the selection a double click makes: the chunk the position sits in, which is a word, a run
-    /// of white space or a single CJK character - the same units line breaking may separate.
+    /// Gets the selection a double click makes: the chunk the position sits in, which is the same unit
+    /// line breaking may not separate - a word, a run of white space, and, since the Unicode rules are
+    /// what cut the pieces, a word and the hyphen it was written to end a line at.
     /// </summary>
     public TextSelection Word(TextPosition position)
     {
