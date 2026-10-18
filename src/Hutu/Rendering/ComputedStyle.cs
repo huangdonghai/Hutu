@@ -211,7 +211,9 @@ internal readonly struct ComputedStyle
 
         var (align, alignLast) = Alignments(
             Keyword("text-align", CssInitialValues.TextAlign),
-            Keyword("text-align-last", CssInitialValues.TextAlignLast));
+            Keyword("text-align-last", CssInitialValues.TextAlignLast),
+            parent?.TextAlign,
+            parent?.Direction ?? TextDirection.LeftToRight);
 
         var text = new TextArea
         {
@@ -232,10 +234,46 @@ internal readonly struct ComputedStyle
     /// and <c>text-align-last</c> how the affected ones do, and the one value that speaks for both is
     /// <c>justify-all</c> - every line justified, the last of them included (CSS Text 3 §6.1).
     /// </summary>
-    internal static (String All, String Last) Alignments(String align, String alignLast) =>
-        align.Equals("justify-all", StringComparison.OrdinalIgnoreCase)
+    /// <param name="matched">
+    /// The alignment the parent came to, which <c>match-parent</c> asks for. Null where there is no parent
+    /// to match: at the root the value computes to <c>start</c>.
+    /// </param>
+    internal static (String All, String Last) Alignments(
+        String align,
+        String alignLast,
+        String? matched,
+        TextDirection matchedDirection)
+    {
+        if (align.Equals("match-parent", StringComparison.OrdinalIgnoreCase))
+        {
+            align = matched is null ? CssInitialValues.TextAlign : MatchedEdge(matched, matchedDirection);
+        }
+
+        return align.Equals("justify-all", StringComparison.OrdinalIgnoreCase)
             ? ("justify", "justify")
             : (align, alignLast);
+    }
+
+    /// <summary>
+    /// Gets the edge of the line a parent came to: <c>start</c> and <c>end</c> are read against the
+    /// direction the parent's own lines ran in, and everything else is already an edge. This is the whole
+    /// of what <c>match-parent</c> does beyond inherit (CSS Text 3 §6.1), and it is why the value survives
+    /// a child that reads the other way.
+    /// </summary>
+    private static String MatchedEdge(String parentAlign, TextDirection parentDirection)
+    {
+        if (parentAlign.Equals("start", StringComparison.OrdinalIgnoreCase))
+        {
+            return parentDirection == TextDirection.RightToLeft ? "right" : "left";
+        }
+
+        if (parentAlign.Equals("end", StringComparison.OrdinalIgnoreCase))
+        {
+            return parentDirection == TextDirection.RightToLeft ? "left" : "right";
+        }
+
+        return parentAlign;
+    }
 
     /// <summary>
     /// Resolves the list marker style, taking the parent's where the element authored none of it.

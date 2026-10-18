@@ -328,7 +328,11 @@ internal static class FusedStyleFactory
 
         // A text behaviour reads the same three inputs - the cascade, the size the indent is measured
         // at, and the parent's text - and nothing of the element's identity, so it caches the same way.
-        var textKey = new AreaKey(cascade, size, parent.Text, variables: variables);
+        // The parent's direction is packed into the key beside its text for one value: `match-parent` is
+        // read against the direction the parent's lines ran in, so two parents that aligned alike and
+        // read the other way hand down two different answers.
+        var textKey = new AreaKey(
+            cascade, size, parent.Text, stamp: (Int32)parent.Direction, variables: variables);
 
         if (cache is not null && cache.TryText(textKey, out var text))
         {
@@ -338,7 +342,12 @@ internal static class FusedStyleFactory
         {
             var (all, last) = ComputedStyle.Alignments(
                 ComputedStyle.ResolveTextAlignFused(find("text-align"), parent.Align),
-                ComputedStyle.ResolveTextAlignLastFused(find("text-align-last"), parent.AlignLast));
+                ComputedStyle.ResolveTextAlignLastFused(find("text-align-last"), parent.AlignLast),
+
+                // The root has no parent to match; `FusedParent.Root` stands for what the root inherits,
+                // and `match-parent` said at the root computes to `start` rather than to that.
+                ReferenceEquals(parent, FusedParent.Root) ? null : parent.Align,
+                parent.Direction);
 
             var built = new TextArea
             {
