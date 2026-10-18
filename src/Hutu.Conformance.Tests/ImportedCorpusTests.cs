@@ -42,8 +42,10 @@ namespace Hutu.Conformance;
 /// Because they all draw the corpus, this fixture is explicit: run it by name rather than as part of an
 /// ordinary run. <c>HUTU_SCORE_LIMIT</c> caps the pages drawn, for a run that is only asking whether the
 /// fixture works; <c>HUTU_SCORE_FINDINGS</c> changes how many the quick run stops at;
-/// <c>HUTU_SCORE_LOOK</c> names the pair to look at closely. The report is written to
-/// <c>build/reftest-score.md</c> as well as to the console.
+/// <c>HUTU_SCORE_LOOK</c> names the pair to look at closely; <c>HUTU_SCORE_LISTED</c> raises how many the
+/// report names, which is what makes two runs' lists diffable against each other when a change says it
+/// moved one pair out of thirty-four hundred. The report is written to <c>build/reftest-score.md</c> as
+/// well as to the console.
 /// </para>
 /// </remarks>
 [TestFixture]
@@ -55,7 +57,8 @@ public sealed class ImportedCorpusTests
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>How many findings the report names before it stops, since the counts are the point.</summary>
-    private const Int32 Listed = 60;
+    private static Int32 Listed =>
+        Int32.TryParse(Environment.GetEnvironmentVariable("HUTU_SCORE_LISTED"), out var cap) ? cap : 60;
 
     /// <summary>
     /// Half the machine, and no more. Both runs here draw thousands of pages, and a run that takes every
