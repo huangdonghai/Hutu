@@ -1246,10 +1246,7 @@ internal readonly struct ComputedStyle
     /// </summary>
     public static Double? ResolveDecorationThicknessFused(
         ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions) =>
-        declared is not null && !IsInherit(declared) &&
-        TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels)
-            ? pixels
-            : null;
+        DecorationLength(declared, font, dimensions) is { } asked ? Math.Round(asked) : null;
 
     /// <summary>
     /// Resolves how far an underline stands from where the font puts it, for the fused path. The property
@@ -1258,14 +1255,53 @@ internal readonly struct ComputedStyle
     /// §2.8).
     /// </summary>
     public static Double? ResolveUnderlineOffsetFused(
-        ICssProperty? declared, Double? parent, LengthReader.FontSource font, IRenderDimensions dimensions)
+        ICssProperty? declared, Double? parent, LengthReader.FontSource font, IRenderDimensions dimensions) =>
+        declared is null || IsInherit(declared) ? parent : DecorationLength(declared, font, dimensions);
+
+    /// <summary>
+    /// Reads a length of a decoration, with the one unit these two properties define for themselves: a
+    /// percentage is a share of the size the text is set at, not of the box it sits in - and a share holds
+    /// that meaning inside <c>calc()</c> as well, where <c>calc(50% + 4px)</c> is the same rule as
+    /// <c>50%</c> (CSS Text Decoration 4 §2.4, §2.8). A keyword - <c>auto</c>, <c>from-font</c>,
+    /// <c>normal</c> - says nothing, which is what leaves the line to the face.
+    /// </summary>
+    private static Double? DecorationLength(ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
-        if (declared is null || IsInherit(declared))
+        if (declared is null)
         {
-            return parent;
+            return null;
+        }
+
+        if (declared.RawValue is CssLengthValue { Type: CssLengthValue.Unit.Percent } share)
+        {
+            return (share.Value / 100) * font.Value;
+        }
+
+        var text = declared.Value;
+
+        if (!String.IsNullOrWhiteSpace(text) &&
+            CssMathLengths.Evaluate(text, argument => DecorationTerm(argument, font, dimensions)) is { } value)
+        {
+            return value;
         }
 
         return TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels) ? pixels : null;
+    }
+
+    /// <summary>
+    /// Reads one term of a decoration length: a share of the text's own size for a percentage, and
+    /// otherwise whatever the common reader makes of the unit.
+    /// </summary>
+    private static Double? DecorationTerm(String term, LengthReader.FontSource font, IRenderDimensions dimensions)
+    {
+        if (!CssLengthValue.TryParse(term, out var length))
+        {
+            return null;
+        }
+
+        return length.Type == CssLengthValue.Unit.Percent
+            ? (length.Value / 100) * font.Value
+            : LengthReader.ToPixel(length, RenderMode.Horizontal, dimensions, font);
     }
 
     internal static UInt32 ToArgb(CssColorValue color) =>

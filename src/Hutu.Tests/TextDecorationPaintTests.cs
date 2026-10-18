@@ -131,9 +131,12 @@ public sealed class TextDecorationPaintTests
         // Half of the forty pixels the text is set at, which is what a share of the used font size means
         // (CSS Text Decoration 4 §2.4), against the face's own width.
         var share = await Ink(Text, "underline", "text-decoration-thickness:50%");
-        var faced = await Ink(Text, "underline");
+        var stated = await Ink(Text, "underline", "text-decoration-thickness:20px");
 
-        Assert.That(share.Bottommost - faced.Bottommost, Is.GreaterThanOrEqualTo(16), "twenty of the forty");
+        Assert.That(
+            share.Bottommost,
+            Is.EqualTo(stated.Bottommost).Within(1),
+            "half of the forty pixels the text is set at, which is what a share of it means");
     }
 
     [Test]
@@ -145,6 +148,27 @@ public sealed class TextDecorationPaintTests
         var near = await Ink(Text, "underline");
 
         Assert.That(stood.Bottommost - near.Bottommost, Is.EqualTo(12).Within(2), "twelve rows further out");
+    }
+
+    [Test]
+    public async Task APercentageOffsetSharesTheFontSizeWithTheLineItOffsets()
+    {
+        // A quarter of the twenty pixels this text is set at, not a quarter of the page: the same place
+        // the same distance states in pixels, which is what the borrowed percentage case asks for.
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(400, 260);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin:0;font-family:Segoe UI;font-size:40px;" +
+            "line-height:2;text-decoration:underline;text-underline-offset:25%'>" + Text + "</p></body></html>");
+
+        var run = Walk(view.Layout!.Root).Single(node => node.Kind == LayoutKind.Text);
+        var share = InkExtent.Of(view.Paint!, measurer, run);
+
+        var stated = await Ink(Text, "underline", "text-underline-offset:10px");
+
+        Assert.That(share.Bottommost, Is.EqualTo(stated.Bottommost).Within(1), "ten of the forty");
     }
 
     [Test]
