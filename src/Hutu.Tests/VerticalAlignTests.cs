@@ -1,4 +1,5 @@
 using Hutu.Rendering.Layout;
+using Hutu.Skia;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
@@ -50,14 +51,33 @@ public sealed class VerticalAlignTests
     {
         using var view = CreateView();
 
-        // The middle of the box goes half the parent's x-height above the baseline. There is no x-height
-        // from the face yet, so the engine stands one in from the half-em `ex` it already uses for that
-        // unit: two and a half of a ten pixel font, against the box's own centre three above its
+        // The middle of the box goes half the parent's x-height above the baseline. This measurer states
+        // no x-height for any font, so the engine stands one in from the half-em `ex` it already uses for
+        // that unit: two and a half of a ten pixel font, against the box's own centre three above its
         // baseline. The box is lowered by the difference and the line grows below it.
         await view.SetHtml(Document("<span style='vertical-align:middle'>ab</span>"));
 
         Assert.That(Lines(view).Single().BorderBox.Height, Is.EqualTo(10.5).Within(0.001));
         Assert.That(Text(view, "ab").Baseline, Is.EqualTo(8.5).Within(0.001), "lowered by half a pixel");
+    }
+
+    [Test]
+    public async Task AMiddleAlignmentUsesTheHeightTheFaceItselfStates()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(600, 600);
+
+        // Ahem stands the top of its lowercase at the top of its box, so half its x-height is sixteen of
+        // the forty pixels it is drawn at, against the twelve its own midline stands above the baseline.
+        // The run climbs that four and the line grows by it - which is the height Chromium gives the same
+        // page, where the em approximation above would have left the line at forty.
+        await view.SetHtml(AhemDocument("<span style='vertical-align:middle'>ab</span>"));
+
+        Assert.That(measurer.GetMetrics(new FontStyle("Ahem", 40, 400, false)).XHeight, Is.EqualTo(32));
+        Assert.That(Lines(view).Single().BorderBox.Height, Is.EqualTo(44), "forty, plus the four it climbed");
+        Assert.That(Lines(view).Single().Baseline, Is.EqualTo(36), "and the room was wanted above");
+        Assert.That(Text(view, "ab").Baseline, Is.EqualTo(32), "four above the line's own baseline");
     }
 
     [Test]
@@ -106,6 +126,11 @@ public sealed class VerticalAlignTests
 
     private static String Document(String content) =>
         "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:1'>" +
+        content + "</p></body></html>";
+
+    /// <summary>A page drawn with the font that states its own heights, at the size the test measures.</summary>
+    private static String AhemDocument(String content) =>
+        "<html><body style='margin:0'><p style='margin:0;font-family:Ahem;font-size:40px;line-height:1'>" +
         content + "</p></body></html>";
 
     private static HutuViewInternal CreateView(Int32 viewportWidth = 600)

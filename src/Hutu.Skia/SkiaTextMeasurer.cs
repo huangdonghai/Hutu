@@ -27,6 +27,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 {
     private readonly SkiaFontResolver _resolver;
     private readonly SkiaTextShaper _shaper = new();
+    private readonly SkiaOpenTypeMetrics _openType = new();
     private readonly SkiaTextBlobCache _blobs;
     private readonly ConcurrentDictionary<FontStyle, SKFont> _fonts = new();
     private readonly ConcurrentDictionary<FallbackFontKey, SKFont> _fallbackFonts = new();
@@ -407,7 +408,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     {
         // GetFontMetrics reports the recommended line spacing; the metrics themselves are always
         // filled in. The decoration offsets are optional because a font may not define them.
-        GetFont(style).GetFontMetrics(out var metrics);
+        var font = GetFont(style);
+        font.GetFontMetrics(out var metrics);
 
         return new FontMetrics(
             -metrics.Ascent,
@@ -416,7 +418,10 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             metrics.UnderlinePosition ?? 0,
             metrics.UnderlineThickness ?? 0,
             metrics.StrikeoutPosition ?? 0,
-            metrics.StrikeoutThickness ?? 0);
+            metrics.StrikeoutThickness ?? 0,
+            // Skia's metrics carry no x-height, so the face itself is asked what it stands its lowercase
+            // at; a font that does not say leaves the field empty and the layout guesses from the em.
+            xHeight: _openType.GetXHeight(font.Typeface, (Single)style.Size) ?? 0);
     }
 
     private SKFont CreateFont(FontStyle style) => new(_resolver.Resolve(style), (Single)style.Size);

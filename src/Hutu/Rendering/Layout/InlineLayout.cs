@@ -2355,7 +2355,13 @@ internal sealed class InlineLayout
 
         if (alignment.Equals("middle", StringComparison.OrdinalIgnoreCase))
         {
-            return ((above - below) / 2) - (0.25 * reference.FontSize);
+            // Half the parent's x-height is what the middle of the box is lifted by, so a face that states
+            // one is followed rather than guessed at. Where it says nothing, the engine's own half-em `ex`
+            // stands in for it, as it does wherever that unit is read.
+            var parentMetrics = measurer.GetMetrics(reference.GetFont());
+            var halfXHeight = parentMetrics.XHeight > 0 ? parentMetrics.XHeight / 2 : 0.25 * reference.FontSize;
+
+            return ((above - below) / 2) - halfXHeight;
         }
 
         return 0;
