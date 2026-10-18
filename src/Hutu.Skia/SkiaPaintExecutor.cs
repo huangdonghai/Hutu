@@ -773,7 +773,7 @@ public sealed class SkiaPaintExecutor
             var baseline = (Single)(command.Bounds.Y + command.Baseline);
             DrawRunBlob(canvas, command, baseline, paint, command.LetterSpacing, command.WordSpacing);
 
-            DrawDecorations(canvas, paint, command, metrics, baseline, alongLine: true);
+            DrawDecorations(canvas, paint, command, metrics, baseline, alongLine: true, Along(command, baseline));
 
             return;
         }
@@ -793,7 +793,14 @@ public sealed class SkiaPaintExecutor
 
         // In a column a decoration runs beside the text rather than under it, so it becomes a line
         // down the box at the distance from the baseline that the font asked for.
-        DrawDecorations(canvas, paint, command, metrics, (Single)command.Baseline, alongLine: false);
+        DrawDecorations(
+            canvas,
+            paint,
+            command,
+            metrics,
+            (Single)command.Baseline,
+            alongLine: false,
+            Beside(command, metrics));
     }
 
     /// <summary>
@@ -811,14 +818,25 @@ public sealed class SkiaPaintExecutor
     /// Whether the run reads along a line, so its decorations run with it, or down a column, so they run
     /// beside the text they decorate.
     /// </param>
+    /// <param name="ink">
+    /// Where the run's own glyphs put their ink, as the page sees it: a line asked to skip ink is broken
+    /// where one of these stands across it (§2.10.4), and the list is empty where nothing is to be skipped.
+    /// </param>
     private void DrawDecorations(
         SKCanvas canvas,
         SKPaint paint,
         TextCommand command,
         FontMetrics metrics,
         Single from,
-        Boolean alongLine)
+        Boolean alongLine,
+        SKRect[] ink)
     {
+        // Down a column the line is drawn along the page's other axis, so the boxes are turned to match:
+        // what runs down the text is what a line asked to skip crosses.
+        var across = alongLine
+            ? ink
+            : [.. ink.Select(box => new SKRect(box.Top, box.Left, box.Bottom, box.Right))];
+
         // A column's lines stand across the box instead of under it, and the run's own left edge is
         // where the distance from the baseline begins.
         var origin = alongLine ? 0f : (Single)command.Bounds.X;
@@ -845,6 +863,17 @@ public sealed class SkiaPaintExecutor
 
             paint.Color = new SKColor(decoration.Color);
 
+            // A line-through is never broken; an underline or overline is broken where the page asked
+            // for it, or where auto was left standing and the script of the text does not lie across the
+            // rule (§2.10.4).
+            var skips = decoration.Skip switch
+            {
+                DecorationSkip.None => false,
+                DecorationSkip.All => true,
+                _ => !TextClusters.StandsAcrossTheLine(command.Text),
+            };
+            var blocked = skips ? across : Array.Empty<SKRect>();
+
             if (decoration.Underline)
             {
                 // The face gives the line its zero position; text-underline-offset moves it outward
@@ -861,7 +890,8 @@ public sealed class SkiaPaintExecutor
                     decoration.Shape,
                     alongLine,
                     pulls,
-                    pushes);
+                    pushes,
+                    blocked);
             }
 
             // The face says where its overline goes; a face that will not is answered with the top of
@@ -885,7 +915,8 @@ public sealed class SkiaPaintExecutor
                     decoration.Shape,
                     alongLine,
                     pulls,
-                    pushes);
+                    pushes,
+                    blocked);
             }
 
             // A line-through is left to the run it crosses: §2.5 has its position recomputed wherever the
@@ -901,7 +932,8 @@ public sealed class SkiaPaintExecutor
                     decoration.Shape,
                     alongLine,
                     pulls,
-                    pushes);
+                    pushes,
+                    blocked);
             }
         }
     }
@@ -989,7 +1021,8 @@ public sealed class SkiaPaintExecutor
         DecorationShape shape,
         Boolean alongLine,
         Double trimStart,
-        Double trimEnd)
+        Double trimEnd,
+        SKRect[] ink)
     {
         var height = (Single)thickness;
         var start = (Single)(alongLine ? command.Bounds.X : command.Bounds.Y);
@@ -1009,6 +1042,33 @@ public sealed class SkiaPaintExecutor
             start += (Single)trimEnd;
         }
 
+        if (end <= start)
+        {
+            return;
+        }
+
+        // Where the line is asked to skip ink, it is laid down in the pieces left between the glyphs'
+        // own ink and the room on either side of it; where it is not, the whole stretch is one piece.
+        foreach (var (from, to) in Pieces(start, end, at, height, ink))
+        {
+            Shape(canvas, paint, command, at, height, shape, alongLine, from, to);
+        }
+    }
+
+    /// <summary>
+    /// Lays one shape of a decoration line across one stretch of the text it is drawn over.
+    /// </summary>
+    private static void Shape(
+        SKCanvas canvas,
+        SKPaint paint,
+        TextCommand command,
+        Single at,
+        Single height,
+        DecorationShape shape,
+        Boolean alongLine,
+        Single start,
+        Single end)
+    {
         if (end <= start)
         {
             return;
@@ -1061,6 +1121,130 @@ public sealed class SkiaPaintExecutor
             Band(canvas, paint, position, room, at, height, alongLine);
         }
     }
+
+    /// <summary>
+    /// Cuts the stretch a line is drawn over into the pieces that are left once the glyphs standing across
+    /// it have been taken out, with a room on either side of each of them: the line is not asked to touch
+    /// the letter it stops short of, and where a whole run of ink lies across the band the line is simply
+    /// not drawn there at all (§2.10.4).
+    /// </summary>
+    private static IEnumerable<(Single From, Single To)> Pieces(
+        Single start, Single end, Single at, Single height, SKRect[] ink)
+    {
+        if (ink.Length == 0)
+        {
+            yield return (start, end);
+            yield break;
+        }
+
+        var pad = Math.Max(1, height);
+        var blocked = new List<(Single From, Single To)>();
+
+        foreach (var box in ink)
+        {
+            if (box.Bottom > at && box.Top < at + height)
+            {
+                blocked.Add((box.Left - pad, box.Right + pad));
+            }
+        }
+
+        var position = start;
+
+        foreach (var stop in blocked.OrderBy(box => box.From))
+        {
+            if (stop.To > position && stop.From < end)
+            {
+                if (stop.From > position)
+                {
+                    yield return (position, Math.Min(stop.From, end));
+                }
+
+                position = Math.Max(position, stop.To);
+            }
+
+            if (position >= end)
+            {
+                yield break;
+            }
+        }
+
+        if (position < end)
+        {
+            yield return (position, end);
+        }
+    }
+
+    /// <summary>
+    /// Gets where the glyphs of a run along a line put their ink, as the page sees it. The boxes the blob
+    /// was built with are counted from the run's own start and baseline, which is the place it is drawn at.
+    /// </summary>
+    private SKRect[] Along(TextCommand command, Single baseline) =>
+        Moved(Ink(command), (Single)command.Bounds.X, baseline);
+
+    /// <summary>
+    /// Gets where the glyphs of a run down a column put their ink. Text turned on its side is drawn as the
+    /// blob of a line would be and turned about the point its column starts at, so its boxes are turned the
+    /// same way; text kept upright is drawn as the column's own blob, moved by the room the em box leaves
+    /// across the column. A run welded into the single em it stands for answers with nothing to skip, being
+    /// one glyph's room of its own.
+    /// </summary>
+    private SKRect[] Beside(TextCommand command, FontMetrics metrics)
+    {
+        if (command.Flow.CombinesUpright)
+        {
+            return [];
+        }
+
+        var ink = Ink(command);
+
+        if (command.Flow.Orientation == TextOrientation.Upright)
+        {
+            var emBox = metrics.Ascent + metrics.Descent;
+
+            return Moved(
+                ink,
+                (Single)(command.Bounds.X + ((command.Bounds.Width - emBox) / 2)),
+                (Single)command.Bounds.Y);
+        }
+
+        var baselineX = (Single)(command.Bounds.X + command.Baseline);
+        var upward = command.Flow.InlineSign < 0;
+        var turn = SKMatrix.CreateRotationDegrees(
+            upward ? -90 : 90,
+            baselineX,
+            (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y));
+
+        return [.. Moved(ink, (Single)command.Bounds.X, (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y))
+            .Select(box => turn.MapRect(box))];
+    }
+
+    /// <summary>Gets the ink of this run's glyphs, of the blob they are drawn as.</summary>
+    private SKRect[] Ink(TextCommand command) =>
+        command.Flow.IsVertical && command.Flow.Orientation == TextOrientation.Upright
+            ? _measurer.Blobs.GetColumnInk(
+                command.Font,
+                command.Text,
+                command.LetterSpacing,
+                command.Justification,
+                command.Justifies,
+                command.Expand,
+                command.WordSpacing)
+            : _measurer.Blobs.GetRunInk(
+                command.Font,
+                command.Text,
+                command.LetterSpacing,
+                command.Justification,
+                command.Justifies,
+                command.Expand,
+                command.WordSpacing);
+
+    /// <summary>Moves a run's boxes into the space the page is drawn in.</summary>
+    private static SKRect[] Moved(SKRect[] boxes, Single x, Single y) =>
+        [.. boxes.Select(box => new SKRect(
+            box.Left + x,
+            box.Top + y,
+            box.Right + x,
+            box.Bottom + y))];
 
     private static void Band(
         SKCanvas canvas,

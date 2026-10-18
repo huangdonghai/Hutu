@@ -361,6 +361,13 @@ internal sealed record TextDecorationArea
     /// once the lines have been laid out.
     /// </summary>
     internal DecorationInsets? Inset { get; init; }
+
+    /// <summary>
+    /// Gets whether this element's underlines and overlines are broken where the glyphs' ink crosses
+    /// them. The property is inherited, so a page that says nothing takes what stands above it - and the
+    /// initial answer is the engine's own, not a straight line (CSS Text Decoration 4 §2.10.4).
+    /// </summary>
+    internal DecorationSkip Skip { get; init; }
 }
 
 /// <summary>

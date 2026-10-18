@@ -69,6 +69,8 @@ internal sealed class FusedParent
     /// </summary>
     public Double? UnderlineOffset { get; init; }
 
+    public DecorationSkip Skip { get; init; }
+
     /// <summary>
     /// Whether the parent is a flex container, which is what makes this element a flex item - the
     /// only thing in the cascade that says so, and the only reason <c>flex-grow</c>, <c>flex-shrink</c>,
@@ -197,6 +199,7 @@ internal sealed class FusedParent
         Visibility = style.Visibility,
         VerticalAlign = style.VerticalAlign,
         UnderlineOffset = style.UnderlineOffset,
+        Skip = style.SkipInk,
         InFlex = style.Display.Contains("flex", StringComparison.OrdinalIgnoreCase),
         InGrid = style.Display.Contains("grid", StringComparison.OrdinalIgnoreCase),
         Indent = style.TextIndent,
@@ -548,7 +551,7 @@ internal static class FusedStyleFactory
         else
         {
             var built = ComputedStyle.ResolveDecorationFused(
-                find, parent.UnderlineOffset, face, dimensions);
+                find, parent.UnderlineOffset, parent.Skip, face, dimensions);
 
             textDecoration = pool is null ? built : pool.Decoration(built);
 

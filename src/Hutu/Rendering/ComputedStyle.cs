@@ -1216,6 +1216,7 @@ internal readonly struct ComputedStyle
     internal static TextDecorationArea ResolveDecorationFused(
         Func<String, ICssProperty?> find,
         Double? parentUnderlineOffset,
+        DecorationSkip parentSkip,
         LengthReader.FontSource font,
         IRenderDimensions dimensions)
     {
@@ -1237,6 +1238,7 @@ internal readonly struct ComputedStyle
                 find("text-underline-offset"), parentUnderlineOffset, font, dimensions),
             Inset = ResolveDecorationInsetFused(
                 find("text-decoration-inset"), find("box-decoration-break"), font, dimensions),
+            Skip = ResolveSkipInkFused(find("text-decoration-skip-ink"), parentSkip),
         };
     }
 
@@ -1259,6 +1261,20 @@ internal readonly struct ComputedStyle
     public static Double? ResolveUnderlineOffsetFused(
         ICssProperty? declared, Double? parent, LengthReader.FontSource font, IRenderDimensions dimensions) =>
         declared is null || IsInherit(declared) ? parent : DecorationLength(declared, font, dimensions);
+
+    /// <summary>
+    /// Resolves whether a line is broken where the ink crosses it, for the fused path. The property is
+    /// inherited, so a miss takes the answer standing above it; the initial answer is <c>auto</c>, which
+    /// is the engine's own rather than a straight line (§2.10.4).
+    /// </summary>
+    public static DecorationSkip ResolveSkipInkFused(ICssProperty? declared, DecorationSkip parent) =>
+        declared?.Value?.Trim() switch
+        {
+            "none" => DecorationSkip.None,
+            "all" => DecorationSkip.All,
+            "auto" => DecorationSkip.Auto,
+            _ => parent,
+        };
 
     /// <summary>
     /// Reads how far back the ends of the lines this element asks for stand. A length is taken in pixels
@@ -2857,6 +2873,12 @@ internal readonly struct ComputedStyle
     /// is a share of that inline size (CSS Text Decoration 4 §2.9.1).
     /// </summary>
     internal DecorationInsets? DecorationInset => _values.Decoration.Inset;
+
+    /// <summary>
+    /// Gets whether this element's underlines and overlines are broken where the glyphs' ink crosses them
+    /// (CSS Text Decoration 4 §2.10.4).
+    /// </summary>
+    internal DecorationSkip SkipInk => _values.Decoration.Skip;
 
     // --- Pointer --------------------------------------------------------
 

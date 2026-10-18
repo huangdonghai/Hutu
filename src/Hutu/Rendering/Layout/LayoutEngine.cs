@@ -494,7 +494,8 @@ internal sealed record LayoutProfile(
                 style.DecorationColor ?? ComputedStyle.ToArgb(style.Color),
                 style.DecorationThickness,
                 style.UnderlineOffset,
-                style.DecorationInset)
+                style.DecorationInset,
+                style.SkipInk)
             {
                 Speaker = box.Source,
             }

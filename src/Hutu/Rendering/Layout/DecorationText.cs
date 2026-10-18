@@ -24,6 +24,24 @@ public enum DecorationShape : Byte
 }
 
 /// <summary>
+/// Whether a decoration's line is broken where the text's ink crosses it. Only underlines and overlines
+/// skip at all - a line-through is always continuous - and <c>auto</c> leaves the answer to the engine,
+/// which is what lets a script whose glyphs are drawn across the rule keep it whole
+/// (CSS Text Decoration 4 §2.10.4).
+/// </summary>
+public enum DecorationSkip : Byte
+{
+    /// <summary>Skip where the ink falls, as long as the script of the text wants it.</summary>
+    Auto,
+
+    /// <summary>Draw the line straight through, whatever the glyphs do.</summary>
+    None,
+
+    /// <summary>Skip where the ink falls, whatever script the text is set in.</summary>
+    All,
+}
+
+/// <summary>
 /// One decorating box's lines, as they are drawn across the text they reach.
 /// </summary>
 /// <remarks>
@@ -42,7 +60,8 @@ public sealed record DecorationSource(
     UInt32 Color,
     Double? Thickness,
     Double? UnderlineOffset,
-    DecorationInsets? Insets)
+    DecorationInsets? Insets,
+    DecorationSkip Skip)
 {
     /// <summary>
     /// Gets the element that asked for these lines. It is not part of what the record answers: two boxes
@@ -60,18 +79,21 @@ public sealed record DecorationSource(
         Color == other.Color &&
         Thickness == other.Thickness &&
         UnderlineOffset == other.UnderlineOffset &&
-        Insets == other.Insets;
+        Insets == other.Insets &&
+        Skip == other.Skip;
 
     public override int GetHashCode() =>
         HashCode.Combine(
-            Underline,
-            Overline,
-            LineThrough,
-            (Int32)Shape,
-            Color,
+            HashCode.Combine(
+                Underline,
+                Overline,
+                LineThrough,
+                (Int32)Shape,
+                Color),
             Thickness,
             UnderlineOffset,
-            Insets);
+            Insets,
+            (Byte)Skip);
 }
 
 /// <summary>

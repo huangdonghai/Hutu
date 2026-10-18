@@ -159,6 +159,43 @@ public static class TextClusters
         codePoint is ' ' or 0x00A0 or 0x1361 or 0x10100 or 0x10101 or 0x1039F or 0x1091F;
 
     /// <summary>
+    /// Gets whether the text is set in a script whose glyphs are drawn across the rule rather than clear
+    /// of it, where a line broken at the ink would cut the letters to pieces. Whether
+    /// <c>text-decoration-skip-ink: auto</c> skips at all is asked of the script, which is what CSS Text
+    /// Decoration 4 §2.10.4 says a user agent should do: the ideographs, the kana that stand among them
+    /// and the hangul syllables keep the line whole.
+    /// </summary>
+    public static Boolean StandsAcrossTheLine(String text)
+    {
+        for (var index = 0; index < text.Length;)
+        {
+            var units = TextChunker.UnitsAt(text, index);
+
+            if (StandsAcrossTheLine(TextChunker.CodePointAt(text, index)))
+            {
+                return true;
+            }
+
+            index += units;
+        }
+
+        return false;
+    }
+
+    /// <summary>Gets whether one character belongs to a script that keeps the rule across it.</summary>
+    public static Boolean StandsAcrossTheLine(Int32 codePoint) =>
+        codePoint is >= 0x2E80 and <= 0x33FF or
+            >= 0x3400 and <= 0x4DBF or
+            >= 0x4E00 and <= 0x9FFF or
+            >= 0xA000 and <= 0xA4CF or
+            >= 0xAC00 and <= 0xD7AF or
+            >= 0xF900 and <= 0xFAFF or
+            >= 0xFE10 and <= 0xFE6F or
+            >= 0xFF00 and <= 0xFFEF or
+            >= 0x1F200 and <= 0x1F2FF or
+            >= 0x20000 and <= 0x3FFFF;
+
+    /// <summary>
     /// Gets where the room of <c>word-spacing</c> goes in this text: after every word separator it holds.
     /// </summary>
     /// <remarks>

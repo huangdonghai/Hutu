@@ -149,8 +149,10 @@ public sealed class TextDecorationInsetTests
 
     /// <summary>Two elements side by side, each asking for a green line of its own.</summary>
     private static String Adjoining(String extra) =>
+        // Neither word descends below the baseline, so the rule each element asks for is its own to keep
+        // or to stand back from - the ink of a descender would break it, which is a different matter.
         $"<span style='text-decoration:underline;text-decoration-color:green;{extra}'>xxx</span>" +
-        $"<span style='text-decoration:underline;text-decoration-color:green;{extra}'>yyy</span>";
+        $"<span style='text-decoration:underline;text-decoration-color:green;{extra}'>zzz</span>";
 
     /// <summary>Draws a page where only what is inside the paragraph asks for lines.</summary>
     private static async Task<List<Run>> Singles(String content)

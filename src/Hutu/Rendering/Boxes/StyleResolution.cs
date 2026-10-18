@@ -198,6 +198,7 @@ internal sealed class StyleResolution
         "text-decoration-thickness",
         "text-underline-offset",
         "text-decoration-inset",
+        "text-decoration-skip-ink",
         "box-decoration-break",
         "cursor",
         "caret-color",
