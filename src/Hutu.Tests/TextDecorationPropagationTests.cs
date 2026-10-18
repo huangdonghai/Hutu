@@ -106,6 +106,209 @@ public sealed class TextDecorationPropagationTests
         Assert.That(fromTheRuby["base"].Rows, Is.GreaterThan(plain["base"].Rows), "the ruby's own line");
     }
 
+    [Test]
+    public async Task OneBoxDrawsOneLineAcrossARaisedRun()
+    {
+        // A decorating box uses one position and one thickness along each line, whatever the sizes and the
+        // alignments of the text it runs across (CSS Text Decoration 4 §2.9): the line a container asked
+        // for stays where the rest of the line has it, and the raised run does not get a line of its own
+        // as well. Measured as the rows of solid ink that run the whole width of a run.
+        var rows = await Rows(Raised);
+
+        Assert.That(rows["oo"], Has.Length.EqualTo(1), "one line across the line box");
+        Assert.That(rows["o"], Is.EqualTo(rows["oo"]), "and the raised run is drawn under on that one");
+    }
+
+    [Test]
+    public async Task ARaisedRunLeavesTheLineWhereItsParentHasIt()
+    {
+        // The position is averaged over the text the box decorates on the line, and a run lifted out of
+        // its line's row counts as its parent was set: the superscript has no effect at all on where the
+        // line stands, or on how thick it is (CSS Text Decoration 4 §2.5).
+        var raised = await Rows(Raised);
+        var plain = await Rows(Plain);
+
+        Assert.That(plain["oooooo"], Has.Length.EqualTo(1), "the plain line is drawn under");
+        Assert.That(
+            raised["oo"],
+            Is.EqualTo(plain["oooooo"]),
+            "the line stands where the parent alone puts it");
+    }
+
+    [Test]
+    public async Task ABoxAskingForTheSameLinesAsItsContainerLaysItsOwn()
+    {
+        // Two boxes asking for identical lines are still two decorating boxes, each laying its own
+        // (§2.1, §2.9): the line the raised element asked for goes up with it, while the one its container
+        // asked for runs on at the row of the line.
+        var rows = await Rows(Own);
+
+        Assert.That(rows["oo"], Has.Length.EqualTo(1), "the container lays one line");
+        Assert.That(rows["o"], Has.Length.EqualTo(2), "and the raised run is drawn under twice");
+        Assert.That(rows["o"][1], Is.EqualTo(rows["oo"][0]), "one of them where the line stands");
+    }
+
+    /// <summary>A line with a superscript in it, the same line without one, and a superscript that asks
+    /// for the same lines its container did.</summary>
+    private const String Raised = "oo<span style='vertical-align:super;font-size:20px'>o</span>oo";
+
+    private const String Plain = "oooooo";
+
+    private const String Own =
+        "oo<span style='vertical-align:super;font-size:20px;text-decoration:underline'>o</span>oo";
+
+    /// <summary>A column with a run of another size in it.</summary>
+    private const String Small = "oo<span style='font-size:20px'>o</span>oo";
+
+    [Test]
+    public async Task OneBoxDrawsOneLineBesideARunOfAnotherSize()
+    {
+        // The same rule where the page runs down: one decorating box keeps one position and one thickness
+        // for the line it draws beside a column, however many sizes the text of that column is set in
+        // (CSS Text Decoration 4 §2.9). Measured as the page column the ink stands in.
+        var stands = await Columns(Small);
+        var bare = await Columns(Small, "none");
+
+        Assert.That(stands["oo"], Is.GreaterThan(0), "the line is drawn");
+        Assert.That(bare["oo"], Is.EqualTo(-1), "and only the line runs the whole way down");
+        Assert.That(stands["o"], Is.EqualTo(stands["oo"]), "one line for the whole of the column");
+    }
+
+    /// <summary>Draws one underlined line and reports the rows each run of its text is lined on.</summary>
+    private static async Task<Dictionary<String, Int32[]>> Rows(String content)
+    {
+        using var view = await Loaded(
+            "<div style='font-family:" + Family + ";font-size:40px;text-decoration:underline'>" +
+            content + "</div>");
+
+        var rows = new Dictionary<String, Int32[]>();
+
+        foreach (var run in Walk(view.Layout!.Root).Where(node => node.Kind == LayoutKind.Text))
+        {
+            rows[run.Text!] = Lined(view, run);
+        }
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Gets the first page row of every band of ink that runs across nearly the whole width of a run - one
+    /// band for each line drawn under it. The letters are round ones, so nothing but the lines themselves
+    /// reaches from edge to edge in solid ink: where a glyph is drawn up to the width, its edges are too
+    /// lightly covered to count as ink.
+    /// </summary>
+    private static Int32[] Lined(HutuViewInternal view, LayoutBox run)
+    {
+        var (paint, bitmap) = Drawn(view);
+
+        try
+        {
+            var left = (Int32)Math.Round(run.BorderBox.X - paint.Bounds.X);
+            var right = (Int32)Math.Round(run.BorderBox.Right - paint.Bounds.X);
+            var bottom = (Int32)Math.Round(run.BorderBox.Bottom - paint.Bounds.Y) + 20;
+            var rows = new List<Int32>();
+            var lined = false;
+
+            for (var y = 0; y < Math.Min(bottom, bitmap.Height); y++)
+            {
+                var inked = 0;
+
+                for (var x = left; x < right && x < bitmap.Width; x++)
+                {
+                    if (Inked(bitmap.GetPixel(x, y)))
+                    {
+                        inked++;
+                    }
+                }
+
+                if (right > left && inked >= (right - left) - 2)
+                {
+                    if (!lined)
+                    {
+                        rows.Add(y);
+                    }
+
+                    lined = true;
+                }
+                else
+                {
+                    lined = false;
+                }
+            }
+
+            return [.. rows];
+        }
+        finally
+        {
+            bitmap.Dispose();
+        }
+    }
+
+    /// <summary>Draws one column of text and reports the page column each run of it is lined on.</summary>
+    private static async Task<Dictionary<String, Double>> Columns(String content, String decoration)
+    {
+        using var view = await Loaded(
+            "<div style='writing-mode:vertical-rl;font-family:" + Family + ";font-size:40px;" +
+            "text-decoration:" + decoration + "'>" + content + "</div>");
+
+        var stands = new Dictionary<String, Double>();
+
+        foreach (var run in Walk(view.Layout!.Root).Where(node => node.Kind == LayoutKind.Text))
+        {
+            stands[run.Text!] = Lied(view, run);
+        }
+
+        return stands;
+    }
+
+    /// <summary>Draws one column of text and reports the page column its runs are lined on.</summary>
+    private static Task<Dictionary<String, Double>> Columns(String content) => Columns(content, "underline");
+
+    /// <summary>
+    /// Gets the leftmost page column whose ink runs down nearly the whole height of a run: the line drawn
+    /// beside a column, where there is one.
+    /// </summary>
+    private static Double Lied(HutuViewInternal view, LayoutBox run)
+    {
+        var (paint, bitmap) = Drawn(view);
+
+        try
+        {
+            var top = (Int32)Math.Round(run.BorderBox.Y - paint.Bounds.Y);
+            var bottom = (Int32)Math.Round(run.BorderBox.Bottom - paint.Bounds.Y);
+            var left = (Int32)Math.Round(run.BorderBox.X - paint.Bounds.X);
+            var right = (Int32)Math.Round(run.BorderBox.Right - paint.Bounds.X);
+            var best = -1d;
+
+            for (var x = right; x >= left && x >= 0; x--)
+            {
+                var inked = 0;
+
+                for (var y = top; y < bottom && y < bitmap.Height; y++)
+                {
+                    if (Inked(bitmap.GetPixel(x, y)))
+                    {
+                        inked++;
+                    }
+                }
+
+                if (bottom > top && inked >= (bottom - top) - 2)
+                {
+                    best = x;
+                }
+            }
+
+            return best;
+        }
+        finally
+        {
+            bitmap.Dispose();
+        }
+    }
+
+    /// <summary>Gets whether a pixel carries the ink of a line drawn, rather than the edge of a glyph.</summary>
+    private static Boolean Inked(SKColor pixel) =>
+        pixel.Red < 128 && pixel.Green < 128 && pixel.Blue < 128;
     /// <summary>Draws one ruby pair - a base and its annotation - with the decorations asked for.</summary>
     private static async Task<Dictionary<String, Band>> Ruby(String onParagraph, String onRuby)
     {

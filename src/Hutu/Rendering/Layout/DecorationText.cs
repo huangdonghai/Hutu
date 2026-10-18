@@ -44,6 +44,23 @@ public sealed record DecorationSource(
     Double? UnderlineOffset);
 
 /// <summary>
+/// Where one decorating box's line stands on one line of text and how thick it is, settled from all the
+/// text that box decorates on that line: for underlines and overlines a decorating box uses a single
+/// position and a single thickness on each line, whatever the sizes of the text it runs across
+/// (CSS Text Decoration 4 §2.9). The distances are taken along the axis the line is offset from - down
+/// the page for a line, across it for a column - and from the baseline the line as a whole stands on,
+/// which is not the baseline of the run drawing them where that run sits higher or lower. A line-through
+/// answers none of this: §2.5 has it recomputed wherever the font size changes, so that the text stays
+/// crossed out.
+/// </summary>
+public sealed record DecorationPlacement(
+    Double BaselineShift,
+    Double UnderlineOffset,
+    Double UnderlineThickness,
+    Double OverlineOffset,
+    Double OverlineThickness);
+
+/// <summary>
 /// Reads the words a decoration was declared with: which lines the element asks for, and in what shape.
 /// </summary>
 internal static class DecorationText

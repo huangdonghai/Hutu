@@ -336,7 +336,8 @@ public sealed class TextCommand : PaintCommand
         Double justification = 0,
         Int32 justifies = 0,
         String expand = "auto",
-        Double wordSpacing = 0)
+        Double wordSpacing = 0,
+        IReadOnlyList<DecorationPlacement>? placements = null)
         : base(bounds)
     {
         Text = text;
@@ -352,6 +353,7 @@ public sealed class TextCommand : PaintCommand
         Justifies = justifies;
         Expand = expand;
         WordSpacing = wordSpacing;
+        Placements = placements ?? Array.Empty<DecorationPlacement>();
     }
 
     public String Text { get; }
@@ -411,4 +413,13 @@ public sealed class TextCommand : PaintCommand
     /// that width says they stand (CSS Text 3 §7.1).
     /// </summary>
     public Double WordSpacing { get; }
+
+    /// <summary>
+    /// Gets where each of <see cref="Decorations"/> stands on the line this run is part of, in the same
+    /// order and as many of them: one decorating box draws its underlines and overlines at one position
+    /// and one thickness along the whole of a line, so the answer is taken from all the text the box
+    /// decorates there rather than from this run alone (CSS Text Decoration 4 §2.5, §2.9). A run with
+    /// nothing to say draws each line where its own face puts it.
+    /// </summary>
+    public IReadOnlyList<DecorationPlacement> Placements { get; }
 }

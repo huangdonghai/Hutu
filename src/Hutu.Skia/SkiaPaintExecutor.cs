@@ -811,7 +811,7 @@ public sealed class SkiaPaintExecutor
     /// Whether the run reads along a line, so its decorations run with it, or down a column, so they run
     /// beside the text they decorate.
     /// </param>
-    private static void DrawDecorations(
+    private void DrawDecorations(
         SKCanvas canvas,
         SKPaint paint,
         TextCommand command,
@@ -824,8 +824,19 @@ public sealed class SkiaPaintExecutor
         var origin = alongLine ? 0f : (Single)command.Bounds.X;
         var sign = alongLine ? 1f : -1f;
 
-        foreach (var decoration in command.Decorations)
+        for (var drawn = 0; drawn < command.Decorations.Count; drawn++)
         {
+            var decoration = command.Decorations[drawn];
+
+            // Where the layout settled the line this run stands on, the whole of it is drawn to that
+            // answer: one decorating box uses one position and one thickness on each line for its
+            // underlines and overlines, so a raised run does not carry the line under it up with itself
+            // and a smaller one does not thin it (CSS Text Decoration 4 §2.9). A column keeps its own
+            // baseline: its text is aligned by its central one, which is not the alphabetic baseline
+            // §2.5 averages, and only the offsets the line was measured with travel.
+            var placed = drawn < command.Placements.Count ? command.Placements[drawn] : null;
+            var stood = from + (alongLine && placed is not null ? (Single)placed.BaselineShift : 0f);
+
             paint.Color = new SKColor(decoration.Color);
 
             if (decoration.Underline)
@@ -837,8 +848,10 @@ public sealed class SkiaPaintExecutor
                     canvas,
                     paint,
                     command,
-                    (Single)(origin + from + (sign * (Math.Abs(metrics.UnderlineOffset) + (decoration.UnderlineOffset ?? 0)))),
-                    Thickness(decoration.Thickness, metrics.UnderlineThickness),
+                    (Single)(origin + stood + (sign * (
+                        (placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset))
+                        + (decoration.UnderlineOffset ?? 0)))),
+                    Thickness(decoration.Thickness, placed?.UnderlineThickness ?? metrics.UnderlineThickness),
                     decoration.Shape,
                     alongLine);
             }
@@ -851,16 +864,22 @@ public sealed class SkiaPaintExecutor
                     canvas,
                     paint,
                     command,
-                    (Single)(origin + from - (sign * (metrics.OverlineOffset > 0
-                        ? Math.Abs(metrics.OverlineOffset)
-                        : metrics.Ascent))),
-                    Thickness(decoration.Thickness, metrics.OverlineThickness > 0
-                        ? metrics.OverlineThickness
-                        : metrics.UnderlineThickness),
+                    (Single)(origin + stood - (sign * (placed?.OverlineOffset
+                        ?? (metrics.OverlineOffset > 0
+                            ? Math.Abs(metrics.OverlineOffset)
+                            : metrics.Ascent)))),
+                    Thickness(
+                        decoration.Thickness,
+                        placed?.OverlineThickness
+                            ?? (metrics.OverlineThickness > 0
+                                ? metrics.OverlineThickness
+                                : metrics.UnderlineThickness)),
                     decoration.Shape,
                     alongLine);
             }
 
+            // A line-through is left to the run it crosses: §2.5 has its position recomputed wherever the
+            // font size changes, so that the text stays crossed out rather than following one line.
             if (decoration.LineThrough)
             {
                 DrawLine(

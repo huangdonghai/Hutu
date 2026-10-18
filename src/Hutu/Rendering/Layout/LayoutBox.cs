@@ -162,6 +162,25 @@ internal sealed class LayoutBox
     internal Boolean IsRubyAnnotation { get; set; }
 
     /// <summary>
+    /// Gets or sets where each line this box's text is drawn under stands on the line of text it is part
+    /// of, in the order of <see cref="Decorations"/>, or null for a box that draws none. A decorating box
+    /// uses one position and one thickness along each line for its underlines and overlines, so the answer
+    /// is settled once for the line from all the text the box decorates there rather than once per run of
+    /// it (CSS Text Decoration 4 §2.5, §2.9).
+    /// </summary>
+    internal List<DecorationPlacement>? DecorationPlacements { get; set; }
+
+    /// <summary>
+    /// Gets or sets which of <see cref="Decorations"/> this box's own element asked for, counting from
+    /// the outermost, or -1 where none of them is its own. A run lifting its text out of the row its line
+    /// stands on is answered from its parent for the lines an ancestor asked for, but keeps its own face
+    /// and its own row for the line its own element asked for - which is why a superscript with a
+    /// decoration of its own draws its line with itself, while the one its container asked for runs
+    /// straight on past it (CSS Text Decoration 4 §2.1, §2.5).
+    /// </summary>
+    internal Int32 OwnDecoration { get; set; } = -1;
+
+    /// <summary>
     /// Gets or sets where a list item's marker is drawn, or null for a box that carries none.
     /// </summary>
     /// <remarks>

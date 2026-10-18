@@ -364,18 +364,32 @@ internal sealed record LayoutProfile(
     /// is being arranged, only once the whole tree has been placed. Keeping it out of the painter
     /// matters: painting runs again on every invalidation, layout only when the document changes.
     /// </remarks>
-    private static void ResolveDecorations(LayoutBox box) => ResolveDecorations(box, null);
+    private void ResolveDecorations(LayoutBox box) => ResolveDecorations(box, null);
+
+    private void ResolveDecorations(LayoutBox box, List<DecorationSource>? around) =>
+        ResolveDecorations(box, around, null, null);
 
     /// <summary>
     /// Settles the paint-time facts of a box: its radii, what its background is clipped to, whether it
-    /// hides what overflows, and which decorations its text is drawn under.
+    /// hides what overflows, which decorations its text is drawn under, and where those lines stand.
     /// </summary>
     /// <param name="around">
     /// The lines the boxes above this one asked for and which reach into it - the list this box hands to
     /// its children with its own lines added, and the list a child that lays its own content out is
     /// given nothing of.
     /// </param>
-    private static void ResolveDecorations(LayoutBox box, List<DecorationSource>? around)
+    /// <param name="owner">
+    /// The nearest element box above this one, and <paramref name="spoke"/> the box whose element asked
+    /// for the last of the lines reaching it. The two are the same box only where this box speaks with
+    /// its own element's declaration again - which is what tells a run repeating the element it belongs
+    /// to apart from an element repeating the one it sits inside. Two boxes asking for identical lines
+    /// are still two decorating boxes, each laying its own line.
+    /// </param>
+    private void ResolveDecorations(
+        LayoutBox box,
+        List<DecorationSource>? around,
+        LayoutBox? owner,
+        LayoutBox? spoke)
     {
         var style = box.Source.Style;
 
@@ -393,40 +407,62 @@ internal sealed record LayoutProfile(
 
         // A decoration is asked for by an element and drawn across the text inside it, so the line a
         // block asked for runs on through every inline that follows, and a child that asks for none
-        // takes none of it away (CSS Text Decoration 4 §2.1). A line box and a run of text are not
-        // elements and own no decoration of their own, and an anonymous box borrows a style that was
-        // already paid for by the element it came from - only the element itself is counted. Which is
-        // also why only an element box can interrupt: the line and the runs inside an atomic box borrow
-        // that box's style, and they are the text the box's own decoration is drawn across, not a fresh
-        // context that starts over.
-        // Only an element box can interrupt a line: the line boxes and the runs inside an atomic box
-        // borrow that box's style, and they are the text its own decoration is drawn across rather than
-        // a fresh context starting over. A ruby annotation is apart in its own right, being set above the
-        // base the line under it decorates.
+        // takes none of it away (CSS Text Decoration 4 §2.1). An anonymous box borrows a style that was
+        // already paid for by the element it came from, so only an element box can start a context of
+        // its own: the line boxes and the runs inside an atomic box borrow that box's style, and they are
+        // the text its own decoration is drawn across rather than a fresh context starting over. A ruby
+        // annotation is apart in its own right, being set above the base the line under it decorates.
         var element = box.Kind != LayoutKind.Line && !box.Source.IsAnonymous;
 
         if (element && StandsApart(box) || box.IsRubyAnnotation)
         {
             around = null;
+            spoke = null;
         }
 
         // A run of text asks for the decoration of the element it belongs to even where that element
         // was given no box of its own to say it with - a ruby base and its annotation are laid out as
-        // runs - and asks for it once: the record is compared by value, so a run whose element already
-        // spoke from the box above it adds nothing.
+        // runs - and asks for it once: the box that spoke last is the element the run belongs to only
+        // where the run repeats that element's own declaration, so a child asking for the same lines as
+        // its container is a decorating box in its own right and adds a second line.
         var lines = element || box.Kind == LayoutKind.Text ? SourceOf(style) : null;
+        var own = ReferenceEquals(spoke, owner) ? around?.Count - 1 ?? -1 : -1;
 
-        box.Decorations = lines is null
-            ? around
-            : around is null
-                ? new List<DecorationSource> { lines }
-                : around[^1] == lines
-                    ? around
-                    : [.. around, lines];
+        if (lines is null)
+        {
+            box.Decorations = around;
+        }
+        else if (around is null)
+        {
+            box.Decorations = new List<DecorationSource> { lines };
+            own = 0;
+            spoke = box;
+        }
+        else if (around[^1] == lines && ReferenceEquals(spoke, owner))
+        {
+            box.Decorations = around;
+        }
+        else
+        {
+            box.Decorations = [.. around, lines];
+            own = box.Decorations.Count - 1;
+            spoke = box;
+        }
+
+        box.OwnDecoration = own;
+
+        var enclosing = element && box.Kind != LayoutKind.Text ? box : owner;
 
         foreach (var child in box.Children)
         {
-            ResolveDecorations(child, box.Decorations);
+            ResolveDecorations(child, box.Decorations, enclosing, spoke);
+        }
+
+        // One line of text is underlined as one thing, however many runs of text it is set out of, so
+        // its answer is taken from the runs once they know which boxes decorate them.
+        if (box.Kind == LayoutKind.Line)
+        {
+            SetDecorationLines(box);
         }
     }
 
@@ -447,6 +483,223 @@ internal sealed record LayoutProfile(
                 style.DecorationThickness,
                 style.UnderlineOffset)
             : null;
+
+    /// <summary>
+    /// Settles where the lines drawn across this line of text stand, and how thick they are. A decorating
+    /// box uses one position and one thickness on each line for its underlines and overlines (CSS Text
+    /// Decoration 4 §2.9), coming at them from the whole of the text it decorates on that line - its
+    /// considered text - by averaging the ideal offsets those faces ask for and then standing the line on
+    /// the lowest alphabetic baseline the considered text reaches (§2.5). A run standing out of the row its
+    /// line is drawn on is counted as the face its parent is set in and as standing where its parent does
+    /// for every box above it, which is what keeps a superscript from throwing the line off-kilter, and
+    /// keeps its own row for the decoration its own element asked for. A line-through answers
+    /// none of this: §2.5 has it recomputed wherever the font size changes, so that the text stays crossed
+    /// out.
+    /// </summary>
+    private void SetDecorationLines(LayoutBox line)
+    {
+        var runs = new List<ConsideredRun>();
+        ConsideredRuns(line, null, null, runs);
+
+        // One answer per decorating box, told apart by the list of lines it reaches and the place in it:
+        // a run's own lines and its container's are averaged separately, since each box lays its own.
+        var ideals = new Dictionary<(IReadOnlyList<DecorationSource>, Int32), LineIdeal>();
+
+        foreach (var run in runs)
+        {
+            for (var asked = 0; asked < run.Asked.Count; asked++)
+            {
+                if (!run.Shifted(asked))
+                {
+                    Ideal(ideals, line, run, asked).Stand(run.Baseline);
+                }
+            }
+        }
+
+        foreach (var run in runs)
+        {
+            for (var asked = 0; asked < run.Asked.Count; asked++)
+            {
+                var ideal = Ideal(ideals, line, run, asked);
+                var shifted = run.Shifted(asked);
+                var face = _measurer.GetMetrics(run.Box.Font);
+
+                ideal.Add(
+                    shifted ? _measurer.GetMetrics(run.Parent) : face,
+                    shifted ? face : (FontMetrics?)null,
+                    ideal.Stood - run.Baseline);
+            }
+        }
+
+        foreach (var run in runs)
+        {
+            var placements = new List<DecorationPlacement>(run.Asked.Count);
+
+            for (var asked = 0; asked < run.Asked.Count; asked++)
+            {
+                var ideal = Ideal(ideals, line, run, asked);
+
+                placements.Add(ideal.Place(ideal.Stood - run.Baseline));
+            }
+
+            run.Box.DecorationPlacements = placements;
+        }
+    }
+
+    /// <summary>
+    /// Gets the record the one decorating box at this place in this run's lines is being averaged into,
+    /// opening a fresh one where it has not been asked for yet. The line the box's text stands on starts
+    /// at the row the line box itself was placed on, which is where a run lifted out of the row is
+    /// answered from.
+    /// </summary>
+    private static LineIdeal Ideal(
+        Dictionary<(IReadOnlyList<DecorationSource>, Int32), LineIdeal> ideals,
+        LayoutBox line,
+        ConsideredRun run,
+        Int32 asked) =>
+        ideals.TryGetValue((run.Asked, asked), out var ideal)
+            ? ideal
+            : ideals[(run.Asked, asked)] = new LineIdeal(Along(line));
+
+    /// <summary>
+    /// Sums what one decorating box's line takes from each run of the text it decorates: the ideal offsets
+    /// and the thicknesses averaged over the runs, and the overline lifted to the highest edge they reach.
+    /// </summary>
+    /// <param name="stood">
+    /// The row the line is drawn on, which is the lowest alphabetic baseline the runs that stand on their
+    /// line's own reach, or the row the line box was placed on where none of them does.
+    /// </param>
+    private sealed class LineIdeal(Double stood)
+    {
+        private Boolean _settled;
+        private Double _stood = stood;
+        private Int32 _count;
+        private Double _underline;
+        private Double _underlineThickness;
+        private Double _overline;
+        private Double _overlineThickness;
+
+        /// <summary>Takes the line down to this run's baseline, where it stands lower than any before it.</summary>
+        internal void Stand(Double baseline)
+        {
+            if (!_settled || baseline > _stood)
+            {
+                _stood = baseline;
+            }
+
+            _settled = true;
+        }
+
+        /// <summary>Gets the row the line is drawn on.</summary>
+        internal Double Stood => _stood;
+
+        /// <param name="shift">
+        /// How far the run's own baseline sits below the row the line stands on: an edge taken from the run
+        /// is that much lower than the same edge measured from the line.
+        /// </param>
+        /// <param name="lifted">
+        /// The run's own face where it stands out of the row its line is drawn on, or null where the face
+        /// it is answered from is the one it is set in: an overline goes to the edge the run's own em box
+        /// reaches, wherever it stands, while its underline is the parent's.
+        /// </param>
+        internal void Add(FontMetrics face, FontMetrics? lifted, Double shift)
+        {
+            _count++;
+            _underline += Math.Abs(face.UnderlineOffset);
+            _underlineThickness += face.UnderlineThickness;
+
+            var over = lifted ?? face;
+
+            _overlineThickness += over.OverlineThickness > 0
+                ? over.OverlineThickness
+                : over.UnderlineThickness;
+
+            // A face that will not say where its overline goes is answered with the top of its own em box,
+            // which is the only other height the line could be taken from.
+            _overline = Math.Max(
+                _overline,
+                shift + (over.OverlineOffset > 0 ? Math.Abs(over.OverlineOffset) : over.Ascent));
+        }
+
+        internal DecorationPlacement Place(Double shift) =>
+            new(
+                shift,
+                _underline / _count,
+                _underlineThickness / _count,
+                _overline,
+                _overlineThickness / _count);
+    }
+
+    /// <summary>
+    /// Gets where a box's baseline stands along the axis its decorations are offset from: down the page
+    /// for a line, across it for a column.
+    /// </summary>
+    private static Double Along(LayoutBox box) =>
+        (box.Vertical ? box.BorderBox.X : box.BorderBox.Y) + box.Baseline;
+
+    /// <summary>
+    /// Collects the runs of text whose lines this line settles: the text it carries at any depth, but not
+    /// what an atomic box or a ruby annotation sets inside itself, neither of which takes part in the line
+    /// the decoration runs across (CSS Text Decoration 4 §2.5).
+    /// </summary>
+    /// <param name="face">
+    /// The font the text below is set in, and <paramref name="parent"/> the font of the element that
+    /// element sits inside. The pair is stepped down whenever a box changes the font on the way in,
+    /// because §2.5 answers for a run lifted out of its line's row from the face its parent is set in.
+    /// </param>
+    private void ConsideredRuns(LayoutBox box, FontStyle? face, FontStyle? parent, List<ConsideredRun> runs)
+    {
+        var own = box.Source.Style.GetFont();
+
+        if (box.Kind != LayoutKind.Line && !box.Source.IsAnonymous &&
+            (box.IsRubyAnnotation || StandsApart(box)))
+        {
+            return;
+        }
+
+        if (face is null || !face.Equals(own))
+        {
+            parent = face;
+            face = own;
+        }
+
+        if (box.Kind == LayoutKind.Text && box.Decorations is { Count: > 0 } asked)
+        {
+            runs.Add(new ConsideredRun(
+                box,
+                asked,
+                parent ?? box.Font,
+                Along(box),
+                box.OwnDecoration,
+                !box.Source.Style.VerticalAlign.Equals("baseline", StringComparison.OrdinalIgnoreCase)));
+        }
+
+        foreach (var child in box.Children)
+        {
+            ConsideredRuns(child, face, parent, runs);
+        }
+    }
+
+    /// <summary>
+    /// One run of text a line settles its decorations from: where its own baseline stands, the face its
+    /// parent is set in, which of the lines reaching it its own element asked for, and whether it stands
+    /// out of the row its line is drawn on.
+    /// </summary>
+    private sealed record ConsideredRun(
+        LayoutBox Box,
+        IReadOnlyList<DecorationSource> Asked,
+        FontStyle Parent,
+        Double Baseline,
+        Int32 Own,
+        Boolean Raised)
+    {
+        /// <summary>
+        /// Gets whether this run is answered from its parent for the lines asked for at this place: a run
+        /// lifted out of its line's row keeps its own row only for the decoration its own element asked
+        /// for, and stands where its parent does for every box above it (CSS Text Decoration 4 §2.5).
+        /// </summary>
+        internal Boolean Shifted(Int32 asked) => Raised && asked != Own;
+    }
 
     /// <summary>
     /// Gets whether the box stands apart from the line its ancestors are drawn on: one that is set as a
