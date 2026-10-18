@@ -433,11 +433,14 @@ internal readonly struct ComputedStyle
     /// nested relative sizes from stacking. <c>inherit</c> and <c>unset</c> name the parent's
     /// size directly; <c>initial</c> is the medium size the device stands in for.
     /// </remarks>
-    public static Double ResolveFontSizeFused(ICssProperty? declared, Double parentFontSize, IRenderDimensions dimensions)
+    public static Double ResolveFontSizeFused(
+        ICssProperty? declared, LengthReader.FontSource parent, IRenderDimensions dimensions)
     {
+        var parentFontSize = parent.Value;
+
         if (declared?.RawValue is CssLengthValue relative && IsFontRelative(relative.Type))
         {
-            return ResolveFontRelative(relative, parentFontSize);
+            return ResolveFontRelative(relative, parent, dimensions);
         }
 
         if (declared?.RawValue is { } raw)
@@ -605,7 +608,7 @@ internal readonly struct ComputedStyle
         // gives - the declaration behind that value is what is read again, not the value itself.
         if (declared is not null && !IsInherit(declared))
         {
-            return ResolveLineHeightValue(declared, font.Value, dimensions);
+            return ResolveLineHeightValue(declared, font, dimensions);
         }
 
         if (parentResolved is null)
@@ -1552,11 +1555,11 @@ internal readonly struct ComputedStyle
         ((declared.RawValue is { } raw && IsInheritKeyword(raw)) ||
          declared.Value?.Trim().Equals("inherit", StringComparison.OrdinalIgnoreCase) == true);
 
-    private static Double? ResolveLineHeightValue(ICssProperty declared, Double size, IRenderDimensions dimensions)
+    private static Double? ResolveLineHeightValue(ICssProperty declared, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
         if (declared.RawValue is CssLengthValue share && share.Type == CssLengthValue.Unit.Percent)
         {
-            return share.Value * 0.01 * size;
+            return share.Value * 0.01 * font.Value;
         }
 
         var text = declared.Value;
@@ -1575,7 +1578,7 @@ internal readonly struct ComputedStyle
 
         if (Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor))
         {
-            return factor * size;
+            return factor * font.Value;
         }
 
         // A line height written as a calc() keeps line-height's own rules: a percentage and a
@@ -1583,12 +1586,12 @@ internal readonly struct ComputedStyle
         // root. Folding against that size returns every length already in pixels; only a plain number is
         // left bare, and a line height reads it as a multiple of the same size.
         if (declared.RawValue is CssCalcValue calc &&
-            LengthReader.TryFoldCalcRaw(calc, size, out var unit, out var number))
+            LengthReader.TryFoldCalcRaw(calc, font.Value, out var unit, out var number))
         {
-            return unit == CssLengthValue.Unit.None ? number * size : number;
+            return unit == CssLengthValue.Unit.None ? number * font.Value : number;
         }
 
-        return TryReadLengthValue(declared, RenderMode.Vertical, new LengthReader.FontSource(size), dimensions, out var pixels)
+        return TryReadLengthValue(declared, RenderMode.Vertical, font, dimensions, out var pixels)
             ? pixels
             : null;
     }
@@ -2222,20 +2225,28 @@ internal readonly struct ComputedStyle
         unit is CssLengthValue.Unit.Em or CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch or CssLengthValue.Unit.Percent;
 
     /// <summary>
-    /// Resolves a relative <c>font-size</c> against the parent's font size. A percentage is a share of
-    /// it; an <c>em</c> is a multiple of it; <c>ex</c> and <c>ch</c> keep the half-em approximation the
-    /// rest of the engine uses for them.
+    /// Resolves a relative <c>font-size</c> against the parent's font. A percentage is a share of its
+    /// size; an <c>em</c> is a multiple of it; <c>ex</c> and <c>ch</c> are heights of the parent's face,
+    /// when the caller has that face - and the half of its size when it has only the size.
     /// </summary>
     private Double ResolveFontRelative(CssLengthValue value) =>
-        ResolveFontRelative(value, _parentFontSize);
+        ResolveFontRelative(value, new LengthReader.FontSource(_parentFontSize), _dimensions);
 
-    private static Double ResolveFontRelative(CssLengthValue value, Double parentFontSize)
+    private static Double ResolveFontRelative(
+        CssLengthValue value, LengthReader.FontSource parent, IRenderDimensions dimensions)
     {
         // The root is the one element with no parent to take a size from, and its share is of the
         // initial value rather than of the size it is deciding - which is also why the device is not
         // asked here: by the time a child is read the device carries the root's size, and the root's
         // own was resolved while it still carried the initial one.
-        var reference = parentFontSize > 0 ? parentFontSize : HutuRenderDevice.InitialFontSize;
+        var reference = parent.Value > 0 ? parent.Value : HutuRenderDevice.InitialFontSize;
+
+        // The parent's face, not the size being decided: a child written in ex is measured by the
+        // lowercase its parent was set in.
+        if (LengthReader.FaceMeasure(value.Type, dimensions, parent) is { } measure)
+        {
+            return value.Value * measure;
+        }
 
         return value.Type switch
         {

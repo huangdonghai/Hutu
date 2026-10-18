@@ -99,10 +99,10 @@ internal readonly struct TableStyle
     internal static TableStyle ReadFused(
         Func<String, ICssProperty?> find,
         String verticalAlign,
-        Double ownSize,
+        LengthReader.FontSource font,
         IRenderDimensions dimensions)
     {
-        var (horizontal, vertical) = ReadSpacingFused(find("border-spacing"), ownSize, dimensions);
+        var (horizontal, vertical) = ReadSpacingFused(find("border-spacing"), font, dimensions);
 
         return new TableStyle(
             Keyword(find("border-collapse")) == "collapse",
@@ -119,7 +119,7 @@ internal readonly struct TableStyle
     /// applies to both axes; two are the horizontal then the vertical one, in that order.
     /// </summary>
     private static (Double Horizontal, Double Vertical) ReadSpacingFused(
-        ICssProperty? declared, Double ownSize, IRenderDimensions dimensions)
+        ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
         if (declared is null)
         {
@@ -130,15 +130,15 @@ internal readonly struct TableStyle
         // AngleSharp produces a generic instantiation the tuple class alone does not match.
         if (LengthReader.Items(declared.RawValue) is { Count: > 0 } items)
         {
-            var horizontal = SpacingOf(items[0], ownSize, dimensions);
+            var horizontal = SpacingOf(items[0], font, dimensions);
 
             if (horizontal is { } first)
             {
-                return (first, items.Count > 1 ? SpacingOf(items[1], ownSize, dimensions) ?? first : first);
+                return (first, items.Count > 1 ? SpacingOf(items[1], font, dimensions) ?? first : first);
             }
         }
 
-        if (LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var single) &&
+        if (LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var single) &&
             single.HasValue)
         {
             var value = Math.Max(0, single.Resolve(0));
@@ -148,8 +148,8 @@ internal readonly struct TableStyle
         return (0, 0);
     }
 
-    private static Double? SpacingOf(ICssValue item, Double ownSize, IRenderDimensions dimensions) =>
-        LengthReader.TryReadValue(item, RenderMode.Horizontal, dimensions, ownSize, out var length) && length.HasValue
+    private static Double? SpacingOf(ICssValue item, LengthReader.FontSource font, IRenderDimensions dimensions) =>
+        LengthReader.TryReadValue(item, RenderMode.Horizontal, dimensions, font, out var length) && length.HasValue
             ? Math.Max(0, length.Resolve(0))
             : null;
 

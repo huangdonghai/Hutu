@@ -248,7 +248,13 @@ internal static class FusedStyleFactory
             return property;
         };
 
-        var size = ComputedStyle.ResolveFontSizeFused(find("font-size"), parent.FontSize, dimensions);
+        // The parent's face travels with its size, because a relative font-size written in ex or ch is
+        // measured off that face rather than off the number.
+        var size = ComputedStyle.ResolveFontSizeFused(
+            find("font-size"),
+            new LengthReader.FontSource(
+                new Hutu.Rendering.Layout.FontStyle(parent.FontFamily, parent.FontSize, parent.Weight, parent.Italic)),
+            dimensions);
 
         // The root's size is the number every `rem` further down the document is a share of, and the
         // length conversion has only the device to ask for it - so this is the one moment it is known,
@@ -594,7 +600,7 @@ internal static class FusedStyleFactory
         // use for, so they are only read where the display says the box is one. Every spelling of it
         // - table, inline-table, table-row, table-cell and the rest - carries the word.
         values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)
-            ? TableStyle.ReadFused(find, text.VerticalAlign, size, dimensions)
+            ? TableStyle.ReadFused(find, text.VerticalAlign, face, dimensions)
             : null;
 
         // The flex longhands are read for a flex container - every spelling carries the word - and
@@ -603,13 +609,13 @@ internal static class FusedStyleFactory
         var flex = display.Display.Contains("flex", StringComparison.OrdinalIgnoreCase);
 
         values.Flex = flex || parent.InFlex
-            ? FlexStyle.ReadFused(find, size, dimensions)
+            ? FlexStyle.ReadFused(find, face, dimensions)
             : null;
 
         // The grid longhands are read for a container - every spelling carries the word - while an
         // item is recognised by its parent's display and asked only for its own placement.
         values.Grid = display.Display.Contains("grid", StringComparison.OrdinalIgnoreCase)
-            ? GridStyle.ReadFused(find, size, dimensions)
+            ? GridStyle.ReadFused(find, face, dimensions)
             : null;
 
         values.GridItem = parent.InGrid ? GridItemStyle.ReadFused(find) : null;

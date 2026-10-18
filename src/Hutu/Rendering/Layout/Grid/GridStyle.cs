@@ -414,10 +414,10 @@ internal readonly struct GridStyle
     /// in both and the two contexts have to agree about a page that sets it.
     /// </summary>
     internal static GridStyle ReadFused(
-        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
+        Func<String, ICssProperty?> find, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
-        var (row, column) = FlexStyle.GapsFused(find, ownSize, dimensions);
-        return Read(Source.Of(find, ownSize, dimensions), row, column);
+        var (row, column) = FlexStyle.GapsFused(find, font, dimensions);
+        return Read(Source.Of(find, font, dimensions), row, column);
     }
 
     private static GridStyle Read(Source source, Double rowGap, Double columnGap)
@@ -828,10 +828,10 @@ internal readonly struct GridStyle
         private readonly ComputedStyle? _style;
         private readonly Func<String, ICssProperty?>? _find;
         private readonly IRenderDimensions _dimensions;
-        private readonly Double _size;
+        private readonly LengthReader.FontSource _size;
 
         private Source(
-            ComputedStyle? style, Func<String, ICssProperty?>? find, IRenderDimensions dimensions, Double size)
+            ComputedStyle? style, Func<String, ICssProperty?>? find, IRenderDimensions dimensions, LengthReader.FontSource size)
         {
             _style = style;
             _find = find;
@@ -842,7 +842,7 @@ internal readonly struct GridStyle
         public static Source Of(ComputedStyle style) => new(style, null, style.Dimensions, 0);
 
         public static Source Of(
-            Func<String, ICssProperty?> find, Double size, IRenderDimensions dimensions) =>
+            Func<String, ICssProperty?> find, LengthReader.FontSource size, IRenderDimensions dimensions) =>
             new(null, find, dimensions, size);
 
         public ComputedStyle? Style => _style;

@@ -189,14 +189,14 @@ internal readonly struct FlexStyle
     /// a box is would cost as much as the reads, and the ones that do not apply are never asked for.
     /// </summary>
     internal static FlexStyle ReadFused(
-        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
+        Func<String, ICssProperty?> find, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
-        var (rowGap, columnGap) = ReadGapsFused(find, ownSize, dimensions);
+        var (rowGap, columnGap) = ReadGapsFused(find, font, dimensions);
         var justify = ReadAlignmentFused(find("justify-content"), CssInitialValues.JustifyContent);
 
         var grow = ReadNumberFused(find("flex-grow"), 0);
         var shrink = ReadNumberFused(find("flex-shrink"), 1);
-        var basis = ReadBasisFused(find("flex-basis"), ownSize, dimensions);
+        var basis = ReadBasisFused(find("flex-basis"), font, dimensions);
         var basisIsContent = Text(find("flex-basis")) == "content";
 
         // The keyword forms of the shorthand are stored as a whole rather than split into their
@@ -237,9 +237,9 @@ internal readonly struct FlexStyle
     /// between every pair of rows.
     /// </remarks>
     private static (Double Row, Double Column) ReadGapsFused(
-        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
+        Func<String, ICssProperty?> find, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
-        return Gaps(find, ownSize, dimensions);
+        return Gaps(find, font, dimensions);
     }
 
     /// <summary>
@@ -247,11 +247,11 @@ internal readonly struct FlexStyle
     /// longhands, and the two contexts have to read a page the same way.
     /// </summary>
     internal static (Double Row, Double Column) GapsFused(
-        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions) =>
-        Gaps(find, ownSize, dimensions);
+        Func<String, ICssProperty?> find, LengthReader.FontSource font, IRenderDimensions dimensions) =>
+        Gaps(find, font, dimensions);
 
     private static (Double Row, Double Column) Gaps(
-        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions)
+        Func<String, ICssProperty?> find, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
         // The grid-prefixed names are the legacy aliases of the two longhands (CSS Gaps 1 §2.4:
         // "grid-row-gap as a legacy name alias of the row-gap property"), and a page that writes only
@@ -259,23 +259,23 @@ internal readonly struct FlexStyle
         // answers nothing; a page that declares both lets the standard one win, whichever order the
         // two were written in, because only the declaration list could weigh the alias against the
         // name and the fused path reads one declaration at a time.
-        var row = ReadGapFused(find("row-gap"), ownSize, dimensions) ??
-            ReadGapFused(find("grid-row-gap"), ownSize, dimensions);
-        var column = ReadGapFused(find("column-gap"), ownSize, dimensions) ??
-            ReadGapFused(find("grid-column-gap"), ownSize, dimensions);
+        var row = ReadGapFused(find("row-gap"), font, dimensions) ??
+            ReadGapFused(find("grid-row-gap"), font, dimensions);
+        var column = ReadGapFused(find("column-gap"), font, dimensions) ??
+            ReadGapFused(find("grid-column-gap"), font, dimensions);
 
         return (row ?? 0, column ?? 0);
     }
 
-    private static Double? ReadGapFused(ICssProperty? declared, Double ownSize, IRenderDimensions dimensions) =>
+    private static Double? ReadGapFused(ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions) =>
         declared is not null &&
-        LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var gap) &&
+        LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var gap) &&
         gap.HasValue
             ? Math.Max(0, gap.Resolve(0))
             : null;
 
-    private static Double? GapOfFused(ICssValue item, Double ownSize, IRenderDimensions dimensions) =>
-        LengthReader.TryReadValue(item, RenderMode.Horizontal, dimensions, ownSize, out var gap) && gap.HasValue
+    private static Double? GapOfFused(ICssValue item, LengthReader.FontSource font, IRenderDimensions dimensions) =>
+        LengthReader.TryReadValue(item, RenderMode.Horizontal, dimensions, font, out var gap) && gap.HasValue
             ? Math.Max(0, gap.Resolve(0))
             : null;
 
@@ -323,9 +323,9 @@ internal readonly struct FlexStyle
         return text.Length == 0 ? fallback : Parse(text, fallback);
     }
 
-    private static StyleLength ReadBasisFused(ICssProperty? declared, Double ownSize, IRenderDimensions dimensions) =>
+    private static StyleLength ReadBasisFused(ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions) =>
         declared is not null &&
-        LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var basis) &&
+        LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var basis) &&
         basis.HasValue
             ? basis
             : StyleLength.Auto;

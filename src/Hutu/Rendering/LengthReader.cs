@@ -364,9 +364,11 @@ internal static class LengthReader
     /// <c>ch</c> - or nothing when there is no face to ask, which is the answer that leaves the unit to
     /// the size it was measured from.
     /// </summary>
-    private static Double? FaceMeasure(CssLengthValue.Unit unit, IRenderDimensions dimensions, FontSource font)
+    internal static Double? FaceMeasure(CssLengthValue.Unit unit, IRenderDimensions dimensions, FontSource font)
     {
-        if (dimensions is not IFontMetricSource metrics || font.Font is not { } face)
+        if (unit is not (CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch) ||
+            dimensions is not IFontMetricSource metrics ||
+            font.Font is not { } face)
         {
             return null;
         }

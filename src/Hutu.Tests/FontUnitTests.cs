@@ -65,6 +65,62 @@ public sealed class FontUnitTests
         Assert.That(Box(view).Width, Is.EqualTo(20), "four of the half-em the size leaves to the unit");
     }
 
+    [Test]
+    public async Task ARelativeFontSizeIsMeasuredFromTheParentsFace()
+    {
+        using var view = CreateView(new SkiaTextMeasurer());
+
+        // The child asks for two ex of the font it was handed, and the parent is set in Ahem at twenty:
+        // the size the child comes out at is twice the parent's x-height, and Ahem's advance is the whole
+        // of its em, so the width of one of its characters reads the size back.
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='font-family:Ahem;font-size:20px'>" +
+            "<span id='x' style='font-size:2ex'>x</span></div></body></html>");
+
+        Assert.That(Box(view).Width, Is.EqualTo(32), "two of the parent's x-heights");
+    }
+
+    [Test]
+    public async Task ALineHeightWrittenInExIsMeasuredFromTheFaceToo()
+    {
+        using var view = CreateView(new SkiaTextMeasurer());
+
+        // line-height is the one length the reader parses out of the string it was given rather than as
+        // a length value, and it has to land on the same unit as every other property.
+        await view.SetHtml(
+            "<html><body style='margin:0'><div id='x' style='font-family:Ahem;font-size:20px;" +
+            "line-height:1ex'>x</div></body></html>");
+
+        Assert.That(Box(view).Height, Is.EqualTo(16), "one x-height of leading");
+    }
+
+    [Test]
+    public async Task AGapWrittenInChIsMeasuredFromTheFace()
+    {
+        using var view = CreateView(new SkiaTextMeasurer());
+
+        // The track readers of flex, grid and table took the size alone; a gap written in ch is the
+        // width of the face's zero, and Ahem's zero is its whole em.
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='display:flex;column-gap:1ch;font-family:Ahem;" +
+            "font-size:20px'><div style='width:10px;height:10px'></div><div id='x' style='width:10px;height:10px'></div>" +
+            "</div></body></html>");
+
+        Assert.That(Box(view).X, Is.EqualTo(30), "the first box, then the zero-wide gap of twenty");
+    }
+
+    [Test]
+    public async Task AnInsetWrittenInExIsMeasuredFromTheFace()
+    {
+        using var view = CreateView(new SkiaTextMeasurer());
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div id='x' style='position:relative;top:1ex;" +
+            "font-family:Ahem;font-size:20px;width:0;height:0'></div></body></html>");
+
+        Assert.That(Box(view).Y, Is.EqualTo(16), "one x-height of offset");
+    }
+
     private static String Page(String style) =>
         "<html><body style='margin:0'><div id='x' style='" + style + "'>x</div></body></html>";
 
