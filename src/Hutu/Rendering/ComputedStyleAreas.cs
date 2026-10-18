@@ -333,6 +333,20 @@ internal sealed record TextDecorationArea
     internal DecorationShape Style { get; init; }
 
     /// <summary>
+    /// Gets how thick the element's lines are, in pixels, or null where the page left it to the face:
+    /// <c>auto</c> and <c>from-font</c> both want the font's own underline metrics, and a percentage is
+    /// already a share of the size the text is set at (CSS Text Decoration 4 §2.4).
+    /// </summary>
+    internal Double? Thickness { get; init; }
+
+    /// <summary>
+    /// Gets how far this element's underlines stand from the position the font gives them, in pixels, or
+    /// null for <c>auto</c>. Of the decoration properties this one is inherited, and it says nothing
+    /// about a line an ancestor asked for (CSS Text Decoration 4 §2.8).
+    /// </summary>
+    internal Double? UnderlineOffset { get; init; }
+
+    /// <summary>
     /// Gets the colour the element's lines are drawn in, or null where it said none: the initial value is
     /// <c>currentcolor</c>, and the box that decorates supplies its own text colour then - not the colour
     /// of the text the line happens to be running across (CSS Text Decoration 4 §2.3).

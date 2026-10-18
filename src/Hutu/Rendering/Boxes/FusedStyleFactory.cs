@@ -64,6 +64,12 @@ internal sealed class FusedParent
     public String VerticalAlign { get; init; } = CssInitialValues.VerticalAlign;
 
     /// <summary>
+    /// Gets how far the parent's underlines stood from the position the font gives them. The property is
+    /// inherited, so this is the only channel through which it reaches the text below.
+    /// </summary>
+    public Double? UnderlineOffset { get; init; }
+
+    /// <summary>
     /// Whether the parent is a flex container, which is what makes this element a flex item - the
     /// only thing in the cascade that says so, and the only reason <c>flex-grow</c>, <c>flex-shrink</c>,
     /// <c>flex-basis</c>, <c>order</c> and <c>align-self</c> mean anything on it.
@@ -190,6 +196,7 @@ internal sealed class FusedParent
         TextJustify = style.TextJustify,
         Visibility = style.Visibility,
         VerticalAlign = style.VerticalAlign,
+        UnderlineOffset = style.UnderlineOffset,
         InFlex = style.Display.Contains("flex", StringComparison.OrdinalIgnoreCase),
         InGrid = style.Display.Contains("grid", StringComparison.OrdinalIgnoreCase),
         Indent = style.TextIndent,
@@ -540,7 +547,8 @@ internal static class FusedStyleFactory
         }
         else
         {
-            var built = ComputedStyle.ResolveDecorationFused(find);
+            var built = ComputedStyle.ResolveDecorationFused(
+                find, parent.UnderlineOffset, face, dimensions);
 
             textDecoration = pool is null ? built : pool.Decoration(built);
 

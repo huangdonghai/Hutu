@@ -433,7 +433,9 @@ internal sealed record LayoutProfile(
                 style.HasOverline,
                 style.HasLineThrough,
                 style.Decoration,
-                style.DecorationColor ?? ComputedStyle.ToArgb(style.Color))
+                style.DecorationColor ?? ComputedStyle.ToArgb(style.Color),
+                style.DecorationThickness,
+                style.UnderlineOffset)
             : null;
 
     /// <summary>

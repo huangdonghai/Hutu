@@ -1213,7 +1213,11 @@ internal readonly struct ComputedStyle
     /// Resolves the text decoration flags from the element's own cascaded declarations, for
     /// the fused path.
     /// </summary>
-    internal static TextDecorationArea ResolveDecorationFused(Func<String, ICssProperty?> find)
+    internal static TextDecorationArea ResolveDecorationFused(
+        Func<String, ICssProperty?> find,
+        Double? parentUnderlineOffset,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions)
     {
         var line = find("text-decoration-line")?.Value;
         var shorthand = find("text-decoration")?.Value;
@@ -1228,7 +1232,40 @@ internal readonly struct ComputedStyle
             // The cascade expands the shorthand into its longhands, so the colour the shorthand carries
             // is read from the same place the line and the shape are.
             Color = find("text-decoration-color")?.RawValue is CssColorValue { } color ? ToArgb(color) : null,
+            Thickness = ResolveDecorationThicknessFused(find("text-decoration-thickness"), font, dimensions),
+            UnderlineOffset = ResolveUnderlineOffsetFused(
+                find("text-underline-offset"), parentUnderlineOffset, font, dimensions),
         };
+    }
+
+    /// <summary>
+    /// Resolves how thick a decoration line is, for the fused path. The property is not inherited: a miss
+    /// says nothing, and the face's own metrics are what the line then takes - which is also what
+    /// <c>auto</c> and <c>from-font</c> ask for, since this engine reads its metrics from the face
+    /// (CSS Text Decoration 4 §2.4).
+    /// </summary>
+    public static Double? ResolveDecorationThicknessFused(
+        ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions) =>
+        declared is not null && !IsInherit(declared) &&
+        TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels)
+            ? pixels
+            : null;
+
+    /// <summary>
+    /// Resolves how far an underline stands from where the font puts it, for the fused path. The property
+    /// is inherited, so a miss takes the distance the parent came to; <c>auto</c> states no distance of
+    /// its own and answers as nothing was said, which is what lets the face speak (CSS Text Decoration 4
+    /// §2.8).
+    /// </summary>
+    public static Double? ResolveUnderlineOffsetFused(
+        ICssProperty? declared, Double? parent, LengthReader.FontSource font, IRenderDimensions dimensions)
+    {
+        if (declared is null || IsInherit(declared))
+        {
+            return parent;
+        }
+
+        return TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels) ? pixels : null;
     }
 
     internal static UInt32 ToArgb(CssColorValue color) =>
@@ -2639,6 +2676,15 @@ internal readonly struct ComputedStyle
     /// and its own text colour is what the line takes (CSS Text Decoration 4 §2.3).
     /// </summary>
     public UInt32? DecorationColor => _values.Decoration.Color;
+
+    /// <summary>Gets how thick this element's decoration lines are, or null where the face decides.</summary>
+    public Double? DecorationThickness => _values.Decoration.Thickness;
+
+    /// <summary>
+    /// Gets how far this element's underlines stand from where the font puts them, or null where the face
+    /// decides. Inherited, and read only for the underlines this element asks for.
+    /// </summary>
+    public Double? UnderlineOffset => _values.Decoration.UnderlineOffset;
 
     // --- Pointer --------------------------------------------------------
 

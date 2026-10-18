@@ -830,12 +830,15 @@ public sealed class SkiaPaintExecutor
 
             if (decoration.Underline)
             {
+                // The face gives the line its zero position; text-underline-offset moves it outward
+                // from there, and text-decoration-thickness replaces the face's own width
+                // (CSS Text Decoration 4 §2.4, §2.8).
                 DrawLine(
                     canvas,
                     paint,
                     command,
-                    (Single)(origin + from + (sign * Math.Abs(metrics.UnderlineOffset))),
-                    Math.Max(1, metrics.UnderlineThickness),
+                    (Single)(origin + from + (sign * (Math.Abs(metrics.UnderlineOffset) + (decoration.UnderlineOffset ?? 0)))),
+                    Thickness(decoration.Thickness, metrics.UnderlineThickness),
                     decoration.Shape,
                     alongLine);
             }
@@ -851,7 +854,7 @@ public sealed class SkiaPaintExecutor
                     (Single)(origin + from - (sign * (metrics.OverlineOffset > 0
                         ? Math.Abs(metrics.OverlineOffset)
                         : metrics.Ascent))),
-                    Math.Max(1, metrics.OverlineThickness > 0
+                    Thickness(decoration.Thickness, metrics.OverlineThickness > 0
                         ? metrics.OverlineThickness
                         : metrics.UnderlineThickness),
                     decoration.Shape,
@@ -865,7 +868,7 @@ public sealed class SkiaPaintExecutor
                     paint,
                     command,
                     (Single)(origin + from - (sign * Math.Abs(metrics.StrikeoutOffset))),
-                    Math.Max(1, metrics.StrikeoutThickness),
+                    Thickness(decoration.Thickness, metrics.StrikeoutThickness),
                     decoration.Shape,
                     alongLine);
             }
@@ -923,6 +926,13 @@ public sealed class SkiaPaintExecutor
             canvas.DrawText(blob, (Single)command.Bounds.X, baseline, paint);
         }
     }
+
+    /// <summary>
+    /// Gets how thick a decoration line is: what the decorating box asked for, or the face's own width
+    /// where it asked for nothing. A line is never thinner than one pixel, however small the ask.
+    /// </summary>
+    private static Double Thickness(Double? asked, Double fromFont) =>
+        Math.Max(1, asked ?? fromFont);
 
     /// <summary>
     /// Draws one decoration line across the run in the shape the element asked for. A solid line is a

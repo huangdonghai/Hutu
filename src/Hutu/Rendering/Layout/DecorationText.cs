@@ -39,7 +39,9 @@ public sealed record DecorationSource(
     Boolean Overline,
     Boolean LineThrough,
     DecorationShape Shape,
-    UInt32 Color);
+    UInt32 Color,
+    Double? Thickness,
+    Double? UnderlineOffset);
 
 /// <summary>
 /// Reads the words a decoration was declared with: which lines the element asks for, and in what shape.

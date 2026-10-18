@@ -92,7 +92,7 @@ public sealed class TextDecorationPaintTests
             "and a dotted one is a row of separate dots");
     }
 
-    private static async Task<InkExtent> Ink(String content, String decoration = "none")
+    private static async Task<InkExtent> Ink(String content, String decoration = "none", String extra = "")
     {
         using var measurer = new SkiaTextMeasurer();
         using var view = new HutuViewInternal(measurer);
@@ -106,11 +106,78 @@ public sealed class TextDecorationPaintTests
         await view.SetHtml(
             "<html><body style='margin:0'>" +
             $"<p style='margin:0;font-family:{Family};font-size:40px;line-height:2;" +
-            $"text-decoration:{decoration}'>{content}</p></body></html>");
+            $"text-decoration:{decoration};{extra}'>{content}</p></body></html>");
 
         var run = Walk(view.Layout!.Root).Single(node => node.Kind == LayoutKind.Text);
 
         return InkExtent.Of(view.Paint!, measurer, run);
+    }
+
+    [Test]
+    public async Task AThickerLineIsTheOneTheBoxAskedFor()
+    {
+        // The face's own width is where the line stops short of the ask: eight pixels of thickness reach
+        // eight rows below the baseline, where the font's own answer reaches only its underline metric
+        // (CSS Text Decoration 4 §2.4).
+        var asked = await Ink(Text, "underline", "text-decoration-thickness:8px");
+        var faced = await Ink(Text, "underline");
+
+        Assert.That(asked.Bottommost - faced.Bottommost, Is.GreaterThanOrEqualTo(6), "the band grew by the ask");
+    }
+
+    [Test]
+    public async Task APercentageThicknessIsAShareOfTheTextItIsSetAt()
+    {
+        // Half of the forty pixels the text is set at, which is what a share of the used font size means
+        // (CSS Text Decoration 4 §2.4), against the face's own width.
+        var share = await Ink(Text, "underline", "text-decoration-thickness:50%");
+        var faced = await Ink(Text, "underline");
+
+        Assert.That(share.Bottommost - faced.Bottommost, Is.GreaterThanOrEqualTo(16), "twenty of the forty");
+    }
+
+    [Test]
+    public async Task AnUnderlineOffsetStandsTheLineOffTheText()
+    {
+        // The offset is a distance outward from where the font puts the line, and it moves the whole band
+        // - the letters stay where they were (CSS Text Decoration 4 §2.8).
+        var stood = await Ink(Text, "underline", "text-underline-offset:12px");
+        var near = await Ink(Text, "underline");
+
+        Assert.That(stood.Bottommost - near.Bottommost, Is.EqualTo(12).Within(2), "twelve rows further out");
+    }
+
+    [Test]
+    public async Task ANegativeOffsetDrawsTheLineBackInward()
+    {
+        // Negative is inward: the band comes up toward the letters by the same distance it would have
+        // gone down.
+        var inward = await Ink(Text, "underline", "text-underline-offset:-6px");
+        var near = await Ink(Text, "underline");
+
+        Assert.That(near.Bottommost - inward.Bottommost, Is.EqualTo(6).Within(2), "six rows inward");
+    }
+
+    [Test]
+    public async Task TheOffsetTravelsDownToTheUnderliningInsideIt()
+    {
+        // The property is inherited, and the decoration is asked for below: the distance the container
+        // settled on is what the line inside it stands at, even though the box that decorated is another.
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(400, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='margin:0;text-underline-offset:12px'>" +
+            $"<p style='margin:0;font-family:{Family};font-size:40px;line-height:2;" +
+            $"text-decoration:underline'>{Text}</p></div></body></html>");
+
+        var run = Walk(view.Layout!.Root).Single(node => node.Kind == LayoutKind.Text);
+        var stood = InkExtent.Of(view.Paint!, measurer, run);
+
+        var near = await Ink(Text, "underline");
+
+        Assert.That(stood.Bottommost - near.Bottommost, Is.EqualTo(12).Within(2), "the inherited distance");
     }
 
     /// <summary>
