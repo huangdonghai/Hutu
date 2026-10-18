@@ -41,7 +41,62 @@ public sealed record DecorationSource(
     DecorationShape Shape,
     UInt32 Color,
     Double? Thickness,
-    Double? UnderlineOffset);
+    Double? UnderlineOffset,
+    DecorationInsets? Insets)
+{
+    /// <summary>
+    /// Gets the element that asked for these lines. It is not part of what the record answers: two boxes
+    /// asking for identical lines are still two decorating boxes, and this is how the run of text one of
+    /// them decorates finds its way back to the box that owns the line (CSS Text Decoration 4 §2.1).
+    /// </summary>
+    public Object? Speaker { get; init; }
+
+    public Boolean Equals(DecorationSource? other) =>
+        other is not null &&
+        Underline == other.Underline &&
+        Overline == other.Overline &&
+        LineThrough == other.LineThrough &&
+        Shape == other.Shape &&
+        Color == other.Color &&
+        Thickness == other.Thickness &&
+        UnderlineOffset == other.UnderlineOffset &&
+        Insets == other.Insets;
+
+    public override int GetHashCode() =>
+        HashCode.Combine(
+            Underline,
+            Overline,
+            LineThrough,
+            (Int32)Shape,
+            Color,
+            Thickness,
+            UnderlineOffset,
+            Insets);
+}
+
+/// <summary>
+/// How far back the ends of the lines a box asks for stand: <c>text-decoration-inset</c>, in the two
+/// units it takes. A length is the distance in pixels and a share is held back to be taken from the
+/// inline size the decorated text fills, since that is what the property measures against - the whole
+/// of it where the decoration is sliced across lines, and one fragment's own where the box repeats its
+/// decoration on every line it reaches (CSS Text Decoration 4 §2.9.1). Where nothing was said the line
+/// runs to the edges it was given; <c>auto</c> leaves the distance to the engine, which takes the
+/// width of the line itself so that two boxes set side by side do not read as one long rule.
+/// </summary>
+/// <param name="Auto">
+/// Whether the page asked for the engine's own answer rather than a distance.
+/// </param>
+/// <param name="PerFragment">
+/// Whether the box repeats its decoration at each line it reaches - <c>box-decoration-break: clone</c> -
+/// which is where the two units above are measured from.
+/// </param>
+public sealed record DecorationInsets(
+    Double? Start,
+    Double? End,
+    Double? StartShare,
+    Double? EndShare,
+    Boolean Auto,
+    Boolean PerFragment);
 
 /// <summary>
 /// Where one decorating box's line stands on one line of text and how thick it is, settled from all the
@@ -58,7 +113,17 @@ public sealed record DecorationPlacement(
     Double UnderlineOffset,
     Double UnderlineThickness,
     Double OverlineOffset,
-    Double OverlineThickness);
+    Double OverlineThickness)
+{
+    /// <summary>
+    /// Gets how far the start of this run's stretch of the line is pulled inward, and
+    /// <see cref="TrimEnd"/> how far its end is: what <c>text-decoration-inset</c> came to for the run,
+    /// counted along the whole of the line the decorating box decorates (CSS Text Decoration 4 §2.9.1).
+    /// </summary>
+    public Double TrimStart { get; init; }
+
+    public Double TrimEnd { get; init; }
+}
 
 /// <summary>
 /// Reads the words a decoration was declared with: which lines the element asks for, and in what shape.

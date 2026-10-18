@@ -1235,6 +1235,8 @@ internal readonly struct ComputedStyle
             Thickness = ResolveDecorationThicknessFused(find("text-decoration-thickness"), font, dimensions),
             UnderlineOffset = ResolveUnderlineOffsetFused(
                 find("text-underline-offset"), parentUnderlineOffset, font, dimensions),
+            Inset = ResolveDecorationInsetFused(
+                find("text-decoration-inset"), find("box-decoration-break"), font, dimensions),
         };
     }
 
@@ -1257,6 +1259,133 @@ internal readonly struct ComputedStyle
     public static Double? ResolveUnderlineOffsetFused(
         ICssProperty? declared, Double? parent, LengthReader.FontSource font, IRenderDimensions dimensions) =>
         declared is null || IsInherit(declared) ? parent : DecorationLength(declared, font, dimensions);
+
+    /// <summary>
+    /// Reads how far back the ends of the lines this element asks for stand. A length is taken in pixels
+    /// and a percentage is kept as a share, because what a share measures here is the inline size of the
+    /// text the decoration runs across - not the size the text is set at, which is the meaning the other
+    /// two decoration lengths give it (§2.9.1). One value speaks for both ends and two give the start then
+    /// the end; <c>auto</c> leaves the distance to the engine, and anything the grammar cannot read leaves
+    /// the line to run to the edges it was given, which is the initial zero. Whether the box repeats its
+    /// decoration on every line it reaches comes from <c>box-decoration-break</c>, and it is what decides
+    /// the size a share is taken of.
+    /// </summary>
+    public static DecorationInsets? ResolveDecorationInsetFused(
+        ICssProperty? declared,
+        ICssProperty? broken,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions)
+    {
+        var clone = broken?.Value?.IndexOf("clone", StringComparison.OrdinalIgnoreCase) >= 0;
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrEmpty(text) || IsInherit(declared))
+        {
+            return clone ? new DecorationInsets(null, null, null, null, false, true) : null;
+        }
+
+        var terms = InsetTerms(text!);
+
+        if (terms.Count == 0 || terms.Count > 2)
+        {
+            return null;
+        }
+
+        if (terms.Count == 1 && terms[0].Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return new DecorationInsets(null, null, null, null, true, clone);
+        }
+
+        var (start, startShare) = ReadInsetTerm(terms[0], font, dimensions);
+        var (end, endShare) = terms.Count > 1
+            ? ReadInsetTerm(terms[1], font, dimensions)
+            : (start, startShare);
+
+        if (start is null && end is null && startShare is null && endShare is null)
+        {
+            return null;
+        }
+
+        return new DecorationInsets(start, end, startShare, endShare, false, clone);
+    }
+
+    /// <summary>
+    /// Splits what was written into its values, keeping the spaces inside a <c>calc()</c> part of the one
+    /// term they belong to.
+    /// </summary>
+    private static List<String> InsetTerms(String text)
+    {
+        var terms = new List<String>();
+        var from = 0;
+        var depth = 0;
+
+        for (var index = 0; index <= text.Length; index++)
+        {
+            var at = index < text.Length ? text[index] : ' ';
+
+            if (at == '(')
+            {
+                depth++;
+            }
+            else if (at == ')')
+            {
+                depth = Math.Max(0, depth - 1);
+            }
+
+            if (depth == 0 && (index == text.Length || Char.IsWhiteSpace(at) || at == ','))
+            {
+                if (index > from)
+                {
+                    terms.Add(text[from..index]);
+                }
+
+                from = index + 1;
+            }
+        }
+
+        return terms;
+    }
+
+    /// <summary>
+    /// Reads one end of the inset: a share where the term is a percentage, and a distance in pixels
+    /// otherwise. A share standing inside a <c>calc()</c> is left unread, since the size it would be a
+    /// share of is not known while the style is being resolved.
+    /// </summary>
+    private static (Double? Pixels, Double? Share) ReadInsetTerm(
+        String term, LengthReader.FontSource font, IRenderDimensions dimensions)
+    {
+        if (CssLengthValue.TryParse(term, out var share) && share.Type == CssLengthValue.Unit.Percent)
+        {
+            return (null, share.Value / 100);
+        }
+
+        if (CssMathLengths.Evaluate(term, argument => InsetTerm(argument, font, dimensions)) is { } value)
+        {
+            return (value, null);
+        }
+
+        return CssLengthValue.TryParse(term, out var length) && InsetLength(length, font, dimensions) is { } pixels
+            ? (pixels, null)
+            : (null, null);
+    }
+
+    private static Double? InsetTerm(String term, LengthReader.FontSource font, IRenderDimensions dimensions) =>
+        CssLengthValue.TryParse(term, out var length) && length.Type != CssLengthValue.Unit.Percent
+            ? InsetLength(length, font, dimensions)
+            : null;
+
+    private static Double? InsetLength(CssLengthValue length, LengthReader.FontSource font, IRenderDimensions dimensions)
+    {
+        try
+        {
+            var pixels = LengthReader.ToPixel(length, RenderMode.Horizontal, dimensions, font);
+            return Double.IsNaN(pixels) || Double.IsInfinity(pixels) ? null : pixels;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 
     /// <summary>
     /// Reads a length of a decoration, with the one unit these two properties define for themselves: a
@@ -2721,6 +2850,13 @@ internal readonly struct ComputedStyle
     /// decides. Inherited, and read only for the underlines this element asks for.
     /// </summary>
     public Double? UnderlineOffset => _values.Decoration.UnderlineOffset;
+
+    /// <summary>
+    /// Gets how far back the ends of this element's own lines stand, or null where it said nothing: the
+    /// distance is settled once the text the decoration runs across has been laid out, since a percentage
+    /// is a share of that inline size (CSS Text Decoration 4 §2.9.1).
+    /// </summary>
+    internal DecorationInsets? DecorationInset => _values.Decoration.Inset;
 
     // --- Pointer --------------------------------------------------------
 

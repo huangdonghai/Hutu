@@ -47,6 +47,9 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         "-webkit-text-stroke-width",
         "-webkit-text-stroke-color",
         "-webkit-text-fill-color",
+        // Text Decoration 4's inset, which AngleSharp has no grammar for at all: without this the whole
+        // declaration is dropped and the line runs to the edges of the text however the page asked.
+        "text-decoration-inset",
         // The grid-lanes axis/packing descriptor, which AngleSharp has no grammar for at all; the lanes
         // formatting context reads it as text.
         "grid-lanes-direction",

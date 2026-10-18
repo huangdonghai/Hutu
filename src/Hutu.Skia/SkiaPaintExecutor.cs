@@ -837,6 +837,12 @@ public sealed class SkiaPaintExecutor
             var placed = drawn < command.Placements.Count ? command.Placements[drawn] : null;
             var stood = from + (alongLine && placed is not null ? (Single)placed.BaselineShift : 0f);
 
+            // The ends of the line are pulled in, or run outward where the distance is negative, by what
+            // the decorating box asked for (§2.9.1). The line-through takes the same ends: the inset
+            // controls every line the box draws, however the line itself is positioned.
+            var pulls = placed?.TrimStart ?? 0.0;
+            var pushes = placed?.TrimEnd ?? 0.0;
+
             paint.Color = new SKColor(decoration.Color);
 
             if (decoration.Underline)
@@ -853,7 +859,9 @@ public sealed class SkiaPaintExecutor
                         + (decoration.UnderlineOffset ?? 0)))),
                     Thickness(decoration.Thickness, placed?.UnderlineThickness ?? metrics.UnderlineThickness),
                     decoration.Shape,
-                    alongLine);
+                    alongLine,
+                    pulls,
+                    pushes);
             }
 
             // The face says where its overline goes; a face that will not is answered with the top of
@@ -875,7 +883,9 @@ public sealed class SkiaPaintExecutor
                                 ? metrics.OverlineThickness
                                 : metrics.UnderlineThickness)),
                     decoration.Shape,
-                    alongLine);
+                    alongLine,
+                    pulls,
+                    pushes);
             }
 
             // A line-through is left to the run it crosses: §2.5 has its position recomputed wherever the
@@ -889,7 +899,9 @@ public sealed class SkiaPaintExecutor
                     (Single)(origin + from - (sign * Math.Abs(metrics.StrikeoutOffset))),
                     Thickness(decoration.Thickness, metrics.StrikeoutThickness),
                     decoration.Shape,
-                    alongLine);
+                    alongLine,
+                    pulls,
+                    pushes);
             }
         }
     }
@@ -975,11 +987,27 @@ public sealed class SkiaPaintExecutor
         Single at,
         Double thickness,
         DecorationShape shape,
-        Boolean alongLine)
+        Boolean alongLine,
+        Double trimStart,
+        Double trimEnd)
     {
         var height = (Single)thickness;
         var start = (Single)(alongLine ? command.Bounds.X : command.Bounds.Y);
         var end = (Single)(alongLine ? command.Bounds.Right : command.Bounds.Bottom);
+
+        // The distance the decorating box asked for is counted from the edge its text begins reading at,
+        // which for a row written right-to-left is the far one, and a negative distance runs the line past
+        // the text rather than back from it (CSS Text Decoration 4 §2.9.1).
+        if (command.Flow.InlineSign > 0)
+        {
+            start += (Single)trimStart;
+            end -= (Single)trimEnd;
+        }
+        else
+        {
+            end -= (Single)trimStart;
+            start += (Single)trimEnd;
+        }
 
         if (end <= start)
         {

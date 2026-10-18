@@ -364,7 +364,14 @@ internal sealed record LayoutProfile(
     /// is being arranged, only once the whole tree has been placed. Keeping it out of the painter
     /// matters: painting runs again on every invalidation, layout only when the document changes.
     /// </remarks>
-    private void ResolveDecorations(LayoutBox box) => ResolveDecorations(box, null);
+    private void ResolveDecorations(LayoutBox box)
+    {
+        ResolveDecorations(box, null, null, null);
+
+        // The inset a decorating box asked for is counted along the whole of the text it decorates, which
+        // is only known once every run carries the lines reaching it.
+        ResolveInsets(box);
+    }
 
     private void ResolveDecorations(LayoutBox box, List<DecorationSource>? around) =>
         ResolveDecorations(box, around, null, null);
@@ -425,7 +432,7 @@ internal sealed record LayoutProfile(
         // runs - and asks for it once: the box that spoke last is the element the run belongs to only
         // where the run repeats that element's own declaration, so a child asking for the same lines as
         // its container is a decorating box in its own right and adds a second line.
-        var lines = element || box.Kind == LayoutKind.Text ? SourceOf(style) : null;
+        var lines = element || box.Kind == LayoutKind.Text ? SourceOf(box) : null;
         var own = ReferenceEquals(spoke, owner) ? around?.Count - 1 ?? -1 : -1;
 
         if (lines is null)
@@ -470,10 +477,15 @@ internal sealed record LayoutProfile(
     /// Gets the lines this box decorates its text with, or null where it asked for none. The colour the
     /// line is drawn in is the one the decorating box settled on: its own <c>text-decoration-color</c>,
     /// or the colour of <em>its</em> text where that says <c>currentcolor</c> - never the colour of the
-    /// descendant's glyphs the line happens to run across (CSS Text Decoration 4 §2.3).
+    /// descendant's glyphs the line happens to run across (CSS Text Decoration 4 §2.3). The record carries
+    /// the element that asked, so the text a line runs across can be gathered back into that one
+    /// decoration when its ends are trimmed (§2.1, §2.9.1).
     /// </summary>
-    private static DecorationSource? SourceOf(ComputedStyle style) =>
-        style.HasUnderline || style.HasOverline || style.HasLineThrough
+    private static DecorationSource? SourceOf(LayoutBox box)
+    {
+        var style = box.Source.Style;
+
+        return style.HasUnderline || style.HasOverline || style.HasLineThrough
             ? new DecorationSource(
                 style.HasUnderline,
                 style.HasOverline,
@@ -481,8 +493,13 @@ internal sealed record LayoutProfile(
                 style.Decoration,
                 style.DecorationColor ?? ComputedStyle.ToArgb(style.Color),
                 style.DecorationThickness,
-                style.UnderlineOffset)
+                style.UnderlineOffset,
+                style.DecorationInset)
+            {
+                Speaker = box.Source,
+            }
             : null;
+    }
 
     /// <summary>
     /// Settles where the lines drawn across this line of text stand, and how thick they are. A decorating
@@ -699,6 +716,177 @@ internal sealed record LayoutProfile(
         /// for, and stands where its parent does for every box above it (CSS Text Decoration 4 §2.5).
         /// </summary>
         internal Boolean Shifted(Int32 asked) => Raised && asked != Own;
+    }
+
+    /// <summary>
+    /// Turns what each decorating box asked its lines to be pulled back by into a distance for every run
+    /// of the text it decorates. The inset is counted along the whole of the decoration one box draws: a
+    /// line that breaks is trimmed at its two outer ends and the break between the fragments is left
+    /// alone, which is what keeps a broken rule reading as one rule rather than a row of short ones. Where
+    /// the box was told to repeat its decoration on every line - <c>box-decoration-break: clone</c> - each
+    /// fragment is trimmed at both of its own ends, and a share is taken of that fragment rather than of
+    /// the whole (CSS Text Decoration 4 §2.9.1).
+    /// </summary>
+    private void ResolveInsets(LayoutBox root)
+    {
+        var decorated = new Dictionary<Object, List<TrimmedRun>>();
+
+        CollectTrimmed(root, null, decorated);
+
+        foreach (var runs in decorated.Values)
+        {
+            Trim(runs);
+        }
+    }
+
+    /// <summary>
+    /// Gathers the runs each decorating box asked to have its ends pulled back from, in the order the text
+    /// is read, together with how much inline room the run takes.
+    /// </summary>
+    private static void CollectTrimmed(
+        LayoutBox box,
+        LayoutBox? line,
+        Dictionary<Object, List<TrimmedRun>> into)
+    {
+        var standing = box.Kind == LayoutKind.Line ? box : line;
+
+        if (box.Kind == LayoutKind.Text && box.Decorations is { } asked)
+        {
+            for (var at = 0; at < asked.Count; at++)
+            {
+                if (asked[at].Insets is { } insets && asked[at].Speaker is { } element)
+                {
+                    if (!into.TryGetValue(element, out var runs))
+                    {
+                        runs = into[element] = new List<TrimmedRun>();
+                    }
+
+                    runs.Add(new TrimmedRun(
+                        box,
+                        at,
+                        box.Vertical ? box.BorderBox.Height : box.BorderBox.Width,
+                        standing,
+                        insets));
+                }
+            }
+        }
+
+        foreach (var child in box.Children)
+        {
+            CollectTrimmed(child, standing, into);
+        }
+    }
+
+    /// <summary>Carries one decorating box's inset out along the text it decorates.</summary>
+    private static void Trim(List<TrimmedRun> runs)
+    {
+        var insets = runs[0].Insets;
+
+        foreach (var segment in Segments(runs, insets.PerFragment))
+        {
+            var total = 0.0;
+            var thickness = 1.0;
+
+            foreach (var run in segment)
+            {
+                total += run.Size;
+                thickness = Math.Max(thickness, run.Thickness);
+            }
+
+            var (start, end) = Distances(insets, total, thickness);
+            var pulls = new Double[segment.Count];
+            var pushes = new Double[segment.Count];
+
+            // One distance shared out along the stretch: the runs take what is left of it in the order
+            // they are read, and a run the whole distance falls across draws nothing. A negative distance
+            // is an extension and belongs to the run at that end whole, since it moves the endpoint
+            // outward rather than eating the line away.
+            var ahead = start;
+
+            for (var at = 0; at < segment.Count; at++)
+            {
+                var size = segment[at].Size;
+                pulls[at] = ahead < 0 ? ahead : Math.Max(0, Math.Min(ahead, size));
+                ahead -= pulls[at];
+            }
+
+            var behind = end;
+
+            for (var at = segment.Count - 1; at >= 0; at--)
+            {
+                var size = segment[at].Size;
+                pushes[at] = behind < 0 ? behind : Math.Max(0, Math.Min(behind, size - pulls[at]));
+                behind -= pushes[at];
+            }
+
+            for (var at = 0; at < segment.Count; at++)
+            {
+                segment[at].Apply(pulls[at], pushes[at]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Splits the text one box decorates into the stretches its inset is counted across: every fragment of
+    /// a box that repeats its decoration on each line stands on its own, and a box that slices its
+    /// decoration is one stretch however many lines it reaches.
+    /// </summary>
+    private static List<List<TrimmedRun>> Segments(List<TrimmedRun> runs, Boolean perFragment)
+    {
+        var segments = new List<List<TrimmedRun>>();
+
+        foreach (var run in runs)
+        {
+            if (segments.Count == 0 ||
+                (perFragment && !ReferenceEquals(segments[^1][0].Line, run.Line)))
+            {
+                segments.Add(new List<TrimmedRun>());
+            }
+
+            segments[^1].Add(run);
+        }
+
+        return segments;
+    }
+
+    /// <summary>
+    /// Gets the two distances a box asked its line to be pulled back by, once the inline size a share is
+    /// taken of is known. <c>auto</c> takes the width of the line itself, which is enough to keep two
+    /// boxes set side by side from reading as one rule - the answer §2.9.1 leaves to the engine.
+    /// </summary>
+    private static (Double Start, Double End) Distances(DecorationInsets insets, Double total, Double thickness) =>
+        insets.Auto
+            ? (thickness, thickness)
+            : (insets.Start ?? (insets.StartShare ?? 0) * total,
+               insets.End ?? (insets.EndShare ?? 0) * total);
+
+    /// <summary>
+    /// One run of text whose decoration has ends to pull in, with the room it takes along the line and
+    /// how far each end came to standing.
+    /// </summary>
+    private sealed record TrimmedRun(
+        LayoutBox Box,
+        Int32 At,
+        Double Size,
+        LayoutBox? Line,
+        DecorationInsets Insets)
+    {
+        internal Double Thickness =>
+            Box.DecorationPlacements is { } placed && At < placed.Count
+                ? Math.Max(1, placed[At].UnderlineThickness)
+                : 1;
+
+        /// <summary>Says to the run where the ends of this one line stand.</summary>
+        internal void Apply(Double start, Double end)
+        {
+            if (Box.DecorationPlacements is not { } placed || At >= placed.Count ||
+                (start == 0 && end == 0))
+            {
+                return;
+            }
+
+            placed[At] = placed[At] with { TrimStart = start, TrimEnd = end };
+        }
     }
 
     /// <summary>

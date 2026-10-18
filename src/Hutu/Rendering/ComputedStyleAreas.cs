@@ -352,6 +352,15 @@ internal sealed record TextDecorationArea
     /// of the text the line happens to be running across (CSS Text Decoration 4 §2.3).
     /// </summary>
     internal UInt32? Color { get; init; }
+
+    /// <summary>
+    /// Gets how far back the ends of this element's own lines stand, or null where it said nothing: the
+    /// distance the page asked for, in pixels or as a share of the inline size the decorated text fills,
+    /// or the engine's own answer for <c>auto</c> (CSS Text Decoration 4 §2.9.1). A share cannot be turned
+    /// into pixels here, because what it measures is the text the element decorates, which is only known
+    /// once the lines have been laid out.
+    /// </summary>
+    internal DecorationInsets? Inset { get; init; }
 }
 
 /// <summary>
