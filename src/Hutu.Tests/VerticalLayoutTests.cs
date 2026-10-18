@@ -1,4 +1,5 @@
 using Hutu.Rendering.Layout;
+using Hutu.Skia;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
@@ -325,6 +326,35 @@ public sealed class VerticalLayoutTests
     }
 
     /// <summary>Gets the x a box's column line falls on, which is what a column aligns its text by.</summary>
+    [Test]
+    public async Task ACharacterOfThePlanesAboveTheBmpStandsInOneCell()
+    {
+        using var view = CreateView(400);
+
+        // U+20000 is one character of the text and two of the string's. A column that stepped by the
+        // string's characters gave it two cells of the measurer's ten pixels, where the ideograph is
+        // given the one em box it is drawn in.
+        var ideographs = Char.ConvertFromUtf32(0x20000) + Char.ConvertFromUtf32(0x20001);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='" + Column + "'>" + ideographs + "</div></body></html>");
+
+        Assert.That(Text(view, ideographs).BorderBox.Height, Is.EqualTo(20), "two characters, two cells");
+    }
+
+    [Test]
+    public void AUprightRunIsDecomposedIntoOneCellPerCodePoint()
+    {
+        using var measurer = new SkiaTextMeasurer();
+
+        var text = Char.ConvertFromUtf32(0x20000) + Char.ConvertFromUtf32(0x2A6B2);
+
+        Assert.That(
+            measurer.DecomposeUpright(text, new FontStyle("SimSun", 16, 400, false)).Count,
+            Is.EqualTo(2),
+            "the pair of characters above the BMP is asked of the font as the one character it is");
+    }
+
     private static Double ColumnLine(LayoutBox box) => box.BorderBox.X + box.Baseline;
 
     [Test]

@@ -1653,13 +1653,17 @@ internal sealed class InlineLayout
                 return false;
             }
 
-            if (_flow.CombinesUpright && TextChunker.IsCombinable(_source[_index]))
+            // Stepped by code point, not by character: the pair written above the BMP is one character of
+            // the text and stands in one cell, and taken by character it was two - each half turned or
+            // upright by what a lone surrogate says about nothing.
+            if (_flow.CombinesUpright && TextChunker.IsCombinable(TextChunker.CodePointAt(_source, _index)))
             {
                 var count = 0;
 
-                while (_index + count < end && TextChunker.IsCombinable(_source[_index + count]))
+                while (_index + count < end &&
+                       TextChunker.IsCombinable(TextChunker.CodePointAt(_source, _index + count)))
                 {
-                    count++;
+                    count += TextChunker.UnitsAt(_source, _index + count);
                 }
 
                 // Only a short run reads as one box. A longer one is ordinary text that happens to be
@@ -1672,12 +1676,14 @@ internal sealed class InlineLayout
                 }
             }
 
-            var upright = _flow.IsUpright(_source[_index]);
             var start = _index;
+            var upright = _flow.IsUpright(TextChunker.CodePointAt(_source, start));
 
-            while (_index < end && _flow.IsUpright(_source[_index]) == upright)
+            _index += TextChunker.UnitsAt(_source, start);
+
+            while (_index < end && _flow.IsUpright(TextChunker.CodePointAt(_source, _index)) == upright)
             {
-                _index++;
+                _index += TextChunker.UnitsAt(_source, _index);
             }
 
             Current = OrientedRun.Of(_source, start, _index - start, upright);
@@ -1973,10 +1979,16 @@ internal sealed class InlineLayout
 
             // Walked over the source rather than over a string of this run's: an upright run is measured
             // character by character, and the answer is the character's and the font's, so neither the
-            // character nor a string holding it is made afresh to ask for it.
-            for (var index = Start; index < Start + Length; index++)
+            // character nor a string holding it is made afresh to ask for it. It is walked by code point,
+            // because one character of the text is one cell of the column however many of the string's
+            // characters it takes to write it.
+            for (var index = Start; index < Start + Length;)
             {
-                total += Math.Max(measurer.MeasureAdvance(Source[index], font, flow), fontSize);
+                total += Math.Max(
+                    measurer.MeasureAdvance(TextChunker.CodePointAt(Source, index), font, flow),
+                    fontSize);
+
+                index += TextChunker.UnitsAt(Source, index);
             }
 
             return total;

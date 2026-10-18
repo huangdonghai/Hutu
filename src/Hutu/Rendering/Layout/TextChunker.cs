@@ -168,12 +168,10 @@ internal readonly struct ChunkRange
     /// as one unbreakable word.
     /// </remarks>
     public static Boolean IsCjk(Int32 codePoint) =>
-        IsIdeographic(codePoint) ||
+        IsWide(codePoint) ||
         (codePoint >= 0x1100 && codePoint <= 0x11FF) ||
         (codePoint >= 0xA960 && codePoint <= 0xA97F) ||
-        (codePoint >= 0xAC00 && codePoint <= 0xD7FF) ||
-        (codePoint >= 0x20000 && codePoint <= 0x2FFFD) ||
-        (codePoint >= 0x30000 && codePoint <= 0x3134A);
+        (codePoint >= 0xAC00 && codePoint <= 0xD7FF);
 
     /// <summary>Gets whether the code point at an index may start a new line without a space.</summary>
     public static Boolean IsCjk(String text, Int32 index) => IsCjk(CodePointAt(text, index));
@@ -182,28 +180,50 @@ internal readonly struct ChunkRange
     /// Gets whether a character keeps its own orientation when it is set in a column.
     /// </summary>
     /// <remarks>
-    /// The wide characters - CJK, kana, the fullwidth forms, and the vertical presentation forms of
-    /// their punctuation - are already drawn the way a column wants them, so <c>text-orientation:
-    /// mixed</c> leaves them upright. Everything else, Latin and digits above all, is turned a quarter
-    /// turn so that it reads down the column rather than one letter per em. Hangul is turned with the
-    /// rest of them: it breaks like an ideograph and is set like an alphabetic.
+    /// The wide characters - CJK, kana, the fullwidth forms, the ideographs of the extension planes and
+    /// the vertical presentation forms of CJK punctuation - are already drawn the way a column wants
+    /// them, so <c>text-orientation: mixed</c> leaves them upright. Everything else, Latin and digits
+    /// above all, is turned a quarter turn so that it reads down the column rather than one letter per
+    /// em. Hangul is turned with the rest of them: it breaks like an ideograph and is set like an
+    /// alphabetic.
     /// </remarks>
-    public static Boolean IsUpright(Char character) =>
-        IsIdeographic(character) || (character >= '\uFE10' && character <= '\uFE4F');
+    public static Boolean IsUpright(Int32 codePoint) =>
+        IsWide(codePoint) || (codePoint >= 0xFE10 && codePoint <= 0xFE4F);
 
-    /// <summary>Gets whether the code point is one of the wide ideographic forms of the BMP.</summary>
-    private static Boolean IsIdeographic(Int32 codePoint) =>
-        (codePoint >= 0x2E80 && codePoint <= 0x9FFF) ||
-        (codePoint >= 0xF900 && codePoint <= 0xFAFF) ||
-        (codePoint >= 0xFF00 && codePoint <= 0xFFEF);
+    /// <summary>Gets whether the character keeps its own orientation when it is set in a column.</summary>
+    public static Boolean IsUpright(Char character) => IsUpright((Int32)character);
 
     /// <summary>
     /// Gets whether a character may take part in a <c>text-combine-upright</c> run: the narrow
     /// characters a column would otherwise have to turn one by one. Digits are what the property is
     /// normally used for, but any non-wide character qualifies.
     /// </summary>
-    public static Boolean IsCombinable(Char character) =>
-        !Char.IsWhiteSpace(character) && !IsUpright(character);
+    /// <remarks>
+    /// The white space test is only made of a character of the BMP, because the only code point above it
+    /// that asks to be unturned is the ideographic space - and that one is wide, so it is answered by
+    /// <see cref="IsUpright"/> before the question of turning is ever reached.
+    /// </remarks>
+    public static Boolean IsCombinable(Int32 codePoint) =>
+        !(codePoint <= Char.MaxValue && Char.IsWhiteSpace((Char)codePoint)) && !IsUpright(codePoint);
+
+    /// <summary>Gets whether a character may take part in a <c>text-combine-upright</c> run.</summary>
+    public static Boolean IsCombinable(Char character) => IsCombinable((Int32)character);
+
+    /// <summary>
+    /// Gets whether the code point is one of the wide forms - the ideographic blocks of the BMP and the
+    /// planes of rare ideographs above it. A column stands each of them in a box of its own, and a line
+    /// comes apart between two of them.
+    /// </summary>
+    private static Boolean IsWide(Int32 codePoint) =>
+        IsIdeographic(codePoint) ||
+        (codePoint >= 0x20000 && codePoint <= 0x2FFFD) ||
+        (codePoint >= 0x30000 && codePoint <= 0x3134A);
+
+    /// <summary>Gets whether the code point is one of the wide ideographic forms of the BMP.</summary>
+    private static Boolean IsIdeographic(Int32 codePoint) =>
+        (codePoint >= 0x2E80 && codePoint <= 0x9FFF) ||
+        (codePoint >= 0xF900 && codePoint <= 0xFAFF) ||
+        (codePoint >= 0xFF00 && codePoint <= 0xFFEF);
 
     /// <summary>The chunks of one string, walked without materialising any of them.</summary>
 internal readonly struct ChunkRanges

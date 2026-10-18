@@ -40,7 +40,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     /// character. Kept by character rather than by string because the answer belongs to the pair: a page
     /// of repeated text then costs a table of the characters it actually uses.
     /// </summary>
-    private readonly ConcurrentDictionary<CharAdvanceKey, Double> _charAdvances = new();
+    private readonly ConcurrentDictionary<CodePointAdvanceKey, Double> _advances = new();
 
     public SkiaTextMeasurer() : this(null)
     {
@@ -202,20 +202,26 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     }
 
     /// <summary>
-    /// Gets how far one character advances along the axis it runs on. A column steps by this once per
+    /// Gets how far one code point advances along the axis it runs on. A column steps by this once per
     /// character, so it is answered from a table rather than by writing the character out as a string
     /// and decomposing that again - the same answer, looked up on a key the column never allocates.
     /// </summary>
-    public Double MeasureAdvance(Char character, FontStyle style, WritingModeInfo flow)
+    /// <remarks>
+    /// The key is a code point and not a character, because a column that stepped by characters stood two
+    /// cells high for the ideograph written above the BMP: each half of the pair was measured as the
+    /// glyph a font keeps for what it has no glyph of, and the character the pair was written for was
+    /// never asked about at all.
+    /// </remarks>
+    public Double MeasureAdvance(Int32 codePoint, FontStyle style, WritingModeInfo flow)
     {
         // The flow is not read, exactly as the string form does not read it: what a character advances
         // along a column is the width of the glyph the style resolves to, and a backend that lets a
         // script say otherwise overrides both forms together.
         _ = flow;
 
-        return _charAdvances.GetOrAdd(
-            new CharAdvanceKey(style, character),
-            _ => MeasureWidth(character.ToString(), style));
+        return _advances.GetOrAdd(
+            new CodePointAdvanceKey(style, codePoint),
+            _ => MeasureWidth(Char.ConvertFromUtf32(codePoint), style));
     }
 
     /// <summary>
@@ -240,7 +246,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         _metrics.Clear();
         _decompositions.Clear();
         _uprightCells.Clear();
-        _charAdvances.Clear();
+        _advances.Clear();
         _blobs.Clear();
     }
 
@@ -261,7 +267,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         _metrics.Clear();
         _decompositions.Clear();
         _uprightCells.Clear();
-        _charAdvances.Clear();
+        _advances.Clear();
         _blobs.Dispose();
         _shaper.Dispose();
         _resolver.Dispose();
@@ -318,10 +324,18 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     {
         var cells = new List<UprightCell>(text.Length);
 
-        foreach (var character in text)
+        // Walked by code point, because a column takes one cell to the character of its text and the
+        // pair written above the BMP is one character: asked by character, each half was drawn in a cell
+        // of its own as the glyph a font keeps for what it has none of.
+        for (var position = 0; position < text.Length;)
         {
-            var characterText = character.ToString();
-            var font = GetFont(style, character);
+            var length = WidthAt(text, position);
+            var codePoint = CodepointAt(text, position);
+            var characterText = text.Substring(position, length);
+
+            position += length;
+
+            var font = GetFont(style, codePoint);
             var vertical = _shaper.ShapeVertical(font, characterText);
             var hasOrigin = vertical.Succeeded && vertical.Glyphs.Length == 1;
             var advance = MeasureWidth(characterText, style);
@@ -329,7 +343,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             // The form the font substitutes for the character is drawn by id, because it need not
             // stand for one a document could name. The cell is still centred by the character's own
             // width, which is the room the layout gave it.
-            if (hasOrigin && IsSubstituted(font, character, vertical.Glyphs[0]))
+            if (hasOrigin && IsSubstituted(font, codePoint, vertical.Glyphs[0]))
             {
                 cells.Add(new UprightCell(
                     font,
@@ -343,8 +357,10 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             }
 
             // A font that has no form of its own is asked for the form Unicode reserved; the form is
-            // a glyph of the same font, drawn where the font puts that glyph.
-            if (VerticalForms.TryGet(character, out var replacement) && HasGlyph(style, replacement))
+            // a glyph of the same font, drawn where the font puts that glyph. The reserved forms are a
+            // block of the BMP, so a character from the planes above has no form to be asked for.
+            if (codePoint <= Char.MaxValue &&
+                VerticalForms.TryGet((Char)codePoint, out var replacement) && HasGlyph(style, replacement))
             {
                 var replacementText = replacement.ToString();
                 var replacementFont = GetFont(style, replacement);
@@ -463,24 +479,24 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     }
 
     /// <summary>The style and the character whose advance is kept together.</summary>
-    private readonly struct CharAdvanceKey : IEquatable<CharAdvanceKey>
+    private readonly struct CodePointAdvanceKey : IEquatable<CodePointAdvanceKey>
     {
-        public CharAdvanceKey(FontStyle style, Char character)
+        public CodePointAdvanceKey(FontStyle style, Int32 codePoint)
         {
             Style = style;
-            Character = character;
+            CodePoint = codePoint;
         }
 
         public FontStyle Style { get; }
 
-        public Char Character { get; }
+        public Int32 CodePoint { get; }
 
-        public Boolean Equals(CharAdvanceKey other) =>
-            Style.Equals(other.Style) && Character == other.Character;
+        public Boolean Equals(CodePointAdvanceKey other) =>
+            Style.Equals(other.Style) && CodePoint == other.CodePoint;
 
-        public override Boolean Equals(Object? obj) => obj is CharAdvanceKey other && Equals(other);
+        public override Boolean Equals(Object? obj) => obj is CodePointAdvanceKey other && Equals(other);
 
-        public override Int32 GetHashCode() => (Style.GetHashCode() * 397) ^ Character;
+        public override Int32 GetHashCode() => (Style.GetHashCode() * 397) ^ CodePoint;
     }
 
     private readonly struct FallbackFontKey : IEquatable<FallbackFontKey>

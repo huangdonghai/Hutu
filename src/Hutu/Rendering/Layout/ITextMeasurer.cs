@@ -66,7 +66,19 @@ public interface ITextMeasurer
     /// </para>
     /// </remarks>
     Double MeasureAdvance(Char character, FontStyle style, WritingModeInfo flow) =>
-        MeasureAdvance(character.ToString(), style, flow);
+        MeasureAdvance((Int32)character, style, flow);
+
+    /// <summary>
+    /// Gets how far one code point advances along the axis it runs on - which for a column is the height
+    /// of the one cell it stands in.
+    /// </summary>
+    /// <remarks>
+    /// The character form above cannot be asked for anything written above the BMP, and a column stepped
+    /// by characters therefore takes two cells for the ideograph one code point stands for. This is the
+    /// form a column walks by.
+    /// </remarks>
+    Double MeasureAdvance(Int32 codePoint, FontStyle style, WritingModeInfo flow) =>
+        MeasureAdvance(Char.ConvertFromUtf32(codePoint), style, flow);
 
     /// <summary>
     /// Gets the extent the text occupies along the block axis: the height of a horizontal line, or the

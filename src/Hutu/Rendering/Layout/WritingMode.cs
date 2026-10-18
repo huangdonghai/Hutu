@@ -240,13 +240,15 @@ public readonly struct WritingModeInfo
     /// the fullwidth forms - upright and turns the rest, which is what makes Latin read sideways in a
     /// column while the text around it does not.
     /// </summary>
-    internal Boolean IsUpright(Char character)
+    internal Boolean IsUpright(Int32 codePoint)
     {
         if (IsSidewaysMode || Orientation == TextOrientation.Sideways)
         {
             return false;
         }
 
-        return Orientation == TextOrientation.Upright || TextChunker.IsUpright(character);
+        return Orientation == TextOrientation.Upright || TextChunker.IsUpright(codePoint);
     }
+
+    internal Boolean IsUpright(Char character) => IsUpright((Int32)character);
 }

@@ -544,7 +544,7 @@ internal sealed class TextSelector
         for (var index = 1; index <= text.Length; index++)
         {
             prefix[index] = run.Flow.IsVertical
-                ? prefix[index - 1] + ColumnStep(run, text[index - 1]) + spacing
+                ? prefix[index - 1] + ColumnStep(run, text, index) + spacing
                 : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow)
                     + (spacing * CharactersThrough(ordinals, index));
         }
@@ -562,15 +562,26 @@ internal sealed class TextSelector
     /// a line, an upright one by its em box, and a run combined upright is spread across the single em
     /// the whole of it is squeezed into.
     /// </summary>
-    private Double ColumnStep(LayoutBox run, Char character)
+    private Double ColumnStep(LayoutBox run, String text, Int32 index)
     {
         if (run.Flow.CombinesUpright)
         {
             return run.Font.Size / Math.Max(1, run.Text?.Length ?? 1);
         }
 
-        var advance = _measurer.MeasureAdvance(character, run.Font, run.Flow);
+        var character = text[index - 1];
 
-        return run.Flow.IsUpright(character) ? Math.Max(advance, run.Font.Size) : advance;
+        // The cell of a character written above the BMP is advanced once, at the half that begins it:
+        // the second half stands in no cell of its own, and a table that gave it one would put the hit
+        // of the character beside it.
+        if (Char.IsLowSurrogate(character))
+        {
+            return 0;
+        }
+
+        var codePoint = TextChunker.CodePointAt(text, index - 1);
+        var advance = _measurer.MeasureAdvance(codePoint, run.Font, run.Flow);
+
+        return run.Flow.IsUpright(codePoint) ? Math.Max(advance, run.Font.Size) : advance;
     }
 }
