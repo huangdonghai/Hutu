@@ -331,6 +331,13 @@ internal sealed record TextDecorationArea
 
     /// <summary>Gets the shape every line the element asks for is drawn in.</summary>
     internal DecorationShape Style { get; init; }
+
+    /// <summary>
+    /// Gets the colour the element's lines are drawn in, or null where it said none: the initial value is
+    /// <c>currentcolor</c>, and the box that decorates supplies its own text colour then - not the colour
+    /// of the text the line happens to be running across (CSS Text Decoration 4 §2.3).
+    /// </summary>
+    internal UInt32? Color { get; init; }
 }
 
 /// <summary>

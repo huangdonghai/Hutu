@@ -305,65 +305,18 @@ public sealed class PopTransformCommand : PaintCommand
 public sealed class TextCommand : PaintCommand
 {
     /// <summary>
-    /// Creates the command for a run of horizontal text, which is what a page that never asks for a
-    /// writing mode is made of.
+    /// Creates the command a run of text is drawn from, in whichever flow it is set: a vertical run
+    /// advances down its bounds rather than across them, and which way its glyphs are turned decides
+    /// whether the backend rotates the whole run or stacks the characters upright one under the other.
     /// </summary>
-    internal TextCommand(
-        Rect bounds,
-        String text,
-        Double baseline,
-        FontStyle font,
-        UInt32 color,
-        Boolean underline,
-        Boolean overline,
-        Boolean lineThrough)
-        : this(
-            bounds, text, baseline, font, color, underline, overline, lineThrough,
-            WritingModeInfo.Horizontal, 0)
-    {
-    }
-
-    /// <param name="flow">
-    /// How the run is laid out. A vertical run advances down its bounds rather than across them, and
-    /// which way its glyphs are turned decides whether the backend rotates the whole run or stacks the
-    /// characters upright one under the other.
+    /// <param name="decorations">
+    /// The lines to draw across the run, with the colour and shape of the box that asked for each of them.
     /// </param>
-    internal TextCommand(
-        Rect bounds,
-        String text,
-        Double baseline,
-        FontStyle font,
-        UInt32 color,
-        Boolean underline,
-        Boolean overline,
-        Boolean lineThrough,
-        WritingModeInfo flow)
-        : this(bounds, text, baseline, font, color, underline, overline, lineThrough, flow, 0)
-    {
-    }
-
     /// <param name="letterSpacing">
     /// The extra space the run carries after every character, which the backend adds to its advances
     /// so that what it draws lands where the layout measured it. It is zero for text that asks for
     /// none.
     /// </param>
-    internal TextCommand(
-        Rect bounds,
-        String text,
-        Double baseline,
-        FontStyle font,
-        UInt32 color,
-        Boolean underline,
-        Boolean overline,
-        Boolean lineThrough,
-        WritingModeInfo flow,
-        Double letterSpacing)
-        : this(
-            bounds, text, baseline, font, color, underline, overline, lineThrough, flow,
-            letterSpacing, 0, 0, DecorationShape.Solid)
-    {
-    }
-
     /// <param name="strokeWidth">
     /// The width the glyphs are ringed with, in pixels, and <paramref name="strokeColor"/> its colour.
     /// Both come from <c>-webkit-text-stroke</c>; a zero width is no stroke. The ring is drawn under the
@@ -375,14 +328,11 @@ public sealed class TextCommand : PaintCommand
         Double baseline,
         FontStyle font,
         UInt32 color,
-        Boolean underline,
-        Boolean overline,
-        Boolean lineThrough,
+        IReadOnlyList<DecorationSource> decorations,
         WritingModeInfo flow,
         Double letterSpacing,
-        Double strokeWidth,
-        UInt32 strokeColor,
-        DecorationShape decoration = DecorationShape.Solid,
+        Double strokeWidth = 0,
+        UInt32 strokeColor = 0,
         Double justification = 0,
         Int32 justifies = 0,
         String expand = "auto",
@@ -393,10 +343,7 @@ public sealed class TextCommand : PaintCommand
         Baseline = baseline;
         Font = font;
         Color = color;
-        Underline = underline;
-        Overline = overline;
-        LineThrough = lineThrough;
-        Decoration = decoration;
+        Decorations = decorations;
         Flow = flow;
         LetterSpacing = letterSpacing;
         StrokeWidth = strokeWidth;
@@ -431,14 +378,14 @@ public sealed class TextCommand : PaintCommand
 
     public UInt32 Color { get; }
 
-    public Boolean Underline { get; }
-
-    public Boolean Overline { get; }
-
-    public Boolean LineThrough { get; }
-
-    /// <summary>Gets the shape every one of the lines above is drawn in.</summary>
-    public DecorationShape Decoration { get; }
+    /// <summary>
+    /// Gets the lines to draw across this run, in the order they are painted: the decorating box nearest
+    /// the run's text is last, so its line lies over the ones the boxes around it asked for. Each carries
+    /// its own kinds, shape and colour, because a decoration an ancestor asked for is drawn in the
+    /// ancestor's colour and not in the colour of the glyphs it runs across
+    /// (CSS Text Decoration 4 §2.3, §5.1).
+    /// </summary>
+    public IReadOnlyList<DecorationSource> Decorations { get; }
 
     /// <summary>
     /// Gets the room a justified line owes after each place between this run's words, and how many of

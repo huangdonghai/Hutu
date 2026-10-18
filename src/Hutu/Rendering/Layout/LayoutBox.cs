@@ -146,6 +146,14 @@ internal sealed class LayoutBox
     internal Int32 Justifies { get; set; }
 
     /// <summary>
+    /// Gets or sets the lines to draw across this box's text: the decorating boxes whose decoration
+    /// reaches here, from the outermost in - which is also the order they are painted in, so an inner
+    /// line lies over an outer one (CSS Text Decoration 4 §5.1). Resolved once the tree is placed, where
+    /// the ancestry of a box is known and the painter need only read what it was given.
+    /// </summary>
+    internal List<DecorationSource>? Decorations { get; set; }
+
+    /// <summary>
     /// Gets or sets where a list item's marker is drawn, or null for a box that carries none.
     /// </summary>
     /// <remarks>

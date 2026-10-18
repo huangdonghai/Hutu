@@ -1224,8 +1224,15 @@ internal readonly struct ComputedStyle
             Overline = DecorationText.Names(line, shorthand, "overline"),
             LineThrough = DecorationText.Names(line, shorthand, "line-through"),
             Style = DecorationText.Shape(find("text-decoration-style")?.Value, shorthand),
+
+            // The cascade expands the shorthand into its longhands, so the colour the shorthand carries
+            // is read from the same place the line and the shape are.
+            Color = find("text-decoration-color")?.RawValue is CssColorValue { } color ? ToArgb(color) : null,
         };
     }
+
+    internal static UInt32 ToArgb(CssColorValue color) =>
+        (UInt32)(((UInt32)color.A << 24) | ((UInt32)color.R << 16) | ((UInt32)color.G << 8) | color.B);
 
     /// <summary>
     /// Resolves the cursor from the element's own cascaded declaration, for the fused path.
@@ -2626,6 +2633,12 @@ internal readonly struct ComputedStyle
 
     /// <summary>Gets the shape the element's decoration lines are drawn in.</summary>
     public DecorationShape Decoration => _values.Decoration.Style;
+
+    /// <summary>
+    /// Gets the colour the element asked its decoration to be drawn in, or null where it asked for none
+    /// and its own text colour is what the line takes (CSS Text Decoration 4 §2.3).
+    /// </summary>
+    public UInt32? DecorationColor => _values.Decoration.Color;
 
     // --- Pointer --------------------------------------------------------
 

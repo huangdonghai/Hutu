@@ -195,9 +195,7 @@ internal sealed class Painter
                 box.MarkerBaseline,
                 marked.GetFont(),
                 ToArgb(marked.Color),
-                false,
-                false,
-                false,
+                box.Decorations ?? NoDecorations,
                 box.Flow,
                 0));
         }
@@ -542,9 +540,7 @@ internal sealed class Painter
                 node.Baseline,
                 node.Font,
                 0xFF00_0000,
-                false,
-                false,
-                false,
+                node.Decorations ?? NoDecorations,
                 node.Flow,
                 style.LetterSpacing,
                 style.TextStrokeWidth,
@@ -619,14 +615,11 @@ internal sealed class Painter
             box.Baseline,
             box.Font,
             fill,
-            style.HasUnderline,
-            style.HasOverline,
-            style.HasLineThrough,
+            box.Decorations ?? NoDecorations,
             box.Flow,
             style.LetterSpacing,
             style.TextStrokeWidth,
             style.TextStrokeColor,
-            style.Decoration,
             box.Justification,
             box.Justifies,
             style.TextJustify,
@@ -656,6 +649,9 @@ internal sealed class Painter
             colors?.Bottom ?? ToArgb(style.BorderBottomColor ?? style.Color),
             colors?.Left ?? ToArgb(style.BorderLeftColor ?? style.Color)));
     }
+
+    /// <summary>The lines a run draws when nothing around it asked for any.</summary>
+    private static readonly IReadOnlyList<DecorationSource> NoDecorations = Array.Empty<DecorationSource>();
 
     private static UInt32 ToArgb(CssColorValue color) =>
         (UInt32)((color.A << 24) | (color.R << 16) | (color.G << 8) | color.B);

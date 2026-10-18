@@ -364,7 +364,18 @@ internal sealed record LayoutProfile(
     /// is being arranged, only once the whole tree has been placed. Keeping it out of the painter
     /// matters: painting runs again on every invalidation, layout only when the document changes.
     /// </remarks>
-    private static void ResolveDecorations(LayoutBox box)
+    private static void ResolveDecorations(LayoutBox box) => ResolveDecorations(box, null);
+
+    /// <summary>
+    /// Settles the paint-time facts of a box: its radii, what its background is clipped to, whether it
+    /// hides what overflows, and which decorations its text is drawn under.
+    /// </summary>
+    /// <param name="around">
+    /// The lines the boxes above this one asked for and which reach into it - the list this box hands to
+    /// its children with its own lines added, and the list a child that lays its own content out is
+    /// given nothing of.
+    /// </param>
+    private static void ResolveDecorations(LayoutBox box, List<DecorationSource>? around)
     {
         var style = box.Source.Style;
 
@@ -380,11 +391,70 @@ internal sealed record LayoutProfile(
             box.Radii = Sliced(box.Radii, box);
         }
 
+        // A decoration is asked for by an element and drawn across the text inside it, so the line a
+        // block asked for runs on through every inline that follows, and a child that asks for none
+        // takes none of it away (CSS Text Decoration 4 §2.1). A line box and a run of text are not
+        // elements and own no decoration of their own, and an anonymous box borrows a style that was
+        // already paid for by the element it came from - only the element itself is counted. Which is
+        // also why only an element box can interrupt: the line and the runs inside an atomic box borrow
+        // that box's style, and they are the text the box's own decoration is drawn across, not a fresh
+        // context that starts over.
+        var element = box.Kind is not (LayoutKind.Line or LayoutKind.Text) && !box.Source.IsAnonymous;
+
+        if (element && StandsApart(box))
+        {
+            around = null;
+        }
+
+        var lines = element ? SourceOf(style) : null;
+
+        box.Decorations = lines is null
+            ? around
+            : around is null
+                ? new List<DecorationSource> { lines }
+                : [.. around, lines];
+
         foreach (var child in box.Children)
         {
-            ResolveDecorations(child);
+            ResolveDecorations(child, box.Decorations);
         }
     }
+
+    /// <summary>
+    /// Gets the lines this box decorates its text with, or null where it asked for none. The colour the
+    /// line is drawn in is the one the decorating box settled on: its own <c>text-decoration-color</c>,
+    /// or the colour of <em>its</em> text where that says <c>currentcolor</c> - never the colour of the
+    /// descendant's glyphs the line happens to run across (CSS Text Decoration 4 §2.3).
+    /// </summary>
+    private static DecorationSource? SourceOf(ComputedStyle style) =>
+        style.HasUnderline || style.HasOverline || style.HasLineThrough
+            ? new DecorationSource(
+                style.HasUnderline,
+                style.HasOverline,
+                style.HasLineThrough,
+                style.Decoration,
+                style.DecorationColor ?? ComputedStyle.ToArgb(style.Color))
+            : null;
+
+    /// <summary>
+    /// Gets whether the box stands apart from the line its ancestors are drawn on: one that is set as a
+    /// unit inside a line - a replaced element, an inline block - or one that lays its own content out
+    /// and so takes no part in the line the decoration runs across: a float, a table part, a box placed
+    /// out of flow. An ancestor's decoration neither reaches into such a box nor is drawn over it, so the
+    /// line stops at its edges and resumes beyond them (CSS Text Decoration 4 §2.5, §2.10.1).
+    /// </summary>
+    private static Boolean StandsApart(LayoutBox box) =>
+        box.IsOutOfFlow ||
+        box.Kind is LayoutKind.Image or LayoutKind.Svg or LayoutKind.HorizontalRule
+            or LayoutKind.Table or LayoutKind.TableRowGroup or LayoutKind.TableRow or LayoutKind.TableCell ||
+        box.Source.IsReplaced ||
+        box.Source.Style.Float != FloatSide.None ||
+
+        // A box that lays its own content out - an inline block, a flex, grid or table container, whether
+        // it sits in a line or stacks - takes no part in the line its ancestors are drawn on
+        // (CSS Text Decoration 4 §2.5).
+        box.Source.Kind is BoxKind.InlineBlock or BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry
+            or BoxKind.Table;
 
     /// <summary>
     /// Works out where each list item's marker is drawn.

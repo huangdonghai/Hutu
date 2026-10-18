@@ -24,6 +24,24 @@ public enum DecorationShape : Byte
 }
 
 /// <summary>
+/// One decorating box's lines, as they are drawn across the text they reach.
+/// </summary>
+/// <remarks>
+/// A decoration is set on an element and drawn over the text of the boxes inside it (CSS Text Decoration
+/// 4 §2.1), so what a run of text has to draw is not one answer but a list: every box around it that
+/// asked for lines, from the outermost in, each drawing its own line in its own shape and its own
+/// colour. A descendant that asks for none takes nothing away - the line the ancestor asked for still
+/// runs across it - and the lines are painted outermost first so that the inner ones lie over them
+/// (CSS Text Decoration 4 §5.1).
+/// </remarks>
+public sealed record DecorationSource(
+    Boolean Underline,
+    Boolean Overline,
+    Boolean LineThrough,
+    DecorationShape Shape,
+    UInt32 Color);
+
+/// <summary>
 /// Reads the words a decoration was declared with: which lines the element asks for, and in what shape.
 /// </summary>
 internal static class DecorationText

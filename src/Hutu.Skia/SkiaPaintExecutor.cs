@@ -773,47 +773,7 @@ public sealed class SkiaPaintExecutor
             var baseline = (Single)(command.Bounds.Y + command.Baseline);
             DrawRunBlob(canvas, command, baseline, paint, command.LetterSpacing, command.WordSpacing);
 
-            if (command.Underline)
-            {
-                DrawLine(
-                    canvas,
-                    paint,
-                    command,
-                    (Single)(baseline + Math.Abs(metrics.UnderlineOffset)),
-                    Math.Max(1, metrics.UnderlineThickness),
-                    command.Decoration,
-                    alongLine: true);
-            }
-
-            // The face says where its overline goes; a face that will not is answered with the top of
-            // its own em box, which is the only other height the line could be taken from.
-            if (command.Overline)
-            {
-                DrawLine(
-                    canvas,
-                    paint,
-                    command,
-                    (Single)(baseline - (metrics.OverlineOffset > 0
-                        ? Math.Abs(metrics.OverlineOffset)
-                        : metrics.Ascent)),
-                    Math.Max(1, metrics.OverlineThickness > 0
-                        ? metrics.OverlineThickness
-                        : metrics.UnderlineThickness),
-                    command.Decoration,
-                    alongLine: true);
-            }
-
-            if (command.LineThrough)
-            {
-                DrawLine(
-                    canvas,
-                    paint,
-                    command,
-                    (Single)(baseline - Math.Abs(metrics.StrikeoutOffset)),
-                    Math.Max(1, metrics.StrikeoutThickness),
-                    command.Decoration,
-                    alongLine: true);
-            }
+            DrawDecorations(canvas, paint, command, metrics, baseline, alongLine: true);
 
             return;
         }
@@ -833,44 +793,82 @@ public sealed class SkiaPaintExecutor
 
         // In a column a decoration runs beside the text rather than under it, so it becomes a line
         // down the box at the distance from the baseline that the font asked for.
-        if (command.Underline)
-        {
-            DrawLine(
-                canvas,
-                paint,
-                command,
-                (Single)(command.Bounds.X + command.Baseline - Math.Abs(metrics.UnderlineOffset)),
-                Math.Max(1, metrics.UnderlineThickness),
-                command.Decoration,
-                alongLine: false);
-        }
+        DrawDecorations(canvas, paint, command, metrics, (Single)command.Baseline, alongLine: false);
+    }
 
-        if (command.Overline)
-        {
-            DrawLine(
-                canvas,
-                paint,
-                command,
-                (Single)(command.Bounds.X + command.Baseline + (metrics.OverlineOffset > 0
-                    ? Math.Abs(metrics.OverlineOffset)
-                    : metrics.Ascent)),
-                Math.Max(1, metrics.OverlineThickness > 0
-                    ? metrics.OverlineThickness
-                    : metrics.UnderlineThickness),
-                command.Decoration,
-                alongLine: false);
-        }
+    /// <summary>
+    /// Draws every line the boxes around this run asked for: outermost first, so the line an element
+    /// itself asked for lies over the one its container did, and each in the shape and the colour of the
+    /// box that decorates - not of the text it happens to be running across
+    /// (CSS Text Decoration 4 §2.3, §5.1). Within one box the underline goes under the overline and the
+    /// strike-through over both, which is the order the specification paints them in.
+    /// </summary>
+    /// <param name="from">
+    /// The baseline the offsets are measured from: down from the top of the box along a line, and across
+    /// from its left edge down a column.
+    /// </param>
+    /// <param name="alongLine">
+    /// Whether the run reads along a line, so its decorations run with it, or down a column, so they run
+    /// beside the text they decorate.
+    /// </param>
+    private static void DrawDecorations(
+        SKCanvas canvas,
+        SKPaint paint,
+        TextCommand command,
+        FontMetrics metrics,
+        Single from,
+        Boolean alongLine)
+    {
+        // A column's lines stand across the box instead of under it, and the run's own left edge is
+        // where the distance from the baseline begins.
+        var origin = alongLine ? 0f : (Single)command.Bounds.X;
+        var sign = alongLine ? 1f : -1f;
 
-        if (command.LineThrough)
+        foreach (var decoration in command.Decorations)
         {
-            DrawLine(
-                canvas,
-                paint,
-                command,
-                (Single)(command.Bounds.X + command.Baseline + Math.Abs(metrics.StrikeoutOffset)),
-                Math.Max(1, metrics.StrikeoutThickness),
-                command.Decoration,
-                alongLine: false);
+            paint.Color = new SKColor(decoration.Color);
+
+            if (decoration.Underline)
+            {
+                DrawLine(
+                    canvas,
+                    paint,
+                    command,
+                    (Single)(origin + from + (sign * Math.Abs(metrics.UnderlineOffset))),
+                    Math.Max(1, metrics.UnderlineThickness),
+                    decoration.Shape,
+                    alongLine);
+            }
+
+            // The face says where its overline goes; a face that will not is answered with the top of
+            // its own em box, which is the only other height the line could be taken from.
+            if (decoration.Overline)
+            {
+                DrawLine(
+                    canvas,
+                    paint,
+                    command,
+                    (Single)(origin + from - (sign * (metrics.OverlineOffset > 0
+                        ? Math.Abs(metrics.OverlineOffset)
+                        : metrics.Ascent))),
+                    Math.Max(1, metrics.OverlineThickness > 0
+                        ? metrics.OverlineThickness
+                        : metrics.UnderlineThickness),
+                    decoration.Shape,
+                    alongLine);
+            }
+
+            if (decoration.LineThrough)
+            {
+                DrawLine(
+                    canvas,
+                    paint,
+                    command,
+                    (Single)(origin + from - (sign * Math.Abs(metrics.StrikeoutOffset))),
+                    Math.Max(1, metrics.StrikeoutThickness),
+                    decoration.Shape,
+                    alongLine);
+            }
         }
     }
 
