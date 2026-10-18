@@ -114,6 +114,22 @@ public sealed class TextDecorationPaintTests
     }
 
     [Test]
+    public async Task AThicknessWrittenInTheShorthandIsTheThicknessOfTheLine()
+    {
+        // The shorthand takes the thickness as one of its words (CSS Text Decoration 4 §2.6). A grammar
+        // with no slot for it leaves the length unconsumed, and an unconsumed value is no value at all:
+        // the whole declaration goes, taking the line with it. Both words have to reach the line.
+        var asked = await Ink(Text, "8px underline");
+        var faced = await Ink(Text, "underline");
+
+        Assert.That(asked.Rows, Is.GreaterThan(0), "the line the shorthand asked for is drawn");
+        Assert.That(
+            asked.Bottommost - faced.Bottommost,
+            Is.GreaterThanOrEqualTo(6),
+            "and it is eight pixels wide where the face would have been two");
+    }
+
+    [Test]
     public async Task AThickerLineIsTheOneTheBoxAskedFor()
     {
         // The face's own width is where the line stops short of the ask: eight pixels of thickness reach

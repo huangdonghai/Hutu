@@ -71,6 +71,18 @@ public sealed class TextDecorationPropagationTests
     }
 
     [Test]
+    public async Task EveryWordOfTheShorthandReachesTheLineItDraws()
+    {
+        // Line, colour and thickness are all words the shorthand takes (CSS Text Decoration 4 §2.6). A
+        // grammar with no slot for the length leaves it unconsumed, and an unconsumed value is no value:
+        // the declaration goes whole, and the text under it is left unlined as well.
+        var bands = await Read("aa<span>bb</span>cc", "3px green underline");
+
+        Assert.That(bands["bb"].Rows, Is.GreaterThan(0), "the line the shorthand asked for reaches the descendant");
+        Assert.That(bands["bb"].Colour, Is.EqualTo(0xFF008000), "in the colour the shorthand said");
+    }
+
+    [Test]
     public async Task ADecorationRunsBesideAColumnItReaches()
     {
         // The same propagation down a column, where the line runs beside the text instead of under it.
