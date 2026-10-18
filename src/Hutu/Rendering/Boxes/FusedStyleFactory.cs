@@ -30,6 +30,7 @@ internal sealed class FusedParent
     public CssColorValue? Color { get; init; }
     public String FontFamily { get; init; } = "sans-serif";
     public Double LetterSpacing { get; init; }
+    public Double WordSpacing { get; init; }
     public Int32 Weight { get; init; } = 400;
     public Boolean Italic { get; init; }
     public Double? LineHeight { get; init; }
@@ -154,6 +155,7 @@ internal sealed class FusedParent
         Color = style.Color,
         FontFamily = style.FontFamily,
         LetterSpacing = style.LetterSpacing,
+        WordSpacing = style.WordSpacing,
         Weight = style.FontWeight,
         Italic = style.IsItalic,
         LineHeight = style.LineHeight,
@@ -281,6 +283,7 @@ internal static class FusedStyleFactory
                 Weight = ComputedStyle.ResolveFontWeightFused(find("font-weight"), parent.Weight),
                 Italic = ComputedStyle.ResolveFontStyleFused(find("font-style"), parent.Italic),
                 LetterSpacing = ComputedStyle.ResolveLetterSpacingFused(find("letter-spacing"), parent.LetterSpacing, size, dimensions),
+                WordSpacing = ComputedStyle.ResolveWordSpacingFused(find("word-spacing"), parent.WordSpacing, size, dimensions),
                 LineHeight = ComputedStyle.ResolveLineHeightFused(
                     find("line-height"), parent.LineHeightHit, size, parent.LineHeight, dimensions),
             };

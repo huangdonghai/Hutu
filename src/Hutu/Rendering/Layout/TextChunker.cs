@@ -85,6 +85,37 @@ internal readonly struct ChunkRange
     public static Boolean EndsInSpace(String text, Int32 start, Int32 length) =>
         length > 0 && IsCollapsible(text[start + length - 1]);
 
+    /// <summary>
+    /// Gets how many word separators the range is drawn with, which is how many times the room
+    /// <c>word-spacing</c> adds.
+    /// </summary>
+    /// <remarks>
+    /// Only the space itself takes the room. The tab, the ideographic space and the rest of the
+    /// characters that read as a gap are left to the font, as the property says they are - and Chromium,
+    /// measured, leaves them alone too. The no-break space is the one place the two disagree: it is given
+    /// the room there and not here, because a run that carries one is drawn as the single piece it was
+    /// written to be, and room put between two characters of one piece has to be folded into where the
+    /// glyphs after it stand - which is the letter spacing's problem rather than this property's.
+    /// <para>
+    /// A separator at the very start of the text is not counted: the room is what goes between words,
+    /// and a space that opens a piece of text has a word only after it.
+    /// </para>
+    /// </remarks>
+    public static Int32 WordSeparators(String text, Int32 start, Int32 length)
+    {
+        var separators = 0;
+
+        for (var index = start; index < start + length; index++)
+        {
+            if (text[index] == ' ')
+            {
+                separators++;
+            }
+        }
+
+        return start == 0 && separators > 0 ? separators - 1 : separators;
+    }
+
 
     /// <summary>
     /// Gets whether the string is nothing but collapsible white space, which is what a line may break

@@ -530,6 +530,7 @@ internal sealed class TextSelector
         // The letter spacing the layout gave the run is added here too, so a boundary falls where the
         // layout put it; without it a caret would drift further off with every character.
         var spacing = run.Source.Style.LetterSpacing;
+        var words = run.Source.Style.WordSpacing;
 
         // Along a line the spacing is charged per character, which is what the layout counted when it
         // gave the run its width; the table has to be counted the same way or a caret lands short of
@@ -546,7 +547,8 @@ internal sealed class TextSelector
             prefix[index] = run.Flow.IsVertical
                 ? prefix[index - 1] + ColumnStep(run, text, index) + spacing
                 : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow)
-                    + (spacing * CharactersThrough(ordinals, index));
+                    + (spacing * CharactersThrough(ordinals, index))
+                    + (words * TextChunker.WordSeparators(text, 0, index));
         }
 
         _prefixes[run] = prefix;

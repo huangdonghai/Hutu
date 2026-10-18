@@ -162,6 +162,7 @@ internal readonly struct ComputedStyle
             Weight = ResolveFontWeight(),
             Italic = Is("font-style", "italic") || Is("font-style", "oblique"),
             LetterSpacing = Length("letter-spacing", RenderMode.Horizontal, new LengthReader.FontSource(size), CssInitialValues.LetterSpacing),
+            WordSpacing = Length("word-spacing", RenderMode.Horizontal, new LengthReader.FontSource(size), CssInitialValues.WordSpacing),
             LineHeight = ResolveLineHeight(size),
         };
 
@@ -1279,6 +1280,25 @@ internal readonly struct ComputedStyle
     }
 
     /// <summary>
+    /// Resolves the room added between words from the element's own cascaded declaration, for the fused
+    /// path. The property is inherited: a miss takes the parent's resolved spacing. <c>normal</c> - the
+    /// initial value, and the only keyword the property has - is no room at all, and a value that is
+    /// neither a length nor that keyword is not a declaration of this property, so it answers the same.
+    /// </summary>
+    public static Double ResolveWordSpacingFused(
+        ICssProperty? declared, Double parent, Double ownSize, IRenderDimensions dimensions)
+    {
+        if (declared is null || IsInherit(declared))
+        {
+            return parent;
+        }
+
+        return TryReadLengthValue(declared, RenderMode.Horizontal, ownSize, dimensions, out var pixels)
+            ? pixels
+            : CssInitialValues.WordSpacing;
+    }
+
+    /// <summary>
     /// Resolves the background layers from the element's own cascaded declarations, for the
     /// fused path. A page with no background properties paints none.
     /// </summary>
@@ -2250,6 +2270,14 @@ internal readonly struct ComputedStyle
     /// asks, which is why a run is that much wider than its glyphs.
     /// </summary>
     public Double LetterSpacing => _values.Font.LetterSpacing;
+
+    /// <summary>
+    /// Gets the room added between words, in pixels. The space is added to each word separator drawn -
+    /// which after the document's own white space processing is one per place two words meet, however
+    /// many spaces were written there - and to none of the other space separators the eye reads as a gap,
+    /// which is what the property says it leaves to the font.
+    /// </summary>
+    public Double WordSpacing => _values.Font.WordSpacing;
 
     public String VerticalAlign => _values.Text.VerticalAlign;
 

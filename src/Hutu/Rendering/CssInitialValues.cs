@@ -67,6 +67,9 @@ internal static class CssInitialValues
 
     internal const Double LetterSpacing = 0;
 
+    /// <summary>The initial <c>word-spacing</c>, which is <c>normal</c>: no room added between words.</summary>
+    internal const Double WordSpacing = 0;
+
     // --- Border and outline ------------------------------------------------------------------
     //
     // One entry for all four sides: the specification gives every one of them `none`, and a reader

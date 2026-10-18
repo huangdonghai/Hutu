@@ -259,6 +259,9 @@ internal sealed record FontArea
 
     internal Double LetterSpacing { get; init; } = CssInitialValues.LetterSpacing;
 
+    /// <summary>Gets the room added between words, in pixels: <c>normal</c> is none.</summary>
+    internal Double WordSpacing { get; init; } = CssInitialValues.WordSpacing;
+
     /// <summary>Gets the line height in pixels, or null for <c>normal</c>, which defers to the
     /// font's own metrics.</summary>
     /// <remarks>

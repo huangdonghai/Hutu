@@ -1522,7 +1522,8 @@ internal sealed class InlineLayout
         (flow.IsVertical
             ? MeasureColumn(source, start, length, style.GetFont(), style.FontSize, flow, measurer)
             : measurer.MeasureWidth(source.Substring(start, length), style.GetFont()))
-        + (style.LetterSpacing * SpacingUnits(source, start, length, flow));
+        + (style.LetterSpacing * SpacingUnits(source, start, length, flow))
+        + (style.WordSpacing * TextChunker.WordSeparators(source, start, length));
 
     /// <summary>
     /// Gets how many times the run's letter spacing is charged along a line, where the glyphs are set
@@ -1698,7 +1699,10 @@ internal sealed class InlineLayout
     /// </summary>
     private MeasuredRun Measure(ComputedStyle style, FontStyle font, OrientedRun run, WritingModeInfo flow)
     {
-        var spacing = style.LetterSpacing * SpacingUnits(run.Source, run.Start, run.Length, flow);
+        // The same two spacings the intrinsic arithmetic charges: the letter spacing once per character of
+        // the run, and the room between words once per separator it is drawn with.
+        var spacing = (style.LetterSpacing * SpacingUnits(run.Source, run.Start, run.Length, flow)) +
+            (style.WordSpacing * TextChunker.WordSeparators(run.Source, run.Start, run.Length));
 
         return new MeasuredRun(
             run.Source,
