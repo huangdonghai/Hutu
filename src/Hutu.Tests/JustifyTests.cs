@@ -173,6 +173,46 @@ public sealed class JustifyTests
             "the line had real room to spread over - without it the equality above proves nothing");
     }
 
+    [Test]
+    public async Task ALineOfChineseSharesItsRoomBetweenItsCharacters()
+    {
+        // A line of Chinese has no word separators to put its room into, and the initial value of
+        // text-justify says the seams between its characters take it instead (CSS Text 3 §3.3.1).
+        // Chromium, measured on this page with five ideographs of twenty on a line of a hundred and
+        // ten, sets them at 0, 23, 45, 68, 90: the four seams sharing the ten units at two and a half
+        // each. Ahem carries no CJK glyph, so the characters go to a face that does.
+        var ideographs = string.Concat(Enumerable.Repeat(Char.ConvertFromUtf32(0x6F22), 11));
+
+        var plain = await Ink("font-family:Ahem;font-size:20px;width:110px;", ideographs);
+        var spread = await Ink("font-family:Ahem;font-size:20px;width:110px;text-align:justify;", ideographs);
+        var words = await Ink(
+            "font-family:Ahem;font-size:20px;width:110px;text-align:justify;text-justify:inter-word;",
+            ideographs);
+
+        Assert.That(plain.Right, Is.LessThan(105), "five cells of twenty stop short of the edge");
+        Assert.That(spread.Right, Is.GreaterThanOrEqualTo(105), "the seams carry the line to it");
+        Assert.That(words.Right, Is.LessThan(105), "and a line asked to expand only between words does not move");
+    }
+
+    [Test]
+    public async Task AFragmentThatCarriesNoTextIsNotAPlaceToPayInto()
+    {
+        using var view = CreateView();
+
+        // A borrowed page (gecko/text/justification-2d) sets an empty inline-block on either side of a
+        // figure space in a justified line. The seam between two pieces of the line asks what the last
+        // character of one and the first of the other are, and a box that carries no text can answer
+        // neither - which is the question that used to walk off the end of the string.
+        await view.SetHtml(Page(
+            "width:40px;text-align:justify",
+            "<span style='display:inline-block;width:5px;height:5px'></span>ab cd" +
+            "<span style='display:inline-block;width:5px;height:5px'></span><br>next"));
+
+        Assert.That(Lines(view).Count(), Is.GreaterThan(1), "the page laid out rather than threw");
+
+        Assert.That(Text(view, "ab cd").BorderBox.Width, Is.GreaterThan(0), "and the words still stand on it");
+    }
+
     /// <summary>Draws the first line of the content for real and reports how far its ink reaches.</summary>
     private static async Task<(Double Right, Double Width)> Ink(String style, String content)
     {

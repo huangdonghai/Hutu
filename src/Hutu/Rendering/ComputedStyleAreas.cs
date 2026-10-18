@@ -286,6 +286,9 @@ internal sealed record TextArea
 
     internal String Align { get; init; } = CssInitialValues.TextAlign;
 
+    /// <summary>Gets where the room of a justified line may be put: between words, between characters, or both.</summary>
+    internal String TextJustify { get; init; } = CssInitialValues.TextJustify;
+
     internal String VerticalAlign { get; init; } = CssInitialValues.VerticalAlign;
 
     /// <summary>

@@ -332,6 +332,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             var length = WidthAt(text, position);
             var codePoint = CodepointAt(text, position);
             var characterText = text.Substring(position, length);
+            var start = position;
 
             position += length;
 
@@ -352,7 +353,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                     drawByGlyph: true,
                     vertical.Points[0].Y,
                     advance,
-                    advance));
+                    advance,
+                    start));
                 continue;
             }
 
@@ -375,7 +377,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                     drawByGlyph: false,
                     replacementHasOrigin ? replacementRun.Points[0].Y : null,
                     advance,
-                    centreWidth));
+                    centreWidth,
+                    start));
                 continue;
             }
 
@@ -388,7 +391,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                 drawByGlyph: false,
                 hasOrigin ? vertical.Points[0].Y : null,
                 advance,
-                advance));
+                advance,
+                start));
         }
 
         return cells;
@@ -565,7 +569,8 @@ internal readonly struct UprightCell
         Boolean drawByGlyph,
         Single? baselineOffset,
         Double advance,
-        Double centreWidth)
+        Double centreWidth,
+        Int32 index)
     {
         Font = font;
         Glyph = glyph;
@@ -574,6 +579,7 @@ internal readonly struct UprightCell
         BaselineOffset = baselineOffset;
         Advance = advance;
         CentreWidth = centreWidth;
+        Index = index;
     }
 
     /// <summary>Gets the font the cell is drawn with, after the fallback and the substitution.</summary>
@@ -599,4 +605,11 @@ internal readonly struct UprightCell
 
     /// <summary>Gets the width the cell is centred across the column by.</summary>
     public Double CentreWidth { get; }
+
+    /// <summary>
+    /// Gets where in the text the character this cell stands for begins. The cell is drawn as the form
+    /// the font keeps for it, which need not be the character the document wrote, so the place a
+    /// justified line puts its room - a seam in the text, not in the glyphs - is read from here.
+    /// </summary>
+    public Int32 Index { get; }
 }

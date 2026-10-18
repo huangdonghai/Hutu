@@ -1811,7 +1811,7 @@ internal sealed class InlineLayout
 
             for (var index = 0; index < line.Fragments.Count; index++)
             {
-                places += Places(line.Fragments[index], endsLine: index == line.Fragments.Count - 1);
+                places += Places(line, index);
             }
 
             var free = (line.Extent - line.Indent) - line.Used;
@@ -1828,7 +1828,7 @@ internal sealed class InlineLayout
             for (var index = 0; index < line.Fragments.Count; index++)
             {
                 var fragment = line.Fragments[index];
-                var count = Places(fragment, endsLine: index == line.Fragments.Count - 1);
+                var count = Places(line, index);
 
                 if (count == 0)
                 {
@@ -1847,15 +1847,67 @@ internal sealed class InlineLayout
     }
 
     /// <summary>
-    /// Gets how many places between two words the fragment holds. A run of white space at the end of the
-    /// line's last fragment is the line trailing rather than two words standing apart, and a line is not
-    /// justified into the room past its own edge.
+    /// Gets how many places the fragment at this point of the line holds a share of the room for: the
+    /// runs of white space it stands between and, where the text expands between characters, the seams
+    /// between the ideographs it is made of. A place is counted for the fragment on its left, whose
+    /// advance carries the room, which is also how a fragment that ends in a space already worked; the
+    /// seam into the fragment after it is therefore this one's, and is what lets a line of Chinese -
+    /// where two ideographs may be split between the pieces the markup made - be paid in full.
     /// </summary>
-    private static Int32 Places(TextFragment fragment, Boolean endsLine) =>
-        TextChunker.Spaces(fragment.Source, fragment.Start, fragment.Length) -
-        (endsLine && TextChunker.EndsInSpace(fragment.Source, fragment.Start, fragment.Length)
+    /// <remarks>
+    /// The place a line trails into is left out: a line is not justified into the room past its own edge
+    /// (CSS Text 3 §5.7.1), and the last line of a block is not justified at all, which the caller asks
+    /// for by never reaching here for it.
+    /// </remarks>
+    private static Int32 Places(Line line, Int32 index)
+    {
+        var fragment = line.Fragments[index];
+        var last = fragment.Start + fragment.Length - 1;
+        var justify = fragment.Style.TextJustify;
+        var places = 0;
+        var atEdge = false;
+
+        foreach (var point in TextClusters.ExpansionPoints(
+            fragment.Source, fragment.Start, fragment.Length, justify))
+        {
+            if (point < last)
+            {
+                places++;
+                continue;
+            }
+
+            // The room past the edge of the line is nowhere to put, and a place standing at the edge of
+            // the fragment already carries the seam into what comes next.
+            atEdge = true;
+
+            if (!EndsLine(line, index))
+            {
+                places++;
+            }
+        }
+
+        // A fragment that carries no text - the empty inline box a page puts between two words - has no
+        // first and no last character to ask about, so the seam either side of it is not a question.
+        if (atEdge || fragment.Length == 0 || EndsLine(line, index))
+        {
+            return places;
+        }
+
+        var following = line.Fragments[index + 1];
+
+        if (following.Length == 0)
+        {
+            return places;
+        }
+
+        return places + (TextClusters.Seam(
+            fragment.Source, last, following.Source, following.Start, justify)
             ? 1
             : 0);
+    }
+
+    /// <summary>Gets whether the fragment is the one the line ends with, whose trailing place is the line trailing.</summary>
+    private static Boolean EndsLine(Line line, Int32 index) => index == line.Fragments.Count - 1;
 
     /// <summary>
     /// Gets the distance the first line of a box is set in from the edge it begins at.

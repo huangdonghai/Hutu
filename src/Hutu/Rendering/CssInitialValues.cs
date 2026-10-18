@@ -65,6 +65,13 @@ internal static class CssInitialValues
     /// </remarks>
     internal const String TextAlign = "start";
 
+    /// <summary>
+    /// The initial <c>text-justify</c>, which is not a fixed method but a delegation: the user agent
+    /// expands at spaces and, for a script that writes no word separators, between its characters too
+    /// (CSS Text 3 §3.3.1).
+    /// </summary>
+    internal const String TextJustify = "auto";
+
     internal const Double LetterSpacing = 0;
 
     /// <summary>The initial <c>word-spacing</c>, which is <c>normal</c>: no room added between words.</summary>

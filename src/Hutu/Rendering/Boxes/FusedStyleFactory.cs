@@ -45,6 +45,8 @@ internal sealed class FusedParent
     public String WhiteSpace { get; init; } = "normal";
     public String Align { get; init; } = "start";
 
+    public String TextJustify { get; init; } = "auto";
+
     /// <summary>
     /// Gets whether the parent is seen, which is what decides whether this element is seen when it says
     /// nothing: a dropdown's hundred boxes are hidden by the one container around them.
@@ -181,6 +183,7 @@ internal sealed class FusedParent
             : LineHeightHit,
         WhiteSpace = style.WhiteSpace,
         Align = style.TextAlign,
+        TextJustify = style.TextJustify,
         Visibility = style.Visibility,
         VerticalAlign = style.VerticalAlign,
         InFlex = style.Display.Contains("flex", StringComparison.OrdinalIgnoreCase),
@@ -333,6 +336,7 @@ internal static class FusedStyleFactory
             {
                 WhiteSpace = ComputedStyle.ResolveWhiteSpaceFused(find("white-space"), parent.WhiteSpace),
                 Align = ComputedStyle.ResolveTextAlignFused(find("text-align"), parent.Align),
+                TextJustify = ComputedStyle.ResolveTextJustifyFused(find("text-justify"), parent.TextJustify),
                 VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign),
                 Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, face, dimensions),
                 Visibility = ComputedStyle.ResolveVisibilityFused(find("visibility"), parent.Visibility),

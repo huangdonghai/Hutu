@@ -95,37 +95,93 @@ public static class TextClusters
     }
 
     /// <summary>
-    /// Gets where each run of collapsible white space in the text ends, which is where a justified line
-    /// puts the room it owes: everything set after that place stands further along.
+    /// Gets where a justified line may put the room it owes: after every run of white space, and - when
+    /// the line is set to expand between characters, which is what <c>text-justify: auto</c> asks of a
+    /// script that writes no spaces - after every ideograph that another ideograph follows.
     /// </summary>
-    public static Int32[] SpaceRunEnds(String text)
+    /// <remarks>
+    /// A place is named by the last unit of the character the room follows, so the drawing side knows
+    /// which glyphs move: those after it, and not those before it. Putting a boundary after the
+    /// character it follows rather than before the one it opens is what lets a run that ends at one pay
+    /// the room from its own advance - the way the trailing space of a run does - and leave what comes
+    /// next where the layout placed it.
+    /// </remarks>
+    public static Int32[] ExpansionPoints(String text, Int32 start, Int32 length, String expand)
     {
-        var ends = new List<Int32>();
+        var points = new List<Int32>();
+        var end = start + length;
         var inside = false;
 
-        for (var index = 0; index < text.Length; index++)
+        for (var index = start; index < end;)
         {
-            if (!TextChunker.IsCollapsible(text[index]))
-            {
-                if (inside)
-                {
-                    ends.Add(index - 1);
-                }
+            var lengthOf = TextChunker.UnitsAt(text, index);
+            var next = index + lengthOf;
 
-                inside = false;
+            index += lengthOf;
+
+            if (TextChunker.IsCollapsible(text[index - lengthOf]))
+            {
+                // A run of spaces is one place, not several, and the room goes where the next word
+                // begins - after the last of them.
+                inside = true;
                 continue;
             }
 
-            inside = true;
+            if (inside)
+            {
+                points.Add(index - lengthOf - 1);
+                inside = false;
+            }
+
+            if (next >= end || !Offers(expand, text, index - lengthOf, next))
+            {
+                continue;
+            }
+
+            points.Add(next - 1);
         }
 
         if (inside)
         {
-            ends.Add(text.Length - 1);
+            points.Add(end - 1);
         }
 
-        return ends.ToArray();
+        return points.ToArray();
     }
+
+    /// <summary>
+    /// Gets whether the boundary between two characters is a place the room goes, under the expansion
+    /// the style asks for.
+    /// </summary>
+    private static Boolean Offers(String expand, String text, Int32 index, Int32 next) =>
+        expand switch
+        {
+            // The initial value: spaces, and the seams between characters of a script that does not
+            // separate its words (CSS Text 3 §3.3.1).
+            "auto" => TextChunker.IsCjk(text, index) && TextChunker.IsCjk(text, next),
+
+            // Every boundary of the text, which is what distribute and inter-character ask for: the
+            // room goes between the letters as well as between the words.
+            "inter-character" or "distribute" => true,
+
+            // inter-word, and anything a reader does not know, which leaves only the spaces.
+            _ => false,
+        };
+
+    /// <summary>
+    /// Gets whether the seam between two pieces of a line - the boundary the text of neither piece can
+    /// see, because its two characters are split between them - is a place the room of a justified line
+    /// goes. It is the same question the boundary inside a piece answers, asked of the neighbours the
+    /// piece has on either side of it.
+    /// </summary>
+    public static Boolean Seam(String left, Int32 leftEnd, String right, Int32 rightStart, String expand) =>
+        expand switch
+        {
+            "auto" => TextChunker.IsCjk(left, leftEnd) && TextChunker.IsCjk(right, rightStart),
+            "inter-character" or "distribute" => true,
+            _ => false,
+        };
+
 
     private static Boolean IsAscii(String text, Int32 start, Int32 length)
     {

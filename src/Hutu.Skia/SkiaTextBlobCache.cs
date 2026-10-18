@@ -46,8 +46,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
         String text,
         Double letterSpacing,
         Double justification = 0,
-        Int32 justifies = 0) =>
-        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies);
+        Int32 justifies = 0,
+        String expand = "auto") =>
+        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand);
 
     /// <summary>
     /// Gets the blob a column of upright characters is drawn as, with its glyphs positioned relative
@@ -57,8 +58,21 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// Each character is centred across the em box rather than across the column's own width, so the
     /// one blob answers a column of any width: the caller draws it where the column's width puts it.
     /// </remarks>
-    public SKTextBlob? GetColumnBlob(FontStyle style, String text, Double letterSpacing) =>
-        GetBlob(BlobKind.Column, style, text, letterSpacing, 0, 0);
+    /// <param name="justification">
+    /// The room a justified line owes after each of this column's places, which every cell after that
+    /// place carries down the column with it - the same debt the run along a line is drawn with, paid
+    /// here between the upright cells rather than between the glyphs of one run.
+    /// </param>
+    /// <param name="justifies">How many places this column holds shares for.</param>
+    /// <param name="expand">Which boundaries of the text those places are, as text-justify says.</param>
+    public SKTextBlob? GetColumnBlob(
+        FontStyle style,
+        String text,
+        Double letterSpacing,
+        Double justification = 0,
+        Int32 justifies = 0,
+        String expand = "auto") =>
+        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand);
 
     private SKTextBlob? GetBlob(
         BlobKind kind,
@@ -66,9 +80,10 @@ internal sealed class SkiaTextBlobCache : IDisposable
         String text,
         Double letterSpacing,
         Double justification,
-        Int32 justifies)
+        Int32 justifies,
+        String expand)
     {
-        var key = new TextBlobKey(kind, style, text, letterSpacing, justification, justifies);
+        var key = new TextBlobKey(kind, style, text, letterSpacing, justification, justifies, expand);
 
         lock (_gate)
         {
@@ -78,8 +93,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
             }
 
             var blob = kind == BlobKind.Run
-                ? BuildRunBlob(style, text, letterSpacing, justification, justifies)
-                : BuildColumnBlob(style, text, letterSpacing);
+                ? BuildRunBlob(style, text, letterSpacing, justification, justifies, expand)
+                : BuildColumnBlob(style, text, letterSpacing, justification, justifies, expand);
             _blobs[key] = blob;
             return blob;
         }
@@ -128,7 +143,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
         String text,
         Double letterSpacing,
         Double justification,
-        Int32 justifies)
+        Int32 justifies,
+        String expand)
     {
         using var builder = new SKTextBlobBuilder();
         var pen = 0f;
@@ -136,6 +152,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
         // The places the line still owes a share to, paid out in the order the text runs: a stretch
         // takes as many as it holds and the rest go to the stretches after it.
         var owing = justifies;
+        var points = Places(text, justifies, justification, expand);
+        var offset = 0;
 
         foreach (var run in _measurer.Decompose(text, style))
         {
@@ -143,7 +161,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 ? 0
                 : TextClusters.Count(run.Text, 0, run.Text.Length);
 
-            var ends = justification == 0 ? Array.Empty<Int32>() : TextClusters.SpaceRunEnds(run.Text);
+            // The places were found in the whole run's text, so each stretch is given the ones that fall
+            // inside it, told again from where the stretch itself begins.
+            var ends = Slice(points, offset, run.Text.Length);
             var places = Math.Min(ends.Length, owing);
             owing -= places;
 
@@ -167,10 +187,56 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 AddMapped(builder, run, pen, letterSpacing);
             }
 
+            offset += run.Text.Length;
+
             pen += (Single)(run.Advance + (letterSpacing * characters) + (justification * places));
         }
 
         return builder.Build();
+    }
+
+    /// <summary>
+    /// Gets the places of the whole run that fall inside one stretch of it, named from where the stretch
+    /// begins - which is the frame the glyphs of that stretch are set out in.
+    /// </summary>
+    private static Int32[] Slice(Int32[] points, Int32 start, Int32 length)
+    {
+        if (points.Length == 0)
+        {
+            return points;
+        }
+
+        var inside = new List<Int32>(points.Length);
+
+        foreach (var point in points)
+        {
+            if (point >= start && point < start + length)
+            {
+                inside.Add(point - start);
+            }
+        }
+
+        return inside.ToArray();
+    }
+
+    /// <summary>
+    /// Gets where the room of a justified run goes, as the index within it after which each share is
+    /// paid: the end of every run of white space and, where the text expands between its characters,
+    /// every seam the style asks for between them.
+    /// </summary>
+    private static Int32[] Places(String text, Int32 justifies, Double justification, String expand)
+    {
+        if (justification == 0)
+        {
+            return Array.Empty<Int32>();
+        }
+
+        var points = TextClusters.ExpansionPoints(text, 0, text.Length, expand);
+
+        // The seam a run cannot see in its own text - the one between its last ideograph and the first
+        // of what the line goes on with, which the layout counted for this run - is paid at its end,
+        // where it moves none of this run's glyphs and only carries the pen on.
+        return points.Length < justifies ? [.. points, text.Length - 1] : points;
     }
 
     private static void AddShaped(
@@ -271,21 +337,39 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// to say, falling back to the middle of the em box for a font that will not. A character with
     /// no glyph of its own to draw is set by its font's own mapping of the text it stands for.
     /// </remarks>
-    private SKTextBlob? BuildColumnBlob(FontStyle style, String text, Double letterSpacing)
+    private SKTextBlob? BuildColumnBlob(
+        FontStyle style,
+        String text,
+        Double letterSpacing,
+        Double justification,
+        Int32 justifies,
+        String expand)
     {
         var metrics = _measurer.GetMetrics(style);
         var emBox = metrics.Ascent + metrics.Descent;
         var cells = _measurer.DecomposeUpright(text, style);
 
+        // The room goes after each place in the text the cells were cut from, which is read by the
+        // character each cell stands for rather than by the glyph it draws: the form a font substitutes
+        // for a character down a column need not be the character the document wrote.
+        var points = Places(text, justifies, justification, expand);
+
         using var builder = new SKTextBlobBuilder();
         var inline = 0.0;
+        var crossed = 0;
 
         foreach (var cell in cells)
         {
+            while (crossed < points.Length && points[crossed] < cell.Index)
+            {
+                crossed++;
+            }
+
             var step = Math.Max(cell.Advance, style.Size) + letterSpacing;
+            var reached = inline + (justification * crossed);
             var baseline = cell.BaselineOffset is { } offset
-                ? (Single)(inline + offset)
-                : (Single)(inline + ((step - emBox) / 2) + metrics.Ascent);
+                ? (Single)(reached + offset)
+                : (Single)(reached + ((step - emBox) / 2) + metrics.Ascent);
             var centre = (Single)((emBox - cell.CentreWidth) / 2);
 
             if (cell.DrawByGlyph)
@@ -349,7 +433,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
             String text,
             Double spacing,
             Double justification,
-            Int32 justifies)
+            Int32 justifies,
+            String expand)
         {
             Kind = kind;
             Style = style;
@@ -357,6 +442,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
             Spacing = spacing;
             Justification = justification;
             Justifies = justifies;
+            Expand = expand;
         }
 
         public BlobKind Kind { get; }
@@ -370,12 +456,16 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
         public Int32 Justifies { get; }
 
+        /// <summary>Gets which boundaries of the text the room goes after, as text-justify says.</summary>
+        public String Expand { get; }
+
         public Boolean Equals(TextBlobKey other) =>
             Kind == other.Kind &&
             Style.Equals(other.Style) &&
             Spacing.Equals(other.Spacing) &&
             Justification.Equals(other.Justification) &&
             Justifies == other.Justifies &&
+            String.Equals(Expand, other.Expand, StringComparison.OrdinalIgnoreCase) &&
             String.Equals(_text, other._text, StringComparison.Ordinal);
 
         public override Boolean Equals(Object? obj) => obj is TextBlobKey other && Equals(other);
@@ -389,6 +479,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 hash = (hash * 397) ^ Spacing.GetHashCode();
                 hash = (hash * 397) ^ Justification.GetHashCode();
                 hash = (hash * 397) ^ Justifies;
+                hash = (hash * 397) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(Expand);
                 return (hash * 397) ^ StringComparer.Ordinal.GetHashCode(_text);
             }
         }

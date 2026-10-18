@@ -384,7 +384,8 @@ public sealed class TextCommand : PaintCommand
         UInt32 strokeColor,
         DecorationShape decoration = DecorationShape.Solid,
         Double justification = 0,
-        Int32 justifies = 0)
+        Int32 justifies = 0,
+        String expand = "auto")
         : base(bounds)
     {
         Text = text;
@@ -401,6 +402,7 @@ public sealed class TextCommand : PaintCommand
         StrokeColor = strokeColor;
         Justification = justification;
         Justifies = justifies;
+        Expand = expand;
     }
 
     public String Text { get; }
@@ -444,4 +446,13 @@ public sealed class TextCommand : PaintCommand
     public Double Justification { get; }
 
     public Int32 Justifies { get; }
+
+    /// <summary>
+    /// Gets which boundaries of the run the justified room goes after - the value of
+    /// <c>text-justify</c>, which says whether a line expands only between its words or also between
+    /// the characters of a script that writes no spaces. The runs of white space the layout counted
+    /// are found again from the text, and the seam between two ideographs split across runs is not,
+    /// so the answer travels with the command rather than being guessed at here.
+    /// </summary>
+    public String Expand { get; }
 }

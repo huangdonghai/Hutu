@@ -199,6 +199,7 @@ internal readonly struct ComputedStyle
         {
             WhiteSpace = Keyword("white-space", CssInitialValues.WhiteSpace),
             Align = Keyword("text-align", CssInitialValues.TextAlign),
+            TextJustify = Keyword("text-justify", CssInitialValues.TextJustify),
             VerticalAlign = Keyword("vertical-align", CssInitialValues.VerticalAlign),
             Indent = ReadLength("text-indent", RenderMode.Horizontal, StyleLength.Zero),
             Visibility = Keyword("visibility", CssInitialValues.Visibility),
@@ -647,6 +648,15 @@ internal readonly struct ComputedStyle
     /// </summary>
     public static String ResolveTextAlignFused(ICssProperty? declared, String parentValue) =>
         ResolveKeywordFused(declared, parentValue, CssInitialValues.TextAlign, inherited: true);
+
+    /// <summary>
+    /// Resolves where a justified line may put its room, for the fused path. The property is inherited,
+    /// and its initial value is a delegation rather than a method: <c>auto</c> is the sentence above
+    /// spelled out by the specification, and the layout reads it as expanding at the seams of a script
+    /// that writes no spaces.
+    /// </summary>
+    public static String ResolveTextJustifyFused(ICssProperty? declared, String parentValue) =>
+        ResolveKeywordFused(declared, parentValue, CssInitialValues.TextJustify, inherited: true);
 
     /// <summary>
     /// Resolves the vertical alignment from the element's own cascaded declaration, for the
@@ -2267,6 +2277,13 @@ internal readonly struct ComputedStyle
     public Double? LineHeight => _values.Font.LineHeight;
 
     public String TextAlign => _values.Text.Align;
+
+    /// <summary>
+    /// Gets where a justified line may put its room. <c>auto</c>, the initial value, is not a method of
+    /// its own but the specification's instruction to expand at spaces and, where the text is written
+    /// without word separators, between its characters too (CSS Text 3 §3.3.1).
+    /// </summary>
+    public String TextJustify => _values.Text.TextJustify;
 
     /// <summary>
     /// Gets the distance the first line of the box is set in from the edge it begins at. A negative

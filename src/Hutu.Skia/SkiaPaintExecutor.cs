@@ -915,7 +915,8 @@ public sealed class SkiaPaintExecutor
             command.Text,
             letterSpacing,
             command.Justification,
-            command.Justifies);
+            command.Justifies,
+            command.Expand);
 
         if (blob is not null)
         {
@@ -1094,7 +1095,8 @@ public sealed class SkiaPaintExecutor
     /// </remarks>
     private void DrawUprightColumn(SKCanvas canvas, TextCommand command, FontMetrics metrics, SKPaint paint)
     {
-        var blob = _measurer.Blobs.GetColumnBlob(command.Font, command.Text, command.LetterSpacing);
+        var blob = _measurer.Blobs.GetColumnBlob(
+            command.Font, command.Text, command.LetterSpacing, command.Justification, command.Justifies, command.Expand);
 
         if (blob is not null)
         {

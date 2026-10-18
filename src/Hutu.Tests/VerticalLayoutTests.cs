@@ -325,7 +325,6 @@ public sealed class VerticalLayoutTests
             "the text inside the label stands on the column line of the text beside it");
     }
 
-    /// <summary>Gets the x a box's column line falls on, which is what a column aligns its text by.</summary>
     [Test]
     public async Task ACharacterOfThePlanesAboveTheBmpStandsInOneCell()
     {
@@ -359,16 +358,25 @@ public sealed class VerticalLayoutTests
     public async Task AJustifiedColumnSpreadsTheWordsItStandsBetween()
     {
         // Ahem sets Latin at one em and carries no CJK glyph, so the ideographs go to a face that does
-        // and stand upright in cells of the em: the turned run has to spread by the glyph positions it
-        // is drawn at, and the upright cells by the step between them. A column of a hundred and ten
-        // takes five cells of twenty, so the ten left over go into the one place between the words and
-        // what stands after it is drawn ten rows further down.
+        // and stand upright in cells of the em: the turned run spreads by the glyph positions it is
+        // drawn with, and the upright cells by the step between them. Five cells of twenty in a column
+        // of a hundred and ten leave ten units of room, which goes between the words - and, where the
+        // text is Chinese and writes no spaces, between its characters as well.
         var turned = InkColumn("ab cd ef");
-        var upright = InkColumn(Char.ConvertFromUtf32(0x6F22) + Char.ConvertFromUtf32(0x5B57) + " " +
-            Char.ConvertFromUtf32(0x6F22) + Char.ConvertFromUtf32(0x5B57) + " " + Char.ConvertFromUtf32(0x6F22));
+        var spaced = InkColumn(Han + Han + " " + Han + Han + " " + Han);
+        var written = InkColumn(string.Concat(Han, Zi, Han, Zi, Han, Zi, Han));
 
         Assert.That(turned, Is.EqualTo(new[] { (0, 35), (66, 105) }), "the turned run stands at 66");
-        Assert.That(upright, Is.EqualTo(new[] { (1, 18), (20, 37), (71, 88), (90, 107) }), "and the cells at 71");
+        Assert.That(spaced.Max(r => r.End), Is.EqualTo(108), "the spaced line reaches the edge");
+
+        // Chromium, measured on the same page, sets the five characters at 0, 23, 45, 68, 90: four
+        // seams sharing the ten units of room at two and a half each, which is where the ink ends.
+        Assert.That(written.Max(r => r.End), Is.EqualTo(108), "and so does the line with nothing to space it");
+        Assert.That(
+            InkColumn(string.Concat(Han, Zi, Han, Zi, Han, Zi, Han), align: "justify", expand: "inter-word")
+                .Max(r => r.End),
+            Is.EqualTo(98),
+            "a line asked to expand only between words is left where it was");
     }
 
     [Test]
@@ -376,15 +384,24 @@ public sealed class VerticalLayoutTests
     {
         // The line that ends the block is not spread (CSS Text 3 §5.7.1), so a column given room for the
         // whole of the text draws the same whether it asks for justification or not - which is the
-        // control that keeps the first case honest: the shift there is the spread, and not the page.
+        // control that keeps the other case honest: the shift there is the spread, and not the page.
         var plain = InkColumn("ab cd ef", height: 200, align: "left");
         var justified = InkColumn("ab cd ef", height: 200, align: "justify");
+        var upright = InkColumn(string.Concat(Han, Zi, Han, Zi, Han, Zi, Han), height: 120, align: "left");
+        var spread = InkColumn(string.Concat(Han, Zi, Han, Zi, Han, Zi, Han), height: 120, align: "justify");
 
         Assert.That(justified, Is.EqualTo(plain), "the last line is left as it was written");
+        Assert.That(spread, Is.EqualTo(upright), "and so is a column of Chinese");
     }
 
+    /// <summary>The ideographs the tests below are written with, named by their code points.</summary>
+    private static readonly String Han = Char.ConvertFromUtf32(0x6F22);
+
+    private static readonly String Zi = Char.ConvertFromUtf32(0x5B57);
+
     /// <summary>Draws five cells' worth of text in a column of a hundred and ten, and reads its ink.</summary>
-    private static List<(Int32 Start, Int32 End)> InkColumn(String content, Int32 height = 110, String align = "justify")
+    private static List<(Int32 Start, Int32 End)> InkColumn(
+        String content, Int32 height = 110, String align = "justify", String expand = "auto")
     {
         using var measurer = new Hutu.Skia.SkiaTextMeasurer();
         using var view = new HutuViewInternal(measurer);
@@ -392,7 +409,8 @@ public sealed class VerticalLayoutTests
 
         view.SetHtml(
             "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:120px;height:" + height +
-            "px;font-family:Ahem;font-size:20px;line-height:1;text-align:" + align + "'>" + content +
+            "px;font-family:Ahem;font-size:20px;line-height:1;text-align:" + align +
+            ";text-justify:" + expand + "'>" + content +
             "</div></body></html>").GetAwaiter().GetResult();
 
         return InkedRows(view, measurer);
