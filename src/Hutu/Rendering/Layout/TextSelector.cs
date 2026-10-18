@@ -553,14 +553,22 @@ internal sealed class TextSelector
             ? Array.Empty<Int32>()
             : TextClusters.ExpansionPoints(text, 0, text.Length, run.Source.Style.TextJustify);
 
+        // The room of word-spacing belongs to these boundaries the same way: everything set after one of
+        // the run's separators stands that much further along. The places are the ones the layout charged,
+        // found from the same rule the drawing follows, so the table, the glyphs and the width agree.
+        var wordPlaces = words == 0
+            ? Array.Empty<Int32>()
+            : TextClusters.WordSeparatorPlaces(text);
+
         for (var index = 1; index <= text.Length; index++)
         {
             prefix[index] = run.Flow.IsVertical
                 ? prefix[index - 1] + ColumnStep(run, text, index) + spacing
                     + (justification * PlacesAt(points, index - 1))
+                    + (words * PlacesAt(wordPlaces, index - 1))
                 : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow)
                     + (spacing * CharactersThrough(ordinals, index))
-                    + (words * TextChunker.WordSeparators(text, 0, index))
+                    + (words * PlacesBefore(wordPlaces, index))
                     + (justification * PlacesBefore(points, index));
         }
 

@@ -338,6 +338,26 @@ public sealed class TextSelectionTests
 
     private static Double Centre(LayoutBox run) => run.BorderBox.Y + run.BorderBox.Height / 2;
 
+    [Test]
+    public async Task AWordSpacedLineSelectsItsWordsWhereTheRoomPutThem()
+    {
+        using var document = await LoadAsync(
+            "<html><body style='margin:0'><div style='width:100px;word-spacing:4px'>aa" +
+            (Char)0x00A0 + "bb cc</div></body></html>");
+
+        var run = document.Selector.Runs[0];
+
+        // Eight characters of five, and the four added at each of the two separators the text is left
+        // with - the no-break space among them, as the specification names it. The room the space before
+        // the last word took lands that word at thirty-eight rather than at thirty, and a selection that
+        // means it has to cover where the room put it, the same way the glyphs were drawn there.
+        var rects = document.Selector.Rects(Selection(run, 6, 8));
+
+        Assert.That(rects, Has.Count.EqualTo(1));
+        Assert.That(rects[0].X, Is.EqualTo(38).Within(0.001), "past both separators and the room they took");
+        Assert.That(rects[0].Right, Is.EqualTo(48).Within(0.001));
+    }
+
     /// <summary>
     /// Lays a document out at a fixed viewport and selects over it. The view is kept alive for the
     /// length of the test because the layout it holds is what the selector reads.

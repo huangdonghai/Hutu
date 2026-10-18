@@ -150,6 +150,45 @@ public static class TextClusters
     }
 
     /// <summary>
+    /// Gets whether the character is a word separator: one whose purpose is to stand between two words,
+    /// as the specification names them rather than as the gaps that happen to fall there. The fixed-width
+    /// spaces - the ideographic space among them - are not among them, and are left to the font
+    /// (CSS Text 3 §7.1).
+    /// </summary>
+    public static Boolean IsWordSeparator(Int32 codePoint) =>
+        codePoint is ' ' or 0x00A0 or 0x1361 or 0x10100 or 0x10101 or 0x1039F or 0x1091F;
+
+    /// <summary>
+    /// Gets where the room of <c>word-spacing</c> goes in this text: after every word separator it holds.
+    /// </summary>
+    /// <remarks>
+    /// Named the way <see cref="ExpansionPoints"/> names its places: by the last unit of the character the
+    /// room follows, so what is drawn after it moves and the separator keeps its own advance. The
+    /// separation of this list from the justified line's places is deliberate: the room of
+    /// <c>word-spacing</c> is owed after every separator, a run of spaces written as two included, while
+    /// a justified line puts its room at the one place the run makes.
+    /// </remarks>
+    public static Int32[] WordSeparatorPlaces(String text)
+    {
+        var places = new List<Int32>();
+
+        for (var index = 0; index < text.Length;)
+        {
+            var units = TextChunker.UnitsAt(text, index);
+            var next = index + units;
+
+            if (IsWordSeparator(TextChunker.CodePointAt(text, index)))
+            {
+                places.Add(next - 1);
+            }
+
+            index = next;
+        }
+
+        return places.ToArray();
+    }
+
+    /// <summary>
     /// Gets whether the boundary between two characters is a place the room goes, under the expansion
     /// the style asks for.
     /// </summary>

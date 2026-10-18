@@ -41,14 +41,19 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// places the text holds: the glyphs set after each of them stand that much further along, which is
     /// what makes the drawn text fill the room it was measured into rather than bunched at one end of it.
     /// </param>
+    /// <param name="wordSpacing">
+    /// The room <c>word-spacing</c> adds after each of the run's word separators - the same count the
+    /// layout charged the run for, so the glyphs land where the run's width says they stand.
+    /// </param>
     public SKTextBlob? GetRunBlob(
         FontStyle style,
         String text,
         Double letterSpacing,
         Double justification = 0,
         Int32 justifies = 0,
-        String expand = "auto") =>
-        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand);
+        String expand = "auto",
+        Double wordSpacing = 0) =>
+        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand, wordSpacing);
 
     /// <summary>
     /// Gets the blob a column of upright characters is drawn as, with its glyphs positioned relative
@@ -71,8 +76,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double letterSpacing,
         Double justification = 0,
         Int32 justifies = 0,
-        String expand = "auto") =>
-        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand);
+        String expand = "auto",
+        Double wordSpacing = 0) =>
+        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand, wordSpacing);
 
     private SKTextBlob? GetBlob(
         BlobKind kind,
@@ -81,9 +87,11 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double letterSpacing,
         Double justification,
         Int32 justifies,
-        String expand)
+        String expand,
+        Double wordSpacing)
     {
-        var key = new TextBlobKey(kind, style, text, letterSpacing, justification, justifies, expand);
+        var key = new TextBlobKey(
+            kind, style, text, letterSpacing, justification, justifies, expand, wordSpacing);
 
         lock (_gate)
         {
@@ -93,8 +101,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
             }
 
             var blob = kind == BlobKind.Run
-                ? BuildRunBlob(style, text, letterSpacing, justification, justifies, expand)
-                : BuildColumnBlob(style, text, letterSpacing, justification, justifies, expand);
+                ? BuildRunBlob(style, text, letterSpacing, justification, justifies, expand, wordSpacing)
+                : BuildColumnBlob(style, text, letterSpacing, justification, justifies, expand, wordSpacing);
             _blobs[key] = blob;
             return blob;
         }
@@ -144,7 +152,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double letterSpacing,
         Double justification,
         Int32 justifies,
-        String expand)
+        String expand,
+        Double wordSpacing)
     {
         using var builder = new SKTextBlobBuilder();
         var pen = 0f;
@@ -153,6 +162,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
         // takes as many as it holds and the rest go to the stretches after it.
         var owing = justifies;
         var points = Places(text, justifies, justification, expand);
+        var separators = wordSpacing == 0
+            ? Array.Empty<Int32>()
+            : TextClusters.WordSeparatorPlaces(text);
         var offset = 0;
 
         foreach (var run in _measurer.Decompose(text, style))
@@ -166,8 +178,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
             var ends = Slice(points, offset, run.Text.Length);
             var places = Math.Min(ends.Length, owing);
             owing -= places;
+            var words = Slice(separators, offset, run.Text.Length);
 
-            var clusters = (letterSpacing != 0 || justification != 0) && run.Shaped.Succeeded
+            var clusters = (letterSpacing != 0 || justification != 0 || wordSpacing != 0) && run.Shaped.Succeeded
                 ? _measurer.Shaper.ShapeClusters(run.Font, run.Text)
                 : null;
 
@@ -180,16 +193,17 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
             if (run.Shaped.Succeeded)
             {
-                AddShaped(builder, run, pen, letterSpacing, justification, places, ends, clusters);
+                AddShaped(builder, run, pen, letterSpacing, justification, places, ends, wordSpacing, words, clusters);
             }
             else
             {
-                AddMapped(builder, run, pen, letterSpacing);
+                AddMapped(builder, run, pen, letterSpacing, wordSpacing, words);
             }
 
             offset += run.Text.Length;
 
-            pen += (Single)(run.Advance + (letterSpacing * characters) + (justification * places));
+            pen += (Single)(run.Advance + (letterSpacing * characters) + (justification * places) +
+                (wordSpacing * words.Length));
         }
 
         return builder.Build();
@@ -247,6 +261,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double justification,
         Int32 places,
         Int32[] ends,
+        Double wordSpacing,
+        Int32[] words,
         Int32[]? clusters)
     {
         var glyphs = run.Shaped.Glyphs;
@@ -262,6 +278,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
         var crossed = 0;
         var spread = 0;
         var reached = 0;
+        var paid = 0;
 
         // The pen walks the text in the order the glyphs are drawn in, which is the order the writing
         // runs: a right-to-left run's characters count backwards from where they stand in the string, so
@@ -284,13 +301,26 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 spread++;
             }
 
+            // The room of word-spacing is owed at every separator rather than shared out among some of
+            // them, so nothing caps it: the pen pays each one as it walks past.
+            while (clusters is not null &&
+                   index < clusters.Length &&
+                   paid < words.Length &&
+                   (backwards
+                        ? words[paid] > clusters[index]
+                        : words[paid] < clusters[index]))
+            {
+                paid++;
+            }
+
             if (index > 0 && (clusters is null || clusters[index] != clusters[index - 1]))
             {
                 crossed++;
             }
 
             positions[index] = new SKPoint(
-                pen + points[index].X + (Single)((letterSpacing * crossed) + (justification * spread)),
+                pen + points[index].X +
+                (Single)((letterSpacing * crossed) + (justification * spread) + (wordSpacing * paid)),
                 points[index].Y);
         }
 
@@ -307,7 +337,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
         SKTextBlobBuilder builder,
         SkiaTextRun run,
         Single pen,
-        Double letterSpacing)
+        Double letterSpacing,
+        Double wordSpacing,
+        Int32[] words)
     {
         if (run.Text.Length == 0)
         {
@@ -316,10 +348,18 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
         var glyphs = run.Font.GetGlyphs(run.Text);
         var positions = run.Font.GetGlyphPositions(run.Text, new SKPoint(pen, 0));
+        var crossed = 0;
 
         for (var index = 0; index < positions.Length; index++)
         {
-            positions[index].X += (Single)(letterSpacing * index);
+            while (crossed < words.Length && words[crossed] < index)
+            {
+                crossed++;
+            }
+
+            // One glyph per character is the whole of what this path knows, so the separators it has
+            // left behind are counted by the same index the spacing is.
+            positions[index].X += (Single)((letterSpacing * index) + (wordSpacing * crossed));
         }
 
         var placed = builder.AllocatePositionedRun(run.Font, glyphs.Length);
@@ -343,7 +383,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double letterSpacing,
         Double justification,
         Int32 justifies,
-        String expand)
+        String expand,
+        Double wordSpacing)
     {
         var metrics = _measurer.GetMetrics(style);
         var emBox = metrics.Ascent + metrics.Descent;
@@ -353,10 +394,14 @@ internal sealed class SkiaTextBlobCache : IDisposable
         // character each cell stands for rather than by the glyph it draws: the form a font substitutes
         // for a character down a column need not be the character the document wrote.
         var points = Places(text, justifies, justification, expand);
+        var separators = wordSpacing == 0
+            ? Array.Empty<Int32>()
+            : TextClusters.WordSeparatorPlaces(text);
 
         using var builder = new SKTextBlobBuilder();
         var inline = 0.0;
         var crossed = 0;
+        var paid = 0;
 
         foreach (var cell in cells)
         {
@@ -365,8 +410,13 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 crossed++;
             }
 
+            while (paid < separators.Length && separators[paid] < cell.Index)
+            {
+                paid++;
+            }
+
             var step = Math.Max(cell.Advance, style.Size) + letterSpacing;
-            var reached = inline + (justification * crossed);
+            var reached = inline + (justification * crossed) + (wordSpacing * paid);
             var baseline = cell.BaselineOffset is { } offset
                 ? (Single)(reached + offset)
                 : (Single)(reached + ((step - emBox) / 2) + metrics.Ascent);
@@ -434,7 +484,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
             Double spacing,
             Double justification,
             Int32 justifies,
-            String expand)
+            String expand,
+            Double wordSpacing)
         {
             Kind = kind;
             Style = style;
@@ -443,6 +494,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
             Justification = justification;
             Justifies = justifies;
             Expand = expand;
+            WordSpacing = wordSpacing;
         }
 
         public BlobKind Kind { get; }
@@ -459,12 +511,16 @@ internal sealed class SkiaTextBlobCache : IDisposable
         /// <summary>Gets which boundaries of the text the room goes after, as text-justify says.</summary>
         public String Expand { get; }
 
+        /// <summary>Gets the room each of the run's word separators was given.</summary>
+        public Double WordSpacing { get; }
+
         public Boolean Equals(TextBlobKey other) =>
             Kind == other.Kind &&
             Style.Equals(other.Style) &&
             Spacing.Equals(other.Spacing) &&
             Justification.Equals(other.Justification) &&
             Justifies == other.Justifies &&
+            WordSpacing.Equals(other.WordSpacing) &&
             String.Equals(Expand, other.Expand, StringComparison.OrdinalIgnoreCase) &&
             String.Equals(_text, other._text, StringComparison.Ordinal);
 
@@ -480,6 +536,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 hash = (hash * 397) ^ Justification.GetHashCode();
                 hash = (hash * 397) ^ Justifies;
                 hash = (hash * 397) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(Expand);
+                hash = (hash * 397) ^ WordSpacing.GetHashCode();
                 return (hash * 397) ^ StringComparer.Ordinal.GetHashCode(_text);
             }
         }

@@ -771,7 +771,7 @@ public sealed class SkiaPaintExecutor
         if (!command.Flow.IsVertical)
         {
             var baseline = (Single)(command.Bounds.Y + command.Baseline);
-            DrawRunBlob(canvas, command, baseline, paint, command.LetterSpacing);
+            DrawRunBlob(canvas, command, baseline, paint, command.LetterSpacing, command.WordSpacing);
 
             if (command.Underline)
             {
@@ -883,7 +883,7 @@ public sealed class SkiaPaintExecutor
         if (!command.Flow.IsVertical)
         {
             var baseline = (Single)(command.Bounds.Y + command.Baseline);
-            DrawRunBlob(canvas, command, baseline, stroke, command.LetterSpacing);
+            DrawRunBlob(canvas, command, baseline, stroke, command.LetterSpacing, command.WordSpacing);
             return;
         }
 
@@ -908,7 +908,8 @@ public sealed class SkiaPaintExecutor
     /// glyphs relative to its own origin, so one object answers every frame and every scroll: drawing
     /// it at the run's position is what lands each glyph where the layout measured it.
     /// </summary>
-    private void DrawRunBlob(SKCanvas canvas, TextCommand command, Single baseline, SKPaint paint, Double letterSpacing)
+    private void DrawRunBlob(
+        SKCanvas canvas, TextCommand command, Single baseline, SKPaint paint, Double letterSpacing, Double wordSpacing)
     {
         var blob = _measurer.Blobs.GetRunBlob(
             command.Font,
@@ -916,7 +917,8 @@ public sealed class SkiaPaintExecutor
             letterSpacing,
             command.Justification,
             command.Justifies,
-            command.Expand);
+            command.Expand,
+            wordSpacing);
 
         if (blob is not null)
         {
@@ -1077,7 +1079,7 @@ public sealed class SkiaPaintExecutor
 
         canvas.Save();
         canvas.RotateDegrees(upward ? -90 : 90, baselineX, start);
-        DrawRunBlob(canvas, command, start, paint, command.LetterSpacing);
+        DrawRunBlob(canvas, command, start, paint, command.LetterSpacing, command.WordSpacing);
         canvas.Restore();
     }
 
@@ -1096,7 +1098,13 @@ public sealed class SkiaPaintExecutor
     private void DrawUprightColumn(SKCanvas canvas, TextCommand command, FontMetrics metrics, SKPaint paint)
     {
         var blob = _measurer.Blobs.GetColumnBlob(
-            command.Font, command.Text, command.LetterSpacing, command.Justification, command.Justifies, command.Expand);
+            command.Font,
+            command.Text,
+            command.LetterSpacing,
+            command.Justification,
+            command.Justifies,
+            command.Expand,
+            command.WordSpacing);
 
         if (blob is not null)
         {
@@ -1138,7 +1146,7 @@ public sealed class SkiaPaintExecutor
             var x = (Single)(command.Bounds.X + ((command.Bounds.Width - natural) / 2));
 
             canvas.Scale(squeeze, 1, x, (Single)command.Bounds.Y);
-            DrawRunBlob(canvas, command, y, paint, 0);
+            DrawRunBlob(canvas, command, y, paint, 0, 0);
         }
         else
         {
@@ -1146,7 +1154,7 @@ public sealed class SkiaPaintExecutor
 
             canvas.RotateDegrees(90, baselineX, start);
             canvas.Scale(squeeze, 1, baselineX, start);
-            DrawRunBlob(canvas, command, start, paint, 0);
+            DrawRunBlob(canvas, command, start, paint, 0, 0);
         }
 
         canvas.Restore();

@@ -385,7 +385,8 @@ public sealed class TextCommand : PaintCommand
         DecorationShape decoration = DecorationShape.Solid,
         Double justification = 0,
         Int32 justifies = 0,
-        String expand = "auto")
+        String expand = "auto",
+        Double wordSpacing = 0)
         : base(bounds)
     {
         Text = text;
@@ -403,6 +404,7 @@ public sealed class TextCommand : PaintCommand
         Justification = justification;
         Justifies = justifies;
         Expand = expand;
+        WordSpacing = wordSpacing;
     }
 
     public String Text { get; }
@@ -455,4 +457,11 @@ public sealed class TextCommand : PaintCommand
     /// so the answer travels with the command rather than being guessed at here.
     /// </summary>
     public String Expand { get; }
+
+    /// <summary>
+    /// Gets the room <c>word-spacing</c> adds after each word separator the run holds: the layout
+    /// counted the separators when it gave the run its width, and the glyphs have to be set out where
+    /// that width says they stand (CSS Text 3 §7.1).
+    /// </summary>
+    public Double WordSpacing { get; }
 }

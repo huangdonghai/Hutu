@@ -86,34 +86,34 @@ internal readonly struct ChunkRange
         length > 0 && IsCollapsible(text[start + length - 1]);
 
     /// <summary>
-    /// Gets how many word separators the range is drawn with, which is how many times the room
+    /// Gets how many word separators the range holds, which is how many times the room
     /// <c>word-spacing</c> adds.
     /// </summary>
     /// <remarks>
-    /// Only the space itself takes the room. The tab, the ideographic space and the rest of the
-    /// characters that read as a gap are left to the font, as the property says they are - and Chromium,
-    /// measured, leaves them alone too. The no-break space is the one place the two disagree: it is given
-    /// the room there and not here, because a run that carries one is drawn as the single piece it was
-    /// written to be, and room put between two characters of one piece has to be folded into where the
-    /// glyphs after it stand - which is the letter spacing's problem rather than this property's.
+    /// The separators are the characters whose purpose is to stand between words: the space, the no-break
+    /// space and the word separators of the scripts that write them (CSS Text 3 §7.1). The tab, the
+    /// ideographic space and the rest of the fixed-width gaps are left to the font, as the property says
+    /// they are - and Chromium, measured, leaves them alone too.
     /// <para>
-    /// A separator at the very start of the text is not counted: the room is what goes between words,
-    /// and a space that opens a piece of text has a word only after it.
+    /// Every separator the text is left with takes the room, with no exception for one that opens it: the
+    /// room is what the property adds at each of them, and a space that opens a line of ordinary text is
+    /// gone before the drawing, rather than standing there unpaid for (CSS Text 3 §7.1, measured against
+    /// Chromium along a preformatted line, where the leading space is kept and is given the room).
     /// </para>
     /// </remarks>
     public static Int32 WordSeparators(String text, Int32 start, Int32 length)
     {
         var separators = 0;
 
-        for (var index = start; index < start + length; index++)
+        for (var index = start; index < start + length;)
         {
-            if (text[index] == ' ')
-            {
-                separators++;
-            }
+            var units = UnitsAt(text, index);
+
+            separators += TextClusters.IsWordSeparator(CodePointAt(text, index)) ? 1 : 0;
+            index += units;
         }
 
-        return start == 0 && separators > 0 ? separators - 1 : separators;
+        return separators;
     }
 
 

@@ -67,14 +67,34 @@ public sealed class WordSpacingTests
     }
 
     [Test]
-    public async Task ASpaceThatOpensTheTextIsNotBetweenTwoWords()
+    public async Task EverySeparatorTheTextIsLeftWithTakesTheRoom()
     {
         using var view = CreateView();
 
-        // The room is what is added between words, and a preserved leading space has a word only after it.
+        // The room is added at every separator the white space processing leaves behind, with no
+        // exception for one that opens the text (CSS Text 3 §7.1). Chromium, measured along a
+        // preformatted line, keeps a leading space and gives it the room; along a line of ordinary text
+        // it pays nothing at the head, because there is nothing there - the space was removed, which is
+        // the white-space rule rather than this property's, and the engine keeps the space for now.
         await view.SetHtml(Page("<p style='white-space:pre;word-spacing:4px'> ab</p>"));
 
-        Assert.That(Text(view, " ab").BorderBox.Width, Is.EqualTo(15), "the space of five, uncharged");
+        Assert.That(Text(view, " ab").BorderBox.Width, Is.EqualTo(19), "the space of five and the room of four");
+    }
+
+    [Test]
+    public async Task ANoBreakSpaceIsAWordSeparatorToo()
+    {
+        using var view = CreateView();
+
+        // The no-break space is named among the word separators by the specification, and Chromium,
+        // measured, adds the room to it exactly as to a space - which it also does when the line is
+        // justified, where the room of this one is shared out with the spaces around it.
+        await view.SetHtml(Page("<p style='word-spacing:4px'>a" + (Char)0x00A0 + "b</p>"));
+
+        Assert.That(
+            Text(view, "a" + (Char)0x00A0 + "b").BorderBox.Width,
+            Is.EqualTo(19),
+            "three characters of five and the room of four");
     }
 
     [Test]
@@ -125,6 +145,73 @@ public sealed class WordSpacingTests
 
         Assert.That(Lines(spaced), Is.EqualTo(2), "the room made the line too long");
         Assert.That(Lines(plain), Is.EqualTo(1), "and without it the words stand together");
+    }
+
+    [Test]
+    public void TheWordsThemselvesStandWhereTheRoomPutThem()
+    {
+        // The room has to reach the glyphs and not only the box around them, or the text is drawn short
+        // of where the line says it ends. Chromium, measured on this page with Ahem at twenty, sets the
+        // word after the space at 66 with the room asked for and at 60 without it.
+        Assert.That(Ink("ab cd", String.Empty), Is.EqualTo(new[] { 0, 60 }));
+        Assert.That(Ink("ab cd", "word-spacing:6px;"), Is.EqualTo(new[] { 0, 66 }));
+    }
+
+    [Test]
+    public void ANoBreakSpaceCarriesTheRoomIntoTheGlyphsAsWell()
+    {
+        // The separator the specification names and this engine had left out. Chromium, measured on the
+        // same page, sets the three characters at 0, 46 and 92: both the no-break space and the space
+        // between the words are given the six.
+        Assert.That(Ink("a" + (Char)0x00A0 + "b c", "word-spacing:6px;"), Is.EqualTo(new[] { 0, 46, 92 }));
+    }
+
+    /// <summary>Draws the content for real and reports where along its first line the ink begins.</summary>
+    private static List<Int32> Ink(String content, String style)
+    {
+        using var measurer = new Hutu.Skia.SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(300, 300);
+
+        view.SetHtml(
+            "<html><body style='margin:0'><div style='margin:0;font-family:Ahem;font-size:20px;" +
+            "line-height:1;width:200px;" + style + "'>" + content + "</div></body></html>")
+            .GetAwaiter().GetResult();
+
+        var paint = view.Paint!;
+        using var surface = SkiaSharp.SKSurface.Create(
+            new SkiaSharp.SKImageInfo((Int32)paint.Bounds.Width, (Int32)paint.Bounds.Height));
+        surface.Canvas.Clear(SkiaSharp.SKColors.White);
+        new Hutu.Skia.SkiaPaintExecutor(measurer).Execute(paint, surface.Canvas);
+
+        using var image = surface.Snapshot();
+        using var bitmap = SkiaSharp.SKBitmap.FromImage(image);
+
+        var starts = new List<Int32>();
+        var inked = false;
+
+        for (var x = 0; x < Math.Min(200, bitmap.Width); x++)
+        {
+            var on = false;
+
+            for (var y = 0; y < Math.Min(20, bitmap.Height); y++)
+            {
+                if (bitmap.GetPixel(x, y) != SkiaSharp.SKColors.White)
+                {
+                    on = true;
+                    break;
+                }
+            }
+
+            if (on && !inked)
+            {
+                starts.Add(x);
+            }
+
+            inked = on;
+        }
+
+        return starts;
     }
 
     private static String Page(String content) =>

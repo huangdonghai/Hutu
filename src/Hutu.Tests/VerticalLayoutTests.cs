@@ -422,6 +422,37 @@ public sealed class VerticalLayoutTests
         Assert.That(ended, Is.EqualTo(new[] { (26, 65), (86, 105) }), "and all thirty, with the ink on the edge");
     }
 
+    [Test]
+    public void AColumnGivesItsCellsTheRoomBetweenThem()
+    {
+        // word-spacing along a column is the same arithmetic it is along a line: the cell after the
+        // separator stands that much further down. Chromium, measured on this page - two ideographs of
+        // twenty with a space between them in a column a hundred and ten tall - sets the cells at 0, 20
+        // and 40, and at 0, 20 and 46 once the room is asked for, the space keeping its own em and
+        // carrying the room on top of it. Ahem has no CJK glyph, so the characters go to a face that
+        // does and stand one to a cell, their ink a pixel in from each edge of it.
+        var spaced = InkColumn(string.Concat(Han, " ", Han), align: "left", spacing: "word-spacing:6px;");
+        var plain = InkColumn(string.Concat(Han, " ", Han), align: "left");
+
+        Assert.That(plain, Is.EqualTo(new[] { (1, 18), (41, 58) }), "the cells stepped by their em");
+        Assert.That(spaced, Is.EqualTo(new[] { (1, 18), (47, 64) }), "and the last one carried down");
+    }
+
+    [Test]
+    public void AColumnDrawsTheRoomBetweenTheWordsOfATurnedRun()
+    {
+        // The other orientation the column sets text in, and the case where the room has to be paid
+        // inside one run rather than between two boxes: "ab c" is one turned piece, so the word after
+        // the space is drawn by the same blob as the words before it, and the six goes between the
+        // glyphs the way it does along a line - which is what Chromium measures as it does for any
+        // language the column carries sideways.
+        var spaced = InkColumn("ab c", align: "left", spacing: "word-spacing:6px;");
+        var plain = InkColumn("ab c", align: "left");
+
+        Assert.That(plain, Is.EqualTo(new[] { (0, 35), (56, 75) }), "the run stepped by its own advances");
+        Assert.That(spaced, Is.EqualTo(new[] { (0, 35), (62, 81) }), "and the word carried down the column");
+    }
+
     /// <summary>The ideographs the tests below are written with, named by their code points.</summary>
     private static readonly String Han = Char.ConvertFromUtf32(0x6F22);
 
@@ -430,7 +461,7 @@ public sealed class VerticalLayoutTests
     /// <summary>Draws five cells' worth of text in a column of a hundred and ten, and reads its ink.</summary>
     private static List<(Int32 Start, Int32 End)> InkColumn(
         String content, Int32 height = 110, String align = "justify", String expand = "auto",
-        String last = "auto") => InkBand(content, height, align, expand, last, 0, 120);
+        String last = "auto", String spacing = "") => InkBand(content, height, align, expand, last, 0, 120, spacing);
 
     /// <summary>Draws the same page and reads the ink of the column the content ends in, and no other.</summary>
     /// <remarks>
@@ -443,7 +474,8 @@ public sealed class VerticalLayoutTests
         InkBand(content, 110, align, "auto", last, 80, 100);
 
     private static List<(Int32 Start, Int32 End)> InkBand(
-        String content, Int32 height, String align, String expand, String last, Int32 left, Int32 right)
+        String content, Int32 height, String align, String expand, String last, Int32 left, Int32 right,
+        String spacing = "")
     {
         using var measurer = new Hutu.Skia.SkiaTextMeasurer();
         using var view = new HutuViewInternal(measurer);
@@ -452,7 +484,7 @@ public sealed class VerticalLayoutTests
         view.SetHtml(
             "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:120px;height:" + height +
             "px;font-family:Ahem;font-size:20px;line-height:1;text-align:" + align +
-            ";text-justify:" + expand + ";text-align-last:" + last + "'>" + content +
+            ";text-justify:" + expand + ";text-align-last:" + last + ";" + spacing + "'>" + content +
             "</div></body></html>").GetAwaiter().GetResult();
 
         return InkedRows(view, measurer, left, right);
