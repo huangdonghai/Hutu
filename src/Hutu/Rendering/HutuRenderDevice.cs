@@ -1,4 +1,5 @@
 using AngleSharp.Css;
+using Hutu.Rendering.Layout;
 using System;
 using System.Collections.Generic;
 
@@ -18,7 +19,7 @@ namespace Hutu.Rendering;
 /// a usable viewport and the host is expected to update it before triggering a relayout.
 /// </para>
 /// </remarks>
-internal sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
+internal sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences, IFontMetricSource
 {
     /// <summary>The viewport assumed until the host reports its real size.</summary>
     public const Int32 DefaultViewportWidth = 800;
@@ -123,6 +124,24 @@ internal sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
 
     /// <inheritdoc />
     public Double FontSize => RootFontSize;
+
+    internal ITextMeasurer? Text { get; set; }
+
+    /// <inheritdoc />
+    public Double? XHeight(FontStyle font)
+    {
+        var height = Text?.GetMetrics(font).XHeight ?? 0;
+
+        return height > 0 ? height : null;
+    }
+
+    /// <inheritdoc />
+    public Double? ZeroAdvance(FontStyle font)
+    {
+        var width = Text?.MeasureWidth("0", font) ?? 0;
+
+        return width > 0 ? width : null;
+    }
 
     /// <inheritdoc />
     public Boolean IsInterlaced => false;

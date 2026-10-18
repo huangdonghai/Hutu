@@ -51,6 +51,7 @@ public sealed class HutuViewInternal : IDisposable
         IFontLoader? fontLoader = null)
     {
         _pipeline = new RenderingPipeline(_renderDevice, textMeasurer, imageLoader);
+        _renderDevice.Text = textMeasurer;
         _imageLoader = imageLoader;
         _fontLoader = fontLoader;
         // Kept rather than only handed on: the selector that answers selection questions has to

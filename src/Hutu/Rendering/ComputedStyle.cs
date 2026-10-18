@@ -596,7 +596,7 @@ internal readonly struct ComputedStyle
     public static Double? ResolveLineHeightFused(
         ICssProperty? declared,
         ICssProperty? parentDeclared,
-        Double ownSize,
+        LengthReader.FontSource font,
         Double? parentResolved,
         IRenderDimensions dimensions)
     {
@@ -605,7 +605,7 @@ internal readonly struct ComputedStyle
         // gives - the declaration behind that value is what is read again, not the value itself.
         if (declared is not null && !IsInherit(declared))
         {
-            return ResolveLineHeightValue(declared, ownSize, dimensions);
+            return ResolveLineHeightValue(declared, font.Value, dimensions);
         }
 
         if (parentResolved is null)
@@ -618,7 +618,7 @@ internal readonly struct ComputedStyle
 
         return !String.IsNullOrWhiteSpace(text) &&
             Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var factor)
-            ? factor * ownSize
+            ? factor * font.Value
             : parentResolved;
     }
 
@@ -753,7 +753,7 @@ internal readonly struct ComputedStyle
     /// the box-model read.
     /// </summary>
     public static StyleLength ResolveTextIndentFused(
-        ICssProperty? declared, StyleLength parentIndent, Double ownSize, IRenderDimensions dimensions)
+        ICssProperty? declared, StyleLength parentIndent, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
         if (declared is null)
         {
@@ -763,7 +763,7 @@ internal readonly struct ComputedStyle
         // Wide keywords fall through to the read below and resolve to zero there, exactly as
         // the old path reads them: the cascade leaves them unresolved and the length reader
         // answers every one of them with nothing.
-        return LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var length)
+        return LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var length)
             ? length
             : StyleLength.Zero;
     }
@@ -796,18 +796,18 @@ internal readonly struct ComputedStyle
     public static (Double Top, Double Right, Double Bottom, Double Left) ResolveBorderWidthsFused(
         Func<String, ICssProperty?> find,
         (String Top, String Right, String Bottom, String Left) styles,
-        Double ownSize,
+        LengthReader.FontSource font,
         IRenderDimensions dimensions,
         BorderArea? parent) =>
     (
-        BorderWidthFused(styles.Top, find("border-top-width"), ownSize, dimensions, parent?.TopWidth),
-        BorderWidthFused(styles.Right, find("border-right-width"), ownSize, dimensions, parent?.RightWidth),
-        BorderWidthFused(styles.Bottom, find("border-bottom-width"), ownSize, dimensions, parent?.BottomWidth),
-        BorderWidthFused(styles.Left, find("border-left-width"), ownSize, dimensions, parent?.LeftWidth)
+        BorderWidthFused(styles.Top, find("border-top-width"), font, dimensions, parent?.TopWidth),
+        BorderWidthFused(styles.Right, find("border-right-width"), font, dimensions, parent?.RightWidth),
+        BorderWidthFused(styles.Bottom, find("border-bottom-width"), font, dimensions, parent?.BottomWidth),
+        BorderWidthFused(styles.Left, find("border-left-width"), font, dimensions, parent?.LeftWidth)
     );
 
     private static Double BorderWidthFused(
-        String style, ICssProperty? declared, Double ownSize, IRenderDimensions dimensions, Double? parentWidth)
+        String style, ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions, Double? parentWidth)
     {
         if (!BorderArea.Draws(style))
         {
@@ -825,7 +825,7 @@ internal readonly struct ComputedStyle
         }
 
         if (declared is not null &&
-            TryReadLengthValue(declared, RenderMode.Horizontal, ownSize, dimensions, out var pixels))
+            TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels))
         {
             return pixels;
         }
@@ -849,11 +849,11 @@ internal readonly struct ComputedStyle
     /// path. Percentages stay unresolved for the layout pass.
     /// </summary>
     public static StyleCornerRadii ResolveBorderRadiusFused(
-        Func<String, ICssProperty?> find, Double ownSize, IRenderDimensions dimensions) => new(
-        LengthReader.TryReadCornerValue(find("border-top-left-radius")?.RawValue, dimensions, ownSize) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCornerValue(find("border-top-right-radius")?.RawValue, dimensions, ownSize) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCornerValue(find("border-bottom-right-radius")?.RawValue, dimensions, ownSize) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCornerValue(find("border-bottom-left-radius")?.RawValue, dimensions, ownSize) ?? StyleCornerRadius.Zero);
+        Func<String, ICssProperty?> find, LengthReader.FontSource font, IRenderDimensions dimensions) => new(
+        LengthReader.TryReadCornerValue(find("border-top-left-radius")?.RawValue, dimensions, font) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCornerValue(find("border-top-right-radius")?.RawValue, dimensions, font) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCornerValue(find("border-bottom-right-radius")?.RawValue, dimensions, font) ?? StyleCornerRadius.Zero,
+        LengthReader.TryReadCornerValue(find("border-bottom-left-radius")?.RawValue, dimensions, font) ?? StyleCornerRadius.Zero);
 
     /// <summary>
     /// Maps the four border style keywords to the strokes the painter draws, for the fused path.
@@ -1043,7 +1043,7 @@ internal readonly struct ComputedStyle
     /// path. No stroke means no width; no width declared means medium.
     /// </summary>
     public static Double ResolveOutlineWidthFused(
-        BorderLineStyle style, ICssProperty? declared, Double ownSize, IRenderDimensions dimensions)
+        BorderLineStyle style, ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
         if (style == BorderLineStyle.None)
         {
@@ -1051,7 +1051,7 @@ internal readonly struct ComputedStyle
         }
 
         if (declared is not null &&
-            TryReadLengthValue(declared, RenderMode.Horizontal, ownSize, dimensions, out var pixels))
+            TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels))
         {
             return pixels;
         }
@@ -1063,10 +1063,10 @@ internal readonly struct ComputedStyle
     /// Resolves the outline offset from the element's own cascaded declaration, for the fused path.
     /// </summary>
     public static Double ResolveOutlineOffsetFused(
-        ICssProperty? declared, Double ownSize, IRenderDimensions dimensions)
+        ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
         if (declared is not null &&
-            TryReadLengthValue(declared, RenderMode.Horizontal, ownSize, dimensions, out var pixels))
+            TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels))
         {
             return pixels;
         }
@@ -1227,9 +1227,9 @@ internal readonly struct ComputedStyle
     /// fused path. Percentages stay unresolved for the layout pass.
     /// </summary>
     public static StyleLength ResolveInsetFused(
-        ICssProperty? declared, Double ownSize, IRenderDimensions dimensions) =>
+        ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions) =>
         declared is not null &&
-        LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var length) &&
+        LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var length) &&
         length.HasValue
             ? length
             : StyleLength.Auto;
@@ -1262,7 +1262,7 @@ internal readonly struct ComputedStyle
     /// path. The property is inherited: a miss takes the parent's resolved spacing.
     /// </summary>
     public static Double ResolveLetterSpacingFused(
-        ICssProperty? declared, Double parent, Double ownSize, IRenderDimensions dimensions)
+        ICssProperty? declared, Double parent, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
         if (declared is null)
         {
@@ -1274,7 +1274,7 @@ internal readonly struct ComputedStyle
             return parent;
         }
 
-        return TryReadLengthValue(declared, RenderMode.Horizontal, ownSize, dimensions, out var pixels)
+        return TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels)
             ? pixels
             : CssInitialValues.LetterSpacing;
     }
@@ -1286,14 +1286,14 @@ internal readonly struct ComputedStyle
     /// neither a length nor that keyword is not a declaration of this property, so it answers the same.
     /// </summary>
     public static Double ResolveWordSpacingFused(
-        ICssProperty? declared, Double parent, Double ownSize, IRenderDimensions dimensions)
+        ICssProperty? declared, Double parent, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
         if (declared is null || IsInherit(declared))
         {
             return parent;
         }
 
-        return TryReadLengthValue(declared, RenderMode.Horizontal, ownSize, dimensions, out var pixels)
+        return TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels)
             ? pixels
             : CssInitialValues.WordSpacing;
     }
@@ -3274,7 +3274,7 @@ internal readonly struct ComputedStyle
     /// path. Percentages stay unresolved for the layout pass.
     /// </summary>
     public static StyleLength ResolveBoxLengthFused(
-        ICssProperty? declared, RenderMode mode, Double ownSize, IRenderDimensions dimensions, StyleLength fallback)
+        ICssProperty? declared, RenderMode mode, LengthReader.FontSource font, IRenderDimensions dimensions, StyleLength fallback)
     {
         if (declared is null)
         {
@@ -3284,7 +3284,7 @@ internal readonly struct ComputedStyle
         // A length, or one of the content keywords: MaxContent is a size the box's content settles
         // rather than a length the reader can resolve, so it travels as itself and the layout engine
         // answers for it where it has the content in hand (CSS Sizing 3 §4).
-        return LengthReader.TryReadProperty(declared, mode, dimensions, ownSize, out var length) &&
+        return LengthReader.TryReadProperty(declared, mode, dimensions, font, out var length) &&
             (length.HasValue || length.IsContentSized)
             ? length
             : fallback;
@@ -3298,7 +3298,7 @@ internal readonly struct ComputedStyle
     public static StyleThickness ResolveThicknessFused(
         Func<String, ICssProperty?> find,
         IElement? element,
-        Double ownSize,
+        LengthReader.FontSource font,
         IRenderDimensions dimensions,
         WritingModeInfo flow,
         String prefix,
@@ -3306,7 +3306,7 @@ internal readonly struct ComputedStyle
     {
         StyleLength? ReadSide(String name) =>
             find(prefix + name) is { } declared &&
-            LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, ownSize, out var length)
+            LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var length)
                 ? length
                 : null;
 
@@ -3346,7 +3346,7 @@ internal readonly struct ComputedStyle
         var blockEndKeyword = SideKeyword("-block-end");
 
         var (defaultBlockStart, defaultBlockEnd, defaultInlineStart, defaultInlineEnd) =
-            ReaderDefaults(prefix, element, ownSize);
+            ReaderDefaults(prefix, element, font.Value);
 
         if (inlineStart is null && inlineEnd is null && blockStart is null && blockEnd is null &&
             inlineStartKeyword is null && inlineEndKeyword is null &&

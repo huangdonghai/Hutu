@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Values;
+using Hutu.Rendering.Layout;
+using LayoutFont = Hutu.Rendering.Layout.FontStyle;
 
 namespace Hutu.Rendering;
 
@@ -43,21 +45,42 @@ internal static class LengthReader
     internal readonly struct FontSource
     {
         private readonly ComputedStyle _style;
+        private readonly LayoutFont _face;
         private readonly Double _size;
         private readonly Boolean _fromStyle;
+        private readonly Boolean _hasFace;
 
         public FontSource(ComputedStyle style)
         {
             _style = style;
+            _face = default;
             _size = 0;
             _fromStyle = true;
+            _hasFace = false;
         }
 
         public FontSource(Double size)
         {
             _style = default;
+            _face = default;
             _size = size;
             _fromStyle = false;
+            _hasFace = false;
+        }
+
+        /// <summary>
+        /// Wraps a font that has already been settled - the family, the weight and the slant beside the
+        /// size - for a caller resolving lengths while the style itself is still being made. The face is
+        /// what <c>ex</c> and <c>ch</c> are measured from, and a caller that has it must not drop it by
+        /// handing over only the number.
+        /// </summary>
+        public FontSource(LayoutFont face)
+        {
+            _style = default;
+            _face = face;
+            _size = face.Size;
+            _fromStyle = false;
+            _hasFace = true;
         }
 
         /// <summary>Lets a caller that already has the number go on passing it.</summary>
@@ -65,6 +88,9 @@ internal static class LengthReader
 
         /// <summary>Gets the size, asking the style for it only now. Zero means unknown.</summary>
         public Double Value => _fromStyle ? _style.FontSize : _size;
+
+        /// <summary>Gets the whole font the length is written in, null where only a number was passed.</summary>
+        public LayoutFont? Font => _fromStyle ? ComputedStyleExtensions.GetFont(_style) : _hasFace ? _face : null;
     }
 
     public static Boolean TryRead(
@@ -301,23 +327,54 @@ internal static class LengthReader
     /// <summary>
     /// Converts a length to pixels, resolving the font-relative units the way CSS asks: <c>em</c> is
     /// the font size passed in - the element's own, or its parent's when the length being read is
-    /// <c>font-size</c> itself - and <c>ex</c> and <c>ch</c> the half of it this engine uses for both,
-    /// because the x-height and the width of a zero are font metrics the render device does not
-    /// expose. <c>rem</c> and every other unit are left to AngleSharp, which resolves the former
-    /// against the device - the root - as it should.
+    /// <c>font-size</c> itself - and <c>ex</c> and <c>ch</c> the x-height and the zero of the face the
+    /// text is set in, when there is a face to ask. <c>rem</c> and every other unit are left to
+    /// AngleSharp, which resolves the former against the device - the root - as it should.
     /// </summary>
     /// <remarks>
     /// The reference is resolved inside the two arms that need it rather than ahead of the switch, so
     /// a pixel length never asks the style for a font size it has no use for. That is the whole point
     /// of <see cref="FontSource"/> being handed around instead of a number.
+    /// <para>
+    /// The half-em left in the switch below is not an approximation of the face but the answer for a
+    /// caller that has no face to give: a host that draws nothing, a style read on its own, a length
+    /// folded while the font area was still being settled. It is also what a text face whose lowercase
+    /// stands at half the em would have come to anyway, which is why it stayed the fallback rather than
+    /// becoming a wrong value to chase.
+    /// </para>
     /// </remarks>
-    public static Double ToPixel(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, FontSource font) =>
-        value.Type switch
+    public static Double ToPixel(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, FontSource font)
+    {
+        if (value.Type is CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch &&
+            FaceMeasure(value.Type, dimensions, font) is { } measure)
+        {
+            return value.Value * measure;
+        }
+
+        return value.Type switch
         {
             CssLengthValue.Unit.Em => value.Value * Reference(font, dimensions),
             CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch => value.Value * Reference(font, dimensions) * 0.5,
             _ => value.ToPixel(dimensions, mode),
         };
+    }
+
+    /// <summary>
+    /// Gets the unit's own measure from the face - the x-height for <c>ex</c>, the width of a zero for
+    /// <c>ch</c> - or nothing when there is no face to ask, which is the answer that leaves the unit to
+    /// the size it was measured from.
+    /// </summary>
+    private static Double? FaceMeasure(CssLengthValue.Unit unit, IRenderDimensions dimensions, FontSource font)
+    {
+        if (dimensions is not IFontMetricSource metrics || font.Font is not { } face)
+        {
+            return null;
+        }
+
+        var measure = unit == CssLengthValue.Unit.Ex ? metrics.XHeight(face) : metrics.ZeroAdvance(face);
+
+        return measure is > 0 ? measure : null;
+    }
 
     private static Double Reference(FontSource font, IRenderDimensions dimensions)
     {

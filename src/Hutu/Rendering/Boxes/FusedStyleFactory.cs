@@ -268,24 +268,41 @@ internal static class FusedStyleFactory
         // of the div whose font it happens to match.
         var fontKey = new AreaKey(cascade, size, parent.Font, parent.LineHeightHit, variables: variables);
 
+        // The whole font a length may be written in. ex and ch are heights of the face rather than
+        // fractions of the size, so a fold that is handed the number alone has nothing to measure them
+        // against - and the answer is settled here, once, whether the font was read or reused.
+        LengthReader.FontSource face;
+
         if (cache is not null && cache.TryFont(fontKey, out var font))
         {
             // Nothing read: family, weight, slant, spacing and leading all came from an element that
             // matched alike, at the same size, under the same inherited font and the same authored
             // line-height.
+            face = new LengthReader.FontSource(
+                new Hutu.Rendering.Layout.FontStyle(font.Family, font.Size, font.Weight, font.Italic));
         }
         else
         {
+            var family = ComputedStyle.ResolveFontFamilyFused(find("font-family"), parent.FontFamily, faces);
+            var weight = ComputedStyle.ResolveFontWeightFused(find("font-weight"), parent.Weight);
+            var italic = ComputedStyle.ResolveFontStyleFused(find("font-style"), parent.Italic);
+
+            // The whole font, settled before any length is folded: ex and ch are heights of the face a
+            // length is written in rather than fractions of its size, and a reader handed the number
+            // alone has nothing to measure them against.
+            face = new LengthReader.FontSource(
+                new Hutu.Rendering.Layout.FontStyle(family, size, weight, italic));
+
             var built = new FontArea
             {
                 Size = size,
-                Family = ComputedStyle.ResolveFontFamilyFused(find("font-family"), parent.FontFamily, faces),
-                Weight = ComputedStyle.ResolveFontWeightFused(find("font-weight"), parent.Weight),
-                Italic = ComputedStyle.ResolveFontStyleFused(find("font-style"), parent.Italic),
-                LetterSpacing = ComputedStyle.ResolveLetterSpacingFused(find("letter-spacing"), parent.LetterSpacing, size, dimensions),
-                WordSpacing = ComputedStyle.ResolveWordSpacingFused(find("word-spacing"), parent.WordSpacing, size, dimensions),
+                Family = family,
+                Weight = weight,
+                Italic = italic,
+                LetterSpacing = ComputedStyle.ResolveLetterSpacingFused(find("letter-spacing"), parent.LetterSpacing, face, dimensions),
+                WordSpacing = ComputedStyle.ResolveWordSpacingFused(find("word-spacing"), parent.WordSpacing, face, dimensions),
                 LineHeight = ComputedStyle.ResolveLineHeightFused(
-                    find("line-height"), parent.LineHeightHit, size, parent.LineHeight, dimensions),
+                    find("line-height"), parent.LineHeightHit, face, parent.LineHeight, dimensions),
             };
 
             font = pool is null ? built : pool.Font(built);
@@ -311,7 +328,7 @@ internal static class FusedStyleFactory
                 WhiteSpace = ComputedStyle.ResolveWhiteSpaceFused(find("white-space"), parent.WhiteSpace),
                 Align = ComputedStyle.ResolveTextAlignFused(find("text-align"), parent.Align),
                 VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign),
-                Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, size, dimensions),
+                Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, face, dimensions),
                 Visibility = ComputedStyle.ResolveVisibilityFused(find("visibility"), parent.Visibility),
             };
 
@@ -339,7 +356,7 @@ internal static class FusedStyleFactory
         else
         {
             var borderStyles = ComputedStyle.ResolveBorderStylesFused(find);
-            var borderWidths = ComputedStyle.ResolveBorderWidthsFused(find, borderStyles, size, dimensions, parent.Border);
+            var borderWidths = ComputedStyle.ResolveBorderWidthsFused(find, borderStyles, face, dimensions, parent.Border);
             var built = new BorderArea
             {
                 TopStyle = borderStyles.Top,
@@ -351,7 +368,7 @@ internal static class FusedStyleFactory
                 BottomWidth = borderWidths.Bottom,
                 LeftWidth = borderWidths.Left,
                 Lines = ComputedStyle.ResolveBorderLinesFused(borderStyles),
-                Radius = ComputedStyle.ResolveBorderRadiusFused(find, size, dimensions),
+                Radius = ComputedStyle.ResolveBorderRadiusFused(find, face, dimensions),
             };
 
             border = pool is null ? built : pool.Border(built);
@@ -411,16 +428,16 @@ internal static class FusedStyleFactory
             var built = new BoxModelArea
             {
                 BoxSizing = ComputedStyle.ResolveBoxSizingFused(find("box-sizing")),
-                Width = ComputedStyle.ResolveBoxLengthFused(widthDeclaration, RenderMode.Horizontal, size, dimensions, StyleLength.Auto),
-                Height = ComputedStyle.ResolveBoxLengthFused(heightDeclaration, RenderMode.Vertical, size, dimensions, StyleLength.Auto),
+                Width = ComputedStyle.ResolveBoxLengthFused(widthDeclaration, RenderMode.Horizontal, face, dimensions, StyleLength.Auto),
+                Height = ComputedStyle.ResolveBoxLengthFused(heightDeclaration, RenderMode.Vertical, face, dimensions, StyleLength.Auto),
                 WidthDeclared = widthDeclaration is not null,
                 HeightDeclared = heightDeclaration is not null,
                 MinWidth = ComputedStyle.ResolveBoxLengthFused(find("min-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
                 MaxWidth = ComputedStyle.ResolveBoxLengthFused(find("max-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
                 MinHeight = ComputedStyle.ResolveBoxLengthFused(find("min-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),
                 MaxHeight = ComputedStyle.ResolveBoxLengthFused(find("max-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),
-                Margin = ComputedStyle.ResolveThicknessFused(find, element, size, dimensions, flow, "margin", StyleLength.Zero),
-                Padding = ComputedStyle.ResolveThicknessFused(find, element, size, dimensions, flow, "padding", StyleLength.Zero),
+                Margin = ComputedStyle.ResolveThicknessFused(find, element, face, dimensions, flow, "margin", StyleLength.Zero),
+                Padding = ComputedStyle.ResolveThicknessFused(find, element, face, dimensions, flow, "padding", StyleLength.Zero),
             };
 
             boxModel = pool is null ? built : pool.BoxModel(built);
@@ -477,8 +494,8 @@ internal static class FusedStyleFactory
             var built = new VisualEffectsArea
             {
                 OutlineStyle = outlineStyle,
-                OutlineWidth = ComputedStyle.ResolveOutlineWidthFused(outlineStyle, find("outline-width"), size, dimensions),
-                OutlineOffset = ComputedStyle.ResolveOutlineOffsetFused(find("outline-offset"), size, dimensions),
+                OutlineWidth = ComputedStyle.ResolveOutlineWidthFused(outlineStyle, find("outline-width"), face, dimensions),
+                OutlineOffset = ComputedStyle.ResolveOutlineOffsetFused(find("outline-offset"), face, dimensions),
             };
 
             visual = pool is null ? built : pool.VisualEffects(built);
@@ -571,7 +588,7 @@ internal static class FusedStyleFactory
         values.VisualEffects = visual;
         values.Decoration = textDecoration;
         values.List = pool is null ? list : pool.List(list);
-        values.Position = PositionStyle.ReadFused(find, size, dimensions);
+        values.Position = PositionStyle.ReadFused(find, face, dimensions);
 
         // The table longhands are five property lookups no element that is not part of a table has a
         // use for, so they are only read where the display says the box is one. Every spelling of it
