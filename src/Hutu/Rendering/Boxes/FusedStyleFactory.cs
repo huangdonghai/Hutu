@@ -571,8 +571,7 @@ internal static class FusedStyleFactory
             }
         }
 
-        var color = ComputedStyle.ResolveColorFused(
-            element, find("color"), parent.Color, ComputedStyle.ResolveLinkColorFused(element));
+        var color = ComputedStyle.ResolveColorFused(element, find("color"), parent.Color);
 
         // The text stroke and fill are read here rather than in the keywords below because they reach
         // across to the parent: each is inherited, and a shorthand sets both halves of the stroke at once.

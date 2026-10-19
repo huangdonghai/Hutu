@@ -1168,13 +1168,13 @@ internal readonly struct ComputedStyle
     /// takes the parent's resolved colour.
     /// </summary>
     public static CssColorValue ResolveColorFused(
-        IElement? element, ICssProperty? declared, CssColorValue? parentColor, CssColorValue linkColor)
+        IElement? element, ICssProperty? declared, CssColorValue? parentColor)
     {
-        var link = IsFollowableLink(element);
-
         if (declared is null)
         {
-            return link ? linkColor : parentColor ?? CssColorValue.Black;
+            // A link asks for nothing from its parent: the colour it is drawn in is the engine's own
+            // answer, so it is only read once it is known that nothing was declared here.
+            return IsFollowableLink(element) ? ResolveLinkColor(element) : parentColor ?? CssColorValue.Black;
         }
 
         // A wide keyword stands for a value: `inherit`/`unset`/`revert` name the parent's
@@ -1505,14 +1505,38 @@ internal readonly struct ComputedStyle
         };
 
     /// <summary>
-    /// Resolves the link colour from the element's interaction state, for the fused path.
+    /// Resolves the colour the engine paints a link in, for the fused path: what the page hints at with
+    /// the <c>body</c> element's legacy attributes where it writes one, and blue, purple or red where it
+    /// does not.
     /// </summary>
-    public static CssColorValue ResolveLinkColorFused(IElement? element) =>
-        element?.GetPseudoClass(PseudoClassNames.Active) == true
-            ? CssColorValue.FromRgb(0xee, 0x00, 0x00)
-            : element?.GetPseudoClass(PseudoClassNames.Visited) == true
-                ? CssColorValue.FromRgb(0x55, 0x1a, 0x8b)
-                : CssColorValue.FromRgb(0x00, 0x00, 0xee);
+    /// <remarks>
+    /// HTML 2.3.6 treats <c>link</c>, <c>vlink</c> and <c>alink</c> on the <c>body</c> element as
+    /// presentational hints naming the colour of every element in the document that matches
+    /// <c>:link</c>, <c>:visited</c> or <c>:active</c>, and each value is read by the rules for parsing a
+    /// legacy color value. A hint stands below anything the page writes - Chrome lets even an author
+    /// <c>* { color: ... }</c> take a link back - and above the colour the link would otherwise inherit,
+    /// which is exactly the place the engine's own link colour holds.
+    /// </remarks>
+    public static CssColorValue ResolveLinkColor(IElement? element)
+    {
+        var active = element?.GetPseudoClass(PseudoClassNames.Active) == true;
+        var visited = !active && element?.GetPseudoClass(PseudoClassNames.Visited) == true;
+
+        return HintColor(element, active ? "alink" : visited ? "vlink" : "link")
+            ?? (active
+                ? CssColorValue.FromRgb(0xee, 0x00, 0x00)
+                : visited
+                    ? CssColorValue.FromRgb(0x55, 0x1a, 0x8b)
+                    : CssColorValue.FromRgb(0x00, 0x00, 0xee));
+    }
+
+    /// <summary>
+    /// Reads one of the <c>body</c> element's legacy colour attributes from the document the element
+    /// stands in, or null where the document carries no such element, writes no such attribute, or writes
+    /// a value that names no colour.
+    /// </summary>
+    private static CssColorValue? HintColor(IElement? element, String name) =>
+        element?.Owner?.Body?.GetAttribute(name) is { } value ? LegacyColor.Parse(value) : null;
 
     /// <summary>
     /// Resolves the positioning mode from the element's own cascaded declaration, for the
@@ -2939,15 +2963,11 @@ internal readonly struct ComputedStyle
     private Boolean IsFollowable => _element is IHtmlAnchorElement anchor && anchor.HasAttribute("href");
 
     /// <summary>
-    /// Gets the colour the engine paints a link in: blue for one that has not been followed, purple for
-    /// one that has, red for the one being followed right now.
+    /// Gets the colour the engine paints a link in: the colour the page hints at with the <c>body</c>
+    /// element's legacy attributes, or blue for a link that has not been followed, purple for one that
+    /// has, and red for the one being followed right now.
     /// </summary>
-    private CssColorValue LinkColor =>
-        _element?.GetPseudoClass(PseudoClassNames.Active) == true
-            ? CssColorValue.FromRgb(0xee, 0x00, 0x00)
-            : _element?.GetPseudoClass(PseudoClassNames.Visited) == true
-                ? CssColorValue.FromRgb(0x55, 0x1a, 0x8b)
-                : CssColorValue.FromRgb(0x00, 0x00, 0xee);
+    private CssColorValue LinkColor => ResolveLinkColor(_element);
 
     /// <summary>
     /// Gets whether the page wrote a declaration for the property on the element itself, as opposed to
