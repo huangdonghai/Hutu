@@ -44,15 +44,15 @@ internal readonly record struct ChildCut(Int32 Fits, Boolean Forced);
 /// </summary>
 internal static class ChildSlicer
 {
-    public static ChildCut Fitting(IReadOnlyList<FragmentChild> children, Double limit)
+    public static ChildCut Fitting(IReadOnlyList<FragmentChild> children, Double limit, Int32 start = 0)
     {
         var used = 0.0;
 
-        for (var i = 0; i < children.Count; i++)
+        for (var i = start; i < children.Count; i++)
         {
-            if (i > 0 && (Forces(children[i - 1].After) || Forces(children[i].Before)))
+            if (i > start && (Forces(children[i - 1].After) || Forces(children[i].Before)))
             {
-                return new ChildCut(i, true);
+                return new ChildCut(i - start, true);
             }
 
             if (used + children[i].Height <= limit + 0.001)
@@ -63,17 +63,17 @@ internal static class ChildSlicer
 
             var cut = i;
 
-            while (cut > 0 && !Allowed(children, cut))
+            while (cut > start && !Allowed(children, cut))
             {
                 cut--;
             }
 
             // No boundary before any child may take the break: the fragment overflows with the one child,
             // and the flow still advances.
-            return new ChildCut(Math.Max(1, cut), false);
+            return new ChildCut(Math.Max(1, cut - start), false);
         }
 
-        return new ChildCut(children.Count, false);
+        return new ChildCut(children.Count - start, false);
     }
 
     /// <summary>Gets whether a forced value on either side ends the fragment at this boundary.</summary>
