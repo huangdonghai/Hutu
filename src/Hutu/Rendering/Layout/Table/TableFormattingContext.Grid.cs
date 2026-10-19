@@ -320,7 +320,7 @@ internal sealed partial class TableFormattingContext
             }
 
             // A row that names fewer cells than the grid has columns is filled to the end with anonymous
-            // cells, which is what CSS 2.1 ¡ì17.2.1 asks for and what keeps a short row's edge on the same
+            // cells, which is what CSS 2.1 Â§17.2.1 asks for and what keeps a short row's edge on the same
             // grid line as the rows above it. They carry the row's style: there is no element to match a
             // cell rule against, so they have no border and the row's inherited properties.
             for (var c = 0; c < columns; c++)
@@ -426,7 +426,7 @@ internal sealed partial class TableFormattingContext
         }
 
         // The rows, row groups, columns and column groups meet the same lines the cells do (CSS 2.1
-        // ¡ì17.6.2): a row's top and bottom meet the two horizontal lines it sits between, a column's
+        // Â§17.6.2): a row's top and bottom meet the two horizontal lines it sits between, a column's
         // left and right the vertical ones, and a group's borders only the lines at its own outer
         // edges. A row's left and right reach no line but the table's outer ones, and a column's top
         // and bottom likewise: the grid keeps one line per line, so the widest of them stands for all.
