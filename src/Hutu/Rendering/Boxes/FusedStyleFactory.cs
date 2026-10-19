@@ -49,6 +49,13 @@ internal sealed class FusedParent
     public Int32 Orphans { get; init; } = 2;
 
     public String WhiteSpace { get; init; } = "normal";
+
+    /// <summary>Gets the parent's tab length in pixels, or null where the tab is counted in characters.</summary>
+    public Double? TabLength { get; init; }
+
+    /// <summary>Gets how many character widths the parent's tabs run to, the form <c>tab-size</c> starts in.</summary>
+    public Double TabUnits { get; init; } = 8;
+
     public String Align { get; init; } = "start";
 
     /// <summary>Gets how the parent's affected lines stand, which is what an element that says nothing gives its own.</summary>
@@ -199,6 +206,8 @@ internal sealed class FusedParent
             ? lineHeight
             : LineHeightHit,
         WhiteSpace = style.WhiteSpace,
+        TabLength = style.TabLength,
+        TabUnits = style.TabUnits,
         Widows = style.Breaks.Widows,
         Orphans = style.Breaks.Orphans,
         Align = style.TextAlign,
@@ -381,9 +390,16 @@ internal static class FusedStyleFactory
                 ReferenceEquals(parent, FusedParent.Root) ? null : parent.Align,
                 parent.Direction);
 
+            // `tab-size` is inherited, and its character form says nothing until the layout has asked
+            // the font how wide one of its spaces is - so both forms travel down.
+            var (tabLength, tabUnits) = ComputedStyle.ResolveTabSizeFused(
+                find("tab-size"), parent.TabLength, parent.TabUnits, face, dimensions);
+
             var built = new TextArea
             {
                 WhiteSpace = ComputedStyle.ResolveWhiteSpaceFused(find("white-space"), parent.WhiteSpace),
+                TabLength = tabLength,
+                TabUnits = tabUnits,
                 Align = all,
                 AlignLast = last,
                 TextJustify = ComputedStyle.ResolveTextJustifyFused(find("text-justify"), parent.TextJustify),

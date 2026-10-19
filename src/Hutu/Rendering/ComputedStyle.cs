@@ -1701,6 +1701,47 @@ internal readonly struct ComputedStyle
     }
 
     /// <summary>
+    /// Resolves how far a tab runs the line on, from the element's own cascaded declaration, for the
+    /// fused path. The property is inherited, and it is written two ways: a count of character widths -
+    /// which is what the initial eight is, and which only the layout can turn into pixels because the
+    /// width of a space belongs to the font - or a length, which is settled here. A percentage is not one
+    /// of the forms the property has, so it is no declaration at all.
+    /// </summary>
+    /// <returns>
+    /// The length in pixels and the count of characters, one of which is the answer and the other null.
+    /// </returns>
+    public static (Double? Length, Double Units) ResolveTabSizeFused(
+        ICssProperty? declared,
+        Double? parentLength,
+        Double parentUnits,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions)
+    {
+        if (declared is null || IsInherit(declared))
+        {
+            return (parentLength, parentUnits);
+        }
+
+        var text = declared.Value?.Trim();
+
+        if (text is not null &&
+            Double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var units) &&
+            units >= 0)
+        {
+            return (null, units);
+        }
+
+        if (declared.RawValue is CssLengthValue { Type: CssLengthValue.Unit.Percent })
+        {
+            return (parentLength, parentUnits);
+        }
+
+        return TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels)
+            ? (Math.Max(0, pixels), parentUnits)
+            : (parentLength, parentUnits);
+    }
+
+    /// <summary>
     /// Resolves the background layers from the element's own cascaded declarations, for the
     /// fused path. A page with no background properties paints none.
     /// </summary>
@@ -2570,6 +2611,12 @@ internal readonly struct ComputedStyle
     public Int32? ListItemIncrement => _values.List.ListItemIncrement;
 
     public String WhiteSpace => _values.Text.WhiteSpace;
+
+    /// <summary>Gets the length form of <c>tab-size</c> in pixels, or null where the box counts characters.</summary>
+    public Double? TabLength => _values.Text.TabLength;
+
+    /// <summary>Gets how many character widths a tab runs the line on, the count form of <c>tab-size</c>.</summary>
+    public Double TabUnits => _values.Text.TabUnits;
 
     /// <summary>Gets whether this box is seen, as the element and the ancestors above it settled it.</summary>
     public String Visibility => _values.Text.Visibility;

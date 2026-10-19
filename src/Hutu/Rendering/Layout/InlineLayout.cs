@@ -339,7 +339,11 @@ internal sealed class InlineLayout
 
             foreach (var chunk in TextChunker.Ranges(source))
             {
-                var width = Measure(item.Style, source, chunk.Start, chunk.Length, flow);
+                // A tab asks the same question here as on a line: how far the content has run decides
+                // where the next stop is.
+                var width = TextChunker.IsCollapsible(source, chunk.Start, chunk.Length)
+                    ? WhiteSpaceWidth(item.Style, source, chunk.Start, chunk.Length, maxContent, flow)
+                    : Measure(item.Style, source, chunk.Start, chunk.Length, flow);
                 var space = TextChunker.IsCollapsible(source, chunk.Start, chunk.Length);
                 var collapsible = space && !item.Style.IsPreformatted;
 
@@ -1354,6 +1358,13 @@ internal sealed class InlineLayout
                 {
                     var piece = Measure(item.Style, font, run, itemFlow);
 
+                    // A tab's room is the line running on to its next stop, which is a question about
+                    // where the line stands rather than about the font, so it is asked here where that
+                    // is known and not of the measurer.
+                    var width = piece.IsWhiteSpace
+                        ? WhiteSpaceWidth(item.Style, run.Source, run.Start, run.Length, builder.Width, itemFlow)
+                        : piece.Width;
+
                     // White space a line begins with is not drawn, but only where the mode collapses it:
                     // `pre`, `pre-wrap` and `break-spaces` keep it, so a line that begins with one
                     // begins with it (and `break-spaces` makes it take room, which is what wraps the
@@ -1374,7 +1385,7 @@ internal sealed class InlineLayout
                     var hangs = piece.IsWhiteSpace &&
                         !item.Style.WhiteSpace.Equals("break-spaces", StringComparison.OrdinalIgnoreCase);
 
-                    if (room.Room > 0 && builder.ExtentFor(item.Inline) + piece.Width > room.Room &&
+                    if (room.Room > 0 && builder.ExtentFor(item.Inline) + width > room.Room &&
                         item.Style.WrapsLines && !hangs)
                     {
                         if (builder.HasContent)
@@ -1393,7 +1404,7 @@ internal sealed class InlineLayout
                         }
                     }
 
-                    builder.Add(piece.Source, piece.Start, piece.Length, piece.Width, item.Style, item.Box, piece.Flow, item.Inline);
+                    builder.Add(piece.Source, piece.Start, piece.Length, width, item.Style, item.Box, piece.Flow, item.Inline);
                 }
             }
         }
@@ -2009,6 +2020,56 @@ internal sealed class InlineLayout
                 : _measurer.MeasureWidth(run.Source.Substring(run.Start, run.Length), font) + spacing,
             PinOrientation(flow, run),
             TextChunker.IsCollapsible(run.Source, run.Start, run.Length));
+    }
+
+    /// <summary>
+    /// Gets the room a run of white space takes where it holds tabs. A tab is not a glyph with an
+    /// advance of its own: it runs the line on to the next multiple of the tab size counted from where
+    /// the line began (CSS Text 3 §4.2), so the answer depends on how far the line has already come and
+    /// has to be asked of the line rather than of the font.
+    /// </summary>
+    private Double WhiteSpaceWidth(
+        ComputedStyle style, String source, Int32 start, Int32 length, Double position, WritingModeInfo flow)
+    {
+        if (source.IndexOf('\t', start, length) < 0)
+        {
+            return Measure(style, source, start, length, flow);
+        }
+
+        // The character form counts spaces as the element's font gives them, letter and word spacing
+        // included, which is what Chrome's tab stops are built out of.
+        var unit = style.TabLength ?? style.TabUnits * Measure(style, " ", flow);
+
+        if (unit <= 0)
+        {
+            return 0;
+        }
+
+        var width = 0.0;
+        var index = start;
+        var end = start + length;
+
+        while (index < end)
+        {
+            if (source[index] == '\t')
+            {
+                var at = position + width;
+                width = (Math.Floor(at / unit) + 1) * unit - position;
+                index++;
+                continue;
+            }
+
+            var from = index;
+
+            while (index < end && source[index] != '\t')
+            {
+                index++;
+            }
+
+            width += Measure(style, source, from, index - from, flow);
+        }
+
+        return width;
     }
 
     /// <summary>
@@ -3452,6 +3513,11 @@ internal sealed class InlineLayout
 
             Enter(inline);
 
+            // A tab draws nothing: the room it took was the line running on to a stop, not a glyph, so
+            // the run is drawn as the spaces it stands between. The width the layout settled on is kept
+            // either way; only the characters handed to the painter change.
+            var drawn = HasTab(source, start, length) ? ToSpaces(source, start, length) : null;
+
             if (_fragments.Count > 0)
             {
                 var last = _fragments[^1];
@@ -3468,13 +3534,13 @@ internal sealed class InlineLayout
                     // pieces come from two strings is the one case that still has to be written out: a
                     // box with more than one text child, and one merge per element rather than one per
                     // character.
-                    if (ReferenceEquals(last.Source, source) && last.Start + last.Length == start)
+                    if (drawn is null && ReferenceEquals(last.Source, source) && last.Start + last.Length == start)
                     {
                         last.Length += length;
                     }
                     else
                     {
-                        last.MergeInto(last.Text + source.Substring(start, length));
+                        last.MergeInto(last.Text + (drawn ?? source.Substring(start, length)));
                     }
 
                     last.Width += width;
@@ -3483,9 +3549,22 @@ internal sealed class InlineLayout
                 }
             }
 
-            _fragments.Add(new TextFragment(source, start, length, width, style, box, flow, inline));
+            var added = new TextFragment(source, start, length, width, style, box, flow, inline);
+
+            if (drawn is not null)
+            {
+                added.MergeInto(drawn);
+            }
+
+            _fragments.Add(added);
             Width += width;
         }
+
+        private static Boolean HasTab(String source, Int32 start, Int32 length) =>
+            source.IndexOf('\t', start, length) >= 0;
+
+        private static String ToSpaces(String source, Int32 start, Int32 length) =>
+            source.Substring(start, length).Replace('\t', ' ');
 
         private static Boolean EndsInCollapsibleSpace(TextFragment fragment) =>
             !fragment.IsReplaced &&
@@ -3813,13 +3892,18 @@ internal sealed class InlineLayout
                     break;
                 }
 
-                hanging += MeasureChunk(
-                    measurer,
-                    fragment.Style,
-                    fragment.Source,
-                    fragment.Start + fragment.Length - trailing,
-                    trailing,
-                    fragment.Flow);
+                // A fragment that is nothing but the spaces hanging is worth what the layout measured
+                // it at, which for a run carrying tabs is the distance to the last stop rather than a
+                // count of spaces.
+                hanging += trailing < fragment.Length
+                    ? MeasureChunk(
+                        measurer,
+                        fragment.Style,
+                        fragment.Source,
+                        fragment.Start + fragment.Length - trailing,
+                        trailing,
+                        fragment.Flow)
+                    : fragment.Width;
 
                 if (trailing < fragment.Length)
                 {

@@ -341,6 +341,16 @@ internal sealed record TextArea
 
     /// <summary>Gets the line the block's end is trimmed to.</summary>
     internal TextBoxEdge EdgeEnd { get; init; } = TextBoxEdge.Text;
+
+    /// <summary>
+    /// Gets how far a tab runs the line on, in pixels, or null where the box counts characters:
+    /// <c>tab-size</c> takes either form, and the character form is a multiple of the space the element's
+    /// font gives it (CSS Text 3 §4.2), which is a question only the layout pass can ask.
+    /// </summary>
+    internal Double? TabLength { get; init; }
+
+    /// <summary>Gets how many character widths a tab runs to, which is the initial and the integer form.</summary>
+    internal Double TabUnits { get; init; } = 8;
 }
 
 /// <summary>
