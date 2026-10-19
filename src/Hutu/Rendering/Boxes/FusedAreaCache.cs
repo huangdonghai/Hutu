@@ -1,3 +1,4 @@
+using AngleSharp.Dom;
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
@@ -82,6 +83,40 @@ internal sealed class FusedAreaCache
         _tags[name] = folded;
 
         return folded;
+    }
+
+    /// <summary>
+    /// Gets the one string this build stands for the kind of element this is: its tag name, and where the
+    /// obsolete attributes of HTML hint at a size or a room for it, the values they hint at. The two cells
+    /// of one table are the same kind of element and share a box model; a cell of a table that set its own
+    /// padding is not, and must not be handed the other's.
+    /// </summary>
+    internal String Kind(IElement element)
+    {
+        var tag = Tag(element.LocalName);
+
+        return PresentationalHints.Fingerprint(element) is { } hints ? Intern(tag + " " + hints) : tag;
+    }
+
+    /// <summary>
+    /// Gets the one string this build stands for the hints an element takes, or null where it takes none -
+    /// which is the answer for every element of a page that writes no such attribute, and keeps them all
+    /// sharing the key they shared before the attributes were read.
+    /// </summary>
+    internal String? Hints(IElement element) =>
+        PresentationalHints.Fingerprint(element) is { } hints ? Intern(hints) : null;
+
+    /// <summary>Keeps one string per distinct stamp, so a key compares by reference like every other slot.</summary>
+    private String Intern(String name)
+    {
+        if (_tags.TryGetValue(name, out var known))
+        {
+            return known;
+        }
+
+        _tags[name] = name;
+
+        return name;
     }
 
     /// <summary>Gets the border already resolved for this cascade and size, if there is one.</summary>

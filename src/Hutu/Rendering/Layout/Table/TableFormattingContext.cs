@@ -67,9 +67,13 @@ internal sealed partial class TableFormattingContext
         CompleteGrid(build, contentWidth, context, gridHeight);
 
         var contentHeight = build.Grid.Height + build.CaptionTop + build.CaptionBottom;
-        var usedHeight = BoxModel.ClampHeight(style, declared ?? contentHeight, basisHeight, build.InsetsV);
 
-        return new Size(contentWidth + build.InsetsH, usedHeight + build.InsetsV);
+        // A declared height is a floor, as CSS 2.1 §17.5.3 has it: a table asked to be shorter than its
+        // rows need is as tall as the rows make it. The width answers the same way, one step further up:
+        // a table asked to be narrower than its columns can go is as wide as the columns make it.
+        var usedHeight = BoxModel.ClampHeight(style, Math.Max(declared ?? 0, contentHeight), basisHeight, build.InsetsV);
+
+        return new Size(Math.Max(contentWidth, build.Grid.Width) + build.InsetsH, usedHeight + build.InsetsV);
     }
 
     /// <summary>

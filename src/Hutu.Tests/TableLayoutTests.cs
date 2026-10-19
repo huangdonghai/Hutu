@@ -34,9 +34,9 @@ public sealed class TableLayoutTests
         var b = Find(view, "b");
 
         Assert.That(a.BorderBox.X, Is.EqualTo(0).Within(0.5));
-        Assert.That(a.BorderBox.Width, Is.EqualTo(5).Within(0.5), "one character");
+        Assert.That(a.BorderBox.Width, Is.EqualTo(7).Within(0.5), "one character and the room a cell keeps at each side of it");
         Assert.That(b.BorderBox.X, Is.EqualTo(a.BorderBox.Right).Within(0.5));
-        Assert.That(b.BorderBox.Width, Is.EqualTo(10).Within(0.5), "two characters");
+        Assert.That(b.BorderBox.Width, Is.EqualTo(12).Within(0.5), "two characters and the same room");
         Assert.That(b.BorderBox.Y, Is.EqualTo(a.BorderBox.Y).Within(0.5));
         Assert.That(b.BorderBox.Height, Is.EqualTo(a.BorderBox.Height).Within(0.5), "one row, one height");
     }
@@ -52,7 +52,7 @@ public sealed class TableLayoutTests
             "</table>" +
             "</body></html>");
 
-        Assert.That(Find(view, "t").BorderBox.Width, Is.EqualTo(5).Within(0.5), "a table without a width shrinks");
+        Assert.That(Find(view, "t").BorderBox.Width, Is.EqualTo(7).Within(0.5), "a table without a width shrinks to the cell and the room it keeps");
     }
 
     [Test]
@@ -242,8 +242,8 @@ public sealed class TableLayoutTests
         var cell = Find(view, "a");
         var line = cell.Children[0];
 
-        Assert.That(cell.BorderBox.Height, Is.EqualTo(60).Within(1), "the row is as tall as the tallest cell");
-        Assert.That(line.BorderBox.Y - cell.BorderBox.Y, Is.EqualTo(25).Within(0.5), "(60 - 10) / 2");
+        Assert.That(cell.BorderBox.Height, Is.EqualTo(62).Within(1), "as tall as the tallest cell, whose 60 pixels sit inside a pixel of room");
+        Assert.That(line.BorderBox.Y - cell.BorderBox.Y, Is.EqualTo(26).Within(0.5), "(60 - 10) / 2, plus the room above the content");
     }
 
     private static HutuViewInternal CreateView(Int32 viewportWidth)

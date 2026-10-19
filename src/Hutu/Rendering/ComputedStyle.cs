@@ -862,18 +862,34 @@ internal readonly struct ComputedStyle
     /// wide keywords included, as the old path reads them.
     /// </summary>
     public static (String Top, String Right, String Bottom, String Left) ResolveBorderStylesFused(
-        Func<String, ICssProperty?> find) =>
-    (
-        KeywordText(find("border-top-style"), CssInitialValues.BorderStyle),
-        KeywordText(find("border-right-style"), CssInitialValues.BorderStyle),
-        KeywordText(find("border-bottom-style"), CssInitialValues.BorderStyle),
-        KeywordText(find("border-left-style"), CssInitialValues.BorderStyle)
-    );
+        Func<String, ICssProperty?> find, IElement? element)
+    {
+        // The bevel a legacy border attribute hints at stands in for the style on every side the page left
+        // unwritten, and on those sides only: a rule that speaks of one side of the border takes that side
+        // back whatever the attribute says.
+        var hinted = PresentationalHints.BorderStyle(element);
 
-    private static String KeywordText(ICssProperty? declared, String initial)
+        return
+        (
+            KeywordText(find("border-top-style"), CssInitialValues.BorderStyle, hinted),
+            KeywordText(find("border-right-style"), CssInitialValues.BorderStyle, hinted),
+            KeywordText(find("border-bottom-style"), CssInitialValues.BorderStyle, hinted),
+            KeywordText(find("border-left-style"), CssInitialValues.BorderStyle, hinted)
+        );
+    }
+
+    private static String KeywordText(ICssProperty? declared, String initial, String? fallback = null)
     {
         var text = declared?.Value?.Trim();
-        return String.IsNullOrWhiteSpace(text) ? initial : text!;
+
+        if (!String.IsNullOrWhiteSpace(text))
+        {
+            return text!;
+        }
+
+        // A declaration that says nothing - the cascade hands back its placeholder for a property no rule
+        // wrote - is where the hint stands, and a hint of no style at all is the initial one.
+        return fallback ?? initial;
     }
 
     /// <summary>
@@ -886,16 +902,22 @@ internal readonly struct ComputedStyle
         (String Top, String Right, String Bottom, String Left) styles,
         LengthReader.FontSource font,
         IRenderDimensions dimensions,
-        BorderArea? parent) =>
+        BorderArea? parent,
+        Double? hint) =>
     (
-        BorderWidthFused(styles.Top, find("border-top-width"), font, dimensions, parent?.TopWidth),
-        BorderWidthFused(styles.Right, find("border-right-width"), font, dimensions, parent?.RightWidth),
-        BorderWidthFused(styles.Bottom, find("border-bottom-width"), font, dimensions, parent?.BottomWidth),
-        BorderWidthFused(styles.Left, find("border-left-width"), font, dimensions, parent?.LeftWidth)
+        BorderWidthFused(styles.Top, find("border-top-width"), font, dimensions, parent?.TopWidth, hint),
+        BorderWidthFused(styles.Right, find("border-right-width"), font, dimensions, parent?.RightWidth, hint),
+        BorderWidthFused(styles.Bottom, find("border-bottom-width"), font, dimensions, parent?.BottomWidth, hint),
+        BorderWidthFused(styles.Left, find("border-left-width"), font, dimensions, parent?.LeftWidth, hint)
     );
 
     private static Double BorderWidthFused(
-        String style, ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions, Double? parentWidth)
+        String style,
+        ICssProperty? declared,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions,
+        Double? parentWidth,
+        Double? hint)
     {
         if (!BorderArea.Draws(style))
         {
@@ -918,9 +940,10 @@ internal readonly struct ComputedStyle
             return pixels;
         }
 
-        // No width declared: the computed declaration still carries the initial medium width,
-        // which the old path resolves the same way. Pinned by the differential test.
-        return 3;
+        // No width declared: the thickness the legacy border attribute asked for stands in, and a table
+        // that wrote none leaves the computed declaration's initial medium, which the old path resolves
+        // the same way. Pinned by the differential test.
+        return hint ?? 3;
     }
 
     /// <summary>
@@ -1173,8 +1196,12 @@ internal readonly struct ComputedStyle
         if (declared is null)
         {
             // A link asks for nothing from its parent: the colour it is drawn in is the engine's own
-            // answer, so it is only read once it is known that nothing was declared here.
-            return IsFollowableLink(element) ? ResolveLinkColor(element) : parentColor ?? CssColorValue.Black;
+            // answer, so it is only read once it is known that nothing was declared here. Anything else
+            // takes the colour the body's legacy <c>text</c> attribute hints at where it writes one, and
+            // the parent's colour otherwise.
+            return IsFollowableLink(element)
+                ? ResolveLinkColor(element)
+                : PresentationalHints.TextColor(element) ?? parentColor ?? CssColorValue.Black;
         }
 
         // A wide keyword stands for a value: `inherit`/`unset`/`revert` name the parent's
@@ -1204,10 +1231,14 @@ internal readonly struct ComputedStyle
 
     /// <summary>
     /// Resolves the background colour from the element's own cascaded declaration, for the
-    /// fused path. A miss takes nothing, as in the old path.
+    /// fused path. A miss takes the colour a legacy <c>bgcolor</c> attribute hints at, and nothing
+    /// where the element writes neither.
     /// </summary>
-    public static CssColorValue? ResolveBackgroundColorFused(ICssProperty? declared) =>
-        declared?.RawValue is CssColorValue color ? color : null;
+    public static CssColorValue? ResolveBackgroundColorFused(
+        IElement? element, ICssProperty? declared) =>
+        declared is not null
+            ? declared.RawValue is CssColorValue color ? color : null
+            : PresentationalHints.BackgroundColor(element);
 
     /// <summary>
     /// Resolves the text decoration flags from the element's own cascaded declarations, for
@@ -1536,7 +1567,7 @@ internal readonly struct ComputedStyle
     /// a value that names no colour.
     /// </summary>
     private static CssColorValue? HintColor(IElement? element, String name) =>
-        element?.Owner?.Body?.GetAttribute(name) is { } value ? LegacyColor.Parse(value) : null;
+        PresentationalHints.LinkColor(element, name);
 
     /// <summary>
     /// Resolves the positioning mode from the element's own cascaded declaration, for the
@@ -2821,13 +2852,18 @@ internal readonly struct ComputedStyle
             // inside a link take its colour. The declared value is asked for its value rather than for
             // its presence: the cascaded declaration answers with a placeholder of its own invention
             // when it holds nothing, so a null property would never be seen.
-            return _specified?.GetProperty("color")?.RawValue is null ? _parentColor ?? declared : declared;
+            if (_specified?.GetProperty("color")?.RawValue is not null)
+            {
+                return declared;
+            }
+
+            return PresentationalHints.TextColor(_element) ?? _parentColor ?? declared;
         }
     }
 
     public CssColorValue? BackgroundColor => _values.Fused is { } fused
         ? fused.BackgroundColor
-        : ColorValue("background-color");
+        : ColorValue("background-color") ?? PresentationalHints.BackgroundColor(_element);
 
     /// <summary>
     /// Gets the background layers in declaration order. The first layer paints on top of the ones
@@ -3090,7 +3126,9 @@ internal readonly struct ComputedStyle
     /// table box, and the initial values are what every longhand of a box that is not one comes to.
     /// </remarks>
     public TableStyle Table =>
-        _values.Fused is null ? _values.Table ??= TableStyle.Read(this) : _values.Table ?? default;
+        _values.Fused is null
+            ? _values.Table ??= TableStyle.Read(this, PresentationalHints.Spacing(_element) ?? 0)
+            : _values.Table ?? default;
 
     /// <summary>
     /// Gets the cascaded declaration. It is the one that still carries a percentage, because

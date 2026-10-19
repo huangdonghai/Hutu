@@ -129,7 +129,10 @@ big             { font-size: 1.17em }
 small, sub, sup { font-size: .83em }
 sub             { vertical-align: sub }
 sup             { vertical-align: super }
-table           { border-spacing: 2px; }
+/* The distance between the cells of a table is not here: it is one of the readings HTML makes of a
+ * table's own attributes, and the two belong together - see PresentationalHints.Spacing. The same goes
+ * for the room a cell keeps its content at, which is a pixel that only stands where the table said no
+ * cellpadding of its own, and for the bevel a table with a border attribute is drawn in. */
 thead, tbody,
 tfoot           { vertical-align: middle }
 td, th, tr      { vertical-align: inherit }

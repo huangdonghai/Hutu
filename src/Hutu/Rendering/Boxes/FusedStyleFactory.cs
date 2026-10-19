@@ -394,7 +394,7 @@ internal static class FusedStyleFactory
         // as well, for the one value that reaches across to it: a width the child inherits is the parent's
         // computed length, not the child's own. What the cache holds is the interned instance, so a hit
         // hands back the very object the value table would have found.
-        var key = new AreaKey(cascade, size, parent.Border, variables: variables);
+        var key = new AreaKey(cascade, size, parent.Border, identity: cache?.Hints(element), variables: variables);
 
         if (cache is not null && cache.TryBorder(key, out var border))
         {
@@ -403,8 +403,9 @@ internal static class FusedStyleFactory
         }
         else
         {
-            var borderStyles = ComputedStyle.ResolveBorderStylesFused(find);
-            var borderWidths = ComputedStyle.ResolveBorderWidthsFused(find, borderStyles, face, dimensions, parent.Border);
+            var borderStyles = ComputedStyle.ResolveBorderStylesFused(find, element);
+            var borderWidths = ComputedStyle.ResolveBorderWidthsFused(
+                find, borderStyles, face, dimensions, parent.Border, PresentationalHints.BorderWidth(element));
             var built = new BorderArea
             {
                 TopStyle = borderStyles.Top,
@@ -459,7 +460,7 @@ internal static class FusedStyleFactory
         // element enters, so the four cache like the rest.
         var boxKey = cache is null
             ? default
-            : new AreaKey(cascade, size, parent.Tag, cache.Tag(element.LocalName), FlowStamp(parent), variables);
+            : new AreaKey(cascade, size, parent.Tag, cache.Kind(element), FlowStamp(parent), variables);
 
         if (cache is not null && cache.TryBoxModel(boxKey, out var boxModel))
         {
@@ -473,19 +474,31 @@ internal static class FusedStyleFactory
             var widthDeclaration = find("width");
             var heightDeclaration = find("height");
 
+            // The size a legacy attribute hints at, which the table sizes by: the table's own box on both
+            // axes, and a cell's or a row's as a least the grid holds it to.
+            var widthHint = PresentationalHints.Size(element, "width") ?? PresentationalHints.CellSize(element, "width");
+            var heightHint = PresentationalHints.Size(element, "height") ?? PresentationalHints.CellSize(element, "height");
+
             var built = new BoxModelArea
             {
                 BoxSizing = ComputedStyle.ResolveBoxSizingFused(find("box-sizing")),
-                Width = ComputedStyle.ResolveBoxLengthFused(widthDeclaration, RenderMode.Horizontal, face, dimensions, StyleLength.Auto),
-                Height = ComputedStyle.ResolveBoxLengthFused(heightDeclaration, RenderMode.Vertical, face, dimensions, StyleLength.Auto),
-                WidthDeclared = widthDeclaration is not null,
-                HeightDeclared = heightDeclaration is not null,
+                Width = ComputedStyle.ResolveBoxLengthFused(widthDeclaration, RenderMode.Horizontal, face, dimensions,
+                    widthDeclaration is null ? widthHint ?? StyleLength.Auto : StyleLength.Auto),
+                Height = ComputedStyle.ResolveBoxLengthFused(heightDeclaration, RenderMode.Vertical, face, dimensions,
+                    heightDeclaration is null ? heightHint ?? StyleLength.Auto : StyleLength.Auto),
+                WidthDeclared = widthDeclaration is not null || widthHint is not null,
+                HeightDeclared = heightDeclaration is not null || heightHint is not null,
                 MinWidth = ComputedStyle.ResolveBoxLengthFused(find("min-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
                 MaxWidth = ComputedStyle.ResolveBoxLengthFused(find("max-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
                 MinHeight = ComputedStyle.ResolveBoxLengthFused(find("min-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),
                 MaxHeight = ComputedStyle.ResolveBoxLengthFused(find("max-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),
                 Margin = ComputedStyle.ResolveThicknessFused(find, element, face, dimensions, flow, "margin", StyleLength.Zero),
-                Padding = ComputedStyle.ResolveThicknessFused(find, element, face, dimensions, flow, "padding", StyleLength.Zero),
+
+                // The room a cell keeps is its table's, and the room it keeps where its table says nothing
+                // is the pixel every browser's sheet gives a cell.
+                Padding = ComputedStyle.ResolveThicknessFused(
+                    find, element, face, dimensions, flow, "padding",
+                    PresentationalHints.CellPadding(element) ?? StyleLength.Zero),
             };
 
             boxModel = pool is null ? built : pool.BoxModel(built);
@@ -588,7 +601,7 @@ internal static class FusedStyleFactory
             Orientation = orientation,
             CombinesUpright = combine,
             Color = color,
-            BackgroundColor = ComputedStyle.ResolveBackgroundColorFused(find("background-color")),
+            BackgroundColor = ComputedStyle.ResolveBackgroundColorFused(element, find("background-color")),
             Backgrounds = ComputedStyle.ResolveBackgroundsFused(find, element, dimensions, size),
             Cursor = ComputedStyle.ResolveCursorFused(element, find("cursor"), parent.Cursor),
             Ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position"), parent.Ruby),
@@ -642,7 +655,7 @@ internal static class FusedStyleFactory
         // use for, so they are only read where the display says the box is one. Every spelling of it
         // - table, inline-table, table-row, table-cell and the rest - carries the word.
         values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)
-            ? TableStyle.ReadFused(find, text.VerticalAlign, face, dimensions)
+            ? TableStyle.ReadFused(find, text.VerticalAlign, face, dimensions, PresentationalHints.Spacing(element) ?? 0)
             : null;
 
         // The flex longhands are read for a flex container - every spelling carries the word - and

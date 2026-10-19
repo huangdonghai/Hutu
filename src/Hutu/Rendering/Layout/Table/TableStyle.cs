@@ -73,9 +73,9 @@ internal readonly struct TableStyle
     /// <summary>Gets the cell's vertical alignment. Meaningful on a cell box.</summary>
     public CellVerticalAlignment VerticalAlign { get; }
 
-    internal static TableStyle Read(ComputedStyle style)
+    internal static TableStyle Read(ComputedStyle style, Double spacing)
     {
-        var (horizontal, vertical) = ReadSpacing(style);
+        var (horizontal, vertical) = ReadSpacing(style, spacing);
 
         return new TableStyle(
             Text(style, "border-collapse") == "collapse",
@@ -96,13 +96,19 @@ internal readonly struct TableStyle
     /// alignment is the one longhand that is a text property everywhere else, and asking for it twice
     /// would mean reading the same declaration twice.
     /// </param>
+    /// <param name="spacing">
+    /// The distance the table's own <c>cellspacing</c> hints at, or the distance HTML gives a table that
+    /// writes no such attribute. It stands in for every side the page left unwritten, and a page that
+    /// wrote <c>border-spacing</c> itself is read instead of it.
+    /// </param>
     internal static TableStyle ReadFused(
         Func<String, ICssProperty?> find,
         String verticalAlign,
         LengthReader.FontSource font,
-        IRenderDimensions dimensions)
+        IRenderDimensions dimensions,
+        Double spacing)
     {
-        var (horizontal, vertical) = ReadSpacingFused(find("border-spacing"), font, dimensions);
+        var (horizontal, vertical) = ReadSpacingFused(find("border-spacing"), spacing, font, dimensions);
 
         return new TableStyle(
             Keyword(find("border-collapse")) == "collapse",
@@ -115,15 +121,16 @@ internal readonly struct TableStyle
     }
 
     /// <summary>
-    /// Reads the two <c>border-spacing</c> lengths from the cascaded declaration. A single value
+    /// Reads the two <c>border-spacing</c> lengths from the cascaded declaration, or the distance the
+    /// table's attributes leave the engine to supply where the page wrote neither. A single value
     /// applies to both axes; two are the horizontal then the vertical one, in that order.
     /// </summary>
     private static (Double Horizontal, Double Vertical) ReadSpacingFused(
-        ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions)
+        ICssProperty? declared, Double spacing, LengthReader.FontSource font, IRenderDimensions dimensions)
     {
         if (declared is null)
         {
-            return (0, 0);
+            return (spacing, spacing);
         }
 
         // The two lengths are read through the multiple-value interface rather than the tuple class:
@@ -158,10 +165,11 @@ internal readonly struct TableStyle
         declared?.Value?.Trim().ToLowerInvariant() ?? String.Empty;
 
     /// <summary>
-    /// Reads the two <c>border-spacing</c> lengths. A single value applies to both axes; two are the
+    /// Reads the two <c>border-spacing</c> lengths, taking the distance the table's attributes leave to
+    /// the engine where the page wrote neither. A single value applies to both axes; two are the
     /// horizontal then the vertical one, in that order.
     /// </summary>
-    private static (Double Horizontal, Double Vertical) ReadSpacing(ComputedStyle style)
+    private static (Double Horizontal, Double Vertical) ReadSpacing(ComputedStyle style, Double spacing)
     {
         // The two lengths are read through the multiple-value interface rather than the tuple class:
         // AngleSharp produces a generic instantiation the tuple class alone does not match.
@@ -182,7 +190,7 @@ internal readonly struct TableStyle
             return (value, value);
         }
 
-        return (0, 0);
+        return (spacing, spacing);
     }
 
     private static Double? SpacingOf(ComputedStyle style, ICssValue item) =>
