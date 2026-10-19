@@ -64,14 +64,18 @@ internal readonly struct BreakStyle
     /// <summary>Gets whether the box says anything about breaking at all.</summary>
     public Boolean IsPlain => Before == BreakValue.Auto && After == BreakValue.Auto && Inside == BreakValue.Auto;
 
-    /// <summary>Reads the box's own declarations. The properties are not inherited.</summary>
-    public static BreakStyle ReadFused(Func<String, ICssProperty?> find) =>
+    /// <summary>
+    /// Reads the box's own declarations. The break properties are not inherited and begin at <c>auto</c>;
+    /// <c>widows</c> and <c>orphans</c> are inherited (CSS Break 3 §3.3), so a box that says nothing takes
+    /// the count handed down rather than the initial two.
+    /// </summary>
+    public static BreakStyle ReadFused(Func<String, ICssProperty?> find, Int32 widows, Int32 orphans) =>
         new(
             Between(find("break-before")?.Value, find("page-break-before")?.Value),
             Between(find("break-after")?.Value, find("page-break-after")?.Value),
             InsideOf(find("break-inside")?.Value, find("page-break-inside")?.Value),
-            Count(find("widows")?.Value, 2),
-            Count(find("orphans")?.Value, 2));
+            Count(find("widows")?.Value, widows),
+            Count(find("orphans")?.Value, orphans));
 
     /// <summary>
     /// Reads a before or after value. <c>avoid-page</c> and <c>avoid-column</c> are both an avoid: the

@@ -77,6 +77,18 @@ public sealed class BreakStyleTests
         Assert.That(invalid.Orphans, Is.EqualTo(2));
     }
 
+    [Test]
+    public async Task TheLineCountsAreInherited()
+    {
+        var inner = await Render(
+            "<div style='widows: 4; orphans: 5'><div id='d'>x</div></div>");
+
+        var breaks = Find(inner).Source.Style.Breaks;
+
+        Assert.That(breaks.Widows, Is.EqualTo(4), "a box that says nothing takes the count it was handed");
+        Assert.That(breaks.Orphans, Is.EqualTo(5));
+    }
+
     private static async Task<BreakStyle> Read(String content) =>
         Find(await Render(content)).Source.Style.Breaks;
 

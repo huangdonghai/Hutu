@@ -42,6 +42,12 @@ internal sealed class FusedParent
     /// <summary>Gets the parent's text fill colour, null where neither it nor an ancestor set one.</summary>
     public UInt32? TextFillColor { get; init; }
     public ICssProperty? LineHeightHit { get; init; }
+    /// <summary>Gets the fewest lines a fragment keeps at its end, which every block under the page inherits.</summary>
+    public Int32 Widows { get; init; } = 2;
+
+    /// <summary>Gets the fewest lines a fragment keeps at its start, likewise inherited.</summary>
+    public Int32 Orphans { get; init; } = 2;
+
     public String WhiteSpace { get; init; } = "normal";
     public String Align { get; init; } = "start";
 
@@ -193,6 +199,8 @@ internal sealed class FusedParent
             ? lineHeight
             : LineHeightHit,
         WhiteSpace = style.WhiteSpace,
+        Widows = style.Breaks.Widows,
+        Orphans = style.Breaks.Orphans,
         Align = style.TextAlign,
         AlignLast = style.TextAlignLast,
         TextJustify = style.TextJustify,
@@ -664,7 +672,7 @@ internal static class FusedStyleFactory
         // The column longhands are read for every box: a page that writes none of them costs two lookups,
         // and a box that writes either is a multi-column container whatever its display says.
         values.Multi = MulticolStyle.ReadFused(find, face, dimensions);
-        values.Breaks = BreakStyle.ReadFused(find);
+        values.Breaks = BreakStyle.ReadFused(find, parent.Widows, parent.Orphans);
 
         values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)
             ? TableStyle.ReadFused(find, text.VerticalAlign, face, dimensions, PresentationalHints.Spacing(element) ?? 0, PresentationalHints.Collapses(element))
