@@ -2310,6 +2310,8 @@ internal readonly struct ComputedStyle
 
         internal MulticolStyle? Multi;
 
+        internal BreakStyle Breaks;
+
         internal PositionStyle? Position;
         internal GridItemStyle? GridItem;
 
@@ -3181,6 +3183,9 @@ internal readonly struct ComputedStyle
     /// </remarks>
     public MulticolStyle Multi =>
         _values.Fused is null ? default : _values.Multi ?? default;
+
+    /// <summary>Gets where the box lets a fragmentainer break around and inside it.</summary>
+    public BreakStyle Breaks => _values.Breaks;
 
     public TableStyle Table =>
         _values.Fused is null

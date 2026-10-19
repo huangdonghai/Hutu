@@ -54,6 +54,15 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // are kept as text and read by the block layout.
         "text-box-trim",
         "text-box-edge",
+        // CSS Fragmentation 3's break values, which AngleSharp's grammar predates (recto, verso and the
+        // avoid-page / avoid-column refinements are dropped without this). The fragmentation reader keeps
+        // each value as text.
+        "break-before",
+        "break-after",
+        "break-inside",
+        "page-break-before",
+        "page-break-after",
+        "page-break-inside",
         // The grid-lanes axis/packing descriptor, which AngleSharp has no grammar for at all; the lanes
         // formatting context reads it as text.
         "grid-lanes-direction",
