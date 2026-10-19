@@ -3127,7 +3127,7 @@ internal readonly struct ComputedStyle
     /// </remarks>
     public TableStyle Table =>
         _values.Fused is null
-            ? _values.Table ??= TableStyle.Read(this, PresentationalHints.Spacing(_element) ?? 0)
+            ? _values.Table ??= TableStyle.Read(this, PresentationalHints.Spacing(_element) ?? 0, PresentationalHints.Collapses(_element))
             : _values.Table ?? default;
 
     /// <summary>
