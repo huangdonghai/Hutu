@@ -98,10 +98,10 @@ internal readonly struct MulticolStyle
         }
 
         // `column-gap: normal` is one em in a multi-column container (CSS Gaps 1 §2.1), which is where
-        // this differs from the zero a row or a grid track takes.
-        var gap = FlexStyle.GapsFused(find, font, dimensions).Column is { } gapPixels && gapPixels > 0
-            ? gapPixels
-            : font.Value;
+        // this differs from the zero a row or a grid track takes. A gap the page wrote as zero is a
+        // zero, so the keyword is told from the number by the declaration being there at all.
+        var declaredGap = find("column-gap") is not null || find("grid-column-gap") is not null;
+        var gap = declaredGap ? FlexStyle.GapsFused(find, font, dimensions).Column : font.Value;
 
         var fill = find("column-fill")?.Value?.Trim();
         var fills = String.Equals(fill, "auto", StringComparison.OrdinalIgnoreCase);

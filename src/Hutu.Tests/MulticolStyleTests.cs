@@ -94,6 +94,15 @@ public sealed class MulticolStyleTests
     }
 
     [Test]
+    public async Task APageThatWritesNoGapAtAllStillHasOne()
+    {
+        using var view = await Render(
+            "<style>div { column-count: 2; column-gap: 0 }</style><div id='d'>x</div>");
+
+        Assert.That(Find(view, "d").Source.Style.Multi.Gap, Is.EqualTo(0), "a zero is a zero, not the one em of normal");
+    }
+
+    [Test]
     public async Task ABoxThatAsksForNoColumnsIsNotAContainer()
     {
         using var view = await Render("<div id='d'>x</div>");
