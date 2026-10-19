@@ -82,6 +82,38 @@ public sealed class WordSpacingTests
     }
 
     [Test]
+    public async Task AnOrdinaryLineBeginsWithoutTheSpaceBeforeIt()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page("<p style='word-spacing:4px'> ab</p>"));
+
+        Assert.That(Text(view, "ab").BorderBox.Width, Is.EqualTo(10), "the space at the head of the line is gone, room and all");
+        Assert.That(Text(view, "ab").BorderBox.X, Is.EqualTo(0), "so the line starts with the first word");
+    }
+
+    [Test]
+    public async Task APreformattedLineKeepsTheSpaceItBeginsWith()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page("<p style='white-space:pre-wrap;word-spacing:4px'> ab</p>"));
+
+        Assert.That(Text(view, " ab").BorderBox.Width, Is.EqualTo(19), "a mode that keeps its spaces keeps them at the head too");
+    }
+
+    [Test]
+    public async Task ALineAfterAPreservedBreakDropsItsCollapsibleSpace()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page("<p style='white-space:pre-line'>a" + (Char)10 + " b</p>"));
+
+        Assert.That(Lines(view), Is.EqualTo(2), "the preserved break starts a line of its own");
+        Assert.That(Text(view, "b").BorderBox.X, Is.EqualTo(0), "and the space after it collapses away");
+    }
+
+    [Test]
     public async Task ANoBreakSpaceIsAWordSeparatorToo()
     {
         using var view = CreateView();

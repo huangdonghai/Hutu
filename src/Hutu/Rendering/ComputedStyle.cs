@@ -2592,6 +2592,15 @@ internal readonly struct ComputedStyle
         WhiteSpace.StartsWith("pre", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Gets whether the spaces of this white-space mode collapse away: every mode but the pre spellings
+    /// that keep them. <c>pre-line</c> keeps its breaks and still collapses the spaces around them.
+    /// </summary>
+    public Boolean CollapsesSpaces =>
+        WhiteSpace.Equals("normal", StringComparison.OrdinalIgnoreCase) ||
+        WhiteSpace.Equals("nowrap", StringComparison.OrdinalIgnoreCase) ||
+        WhiteSpace.Equals("pre-line", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Gets whether a segment break in this element's text stands as a line break of its own: every
     /// <c>pre</c> spelling and <c>break-spaces</c> keep it, while <c>normal</c> and <c>nowrap</c> fold it
     /// into the white space around it. <c>pre-line</c> collapses the spaces and keeps the breaks.

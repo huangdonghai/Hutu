@@ -3163,6 +3163,14 @@ internal sealed class InlineLayout
         {
             var isSpace = TextChunker.IsCollapsible(source, start, length);
 
+            // CSS Text 3 ¡ì4.1.1: a collapsible space at the head of a line is removed - the line begins
+            // with what follows the break, not with the white space that stood around it. A mode that
+            // keeps its spaces (pre, pre-wrap, break-spaces) keeps them wherever the line starts.
+            if (isSpace && _fragments.Count == 0 && style.CollapsesSpaces)
+            {
+                return;
+            }
+
             // White space that follows white space across an element's edge collapses into the space
             // already on the line: the pieces come from two nodes, so no node's own collapse saw them
             // together, and the line is where their neighbourhood finally shows up.
