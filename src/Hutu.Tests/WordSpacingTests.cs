@@ -75,7 +75,7 @@ public sealed class WordSpacingTests
         // exception for one that opens the text (CSS Text 3 §7.1). Chromium, measured along a
         // preformatted line, keeps a leading space and gives it the room; along a line of ordinary text
         // it pays nothing at the head, because there is nothing there - the space was removed, which is
-        // the white-space rule rather than this property's, and the engine keeps the space for now.
+        // the white-space rule rather than this property's.
         await view.SetHtml(Page("<p style='white-space:pre;word-spacing:4px'> ab</p>"));
 
         Assert.That(Text(view, " ab").BorderBox.Width, Is.EqualTo(19), "the space of five and the room of four");
