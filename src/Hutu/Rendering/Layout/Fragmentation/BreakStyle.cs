@@ -37,13 +37,15 @@ internal enum BreakValue : Byte
 /// </remarks>
 internal readonly struct BreakStyle
 {
-    private BreakStyle(BreakValue before, BreakValue after, BreakValue inside, Int32 widows, Int32 orphans)
+    private BreakStyle(
+        BreakValue before, BreakValue after, BreakValue inside, Int32 widows, Int32 orphans, Boolean spansColumns)
     {
         Before = before;
         After = after;
         Inside = inside;
         Widows = widows;
         Orphans = orphans;
+        SpansColumns = spansColumns;
     }
 
     /// <summary>Gets what the box asks for before itself.</summary>
@@ -61,6 +63,9 @@ internal readonly struct BreakStyle
     /// <summary>Gets the fewest lines a fragment must keep at its start.</summary>
     public Int32 Orphans { get; }
 
+    /// <summary>Gets whether the box asks to span every column of the container it stands in.</summary>
+    public Boolean SpansColumns { get; }
+
     /// <summary>Gets whether the box says anything about breaking at all.</summary>
     public Boolean IsPlain => Before == BreakValue.Auto && After == BreakValue.Auto && Inside == BreakValue.Auto;
 
@@ -75,7 +80,8 @@ internal readonly struct BreakStyle
             Between(find("break-after")?.Value, find("page-break-after")?.Value),
             InsideOf(find("break-inside")?.Value, find("page-break-inside")?.Value),
             Count(find("widows")?.Value, widows),
-            Count(find("orphans")?.Value, orphans));
+            Count(find("orphans")?.Value, orphans),
+            String.Equals(find("column-span")?.Value?.Trim(), "all", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Reads a before or after value. <c>avoid-page</c> and <c>avoid-column</c> are both an avoid: the

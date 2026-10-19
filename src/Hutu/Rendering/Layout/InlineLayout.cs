@@ -242,6 +242,11 @@ internal sealed class InlineLayout
         var maxContent = indent;
         var unbreakable = indent;
 
+        // The widest line of those a forced break makes. A forced break is honoured even by the
+        // max-content size (CSS Sizing 3 §5.1), so the lines it makes lie beside each other rather than
+        // one after another: what the content asks for is the widest of them, not their sum.
+        var widest = 0.0;
+
         // Whether the stream has reached anything a line would draw. White space ahead of it asks for
         // no room, because the line it would begin is the one line that does not draw it.
         var sawContent = false;
@@ -260,6 +265,14 @@ internal sealed class InlineLayout
             if (item.IsBreak)
             {
                 minContent = Math.Max(minContent, unbreakable);
+                widest = Math.Max(widest, maxContent);
+
+                // The line the break ends takes its trailing space with it, and the one it begins
+                // starts where any line but the first does: no indentation, and no space of its own
+                // ahead of the first thing drawn on it.
+                maxContent = 0;
+                trailing = 0;
+                sawContent = false;
                 unbreakable = 0;
                 continue;
             }
@@ -414,7 +427,9 @@ internal sealed class InlineLayout
         }
 
         minContent = Math.Max(minContent, unbreakable);
-        return new IntrinsicSize(minContent, Math.Max(maxContent, minContent));
+        widest = Math.Max(widest, maxContent);
+
+        return new IntrinsicSize(minContent, Math.Max(widest, minContent));
     }
 
     /// <summary>

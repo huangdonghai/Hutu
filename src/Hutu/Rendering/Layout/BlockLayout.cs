@@ -86,7 +86,9 @@ internal sealed class BlockLayout
         }
         else if (HasBlockChildren(box))
         {
-            contentHeight = MeasureBlockChildren(box, contentWidth, childHeight, context);
+            contentHeight = ColumnsOf(box, contentWidth, out var columns, out var share)
+                ? MeasureMulticolChildren(box, share, childHeight, declaredHeight is not null, columns, context)
+                : MeasureBlockChildren(box, contentWidth, childHeight, context);
         }
         else
         {
@@ -356,6 +358,20 @@ internal sealed class BlockLayout
             max = intrinsic.MaxContent;
         }
 
+        // A multi-column box asks for its columns side by side: the content's extent for each column,
+        // and the gaps between them, for the narrowest extent as for the widest. Chrome measured:
+        // `columns: 2; column-gap: 10px` over a line that asks for a hundred pixels lays the box out
+        // two hundred and ten wide, and its `min-content` over a forty-pixel word is eighty and ten.
+        var multi = box.Style.Multi;
+        var columns = multi.Count ?? 1;
+
+        if (!box.Flow.IsVertical && multi.IsMultiColumn && columns > 1)
+        {
+            var gaps = (columns - 1) * multi.Gap;
+            min = min * columns + gaps;
+            max = max * columns + gaps;
+        }
+
         return new IntrinsicSize(min + insets, max + insets);
     }
 
@@ -468,9 +484,19 @@ internal sealed class BlockLayout
 
         if (HasBlockChildren(box))
         {
-            used = flow.IsVertical
-                ? ArrangeColumnChildren(box, layout, content, childContext, context.ContainingBlock.Width)
-                : ArrangeBlockChildren(box, layout, contentX, contentY, contentWidth, childContext);
+            used = !flow.IsVertical && ColumnsOf(box, contentWidth, out var columns, out var share)
+                ? ArrangeMulticolChildren(
+                    box,
+                    layout,
+                    content,
+                    columns,
+                    share,
+                    usedHeight is not null,
+                    usedHeight ?? 0,
+                    context)
+                : flow.IsVertical
+                    ? ArrangeColumnChildren(box, layout, content, childContext, context.ContainingBlock.Width)
+                    : ArrangeBlockChildren(box, layout, contentX, contentY, contentWidth, childContext);
         }
         else
         {
@@ -652,6 +678,168 @@ internal sealed class BlockLayout
         _engine.PublishFloats(box, tracks);
 
         return Math.Max(stacked, directBottom);
+    }
+
+    /// <summary>
+    /// Gets whether the box lays its block-level children out in more than one column, and over how
+    /// many: a horizontal multi-column container with room for columns. A container holding a float or
+    /// a box that left the flow keeps the ordinary stack for now - neither can be put in a column yet.
+    /// </summary>
+    private static Boolean ColumnsOf(Box box, Double contentWidth, out Int32 columns, out Double share)
+    {
+        columns = 1;
+        share = contentWidth;
+
+        if (box.Flow.IsVertical || !box.Style.Multi.IsMultiColumn)
+        {
+            return false;
+        }
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel)
+            {
+                continue;
+            }
+
+            if (child.Style.Float != FloatSide.None || PositionedLayout.IsOutOfFlow(child))
+            {
+                return false;
+            }
+
+            // A spanner spans the whole row of columns, and a multi-column child balances its own
+            // columns inside one column of this one. Neither can be put in a column yet, so the box
+            // keeps the ordinary stack - one column's worth - until they can.
+            if (child.Style.SpansColumns || (!child.Flow.IsVertical && child.Style.Multi.IsMultiColumn))
+            {
+                return false;
+            }
+        }
+
+        var used = box.Style.Multi.Used(contentWidth);
+
+        if (used.Count <= 1)
+        {
+            return false;
+        }
+
+        columns = used.Count;
+        share = used.Width;
+        return true;
+    }
+
+    /// <summary>
+    /// Measures the block children of a multi-column box against the width of one column and answers the
+    /// height the columns come to: the <c>column-fill: auto</c> height the box states, or the least
+    /// extent a balanced fill of its columns needs (CSS Multicol 3 §3.4).
+    /// </summary>
+    private Double MeasureMulticolChildren(
+        Box box,
+        Double share,
+        Double declaredHeight,
+        Boolean heightStated,
+        Int32 columns,
+        LayoutContext context)
+    {
+        var children = MulticolChildren(box, share, declaredHeight, context);
+
+        // Nothing here takes part in the floats of the boxes around it yet; the container holds none of
+        // its own, which is what let it take this path at all.
+        _engine.PublishFloats(box, null);
+
+        return MulticolExtent(box.Style.Multi, columns, heightStated ? declaredHeight : null, children);
+    }
+
+    /// <summary>One in-flow child of a multi-column box, measured at the width of a column.</summary>
+    private readonly struct MulticolChild
+    {
+        public MulticolChild(Box box, Size size, Thickness margin, FragmentChild fragment)
+        {
+            Box = box;
+            Size = size;
+            Margin = margin;
+            Fragment = fragment;
+        }
+
+        public Box Box { get; }
+
+        public Size Size { get; }
+
+        public Thickness Margin { get; }
+
+        /// <summary>Gets the child as the column slicer sees it: its margin box and its break values.</summary>
+        public FragmentChild Fragment { get; }
+    }
+
+    private List<MulticolChild> MulticolChildren(Box box, Double share, Double declaredHeight, LayoutContext context)
+    {
+        var childContext = context.ForContainingBlock(new Size(share, declaredHeight));
+        var constraints = MeasureConstraints.FitWidth(share);
+        var children = new List<MulticolChild>(box.Children.Count);
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            var size = _engine.Measure(child, constraints, childContext);
+            var used = BoxModel.UsedMargin(child.Style, share, size.Width);
+
+            // What stands before and after the child is the margin it presents to the stack, not only
+            // the one it wrote: a first child's margin travels out through a parent that does not seal
+            // it, and the column has to leave that room too.
+            var margin = new Thickness(
+                CollapsedStart(child, box.Flow, share),
+                used.Right,
+                CollapsedEnd(child, box.Flow, share),
+                used.Left);
+            var breaks = child.Style.Breaks;
+
+            children.Add(new MulticolChild(
+                child,
+                size,
+                margin,
+                new FragmentChild(size.Height + margin.Top + margin.Bottom, breaks.Before, breaks.After, breaks.Inside)));
+        }
+
+        return children;
+    }
+
+    /// <summary>
+    /// Gets the extent the columns are shared at: the height the box states for a fill, the whole stack
+    /// where it states none (there is nothing to fill to, so the first column takes it all), or the
+    /// least extent the children balance into (CSS Multicol 3 §3.4).
+    /// </summary>
+    private static Double MulticolExtent(
+        MulticolStyle multi, Int32 columns, Double? declaredHeight, List<MulticolChild> children)
+    {
+        if (multi.Fills)
+        {
+            if (declaredHeight is { } declared)
+            {
+                return declared;
+            }
+
+            var total = 0.0;
+
+            foreach (var child in children)
+            {
+                total += child.Fragment.Height;
+            }
+
+            return total;
+        }
+
+        var fragments = new List<FragmentChild>(children.Count);
+
+        foreach (var child in children)
+        {
+            fragments.Add(child.Fragment);
+        }
+
+        return Fragmentainer.Balance(fragments, columns);
     }
 
     /// <summary>Gets whether the child is pinned to an edge of its container instead of stacked in it.</summary>
@@ -1021,6 +1209,67 @@ internal sealed class BlockLayout
         var occupied = CollapsesThroughEnd(box, box.Flow, contentWidth) ? cursor : cursor + pending;
 
         return Math.Max(0, occupied - contentY);
+    }
+
+    /// <summary>
+    /// Arranges the block children of a multi-column box: each column takes the children the slicer
+    /// gives it, stacked from the column's top, and a forced column break ends a column even where more
+    /// would fit (CSS Break 3 §4.3). The extent the columns were shared at is what the box's content
+    /// comes to.
+    /// </summary>
+    private Double ArrangeMulticolChildren(
+        Box box,
+        LayoutBox parent,
+        Rect content,
+        Int32 columns,
+        Double share,
+        Boolean heightStated,
+        Double declaredHeight,
+        LayoutContext context)
+    {
+        var children = MulticolChildren(box, share, heightStated ? declaredHeight : 0, context);
+        var multi = box.Style.Multi;
+        var extent = MulticolExtent(multi, columns, heightStated ? declaredHeight : null, children);
+        var fragments = new List<FragmentChild>(children.Count);
+
+        foreach (var child in children)
+        {
+            fragments.Add(child.Fragment);
+        }
+
+        // A fill is not held to the column count: content that does not fit the stated columns spills
+        // into more of them, which is how Chrome lays out a run longer than its `column-count`. A
+        // balance has already been solved into the columns it was given.
+        var extents = new Double[Math.Max(1, multi.Fills ? children.Count : columns)];
+        Array.Fill(extents, extent);
+
+        var counts = Fragmentainer.Fill(fragments, extents);
+        var childContext = context.ForContainingBlock(new Size(share, heightStated ? declaredHeight : 0));
+        var from = 0;
+
+        for (var column = 0; column < counts.Count; column++)
+        {
+            var x = content.X + column * (share + multi.Gap);
+            var y = content.Y;
+
+            for (var index = 0; index < counts[column]; index++)
+            {
+                var child = children[from++];
+
+                // A column begins a fresh stack: what a child brings to its top edge is added there
+                // rather than folded into the margin run the column before ended with.
+                y += child.Margin.Top;
+
+                var rect = new Rect(x + child.Margin.Left, y, child.Size.Width, child.Size.Height);
+
+                parent.Children.Add(_engine.Arrange(child.Box, rect, childContext));
+                y += child.Size.Height + child.Margin.Bottom;
+            }
+        }
+
+        _engine.PublishFloats(box, null);
+
+        return extent;
     }
 
     /// <summary>

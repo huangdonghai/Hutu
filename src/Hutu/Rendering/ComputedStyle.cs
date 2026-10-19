@@ -3187,6 +3187,9 @@ internal readonly struct ComputedStyle
     /// <summary>Gets where the box lets a fragmentainer break around and inside it.</summary>
     public BreakStyle Breaks => _values.Breaks;
 
+    /// <summary>Gets whether the box asks to span every column of the multi-column container it stands in.</summary>
+    public Boolean SpansColumns => _values.Breaks.SpansColumns;
+
     public TableStyle Table =>
         _values.Fused is null
             ? _values.Table ??= TableStyle.Read(this, PresentationalHints.Spacing(_element) ?? 0, PresentationalHints.Collapses(_element))
