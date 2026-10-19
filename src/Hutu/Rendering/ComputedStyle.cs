@@ -864,17 +864,17 @@ internal readonly struct ComputedStyle
     public static (String Top, String Right, String Bottom, String Left) ResolveBorderStylesFused(
         Func<String, ICssProperty?> find, IElement? element)
     {
-        // The bevel a legacy border attribute hints at stands in for the style on every side the page left
-        // unwritten, and on those sides only: a rule that speaks of one side of the border takes that side
-        // back whatever the attribute says.
-        var hinted = PresentationalHints.BorderStyle(element);
+        // The style a legacy border attribute asks for - a bevel, or the flat line a frame or a rule
+        // draws - stands in on every side the page left unwritten, and on those sides only: a rule that
+        // speaks of one side of the border takes that side back whatever the attributes say.
+        var hinted = PresentationalHints.Border(element);
 
         return
         (
-            KeywordText(find("border-top-style"), CssInitialValues.BorderStyle, hinted),
-            KeywordText(find("border-right-style"), CssInitialValues.BorderStyle, hinted),
-            KeywordText(find("border-bottom-style"), CssInitialValues.BorderStyle, hinted),
-            KeywordText(find("border-left-style"), CssInitialValues.BorderStyle, hinted)
+            KeywordText(find("border-top-style"), CssInitialValues.BorderStyle, hinted?.TopStyle),
+            KeywordText(find("border-right-style"), CssInitialValues.BorderStyle, hinted?.RightStyle),
+            KeywordText(find("border-bottom-style"), CssInitialValues.BorderStyle, hinted?.BottomStyle),
+            KeywordText(find("border-left-style"), CssInitialValues.BorderStyle, hinted?.LeftStyle)
         );
     }
 
@@ -903,12 +903,12 @@ internal readonly struct ComputedStyle
         LengthReader.FontSource font,
         IRenderDimensions dimensions,
         BorderArea? parent,
-        Double? hint) =>
+        PresentationalHints.Ring? hint) =>
     (
-        BorderWidthFused(styles.Top, find("border-top-width"), font, dimensions, parent?.TopWidth, hint),
-        BorderWidthFused(styles.Right, find("border-right-width"), font, dimensions, parent?.RightWidth, hint),
-        BorderWidthFused(styles.Bottom, find("border-bottom-width"), font, dimensions, parent?.BottomWidth, hint),
-        BorderWidthFused(styles.Left, find("border-left-width"), font, dimensions, parent?.LeftWidth, hint)
+        BorderWidthFused(styles.Top, find("border-top-width"), font, dimensions, parent?.TopWidth, hint?.Top),
+        BorderWidthFused(styles.Right, find("border-right-width"), font, dimensions, parent?.RightWidth, hint?.Right),
+        BorderWidthFused(styles.Bottom, find("border-bottom-width"), font, dimensions, parent?.BottomWidth, hint?.Bottom),
+        BorderWidthFused(styles.Left, find("border-left-width"), font, dimensions, parent?.LeftWidth, hint?.Left)
     );
 
     private static Double BorderWidthFused(

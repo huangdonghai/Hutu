@@ -51,6 +51,15 @@ internal static class PresentationalHints
     /// <summary>The bevel the cells of such a table are drawn in.</summary>
     private const String InsetBorder = "inset";
 
+    /// <summary>The flat line a frame or a rule draws.</summary>
+    private const String SolidBorder = "solid";
+
+    /// <summary>The side a frame leaves out of its ring, which draws nothing and would hide a line drawn there.</summary>
+    private const String HiddenBorder = "hidden";
+
+    /// <summary>The side a rule leaves out of its ring, which leaves the side to whatever else asks for it.</summary>
+    private const String NoBorder = "none";
+
     /// <summary>The elements HTML gives a <c>bgcolor</c> hint to.</summary>
     private static readonly HashSet<String> BackgroundColors = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -189,17 +198,38 @@ internal static class PresentationalHints
         return Snap(number);
     }
 
-    /// <summary>
-    /// Gets the width of the border a <c>border</c> attribute hints at: for a table, the number the
-    /// attribute holds, and for one of its cells, the one pixel Chrome rings every cell of a bordered
-    /// table with however thick the table's own border is asked to be. Nothing is said where no
-    /// <c>border</c> attribute stands on the table the cell belongs to.
-    /// </summary>
+    /// <summary>One ring a legacy attribute asks for: a width and a style for each of the four sides.</summary>
     /// <remarks>
-    /// A table's attribute that names no number at all - nothing in it, or letters, or a negative - is
-    /// still a border asked for, and comes to one pixel; only a number that is zero takes the border back.
+    /// A width of zero is a side the attribute leaves out - a <c>frame</c> naming two of the table's
+    /// sides, or a <c>rules</c> naming one direction of the cells - and draws nothing. Chrome gives the
+    /// two attributes different styles to the sides they leave out, and both were measured: a frame's
+    /// unnamed sides are <c>hidden</c>, and a rule's are <c>none</c>.
     /// </remarks>
-    public static Double? BorderWidth(IElement? element)
+    internal readonly record struct Ring(
+        Double Top,
+        Double Right,
+        Double Bottom,
+        Double Left,
+        String TopStyle,
+        String RightStyle,
+        String BottomStyle,
+        String LeftStyle);
+
+    private static Ring Sided(Double top, Double right, Double bottom, Double left, String drawn, String absent) =>
+        new(top, right, bottom, left,
+            top > 0 ? drawn : absent,
+            right > 0 ? drawn : absent,
+            bottom > 0 ? drawn : absent,
+            left > 0 ? drawn : absent);
+
+    /// <summary>
+    /// Gets the ring the legacy border attributes ask of this element: the table's <c>frame</c> decides
+    /// which of its own sides are drawn, and its <c>rules</c> which sides of each cell are. Both are
+    /// read whether or not the <c>border</c> attribute is there, and either draws a line of its own when
+    /// <c>border</c> names no width: an attribute that survives on the page without a border still
+    /// draws, measured in Chrome.
+    /// </summary>
+    public static Ring? Border(IElement? element)
     {
         if (element is null)
         {
@@ -208,26 +238,118 @@ internal static class PresentationalHints
 
         if (element.LocalName.Equals("table", StringComparison.OrdinalIgnoreCase))
         {
-            return TableBorderWidth(element);
+            return TableRing(element);
         }
 
-        if (!Cells.Contains(element.LocalName))
+        return Cells.Contains(element.LocalName) ? CellRing(TableOf(element)) : null;
+    }
+
+    private static Ring? TableRing(IElement? table)
+    {
+        if (table is null)
         {
             return null;
         }
 
-        return TableBorderWidth(TableOf(element)) is { } width ? (width > 0 ? CellBorderWidth : 0) : null;
+        if (FrameOf(table.GetAttribute("frame")) is { } frame)
+        {
+            return Sided(
+                frame.Top ? 1 : 0,
+                frame.Right ? 1 : 0,
+                frame.Bottom ? 1 : 0,
+                frame.Left ? 1 : 0,
+                SolidBorder,
+                HiddenBorder);
+        }
+
+        return TableBorderWidth(table) is { } width && width > 0
+            ? Sided(width, width, width, width, OutsetBorder, NoBorder)
+            : null;
+    }
+
+    private static Ring? CellRing(IElement? table)
+    {
+        if (table is null)
+        {
+            return null;
+        }
+
+        if (RulesOf(table.GetAttribute("rules")) is { } rules)
+        {
+            return Sided(
+                rules.Top ? CellBorderWidth : 0,
+                rules.Right ? CellBorderWidth : 0,
+                rules.Bottom ? CellBorderWidth : 0,
+                rules.Left ? CellBorderWidth : 0,
+                SolidBorder,
+                NoBorder);
+        }
+
+        return TableBorderWidth(table) is { } width && width > 0
+            ? Sided(CellBorderWidth, CellBorderWidth, CellBorderWidth, CellBorderWidth, InsetBorder, NoBorder)
+            : null;
     }
 
     /// <summary>
-    /// Gets the border style a <c>border</c> attribute hints at: the table raised on the page in its own
-    /// bevel, and its cells sunk into it. Nothing is said where the table writes no such attribute, or
-    /// writes it as no border, which is what leaves both to the flat edge the property begins with.
+    /// Gets the colour a <c>bordercolor</c> attribute hints at: the table's, for the table itself and for
+    /// every cell of it, and a cell's own where it writes one. Nothing is said where neither does.
     /// </summary>
-    public static String? BorderStyle(IElement? element) =>
-        BorderWidth(element) is { } width && width > 0
-            ? element!.LocalName.Equals("table", StringComparison.OrdinalIgnoreCase) ? OutsetBorder : InsetBorder
-            : null;
+    public static CssColorValue? BorderColor(IElement? element)
+    {
+        if (element is null)
+        {
+            return null;
+        }
+
+        var table = element.LocalName.Equals("table", StringComparison.OrdinalIgnoreCase);
+
+        if (!table && !Cells.Contains(element.LocalName))
+        {
+            return null;
+        }
+
+        if (LegacyColor.Parse(element.GetAttribute("bordercolor")) is { } own)
+        {
+            return own;
+        }
+
+        var owner = table ? element : TableOf(element);
+
+        return owner is null ? null : LegacyColor.Parse(owner.GetAttribute("bordercolor"));
+    }
+
+    /// <summary>
+    /// Gets the sides a <c>frame</c> names, or null where it names none of the values HTML gives it -
+    /// which leaves the table's borders to the <c>border</c> attribute.
+    /// </summary>
+    private static Sides? FrameOf(String? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "void" => new Sides(false, false, false, false),
+        "above" => new Sides(true, false, false, false),
+        "below" => new Sides(false, false, true, false),
+        "hsides" => new Sides(true, false, true, false),
+        "vsides" => new Sides(false, true, false, true),
+        "lhs" => new Sides(false, false, false, true),
+        "rhs" => new Sides(false, true, false, false),
+        "box" or "border" => new Sides(true, true, true, true),
+        _ => null,
+    };
+
+    /// <summary>
+    /// Gets the sides a <c>rules</c> value draws between cells, or null where it names none of the
+    /// values HTML gives it. Chrome draws nothing for <c>groups</c>, measured, even where row and column
+    /// groups are written out: it is the same as <c>none</c>.
+    /// </summary>
+    private static Sides? RulesOf(String? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "none" or "groups" => new Sides(false, false, false, false),
+        "rows" => new Sides(true, false, true, false),
+        "cols" => new Sides(false, true, false, true),
+        "all" => new Sides(true, true, true, true),
+        _ => null,
+    };
+
+    private readonly record struct Sides(Boolean Top, Boolean Right, Boolean Bottom, Boolean Left);
 
     /// <summary>Gets the border width a table's own <c>border</c> attribute hints at, or null for none.</summary>
     private static Double? TableBorderWidth(IElement? table)
@@ -380,10 +502,10 @@ internal static class PresentationalHints
     };
 
     /// <summary>The attributes read as a declaration on the element that writes them.</summary>
-    private static readonly String[] OwnHints = { "width", "height", "cellspacing", "border", "cellpadding" };
+    private static readonly String[] OwnHints = { "width", "height", "cellspacing", "border", "cellpadding", "frame", "rules", "bordercolor" };
 
     /// <summary>The attributes a cell reads from the table it belongs to.</summary>
-    private static readonly String[] InheritedHints = { "cellpadding", "border" };
+    private static readonly String[] InheritedHints = { "cellpadding", "border", "rules", "bordercolor" };
 
     /// <summary>Gets the table a cell or a row belongs to, which is the nearest one above it.</summary>
     private static IElement? TableOf(IElement element)

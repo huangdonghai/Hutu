@@ -176,6 +176,80 @@ public sealed class TableHintTests
     }
 
     [Test]
+    public async Task TheFrameNamesTheTablesOwnSides()
+    {
+        using var view = await Render(
+            "<table id='t' border='3' frame='above'><tr><td id='c'>A</td></tr></table>");
+
+        Assert.That(Sides(view, "t"), Is.EqualTo("1px,solid;0px,hidden;0px,hidden;0px,hidden"), "the top side alone, and a frame draws one pixel whatever the border asks for");
+        Assert.That(Sides(view, "c"), Is.EqualTo("1px,inset;1px,inset;1px,inset;1px,inset"), "and the cells keep the ring the border attribute gives them");
+    }
+
+    [Test]
+    public async Task TheFrameDrawsEvenWhereTheBorderIsNoWidth()
+    {
+        using var view = await Render("<table id='t' frame='box'><tr><td id='c'>A</td></tr></table>");
+
+        Assert.That(Sides(view, "t"), Is.EqualTo("1px,solid;1px,solid;1px,solid;1px,solid"), "the frame is a border of its own");
+        Assert.That(Sides(view, "c"), Is.EqualTo("0px,none;0px,none;0px,none;0px,none"), "and it draws no ring around the cells");
+    }
+
+    [TestCase("void", "0px,hidden;0px,hidden;0px,hidden;0px,hidden")]
+    [TestCase("below", "0px,hidden;0px,hidden;1px,solid;0px,hidden")]
+    [TestCase("hsides", "1px,solid;0px,hidden;1px,solid;0px,hidden")]
+    [TestCase("vsides", "0px,hidden;1px,solid;0px,hidden;1px,solid")]
+    [TestCase("lhs", "0px,hidden;0px,hidden;0px,hidden;1px,solid")]
+    [TestCase("rhs", "0px,hidden;1px,solid;0px,hidden;0px,hidden")]
+    [TestCase("border", "1px,solid;1px,solid;1px,solid;1px,solid")]
+    [TestCase("x", "1px,outset;1px,outset;1px,outset;1px,outset")]
+    public async Task TheFrameReadsTheValuesHtmlGivesIt(String value, String sides)
+    {
+        using var view = await Render("<table id='t' border='1' frame='" + value + "'><tr><td>A</td></tr></table>");
+
+        Assert.That(Sides(view, "t"), Is.EqualTo(sides), "a value that is no frame leaves the border attribute to answer");
+    }
+
+    [Test]
+    public async Task TheRulesNameTheCellsOwnSides()
+    {
+        using var view = await Render(
+            "<table id='t' border='1' rules='cols'><tr><td id='c'>A</td></tr></table>");
+
+        Assert.That(Sides(view, "c"), Is.EqualTo("0px,none;1px,solid;0px,none;1px,solid"), "the lines between columns, and no lines above or below");
+        Assert.That(Sides(view, "t"), Is.EqualTo("1px,outset;1px,outset;1px,outset;1px,outset"), "the table keeps its own ring");
+    }
+
+    [Test]
+    public async Task TheRulesDrawEvenWhereTheBorderIsNoWidth()
+    {
+        using var view = await Render("<table id='t' rules='all'><tr><td id='c'>A</td></tr></table>");
+
+        Assert.That(Sides(view, "c"), Is.EqualTo("1px,solid;1px,solid;1px,solid;1px,solid"), "the rules are borders of their own");
+        Assert.That(Sides(view, "t"), Is.EqualTo("0px,none;0px,none;0px,none;0px,none"), "and the table writes no border");
+    }
+
+    [TestCase("none", "0px,none;0px,none;0px,none;0px,none")]
+    [TestCase("groups", "0px,none;0px,none;0px,none;0px,none")]
+    [TestCase("rows", "1px,solid;0px,none;1px,solid;0px,none")]
+    [TestCase("x", "1px,inset;1px,inset;1px,inset;1px,inset")]
+    public async Task TheRulesReadTheValuesHtmlGivesThem(String value, String sides)
+    {
+        using var view = await Render("<table border='1' rules='" + value + "'><tr><td id='c'>A</td></tr></table>");
+
+        Assert.That(Sides(view, "c"), Is.EqualTo(sides), "groups draws nothing, measured, and a value that is no rule leaves the border attribute to answer");
+    }
+
+    [Test]
+    public async Task ABordercolorIsTheColourOfTheTablesRingAndItsCells()
+    {
+        using var view = await Render(
+            "<table id='t' border='1' bordercolor='green'><tr><td id='c'>A</td></tr></table>");
+
+        Assert.That(Colour(Find(view, "t").Source.Style.BorderTopColor), Is.EqualTo((0x00, 0x80, 0x00)), "the table's ring");
+        Assert.That(Colour(Find(view, "c").Source.Style.BorderTopColor), Is.EqualTo((0x00, 0x80, 0x00)), "and the ring of every cell in it");
+    }
+
+    [Test]
     public async Task APageRuleTakesTheCellsRingBack()
     {
         using var view = await Render(
@@ -406,9 +480,21 @@ public sealed class TableHintTests
         return view;
     }
 
+    private static String Side(Double width, String style) => width + "px," + style;
+
     private static StyleThickness Padding(HutuViewInternal view, String id) => Find(view, id).Source.Style.Padding;
 
     private static TableStyle Table(HutuViewInternal view, String id) => Find(view, id).Source.Style.Table;
+
+    private static String Sides(HutuViewInternal view, String id)
+    {
+        var style = Find(view, id).Source.Style;
+
+        return Side(style.BorderTopWidth, style.BorderTopStyle) + ";" +
+            Side(style.BorderRightWidth, style.BorderRightStyle) + ";" +
+            Side(style.BorderBottomWidth, style.BorderBottomStyle) + ";" +
+            Side(style.BorderLeftWidth, style.BorderLeftStyle);
+    }
 
     internal static CssColorValue? Background(HutuViewInternal view, String id) =>
         Find(view, id).Source.Style.BackgroundColor;

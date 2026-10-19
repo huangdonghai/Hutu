@@ -405,7 +405,7 @@ internal static class FusedStyleFactory
         {
             var borderStyles = ComputedStyle.ResolveBorderStylesFused(find, element);
             var borderWidths = ComputedStyle.ResolveBorderWidthsFused(
-                find, borderStyles, face, dimensions, parent.Border, PresentationalHints.BorderWidth(element));
+                find, borderStyles, face, dimensions, parent.Border, PresentationalHints.Border(element));
             var built = new BorderArea
             {
                 TopStyle = borderStyles.Top,
@@ -618,10 +618,10 @@ internal static class FusedStyleFactory
             OffsetAnchor = find("offset-anchor")?.Value,
             OffsetPosition = find("offset-position")?.Value,
             Offset = find("offset")?.Value,
-            BorderTopColor = ComputedStyle.ResolveBorderColorFused(find("border-top-color"), color),
-            BorderRightColor = ComputedStyle.ResolveBorderColorFused(find("border-right-color"), color),
-            BorderBottomColor = ComputedStyle.ResolveBorderColorFused(find("border-bottom-color"), color),
-            BorderLeftColor = ComputedStyle.ResolveBorderColorFused(find("border-left-color"), color),
+            BorderTopColor = ComputedStyle.ResolveBorderColorFused(find("border-top-color"), color) ?? PresentationalHints.BorderColor(element),
+            BorderRightColor = ComputedStyle.ResolveBorderColorFused(find("border-right-color"), color) ?? PresentationalHints.BorderColor(element),
+            BorderBottomColor = ComputedStyle.ResolveBorderColorFused(find("border-bottom-color"), color) ?? PresentationalHints.BorderColor(element),
+            BorderLeftColor = ComputedStyle.ResolveBorderColorFused(find("border-left-color"), color) ?? PresentationalHints.BorderColor(element),
         };
 
         var values = new ComputedStyle.StyleValues();
