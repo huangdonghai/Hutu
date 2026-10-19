@@ -152,6 +152,23 @@ internal sealed class Box
     public ComputedStyle? MarkerStyle { get; internal set; }
 
     /// <summary>
+    /// Gets the pieces one item's marker is asked to hold by the <c>content</c> written for it, or null
+    /// when its contents are left to the item's own list style. An empty list is a marker the page asked to
+    /// hold nothing - <c>content: none</c>, or a content this engine has no way of drawing.
+    /// </summary>
+    /// <remarks>
+    /// Read while the marker's style is, because it comes from the same arms of the sheet, and turned into
+    /// text only once the lists have counted - <see cref="ListMarkers.Finish"/>.
+    /// </remarks>
+    internal IReadOnlyList<MarkerPiece>? MarkerContent { get; set; }
+
+    /// <summary>
+    /// Gets which item the box was counted as among its siblings, once its list has counted them, or null
+    /// while it stands in no list. The marker says that number out.
+    /// </summary>
+    internal Int32? ListItemNumber { get; set; }
+
+    /// <summary>
     /// Gets whether the box wants the same intrinsic size at every containing block: nothing in the
     /// subtree it holds reads a fraction of one.
     /// </summary>

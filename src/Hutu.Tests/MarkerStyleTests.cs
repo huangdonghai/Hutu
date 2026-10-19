@@ -170,6 +170,89 @@ public sealed class MarkerStyleTests
     }
 
     [Test]
+    public async Task AMarkersOwnContentReplacesWhatItsListWouldHaveSaid()
+    {
+        var items = await Items("li::marker { content: 'X' }", "<ol><li>one</li></ol>");
+
+        Assert.That(items[0].Marker, Is.EqualTo("X"),
+            "the marker's own content decides what it holds, and the list's style is left aside");
+    }
+
+    [Test]
+    public async Task AContentAskingForNothingLeavesTheItemUnmarked()
+    {
+        var items = await Items("li::marker { content: none }", "<ol><li>one</li></ol>");
+
+        Assert.That(items[0].Marker, Is.Null, "content: none takes the marker away");
+    }
+
+    [Test]
+    public async Task AContentOfNormalLeavesTheListStyleToAnswer()
+    {
+        var items = await Items("li::marker { content: normal }", "<ol><li>one</li></ol>");
+
+        Assert.That(items[0].Marker, Is.EqualTo("1. "), "normal is what an arm that says nothing comes to");
+    }
+
+    [Test]
+    public async Task ACountersNameIsSpelledInTheStyleThePageNames()
+    {
+        // The number the item was counted as, spelled in the counter style the content asked for - and with
+        // no period or gap added, since a marker written out by the page carries its own.
+        var items = await Items(
+            "li::marker { content: counter(list-item, lower-roman) '. ' }",
+            "<ol><li>one</li><li>two</li><li value='9'>three</li></ol>");
+
+        Assert.That(items.Select(item => item.Marker),
+            Is.EqualTo(new[] { "i. ", "ii. ", "ix. " }),
+            "the counting is spelled in the style the content named, and the value attribute moves it");
+    }
+
+    [Test]
+    public async Task ACounterWithoutAStyleIsSpelledInDecimal()
+    {
+        var items = await Items("li::marker { content: '[' counter(list-item) ']' }", "<ul><li>one</li></ul>");
+
+        Assert.That(items[0].Marker, Is.EqualTo("[1]"),
+            "an omitted counter style is decimal, not the item's list style");
+    }
+
+    [Test]
+    public async Task CountersJoinTheListsAnItemStandsIn()
+    {
+        var items = await Items(
+            ".deep::marker { content: '[' counters(list-item, '.') ']' }",
+            "<ul><li class='deep'>one<ul><li class='deep'>two<ul><li class='deep'>three</li></ul></li></ul></li></ul>");
+
+        Assert.That(items.Select(item => item.Marker),
+            Is.EqualTo(new[] { "[1]", "[1.1]", "[1.1.1]" }),
+            "counters() spells every list the item stands in, outermost first (Lists 3 §4.7)");
+    }
+
+    [Test]
+    public async Task AContentThisEngineCannotDrawIsLeftOutWhole()
+    {
+        var items = await Items("li::marker { content: url(flag.png) }", "<ol><li>one</li></ol>");
+
+        Assert.That(items[0].Marker, Is.Null,
+            "a picture marker is content this engine has no way of drawing, and the value is left out whole");
+    }
+
+    [Test]
+    public async Task AMarkerSpellsTheAttributeItsItemCarries()
+    {
+        // Content 3 §1 reads an attribute as the text it holds, and Lists 3 §3.2 has the marker's content
+        // spelled exactly as ::before's is. An item that carries no such attribute is marked with nothing.
+        var items = await Items(
+            "li::marker { content: attr(icon) }",
+            "<ul><li icon='@ '>one</li><li>two</li></ul>");
+
+        Assert.That(items.Select(item => item.Marker),
+            Is.EqualTo(new[] { "@ ", "" }),
+            "the attribute the item carries is its marker, and an item that carries none is left unmarked");
+    }
+
+    [Test]
     public async Task AMarkerSkipsItsOwnInkWhenItSaysTo()
     {
         // The rule is drawn by the list and the ink is the marker's, so it is the marker's own

@@ -539,7 +539,7 @@ internal static class GeneratedContent
             return;
         }
 
-        var items = Items(pseudo);
+        var items = Items(pseudo, element);
 
         if (items is null)
         {
@@ -768,23 +768,24 @@ internal static class GeneratedContent
     /// </summary>
     /// <remarks>
     /// Content 3 §1 lets <c>content</c> hold strings, images, attribute values, counters and quotation
-    /// marks. Strings and images are drawn; the rest is left out rather than guessed at - an
-    /// <c>attr()</c> read as its own name, or a <c>counter()</c> read as zero, would put words on the
-    /// page the sheet never wrote. A value that holds something this engine cannot draw is left out
-    /// whole, because a half-read <c>content</c> would put up part of what the page asked for.
+    /// marks. Strings, images and attributes are drawn - an attribute as the text the element carries, with
+    /// the fallback the page gave for the ones that carry nothing. Counters and quotation marks are left out
+    /// rather than guessed at, since a <c>counter()</c> read as zero or a quote read as some default would
+    /// put words on the page the sheet never wrote. A value that holds something this engine cannot draw is
+    /// left out whole, because a half-read <c>content</c> would put up part of what the page asked for.
     /// </remarks>
-    private static List<Item>? Items(MatchedCascade pseudo)
+    private static List<Item>? Items(MatchedCascade pseudo, IElement element)
     {
         var property = pseudo.Find("content");
 
-        return property is null ? null : Read(property.Value);
+        return property is null ? null : Read(property.Value, element);
     }
 
     /// <summary>
     /// Reads a <c>content</c> value item by item, in CSS's own escaping. Null when it holds anything
     /// this engine does not draw.
     /// </summary>
-    private static List<Item>? Read(String? value)
+    private static List<Item>? Read(String? value, IElement element)
     {
         if (String.IsNullOrWhiteSpace(value))
         {
@@ -832,6 +833,30 @@ internal static class GeneratedContent
                 continue;
             }
 
+            if (i + 5 <= text.Length && text.AsSpan(i, 5).Equals("attr(", StringComparison.OrdinalIgnoreCase))
+            {
+                var close = text.IndexOf(')', i + 5);
+
+                if (close < 0)
+                {
+                    return null;
+                }
+
+                // An attribute is read as the text the element carries it in. A fallback for an element
+                // that carries no such attribute, or a typed reading of it, is not the shape AngleSharp's
+                // grammar for content hands back, and is left out whole.
+                var name = text[(i + 5)..close].Trim();
+
+                if (name.Length == 0 || name[0] is '"' or '\'' || name.Contains(',') || name.Contains('('))
+                {
+                    return null;
+                }
+
+                items.Add(new Item(element.GetAttribute(name), null));
+                i = close + 1;
+                continue;
+            }
+
             return null;
         }
 
@@ -840,9 +865,10 @@ internal static class GeneratedContent
 
     /// <summary>
     /// Reads one quoted string into <paramref name="run"/>, leaving <paramref name="at"/> just past its
-    /// closing quote.
+    /// closing quote. A marker's <c>content</c> is read with this too - Lists 3 §3.2 has it spelled
+    /// "exactly as for <c>::before</c>".
     /// </summary>
-    private static void ReadRun(String text, ref Int32 at, StringBuilder run)
+    internal static void ReadRun(String text, ref Int32 at, StringBuilder run)
     {
         var quote = text[at++];
 

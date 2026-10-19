@@ -41,6 +41,21 @@ public sealed class GeneratedContentTests
     }
 
     [Test]
+    public async Task AnAttributeIsDrawnAsTheTextTheElementCarries()
+    {
+        var view = await Build(
+            "p::before { content: attr(data-mark) ':' attr(missing) }",
+            "<p data-mark='here'>mid</p>");
+
+        var texts = Painted(view);
+
+        Assert.That(
+            String.Concat(texts),
+            Does.Contain("here:"),
+            "Content 3 §1: an attribute is read as the text it holds, and one the element lacks says nothing");
+    }
+
+    [Test]
     public async Task NoneAndNormalGenerateNoBox()
     {
         var view = await Build(
@@ -198,10 +213,11 @@ public sealed class GeneratedContentTests
     [Test]
     public async Task AContentValueTheParserCannotReadGeneratesNoBox()
     {
-        // The `/` alternative text of Content 3 §1.2 is not a value this parser models, so the
-        // declaration is dropped whole - and a dropped declaration is no content at all, which is
-        // `normal`, which computes to `none`. Half-reading it and drawing the "A" would put up part
-        // of what the page asked for and none of the rest.
+        // The `/` alternative text of Content 3 §1.2 is not a value AngleSharp's grammar for content takes,
+        // and an unknown property value is a declaration the cascade never sees - which leaves `normal`,
+        // which computes to `none`. Chrome draws the "A" and keeps the words after the slash out of the
+        // page; getting that here means the grammar itself learns the alternative text, rather than the
+        // reader being handed the page's words and losing the validation that says which words count.
         var view = await Build("p::before { content: 'A' / 'spoken instead' }", "<p>text</p>");
 
         Assert.That(

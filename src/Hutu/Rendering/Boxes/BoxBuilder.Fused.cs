@@ -102,6 +102,10 @@ internal static partial class BoxBuilder
         AdoptBodyFlow(box, rootCascade.Find("writing-mode") is not null);
         MarkBasisUse(box);
 
+        // Every list has now counted, so this is the first moment an item can be told what its mark says -
+        // which for a nested list needs the counts of the lists around it. See ListMarkers.Finish.
+        ListMarkers.Finish(box);
+
         // Remembered only now that the walk has agreed to describe the document: a build that
         // abstained has proved nothing about the sheets, so the next one starts again.
         state.Keep(index);
@@ -342,8 +346,8 @@ internal static partial class BoxBuilder
         // element of the document and so never reach the cascade the item was read from.
         if (index.Pseudo.HasMarkers && kind is BoxKind.Block or BoxKind.InlineBlock)
         {
-            box.MarkerStyle = ListMarkers.StyleForItem(
-                element, style, cascade, variables, parent, index, device, faces, state, parser);
+            ListMarkers.ApplyMarker(
+                box, element, style, cascade, variables, parent, index, device, faces, state, parser);
         }
 
         // The two generated boxes are children of this element, so they are made once every other

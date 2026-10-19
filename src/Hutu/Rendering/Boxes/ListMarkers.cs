@@ -1,11 +1,19 @@
+using AngleSharp.Css.Dom;
 using AngleSharp.Css.Parser;
 using AngleSharp.Dom;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 
 namespace Hutu.Rendering.Boxes;
+
+/// <summary>
+/// One thing a marker's own <c>content</c> asks to be drawn: text as the author wrote it, the list's
+/// counting spelled in a counter style, or the attribute the originating element carries.
+/// </summary>
+internal readonly record struct MarkerPiece(String? Text, String? Style, String? Join, String? Attribute);
 
 /// <summary>
 /// Which item a box is among its siblings, and the marker it therefore wears.
@@ -73,27 +81,133 @@ internal static class ListMarkers
             }
 
             var child = step.Child;
-            var text = For(child.Style.ListStyleType, child.Style.ListStyleImage, numbers[index]);
 
+            // What the marker says is read once the whole tree is counted - see <see cref="Finish"/> - and
+            // all that is settled here is which item this one is and where its mark stands.
             child.MarkerPosition = child.Style.ListStylePosition;
-
-            if (text is not null && child.Style.ListStylePosition == MarkerPosition.Inside)
-            {
-                PlaceInside(child, text);
-            }
-            else
-            {
-                // Beside an item the marker is no part of its text: the layout is given a place for it
-                // once the lines are down, and nothing in the line knows it exists.
-                child.Marker = text;
-            }
+            child.ListItemNumber = numbers[index];
         }
     }
 
     /// <summary>
-    /// Gets the style one item's marker is drawn with, or null when nothing in the sheets is written for
-    /// it - which is every list this engine has drawn until now, and answered here from the count of arms
-    /// alone.
+    /// Gives every item of a finished tree the marker its counting lands on, walking the lists from the
+    /// outer in so that an item nested inside another knows the numbers of the items around it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The walk cannot happen while a container is being built: an item's marker may be written
+    /// <c>counters(list-item, ".")</c>, which spells the count of every list the item stands in from the
+    /// outermost in (Lists 3 §4.7), and the outer list has not counted yet when its nested one is put
+    /// together. So <see cref="Mark"/> records the number each item lands on and this reads the texts out
+    /// once the whole document has been counted.
+    /// </para>
+    /// <para>
+    /// A marker stated <c>inside</c> its item becomes a box here, which is why the run is a pass over the
+    /// tree rather than an answer given while the item is painted: the mark is the item's first inline box,
+    /// and the line has to be laid out around it.
+    /// </para>
+    /// </remarks>
+    public static void Finish(Box box, Int32[]? reaching = null)
+    {
+        foreach (var child in box.Children)
+        {
+            if (!IsItem(child))
+            {
+                Finish(child, reaching);
+                continue;
+            }
+
+            // The chain this item's own marker is measured against: the numbers of the items it stands in,
+            // outermost first, with its own at the end.
+            var chain = reaching is null
+                ? new[] { child.ListItemNumber ?? 1 }
+                : [.. reaching, child.ListItemNumber ?? 1];
+
+            SetMarker(child, chain);
+            Finish(child, chain);
+        }
+    }
+
+    /// <summary>Puts one item's marker where its position asks, spelled out as its list and its content do.</summary>
+    private static void SetMarker(Box item, Int32[] chain)
+    {
+        var text = MarkerText(item, chain);
+
+        if (text is not null && item.MarkerPosition == MarkerPosition.Inside)
+        {
+            PlaceInside(item, text);
+            return;
+        }
+
+        // Beside an item the marker is no part of its text: the layout is given a place for it once the
+        // lines are down, and nothing in the line knows it exists.
+        item.Marker = text;
+    }
+
+    /// <summary>
+    /// Gets what one item's marker is drawn with, or null when it has nothing to draw.
+    /// </summary>
+    private static String? MarkerText(Box item, Int32[] chain)
+    {
+        // Lists 3 §3.2 puts the marker's own `content` first: unless it says `normal`, it decides what the
+        // marker holds and the item's list style is left aside.
+        if (item.MarkerContent is not { } pieces)
+        {
+            return For(item.Style.ListStyleType, item.Style.ListStyleImage, chain[^1]);
+        }
+
+        // `content: none` asks for no marker at all, and so does a content this engine has no way of
+        // drawing - a picture, or a counter the page keeps under a name the list does not count. The whole
+        // value is left out rather than half-read, which is how a generated content list is dealt with too.
+        if (pieces.Count == 0)
+        {
+            return null;
+        }
+
+        var text = new StringBuilder();
+
+        foreach (var piece in pieces)
+        {
+            if (piece.Text is { } written)
+            {
+                text.Append(written);
+                continue;
+            }
+
+            if (piece.Attribute is { } name)
+            {
+                text.Append(item.Element?.GetAttribute(name));
+                continue;
+            }
+
+            var style = piece.Style ?? "decimal";
+
+            if (piece.Join is { } join)
+            {
+                for (var i = 0; i < chain.Length; i++)
+                {
+                    if (i > 0)
+                    {
+                        text.Append(join);
+                    }
+
+                    text.Append(CounterStyles.Spell(style, chain[i]));
+                }
+
+                continue;
+            }
+
+            // The innermost count is what a lone counter() spells, and the item's own number is the inner
+            // one of its list.
+            text.Append(CounterStyles.Spell(style, chain[^1]));
+        }
+
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// Resolves what one item's marker is drawn with - the style the arms written for it came to, and the
+    /// contents its own <c>content</c> asks for - and puts both on the box.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -104,16 +218,17 @@ internal static class ListMarkers
     /// from the rules that do match it, has no notice of them.
     /// </para>
     /// <para>
-    /// The parent this is read against is the channel the item hands its own children rather than the
+    /// The parent the style is read against is the channel the item hands its own children rather than the
     /// marker's declarations, and that is measured rather than assumed: Chrome re-resolves a numeric
     /// <c>line-height</c> at the marker's size, so an item at 16px with <c>line-height: 3</c> and a marker
     /// at 20px draws its marker in a row 60px tall. A declaration of the marker's own still wins, since
     /// the marker's cascade is what every resolver reads.
     /// </para>
     /// </remarks>
-    public static ComputedStyle? StyleForItem(
+    public static void ApplyMarker(
+        Box item,
         IElement element,
-        ComputedStyle item,
+        ComputedStyle style,
         MatchedCascade itemCascade,
         VariableScope? itemVariables,
         FusedParent parent,
@@ -123,16 +238,16 @@ internal static class ListMarkers
         StyleResolution state,
         ICssParser? parser)
     {
-        if (!item.Display.Equals("list-item", StringComparison.OrdinalIgnoreCase))
+        if (!style.Display.Equals("list-item", StringComparison.OrdinalIgnoreCase))
         {
-            return null;
+            return;
         }
 
         var marker = index.Pseudo.Cascade(PseudoArm.Marker, element, index.Rules, index.Origins);
 
         if (marker is null)
         {
-            return null;
+            return;
         }
 
         // A custom property written on the marker is the marker's own, so the scope it is read through is
@@ -140,16 +255,323 @@ internal static class ListMarkers
         // property the marker inherited from above down the values it was given higher up.
         var variables = VariableScope.Open(marker, itemVariables, parser, state.Heads);
 
-        return FusedStyleFactory.Build(
+        item.MarkerStyle = FusedStyleFactory.Build(
             element,
             marker,
-            parent.Next(item, itemCascade, itemVariables, state.Tag(element.LocalName), false),
+            parent.Next(style, itemCascade, itemVariables, state.Tag(element.LocalName), false),
             device,
             faces,
             state.Pool,
             state.Cache,
             variables,
             AppliesToMarker);
+
+        item.MarkerContent = MarkerPieces(
+            variables is null ? marker.Find("content") : variables.ReadProperty(marker, "content"));
+    }
+
+    /// <summary>
+    /// Reads the pieces one marker's <c>content</c> asks to be drawn, or null where the contents are left
+    /// to the item's own list style - which is what <c>normal</c> says, and what an arm that never
+    /// mentions content says. An empty list is a marker asked to hold nothing.
+    /// </summary>
+    /// <remarks>
+    /// Lists 3 §3.2 has the marker's contents read "exactly as for <c>::before</c>", so a string is the
+    /// text and a counter is the list's counting spelled in the style the page named. Only the
+    /// <c>list-item</c> counter is spelled: it is the one a list keeps, and a value that names a counter
+    /// of the page's own - or a picture, or an attribute - is left out whole rather than guessed at, since
+    /// a counter read as zero or an attribute read as its own name would put words on the page the sheet
+    /// never wrote.
+    /// </remarks>
+    private static List<MarkerPiece>? MarkerPieces(ICssProperty? declared)
+    {
+        var value = declared?.Value;
+
+        if (declared is null || String.IsNullOrWhiteSpace(value) || ComputedStyle.IsInherit(declared))
+        {
+            return null;
+        }
+
+        var text = value!.Trim();
+
+        if (text.Equals("normal", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (text.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var pieces = new List<MarkerPiece>();
+        var at = 0;
+
+        while (at < text.Length)
+        {
+            if (Char.IsWhiteSpace(text[at]))
+            {
+                at++;
+                continue;
+            }
+
+            // A slash opens the alternative text, which is spoken rather than drawn (Content 3 §1.2).
+            if (text[at] == '/')
+            {
+                break;
+            }
+
+            if (text[at] is '"' or '\'')
+            {
+                var run = new StringBuilder();
+                GeneratedContent.ReadRun(text, ref at, run);
+                pieces.Add(new MarkerPiece(run.ToString(), null, null, null));
+                continue;
+            }
+
+            if (ReadCounter(text, ref at, out var piece))
+            {
+                if (piece is null)
+                {
+                    return [];
+                }
+
+                pieces.Add(piece.Value);
+                continue;
+            }
+
+            if (ReadAttribute(text, ref at, out var term))
+            {
+                if (term is null)
+                {
+                    return [];
+                }
+
+                pieces.Add(term.Value);
+                continue;
+            }
+
+            // Anything else - a picture, a quotation mark, a value this grammar has no way of spelling -
+            // is content this engine does not draw, and the value that holds it is left out whole.
+            return [];
+        }
+
+        return pieces;
+    }
+
+    /// <summary>
+    /// Reads one <c>counter()</c> or <c>counters()</c> out of the marker's content, leaving
+    /// <paramref name="at"/> past its closing parenthesis. False when the text there is no such call, and a
+    /// null piece when it is one this engine cannot spell.
+    /// </summary>
+    /// <remarks>
+    /// Only the list's own counting is spelled: it is the counter a list keeps, and a name the page declared
+    /// for itself is a counter this engine has no register of. The style a call names defaults to decimal,
+    /// which is what the page's list style has nothing to do with - a marker that says
+    /// <c>counter(list-item)</c> spells digits even on a list of letters, measured against Chrome.
+    /// <para>
+    /// The call is read out of what the parser hands back rather than out of the text the page wrote, and
+    /// the two do not agree on a separator: <c>counters(list-item, ".")</c> comes back as
+    /// <c>counters(list-item .)</c>, its quotes resolved and the comma between its arguments gone, and a
+    /// style is left out altogether when it is the decimal one nothing says. Both spellings are taken -
+    /// a <c>var()</c> that was substituted reaches this reader as the words the page wrote.
+    /// </para>
+    /// </remarks>
+    private static Boolean ReadCounter(String text, ref Int32 at, out MarkerPiece? piece)
+    {
+        piece = null;
+
+        var end = Identifier(text, at);
+        var function = text[at..end];
+        var counts = function.Equals("counters", StringComparison.OrdinalIgnoreCase);
+
+        if (!counts && !function.Equals("counter", StringComparison.OrdinalIgnoreCase) ||
+            end >= text.Length || text[end] != '(')
+        {
+            return false;
+        }
+
+        var terms = Terms(text, end + 1, out var after);
+        at = after;
+
+        if (terms is null)
+        {
+            return true;
+        }
+
+        var head = terms[0].TrimStart();
+        var space = head.IndexOf(' ');
+        var counter = space < 0 ? head : head[..space];
+        var joined = space < 0 ? null : head[(space + 1)..];
+
+        // An unbalanced call, or one whose counter is not the list's own counting, is content this engine
+        // has nothing to spell; the piece stays null and the caller leaves the value out whole.
+        if (!counter.Equals("list-item", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        String? style = null;
+
+        if (terms.Count > 1)
+        {
+            if (joined is not null)
+            {
+                // The serializer hangs a style on the end of the separators it was given.
+                style = Style(terms[1]);
+            }
+            else if (counts)
+            {
+                joined = Joined(terms[1]);
+                style = terms.Count > 2 ? Style(terms[2]) : null;
+            }
+            else
+            {
+                style = Style(terms[1]);
+            }
+        }
+
+        if (counts && joined is null)
+        {
+            return true;
+        }
+
+        piece = new MarkerPiece(null, style, joined, null);
+        return true;
+    }
+
+    /// <summary>Gets how far an identifier reaches from <paramref name="at"/>.</summary>
+    private static Int32 Identifier(String text, Int32 at)
+    {
+        var end = at;
+
+        while (end < text.Length && (Char.IsLetterOrDigit(text[end]) || text[end] is '-' or '_'))
+        {
+            end++;
+        }
+
+        return end;
+    }
+
+    /// <summary>
+    /// Reads one <c>attr()</c> out of the marker's content, leaving <paramref name="at"/> past its closing
+    /// parenthesis. False when the text there is no such call, and a null term when it is one this engine
+    /// cannot spell.
+    /// </summary>
+    /// <remarks>
+    /// Content 3 §1 lets an attribute be read as the text it holds, and CSS Values 4 lets the page say what
+    /// to hold for an element that carries no such attribute - a fallback. AngleSharp's grammar for content
+    /// takes only the name, so a call that states a fallback never reaches this reader at all; the name is
+    /// read here as it comes, and a typed reading (<c>attr(x, integer)</c>) is left out whole, since
+    /// turning an attribute into a number or a colour is a different feature from drawing its text.
+    /// </summary>
+    private static Boolean ReadAttribute(String text, ref Int32 at, out MarkerPiece? term)
+    {
+        term = null;
+
+        var end = Identifier(text, at);
+
+        if (!text[at..end].Equals("attr", StringComparison.OrdinalIgnoreCase) ||
+            end >= text.Length || text[end] != '(')
+        {
+            return false;
+        }
+
+        var terms = Terms(text, end + 1, out var after);
+        at = after;
+
+        var name = terms is { Count: 1 } ? terms[0].Trim() : null;
+
+        if (name is not { Length: > 0 } || name[0] is '"' or '\'')
+        {
+            return true;
+        }
+
+        term = new MarkerPiece(null, null, null, name);
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the arguments of a function call, split at the commas that stand outside its quotes, and
+    /// <paramref name="after"/> the index past its closing parenthesis. Null when none closes.
+    /// </summary>
+    private static List<String>? Terms(String text, Int32 start, out Int32 after)
+    {
+        var terms = new List<String>();
+        var from = start;
+        var quote = '\0';
+
+        for (var i = start; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (quote != '\0')
+            {
+                if (c == '\\')
+                {
+                    i++;
+                }
+                else if (c == quote)
+                {
+                    quote = '\0';
+                }
+
+                continue;
+            }
+
+            if (c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if (c == ',')
+            {
+                terms.Add(text[from..i]);
+                from = i + 1;
+            }
+            else if (c == ')')
+            {
+                terms.Add(text[from..i]);
+                after = i + 1;
+                return terms.Count == 0 ? null : terms;
+            }
+        }
+
+        after = text.Length;
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the counter style an argument names, or null when it is not a style this engine can read - a
+    /// bare name, since the quoted spelling CSS 2.1 allowed is not the one counter styles take.
+    /// </summary>
+    private static String? Style(String term)
+    {
+        var name = term.Trim();
+
+        return name.Length > 0 && name[0] is not ('"' or '\'') &&
+            !name.Equals("none", StringComparison.OrdinalIgnoreCase)
+            ? name
+            : null;
+    }
+
+    /// <summary>
+    /// Gets the text a <c>counters()</c> joins its values with, read in CSS's own escaping, or null when
+    /// the argument is not the string the function asks for.
+    /// </summary>
+    private static String? Joined(String term)
+    {
+        var text = term.Trim();
+
+        if (text.Length == 0 || text[0] is not ('"' or '\''))
+        {
+            return null;
+        }
+
+        var run = new StringBuilder();
+        var at = 0;
+        GeneratedContent.ReadRun(text, ref at, run);
+
+        return run.ToString();
     }
 
     /// <summary>
