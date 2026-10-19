@@ -745,38 +745,51 @@ public sealed class SkiaPaintExecutor
     /// Draws a run of text as the blob the measurer's cache keeps for it: the glyphs are shaped and
     /// positioned once per text, style and spacing, and every frame after the first is a single draw.
     /// </summary>
+    /// <remarks>
+    /// The run is drawn in the two bands CSS Text Decoration 4 §5.1 names, which is what decides what
+    /// covers what: a descender that reaches down to the rule under it stands in the letter's own ink
+    /// rather than in the rule's, while a line that crosses the letters lies over them.
+    /// </remarks>
     private void DrawText(SKCanvas canvas, TextCommand command)
     {
         var metrics = _measurer.GetMetrics(command.Font);
 
         using var paint = new SKPaint { Color = new SKColor(command.Color), IsAntialias = true };
 
-        // A text stroke rings each glyph, drawn before - and so behind - the fill. A transparent stroke
-        // paints nothing of its own and is skipped; its width still matters, but only to a background
-        // clipped to the text, which widens to it in its own pass.
-        if (command.StrokeWidth > 0 && (command.StrokeColor & 0xFF00_0000) != 0)
-        {
-            using var stroke = new SKPaint
-            {
-                Color = new SKColor(command.StrokeColor),
-                IsAntialias = true,
-                Style = SKPaintStyle.Stroke,
-                StrokeWidth = (Single)command.StrokeWidth,
-                StrokeJoin = SKStrokeJoin.Round,
-            };
-
-            StrokeGlyphs(canvas, command, stroke);
-        }
-
         if (!command.Flow.IsVertical)
         {
             var baseline = (Single)(command.Bounds.Y + command.Baseline);
+            var ink = Along(command, baseline);
+
+            DrawDecorations(canvas, paint, command, metrics, baseline, alongLine: true, ink, through: false);
+
+            // The letters, and the stroke that rings them, come between the two bands: §5.1 puts
+            // underlines and overlines under the text and the line-through over it. A text stroke is drawn
+            // before - and so behind - the fill. A transparent stroke paints nothing of its own and is
+            // skipped; its width still matters, but only to a background clipped to the text, which
+            // widens to it in its own pass.
+            StrokeRun(canvas, command);
+
+            paint.Color = new SKColor(command.Color);
             DrawRunBlob(canvas, command, baseline, paint, command.LetterSpacing, command.WordSpacing);
 
-            DrawDecorations(canvas, paint, command, metrics, baseline, alongLine: true, Along(command, baseline));
+            DrawDecorations(canvas, paint, command, metrics, baseline, alongLine: true, ink, through: true);
 
             return;
         }
+
+        // In a column a decoration runs beside the text rather than under it, so it becomes a line
+        // down the box at the distance from the baseline that the font asked for - and it is split the
+        // same way, the lines stood off the baseline behind the turned glyphs and the crossing one in
+        // front of them.
+        var across = (Single)command.Baseline;
+        var beside = Beside(command, metrics);
+
+        DrawDecorations(canvas, paint, command, metrics, across, alongLine: false, beside, through: false);
+
+        StrokeRun(canvas, command);
+
+        paint.Color = new SKColor(command.Color);
 
         if (command.Flow.CombinesUpright)
         {
@@ -791,16 +804,30 @@ public sealed class SkiaPaintExecutor
             DrawTurned(canvas, command, paint);
         }
 
-        // In a column a decoration runs beside the text rather than under it, so it becomes a line
-        // down the box at the distance from the baseline that the font asked for.
-        DrawDecorations(
-            canvas,
-            paint,
-            command,
-            metrics,
-            (Single)command.Baseline,
-            alongLine: false,
-            Beside(command, metrics));
+        DrawDecorations(canvas, paint, command, metrics, across, alongLine: false, beside, through: true);
+    }
+
+    /// <summary>
+    /// Rings the glyphs of a run, drawn behind its fill. Nothing happens where the page asked for no
+    /// stroke, or for a transparent one.
+    /// </summary>
+    private void StrokeRun(SKCanvas canvas, TextCommand command)
+    {
+        if (command.StrokeWidth <= 0 || (command.StrokeColor & 0xFF00_0000) == 0)
+        {
+            return;
+        }
+
+        using var stroke = new SKPaint
+        {
+            Color = new SKColor(command.StrokeColor),
+            IsAntialias = true,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = (Single)command.StrokeWidth,
+            StrokeJoin = SKStrokeJoin.Round,
+        };
+
+        StrokeGlyphs(canvas, command, stroke);
     }
 
     /// <summary>
@@ -822,6 +849,11 @@ public sealed class SkiaPaintExecutor
     /// Where the run's own glyphs put their ink, as the page sees it: a line asked to skip ink is broken
     /// where one of these stands across it (§2.10.4), and the list is empty where nothing is to be skipped.
     /// </param>
+    /// <param name="through">
+    /// Which of the two bands §5.1 this pass draws: false for the lines stood off the baseline - the
+    /// underline and the overline, which are painted under the text - and true for the line-through, which
+    /// is painted over it.
+    /// </param>
     private void DrawDecorations(
         SKCanvas canvas,
         SKPaint paint,
@@ -829,7 +861,8 @@ public sealed class SkiaPaintExecutor
         FontMetrics metrics,
         Single from,
         Boolean alongLine,
-        SKRect[] ink)
+        SKRect[] ink,
+        Boolean through)
     {
         // Down a column the line is drawn along the page's other axis, so the boxes are turned to match:
         // what runs down the text is what a line asked to skip crosses.
@@ -875,7 +908,7 @@ public sealed class SkiaPaintExecutor
             };
             var blocked = skips ? across : Array.Empty<SKRect>();
 
-            if (decoration.Underline)
+            if (!through && decoration.Underline)
             {
                 // The face gives the line its zero position; text-underline-offset moves it outward
                 // from there, and text-decoration-thickness replaces the face's own width
@@ -897,7 +930,7 @@ public sealed class SkiaPaintExecutor
 
             // The face says where its overline goes; a face that will not is answered with the top of
             // its own em box, which is the only other height the line could be taken from.
-            if (decoration.Overline)
+            if (!through && decoration.Overline)
             {
                 DrawLine(
                     canvas,
@@ -922,7 +955,7 @@ public sealed class SkiaPaintExecutor
 
             // A line-through is left to the run it crosses: §2.5 has its position recomputed wherever the
             // font size changes, so that the text stays crossed out rather than following one line.
-            if (decoration.LineThrough)
+            if (through && decoration.LineThrough)
             {
                 DrawLine(
                     canvas,
