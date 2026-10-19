@@ -44,15 +44,15 @@ public sealed class GeneratedContentTests
     public async Task AnAttributeIsDrawnAsTheTextTheElementCarries()
     {
         var view = await Build(
-            "p::before { content: attr(data-mark) ':' attr(missing) }",
+            "p::before { content: attr(data-mark) ':' attr(missing, 'fallback') }",
             "<p data-mark='here'>mid</p>");
 
         var texts = Painted(view);
 
         Assert.That(
             String.Concat(texts),
-            Does.Contain("here:"),
-            "Content 3 §1: an attribute is read as the text it holds, and one the element lacks says nothing");
+            Does.Contain("here:fallback"),
+            "Content 3 §1 and §10.5: an attribute is read as the text it holds, and a missing one falls back");
     }
 
     [Test]
@@ -211,19 +211,20 @@ public sealed class GeneratedContentTests
     }
 
     [Test]
-    public async Task AContentValueTheParserCannotReadGeneratesNoBox()
+    public async Task TheAlternativeTextAfterASlashIsNotDrawn()
     {
-        // The `/` alternative text of Content 3 §1.2 is not a value AngleSharp's grammar for content takes,
-        // and an unknown property value is a declaration the cascade never sees - which leaves `normal`,
-        // which computes to `none`. Chrome draws the "A" and keeps the words after the slash out of the
-        // page; getting that here means the grammar itself learns the alternative text, rather than the
-        // reader being handed the page's words and losing the validation that says which words count.
+        // Content 3 §1.2: what stands after the slash is spoken in place of the content rather than drawn
+        // with it. The text before the slash is drawn, and neither the slash nor the words after it reach
+        // the page - which is also what Chrome does with the same declaration.
         var view = await Build("p::before { content: 'A' / 'spoken instead' }", "<p>text</p>");
 
-        Assert.That(
-            Walk(view.Layout!.Root).Any(box => box.Source.IsGenerated),
-            Is.False,
-            "a value the parser will not take is a declaration the cascade never sees");
+        var texts = Painted(view);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(texts, Does.Contain("A"), "the content the page asked to be drawn is drawn");
+            Assert.That(String.Concat(texts), Does.Not.Contain("spoken"), "and the alternative text is not");
+        });
     }
 
     private static async Task<HutuViewInternal> Build(String style, String body)

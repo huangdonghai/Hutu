@@ -241,15 +241,16 @@ public sealed class MarkerStyleTests
     [Test]
     public async Task AMarkerSpellsTheAttributeItsItemCarries()
     {
-        // Content 3 §1 reads an attribute as the text it holds, and Lists 3 §3.2 has the marker's content
-        // spelled exactly as ::before's is. An item that carries no such attribute is marked with nothing.
+        // Content 3 §1 reads an attribute as the text it holds and §10.5 gives the page a text to stand
+        // where the element carries none, and Lists 3 §3.2 has a marker's content spelled exactly as
+        // ::before's is - which is what wpt/css-values/attr-style-sharing-5 states.
         var items = await Items(
-            "li::marker { content: attr(icon) }",
+            "li::marker { content: attr(icon, '* ') }",
             "<ul><li icon='@ '>one</li><li>two</li></ul>");
 
         Assert.That(items.Select(item => item.Marker),
-            Is.EqualTo(new[] { "@ ", "" }),
-            "the attribute the item carries is its marker, and an item that carries none is left unmarked");
+            Is.EqualTo(new[] { "@ ", "* " }),
+            "the attribute the item carries, and the fallback where it carries none");
     }
 
     [Test]

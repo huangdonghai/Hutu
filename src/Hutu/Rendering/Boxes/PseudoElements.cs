@@ -842,17 +842,37 @@ internal static class GeneratedContent
                     return null;
                 }
 
-                // An attribute is read as the text the element carries it in. A fallback for an element
-                // that carries no such attribute, or a typed reading of it, is not the shape AngleSharp's
-                // grammar for content hands back, and is left out whole.
-                var name = text[(i + 5)..close].Trim();
+                // An attribute is read as the text the element carries it in, and Content 3 §10.5 lets the
+                // page state the text standing where an attribute the element has not got would have been.
+                // A typed reading is a different feature from drawing its text, so it is left out whole -
+                // and a name in quotes is not a name at all.
+                var inner = text[(i + 5)..close];
+                var comma = inner.IndexOf(',');
+                var name = (comma < 0 ? inner : inner[..comma]).Trim();
 
-                if (name.Length == 0 || name[0] is '"' or '\'' || name.Contains(',') || name.Contains('('))
+                if (name.Length == 0 || name[0] is '"' or '\'' || name.Contains('('))
                 {
                     return null;
                 }
 
-                items.Add(new Item(element.GetAttribute(name), null));
+                var fallback = String.Empty;
+
+                if (comma >= 0)
+                {
+                    var term = inner[(comma + 1)..].Trim();
+
+                    if (term.Length == 0 || term[0] is not ('"' or '\''))
+                    {
+                        return null;
+                    }
+
+                    var run = new StringBuilder();
+                    var at = 0;
+                    ReadRun(term, ref at, run);
+                    fallback = run.ToString();
+                }
+
+                items.Add(new Item(element.GetAttribute(name) ?? fallback, null));
                 i = close + 1;
                 continue;
             }

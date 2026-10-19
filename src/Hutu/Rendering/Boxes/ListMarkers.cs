@@ -11,9 +11,15 @@ namespace Hutu.Rendering.Boxes;
 
 /// <summary>
 /// One thing a marker's own <c>content</c> asks to be drawn: text as the author wrote it, the list's
-/// counting spelled in a counter style, or the attribute the originating element carries.
+/// counting spelled in a counter style, or the attribute the originating element carries - with the text
+/// the page asked for where it carries no such attribute.
 /// </summary>
-internal readonly record struct MarkerPiece(String? Text, String? Style, String? Join, String? Attribute);
+internal readonly record struct MarkerPiece(
+    String? Text,
+    String? Style,
+    String? Join,
+    String? Attribute,
+    String? Fallback);
 
 /// <summary>
 /// Which item a box is among its siblings, and the marker it therefore wears.
@@ -176,7 +182,7 @@ internal static class ListMarkers
 
             if (piece.Attribute is { } name)
             {
-                text.Append(item.Element?.GetAttribute(name));
+                text.Append(item.Element?.GetAttribute(name) ?? piece.Fallback);
                 continue;
             }
 
@@ -325,7 +331,7 @@ internal static class ListMarkers
             {
                 var run = new StringBuilder();
                 GeneratedContent.ReadRun(text, ref at, run);
-                pieces.Add(new MarkerPiece(run.ToString(), null, null, null));
+                pieces.Add(new MarkerPiece(run.ToString(), null, null, null, null));
                 continue;
             }
 
@@ -369,13 +375,6 @@ internal static class ListMarkers
     /// for itself is a counter this engine has no register of. The style a call names defaults to decimal,
     /// which is what the page's list style has nothing to do with - a marker that says
     /// <c>counter(list-item)</c> spells digits even on a list of letters, measured against Chrome.
-    /// <para>
-    /// The call is read out of what the parser hands back rather than out of the text the page wrote, and
-    /// the two do not agree on a separator: <c>counters(list-item, ".")</c> comes back as
-    /// <c>counters(list-item .)</c>, its quotes resolved and the comma between its arguments gone, and a
-    /// style is left out altogether when it is the decimal one nothing says. Both spellings are taken -
-    /// a <c>var()</c> that was substituted reaches this reader as the words the page wrote.
-    /// </para>
     /// </remarks>
     private static Boolean ReadCounter(String text, ref Int32 at, out MarkerPiece? piece)
     {
@@ -394,49 +393,34 @@ internal static class ListMarkers
         var terms = Terms(text, end + 1, out var after);
         at = after;
 
-        if (terms is null)
-        {
-            return true;
-        }
-
-        var head = terms[0].TrimStart();
-        var space = head.IndexOf(' ');
-        var counter = space < 0 ? head : head[..space];
-        var joined = space < 0 ? null : head[(space + 1)..];
-
         // An unbalanced call, or one whose counter is not the list's own counting, is content this engine
         // has nothing to spell; the piece stays null and the caller leaves the value out whole.
-        if (!counter.Equals("list-item", StringComparison.OrdinalIgnoreCase))
+        if (terms is null || !terms[0].Trim().Equals("list-item", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
+        String? joined = null;
         String? style = null;
 
-        if (terms.Count > 1)
+        if (counts)
         {
-            if (joined is not null)
+            // counters(name, separator[, style]): the separator is the text the page quoted.
+            joined = terms.Count > 1 ? Joined(terms[1]) : String.Empty;
+
+            if (joined is null)
             {
-                // The serializer hangs a style on the end of the separators it was given.
-                style = Style(terms[1]);
+                return true;
             }
-            else if (counts)
-            {
-                joined = Joined(terms[1]);
-                style = terms.Count > 2 ? Style(terms[2]) : null;
-            }
-            else
-            {
-                style = Style(terms[1]);
-            }
+
+            style = terms.Count > 2 ? Style(terms[2]) : null;
+        }
+        else if (terms.Count > 1)
+        {
+            style = Style(terms[1]);
         }
 
-        if (counts && joined is null)
-        {
-            return true;
-        }
-
-        piece = new MarkerPiece(null, style, joined, null);
+        piece = new MarkerPiece(null, style, joined, null, null);
         return true;
     }
 
@@ -459,11 +443,11 @@ internal static class ListMarkers
     /// cannot spell.
     /// </summary>
     /// <remarks>
-    /// Content 3 §1 lets an attribute be read as the text it holds, and CSS Values 4 lets the page say what
-    /// to hold for an element that carries no such attribute - a fallback. AngleSharp's grammar for content
-    /// takes only the name, so a call that states a fallback never reaches this reader at all; the name is
-    /// read here as it comes, and a typed reading (<c>attr(x, integer)</c>) is left out whole, since
-    /// turning an attribute into a number or a colour is a different feature from drawing its text.
+    /// Content 3 §1 lets an attribute be read as the text it holds, and §10.5 lets the page state the text
+    /// that stands where an attribute it has not got would have been. A typed reading -
+    /// <c>attr(x, integer)</c>, or the <c>attr(x type(&lt;color&gt;))</c> form CSS Values 5 writes inside
+    /// other properties - is left out whole, since turning an attribute into a number or a colour is a
+    /// different feature from drawing its text.
     /// </summary>
     private static Boolean ReadAttribute(String text, ref Int32 at, out MarkerPiece? term)
     {
@@ -480,14 +464,23 @@ internal static class ListMarkers
         var terms = Terms(text, end + 1, out var after);
         at = after;
 
-        var name = terms is { Count: 1 } ? terms[0].Trim() : null;
+        var name = terms is { Count: > 0 } ? terms[0].Trim() : null;
 
         if (name is not { Length: > 0 } || name[0] is '"' or '\'')
         {
             return true;
         }
 
-        term = new MarkerPiece(null, null, null, name);
+        // A quoted argument after the name is the text asked for where the attribute is not there; a bare
+        // one is the type the value should be read as, and that is not drawn.
+        var fallback = terms!.Count > 1 ? Joined(terms[1]) : null;
+
+        if (terms.Count > 1 && fallback is null)
+        {
+            return true;
+        }
+
+        term = new MarkerPiece(null, null, null, name, fallback);
         return true;
     }
 
