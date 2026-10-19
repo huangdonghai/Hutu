@@ -356,6 +356,15 @@ internal static partial class BoxBuilder
         // pseudo-elements", which is the order the reader sees them in.
         GeneratedContent.Place(box, element, index, style, cascade, variables, parent, device, faces, state, images, parser, flow);
 
+        // The first letter is a piece of the text the block opens with, and the generated box that comes
+        // before that text is part of what the block says, so the letter is looked for once
+        // <c>::before</c> is in the tree. It is cut out of the run it stands in and given the style the
+        // arms written `p::first-letter` came to.
+        if (index.Pseudo.HasFirstLetters && FirstLetter.AppliesTo(kind, style))
+        {
+            FirstLetter.Apply(box, element, cascade, variables, parent, index, device, faces, state, parser);
+        }
+
         // Every child is here now, so this is the first point at which an item can be told which item it
         // is. The same call runs in the render-tree builder, which is what keeps the two trees marking
         // the same items the same way.

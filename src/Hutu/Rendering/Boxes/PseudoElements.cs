@@ -18,6 +18,7 @@ internal enum PseudoArm
     Before,
     After,
     Marker,
+    FirstLetter,
 }
 
 /// <summary>
@@ -47,6 +48,7 @@ internal sealed class PseudoRuleIndex
     private readonly ArmSet _before = new();
     private readonly ArmSet _after = new();
     private readonly ArmSet _marker = new();
+    private readonly ArmSet _firstLetter = new();
 
     /// <summary>
     /// Gets whether no arm anywhere in the sheets is written for either generated-content pseudo-element.
@@ -58,6 +60,9 @@ internal sealed class PseudoRuleIndex
 
     /// <summary>Gets whether any arm anywhere in the sheets is written for a list item's marker.</summary>
     internal Boolean HasMarkers => _marker.Count > 0;
+
+    /// <summary>Gets whether any arm anywhere in the sheets is written for a block's first letter.</summary>
+    internal Boolean HasFirstLetters => _firstLetter.Count > 0;
 
     /// <summary>Reads the pseudo-element arms out of the flattened rules, in the order they cascade in.</summary>
     internal static PseudoRuleIndex Build(List<ICssStyleRule> rules)
@@ -150,6 +155,7 @@ internal sealed class PseudoRuleIndex
     {
         PseudoArm.Before => _before,
         PseudoArm.After => _after,
+        PseudoArm.FirstLetter => _firstLetter,
         _ => _marker,
     };
 
@@ -229,6 +235,16 @@ internal sealed class PseudoRuleIndex
         if (name.Equals("marker", StringComparison.OrdinalIgnoreCase))
         {
             arm = PseudoArm.Marker;
+            colon = at;
+            return true;
+        }
+
+        // A first letter is the other arm that names no box of its own: it is a piece of the text the
+        // block opens with, and Pseudo-Elements 4 §5.1 gives it to the block's first formatted line.
+        // What it styles is settled by <see cref="FirstLetter"/>, which splits that piece out of the run.
+        if (name.Equals("first-letter", StringComparison.OrdinalIgnoreCase))
+        {
+            arm = PseudoArm.FirstLetter;
             colon = at;
             return true;
         }
