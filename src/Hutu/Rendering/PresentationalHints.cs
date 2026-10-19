@@ -530,6 +530,76 @@ internal static class PresentationalHints
     /// </summary>
     private static Double Snap(Double number) => Math.Floor(number * 2) / 2;
 
+    /// <summary>The table parts whose legacy alignment attributes HTML gives a meaning.</summary>
+    private static readonly HashSet<String> Aligned = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "thead", "tbody", "tfoot", "tr", "td", "th", "col", "colgroup",
+    };
+
+    /// <summary>
+    /// Gets the <c>text-align</c> an <c>align</c> attribute hints at for a table part. Chrome reads the
+    /// physical spellings and <c>absmiddle</c>, which is the older spelling of a centre: measured,
+    /// <c>align="left"</c> on a row computes <c>left</c> on its cells and <c>absmiddle</c> computes
+    /// <c>center</c>. Any other value says nothing.
+    /// </summary>
+    public static String? Align(IElement? element) =>
+        element is not null && Aligned.Contains(element.LocalName)
+            ? element.GetAttribute("align")?.Trim().ToLowerInvariant() switch
+            {
+                "left" => "left",
+                "right" => "right",
+                "center" or "absmiddle" => "center",
+                "justify" => "justify",
+                _ => null,
+            }
+            : null;
+
+    /// <summary>
+    /// Gets the alignment a table header is given when nothing else says: the standard's sheet centres
+    /// it, and a declaration the page writes - the <c>align</c> attribute among them - stands above that.
+    /// </summary>
+    public static String? DefaultTextAlign(IElement? element) =>
+        element is not null && element.LocalName.Equals("th", StringComparison.OrdinalIgnoreCase)
+            ? "center"
+            : null;
+
+    /// <summary>
+    /// Gets the <c>vertical-align</c> a <c>valign</c> attribute hints at for a table part, or null where
+    /// it names none of the four values HTML gives it.
+    /// </summary>
+    public static String? Valign(IElement? element) =>
+        element is not null && Aligned.Contains(element.LocalName)
+            ? element.GetAttribute("valign")?.Trim().ToLowerInvariant() switch
+            {
+                "top" => "top",
+                "middle" => "middle",
+                "bottom" => "bottom",
+                "baseline" => "baseline",
+                _ => null,
+            }
+            : null;
+
+    /// <summary>
+    /// Gets the side a table's <c>align</c> attribute floats it to. The standard's sheet gives a table
+    /// <c>float: left</c> or <c>float: right</c>, and <c>align="center"</c> auto inline margins instead -
+    /// see <see cref="CentersTable"/>.
+    /// </summary>
+    public static Layout.FloatSide? Float(IElement? element) =>
+        element is not null && element.LocalName.Equals("table", StringComparison.OrdinalIgnoreCase)
+            ? element.GetAttribute("align")?.Trim().ToLowerInvariant() switch
+            {
+                "left" => Layout.FloatSide.Left,
+                "right" => Layout.FloatSide.Right,
+                _ => null,
+            }
+            : null;
+
+    /// <summary>Gets whether a table's <c>align="center"</c> puts an auto margin on each inline side.</summary>
+    public static Boolean CentersTable(IElement? element) =>
+        element is not null &&
+        element.LocalName.Equals("table", StringComparison.OrdinalIgnoreCase) &&
+        String.Equals(element.GetAttribute("align")?.Trim(), "center", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Gets what the hints this element takes from its own attributes and from the table it belongs to
     /// come to, as one string, or null where it takes none. Two elements that match the same rules are one
@@ -572,14 +642,14 @@ internal static class PresentationalHints
     /// <summary>The elements HTML hints a size or a room at.</summary>
     private static readonly HashSet<String> TableFamily = new(StringComparer.OrdinalIgnoreCase)
     {
-        "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption",
+        "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "col", "colgroup",
     };
 
     /// <summary>The attributes read as a declaration on the element that writes them.</summary>
-    private static readonly String[] OwnHints = { "width", "height", "cellspacing", "border", "cellpadding", "frame", "rules", "bordercolor" };
+    private static readonly String[] OwnHints = { "width", "height", "cellspacing", "border", "cellpadding", "frame", "rules", "bordercolor", "align", "valign" };
 
     /// <summary>The attributes a cell reads from the table it belongs to.</summary>
-    private static readonly String[] InheritedHints = { "cellpadding", "border", "rules", "bordercolor" };
+    private static readonly String[] InheritedHints = { "cellpadding", "border", "rules", "bordercolor", "align", "valign" };
 
     /// <summary>Gets the table a cell or a row belongs to, which is the nearest one above it.</summary>
     private static IElement? TableOf(IElement element)

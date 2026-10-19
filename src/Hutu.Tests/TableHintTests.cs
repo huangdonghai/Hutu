@@ -445,6 +445,75 @@ public sealed class TableHintTests
     }
 
     [Test]
+    public async Task ARowsAlignmentIsHandedDownToItsCells()
+    {
+        using var view = await Render("<table><tr align='left'><th id='h'>Text</th></tr></table>");
+
+        Assert.That(Find(view, "h").Source.Style.TextAlign, Is.EqualTo("left"), "the header takes the row's alignment");
+    }
+
+    [Test]
+    public async Task AHeaderIsCentredWhereNothingSaysOtherwise()
+    {
+        using var view = await Render("<table><tr><th id='h'>Text</th></tr><tr><td id='c'>A</td></tr></table>");
+
+        Assert.That(Find(view, "h").Source.Style.TextAlign, Is.EqualTo("center"), "the value a header begins with");
+        Assert.That(Find(view, "c").Source.Style.TextAlign, Is.Not.EqualTo("center"), "and a cell begins at the start of its line");
+    }
+
+    [Test]
+    public async Task AnAlignmentTheAttributeNamesLosesToThePagesOwnRule()
+    {
+        using var view = await Render(
+            "<style>th { text-align: right }</style><table><tr align='left'><th id='h'>Text</th></tr></table>");
+
+        Assert.That(Find(view, "h").Source.Style.TextAlign, Is.EqualTo("right"), "the page's declaration beats the hint");
+    }
+
+    [TestCase("center", "center")]
+    [TestCase("absmiddle", "center")]
+    [TestCase("justify", "justify")]
+    [TestCase("bogus", "start")]
+    public async Task ACellsAlignmentReadsTheValuesHtmlGives(String value, String expected)
+    {
+        using var view = await Render(
+            "<table><tr><td id='c' align='" + value + "'>Text</td></tr></table>");
+
+        Assert.That(Find(view, "c").Source.Style.TextAlign, Is.EqualTo(expected), "the value read as the standard reads it");
+    }
+
+    [TestCase("middle", "Middle")]
+    [TestCase("bottom", "Bottom")]
+    [TestCase("top", "Top")]
+    public async Task ACellsVerticalAlignmentReadsValign(String value, String expected)
+    {
+        using var view = await Render(
+            "<table height='100'><tr><td id='c' valign='" + value + "'>Text</td></tr></table>");
+
+        Assert.That(Table(view, "c").VerticalAlign.ToString(), Is.EqualTo(expected), "the cell sits where the attribute says");
+    }
+
+    [Test]
+    public async Task ATableAlignedLeftFloats()
+    {
+        using var view = await Render(
+            "<table id='t' align='left' width='100'><tr><td>A</td></tr></table><p>words</p>");
+
+        Assert.That(Find(view, "t").Source.Style.Float, Is.EqualTo(FloatSide.Left), "the standard's sheet floats a left-aligned table");
+        Assert.That(Find(view, "t").BorderBox.X, Is.EqualTo(0), "and it stands at the start of the line");
+    }
+
+    [Test]
+    public async Task ACentredTableTakesAutoMargins()
+    {
+        using var view = await Render(
+            "<table id='t' align='center' width='100'><tr><td>A</td></tr></table>");
+
+        Assert.That(Find(view, "t").BorderBox.X, Is.EqualTo(150), "a hundred pixels centred in the four hundred the body has");
+        Assert.That(Find(view, "t").Source.Style.Margin.Left.IsAuto, Is.True, "with the share left to the margins");
+    }
+
+    [Test]
     public async Task ABodysBgcolorIsThePagesBackground()
     {
         using var view = await Render("<body id='b' bgcolor='green' style='margin:0'>A</body>");

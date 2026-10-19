@@ -713,8 +713,31 @@ internal readonly struct ComputedStyle
     /// path. The cascade treats the property as inherited (CSS 2.1 model): a miss takes the
     /// parent's resolved value.
     /// </summary>
-    public static String ResolveTextAlignFused(ICssProperty? declared, String parentValue) =>
-        ResolveKeywordFused(declared, parentValue, CssInitialValues.TextAlign, inherited: true);
+    public static String ResolveTextAlignFused(
+        ICssProperty? declared, String parentValue, String? hint = null, String? ownDefault = null)
+    {
+        if (!String.IsNullOrWhiteSpace(declared?.Value))
+        {
+            return declared!.Value!.Trim();
+        }
+
+        // A declaration the page is taken to have written - the align attribute among them - stands
+        // above what the element would inherit.
+        if (hint is not null)
+        {
+            return hint;
+        }
+
+        // A header's centring is the value it begins with, not a declaration of its own, which is why
+        // the alignment a row above it states is handed down: measured in Chrome, a th under a row
+        // set to the right computes right.
+        if (ownDefault is not null && parentValue.Equals(CssInitialValues.TextAlign, StringComparison.OrdinalIgnoreCase))
+        {
+            return ownDefault;
+        }
+
+        return parentValue;
+    }
 
     /// <summary>
     /// Resolves how the last line of a block, and a line a forced break ended, stand, for the fused
@@ -743,8 +766,17 @@ internal readonly struct ComputedStyle
     /// sheet sets <c>vertical-align: inherit</c> on every row and cell, so a table is nothing but
     /// cells asking for the alignment of the group around them.
     /// </param>
-    public static String ResolveVerticalAlignFused(ICssProperty? declared, String parentValue)
+    public static String ResolveVerticalAlignFused(ICssProperty? declared, String parentValue, String? hint = null)
     {
+        // The user-agent sheet gives every row and cell `vertical-align: inherit`, so a cell that says
+        // nothing of its own still has a declaration to read. The legacy attribute is a declaration the
+        // page is taken to have written, and it stands above that one.
+        if (hint is not null && (String.IsNullOrWhiteSpace(declared?.Value) ||
+            declared!.Value!.Trim().Equals("inherit", StringComparison.OrdinalIgnoreCase)))
+        {
+            return hint;
+        }
+
         var text = ResolveKeywordFused(
             declared, CssInitialValues.VerticalAlign, CssInitialValues.VerticalAlign, inherited: false);
 
@@ -987,8 +1019,10 @@ internal readonly struct ComputedStyle
     /// fused path. Neither the keyword nor a keyword this engine does not place maps to anything
     /// but staying in flow.
     /// </summary>
-    public static Layout.FloatSide ResolveFloatFused(ICssProperty? declared) =>
-        ToFloat(KeywordText(declared, CssInitialValues.Float));
+    public static Layout.FloatSide ResolveFloatFused(ICssProperty? declared, Layout.FloatSide? hint = null) =>
+        declared is null && hint is { } hinted
+            ? hinted
+            : ToFloat(KeywordText(declared, CssInitialValues.Float));
 
     /// <summary>Resolves which side's floats a box clears, for the fused path.</summary>
     public static Layout.ClearSide ResolveClearFused(ICssProperty? declared) =>
@@ -3882,6 +3916,13 @@ internal readonly struct ComputedStyle
         if (!String.Equals(prefix, "margin", StringComparison.Ordinal))
         {
             return default;
+        }
+
+        // A centred table is centred by the inline margins the standard's sheet gives it, and those
+        // sit beside whatever block margins the reader above supplies.
+        if (tag == "table" && PresentationalHints.CentersTable(element))
+        {
+            return (null, null, StyleLength.Auto, StyleLength.Auto);
         }
 
         var block = tag switch

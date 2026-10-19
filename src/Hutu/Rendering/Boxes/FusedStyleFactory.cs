@@ -361,7 +361,11 @@ internal static class FusedStyleFactory
         else
         {
             var (all, last) = ComputedStyle.Alignments(
-                ComputedStyle.ResolveTextAlignFused(find("text-align"), parent.Align),
+                ComputedStyle.ResolveTextAlignFused(
+                    find("text-align"),
+                    parent.Align,
+                    PresentationalHints.Align(element),
+                    PresentationalHints.DefaultTextAlign(element)),
                 ComputedStyle.ResolveTextAlignLastFused(find("text-align-last"), parent.AlignLast),
 
                 // The root has no parent to match; `FusedParent.Root` stands for what the root inherits,
@@ -375,7 +379,7 @@ internal static class FusedStyleFactory
                 Align = all,
                 AlignLast = last,
                 TextJustify = ComputedStyle.ResolveTextJustifyFused(find("text-justify"), parent.TextJustify),
-                VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign),
+                VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign, PresentationalHints.Valign(element)),
                 Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, face, dimensions),
                 Visibility = ComputedStyle.ResolveVisibilityFused(find("visibility"), parent.Visibility),
             };
@@ -524,7 +528,7 @@ internal static class FusedStyleFactory
             var built = new DisplayPositioningArea
             {
                 Display = ComputedStyle.ResolveDisplayFused(find("display")),
-                Float = ComputedStyle.ResolveFloatFused(find("float")),
+                Float = ComputedStyle.ResolveFloatFused(find("float"), PresentationalHints.Float(element)),
                 Clear = ComputedStyle.ResolveClearFused(find("clear")),
                 ObjectFit = ComputedStyle.ResolveObjectFitFused(find("object-fit")),
                 ClipsOverflow = ComputedStyle.ResolveClipsOverflowFused(find("overflow-x"), find("overflow-y")),

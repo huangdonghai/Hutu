@@ -69,7 +69,7 @@ col             { display: table-column }
 colgroup        { display: table-column-group }
 td, th          { display: table-cell }
 caption         { display: table-caption }
-th              { font-weight: bolder; text-align: center }
+th              { font-weight: bolder }
 caption         { text-align: center }
 body            { margin: 8px }
 h1              { font-size: 2em }
