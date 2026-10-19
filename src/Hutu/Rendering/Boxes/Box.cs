@@ -152,6 +152,21 @@ internal sealed class Box
     public ComputedStyle? MarkerStyle { get; internal set; }
 
     /// <summary>
+    /// Gets what the arm ending in <c>::first-line</c> came to for this block, or null where the sheets write
+    /// none. What it covers is not the block but the first line the block reaches, which only the layout
+    /// knows, so this travels to the fragments of that line as they are marked.
+    /// </summary>
+    public Hutu.Rendering.Boxes.FirstLine.Paint? FirstLinePaint { get; internal set; }
+
+    /// <summary>
+    /// Gets whether the element wrote a colour of its own, which is what the first line's anonymous box
+    /// leaves alone: that box reaches the text it covers by inheritance, so the text of an inline element
+    /// stating its own colour keeps it (display-contents-first-line-002), while a colour stated only by a
+    /// block above the line steps aside (first-line-on-ancestor-block).
+    /// </summary>
+    public Boolean DeclaresColor { get; internal set; }
+
+    /// <summary>
     /// Gets the pieces one item's marker is asked to hold by the <c>content</c> written for it, or null
     /// when its contents are left to the item's own list style. An empty list is a marker the page asked to
     /// hold nothing - <c>content: none</c>, or a content this engine has no way of drawing.

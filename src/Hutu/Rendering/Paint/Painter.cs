@@ -609,10 +609,29 @@ internal sealed class Painter
         }
 
         var style = box.Source.Style;
+        var line = box.FirstLinePaint;
+
+        if (line is { Background: true } band && band.Style.BackgroundColor is { } background &&
+            background.A != 0)
+        {
+            // The band is the fragment's own box, which is what makes a first line's background the union
+            // of the pieces standing on it - and why the mark an item wears inside is covered with its text.
+            // A background the run's own style carries is not painted here: that belongs to the inline
+            // element box, which paints its fragments where they stand.
+            target.Add(new FillCommand(box.BorderBox, ToArgb(background), CornerRadii.None));
+        }
+
+        // The first line is asked for what it wrote, and for nothing else: it is a box around the line, so
+        // a property it never mentions leaves the text with the value it came to. A spacing or a font size
+        // written on the line is not asked for at all, because the breaks were settled with the block's own
+        // font and the layout cannot yet be asked to break a line twice.
+        var painted = line is { Color: true } colour ? colour.Style : style;
+        var stroke = line is { Stroke: true } ring ? ring.Style : style;
 
         // The fill colour stands in for the text colour where the page set one; the stroke travels so the
         // back end rings each glyph with it, and a background clipped to the text can widen to it.
-        var fill = style.TextFillColor ?? ToArgb(style.Color);
+        var fill = (line is { Fill: true } ? line.Value.Style.TextFillColor : style.TextFillColor)
+            ?? ToArgb(painted.Color);
 
         target.Add(new TextCommand(
             box.BorderBox,
@@ -623,8 +642,8 @@ internal sealed class Painter
             box.Decorations ?? NoDecorations,
             box.Flow,
             style.LetterSpacing,
-            style.TextStrokeWidth,
-            style.TextStrokeColor,
+            stroke.TextStrokeWidth,
+            stroke.TextStrokeColor,
             box.Justification,
             box.Justifies,
             style.TextJustify,

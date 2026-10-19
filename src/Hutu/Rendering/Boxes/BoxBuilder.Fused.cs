@@ -350,6 +350,22 @@ internal static partial class BoxBuilder
                 box, element, style, cascade, variables, parent, index, device, faces, state, parser);
         }
 
+        // An arm written `p::first-line` styles a box the layout has yet to make, so only the style is
+        // resolved here - which of the block's fragments stand on its first line is answered later, by
+        // Hutu.Rendering.Layout's pass that hands the style to them.
+        // Whether this element states a colour of its own is asked once, here, because the first line's
+        // box has to know which of the boxes it reaches across said something of their own.
+        if (index.Pseudo.HasFirstLines)
+        {
+            box.DeclaresColor = cascade.Find("color") is not null;
+        }
+
+        if (index.Pseudo.HasFirstLines && kind is BoxKind.Block or BoxKind.InlineBlock or BoxKind.TableCell)
+        {
+            FirstLine.Apply(
+                box, element, style, cascade, variables, parent, index, device, faces, state, parser);
+        }
+
         // The two generated boxes are children of this element, so they are made once every other
         // child is in place - and before the markers are, because CSS 2.1 §12.5.1 puts a marker
         // stated `inside` its item "before the element's content and before any :before

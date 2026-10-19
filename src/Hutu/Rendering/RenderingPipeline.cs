@@ -248,6 +248,7 @@ internal sealed class RenderingPipeline
     {
         kept.Style = fresh.Style;
         kept.MarkerStyle = fresh.MarkerStyle;
+        kept.FirstLinePaint = fresh.FirstLinePaint;
 
         var mine = kept.Children;
         var theirs = fresh.Children;

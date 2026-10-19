@@ -195,7 +195,7 @@ internal static class FirstLetter
     /// </summary>
     private static Int32 Take(String text, ComputedStyle style)
     {
-        var keepsBreaks = KeepsBreaks(style);
+        var keepsBreaks = style.KeepsSegmentBreaks;
         var at = 0;
 
         while (at < text.Length)
@@ -231,11 +231,6 @@ internal static class FirstLetter
 
         return 0;
     }
-
-    /// <summary>Gets whether the white-space mode keeps a line break where it stands.</summary>
-    private static Boolean KeepsBreaks(ComputedStyle style) =>
-        style.WhiteSpace.Contains("pre", StringComparison.OrdinalIgnoreCase) ||
-        style.WhiteSpace.Contains("break-spaces", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Gets whether two styles would put the same glyphs on the page: the colour, the font it is drawn in,

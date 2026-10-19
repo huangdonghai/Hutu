@@ -155,6 +155,11 @@ internal sealed class LayoutEngine
         // lines have been put down.
         ResolveMarkers(rootBox);
 
+        // A first line is the same kind of answer, and it comes after for the same reason: the arm is read
+        // while the boxes are made, but which fragments the block reaches first is only known here, with
+        // the lines put down.
+        Hutu.Rendering.Boxes.FirstLine.Mark(rootBox);
+
         // What the document occupies is what a viewport has to be able to reach, which is not the
         // root's box: a page whose columns run sideways, or a box placed off an edge, reaches past
         // it. It is never less than the viewport itself either, because the viewport is what the
@@ -317,6 +322,7 @@ internal sealed record LayoutProfile(
         decoration?.Start();
         ResolveDecorations(rootBox);
         ResolveMarkers(rootBox);
+        Hutu.Rendering.Boxes.FirstLine.Mark(rootBox);
         decoration?.Stop();
 
         overflow?.Start();

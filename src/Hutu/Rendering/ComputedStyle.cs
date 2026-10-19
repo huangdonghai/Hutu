@@ -2527,6 +2527,13 @@ internal readonly struct ComputedStyle
         WhiteSpace.StartsWith("pre", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Gets whether a segment break in this element's text stands as a line break of its own: every
+    /// <c>pre</c> spelling and <c>break-spaces</c> keep it, while <c>normal</c> and <c>nowrap</c> fold it
+    /// into the white space around it. <c>pre-line</c> collapses the spaces and keeps the breaks.
+    /// </summary>
+    public Boolean KeepsSegmentBreaks => !IsCollapsibleWhiteSpace;
+
+    /// <summary>
     /// Gets whether a line may break inside this element's text where the text itself offers an
     /// opportunity to - between words, beside a boundary a script allows, or around an atomic inline.
     /// </summary>

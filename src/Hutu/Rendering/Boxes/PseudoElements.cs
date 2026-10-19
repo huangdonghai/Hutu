@@ -19,6 +19,7 @@ internal enum PseudoArm
     After,
     Marker,
     FirstLetter,
+    FirstLine,
 }
 
 /// <summary>
@@ -49,6 +50,7 @@ internal sealed class PseudoRuleIndex
     private readonly ArmSet _after = new();
     private readonly ArmSet _marker = new();
     private readonly ArmSet _firstLetter = new();
+    private readonly ArmSet _firstLine = new();
 
     /// <summary>
     /// Gets whether no arm anywhere in the sheets is written for either generated-content pseudo-element.
@@ -63,6 +65,9 @@ internal sealed class PseudoRuleIndex
 
     /// <summary>Gets whether any arm anywhere in the sheets is written for a block's first letter.</summary>
     internal Boolean HasFirstLetters => _firstLetter.Count > 0;
+
+    /// <summary>Gets whether any arm anywhere in the sheets is written for a block's first line.</summary>
+    internal Boolean HasFirstLines => _firstLine.Count > 0;
 
     /// <summary>Reads the pseudo-element arms out of the flattened rules, in the order they cascade in.</summary>
     internal static PseudoRuleIndex Build(List<ICssStyleRule> rules)
@@ -156,6 +161,7 @@ internal sealed class PseudoRuleIndex
         PseudoArm.Before => _before,
         PseudoArm.After => _after,
         PseudoArm.FirstLetter => _firstLetter,
+        PseudoArm.FirstLine => _firstLine,
         _ => _marker,
     };
 
@@ -245,6 +251,15 @@ internal sealed class PseudoRuleIndex
         if (name.Equals("first-letter", StringComparison.OrdinalIgnoreCase))
         {
             arm = PseudoArm.FirstLetter;
+            colon = at;
+            return true;
+        }
+
+        // The first line is the arm that cannot be settled while the boxes are being made: which runs it
+        // covers is a question for the layout, which is the only one that knows where the line ends.
+        if (name.Equals("first-line", StringComparison.OrdinalIgnoreCase))
+        {
+            arm = PseudoArm.FirstLine;
             colon = at;
             return true;
         }

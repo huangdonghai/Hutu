@@ -109,6 +109,14 @@ internal sealed class LayoutBox
     /// <summary>Gets whether the box was taken out of normal flow by <c>absolute</c> or <c>fixed</c>.</summary>
     public Boolean IsOutOfFlow => Position is PositionMode.Absolute or PositionMode.Fixed;
 
+    /// <summary>
+    /// Gets what the <c>::first-line</c> of a block this fragment stands in came to, where the fragment
+    /// stands on that block's first line. Only the properties the arm wrote are drawn from it: the
+    /// pseudo-element is a box around the line, so anything it says nothing about is left as the text came
+    /// to it - which is what lets a colour declared on the text inside stand beside a line that is red.
+    /// </summary>
+    public Hutu.Rendering.Boxes.FirstLine.Paint? FirstLinePaint { get; set; }
+
     public Thickness Margin { get; set; }
 
     public Thickness Border { get; set; }
