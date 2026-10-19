@@ -343,6 +343,35 @@ public sealed class InlineBoxTests
             "and it overflows the paragraph rather than wrapping");
     }
 
+    [Test]
+    public async Task ALineTheBreakEndsStillTakesItsLineHeight()
+    {
+        using var view = CreateView();
+
+        // CSS 2.1 §9.4.2 leaves a line box that ends with a forced break standing even when nothing
+        // is on it: the two breaks of "a<br><br>b" end a line each, and the one between them is a
+        // blank line of the line height. Treating it as zero-height would pull the line after it up.
+        await view.SetHtml(Document("a<br><br>b"));
+
+        var paragraph = Walk(view).Single(node => node.Kind == LayoutKind.Block && Name(node) == "p");
+
+        Assert.That(Text(view, "b").BorderBox.Y, Is.EqualTo(40), "the text after the blank line stands two lines down");
+        Assert.That(paragraph.BorderBox.Height, Is.EqualTo(60), "and the paragraph holds the blank line's room");
+    }
+
+    [Test]
+    public async Task AnEmptyColumnTakesItsLineHeightAsWell()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Column("a<br><br>b"));
+
+        Assert.That(
+            Text(view, "b").BorderBox.X,
+            Is.EqualTo(Text(view, "a").BorderBox.X - 20),
+            "the text after the blank column stands two columns along");
+    }
+
     /// <summary>
     /// Gets the document the inline box is asserted in: a paragraph with no margin of its own, set in a
     /// font the fake measurer gives a ten-pixel content area whatever the size.

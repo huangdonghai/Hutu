@@ -31,38 +31,46 @@ public sealed class FragmentSlicerTests
     }
 
     [Test]
-    public void ABlockThatCannotKeepItsOrphansMovesWhole()
+    public void AFragmentFillsEvenWhereTheOrphansCannotAllBeKept()
     {
-        Assert.That(Fit(3, 25, orphans: 2, widows: 2, startsHere: true), Is.EqualTo(0), "one line before the break is fewer than the orphans");
+        // Three lines with room for two and three of each owed: Chrome puts two in the first column and
+        // one in the second rather than moving the block whole, and the same holds with larger counts
+        // everywhere the room runs out.
+        Assert.That(Fit(3, 25, orphans: 2, widows: 2), Is.EqualTo(2));
     }
 
     [Test]
-    public void ABlockShorterThanTheCountsIsKeptTogether()
+    public void ALoneLineIsTakenWholeOrOverflows()
     {
-        Assert.That(Fit(1, 5, orphans: 2, widows: 2, startsHere: true), Is.EqualTo(0), "one line cannot be split, and it does not fit");
-        Assert.That(Fit(1, 100, orphans: 2, widows: 2, startsHere: true), Is.EqualTo(1), "it fits whole");
+        Assert.That(Fit(1, 100, orphans: 2, widows: 2), Is.EqualTo(1), "a block of one line fits whole");
+        Assert.That(Fit(1, 5, orphans: 2, widows: 2), Is.EqualTo(1), "and overflows a fragment shorter than itself");
     }
 
     [Test]
-    public void AContinuationTakesALineEvenWhereNoneFits()
+    public void AFragmentWithNoRoomStillTakesALine()
     {
-        Assert.That(Fit(5, 5, startsHere: false), Is.EqualTo(1), "the flow must advance, so a line taller than the fragment overflows it");
-    }
-
-    [Test]
-    public void AStartWithNoRoomTakesNothing()
-    {
-        Assert.That(Fit(5, 5, startsHere: true), Is.EqualTo(0), "the block can begin on the next fragmentainer instead");
+        Assert.That(Fit(5, 5), Is.EqualTo(1), "the flow must advance, so a line taller than the fragment overflows it");
     }
 
     [Test]
     public void ABlockOfNoLinesTakesNoRoom()
     {
-        Assert.That(FragmentSlicer.Fitting(Array.Empty<Double>(), 40, 2, 2, true), Is.EqualTo(0));
+        Assert.That(FragmentSlicer.Fitting(Array.Empty<Double>(), 40, 2, 2), Is.EqualTo(0));
     }
 
-    private static Int32 Fit(Int32 lines, Double limit, Int32 orphans = 2, Int32 widows = 2, Boolean startsHere = true) =>
-        FragmentSlicer.Fitting(Heights(lines), limit, orphans, widows, startsHere);
+    [Test]
+    public void TheOrphansStopTheWidowsMovingTheBreakTooFarBack()
+    {
+        // Nine ten-pixel lines with a four-line fragment: taking four leaves one line for the widows'
+        // three, and moving the break back far enough to leave three would leave two lines in this
+        // fragment, fewer than its orphans. The orphans hold and the widows go short, which is how
+        // Chrome distributes widows-orphans-018.
+        Assert.That(Fit(9, 40, orphans: 3, widows: 3, start: 4), Is.EqualTo(3));
+    }
+
+    private static Int32 Fit(
+        Int32 lines, Double limit, Int32 orphans = 2, Int32 widows = 2, Int32 start = 0) =>
+        FragmentSlicer.Fitting(Heights(lines), limit, orphans, widows, start);
 
     private static List<Double> Heights(Int32 count)
     {

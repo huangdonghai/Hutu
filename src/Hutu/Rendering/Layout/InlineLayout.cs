@@ -113,7 +113,7 @@ internal sealed class InlineLayout
         // an empty list is the same work saved as any other.
         var lines = items.Count == 0
             ? new List<Line>()
-            : BuildLines(items, maxInline, flow, context, indent);
+            : BuildLines(items, maxInline, flow, context, container.Style, indent);
 
         _plans[key] = lines;
         return lines;
@@ -169,6 +169,44 @@ internal sealed class InlineLayout
             // The room the line takes is what its runs take plus the distance it was set in by, which
             // only the first line of a box has any of.
             inline = Math.Max(inline, line.Indent + line.Used);
+        }
+
+        // A multi-column container breaks its lines at the width of one column and is as tall as the
+        // columns were shared at, not as the one long stack would have been.
+        var multi = container.Style.Multi;
+
+        if (!flow.IsVertical && multi.IsMultiColumn)
+        {
+            var (columns, share) = multi.Used(maxInline);
+
+            if (columns > 1)
+            {
+                var columnLines = Plan(container, share, flow, context, Indentation(container, flow, context));
+                var breaks = container.Style.Breaks;
+                var heights = Heights(columnLines);
+                var starts = Leadings(container, columnLines, atStart: true);
+                var ends = Leadings(container, columnLines, atStart: false);
+                var (columnTrimStart, columnTrimEnd) = Trim(container, columnLines);
+
+                // `column-fill: auto` has a column height to fill to only when the box states one. An
+                // auto-height box has none, and its first column takes the whole stack - Chrome lays
+                // widows-orphans-017's seven lines all in the first of its four columns. A percentage
+                // height against a containing block that has no height is auto, so it has none either.
+                var height = container.Style.Height;
+                var fillsToHeight = !height.IsAuto &&
+                    (height.Kind != StyleLengthKind.Percent || context.Containing.ContainingBlock.Height > 0);
+
+                if (multi.Fills && !fillsToHeight)
+                {
+                    return new InlineContentSize(inline, Math.Max(0, Total(heights) - columnTrimStart - columnTrimEnd));
+                }
+
+                var columnHeight = multi.Fills
+                    ? context.Containing.ContainingBlock.Height
+                    : Fragmentainer.BalanceLines(heights, columns, breaks.Orphans, breaks.Widows, starts, ends);
+
+                return new InlineContentSize(inline, Math.Max(0, columnHeight - columnTrimStart - columnTrimEnd));
+            }
         }
 
         // The leading a block trims away is not height it takes, in the measure as in the arrangement.
@@ -391,6 +429,20 @@ internal sealed class InlineLayout
     private Double LayoutCore(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow, InlineContext context)
     {
         var maxInline = flow.InlineExtent(contentBox.Width, contentBox.Height);
+        var multi = container.Style.Multi;
+
+        // A multi-column container breaks its lines at the width of one column, so the plan it needs is
+        // a different one from the block's own extent: it is made here, at the column's width, and the
+        // columns share it.
+        if (!flow.IsVertical && multi.IsMultiColumn)
+        {
+            var (columns, share) = multi.Used(maxInline);
+
+            if (columns > 1)
+            {
+                return LayoutColumns(container, parent, contentBox, flow, context, columns, share, multi);
+            }
+        }
 
         // The lines the measuring phase broke this content into, if it broke them at the same extent -
         // which is what the block layout makes sure of, since it reconstructs the child's containing
@@ -411,11 +463,107 @@ internal sealed class InlineLayout
         // lines stand with their text edge on the block's edge. The line box is not resized - the lines
         // simply start above the block's start and the block's height ends at the last text edge.
         var (trimStart, trimEnd) = Trim(container, lines);
-        var cursor = -trimStart;
-        var step = new InlineStep();
+        var cursor = PlaceLines(container, parent, lines, 0, lines.Count, contentBox, flow, context, -trimStart);
+
+        return Math.Max(0, cursor - trimEnd);
+    }
+
+    /// <summary>
+    /// Lays the lines out in the container's columns: each column takes the lines the line slicer gives
+    /// it (CSS Break 3 §3.3 keeps the orphans and widows), and the lines of one column stand at its own
+    /// inline offset. The columns end at the height they were shared at, which the measure settled.
+    /// </summary>
+    private Double LayoutColumns(
+        Box container,
+        LayoutBox parent,
+        Rect contentBox,
+        WritingModeInfo flow,
+        InlineContext context,
+        Int32 columns,
+        Double share,
+        MulticolStyle multi)
+    {
+        var lines = Plan(container, share, flow, context, Indentation(container, flow, context));
+        AlignLastLines(lines, share);
+        DistributeSpace(lines);
+
+        var heights = Heights(lines);
+        var breaks = container.Style.Breaks;
+        var starts = Leadings(container, lines, atStart: true);
+        var ends = Leadings(container, lines, atStart: false);
+        var extent = multi.Fills
+            ? contentBox.Height
+            : Fragmentainer.BalanceLines(heights, columns, breaks.Orphans, breaks.Widows, starts, ends);
+
+        // A fill is not held to the column count: content that does not fit the stated columns spills
+        // into more of them, which is how Chrome lays a run too long for its `column-count` out.
+        var counts = Fragmentainer.FillLines(
+            heights, extent, multi.Fills ? Int32.MaxValue : columns, breaks.Orphans, breaks.Widows, starts, ends);
+
+        // Each column trims the leading off its own first and last lines (CSS Inline 3 §6.2), so every
+        // column begins with its first line standing where that line's text edge asks.
+        var (trimStart, trimEnd) = Trim(container, lines);
+        var from = 0;
+
+        for (var column = 0; column < counts.Count; column++)
+        {
+            var count = counts[column];
+
+            var area = new Rect(contentBox.X + column * (share + multi.Gap), contentBox.Y, share, extent);
+            PlaceLines(container, parent, lines, from, from + count, area, flow, context, -starts[from]);
+            from += count;
+        }
+
+        return Math.Max(0, extent - trimStart - trimEnd);
+    }
+
+    /// <summary>Gets the heights the lines take when stacked, the gaps a float made included.</summary>
+    private static List<Double> Heights(List<Line> lines)
+    {
+        var heights = new List<Double>(lines.Count);
 
         foreach (var line in lines)
         {
+            heights.Add(Math.Max(0, line.Height) + line.GapBefore);
+        }
+
+        return heights;
+    }
+
+    private static Double Total(List<Double> heights)
+    {
+        var total = 0.0;
+
+        foreach (var height in heights)
+        {
+            total += height;
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// Places lines <paramref name="from"/> to <paramref name="to"/> into the content box, stacking them
+    /// from <paramref name="start"/>, and returns where the stack ended.
+    /// </summary>
+    private Double PlaceLines(
+        Box container,
+        LayoutBox parent,
+        List<Line> lines,
+        Int32 from,
+        Int32 to,
+        Rect contentBox,
+        WritingModeInfo flow,
+        InlineContext context,
+        Double start)
+    {
+        var cursor = start;
+        var step = new InlineStep();
+
+        for (var lineIndex = from; lineIndex < to; lineIndex++)
+        {
+            var line = lines[lineIndex];
+
             // A line is placed for what is on it, not for how tall it came out: a run set with no line
             // height at all still has glyphs, and they are drawn overflowing the line they sit on.
             if (line.Fragments.Count == 0)
@@ -492,7 +640,29 @@ internal sealed class InlineLayout
             cursor += line.Height;
         }
 
-        return Math.Max(0, cursor - trimEnd);
+        return cursor;
+    }
+
+    /// <summary>
+    /// Gets the leading every line would have cut off one of its edges, zero where the block trims no
+    /// edge or the line carries nothing to measure a text edge on. A column asks for these per line:
+    /// the trim reaches the first and the last line of every column, not only the block's own ends.
+    /// </summary>
+    private List<Double> Leadings(Box container, List<Line> lines, Boolean atStart)
+    {
+        var trims = new List<Double>(lines.Count);
+        var trim = container.Style.TextBoxTrim;
+        var applies = atStart
+            ? trim is TextBoxTrim.Start or TextBoxTrim.Both
+            : trim is TextBoxTrim.End or TextBoxTrim.Both;
+        var edge = atStart ? container.Style.TextBoxEdgeStart : container.Style.TextBoxEdgeEnd;
+
+        foreach (var line in lines)
+        {
+            trims.Add(applies && line.Fragments.Count > 0 ? Leading(line, edge, atStart) : 0);
+        }
+
+        return trims;
     }
 
     /// <summary>
@@ -1002,6 +1172,7 @@ internal sealed class InlineLayout
         Double maxInline,
         WritingModeInfo flow,
         InlineContext context,
+        ComputedStyle strut,
         Double indent = 0)
     {
         var lines = new List<Line>();
@@ -1019,11 +1190,11 @@ internal sealed class InlineLayout
 
         // Only the first line of the content is set in; the line after a forced break begins where any
         // other line does, which is what leaving the indent behind on the first builder says.
-        var builder = new LineBuilder(indent);
+        var builder = new LineBuilder(strut, indent);
 
         void Close(LineBuilder filled, Boolean forced = false)
         {
-            var line = filled.Build(_measurer, room.Room, carried);
+            var line = filled.Build(_measurer, room.Room, carried, forced);
 
             line.Left = room.Inset;
             line.Extent = room.Room;
@@ -1168,28 +1339,33 @@ internal sealed class InlineLayout
                 {
                     var piece = Measure(item.Style, font, run, itemFlow);
 
-                    // White space a line begins with is not drawn. The node a run of text starts with
-                    // may begin with the one space an element's edge collapsed into, and only the line
-                    // knows whether that edge is a line's start - so the piece is dropped here rather
-                    // than when the nodes were collapsed.
-                    if (piece.IsWhiteSpace && !builder.HasContent && !item.Style.IsPreformatted)
+                    // White space a line begins with is not drawn, but only where the mode collapses it:
+                    // `pre`, `pre-wrap` and `break-spaces` keep it, so a line that begins with one
+                    // begins with it (and `break-spaces` makes it take room, which is what wraps the
+                    // word after it). The node a run of text starts with may begin with the one space an
+                    // element's edge collapsed into, and only the line knows whether that edge is a
+                    // line's start - so the piece is dropped here rather than when the nodes were
+                    // collapsed.
+                    if (piece.IsWhiteSpace && !builder.HasContent && item.Style.CollapsesSpaces)
                     {
                         continue;
                     }
 
+                    // A space that is taken off, or hung, at the end of a line does not make the line
+                    // wrap: the break opportunity is after it, so it stands at the end of the line it
+                    // would have overflowed (which is also why a `<br>` behind it ends that line rather
+                    // than an empty one). `break-spaces` is the mode whose spaces take room wherever
+                    // they stand, so its spaces wrap like any other content.
+                    var hangs = piece.IsWhiteSpace &&
+                        !item.Style.WhiteSpace.Equals("break-spaces", StringComparison.OrdinalIgnoreCase);
+
                     if (room.Room > 0 && builder.ExtentFor(item.Inline) + piece.Width > room.Room &&
-                        item.Style.WrapsLines)
+                        item.Style.WrapsLines && !hangs)
                     {
                         if (builder.HasContent)
                         {
                             Close(builder);
                             builder = new LineBuilder(item.Style, carried);
-
-                            // The space that triggered the break is consumed by it.
-                            if (piece.IsWhiteSpace)
-                            {
-                                continue;
-                            }
                         }
                         else if (room.Shortened)
                         {
@@ -1550,7 +1726,7 @@ internal sealed class InlineLayout
         var items = new List<InlineItem>();
         Collect(box, items, box.Flow, null, contentInline);
 
-        var lines = BuildLines(items, contentInline, box.Flow, context, Indentation(box, box.Flow, context));
+        var lines = BuildLines(items, contentInline, box.Flow, context, style, Indentation(box, box.Flow, context));
 
         if (lines.Count == 0)
         {
@@ -3126,8 +3302,9 @@ internal sealed class InlineLayout
         /// out having used, so the run that would not have fitted without it is carried to the next
         /// line - which is what an indented first line does to the text on it.
         /// </param>
-        public LineBuilder(Double indent)
+        public LineBuilder(ComputedStyle strut, Double indent)
         {
+            _fallback = strut;
             _indent = indent;
             Width = indent;
         }
@@ -3347,7 +3524,7 @@ internal sealed class InlineLayout
         /// Closes the line and hands it back, with the extent it takes along the inline axis and the
         /// report of which elements it ends inside.
         /// </summary>
-        public Line Build(ITextMeasurer measurer, Double maxInline, HashSet<InlineAncestor>? carried)
+        public Line Build(ITextMeasurer measurer, Double maxInline, HashSet<InlineAncestor>? carried, Boolean forced)
         {
             TrimTrailingSpaces(measurer);
 
@@ -3479,11 +3656,30 @@ internal sealed class InlineLayout
                 // hung from: an absolutely positioned panel added 21.3px to the 32px button above it,
                 // and every row below moved down with it.
                 //
+                // A line the break ended is not that line: CSS 2.1 §9.4.2 keeps a line box that ends
+                // with a preserved newline standing, blank or not, at the height of the strut - the
+                // container's own font and line height - which is what sets the room a blank line takes.
+                //
                 // A line that carries content and still reaches nowhere is as tall as the fallback asks
                 // for and no taller - the container's own font standing in where no run does.
-                var metrics = _fallback is { } fallback ? measurer.GetMetrics(fallback.GetFont()) : default;
-                ascent = _fallback is null || !HasContent ? 0 : metrics.Ascent;
-                descent = _fallback is null || !HasContent ? 0 : metrics.Descent;
+                if (_fallback is { } fallback && (HasContent || forced))
+                {
+                    var metrics = measurer.GetMetrics(fallback.GetFont());
+                    ascent = metrics.Ascent;
+                    descent = metrics.Descent;
+
+                    if (fallback.LineHeight is { } lineHeight)
+                    {
+                        var halfLeading = (lineHeight - (ascent + descent)) / 2;
+                        ascent += halfLeading;
+                        descent += halfLeading;
+                    }
+                }
+                else
+                {
+                    ascent = 0;
+                    descent = 0;
+                }
             }
 
             // The line box is grown from the boxes as they end up standing (CSS 2.1 §10.8.1): a run
@@ -3563,7 +3759,7 @@ internal sealed class InlineLayout
             line.BandShifts = bands;
             line.Ascent = reach;
             line.Height = reach + depth;
-            line.Used = used;
+            line.Used = used - HangingTrail(measurer);
             line.Indent = _indent;
             line.Alignment = line.Fragments.Count == 0
                 ? CssInitialValues.TextAlign
@@ -3574,8 +3770,55 @@ internal sealed class InlineLayout
         }
 
         /// <summary>
-        /// Takes the line's trailing spaces off, which a line never draws at its end. Only the runs
-        /// themselves are touched: the extent is worked out from what is left when the line is built.
+        /// Gets the width of the white space the line trails into where its mode hangs it: a
+        /// <c>pre-wrap</c> line keeps those spaces rather than drawing them away, and they take none of
+        /// its advance (CSS Text 3 §4.1.3) - so the room it was given is shared over what does not hang.
+        /// </summary>
+        private Double HangingTrail(ITextMeasurer measurer)
+        {
+            var hanging = 0.0;
+
+            for (var index = _fragments.Count - 1; index >= 0; index--)
+            {
+                var fragment = _fragments[index];
+
+                if (fragment.IsReplaced ||
+                    fragment.Atomic is not null ||
+                    fragment.Ruby is not null ||
+                    fragment.Length == 0 ||
+                    !fragment.Style.WhiteSpace.Equals("pre-wrap", StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+
+                var trailing = fragment.TrailingSpaces();
+
+                if (trailing == 0)
+                {
+                    break;
+                }
+
+                hanging += MeasureChunk(
+                    measurer,
+                    fragment.Style,
+                    fragment.Source,
+                    fragment.Start + fragment.Length - trailing,
+                    trailing,
+                    fragment.Flow);
+
+                if (trailing < fragment.Length)
+                {
+                    break;
+                }
+            }
+
+            return hanging;
+        }
+
+        /// <summary>
+        /// Takes the collapsible spaces a line trails into off, which a line never draws at its end.
+        /// Only the runs themselves are touched: the extent is worked out from what is left when the
+        /// line is built.
         /// </summary>
         private void TrimTrailingSpaces(ITextMeasurer measurer)
         {
@@ -3586,6 +3829,15 @@ internal sealed class InlineLayout
                 // A pair is not a run of text that can be shortened: its base belongs to the annotation
                 // drawn over it, so trailing space inside one is left where it is.
                 if (last.Ruby is not null)
+                {
+                    break;
+                }
+
+                // White space a preformatted mode preserves is not taken off: it hangs at the end of the
+                // line it was written on rather than being removed, and a line holding nothing else is
+                // still a line box at the height of its strut (CSS Text 3 §4.1.3). Only the modes that
+                // collapse their spaces lose the run at the line's end.
+                if (!last.Style.CollapsesSpaces)
                 {
                     break;
                 }

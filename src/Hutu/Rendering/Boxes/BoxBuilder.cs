@@ -467,7 +467,12 @@ internal static partial class BoxBuilder
             return null;
         }
 
-        var text = parentStyle.IsPreformatted ? raw : CollapseWhitespace(raw);
+        // `break-spaces` keeps its runs as written just as the `pre` spellings do; only the modes that
+        // collapse their spaces fold the text down here, and `pre-line` keeps the breaks it was written
+        // with while folding everything else.
+        var text = parentStyle.CollapsesSpaces
+            ? CollapseWhitespace(raw, keepBreaks: parentStyle.KeepsSegmentBreaks)
+            : raw;
 
         return text.Length == 0 ? null : text;
     }
@@ -595,13 +600,22 @@ internal static partial class BoxBuilder
     /// folding into one of the spaces around it. Reading the document language's notion of an ASCII
     /// space here instead is what made the node and the line disagree about what the text was made of.
     /// </remarks>
-    private static String CollapseWhitespace(String text)
+    private static String CollapseWhitespace(String text, Boolean keepBreaks)
     {
         var builder = new StringBuilder(text.Length);
         var pendingSpace = false;
 
         foreach (var character in text)
         {
+            if (keepBreaks && character == '\n')
+            {
+                // The break is kept as it was written; the space before it sits at the end of the line
+                // it closes and collapses away with the run it belongs to.
+                pendingSpace = false;
+                builder.Append(character);
+                continue;
+            }
+
             if (TextChunker.IsCollapsible(character))
             {
                 pendingSpace = true;

@@ -94,6 +94,9 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         ["background-clip"] = ["text"],
         ["color"] = ["-moz-default-color"],
         ["background-color"] = ["-moz-default-background-color"],
+        // CSS Text 3's break-spaces, which AngleSharp's grammar predates: dropped, the declaration
+        // would leave the element on the white-space it inherited and its spaces would collapse.
+        ["white-space"] = ["break-spaces"],
     };
 
     /// <summary>

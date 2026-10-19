@@ -40,6 +40,91 @@ internal static class Fragmentainer
     }
 
     /// <summary>
+    /// Fills the fragments with lines, keeping the orphans and widows of each cut (CSS Break 3 §3.3):
+    /// the counts it returns are the lines each column takes, and the last column takes what is left.
+    /// </summary>
+    public static IReadOnlyList<Int32> FillLines(
+        IReadOnlyList<Double> heights,
+        Double extent,
+        Int32 columns,
+        Int32 orphans,
+        Int32 widows,
+        IReadOnlyList<Double>? startTrims = null,
+        IReadOnlyList<Double>? endTrims = null)
+    {
+        var counts = new List<Int32>(Math.Min(columns, heights.Count));
+        var from = 0;
+
+        for (var column = 0; column < columns && from < heights.Count; column++)
+        {
+            var fit = FragmentSlicer.Fitting(heights, extent, orphans, widows, from, startTrims, endTrims);
+
+            counts.Add(fit);
+            from += fit;
+        }
+
+        return counts;
+    }
+
+    /// <summary>
+    /// Gets the least extent a balanced fill of <paramref name="columns"/> columns needs for a run of
+    /// lines: the height at which the whole run still fits, honoured with the same orphans and widows the
+    /// fill uses.
+    /// </summary>
+    public static Double BalanceLines(
+        IReadOnlyList<Double> heights,
+        Int32 columns,
+        Int32 orphans,
+        Int32 widows,
+        IReadOnlyList<Double>? startTrims = null,
+        IReadOnlyList<Double>? endTrims = null)
+    {
+        if (columns <= 1 || heights.Count == 0)
+        {
+            return TotalHeights(heights);
+        }
+
+        var tallest = 0.0;
+
+        foreach (var height in heights)
+        {
+            tallest = Math.Max(tallest, height);
+        }
+
+        var low = 0.0;
+        var high = TotalHeights(heights);
+
+        for (var step = 0; step < 40; step++)
+        {
+            var middle = (low + high) / 2;
+
+            if (middle >= tallest &&
+                Placed(FillLines(heights, middle, columns, orphans, widows, startTrims, endTrims)) >= heights.Count)
+            {
+                high = middle;
+            }
+            else
+            {
+                low = middle;
+            }
+        }
+
+        return high;
+    }
+
+    private static Double TotalHeights(IReadOnlyList<Double> heights)
+    {
+        var total = 0.0;
+
+        for (var i = 0; i < heights.Count; i++)
+        {
+            total += heights[i];
+        }
+
+        return total;
+    }
+
+    /// <summary>
     /// Gets the least extent a balanced fill of <paramref name="fragments"/> fragments needs: the height
     /// at which the whole content still fits, which is what <c>column-fill: balance</c> answers and what
     /// Chrome iterates towards.
