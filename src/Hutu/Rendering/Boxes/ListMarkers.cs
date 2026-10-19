@@ -1,3 +1,5 @@
+using AngleSharp.Css.Parser;
+using AngleSharp.Dom;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -88,6 +90,109 @@ internal static class ListMarkers
         }
     }
 
+    /// <summary>
+    /// Gets the style one item's marker is drawn with, or null when nothing in the sheets is written for
+    /// it - which is every list this engine has drawn until now, and answered here from the count of arms
+    /// alone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A marker is a box of its own, and Pseudo-Elements 4 §4.2 gives it the same tree-abiding place as
+    /// <c>::before</c>: what the item came to is what the marker inherits, and the arms written
+    /// <c>li::marker</c> are read over that. Those arms reach the marker and nowhere else, because an arm
+    /// that names a pseudo-element matches no element of the document - so the item's own style, resolved
+    /// from the rules that do match it, has no notice of them.
+    /// </para>
+    /// <para>
+    /// The parent this is read against is the channel the item hands its own children rather than the
+    /// marker's declarations, and that is measured rather than assumed: Chrome re-resolves a numeric
+    /// <c>line-height</c> at the marker's size, so an item at 16px with <c>line-height: 3</c> and a marker
+    /// at 20px draws its marker in a row 60px tall. A declaration of the marker's own still wins, since
+    /// the marker's cascade is what every resolver reads.
+    /// </para>
+    /// </remarks>
+    public static ComputedStyle? StyleForItem(
+        IElement element,
+        ComputedStyle item,
+        MatchedCascade itemCascade,
+        VariableScope? itemVariables,
+        FusedParent parent,
+        RuleBucketIndex index,
+        HutuRenderDevice device,
+        FontFaceTable? faces,
+        StyleResolution state,
+        ICssParser? parser)
+    {
+        if (!item.Display.Equals("list-item", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var marker = index.Pseudo.Cascade(PseudoArm.Marker, element, index.Rules, index.Origins);
+
+        if (marker is null)
+        {
+            return null;
+        }
+
+        // A custom property written on the marker is the marker's own, so the scope it is read through is
+        // opened from the marker's arms - with the item's scope for a parent, which is what hands a
+        // property the marker inherited from above down the values it was given higher up.
+        var variables = VariableScope.Open(marker, itemVariables, parser, state.Heads);
+
+        return FusedStyleFactory.Build(
+            element,
+            marker,
+            parent.Next(item, itemCascade, itemVariables, state.Tag(element.LocalName), false),
+            device,
+            faces,
+            state.Pool,
+            state.Cache,
+            variables,
+            AppliesToMarker);
+    }
+
+    /// <summary>
+    /// Gets whether a property written on <c>::marker</c> has any effect on it.
+    /// </summary>
+    /// <remarks>
+    /// Lists 3 §3.1.1 lets only a handful of properties apply to the marker box, and allows the rest to be
+    /// read either as not applying or as enforced from the originating element. Chrome enforces them:
+    /// measured against it, a decoration, a background, a visibility, a text fill or stroke, an opacity or
+    /// a <c>display</c> written on the marker comes back as the value the item came to - or as the initial
+    /// one where the property is not inherited - while the colour, the whole font, its spacing, its
+    /// line-height and <c>text-decoration-skip-ink</c> all take the declaration. What is below is the
+    /// first of those two groups, in the names this engine reads. A marker's <c>display</c> is in it
+    /// because the answer is a box this engine places, not one the page lays out.
+    /// </remarks>
+    private static Boolean AppliesToMarker(String name) => !_markerIgnores.Contains(name);
+
+    private static readonly HashSet<String> _markerIgnores = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "display",
+        "visibility",
+        "opacity",
+        "text-rendering",
+        "text-decoration",
+        "text-decoration-line",
+        "text-decoration-style",
+        "text-decoration-color",
+        "text-decoration-thickness",
+        "-webkit-text-fill-color",
+        "-webkit-text-stroke",
+        "-webkit-text-stroke-width",
+        "-webkit-text-stroke-color",
+        "background",
+        "background-color",
+        "background-image",
+        "background-repeat",
+        "background-position",
+        "background-size",
+        "background-origin",
+        "background-clip",
+        "background-blend-mode",
+        "-webkit-background-clip",
+    };
     /// <summary>
     /// Works out the number each step lands on, walking the list the way CSS counts its <c>list-item</c>
     /// counter. A step that gives the counter an absolute value (an item's <c>value</c>, or a
@@ -248,7 +353,10 @@ internal static class ListMarkers
     /// </summary>
     private static void PlaceInside(Box item, String text)
     {
-        var marker = new Box(BoxKind.Text, item.Style) { Text = text, Flow = item.Flow, IsMarker = true };
+        // The marker is a box of its own, so it wears the style the sheet wrote for it rather than the one
+        // its item came to - and where the sheets say nothing about markers, the two are the one style.
+        var marker = new Box(
+            BoxKind.Text, item.MarkerStyle ?? item.Style) { Text = text, Flow = item.Flow, IsMarker = true };
 
         if (item.Children.Count > 0 && item.Children[0].IsInlineLevel)
         {

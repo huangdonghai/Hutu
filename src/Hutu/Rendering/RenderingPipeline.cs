@@ -247,6 +247,7 @@ internal sealed class RenderingPipeline
     private static void AdoptStyles(Box kept, Box fresh)
     {
         kept.Style = fresh.Style;
+        kept.MarkerStyle = fresh.MarkerStyle;
 
         var mine = kept.Children;
         var theirs = fresh.Children;

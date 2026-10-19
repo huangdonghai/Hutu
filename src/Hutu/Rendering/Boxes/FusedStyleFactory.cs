@@ -239,7 +239,8 @@ internal static class FusedStyleFactory
         FontFaceTable? faces,
         StyleIntern? pool,
         FusedAreaCache? cache = null,
-        VariableScope? variables = null)
+        VariableScope? variables = null,
+        Func<String, Boolean>? applies = null)
     {
         // The scope is read through only where one exists: a page that declares no custom property
         // never asks for a substitution, and the cascade's own lookup - with the answers it remembers -
@@ -248,6 +249,15 @@ internal static class FusedStyleFactory
 
         Func<String, ICssProperty?> find = name =>
         {
+            // A pseudo-element that is not fully styleable has the declarations it was given taken off
+            // it: what it comes to for that property is then whatever it inherits, or the initial value
+            // where nothing is inherited. Lists 3 §3.1.1 gives ::marker that reading, and Chrome answers
+            // a decoration, a background or a visibility written on a marker exactly that way.
+            if (applies is not null && !applies(name))
+            {
+                return null;
+            }
+
             var property = variables is null ? cascade.Find(name) : variables.ReadProperty(cascade, name);
 
             // A longhand that the cascade holds with no text at all is the shadow a shorthand written

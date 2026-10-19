@@ -139,6 +139,19 @@ internal sealed class Box
     public MarkerPosition MarkerPosition { get; internal set; } = MarkerPosition.Outside;
 
     /// <summary>
+    /// Gets the style the item's marker is drawn with, or null when nothing in the sheets is written for
+    /// it - which is the common case, and the one where the marker wears its item's own style.
+    /// </summary>
+    /// <remarks>
+    /// A marker is a box of its own (Pseudo-Elements 4 §4.2), and Lists 3 §3.1.1 has it inherit the
+    /// inheritable properties of text from its originating element unless a rule written for the marker
+    /// says otherwise. The builder resolves it beside the item's own style because the two are read from
+    /// different arms of the sheet: <see cref="Style"/> comes from the rules that match the element, and
+    /// this from the ones that end in <c>::marker</c>, which match no element at all.
+    /// </remarks>
+    public ComputedStyle? MarkerStyle { get; internal set; }
+
+    /// <summary>
     /// Gets whether the box wants the same intrinsic size at every containing block: nothing in the
     /// subtree it holds reads a fraction of one.
     /// </summary>
@@ -321,6 +334,7 @@ internal sealed class Box
             !SameFlow(fresh) ||
             !String.Equals(Marker, fresh.Marker, StringComparison.Ordinal) ||
             MarkerPosition != fresh.MarkerPosition ||
+            !SameMarkerStyle(fresh) ||
             IntrinsicIgnoresBasis != fresh.IntrinsicIgnoresBasis ||
             !Style.SameLayoutAreas(fresh.Style))
         {
@@ -352,4 +366,22 @@ internal sealed class Box
         Flow.Orientation == fresh.Flow.Orientation &&
         Flow.CombinesUpright == fresh.Flow.CombinesUpright &&
         Flow.Direction == fresh.Flow.Direction;
+
+    /// <summary>
+    /// Gets whether the marker this box wears would be laid out the same way as <paramref name="fresh"/>'s.
+    /// The two styles are compared by their areas, as <see cref="Style"/> is: a marker that came to the
+    /// same box model, font and text at a different colour needs no layout, only a new paint.
+    /// </summary>
+    private Boolean SameMarkerStyle(Box fresh)
+    {
+        var mine = MarkerStyle;
+        var theirs = fresh.MarkerStyle;
+
+        if (!mine.HasValue || !theirs.HasValue)
+        {
+            return !mine.HasValue && !theirs.HasValue;
+        }
+
+        return mine.Value.SameLayoutAreas(theirs.Value);
+    }
 }

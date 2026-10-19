@@ -494,8 +494,7 @@ internal sealed record LayoutProfile(
                 style.DecorationColor ?? ComputedStyle.ToArgb(style.Color),
                 style.DecorationThickness,
                 style.UnderlineOffset,
-                style.DecorationInset,
-                style.SkipInk)
+                style.DecorationInset)
             {
                 Speaker = box.Source,
             }
@@ -947,9 +946,16 @@ internal sealed record LayoutProfile(
             source.Marker is { Length: > 0 } text &&
             source.MarkerPosition == MarkerPosition.Outside)
         {
-            var font = source.Style.GetFont();
+            // The marker is drawn in the font its own rules settled, which is why the measure, the row it
+            // stands on and the painting all ask for that style rather than the item's. Its spacing counts
+            // toward the room it takes the same way a run of the document's own text is measured - the
+            // width the face gives the glyphs, plus what the box asks between them.
+            var marked = source.MarkerStyle ?? source.Style;
+            var font = marked.GetFont();
             var metrics = _measurer.GetMetrics(font);
-            var advance = _measurer.MeasureWidth(text, font);
+            var advance = _measurer.MeasureWidth(text, font) +
+                marked.LetterSpacing * (box.Vertical ? text.Length : TextClusters.Count(text, 0, text.Length)) +
+                marked.WordSpacing * TextChunker.WordSeparators(text, 0, text.Length);
             var content = box.ContentBox;
             var line = FirstLine(box);
 

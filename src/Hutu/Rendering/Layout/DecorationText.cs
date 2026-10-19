@@ -60,8 +60,7 @@ public sealed record DecorationSource(
     UInt32 Color,
     Double? Thickness,
     Double? UnderlineOffset,
-    DecorationInsets? Insets,
-    DecorationSkip Skip)
+    DecorationInsets? Insets)
 {
     /// <summary>
     /// Gets the element that asked for these lines. It is not part of what the record answers: two boxes
@@ -79,8 +78,7 @@ public sealed record DecorationSource(
         Color == other.Color &&
         Thickness == other.Thickness &&
         UnderlineOffset == other.UnderlineOffset &&
-        Insets == other.Insets &&
-        Skip == other.Skip;
+        Insets == other.Insets;
 
     public override int GetHashCode() =>
         HashCode.Combine(
@@ -92,8 +90,7 @@ public sealed record DecorationSource(
                 Color),
             Thickness,
             UnderlineOffset,
-            Insets,
-            (Byte)Skip);
+            Insets);
 }
 
 /// <summary>

@@ -337,6 +337,15 @@ internal static partial class BoxBuilder
                 break;
         }
 
+        // A marker is a box of its own, so an arm written `li::marker` styles that box rather than the item
+        // it hangs on. It is resolved here, beside the item's own style, because the arms for it match no
+        // element of the document and so never reach the cascade the item was read from.
+        if (index.Pseudo.HasMarkers && kind is BoxKind.Block or BoxKind.InlineBlock)
+        {
+            box.MarkerStyle = ListMarkers.StyleForItem(
+                element, style, cascade, variables, parent, index, device, faces, state, parser);
+        }
+
         // The two generated boxes are children of this element, so they are made once every other
         // child is in place - and before the markers are, because CSS 2.1 §12.5.1 puts a marker
         // stated `inside` its item "before the element's content and before any :before

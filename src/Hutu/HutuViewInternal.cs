@@ -665,10 +665,15 @@ public sealed class HutuViewInternal : IDisposable
         // which ship their own only when nothing else has: two sheets at the user-agent level would be
         // two sources to reconcile, and the declaration factory is asked for by name - whichever is
         // registered answers, so the one that wraps AngleSharp's has to be the one to hand.
+        //
+        // The pseudo-element names go the other way, after the CSS services and in place of the default:
+        // exactly one factory is asked for, so the one that knows ::marker has to be the only one
+        // registered. See HutuPseudoElementSelectorFactory for why the name cannot be left out.
         var configuration = Configuration.Default
             .With(_uaProvider = new UserAgentStyleSheetProvider())
             .With((Object)new WideKeywordDeclarationFactory())
             .WithCss()
+            .WithOnly<IPseudoElementSelectorFactory>(new HutuPseudoElementSelectorFactory())
             .WithRenderDevice(_renderDevice);
 
         configuration = configuration.With(CreateRequesterChain());

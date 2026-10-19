@@ -337,7 +337,8 @@ public sealed class TextCommand : PaintCommand
         Int32 justifies = 0,
         String expand = "auto",
         Double wordSpacing = 0,
-        IReadOnlyList<DecorationPlacement>? placements = null)
+        IReadOnlyList<DecorationPlacement>? placements = null,
+        DecorationSkip skip = DecorationSkip.Auto)
         : base(bounds)
     {
         Text = text;
@@ -354,6 +355,7 @@ public sealed class TextCommand : PaintCommand
         Expand = expand;
         WordSpacing = wordSpacing;
         Placements = placements ?? Array.Empty<DecorationPlacement>();
+        Skip = skip;
     }
 
     public String Text { get; }
@@ -388,6 +390,14 @@ public sealed class TextCommand : PaintCommand
     /// (CSS Text Decoration 4 §2.3, §5.1).
     /// </summary>
     public IReadOnlyList<DecorationSource> Decorations { get; }
+
+    /// <summary>
+    /// Gets how this run's own ink is treated by the lines it is drawn under: <c>auto</c>, <c>none</c> or
+    /// <c>all</c>, as the box that holds the text was set. It is the text's answer rather than the
+    /// decorating box's (CSS Text Decoration 4 §2.10.4) - what is skipped is where this run's glyphs stand,
+    /// and a marker, whose ink is its own, is measured against its own value.
+    /// </summary>
+    public DecorationSkip Skip { get; }
 
     /// <summary>
     /// Gets the room a justified line owes after each place between this run's words, and how many of

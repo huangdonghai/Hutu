@@ -865,8 +865,9 @@ public sealed class SkiaPaintExecutor
 
             // A line-through is never broken; an underline or overline is broken where the page asked
             // for it, or where auto was left standing and the script of the text does not lie across the
-            // rule (§2.10.4).
-            var skips = decoration.Skip switch
+            // rule (§2.10.4). The answer is the run's own: it is this text's ink the line would cross, and
+            // a marker - or a descendant - that says otherwise about its own text is taken at its word.
+            var skips = command.Skip switch
             {
                 DecorationSkip.None => false,
                 DecorationSkip.All => true,

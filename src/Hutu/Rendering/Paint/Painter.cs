@@ -180,26 +180,6 @@ internal sealed class Painter
                 break;
         }
 
-        // A marker is text, drawn where the layout put it and in the font and colour of the item it
-        // marks - so a bullet in a heading is a bullet of the heading's size, and one in red text is red.
-        // It stands beside the item rather than in it, which is why nothing else about the box decides
-        // where it goes, and why it is emitted after the box's own background and its children: the space
-        // it hangs in belongs to the list, and nothing is laid out there to be drawn over.
-        if (box.MarkerBounds is { } marker && box.Source.Marker is { Length: > 0 } marks)
-        {
-            var marked = box.Source.Style;
-
-            target.Add(new TextCommand(
-                marker,
-                marks,
-                box.MarkerBaseline,
-                marked.GetFont(),
-                ToArgb(marked.Color),
-                box.Decorations ?? NoDecorations,
-                box.Flow,
-                0));
-        }
-
         // The outline is emitted last because it is drawn around the box rather than in it, which also
         // puts it after the clip the children were wrapped in: the box's own overflow must not cut it
         // off, while the clip of the nearest ancestor that hides its overflow still holds it in.
@@ -271,6 +251,31 @@ internal sealed class Painter
         if (!box.SuppressBorder)
         {
             AddBorder(box, style, target);
+        }
+
+        // A marker is text, drawn where the layout put it and in the font and colour the rules written for
+        // it settled - the item's own where the sheet says nothing about markers, which is the usual page.
+        // It stands beside the item rather than in it, so nothing about the box decides where it goes.
+        // What it is painted under is the item's own content: the space it hangs in is outside the item's
+        // border box, but content reaches it - a first line pulled back over it by a negative
+        // <c>text-indent</c>, a block shifted out there by <c>position: relative</c> - and each of those
+        // lies over the mark, which is what both outside-marker-paint-order and
+        // outside-marker-covered-by-relpos-block-link are drawn to say.
+        if (box.MarkerBounds is { } marker && box.Source.Marker is { Length: > 0 } marks)
+        {
+            var marked = box.Source.MarkerStyle ?? box.Source.Style;
+
+            target.Add(new TextCommand(
+                marker,
+                marks,
+                box.MarkerBaseline,
+                marked.GetFont(),
+                marked.TextFillColor ?? ToArgb(marked.Color),
+                box.Decorations ?? NoDecorations,
+                box.Flow,
+                marked.LetterSpacing,
+                wordSpacing: marked.WordSpacing,
+                skip: marked.SkipInk));
         }
 
         PaintChildren(box, list, target, deferred);
@@ -624,7 +629,8 @@ internal sealed class Painter
             box.Justifies,
             style.TextJustify,
             style.WordSpacing,
-            box.DecorationPlacements));
+            box.DecorationPlacements,
+            style.SkipInk));
     }
 
     private static void AddBorder(LayoutBox box, ComputedStyle style, List<PaintCommand> target)

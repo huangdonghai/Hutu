@@ -11,17 +11,18 @@ using System.Text;
 namespace Hutu.Rendering.Boxes;
 
 /// <summary>
-/// Which of the two generated-content pseudo-elements a rule is written for.
+/// Which of the pseudo-elements the index holds arms for a rule is written for.
 /// </summary>
-internal enum PseudoSide
+internal enum PseudoArm
 {
     Before,
     After,
+    Marker,
 }
 
 /// <summary>
-/// The arms of the sheet that are written for <c>::before</c> and <c>::after</c>, held apart from the
-/// rules they came from and matched against the element that originates the pseudo-element.
+/// The arms of the sheet that are written for <c>::before</c>, <c>::after</c> and <c>::marker</c>, held
+/// apart from the rules they came from and matched against the element that originates the pseudo-element.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -45,14 +46,18 @@ internal sealed class PseudoRuleIndex
 {
     private readonly ArmSet _before = new();
     private readonly ArmSet _after = new();
+    private readonly ArmSet _marker = new();
 
     /// <summary>
-    /// Gets whether no arm anywhere in the sheets is written for either pseudo-element. A page that
-    /// generates no content is every page this engine has rendered until now, and it must not pay
-    /// for the question - so this is the gate the box builder asks first, and it is answered from
+    /// Gets whether no arm anywhere in the sheets is written for either generated-content pseudo-element.
+    /// A page that generates no content is every page this engine has rendered until now, and it must not
+    /// pay for the question - so this is the gate the box builder asks first, and it is answered from
     /// the count of arms alone, with nothing parsed.
     /// </summary>
     internal Boolean IsEmpty => _before.Count == 0 && _after.Count == 0;
+
+    /// <summary>Gets whether any arm anywhere in the sheets is written for a list item's marker.</summary>
+    internal Boolean HasMarkers => _marker.Count > 0;
 
     /// <summary>Reads the pseudo-element arms out of the flattened rules, in the order they cascade in.</summary>
     internal static PseudoRuleIndex Build(List<ICssStyleRule> rules)
@@ -108,7 +113,7 @@ internal sealed class PseudoRuleIndex
 
     private void Take(String text, Int32 start, Int32 end, Int32 order)
     {
-        if (!EndsWithPseudoElement(text, start, end, out var side, out var colon))
+        if (!EndsWithPseudoElement(text, start, end, out var arm, out var colon))
         {
             return;
         }
@@ -116,12 +121,20 @@ internal sealed class PseudoRuleIndex
         // What is left when the pseudo-element is taken off selects the originating element. An arm
         // written `::before` alone is written for every element, which is what `*` says.
         var rest = text[Math.Min(colon, start)..colon].Trim();
-        (side == PseudoSide.Before ? _before : _after).Add(rest.Length == 0 ? "*" : rest, order);
+        ArmsOf(arm).Add(rest.Length == 0 ? "*" : rest, order);
     }
 
+    /// <summary>Gets the arms of one pseudo-element out of the three the index keeps.</summary>
+    private ArmSet ArmsOf(PseudoArm arm) => arm switch
+    {
+        PseudoArm.Before => _before,
+        PseudoArm.After => _after,
+        _ => _marker,
+    };
+
     /// <summary>
-    /// Gets whether an arm is written for <c>::before</c> or <c>::after</c>, and where the colon that
-    /// begins the pseudo-element stands.
+    /// Gets whether an arm is written for one of the pseudo-elements the index keeps, which one it is, and
+    /// where the colon that begins it stands.
     /// </summary>
     /// <remarks>
     /// A pseudo-element is the last thing in a selector - Selectors 4 lets nothing follow it - so the
@@ -129,9 +142,9 @@ internal sealed class PseudoRuleIndex
     /// one-colon form CSS 2 wrote to keep working. The colon has to stand outside every bracket and
     /// quote, or <c>[title="a:before"]</c> would read as a pseudo-element.
     /// </remarks>
-    private static Boolean EndsWithPseudoElement(String text, Int32 start, Int32 end, out PseudoSide side, out Int32 colon)
+    private static Boolean EndsWithPseudoElement(String text, Int32 start, Int32 end, out PseudoArm arm, out Int32 colon)
     {
-        side = PseudoSide.Before;
+        arm = PseudoArm.Before;
         colon = -1;
 
         var at = -1;
@@ -176,14 +189,25 @@ internal sealed class PseudoRuleIndex
 
         if (name.Equals("before", StringComparison.OrdinalIgnoreCase))
         {
-            side = PseudoSide.Before;
+            arm = PseudoArm.Before;
             colon = at;
             return true;
         }
 
         if (name.Equals("after", StringComparison.OrdinalIgnoreCase))
         {
-            side = PseudoSide.After;
+            arm = PseudoArm.After;
+            colon = at;
+            return true;
+        }
+
+        // A marker is held the same way although it is not a generated-content box: the arm names a box
+        // the engine makes for itself, and no element of the document is what it selects. Lists 3 §3.1
+        // calls it the marker box of a list item, and Pseudo-Elements 4 §4.2 gives it the same
+        // tree-abiding place as the two above.
+        if (name.Equals("marker", StringComparison.OrdinalIgnoreCase))
+        {
+            arm = PseudoArm.Marker;
             colon = at;
             return true;
         }
@@ -250,22 +274,22 @@ internal sealed class PseudoRuleIndex
     }
 
     /// <summary>
-    /// Gets the cascade the pseudo-element of <paramref name="side"/> matches on
+    /// Gets the cascade the pseudo-element of <paramref name="arm"/> matches on
     /// <paramref name="element"/>, or null when no arm of the sheet is written for it.
     /// </summary>
     /// <remarks>
     /// The pseudo-element itself is the last step of the arm and was taken off before the arm was
     /// matched, so the specificity the cascade sorts by is the arm's own plus the one a
-    /// pseudo-element counts for - which Selectors 4 §17 puts in the same place as a type selector,
-    /// and which AngleSharp's own <c>PseudoElementSelector</c> also answers with.
+    /// pseudo-element counts for - which Selectors 4 §17 puts in the same place as a type selector, and
+    /// which AngleSharp's own <c>PseudoElementSelector</c> also answers with.
     /// </remarks>
     internal MatchedCascade? Cascade(
-        PseudoSide side,
+        PseudoArm arm,
         IElement element,
         List<ICssStyleRule> rules,
         RuleOrigin[] origins)
     {
-        var arms = side == PseudoSide.Before ? _before : _after;
+        var arms = ArmsOf(arm);
 
         if (arms.Count == 0)
         {
@@ -279,14 +303,14 @@ internal sealed class PseudoRuleIndex
 
         for (var i = 0; i < candidates.Count; i++)
         {
-            var arm = arms.Arms[candidates[i]];
+            var entry = arms.Arms[candidates[i]];
 
-            if (arm.Selector is null || !arm.Selector.Match(element, scope))
+            if (entry.Selector is null || !entry.Selector.Match(element, scope))
             {
                 continue;
             }
 
-            var specificity = arm.Selector.Specificity + Priority.OneTag;
+            var specificity = entry.Selector.Specificity + Priority.OneTag;
             var at = matched.Count;
 
             while (at > 0 && priorities[at - 1] > specificity)
@@ -294,7 +318,7 @@ internal sealed class PseudoRuleIndex
                 at--;
             }
 
-            matched.Insert(at, new MatchedRule(rules[arm.Rule], origins[arm.Rule], specificity, arm.Rule));
+            matched.Insert(at, new MatchedRule(rules[entry.Rule], origins[entry.Rule], specificity, entry.Rule));
             priorities.Insert(at, specificity);
         }
 
@@ -489,15 +513,15 @@ internal static class GeneratedContent
             return;
         }
 
-        Put(box, element, index, PseudoSide.Before, style, cascade, variables, parent, device, faces, state, images, flow);
-        Put(box, element, index, PseudoSide.After, style, cascade, variables, parent, device, faces, state, images, flow);
+        Put(box, element, index, PseudoArm.Before, style, cascade, variables, parent, device, faces, state, images, flow);
+        Put(box, element, index, PseudoArm.After, style, cascade, variables, parent, device, faces, state, images, flow);
     }
 
     private static void Put(
         Box box,
         IElement element,
         RuleBucketIndex index,
-        PseudoSide side,
+        PseudoArm arm,
         ComputedStyle style,
         MatchedCascade cascade,
         VariableScope? variables,
@@ -508,7 +532,7 @@ internal static class GeneratedContent
         IImageProvider? images,
         WritingModeInfo flow)
     {
-        var pseudo = index.Pseudo.Cascade(side, element, index.Rules, index.Origins);
+        var pseudo = index.Pseudo.Cascade(arm, element, index.Rules, index.Origins);
 
         if (pseudo is null)
         {
@@ -554,7 +578,7 @@ internal static class GeneratedContent
         // replaced element" - so the pseudo-element is the replaced box, not a box around one.
         if (items.Count == 1 && items[0].Url is { } only)
         {
-            Insert(side, box, new List<Box> { Replaced(only, element, kind, pseudoStyle, flow, images) });
+            Insert(arm, box, new List<Box> { Replaced(only, element, kind, pseudoStyle, flow, images) });
             return;
         }
 
@@ -576,7 +600,7 @@ internal static class GeneratedContent
                 }
             }
 
-            Insert(side, box, new List<Box> { container });
+            Insert(arm, box, new List<Box> { container });
             return;
         }
 
@@ -590,7 +614,7 @@ internal static class GeneratedContent
             }
         }
 
-        Insert(side, box, runs);
+        Insert(arm, box, runs);
     }
 
     private static Box Run(String text, IElement element, ComputedStyle style, WritingModeInfo flow) =>
@@ -661,14 +685,14 @@ internal static class GeneratedContent
         return display.StartsWith("inline", StringComparison.OrdinalIgnoreCase) ? BoxKind.Inline : BoxKind.Block;
     }
 
-    private static void Insert(PseudoSide side, Box host, List<Box> generated)
+    private static void Insert(PseudoArm arm, Box host, List<Box> generated)
     {
         if (generated.Count == 0)
         {
             return;
         }
 
-        if (side == PseudoSide.Before)
+        if (arm == PseudoArm.Before)
         {
             InsertFirst(host, generated);
         }
