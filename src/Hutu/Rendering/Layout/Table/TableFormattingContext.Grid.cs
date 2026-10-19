@@ -120,8 +120,20 @@ internal sealed partial class TableFormattingContext
         var tableStyle = build.Style;
         var spacing = tableStyle.Collapse ? 0.0 : tableStyle.HorizontalSpacing;
         var rowSpacing = tableStyle.Collapse ? 0.0 : tableStyle.VerticalSpacing;
+        var columnTarget = Math.Max(0, contentWidth - HorizontalSpacingTotal(build));
 
-        build.Grid.SizeColumns(Math.Max(0, contentWidth - HorizontalSpacingTotal(build)), tableStyle.Fixed);
+        // A cell's per cent is a share of the room the columns have between them, so it can only be read
+        // now that the table's own width is settled - and only where the table has a width of its own to
+        // be a share of. A table that takes its width from its content has no whole for the share, and the
+        // share is left unread rather than deciding how wide the table it sits in becomes. Rebuilding the
+        // column bounds also clears the widths a column declaration asked for, so those are handed back
+        // before the columns are shared out.
+        if (build.Box.Style.Width.HasValue && build.Grid.ResolvePercentages(columnTarget))
+        {
+            build.Grid.ApplyColumnHints(build.ColumnHints);
+        }
+
+        build.Grid.SizeColumns(columnTarget, tableStyle.Fixed);
         MeasureCellHeights(build, context, spacing, targetHeight);
         build.Grid.SizeRows();
         build.Grid.PlaceColumns(spacing, tableStyle.Collapse);
@@ -180,7 +192,29 @@ internal sealed partial class TableFormattingContext
         }
 
         var occupied = new HashSet<(Int32 Row, Int32 Column)>();
+
+        // A row settles the columns its cells reach across; a row of a single cell settles one, however
+        // far that cell's span reaches. Chrome answers a table of one cell and a row whose only cell
+        // spans two with one column, the same span in a row of two cells with the columns those cells
+        // reach across, and a row of two cells spanning a hundred each with a hundred and one columns.
         var columns = 0;
+
+        foreach (var (row, _) in source)
+        {
+            var cells = 0;
+            var spans = 0;
+
+            foreach (var child in row.Children)
+            {
+                if (child.Kind == BoxKind.TableCell)
+                {
+                    cells++;
+                    spans += ReadSpans(child).Item1;
+                }
+            }
+
+            columns = Math.Max(columns, cells == 1 ? 1 : spans);
+        }
 
         for (var r = 0; r < source.Count; r++)
         {
@@ -196,10 +230,17 @@ internal sealed partial class TableFormattingContext
                 var (columnSpan, rowSpan) = ReadSpans(child);
                 var column = 0;
 
+                // A span reaches at most to the table's last column, and never shortens to nothing.
+                columnSpan = Math.Max(1, Math.Min(columnSpan, columns));
+
                 while (Occupied(occupied, r, column, columnSpan, rowSpan))
                 {
                     column++;
                 }
+
+                // A cell pushed sideways by a row span may still reach past the last column counted from
+                // the rows' cells; the table grows then rather than dropping the cell's last columns.
+                columns = Math.Max(columns, column + columnSpan);
 
                 Mark(occupied, r, column, columnSpan, rowSpan);
 
@@ -214,7 +255,6 @@ internal sealed partial class TableFormattingContext
                     Padding = child.Style.Padding.Resolve(basis),
                 });
 
-                columns = Math.Max(columns, column + columnSpan);
             }
 
             build.Grid.Rows.Add(info);
@@ -343,7 +383,15 @@ internal sealed partial class TableFormattingContext
 
                 cell.MinContent = min;
                 cell.MaxContent = Math.Max(min, max);
-                cell.Specified = ResolveSpecified(cell.Box, basis, cell.Insets.Horizontal);
+
+                // A per-cent width is a share of the table's own width, which is not settled yet at this
+                // point - a share resolved against the box the table sits in would make the table as wide
+                // as its own share, so it is kept as the length it was read from and resolved later. A
+                // length is read here, where the content and the cell's own margins already are.
+                cell.SpecifiedLength = cell.Box.Style.Width.HasValue ? cell.Box.Style.Width : cell.Box.HintedWidth;
+                cell.Specified = cell.SpecifiedLength is { Kind: StyleLengthKind.Percent }
+                    ? null
+                    : Pixels(cell.SpecifiedLength, basis, cell.Insets.Horizontal, BoxModel.IsBorderBox(cell.Box.Style));
             }
         }
     }
@@ -359,7 +407,11 @@ internal sealed partial class TableFormattingContext
             // cap: the row ends up the taller of what it asked for and what its cells need. A per cent is
             // relative to the table's own height, so it can only be read when the table declared one;
             // against an auto height the per cent says nothing and the row takes its content instead.
-            var declared = row.Box.Style.Height;
+            var declared = row.Box.Style.Height.HasValue
+                ? row.Box.Style.Height
+                : row.Box.HintedHeight ?? row.Box.Style.Height;
+
+            row.HeightDeclared = declared.HasValue;
 
             row.Declared = declared.Kind == StyleLengthKind.Percent
                 ? tableHeight is { } height ? Math.Max(0, declared.Resolve(height)) : 0
@@ -384,6 +436,15 @@ internal sealed partial class TableFormattingContext
                     cellContext);
 
                 var contentHeight = Math.Max(0, measured.Height - styleInsetsV);
+
+                // A height a cell's attribute asks for is a floor under the row, not a size for the cell
+                // box: the cell is as tall as the row the floor helped settle.
+                if (cell.Box.HintedHeight is { HasValue: true } hinted && hinted.Kind != StyleLengthKind.Percent)
+                {
+                    contentHeight = Math.Max(contentHeight, Math.Max(0, hinted.Resolve(0)));
+                    row.HeightDeclared = true;
+                }
+
                 cell.Height = contentHeight + cell.Insets.Vertical;
             }
         }
@@ -453,27 +514,31 @@ internal sealed partial class TableFormattingContext
         ResolveSpecified(box, basis, StyleInsetsH(box, basis));
 
     /// <summary>Gets a declared width as a border-box width, or null when there is none.</summary>
-    private static Double? ResolveSpecified(Box box, Double basis, Double insets)
-    {
-        var width = box.Style.Width;
+    private static Double? ResolveSpecified(Box box, Double basis, Double insets) =>
+        Pixels(box.Style.Width, basis, insets, BoxModel.IsBorderBox(box.Style));
 
-        if (!width.HasValue || (width.Kind == StyleLengthKind.Percent && basis <= 0))
+    /// <summary>
+    /// Turns a width a cell or column asked for into the border-box width the grid settles by. A per-cent
+    /// width sizes the grid area itself: the per cent is of the table's width and the insets sit inside it
+    /// rather than on top of it, which is what keeps a row of cells declared in per cents from adding
+    /// their padding past the width the table was given. A length is still a content-box width, so it
+    /// carries the insets. A per cent with no whole to be a share of yet stays unresolved.
+    /// </summary>
+    private static Double? Pixels(StyleLength? width, Double basis, Double insets, Boolean borderBox)
+    {
+        if (width is not { } length || !length.HasValue || (length.Kind == StyleLengthKind.Percent && basis <= 0))
         {
             return null;
         }
 
-        var resolved = Math.Max(0, width.Resolve(basis));
+        var resolved = Math.Max(0, length.Resolve(basis));
 
-        if (BoxModel.IsBorderBox(box.Style))
+        if (borderBox)
         {
             return resolved;
         }
 
-        // A percentage width sizes the grid area itself: the per cent is of the table's width and
-        // the insets sit inside it rather than on top of it, which is what keeps a row of cells
-        // declared in per cents from adding their padding past the width the table was given.
-        // A length is still a content-box width, so it carries the insets as before.
-        return width.Kind == StyleLengthKind.Percent ? resolved : resolved + insets;
+        return length.Kind == StyleLengthKind.Percent ? resolved : resolved + insets;
     }
 
     private static Boolean Occupied(HashSet<(Int32 Row, Int32 Column)> occupied, Int32 row, Int32 column, Int32 columnSpan, Int32 rowSpan)

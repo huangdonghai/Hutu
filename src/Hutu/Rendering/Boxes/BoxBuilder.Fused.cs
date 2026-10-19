@@ -297,7 +297,21 @@ internal static partial class BoxBuilder
             kind = BoxKind.Block;
         }
 
-        var box = new Box(kind, style) { Element = element, Flow = flow, IsInlineOuter = inlineOuter };
+        // A cell's or a row's size attribute is not a CSS size: the table reads it to settle the column
+        // or the row, while the box itself is laid out at whatever the table gives it.
+        var hintedWidth = kind == BoxKind.TableCell ? PresentationalHints.CellSize(element, "width") : null;
+        var hintedHeight = kind is BoxKind.TableCell or BoxKind.TableRow
+            ? PresentationalHints.CellSize(element, "height")
+            : null;
+
+        var box = new Box(kind, style)
+        {
+            Element = element,
+            Flow = flow,
+            IsInlineOuter = inlineOuter,
+            HintedWidth = hintedWidth,
+            HintedHeight = hintedHeight,
+        };
 
         switch (kind)
         {

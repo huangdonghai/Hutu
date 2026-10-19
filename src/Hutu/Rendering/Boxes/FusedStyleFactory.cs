@@ -474,10 +474,10 @@ internal static class FusedStyleFactory
             var widthDeclaration = find("width");
             var heightDeclaration = find("height");
 
-            // The size a legacy attribute hints at, which the table sizes by: the table's own box on both
-            // axes, and a cell's or a row's as a least the grid holds it to.
-            var widthHint = PresentationalHints.Size(element, "width") ?? PresentationalHints.CellSize(element, "width");
-            var heightHint = PresentationalHints.Size(element, "height") ?? PresentationalHints.CellSize(element, "height");
+            // The size a legacy attribute hints at for a table. A cell's or a row's attribute is not read
+            // here: it sizes a column or a row, not the box, and travels on the box for the table to read.
+            var widthHint = PresentationalHints.Size(element, "width");
+            var heightHint = PresentationalHints.Size(element, "height");
 
             var built = new BoxModelArea
             {

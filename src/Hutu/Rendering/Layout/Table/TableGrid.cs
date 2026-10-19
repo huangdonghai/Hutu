@@ -30,8 +30,12 @@ internal sealed class TableCellInfo
 
     /// <summary>Gets or sets the declared width as a border-box size, or <c>null</c> when there is
     /// none. It is a border-box size so that it can be compared with the min-content and max-content
-    /// suggestions, which the grid also holds as border-box sizes.</summary>
+    /// suggestions, which the grid also holds as border-box sizes. A per-cent width has none until the
+    /// table's own width is known, and is resolved then.</summary>
     public Double? Specified;
+
+    /// <summary>Gets or sets the length the specified width was read from, per cent included.</summary>
+    public StyleLength? SpecifiedLength;
 
     /// <summary>Gets or sets the used border-box height.</summary>
     public Double Height;
@@ -79,6 +83,13 @@ internal sealed class TableRowInfo
     /// floor under the cells, not a cap over them.
     /// </summary>
     public Double Declared;
+
+    /// <summary>
+    /// Gets or sets whether the row or any of its cells asked for a height. The surplus of a table
+    /// taller than its rows goes to the rows that asked for none, which is how a row asked to be 15
+    /// pixels stays 15 while the rows around it take up the rest.
+    /// </summary>
+    public Boolean HeightDeclared;
 
     /// <summary>Gets or sets the border-box offset from the grid origin.</summary>
     public Double Y;
@@ -188,6 +199,43 @@ internal sealed class TableGrid
         }
     }
 
+    /// <summary>
+    /// Resolves the widths a cell declared in per cents against the width the columns are shared out of,
+    /// and rebuilds the column bounds when any was waiting. The per cent is of the room the columns have
+    /// between them - what is left of the table's content width once the distance between columns is
+    /// taken out - which is the basis Chrome measures a cell's per cent against.
+    /// </summary>
+    public Boolean ResolvePercentages(Double basis)
+    {
+        if (basis <= 0)
+        {
+            return false;
+        }
+
+        var any = false;
+
+        foreach (var row in Rows)
+        {
+            foreach (var cell in row.Cells)
+            {
+                if (cell.SpecifiedLength is { Kind: StyleLengthKind.Percent } length)
+                {
+                    // A per-cent width sizes the grid area itself, insets included, so nothing is added
+                    // to it here.
+                    cell.Specified = Math.Max(0, length.Resolve(basis));
+                    any = true;
+                }
+            }
+        }
+
+        if (any)
+        {
+            Prepare();
+        }
+
+        return any;
+    }
+
     /// <summary>Gets the narrowest width the columns can take between them.</summary>
     public Double SumMinimum() => Sum(Minimum);
 
@@ -272,11 +320,26 @@ internal sealed class TableGrid
             }
         }
 
+        // A table whose every column was given a width has no column left to take the room up, and
+        // Chrome shares it over the columns that asked for one in proportion to what each asked for -
+        // it is how a lone column declared at one per cent still fills the table it stands in. A column
+        // left to itself takes the room even when it wants none of its own: an empty cell with no
+        // padding keeps the rest of the row beside the column declared at one per cent.
+        if (autoCount == 0)
+        {
+            for (var i = 0; i < Columns; i++)
+            {
+                Widths[i] = Maximum[i] + (sumMax > 0 ? extra * Maximum[i] / sumMax : extra / Columns);
+            }
+
+            return;
+        }
+
         for (var i = 0; i < Columns; i++)
         {
             if (Declared[i] is null)
             {
-                var share = autoCount > 0 ? (autoMax > 0 ? extra * Maximum[i] / autoMax : extra / autoCount) : extra / Columns;
+                var share = autoMax > 0 ? extra * Maximum[i] / autoMax : extra / autoCount;
                 Widths[i] = Maximum[i] + share;
             }
             else
@@ -394,11 +457,26 @@ internal sealed class TableGrid
             return;
         }
 
-        var share = surplus / Rows.Count;
+        var open = 0;
 
         foreach (var row in Rows)
         {
-            row.Height += share;
+            if (!row.HeightDeclared)
+            {
+                open++;
+            }
+        }
+
+        // A row that asked for a height keeps it while any row that asked for none is left to take the
+        // room; a table whose rows all asked for a height shares the surplus over all of them equally.
+        var share = surplus / (open > 0 ? open : Rows.Count);
+
+        foreach (var row in Rows)
+        {
+            if (open == 0 || !row.HeightDeclared)
+            {
+                row.Height += share;
+            }
         }
     }
 

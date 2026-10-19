@@ -295,6 +295,21 @@ internal sealed class Box
     /// </remarks>
     public ImageSize? AttributeSize { get; init; }
 
+    /// <summary>
+    /// Gets the width a legacy HTML attribute asks of this cell, which is not a CSS size: the cell's own
+    /// content is laid out at the width its column settles on, and the attribute only tells the table how
+    /// wide that column should be. It lives on the box for the same reason the image's attribute size
+    /// does - the style a box carries is shared by everything the same rules matched, and an attribute
+    /// belongs to one element.
+    /// </summary>
+    public StyleLength? HintedWidth { get; init; }
+
+    /// <summary>
+    /// Gets the height a legacy HTML attribute asks of this cell or row, held the same way: the table
+    /// takes it as a floor under the row, and the box itself is laid out as tall as the row comes to.
+    /// </summary>
+    public StyleLength? HintedHeight { get; init; }
+
     public List<Box> Children { get; } = new();
 
     /// <summary>
@@ -363,6 +378,8 @@ internal sealed class Box
             !ReferenceEquals(Element, fresh.Element) ||
             !IntrinsicSize.Equals(fresh.IntrinsicSize) ||
             !AttributeSize.Equals(fresh.AttributeSize) ||
+            !Equals(HintedWidth, fresh.HintedWidth) ||
+            !Equals(HintedHeight, fresh.HintedHeight) ||
             !SameFlow(fresh) ||
             !String.Equals(Marker, fresh.Marker, StringComparison.Ordinal) ||
             MarkerPosition != fresh.MarkerPosition ||

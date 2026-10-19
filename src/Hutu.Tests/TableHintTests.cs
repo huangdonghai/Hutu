@@ -3,7 +3,6 @@ using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 
 namespace Hutu.Tests;
@@ -237,6 +236,88 @@ public sealed class TableHintTests
             "<table id='t' height='1' cellpadding='0'><tr><td id='c'>wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww</td></tr></table>");
 
         Assert.That(Find(tall, "t").BorderBox.Height, Is.GreaterThan(1), "but content taller than the asking wins");
+    }
+
+    [Test]
+    public async Task ACellsWidthSizesItsColumnAndNotItsOwnContent()
+    {
+        using var view = await Render(
+            "<table cellpadding='0'><tr><td id='a' width='10'>aaaa</td></tr>" +
+            "<tr><td width='60'></td></tr></table>");
+
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(60), "the column takes the widest width its cells ask for");
+        Assert.That(Find(view, "a").Children[0].BorderBox.Height, Is.EqualTo(11), "and the words are laid out at the column's width, so they fit on one line");
+    }
+
+    [Test]
+    public async Task APercentageCellWidthIsAShareOfTheTable()
+    {
+        using var view = await Render(
+            "<table width='200' cellpadding='0' cellspacing='0'><tr><td id='a' width='25%'>A</td><td id='b'>B</td></tr></table>");
+
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(50), "a quarter of the room the columns share");
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(150), "and the rest to the column that asked for nothing");
+    }
+
+    [Test]
+    public async Task ACellHeightIsAFloorUnderItsRow()
+    {
+        using var view = await Render(
+            "<table cellpadding='0'><tr><td id='a' height='15'></td></tr><tr><td id='b'>x</td></tr></table>");
+
+        Assert.That(Find(view, "a").BorderBox.Height, Is.EqualTo(15), "the row is as tall as the cell asked to be");
+        Assert.That(Find(view, "b").BorderBox.Height, Is.EqualTo(11), "and the row below keeps its own height");
+    }
+
+    [Test]
+    public async Task ASurplusHeightGoesToTheRowsThatAskedForNone()
+    {
+        using var view = await Render(
+            "<table id='t' height='100' cellpadding='0' cellspacing='0'>" +
+            "<tr><td id='a' bgcolor='green'></td></tr>" +
+            "<tr><td id='b' height='10' bgcolor='pink'></td></tr>" +
+            "<tr><td id='c' bgcolor='blue'></td></tr></table>");
+
+        Assert.That(Find(view, "a").BorderBox.Height, Is.EqualTo(45), "half of what is left over");
+        Assert.That(Find(view, "b").BorderBox.Height, Is.EqualTo(10), "the row that asked for a height keeps it");
+        Assert.That(Find(view, "c").BorderBox.Height, Is.EqualTo(45), "and the other row that asked for none takes the other half");
+    }
+
+    [Test]
+    public async Task ASurplusHeightIsSharedOverEveryRowWhenEveryRowAsked()
+    {
+        using var view = await Render(
+            "<table id='t' height='100' cellpadding='0' cellspacing='0'>" +
+            "<tr><td height='10'></td></tr><tr><td height='10'></td></tr><tr><td height='10'></td></tr></table>");
+
+        var rows = Walk(Find(view, "t")).Where(box => box.Kind == LayoutKind.TableRow).ToList();
+
+        Assert.That(rows[0].BorderBox.Height, Is.EqualTo(100.0 / 3).Within(0.01), "the surplus is shared equally");
+        Assert.That(rows[1].BorderBox.Height, Is.EqualTo(rows[0].BorderBox.Height).Within(0.01));
+        Assert.That(rows[2].BorderBox.Height, Is.EqualTo(rows[0].BorderBox.Height).Within(0.01));
+        Assert.That(rows[0].BorderBox.Y, Is.EqualTo(0).Within(0.01));
+    }
+
+    [Test]
+    public async Task ASpanDoesNotMakeColumnsOfItsOwn()
+    {
+        using var view = await Render(
+            "<table id='t' width='300' cellspacing='10'><tr><td id='a'>A</td></tr>" +
+            "<tr><td id='b' colspan='2'>B</td></tr></table>");
+
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(280), "a row of one cell settles one column, however far the other row's cell spans");
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(280), "and the spanning cell takes it whole");
+    }
+
+    [Test]
+    public async Task ASpanReachesAcrossTheColumnsItsRowMakes()
+    {
+        using var view = await Render(
+            "<table id='t' width='300' cellspacing='10'><tr><td id='a' colspan='2'>A</td></tr>" +
+            "<tr><td id='b'>B</td><td id='c'>C</td></tr></table>");
+
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(280), "the span covers both columns");
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(135), "and the row of two cells settles them equal");
     }
 
     [Test]
