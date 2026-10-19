@@ -661,6 +661,10 @@ internal static class FusedStyleFactory
         // The table longhands are five property lookups no element that is not part of a table has a
         // use for, so they are only read where the display says the box is one. Every spelling of it
         // - table, inline-table, table-row, table-cell and the rest - carries the word.
+        // The column longhands are read for every box: a page that writes none of them costs two lookups,
+        // and a box that writes either is a multi-column container whatever its display says.
+        values.Multi = MulticolStyle.ReadFused(find, face, dimensions);
+
         values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)
             ? TableStyle.ReadFused(find, text.VerticalAlign, face, dimensions, PresentationalHints.Spacing(element) ?? 0, PresentationalHints.Collapses(element))
             : null;

@@ -2308,6 +2308,8 @@ internal readonly struct ComputedStyle
 
         internal TableStyle? Table;
 
+        internal MulticolStyle? Multi;
+
         internal PositionStyle? Position;
         internal GridItemStyle? GridItem;
 
@@ -3177,6 +3179,9 @@ internal readonly struct ComputedStyle
     /// the table longhands the box builder resolved instead. One that was not given any is not a
     /// table box, and the initial values are what every longhand of a box that is not one comes to.
     /// </remarks>
+    public MulticolStyle Multi =>
+        _values.Fused is null ? default : _values.Multi ?? default;
+
     public TableStyle Table =>
         _values.Fused is null
             ? _values.Table ??= TableStyle.Read(this, PresentationalHints.Spacing(_element) ?? 0, PresentationalHints.Collapses(_element))
