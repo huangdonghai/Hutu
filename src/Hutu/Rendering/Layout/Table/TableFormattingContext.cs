@@ -320,6 +320,7 @@ internal sealed partial class TableFormattingContext
         if (cell.Colors is { } colors)
         {
             layout.BorderColors = colors;
+            layout.BorderStyles = cell.LineStyles;
         }
 
         var hide = build.Style.HideEmptyCells && !build.Style.Collapse && cell.IsEmpty;

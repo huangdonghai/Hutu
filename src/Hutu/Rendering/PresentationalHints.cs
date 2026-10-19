@@ -60,6 +60,9 @@ internal static class PresentationalHints
     /// <summary>The side a rule leaves out of its ring, which leaves the side to whatever else asks for it.</summary>
     private const String NoBorder = "none";
 
+    /// <summary>The width a border begins with, which is what a frame draws where no border names one.</summary>
+    private const Double MediumBorderWidth = 3;
+
     /// <summary>The elements HTML gives a <c>bgcolor</c> hint to.</summary>
     private static readonly HashSet<String> BackgroundColors = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -200,10 +203,9 @@ internal static class PresentationalHints
 
     /// <summary>One ring a legacy attribute asks for: a width and a style for each of the four sides.</summary>
     /// <remarks>
-    /// A width of zero is a side the attribute leaves out - a <c>frame</c> naming two of the table's
-    /// sides, or a <c>rules</c> naming one direction of the cells - and draws nothing. Chrome gives the
-    /// two attributes different styles to the sides they leave out, and both were measured: a frame's
-    /// unnamed sides are <c>hidden</c>, and a rule's are <c>none</c>.
+    /// A side whose style is <c>none</c> or <c>hidden</c> draws nothing. The two are not the same in the
+    /// collapsing model - hidden suppresses the line it meets and none loses to it - so the difference is
+    /// kept, and the rendering section of the HTML standard is what says which side gets which.
     /// </remarks>
     internal readonly record struct Ring(
         Double Top,
@@ -215,19 +217,12 @@ internal static class PresentationalHints
         String BottomStyle,
         String LeftStyle);
 
-    private static Ring Sided(Double top, Double right, Double bottom, Double left, String drawn, String absent) =>
-        new(top, right, bottom, left,
-            top > 0 ? drawn : absent,
-            right > 0 ? drawn : absent,
-            bottom > 0 ? drawn : absent,
-            left > 0 ? drawn : absent);
-
     /// <summary>
-    /// Gets the ring the legacy border attributes ask of this element: the table's <c>frame</c> decides
-    /// which of its own sides are drawn, and its <c>rules</c> which sides of each cell are. Both are
-    /// read whether or not the <c>border</c> attribute is there, and either draws a line of its own when
-    /// <c>border</c> names no width: an attribute that survives on the page without a border still
-    /// draws, measured in Chrome.
+    /// Gets the ring the legacy border attributes ask of this element, read as the rendering section of
+    /// the HTML standard reads them. The table's own ring comes from <c>rules</c>, <c>border</c> and
+    /// <c>frame</c> in that order - a rules table hides its own edges and collapses, a border raises
+    /// them, and a frame names the sides - while cells, rows, row groups and column groups take the
+    /// borders the rules value puts on them.
     /// </summary>
     public static Ring? Border(IElement? element)
     {
@@ -236,13 +231,42 @@ internal static class PresentationalHints
             return null;
         }
 
-        if (element.LocalName.Equals("table", StringComparison.OrdinalIgnoreCase))
+        var name = element.LocalName;
+
+        if (name.Equals("table", StringComparison.OrdinalIgnoreCase))
         {
             return TableRing(element);
         }
 
-        return Cells.Contains(element.LocalName) ? CellRing(TableOf(element)) : null;
+        if (Cells.Contains(name))
+        {
+            return CellRing(TableOf(element));
+        }
+
+        if (name.Equals("tr", StringComparison.OrdinalIgnoreCase))
+        {
+            return RowRing(TableOf(element));
+        }
+
+        if (name.Equals("thead", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("tbody", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("tfoot", StringComparison.OrdinalIgnoreCase))
+        {
+            return RowGroupRing(TableOf(element));
+        }
+
+        return name.Equals("colgroup", StringComparison.OrdinalIgnoreCase) ? ColumnGroupRing(TableOf(element)) : null;
     }
+
+    /// <summary>
+    /// Gets whether the table's <c>rules</c> attribute puts it into the collapsing model, which the
+    /// standard's rendering section does for every value the attribute takes. A declaration the page
+    /// writes for <c>border-collapse</c> is read instead of this.
+    /// </summary>
+    public static Boolean Collapses(IElement? element) =>
+        element is not null &&
+        element.LocalName.Equals("table", StringComparison.OrdinalIgnoreCase) &&
+        RulesOf(element.GetAttribute("rules")) is not null;
 
     private static Ring? TableRing(IElement? table)
     {
@@ -251,20 +275,40 @@ internal static class PresentationalHints
             return null;
         }
 
-        if (FrameOf(table.GetAttribute("frame")) is { } frame)
+        var rules = RulesOf(table.GetAttribute("rules"));
+        var frame = FrameOf(table.GetAttribute("frame"));
+        var border = TableBorderWidth(table);
+        var sized = border is { } size && size > 0;
+
+        if (rules is null && !sized && frame is null)
         {
-            return Sided(
-                frame.Top ? 1 : 0,
-                frame.Right ? 1 : 0,
-                frame.Bottom ? 1 : 0,
-                frame.Left ? 1 : 0,
-                SolidBorder,
-                HiddenBorder);
+            return null;
         }
 
-        return TableBorderWidth(table) is { } width && width > 0
-            ? Sided(width, width, width, width, OutsetBorder, NoBorder)
-            : null;
+        // The standard's sheet sets the rules first, the border over it, and the frame over that, so a
+        // table with both a border and rules draws its border, and a frame names the sides after both.
+        var style = rules is not null ? HiddenBorder : NoBorder;
+        var width = sized ? border!.Value : MediumBorderWidth;
+
+        if (sized)
+        {
+            style = OutsetBorder;
+        }
+
+        if (frame is { } sides)
+        {
+            return new Ring(
+                sides.Top ? width : 0,
+                sides.Right ? width : 0,
+                sides.Bottom ? width : 0,
+                sides.Left ? width : 0,
+                sides.Top ? OutsetBorder : HiddenBorder,
+                sides.Right ? OutsetBorder : HiddenBorder,
+                sides.Bottom ? OutsetBorder : HiddenBorder,
+                sides.Left ? OutsetBorder : HiddenBorder);
+        }
+
+        return new Ring(width, width, width, width, style, style, style, style);
     }
 
     private static Ring? CellRing(IElement? table)
@@ -274,21 +318,39 @@ internal static class PresentationalHints
             return null;
         }
 
-        if (RulesOf(table.GetAttribute("rules")) is { } rules)
+        var rules = RulesOf(table.GetAttribute("rules"));
+
+        if (rules is { } value)
         {
-            return Sided(
-                rules.Top ? CellBorderWidth : 0,
-                rules.Right ? CellBorderWidth : 0,
-                rules.Bottom ? CellBorderWidth : 0,
-                rules.Left ? CellBorderWidth : 0,
-                SolidBorder,
-                NoBorder);
+            // The standard gives every cell a one-pixel border and takes back the sides the rules do
+            // not draw, so the width is there for the collapsing model while the style says what shows.
+            return value.Kind switch
+            {
+                RulesKind.All => new Ring(1, 1, 1, 1, SolidBorder, SolidBorder, SolidBorder, SolidBorder),
+                RulesKind.Cols => new Ring(1, 1, 1, 1, NoBorder, SolidBorder, NoBorder, SolidBorder),
+                _ => new Ring(1, 1, 1, 1, NoBorder, NoBorder, NoBorder, NoBorder),
+            };
         }
 
         return TableBorderWidth(table) is { } width && width > 0
-            ? Sided(CellBorderWidth, CellBorderWidth, CellBorderWidth, CellBorderWidth, InsetBorder, NoBorder)
+            ? new Ring(1, 1, 1, 1, InsetBorder, InsetBorder, InsetBorder, InsetBorder)
             : null;
     }
+
+    private static Ring? RowRing(IElement? table) =>
+        RulesOf(table?.GetAttribute("rules")) is { Kind: RulesKind.Rows }
+            ? new Ring(1, 1, 1, 1, SolidBorder, NoBorder, SolidBorder, NoBorder)
+            : null;
+
+    private static Ring? RowGroupRing(IElement? table) =>
+        RulesOf(table?.GetAttribute("rules")) is { Kind: RulesKind.Groups }
+            ? new Ring(1, 1, 1, 1, SolidBorder, NoBorder, SolidBorder, NoBorder)
+            : null;
+
+    private static Ring? ColumnGroupRing(IElement? table) =>
+        RulesOf(table?.GetAttribute("rules")) is { Kind: RulesKind.Groups }
+            ? new Ring(1, 1, 1, 1, NoBorder, SolidBorder, NoBorder, SolidBorder)
+            : null;
 
     /// <summary>
     /// Gets the colour a <c>bordercolor</c> attribute hints at: the table's, for the table itself and for
@@ -336,18 +398,30 @@ internal static class PresentationalHints
     };
 
     /// <summary>
-    /// Gets the sides a <c>rules</c> value draws between cells, or null where it names none of the
-    /// values HTML gives it. Chrome draws nothing for <c>groups</c>, measured, even where row and column
-    /// groups are written out: it is the same as <c>none</c>.
+    /// Gets what a <c>rules</c> value asks for, or null where it names none of the values the standard
+    /// gives it. Which boxes draw the lines differs by value: <c>rows</c> gives them to the rows,
+    /// <c>groups</c> to the row and column groups, and <c>all</c> and <c>cols</c> to the cells.
     /// </summary>
-    private static Sides? RulesOf(String? value) => value?.Trim().ToLowerInvariant() switch
+    private static Rules? RulesOf(String? value) => value?.Trim().ToLowerInvariant() switch
     {
-        "none" or "groups" => new Sides(false, false, false, false),
-        "rows" => new Sides(true, false, true, false),
-        "cols" => new Sides(false, true, false, true),
-        "all" => new Sides(true, true, true, true),
+        "none" => new Rules(RulesKind.None),
+        "groups" => new Rules(RulesKind.Groups),
+        "rows" => new Rules(RulesKind.Rows),
+        "cols" => new Rules(RulesKind.Cols),
+        "all" => new Rules(RulesKind.All),
         _ => null,
     };
+
+    private enum RulesKind : Byte
+    {
+        None,
+        Groups,
+        Rows,
+        Cols,
+        All,
+    }
+
+    private readonly record struct Rules(RulesKind Kind);
 
     private readonly record struct Sides(Boolean Top, Boolean Right, Boolean Bottom, Boolean Left);
 

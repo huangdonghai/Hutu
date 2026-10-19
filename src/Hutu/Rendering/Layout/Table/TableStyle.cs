@@ -73,12 +73,13 @@ internal readonly struct TableStyle
     /// <summary>Gets the cell's vertical alignment. Meaningful on a cell box.</summary>
     public CellVerticalAlignment VerticalAlign { get; }
 
-    internal static TableStyle Read(ComputedStyle style, Double spacing)
+    internal static TableStyle Read(ComputedStyle style, Double spacing, Boolean collapses)
     {
         var (horizontal, vertical) = ReadSpacing(style, spacing);
+        var declared = Text(style, "border-collapse");
 
         return new TableStyle(
-            Text(style, "border-collapse") == "collapse",
+            declared.Length > 0 ? declared == "collapse" : collapses,
             horizontal,
             vertical,
             Text(style, "table-layout") == "fixed",
@@ -106,12 +107,14 @@ internal readonly struct TableStyle
         String verticalAlign,
         LengthReader.FontSource font,
         IRenderDimensions dimensions,
-        Double spacing)
+        Double spacing,
+        Boolean collapses)
     {
         var (horizontal, vertical) = ReadSpacingFused(find("border-spacing"), spacing, font, dimensions);
+        var declared = Keyword(find("border-collapse"));
 
         return new TableStyle(
-            Keyword(find("border-collapse")) == "collapse",
+            declared.Length > 0 ? declared == "collapse" : collapses,
             horizontal,
             vertical,
             Keyword(find("table-layout")) == "fixed",

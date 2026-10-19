@@ -54,6 +54,10 @@ internal sealed class TableCellInfo
     /// them away from the cell's own style.</summary>
     public BorderColors? Colors;
 
+    /// <summary>Gets or sets the strokes of <see cref="UsedBorder"/>, which the collapsing model takes
+    /// from whichever border won each line - a row's or a column's as readily as the cell's own.</summary>
+    public BorderStyles LineStyles;
+
     /// <summary>Gets or sets whether the cell has no content, which <c>empty-cells</c> acts on.</summary>
     public Boolean IsEmpty = true;
 

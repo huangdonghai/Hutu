@@ -181,7 +181,7 @@ public sealed class TableHintTests
         using var view = await Render(
             "<table id='t' border='3' frame='above'><tr><td id='c'>A</td></tr></table>");
 
-        Assert.That(Sides(view, "t"), Is.EqualTo("1px,solid;0px,hidden;0px,hidden;0px,hidden"), "the top side alone, and a frame draws one pixel whatever the border asks for");
+        Assert.That(Sides(view, "t"), Is.EqualTo("3px,outset;0px,hidden;0px,hidden;0px,hidden"), "the top side alone, raised in the border's own width");
         Assert.That(Sides(view, "c"), Is.EqualTo("1px,inset;1px,inset;1px,inset;1px,inset"), "and the cells keep the ring the border attribute gives them");
     }
 
@@ -190,17 +190,17 @@ public sealed class TableHintTests
     {
         using var view = await Render("<table id='t' frame='box'><tr><td id='c'>A</td></tr></table>");
 
-        Assert.That(Sides(view, "t"), Is.EqualTo("1px,solid;1px,solid;1px,solid;1px,solid"), "the frame is a border of its own");
+        Assert.That(Sides(view, "t"), Is.EqualTo("3px,outset;3px,outset;3px,outset;3px,outset"), "a frame of no border draws the width a border begins with");
         Assert.That(Sides(view, "c"), Is.EqualTo("0px,none;0px,none;0px,none;0px,none"), "and it draws no ring around the cells");
     }
 
     [TestCase("void", "0px,hidden;0px,hidden;0px,hidden;0px,hidden")]
-    [TestCase("below", "0px,hidden;0px,hidden;1px,solid;0px,hidden")]
-    [TestCase("hsides", "1px,solid;0px,hidden;1px,solid;0px,hidden")]
-    [TestCase("vsides", "0px,hidden;1px,solid;0px,hidden;1px,solid")]
-    [TestCase("lhs", "0px,hidden;0px,hidden;0px,hidden;1px,solid")]
-    [TestCase("rhs", "0px,hidden;1px,solid;0px,hidden;0px,hidden")]
-    [TestCase("border", "1px,solid;1px,solid;1px,solid;1px,solid")]
+    [TestCase("below", "0px,hidden;0px,hidden;1px,outset;0px,hidden")]
+    [TestCase("hsides", "1px,outset;0px,hidden;1px,outset;0px,hidden")]
+    [TestCase("vsides", "0px,hidden;1px,outset;0px,hidden;1px,outset")]
+    [TestCase("lhs", "0px,hidden;0px,hidden;0px,hidden;1px,outset")]
+    [TestCase("rhs", "0px,hidden;1px,outset;0px,hidden;0px,hidden")]
+    [TestCase("border", "1px,outset;1px,outset;1px,outset;1px,outset")]
     [TestCase("x", "1px,outset;1px,outset;1px,outset;1px,outset")]
     public async Task TheFrameReadsTheValuesHtmlGivesIt(String value, String sides)
     {
@@ -225,18 +225,51 @@ public sealed class TableHintTests
         using var view = await Render("<table id='t' rules='all'><tr><td id='c'>A</td></tr></table>");
 
         Assert.That(Sides(view, "c"), Is.EqualTo("1px,solid;1px,solid;1px,solid;1px,solid"), "the rules are borders of their own");
-        Assert.That(Sides(view, "t"), Is.EqualTo("0px,none;0px,none;0px,none;0px,none"), "and the table writes no border");
+        Assert.That(Sides(view, "t"), Is.EqualTo("0px,hidden;0px,hidden;0px,hidden;0px,hidden"), "and the rules hide the table's own edges");
     }
 
     [TestCase("none", "0px,none;0px,none;0px,none;0px,none")]
     [TestCase("groups", "0px,none;0px,none;0px,none;0px,none")]
-    [TestCase("rows", "1px,solid;0px,none;1px,solid;0px,none")]
+    [TestCase("rows", "0px,none;0px,none;0px,none;0px,none")]
     [TestCase("x", "1px,inset;1px,inset;1px,inset;1px,inset")]
     public async Task TheRulesReadTheValuesHtmlGivesThem(String value, String sides)
     {
         using var view = await Render("<table border='1' rules='" + value + "'><tr><td id='c'>A</td></tr></table>");
 
         Assert.That(Sides(view, "c"), Is.EqualTo(sides), "groups draws nothing, measured, and a value that is no rule leaves the border attribute to answer");
+    }
+
+    [Test]
+    public async Task TheRulesDrawTheirTableCollapsed()
+    {
+        using var view = await Render("<table id='t' rules='none'><tr><td>A</td></tr></table>");
+
+        Assert.That(Table(view, "t").Collapse, Is.True, "the standard's sheet collapses every rules table");
+
+        using var separated = await Render("<table id='t'><tr><td>A</td></tr></table>");
+
+        Assert.That(Table(separated, "t").Collapse, Is.False, "a table without rules keeps its own model");
+    }
+
+    [Test]
+    public async Task ARowDrawsTheLinesOfRulesRows()
+    {
+        using var view = await Render(
+            "<table rules='rows'><tr id='r'><td id='c'>A</td></tr><tr><td>B</td></tr></table>");
+
+        Assert.That(Sides(view, "r"), Is.EqualTo("1px,solid;0px,none;1px,solid;0px,none"), "the rows carry the horizontal lines");
+        Assert.That(Sides(view, "c"), Is.EqualTo("0px,none;0px,none;0px,none;0px,none"), "and the cells none of them");
+    }
+
+    [Test]
+    public async Task ARowGroupDrawsTheLinesOfRulesGroups()
+    {
+        using var view = await Render(
+            "<table rules='groups'><thead id='g'><tr id='r'><td>A</td></tr></thead>" +
+            "<tbody><tr><td>B</td></tr></tbody></table>");
+
+        Assert.That(Sides(view, "r"), Is.EqualTo("0px,none;0px,none;0px,none;0px,none"), "a row draws nothing for groups");
+        Assert.That(Sides(view, "g"), Is.EqualTo("1px,solid;0px,none;1px,solid;0px,none"), "the group draws the lines at its own edges");
     }
 
     [Test]

@@ -441,6 +441,14 @@ public sealed class SkiaPaintExecutor
             return;
         }
 
+        // CSS 2.1 ¡ì8.5.3: a double line needs three pixels to be two lines and the gap between them, and
+        // a narrower border is drawn as a solid line instead.
+        if (style == BorderLineStyle.Double && width < 3)
+        {
+            FillBand(canvas, box, side, 0, width, color);
+            return;
+        }
+
         var dark = Darken(color);
         var light = Lighten(color);
         var topOrLeft = side is BorderSide.Top or BorderSide.Left;

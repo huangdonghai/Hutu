@@ -197,6 +197,62 @@ internal sealed partial class TableFormattingContext
             }
         }
 
+        // The table's first header group is rendered before every row and its first footer after them,
+        // however early or late the page writes them; any further header or footer is an ordinary body
+        // group and keeps its place. That is the HTML table model, and a page that writes its groups out
+        // of order relies on it. The whole group moves, not a row of it.
+        Box? head = null;
+        Box? foot = null;
+
+        foreach (var (_, group) in source)
+        {
+            if (group is null)
+            {
+                continue;
+            }
+
+            if (head is null && Section(group) == 0)
+            {
+                head = group;
+            }
+
+            if (foot is null && Section(group) == 2)
+            {
+                foot = group;
+            }
+        }
+
+        if (head is not null || foot is not null)
+        {
+            var ordered = new List<(Box Box, Box? Group)>(source.Count);
+
+            foreach (var entry in source)
+            {
+                if (head is not null && ReferenceEquals(entry.Group, head))
+                {
+                    ordered.Add(entry);
+                }
+            }
+
+            foreach (var entry in source)
+            {
+                if (!ReferenceEquals(entry.Group, head) && !ReferenceEquals(entry.Group, foot))
+                {
+                    ordered.Add(entry);
+                }
+            }
+
+            foreach (var entry in source)
+            {
+                if (foot is not null && ReferenceEquals(entry.Group, foot))
+                {
+                    ordered.Add(entry);
+                }
+            }
+
+            source = ordered;
+        }
+
         var occupied = new HashSet<(Int32 Row, Int32 Column)>();
 
         // A row settles the columns its cells reach across; a row of a single cell settles one, however
@@ -263,6 +319,29 @@ internal sealed partial class TableFormattingContext
 
             }
 
+            // A row that names fewer cells than the grid has columns is filled to the end with anonymous
+            // cells, which is what CSS 2.1 ¡ì17.2.1 asks for and what keeps a short row's edge on the same
+            // grid line as the rows above it. They carry the row's style: there is no element to match a
+            // cell rule against, so they have no border and the row's inherited properties.
+            for (var c = 0; c < columns; c++)
+            {
+                if (!occupied.Contains((r, c)))
+                {
+                    info.Cells.Add(new TableCellInfo
+                    {
+                        Box = new Box(BoxKind.TableCell, info.Box.Style) { IsAnonymous = true },
+                        Row = r,
+                        Column = c,
+                        Span = 1,
+                        RowSpan = 1,
+                        IsEmpty = true,
+                        Padding = Thickness.Zero,
+                    });
+                }
+            }
+
+            info.Cells.Sort(static (left, right) => left.Column.CompareTo(right.Column));
+
             build.Grid.Rows.Add(info);
         }
 
@@ -288,6 +367,14 @@ internal sealed partial class TableFormattingContext
         build.Grid.Columns = columns;
         CollectColumnHints(build, basis);
     }
+
+    /// <summary>Gets where a row group stands in the rendering order: header, body, footer.</summary>
+    private static Int32 Section(Box? group) => group?.Element?.LocalName.ToLowerInvariant() switch
+    {
+        "thead" => 0,
+        "tfoot" => 2,
+        _ => 1,
+    };
 
     /// <summary>
     /// Settles the border of every cell. In the separated model a cell keeps its own border. In the
@@ -427,6 +514,11 @@ internal sealed partial class TableFormattingContext
                     vertical[lastColumn].Color,
                     horizontal[lastRow].Color,
                     vertical[cell.Column].Color);
+                cell.LineStyles = new BorderStyles(
+                    horizontal[cell.Row].Line,
+                    vertical[lastColumn].Line,
+                    horizontal[lastRow].Line,
+                    vertical[cell.Column].Line);
                 cell.Insets = Add(cell.Padding, cell.UsedBorder);
             }
         }

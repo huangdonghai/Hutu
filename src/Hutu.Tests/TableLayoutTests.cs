@@ -313,6 +313,53 @@ public sealed class TableLayoutTests
         Assert.That(Painted(view, "b").Widths.Bottom, Is.EqualTo(0).Within(0.01));
     }
 
+    [Test]
+    public async Task AShortRowIsFilledToTheGrid()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table id='t'><tr><td>A</td><td>B</td><td>C</td></tr><tr id='r'><td>D</td></tr></table>" +
+            "</body></html>");
+
+        var cells = Walk(Find(view, "t")).Count(box => box.Kind == LayoutKind.TableCell);
+
+        Assert.That(cells, Is.EqualTo(6), "the short row is filled to the three columns the grid has");
+    }
+
+    [Test]
+    public async Task TheFirstHeaderIsRenderedFirstAndTheFirstFooterLast()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table><tbody><tr id='body'><td>B</td></tr></tbody>" +
+            "<thead><tr id='head'><td>H</td></tr></thead>" +
+            "<tfoot><tr id='foot'><td>F</td></tr></tfoot></table>" +
+            "</body></html>");
+
+        Assert.That(Find(view, "head").BorderBox.Y, Is.LessThan(Find(view, "body").BorderBox.Y), "the header is drawn above the rows");
+        Assert.That(Find(view, "foot").BorderBox.Y, Is.GreaterThan(Find(view, "body").BorderBox.Y), "and the footer below them");
+    }
+
+    [Test]
+    public async Task AColumnGroupDrawsTheLinesAtItsEdges()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<style>.g { border-left: 2px solid; border-right: 2px solid }</style>" +
+            "<table style='border-collapse:collapse'>" +
+            "<colgroup class='g'><col></colgroup><colgroup><col></colgroup>" +
+            "<tr><td id='a'>A</td><td id='b'>B</td></tr></table>" +
+            "</body></html>");
+
+        Assert.That(Painted(view, "a").Widths.Left, Is.EqualTo(2).Within(0.01), "the group's left edge is the table's own edge");
+        Assert.That(Painted(view, "a").Widths.Right, Is.EqualTo(1).Within(0.01), "and its right edge is the line the columns share");
+        Assert.That(Painted(view, "b").Widths.Left, Is.EqualTo(1).Within(0.01), "which the next column takes the other half of");
+        Assert.That(Painted(view, "b").Widths.Right, Is.EqualTo(0).Within(0.01), "the second group declared nothing");
+    }
+
     private static BorderCommand Painted(HutuViewInternal view, String id)
     {
         var box = Find(view, id);

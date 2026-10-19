@@ -237,6 +237,14 @@ internal sealed class Painter
         // bury the earlier float). It draws only what is inside it.
         if (box.Source.IsAnonymous)
         {
+            // An anonymous table cell is the exception: the border it carries is not the container's
+            // presentation borrowed but the half of a collapsed grid line the table settled on, and the
+            // row around it has nothing to paint it with.
+            if (box.Kind == LayoutKind.TableCell && !box.SuppressBorder)
+            {
+                AddBorder(box, style, target);
+            }
+
             PaintChildren(box, list, target, deferred);
             return;
         }
@@ -668,7 +676,7 @@ internal sealed class Painter
         target.Add(new BorderCommand(
             box.BorderBox,
             border,
-            style.BorderStyles,
+            box.BorderStyles ?? style.BorderStyles,
             box.Radii,
             colors?.Top ?? ToArgb(style.BorderTopColor ?? style.Color),
             colors?.Right ?? ToArgb(style.BorderRightColor ?? style.Color),

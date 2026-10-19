@@ -290,6 +290,11 @@ internal sealed class LayoutBox
     /// borders come from a shared table grid line.</summary>
     public BorderColors? BorderColors { get; set; }
 
+    /// <summary>Gets or sets the strokes to paint instead of the box's own, set with
+    /// <see cref="BorderColors"/>: a collapsed line is drawn in the stroke of whichever border won it,
+    /// which may be a row's or a column's rather than this box's.</summary>
+    public BorderStyles? BorderStyles { get; set; }
+
     public Rect ContentBox => new(
         BorderBox.X + Border.Left + Padding.Left,
         BorderBox.Y + Border.Top + Padding.Top,

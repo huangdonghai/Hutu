@@ -27,13 +27,14 @@ internal readonly struct CollapsedBorder
     public const Int32 OriginRow = 4;
     public const Int32 OriginCell = 5;
 
-    private CollapsedBorder(Double width, UInt32 color, Boolean hidden, Int32 styleRank, Int32 origin)
+    private CollapsedBorder(Double width, UInt32 color, Boolean hidden, Int32 styleRank, Int32 origin, BorderLineStyle line)
     {
         Width = width;
         Color = color;
         IsHidden = hidden;
         StyleRank = styleRank;
         Origin = origin;
+        Line = line;
     }
 
     public Double Width { get; }
@@ -45,13 +46,16 @@ internal readonly struct CollapsedBorder
 
     public Int32 StyleRank { get; }
 
+    /// <summary>Gets the stroke the line is drawn with, which the winning border brought to it.</summary>
+    public BorderLineStyle Line { get; }
+
     public Int32 Origin { get; }
 
     /// <summary>Gets whether anything is painted for this border.</summary>
     public Boolean IsVisible => !IsHidden && Width > 0;
 
     /// <summary>A border that paints nothing and loses every conflict.</summary>
-    public static CollapsedBorder None => new(0, 0, false, 0, -1);
+    public static CollapsedBorder None => new(0, 0, false, 0, -1, BorderLineStyle.None);
 
     /// <summary>Reads one side of a box as a collapsing candidate.</summary>
     public static CollapsedBorder Of(ComputedStyle style, BorderSide side, Int32 origin)
@@ -71,11 +75,11 @@ internal readonly struct CollapsedBorder
             // `none` and `hidden` both mean "no line here", but they differ in what they do to a
             // neighbour: `hidden` wins the conflict, `none` loses it.
             return keyword == "hidden"
-                ? new CollapsedBorder(0, 0, true, rank, origin)
+                ? new CollapsedBorder(0, 0, true, rank, origin, BorderLineStyle.None)
                 : None;
         }
 
-        return new CollapsedBorder(width, ToArgb(color), false, rank, origin);
+        return new CollapsedBorder(width, ToArgb(color), false, rank, origin, ComputedStyle.ToLineStyle(keyword));
     }
 
     /// <summary>Picks the border that wins the conflict between two candidates on the same line.</summary>
@@ -84,7 +88,7 @@ internal readonly struct CollapsedBorder
         if (left.IsHidden || right.IsHidden)
         {
             return (left.IsHidden ? left : right).Width == 0
-                ? new CollapsedBorder(0, 0, true, 9, Math.Max(left.Origin, right.Origin))
+                ? new CollapsedBorder(0, 0, true, 9, Math.Max(left.Origin, right.Origin), BorderLineStyle.None)
                 : (left.IsHidden ? left : right);
         }
 

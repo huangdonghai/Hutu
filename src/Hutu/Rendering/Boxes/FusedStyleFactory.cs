@@ -655,7 +655,7 @@ internal static class FusedStyleFactory
         // use for, so they are only read where the display says the box is one. Every spelling of it
         // - table, inline-table, table-row, table-cell and the rest - carries the word.
         values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)
-            ? TableStyle.ReadFused(find, text.VerticalAlign, face, dimensions, PresentationalHints.Spacing(element) ?? 0)
+            ? TableStyle.ReadFused(find, text.VerticalAlign, face, dimensions, PresentationalHints.Spacing(element) ?? 0, PresentationalHints.Collapses(element))
             : null;
 
         // The flex longhands are read for a flex container - every spelling carries the word - and
