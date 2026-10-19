@@ -72,6 +72,12 @@ internal sealed partial class TableFormattingContext
 
         public List<Double?> ColumnHints { get; } = new();
 
+        /// <summary>Gets the <c>col</c> box standing for each grid column, or null where none does.</summary>
+        public List<Box?> ColumnBoxes { get; } = new();
+
+        /// <summary>Gets the <c>colgroup</c> box standing over each grid column, or null where none does.</summary>
+        public List<Box?> ColumnGroupBoxes { get; } = new();
+
         public Double CaptionTop;
 
         public Double CaptionBottom;
@@ -332,6 +338,69 @@ internal sealed partial class TableFormattingContext
             }
         }
 
+        // The rows, row groups, columns and column groups meet the same lines the cells do (CSS 2.1
+        // ¡ì17.6.2): a row's top and bottom meet the two horizontal lines it sits between, a column's
+        // left and right the vertical ones, and a group's borders only the lines at its own outer
+        // edges. A row's left and right reach no line but the table's outer ones, and a column's top
+        // and bottom likewise: the grid keeps one line per line, so the widest of them stands for all.
+        for (var r = 0; r < rows; r++)
+        {
+            var row = grid.Rows[r];
+            var rowStyle = row.Box.Style;
+
+            horizontal[r] = CollapsedBorder.Resolve(horizontal[r], CollapsedBorder.Of(rowStyle, BorderSide.Top, CollapsedBorder.OriginRow));
+            horizontal[r + 1] = CollapsedBorder.Resolve(horizontal[r + 1], CollapsedBorder.Of(rowStyle, BorderSide.Bottom, CollapsedBorder.OriginRow));
+            vertical[0] = CollapsedBorder.Resolve(vertical[0], CollapsedBorder.Of(rowStyle, BorderSide.Left, CollapsedBorder.OriginRow));
+            vertical[grid.Columns] = CollapsedBorder.Resolve(vertical[grid.Columns], CollapsedBorder.Of(rowStyle, BorderSide.Right, CollapsedBorder.OriginRow));
+
+            if (row.Group is { } group)
+            {
+                var first = r == 0 || !ReferenceEquals(grid.Rows[r - 1].Group, group);
+                var last = r == rows - 1 || !ReferenceEquals(grid.Rows[r + 1].Group, group);
+
+                if (first)
+                {
+                    horizontal[r] = CollapsedBorder.Resolve(horizontal[r], CollapsedBorder.Of(group.Style, BorderSide.Top, CollapsedBorder.OriginRowGroup));
+                    vertical[0] = CollapsedBorder.Resolve(vertical[0], CollapsedBorder.Of(group.Style, BorderSide.Left, CollapsedBorder.OriginRowGroup));
+                }
+
+                if (last)
+                {
+                    horizontal[r + 1] = CollapsedBorder.Resolve(horizontal[r + 1], CollapsedBorder.Of(group.Style, BorderSide.Bottom, CollapsedBorder.OriginRowGroup));
+                    vertical[grid.Columns] = CollapsedBorder.Resolve(vertical[grid.Columns], CollapsedBorder.Of(group.Style, BorderSide.Right, CollapsedBorder.OriginRowGroup));
+                }
+            }
+        }
+
+        for (var c = 0; c < grid.Columns; c++)
+        {
+            if (c < build.ColumnBoxes.Count && build.ColumnBoxes[c] is { } column)
+            {
+                vertical[c] = CollapsedBorder.Resolve(vertical[c], CollapsedBorder.Of(column.Style, BorderSide.Left, CollapsedBorder.OriginColumn));
+                vertical[c + 1] = CollapsedBorder.Resolve(vertical[c + 1], CollapsedBorder.Of(column.Style, BorderSide.Right, CollapsedBorder.OriginColumn));
+                horizontal[0] = CollapsedBorder.Resolve(horizontal[0], CollapsedBorder.Of(column.Style, BorderSide.Top, CollapsedBorder.OriginColumn));
+                horizontal[rows] = CollapsedBorder.Resolve(horizontal[rows], CollapsedBorder.Of(column.Style, BorderSide.Bottom, CollapsedBorder.OriginColumn));
+            }
+
+            if (c < build.ColumnGroupBoxes.Count && build.ColumnGroupBoxes[c] is { } columnGroup)
+            {
+                var first = c == 0 || !ReferenceEquals(build.ColumnGroupBoxes[c - 1], columnGroup);
+                var last = c == grid.Columns - 1 || c + 1 >= build.ColumnGroupBoxes.Count || !ReferenceEquals(build.ColumnGroupBoxes[c + 1], columnGroup);
+
+                if (first)
+                {
+                    vertical[c] = CollapsedBorder.Resolve(vertical[c], CollapsedBorder.Of(columnGroup.Style, BorderSide.Left, CollapsedBorder.OriginColumnGroup));
+                    horizontal[0] = CollapsedBorder.Resolve(horizontal[0], CollapsedBorder.Of(columnGroup.Style, BorderSide.Top, CollapsedBorder.OriginColumnGroup));
+                }
+
+                if (last)
+                {
+                    vertical[c + 1] = CollapsedBorder.Resolve(vertical[c + 1], CollapsedBorder.Of(columnGroup.Style, BorderSide.Right, CollapsedBorder.OriginColumnGroup));
+                    horizontal[rows] = CollapsedBorder.Resolve(horizontal[rows], CollapsedBorder.Of(columnGroup.Style, BorderSide.Bottom, CollapsedBorder.OriginColumnGroup));
+                }
+            }
+        }
+
         // The table's own border only competes on the outermost lines, where it takes the lowest
         // origin and therefore only wins when no cell asked for something wider.
         var style = build.Box.Style;
@@ -492,6 +561,8 @@ internal sealed partial class TableFormattingContext
             {
                 case BoxKind.TableColumn:
                     build.ColumnHints.Add(HintOf(child, basis));
+                    build.ColumnBoxes.Add(child);
+                    build.ColumnGroupBoxes.Add(null);
                     break;
 
                 case BoxKind.TableColumnGroup:
@@ -502,6 +573,8 @@ internal sealed partial class TableFormattingContext
                         if (column.Kind == BoxKind.TableColumn)
                         {
                             build.ColumnHints.Add(HintOf(column, basis) ?? group);
+                            build.ColumnBoxes.Add(column);
+                            build.ColumnGroupBoxes.Add(child);
                         }
                     }
 

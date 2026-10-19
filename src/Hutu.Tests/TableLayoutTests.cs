@@ -1,7 +1,10 @@
+using Hutu.Rendering;
 using Hutu.Rendering.Layout;
+using Hutu.Rendering.Paint;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Hutu.Tests;
@@ -244,6 +247,79 @@ public sealed class TableLayoutTests
 
         Assert.That(cell.BorderBox.Height, Is.EqualTo(62).Within(1), "as tall as the tallest cell, whose 60 pixels sit inside a pixel of room");
         Assert.That(line.BorderBox.Y - cell.BorderBox.Y, Is.EqualTo(26).Within(0.5), "(60 - 10) / 2, plus the room above the content");
+    }
+
+    [Test]
+    public async Task ARowsBorderMeetsTheLinesAboveAndBelowIt()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:collapse'>" +
+            "<tr style='border-top:2px solid;border-bottom:1px solid'><td id='a'>A</td></tr>" +
+            "<tr style='border-bottom:3px solid'><td id='b'>B</td></tr>" +
+            "</table></body></html>");
+
+        Assert.That(Painted(view, "a").Widths.Top, Is.EqualTo(2).Within(0.01), "the top line is the table's edge, so the cell paints all of it");
+        Assert.That(Painted(view, "a").Widths.Bottom, Is.EqualTo(0.5).Within(0.01), "the line between the rows is shared, so each cell paints half of it");
+        Assert.That(Painted(view, "b").Widths.Top, Is.EqualTo(0.5).Within(0.01), "and the row below takes the other half");
+        Assert.That(Painted(view, "b").Widths.Bottom, Is.EqualTo(3).Within(0.01), "the last line is the table's other edge");
+    }
+
+    [Test]
+    public async Task AColumnsBorderMeetsTheLinesBesideItsCells()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:collapse'>" +
+            "<colgroup><col style='border-left:4px solid;border-right:2px solid'><col></colgroup>" +
+            "<tr><td id='a'>A</td><td id='b'>B</td></tr>" +
+            "</table></body></html>");
+
+        Assert.That(Painted(view, "a").Widths.Left, Is.EqualTo(4).Within(0.01), "the column's border at the table's edge");
+        Assert.That(Painted(view, "a").Widths.Right, Is.EqualTo(1).Within(0.01), "and half of the line it shares with the next column");
+        Assert.That(Painted(view, "b").Widths.Left, Is.EqualTo(1).Within(0.01), "which the next column takes the other half of");
+        Assert.That(Painted(view, "b").Widths.Right, Is.EqualTo(0).Within(0.01), "the last column declared nothing");
+    }
+
+    [Test]
+    public async Task ACellWinsTheLineItSharesWithItsRow()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:collapse'>" +
+            "<tr style='border-top:2px solid'><td id='a' style='border-top:2px double'>A</td></tr>" +
+            "</table></body></html>");
+
+        Assert.That(Painted(view, "a").Styles.Top, Is.EqualTo(BorderLineStyle.Double), "the same width, but the cell's style is the more emphatic");
+        Assert.That(Painted(view, "a").Widths.Top, Is.EqualTo(2).Within(0.01));
+    }
+
+    [Test]
+    public async Task AHiddenTableBorderHidesTheTablesOwnEdge()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:collapse;border-style:hidden'>" +
+            "<tr style='border-bottom:2px solid'><td id='a'>A</td></tr>" +
+            "<tr style='border-top:2px solid'><td id='b'>B</td></tr>" +
+            "</table></body></html>");
+
+        Assert.That(Painted(view, "a").Widths.Top, Is.EqualTo(0).Within(0.01), "hidden wins the table's own edge");
+        Assert.That(Painted(view, "a").Widths.Bottom, Is.EqualTo(1).Within(0.01), "but the line between the rows is still drawn");
+        Assert.That(Painted(view, "b").Widths.Bottom, Is.EqualTo(0).Within(0.01));
+    }
+
+    private static BorderCommand Painted(HutuViewInternal view, String id)
+    {
+        var box = Find(view, id);
+
+        return view.Paint!.Commands.OfType<BorderCommand>()
+            .First(command => Math.Abs(command.Bounds.X - box.BorderBox.X) < 0.01 &&
+                              Math.Abs(command.Bounds.Y - box.BorderBox.Y) < 0.01);
     }
 
     private static HutuViewInternal CreateView(Int32 viewportWidth)
