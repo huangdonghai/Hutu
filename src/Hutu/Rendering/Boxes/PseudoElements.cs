@@ -118,10 +118,31 @@ internal sealed class PseudoRuleIndex
             return;
         }
 
-        // What is left when the pseudo-element is taken off selects the originating element. An arm
+        // A marker hangs on a generated box as readily as on an element, and the two are different boxes:
+        // `li::before::marker` is the marker of the box the li's `::before` generates, which Pseudo-
+        // Elements 4 §4.2 lists as valid, while the plain `::marker` - which Selectors 4 expands to
+        // `*::marker` - does not select it, as Lists 3 §3.1.1 repeats. So the generated box's own name is
+        // taken off with the marker's, and the arm is kept against the box it belongs to rather than
+        // against every marker of the element.
+        PseudoArm? origin = null;
+
+        if (arm == PseudoArm.Marker &&
+            EndsWithPseudoElement(text, start, colon, out var inner, out var innerColon))
+        {
+            // A marker has no marker of its own, and an arm that asks for one selects nothing at all.
+            if (inner == PseudoArm.Marker)
+            {
+                return;
+            }
+
+            origin = inner;
+            colon = innerColon;
+        }
+
+        // What is left when the pseudo-elements are taken off selects the originating element. An arm
         // written `::before` alone is written for every element, which is what `*` says.
         var rest = text[Math.Min(colon, start)..colon].Trim();
-        ArmsOf(arm).Add(rest.Length == 0 ? "*" : rest, order);
+        ArmsOf(arm).Add(rest.Length == 0 ? "*" : rest, order, origin);
     }
 
     /// <summary>Gets the arms of one pseudo-element out of the three the index keeps.</summary>
@@ -277,17 +298,25 @@ internal sealed class PseudoRuleIndex
     /// Gets the cascade the pseudo-element of <paramref name="arm"/> matches on
     /// <paramref name="element"/>, or null when no arm of the sheet is written for it.
     /// </summary>
+    /// <param name="origin">
+    /// The generated box the marker of <paramref name="arm"/> hangs on, where one is asked for:
+    /// <see cref="PseudoArm.Before"/> for the marker of the element's <c>::before</c>, and null for the
+    /// marker of the element itself. An arm is kept against one or the other, never both, which is what
+    /// keeps <c>*::marker</c> out of the markers generated boxes make.
+    /// </param>
     /// <remarks>
     /// The pseudo-element itself is the last step of the arm and was taken off before the arm was
     /// matched, so the specificity the cascade sorts by is the arm's own plus the one a
     /// pseudo-element counts for - which Selectors 4 §17 puts in the same place as a type selector, and
-    /// which AngleSharp's own <c>PseudoElementSelector</c> also answers with.
+    /// which AngleSharp's own <c>PseudoElementSelector</c> also answers with. A marker of a generated box
+    /// is two pseudo-elements, so it is two type selectors.
     /// </remarks>
     internal MatchedCascade? Cascade(
         PseudoArm arm,
         IElement element,
         List<ICssStyleRule> rules,
-        RuleOrigin[] origins)
+        RuleOrigin[] origins,
+        PseudoArm? origin = null)
     {
         var arms = ArmsOf(arm);
 
@@ -296,6 +325,8 @@ internal sealed class PseudoRuleIndex
             return null;
         }
 
+        // Every pseudo-element the arm named counts as a type selector of its own.
+        var pseudo = origin is null ? Priority.OneTag : Priority.OneTag + Priority.OneTag;
         var candidates = arms.Candidates(element);
         var matched = new List<MatchedRule>(candidates.Count);
         var priorities = new List<Priority>(candidates.Count);
@@ -305,12 +336,13 @@ internal sealed class PseudoRuleIndex
         {
             var entry = arms.Arms[candidates[i]];
 
-            if (entry.Selector is null || !entry.Selector.Match(element, scope))
+            if (entry.Origin != origin ||
+                entry.Selector is null || !entry.Selector.Match(element, scope))
             {
                 continue;
             }
 
-            var specificity = entry.Selector.Specificity + Priority.OneTag;
+            var specificity = entry.Selector.Specificity + pseudo;
             var at = matched.Count;
 
             while (at > 0 && priorities[at - 1] > specificity)
@@ -325,18 +357,25 @@ internal sealed class PseudoRuleIndex
         return matched.Count == 0 ? null : new MatchedCascade(matched, null);
     }
 
-    /// <summary>One arm, with the selector it was left as and the rule its declarations came from.</summary>
+    /// <summary>
+    /// One arm, with the selector it was left as, the rule its declarations came from and the generated
+    /// box it was written for, where a marker was.
+    /// </summary>
     private sealed class Arm
     {
-        internal Arm(String text, Int32 rule)
+        internal Arm(String text, Int32 rule, PseudoArm? origin)
         {
             Text = text;
             Rule = rule;
+            Origin = origin;
         }
 
         internal String Text { get; }
 
         internal Int32 Rule { get; }
+
+        /// <summary>The generated box a marker of this arm belongs to, or null for the element itself.</summary>
+        internal PseudoArm? Origin { get; }
 
         /// <summary>The parsed selector, or null when the parser would not take the text.</summary>
         internal ISelector? Selector;
@@ -354,7 +393,8 @@ internal sealed class PseudoRuleIndex
 
         internal Int32 Count => Arms.Count;
 
-        internal void Add(String selectorText, Int32 rule) => Arms.Add(new Arm(selectorText, rule));
+        internal void Add(String selectorText, Int32 rule, PseudoArm? origin) =>
+            Arms.Add(new Arm(selectorText, rule, origin));
 
         /// <summary>
         /// Parses the arms and files them by key. Nothing of this happens until an element asks, and
@@ -498,6 +538,7 @@ internal static class GeneratedContent
         FontFaceTable? faces,
         StyleResolution state,
         IImageProvider? images,
+        ICssParser? parser,
         WritingModeInfo flow)
     {
         if (index.Pseudo.IsEmpty)
@@ -513,8 +554,8 @@ internal static class GeneratedContent
             return;
         }
 
-        Put(box, element, index, PseudoArm.Before, style, cascade, variables, parent, device, faces, state, images, flow);
-        Put(box, element, index, PseudoArm.After, style, cascade, variables, parent, device, faces, state, images, flow);
+        Put(box, element, index, PseudoArm.Before, style, cascade, variables, parent, device, faces, state, images, parser, flow);
+        Put(box, element, index, PseudoArm.After, style, cascade, variables, parent, device, faces, state, images, parser, flow);
     }
 
     private static void Put(
@@ -530,6 +571,7 @@ internal static class GeneratedContent
         FontFaceTable? faces,
         StyleResolution state,
         IImageProvider? images,
+        ICssParser? parser,
         WritingModeInfo flow)
     {
         var pseudo = index.Pseudo.Cascade(arm, element, index.Rules, index.Origins);
@@ -598,6 +640,16 @@ internal static class GeneratedContent
                 {
                     container.Children.Add(Run(inside, element, pseudoStyle, flow));
                 }
+            }
+
+            // A generated box shown `list-item` makes a marker of its own, and the arms written for that
+            // marker - `li::before::marker` - are read over the box rather than over the element it came
+            // from. Those arms name a box, not a node of the tree, so nothing else in the cascade sees them.
+            if (index.Pseudo.HasMarkers && kind is BoxKind.Block or BoxKind.InlineBlock)
+            {
+                ListMarkers.ApplyMarker(
+                    container, element, pseudoStyle, pseudo, variables, parent,
+                    index, device, faces, state, parser, arm);
             }
 
             Insert(arm, box, new List<Box> { container });
@@ -700,6 +752,57 @@ internal static class GeneratedContent
         {
             InsertLast(host, generated);
         }
+
+        GroupInlineRuns(host);
+    }
+
+    /// <summary>
+    /// Wraps the inline-level runs of a block container that has come to hold block-level children too.
+    /// </summary>
+    /// <remarks>
+    /// §9.2.1.1 asks for this whenever inline content stands beside a block in a block container, and a
+    /// generated box is exactly how content comes to stand there after the fact: the grouping the builder
+    /// did over the element's own children declined to wrap an inline run when nothing was beside it, and
+    /// the block-level generated box inserted here is beside it now. Left unwrapped, the run is content no
+    /// block layout looks at - a block container lays its block-level children out and hands the lines to
+    /// nobody - and the element's own words vanish from the page.
+    /// </remarks>
+    private static void GroupInlineRuns(Box host)
+    {
+        if (host.Kind is not (BoxKind.Block or BoxKind.InlineBlock))
+        {
+            return;
+        }
+
+        var inline = false;
+        var block = false;
+
+        foreach (var child in host.Children)
+        {
+            // A box that left the flow takes no part in what stands beside what.
+            if (PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (child.IsInlineLevel)
+            {
+                inline = true;
+            }
+            else
+            {
+                block = true;
+            }
+        }
+
+        if (!inline || !block)
+        {
+            return;
+        }
+
+        var children = new List<Box>(host.Children);
+        host.Children.Clear();
+        BoxBuilder.GroupChildren(host, children);
     }
 
     /// <summary>

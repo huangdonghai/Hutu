@@ -231,6 +231,11 @@ internal static class ListMarkers
     /// the marker's cascade is what every resolver reads.
     /// </para>
     /// </remarks>
+    /// <param name="origin">
+    /// The generated box whose marker is being resolved, where the item is one: <c>::before</c> for the
+    /// list item a <c>::before</c> generates. Null for an item that is an element, whose marker is the one
+    /// the arms written for the element come to.
+    /// </param>
     public static void ApplyMarker(
         Box item,
         IElement element,
@@ -242,14 +247,15 @@ internal static class ListMarkers
         HutuRenderDevice device,
         FontFaceTable? faces,
         StyleResolution state,
-        ICssParser? parser)
+        ICssParser? parser,
+        PseudoArm? origin = null)
     {
         if (!style.Display.Equals("list-item", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
-        var marker = index.Pseudo.Cascade(PseudoArm.Marker, element, index.Rules, index.Origins);
+        var marker = index.Pseudo.Cascade(PseudoArm.Marker, element, index.Rules, index.Origins, origin);
 
         if (marker is null)
         {

@@ -354,7 +354,7 @@ internal static partial class BoxBuilder
         // child is in place - and before the markers are, because CSS 2.1 §12.5.1 puts a marker
         // stated `inside` its item "before the element's content and before any :before
         // pseudo-elements", which is the order the reader sees them in.
-        GeneratedContent.Place(box, element, index, style, cascade, variables, parent, device, faces, state, images, flow);
+        GeneratedContent.Place(box, element, index, style, cascade, variables, parent, device, faces, state, images, parser, flow);
 
         // Every child is here now, so this is the first point at which an item can be told which item it
         // is. The same call runs in the render-tree builder, which is what keeps the two trees marking
