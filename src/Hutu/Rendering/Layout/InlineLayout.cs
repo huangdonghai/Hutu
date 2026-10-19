@@ -171,7 +171,10 @@ internal sealed class InlineLayout
             inline = Math.Max(inline, line.Indent + line.Used);
         }
 
-        return new InlineContentSize(inline, block);
+        // The leading a block trims away is not height it takes, in the measure as in the arrangement.
+        var (trimStart, trimEnd) = Trim(container, lines);
+
+        return new InlineContentSize(inline, Math.Max(0, block - trimStart - trimEnd));
     }
 
     /// <summary>
@@ -404,7 +407,11 @@ internal sealed class InlineLayout
         // settled and will not move again.
         DistributeSpace(lines);
 
-        var cursor = 0.0;
+        // CSS Inline 3 ยง5.1: a block may trim the leading away at its start and end, so the first and last
+        // lines stand with their text edge on the block's edge. The line box is not resized - the lines
+        // simply start above the block's start and the block's height ends at the last text edge.
+        var (trimStart, trimEnd) = Trim(container, lines);
+        var cursor = -trimStart;
         var step = new InlineStep();
 
         foreach (var line in lines)
@@ -485,8 +492,80 @@ internal sealed class InlineLayout
             cursor += line.Height;
         }
 
-        return cursor;
+        return Math.Max(0, cursor - trimEnd);
     }
+
+    /// <summary>
+    /// Gets the leading the block cuts away at its start and its end: what stands between the line's box
+    /// edge and the line its <c>text-box-edge</c> names, for the ends the trim reaches.
+    /// </summary>
+    private (Double Start, Double End) Trim(Box container, List<Line> lines)
+    {
+        var trim = container.Style.TextBoxTrim;
+
+        if (trim == TextBoxTrim.None)
+        {
+            return (0, 0);
+        }
+
+        var (first, last) = ContentEnds(lines);
+        var start = first is not null && trim is TextBoxTrim.Start or TextBoxTrim.Both
+            ? Leading(first, container.Style.TextBoxEdgeStart, atStart: true)
+            : 0;
+        var end = last is not null && trim is TextBoxTrim.End or TextBoxTrim.Both
+            ? Leading(last, container.Style.TextBoxEdgeEnd, atStart: false)
+            : 0;
+
+        return (start, end);
+    }
+
+    /// <summary>Gets the first and the last line of the block that carry anything on them.</summary>
+    private static (Line? First, Line? Last) ContentEnds(List<Line> lines)
+    {
+        Line? first = null;
+        Line? last = null;
+
+        foreach (var line in lines)
+        {
+            if (line.Fragments.Count == 0)
+            {
+                continue;
+            }
+
+            first ??= line;
+            last = line;
+        }
+
+        return (first, last);
+    }
+
+    /// <summary>
+    /// Gets the distance from the line box's edge to the line its <c>text-box-edge</c> names: the text
+    /// box, a capital's top, the x-height, or the alphabetic baseline itself.
+    /// </summary>
+    private Double Leading(Line line, TextBoxEdge edge, Boolean atStart)
+    {
+        var style = atStart ? line.Fragments[0].Style : line.Fragments[^1].Style;
+        var metrics = _measurer.GetMetrics(style.GetFont());
+
+        // The line's leading is split evenly over the text box, and the edge asked for stands somewhere
+        // inside that box: what is trimmed is the half-leading plus the part of the box the edge leaves.
+        var textBox = metrics.Ascent + metrics.Descent;
+        var halfLeading = Math.Max(0, (line.Height - textBox) / 2);
+
+        return atStart
+            ? halfLeading + Math.Max(0, metrics.Ascent - Edge(metrics, edge, atStart: true))
+            : halfLeading + Math.Max(0, metrics.Descent - Edge(metrics, edge, atStart: false));
+    }
+
+    private static Double Edge(FontMetrics metrics, TextBoxEdge edge, Boolean atStart) => edge switch
+    {
+        TextBoxEdge.Cap => metrics.CapHeight,
+        TextBoxEdge.Ex => metrics.XHeight,
+        TextBoxEdge.Alphabetic => 0,
+        TextBoxEdge.Ideographic or TextBoxEdge.IdeographicInk => atStart ? metrics.Ascent : metrics.Descent,
+        _ => atStart ? metrics.Ascent : metrics.Descent,
+    };
 
     /// <summary>
     /// Opens the box an inline element draws through on this line.
@@ -3163,7 +3242,7 @@ internal sealed class InlineLayout
         {
             var isSpace = TextChunker.IsCollapsible(source, start, length);
 
-            // CSS Text 3 ก์4.1.1: a collapsible space at the head of a line is removed - the line begins
+            // CSS Text 3 ยง4.1.1: a collapsible space at the head of a line is removed - the line begins
             // with what follows the break, not with the white space that stood around it. A mode that
             // keeps its spaces (pre, pre-wrap, break-spaces) keeps them wherever the line starts.
             if (isSpace && _fragments.Count == 0 && style.CollapsesSpaces)

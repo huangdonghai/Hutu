@@ -280,6 +280,26 @@ internal sealed record FontArea
 /// was authored, and from the declarations otherwise. The initialisers are what an unfilled holder
 /// would read rather than a real answer, for the same reason.
 /// </remarks>
+/// <summary>Which ends of a block have their leading trimmed away (CSS Inline 3).</summary>
+internal enum TextBoxTrim : Byte
+{
+    None,
+    Start,
+    End,
+    Both,
+}
+
+/// <summary>The line a <c>text-box-edge</c> measures a block's edge to (CSS Inline 3).</summary>
+internal enum TextBoxEdge : Byte
+{
+    Text,
+    Cap,
+    Ex,
+    Alphabetic,
+    Ideographic,
+    IdeographicInk,
+}
+
 internal sealed record TextArea
 {
     internal String WhiteSpace { get; init; } = CssInitialValues.WhiteSpace;
@@ -312,6 +332,15 @@ internal sealed record TextArea
     /// space and draws nothing comes to here.
     /// </summary>
     internal String Visibility { get; init; } = CssInitialValues.Visibility;
+
+    /// <summary>Gets which ends of the block are trimmed to the edge of its first and last line.</summary>
+    internal TextBoxTrim Trim { get; init; } = TextBoxTrim.None;
+
+    /// <summary>Gets the line the block's start is trimmed to.</summary>
+    internal TextBoxEdge EdgeStart { get; init; } = TextBoxEdge.Text;
+
+    /// <summary>Gets the line the block's end is trimmed to.</summary>
+    internal TextBoxEdge EdgeEnd { get; init; } = TextBoxEdge.Text;
 }
 
 /// <summary>

@@ -2570,6 +2570,15 @@ internal readonly struct ComputedStyle
     /// <summary>Gets whether this box is seen, as the element and the ancestors above it settled it.</summary>
     public String Visibility => _values.Text.Visibility;
 
+    /// <summary>Gets which ends of the block have their leading trimmed away (CSS Inline 3).</summary>
+    public TextBoxTrim TextBoxTrim => _values.Text.Trim;
+
+    /// <summary>Gets the line the block's start is trimmed to.</summary>
+    public TextBoxEdge TextBoxEdgeStart => _values.Text.EdgeStart;
+
+    /// <summary>Gets the line the block's end is trimmed to.</summary>
+    public TextBoxEdge TextBoxEdgeEnd => _values.Text.EdgeEnd;
+
     /// <summary>
     /// Gets whether the box draws nothing of itself. <c>collapse</c> is counted in: a box that keeps its
     /// space and paints no lines of its own is painted the same way here as one that is hidden.

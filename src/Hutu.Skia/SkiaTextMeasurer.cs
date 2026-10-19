@@ -131,7 +131,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             primary.UnderlineOffset,
             primary.UnderlineThickness,
             primary.StrikeoutOffset,
-            primary.StrikeoutThickness);
+            primary.StrikeoutThickness,
+            capHeight: primary.CapHeight);
     }
 
     /// <summary>
@@ -441,7 +442,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             metrics.StrikeoutThickness ?? 0,
             // Skia's metrics carry no x-height, so the face itself is asked what it stands its lowercase
             // at; a font that does not say leaves the field empty and the layout guesses from the em.
-            xHeight: _openType.GetXHeight(font.Typeface, (Single)style.Size) ?? 0);
+            xHeight: _openType.GetXHeight(font.Typeface, (Single)style.Size) ?? 0,
+            capHeight: metrics.CapHeight);
     }
 
     private SKFont CreateFont(FontStyle style) => new(_resolver.Resolve(style), (Single)style.Size);

@@ -50,6 +50,10 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // Text Decoration 4's inset, which AngleSharp has no grammar for at all: without this the whole
         // declaration is dropped and the line runs to the edges of the text however the page asked.
         "text-decoration-inset",
+        // CSS Inline 3's leading trim, which AngleSharp has no grammar for either: the two properties
+        // are kept as text and read by the block layout.
+        "text-box-trim",
+        "text-box-edge",
         // The grid-lanes axis/packing descriptor, which AngleSharp has no grammar for at all; the lanes
         // formatting context reads it as text.
         "grid-lanes-direction",

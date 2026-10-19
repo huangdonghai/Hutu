@@ -21,7 +21,8 @@ public readonly struct FontMetrics
         Double strikeoutThickness,
         Double overlineOffset = 0,
         Double overlineThickness = 0,
-        Double xHeight = 0)
+        Double xHeight = 0,
+        Double capHeight = 0)
     {
         Ascent = ascent;
         Descent = descent;
@@ -33,6 +34,7 @@ public readonly struct FontMetrics
         OverlineOffset = overlineOffset;
         OverlineThickness = overlineThickness;
         XHeight = xHeight;
+        CapHeight = capHeight;
     }
 
     /// <summary>Gets the distance from the baseline to the top of the em box, as a positive value.</summary>
@@ -73,4 +75,7 @@ public readonly struct FontMetrics
     /// metrics do not carry.
     /// </summary>
     public Double XHeight { get; }
+
+    /// <summary>Gets the distance from the baseline to the top of a capital letter, or zero where the face does not say.</summary>
+    public Double CapHeight { get; }
 }

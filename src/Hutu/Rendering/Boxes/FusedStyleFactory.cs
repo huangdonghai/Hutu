@@ -382,6 +382,9 @@ internal static class FusedStyleFactory
                 VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign, PresentationalHints.Valign(element)),
                 Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, face, dimensions),
                 Visibility = ComputedStyle.ResolveVisibilityFused(find("visibility"), parent.Visibility),
+                Trim = Trim(find("text-box-trim")?.Value),
+                EdgeStart = Edge(find("text-box-edge")?.Value, first: true),
+                EdgeEnd = Edge(find("text-box-edge")?.Value, first: false),
             };
 
             text = pool is null ? built : pool.Text(built);
@@ -720,4 +723,39 @@ internal static class FusedStyleFactory
                 ? WritingModeInfo.Horizontal
                 : new WritingModeInfo(mode, TextOrientation.Mixed, false, direction)
             : new WritingModeInfo(mode, orientation ?? TextOrientation.Mixed, combine ?? false, direction);
+
+    /// <summary>Reads the ends a <c>text-box-trim</c> value names.</summary>
+    private static TextBoxTrim Trim(String? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "trim-start" => TextBoxTrim.Start,
+        "trim-end" => TextBoxTrim.End,
+        "trim-both" => TextBoxTrim.Both,
+        _ => TextBoxTrim.None,
+    };
+
+    /// <summary>
+    /// Reads one of the two edges a <c>text-box-edge</c> value may name: a single edge is the one both
+    /// ends take, and a value that names no edge the engine knows leaves the text box to be trimmed to.
+    /// </summary>
+    private static TextBoxEdge Edge(String? value, Boolean first)
+    {
+        var parts = value?.Trim().ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts is not { Length: > 0 })
+        {
+            return TextBoxEdge.Text;
+        }
+
+        var part = first || parts.Length == 1 ? parts[0] : parts[1];
+
+        return part switch
+        {
+            "cap" => TextBoxEdge.Cap,
+            "ex" => TextBoxEdge.Ex,
+            "alphabetic" => TextBoxEdge.Alphabetic,
+            "ideographic" => TextBoxEdge.Ideographic,
+            "ideographic-ink" => TextBoxEdge.IdeographicInk,
+            _ => TextBoxEdge.Text,
+        };
+    }
 }
