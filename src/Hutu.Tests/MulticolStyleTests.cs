@@ -169,6 +169,33 @@ public sealed class MulticolStyleTests
         });
     }
 
+    /// <summary>
+    /// A container that states a column height and wraps its columns makes a grid of column boxes: the
+    /// content runs down a box, then on into the next column, and a row of boxes further down the page
+    /// (CSS Multicol 2 §3).
+    /// </summary>
+    [Test]
+    public async Task ColumnsThatStateAHeightAndWrapFillARowOfBoxes()
+    {
+        using var view = await Render(
+            "<style>#d { border:0; padding:0; margin:0; width:200px; height:130px; column-count:3;" +
+            " column-width:60px; column-height:60px; column-gap:10px; row-gap:10px; column-wrap:wrap }" +
+            "p { margin:0; height:60px }</style>" +
+            "<div id='d'><p></p><p></p><p></p><p></p><p></p><p></p></div>");
+
+        var boxes = Find(view, "d").Children;
+
+        Assert.That(boxes, Has.Count.EqualTo(6));
+        Assert.Multiple(() =>
+        {
+            Assert.That(boxes[0].BorderBox.X, Is.EqualTo(0).Within(0.01));
+            Assert.That(boxes[2].BorderBox.X, Is.EqualTo(140).Within(0.01), "the third column of the first row");
+            Assert.That(boxes[3].BorderBox.Y, Is.EqualTo(70).Within(0.01), "the fourth box starts the next row");
+            Assert.That(boxes[3].BorderBox.X, Is.EqualTo(0).Within(0.01), "back at the first column");
+            Assert.That(boxes[5].BorderBox.Y, Is.EqualTo(70).Within(0.01), "and the last box the same row");
+        });
+    }
+
     [Test]
     public async Task ARuleAppearsOnlyBetweenColumnsThatHaveContent()
     {

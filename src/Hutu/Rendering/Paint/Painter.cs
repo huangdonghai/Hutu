@@ -717,9 +717,8 @@ internal sealed class Painter
     private static void AddColumnRules(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
     {
         var multi = style.Multi;
-        var axis = style.Gap.Column;
 
-        if (!multi.IsMultiColumn || !axis.IsStated)
+        if (!multi.IsMultiColumn || multi.Used(box.Flow.IsVertical ? box.ContentBox.Height : box.ContentBox.Width).Count < 1)
         {
             return;
         }
@@ -727,17 +726,18 @@ internal sealed class Painter
         var content = box.ContentBox;
         var along = box.Flow.IsVertical;
         var room = along ? content.Height : content.Width;
+        var crossRoom = along ? content.Width : content.Height;
         var (count, width) = multi.Used(room);
         var step = width + multi.Gap;
+        var (_, _, columnHeight, rows) = multi.Grid(room, crossRoom);
+        var rowStep = columnHeight + multi.RowGap;
+        var axis = style.Gap.Column;
+        var rowAxis = style.Gap.Row;
 
-        if (count < 2 || step <= 0)
-        {
-            return;
-        }
-
-        // Which of the used columns hold content, by where the boxes that make them stand.
-        var filled = new Boolean[count];
+        // Which column boxes hold content, by where the boxes that make them stand.
+        var filled = new Boolean[Math.Max(1, count * rows)];
         var start = along ? content.Y : content.X;
+        var rowStart = along ? content.X : content.Y;
 
         foreach (var child in box.Children)
         {
@@ -747,47 +747,141 @@ internal sealed class Painter
             }
 
             var edge = (along ? child.BorderBox.Y : child.BorderBox.X) - start;
-            var column = (Int32)Math.Round(edge / step);
+            var down = (along ? child.BorderBox.X : child.BorderBox.Y) - rowStart;
+            var column = step > 0 ? (Int32)Math.Round(edge / step) : 0;
+            var row = rowStep > 0 ? (Int32)Math.Round(down / rowStep) : 0;
 
-            if (column >= 0 && column < count && Math.Abs(edge - column * step) <= 0.5)
+            if (column >= 0 && column < count && row >= 0 && row < rows &&
+                Math.Abs(edge - column * step) <= 0.5 && Math.Abs(down - row * rowStep) <= 0.5)
             {
-                filled[column] = true;
+                filled[row * count + column] = true;
             }
         }
 
-        // A multi-column container draws between every pair of used columns whose sides the visibility
-        // asks about; `normal` is the initial value and, for the column gaps, means both sides
-        // (CSS Gaps 1 §3.4).
-        var visibility = axis.Visibility == GapRuleVisibility.Normal ? GapRuleVisibility.Between : axis.Visibility;
-        var gaps = Math.Max(0, count - 1);
+        AddColumnGaps(target, axis, along, count, width, step, columnHeight, rows, rowStep, start, rowStart, room, filled, content);
+        AddRowGaps(target, rowAxis, along, count, rows, rowStep, columnHeight, start, rowStart, room, filled);
 
-        for (var index = 0; index < gaps; index++)
+        static void AddColumnGaps(
+            List<PaintCommand> target,
+            GapRuleAxis axis,
+            Boolean along,
+            Int32 count,
+            Double width,
+            Double step,
+            Double columnHeight,
+            Int32 rows,
+            Double rowStep,
+            Double start,
+            Double rowStart,
+            Double room,
+            Boolean[] filled,
+            Rect content)
         {
-            var rule = axis.At(index, gaps);
-            var shown = visibility == GapRuleVisibility.All ||
-                (visibility == GapRuleVisibility.Around
-                    ? filled[index] || filled[index + 1]
-                    : filled[index] && filled[index + 1]);
-
-            if (!rule.Appears || !shown)
+            if (count < 2)
             {
-                continue;
+                return;
             }
 
-            var centre = start + index * step + width + multi.Gap / 2;
+            var visibility = axis.Visibility == GapRuleVisibility.Normal ? GapRuleVisibility.Between : axis.Visibility;
+            var gaps = count - 1;
 
-            // A multi-column rule runs from one content edge to the other, so both its ends are caps and
-            // the page's cap insets draw them back from those edges (CSS Gaps 1 §3.3).
-            var from = (along ? content.X : content.Y) + axis.CapStart.Resolve(0, 0);
-            var to = (along ? content.X + content.Width : content.Y + content.Height) - axis.CapEnd.Resolve(0, 0);
+            // A column gap stands once between each pair of columns, in every row of column boxes.
+            for (var row = 0; row < rows; row++)
+            {
+                for (var index = 0; index < gaps; index++)
+                {
+                    var rule = axis.At(row * gaps + index, rows * gaps);
+                    var shown = visibility == GapRuleVisibility.All ||
+                        (visibility == GapRuleVisibility.Around
+                            ? filled[row * count + index] || filled[row * count + index + 1]
+                            : filled[row * count + index] && filled[row * count + index + 1]);
 
-            AddRuleBand(
-                target,
-                along
-                    ? new Rect(from, centre - rule.Width / 2, to - from, rule.Width)
-                    : new Rect(centre - rule.Width / 2, from, rule.Width, to - from),
-                rule,
-                thinAlongY: along);
+                    if (!rule.Appears || !shown)
+                    {
+                        continue;
+                    }
+
+                    var centre = start + index * step + width + (step - width) / 2;
+                    var low = rowStart + row * rowStep + axis.CapStart.Resolve(0, 0);
+                    var high = rowStart + row * rowStep + columnHeight - axis.CapEnd.Resolve(0, 0);
+
+                    if (high > low)
+                    {
+                        AddRuleBand(
+                            target,
+                            along
+                                ? new Rect(low, centre - rule.Width / 2, high - low, rule.Width)
+                                : new Rect(centre - rule.Width / 2, low, rule.Width, high - low),
+                            rule,
+                            thinAlongY: along);
+                    }
+                }
+            }
+        }
+
+        static void AddRowGaps(
+            List<PaintCommand> target,
+            GapRuleAxis axis,
+            Boolean along,
+            Int32 count,
+            Int32 rows,
+            Double rowStep,
+            Double columnHeight,
+            Double start,
+            Double rowStart,
+            Double room,
+            Boolean[] filled)
+        {
+            if (rows < 2 || !axis.IsStated)
+            {
+                return;
+            }
+
+            // A multi-column container's row gaps are ruled in every row without asking what stands
+            // beside them, which is what its `normal` means (CSS Gaps 1 §3.4).
+            var visibility = axis.Visibility == GapRuleVisibility.Normal ? GapRuleVisibility.All : axis.Visibility;
+
+            for (var row = 0; row + 1 < rows; row++)
+            {
+                var rule = axis.At(row, rows - 1);
+                var before = RowHasContent(filled, count, row);
+                var after = RowHasContent(filled, count, row + 1);
+                var shown = visibility == GapRuleVisibility.All ||
+                    (visibility == GapRuleVisibility.Around ? before || after : before && after);
+
+                if (!rule.Appears || !shown)
+                {
+                    continue;
+                }
+
+                var centre = rowStart + (row + 1) * rowStep - (rowStep - columnHeight) / 2;
+                var low = start + axis.CapStart.Resolve(0, 0);
+                var high = start + room - axis.CapEnd.Resolve(0, 0);
+
+                if (high > low)
+                {
+                    AddRuleBand(
+                        target,
+                        along
+                            ? new Rect(centre - rule.Width / 2, low, rule.Width, high - low)
+                            : new Rect(low, centre - rule.Width / 2, high - low, rule.Width),
+                        rule,
+                        thinAlongY: !along);
+                }
+            }
+        }
+
+        static Boolean RowHasContent(Boolean[] filled, Int32 count, Int32 row)
+        {
+            for (var column = 0; column < count; column++)
+            {
+                if (filled[row * count + column])
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 

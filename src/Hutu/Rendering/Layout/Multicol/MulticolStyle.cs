@@ -19,12 +19,22 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 internal readonly struct MulticolStyle
 {
-    internal MulticolStyle(Int32? count, Double? width, Double gap, Boolean fills)
+    internal MulticolStyle(
+        Int32? count,
+        Double? width,
+        Double gap,
+        Boolean fills,
+        Double? height = null,
+        Boolean wraps = false,
+        Double rowGap = 0)
     {
         Count = count is { } declared ? Math.Max(1, declared) : null;
         Width = width is { } sized ? Math.Max(0, sized) : null;
         Gap = Math.Max(0, gap);
         Fills = fills;
+        Height = height is { } tall ? Math.Max(0, tall) : null;
+        Wraps = wraps;
+        RowGap = Math.Max(0, rowGap);
     }
 
     /// <summary>Gets the declared column count, or null where it is <c>auto</c>.</summary>
@@ -40,8 +50,37 @@ internal readonly struct MulticolStyle
     /// height in turn rather than balanced.</summary>
     public Boolean Fills { get; }
 
+    /// <summary>Gets the height a column box takes, or null where it is <c>auto</c>.</summary>
+    public Double? Height { get; }
+
+    /// <summary>Gets whether column boxes that run out of room start another row of them.</summary>
+    public Boolean Wraps { get; }
+
+    /// <summary>Gets the gap between two rows of column boxes.</summary>
+    public Double RowGap { get; }
+
     /// <summary>Gets whether the box asks for columns at all.</summary>
     public Boolean IsMultiColumn => Count is not null || Width is not null;
+
+    /// <summary>
+    /// Gets the column boxes a content box of this width and height makes: how many columns, how wide,
+    /// how tall a box is, and how many rows of them the container's height allows when the columns wrap
+    /// (CSS Multicol 2 §3).
+    /// </summary>
+    public (Int32 Columns, Double Width, Double Height, Int32 Rows) Grid(Double available, Double height)
+    {
+        var (columns, width) = Used(available);
+        var box = Height ?? Math.Max(0, height);
+
+        if (!Wraps || Height is not { } stated || stated <= 0 || height <= 0)
+        {
+            return (columns, width, box, 1);
+        }
+
+        var rows = Math.Max(1, (Int32)Math.Floor((height + RowGap) / (box + RowGap)));
+
+        return (columns, width, box, rows);
+    }
 
     /// <summary>
     /// Works out the column count and the width each column takes in a content box of
@@ -109,7 +148,11 @@ internal readonly struct MulticolStyle
         var fill = find("column-fill")?.Value?.Trim();
         var fills = String.Equals(fill, "auto", StringComparison.OrdinalIgnoreCase);
 
-        return new MulticolStyle(count, width, gap, fills);
+        var height = HeightOf(find("column-height"), font, dimensions);
+        var wraps = String.Equals(find("column-wrap")?.Value?.Trim(), "wrap", StringComparison.OrdinalIgnoreCase);
+        var rowGap = FlexStyle.GapsFused(find, font, dimensions).Row;
+
+        return new MulticolStyle(count, width, gap, fills, height, wraps, rowGap);
     }
 
     private static Int32? CountOf(ICssProperty? declared)
@@ -117,6 +160,20 @@ internal readonly struct MulticolStyle
         var text = declared?.Value?.Trim();
 
         return Int32.TryParse(text, out var count) && count > 0 ? count : null;
+    }
+
+    private static Double? HeightOf(ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions)
+    {
+        if (declared is null)
+        {
+            return null;
+        }
+
+        return LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var height) &&
+            height.HasValue &&
+            height.Kind != StyleLengthKind.Percent
+                ? Math.Max(0, height.Resolve(0))
+                : null;
     }
 
     private static Double? WidthOf(ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions)

@@ -756,7 +756,32 @@ internal sealed class BlockLayout
         // its own, which is what let it take this path at all.
         _engine.PublishFloats(box, null);
 
-        return MulticolExtent(box.Style.Multi, columns, heightStated ? declaredHeight : null, children);
+        var multi = box.Style.Multi;
+
+        // With wrapping, a column box is as tall as `column-height` and the content continues in another
+        // box rather than running down one: the height the content comes to is the rows it needed
+        // (CSS Multicol 2 §3). A container that stated its own height keeps it.
+        if (multi.Wraps && multi.Height is { } columnHeight && columnHeight > 0)
+        {
+            if (heightStated && declaredHeight is { } stated)
+            {
+                return stated;
+            }
+
+            var total = 0.0;
+
+            foreach (var child in children)
+            {
+                total += child.Fragment.Height;
+            }
+
+            var boxes = Math.Max(1, (Int32)Math.Ceiling(total / columnHeight));
+            var rows = (Int32)Math.Ceiling((Double)boxes / columns);
+
+            return rows * (columnHeight + multi.RowGap) - multi.RowGap;
+        }
+
+        return MulticolExtent(multi, columns, heightStated ? declaredHeight : null, children);
     }
 
     /// <summary>
@@ -1335,27 +1360,39 @@ internal sealed class BlockLayout
             fragments.Add(child.Fragment);
         }
 
+        // With wrapping, a column box is one `column-height` tall and the content continues in the next
+        // box; the container's own height says how many rows of them fit, and content that needs more
+        // runs past the last row rather than shrinking it (CSS Multicol 2 §3).
+        var columnHeight = multi.Wraps && multi.Height is { } statedHeight ? statedHeight : 0.0;
+        var wraps = columnHeight > 0;
+        var boxHeight = wraps ? columnHeight : extent;
+        var rows = wraps && declaredHeight > 0
+            ? Math.Max(1, (Int32)Math.Floor((declaredHeight + multi.RowGap) / (boxHeight + multi.RowGap)))
+            : 1;
+
         // A fill is not held to the column count: content that does not fit the stated columns spills
         // into more of them, which is how Chrome lays out a run longer than its `column-count`. A
         // balance has already been solved into the columns it was given.
-        var extents = new Double[Math.Max(1, multi.Fills ? children.Count : columns)];
-        Array.Fill(extents, extent);
+        var extents = new Double[Math.Max(1, wraps ? columns * rows : multi.Fills ? children.Count : columns)];
+        Array.Fill(extents, boxHeight);
 
         var counts = Fragmentainer.Fill(fragments, extents);
-        var childContext = context.ForContainingBlock(new Size(share, heightStated ? declaredHeight : 0));
+        var childContext = context.ForContainingBlock(new Size(share, wraps ? boxHeight : heightStated ? declaredHeight : 0));
         var from = 0;
 
-        for (var column = 0; column < counts.Count; column++)
+        for (var cell = 0; cell < counts.Count; cell++)
         {
+            var column = cell % columns;
+            var row = cell / columns;
             var x = content.X + column * (share + multi.Gap);
-            var y = content.Y;
+            var y = content.Y + row * (boxHeight + multi.RowGap);
 
-            for (var index = 0; index < counts[column]; index++)
+            for (var index = 0; index < counts[cell]; index++)
             {
                 var child = children[from++];
 
-                // A column begins a fresh stack: what a child brings to its top edge is added there
-                // rather than folded into the margin run the column before ended with.
+                // A column box begins a fresh stack: what a child brings to its top edge is added there
+                // rather than folded into the margin run the box before ended with.
                 y += child.Margin.Top;
 
                 var width = child.Size.Width;
@@ -1366,7 +1403,7 @@ internal sealed class BlockLayout
                 // line carry the child's edges.
                 var to = child.Broken ? child.Line + 1 : -1;
 
-                while (child.Broken && index + 1 < counts[column] && children[from].Broken &&
+                while (child.Broken && index + 1 < counts[cell] && children[from].Broken &&
                     ReferenceEquals(children[from].Box, child.Box))
                 {
                     var next = children[from++];
