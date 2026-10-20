@@ -50,6 +50,7 @@ internal static class GridGapBands
     public static void Add(
         List<GapRuleSegment> target,
         GapRuleAxis axis,
+        GapRuleAxis across,
         Boolean isRow,
         IReadOnlyList<GridGapRun> gaps,
         IReadOnlyList<GridGapRun> crossings,
@@ -66,38 +67,79 @@ internal static class GridGapBands
                 continue;
             }
 
-            foreach (var (from, to) in Segments(gap, crossings, breaks, items))
+            foreach (var (from, to, fromAtBound, toAtBound) in Segments(gap, crossings, breaks, items))
             {
-                if (to <= from)
-                {
-                    continue;
-                }
+                var start = from + Inset(axis, fromAtBound, true, from, crossings, across);
+                var end = to - Inset(axis, toAtBound, false, to, crossings, across);
 
-                target.Add(new GapRuleSegment(
-                    GapRuleBands.Band(rule, gap.CentreIsX, gap.Centre, from, to),
-                    rule,
-                    isRow));
+                if (end > start)
+                {
+                    target.Add(new GapRuleSegment(
+                        GapRuleBands.Band(rule, gap.CentreIsX, gap.Centre, start, end),
+                        rule,
+                        isRow));
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Gets how far the end of a decoration drawn back from <paramref name="at"/> moves: the inset the page
+    /// asked for this kind of end, against the crossing that stands there - nothing, where the end is a cap.
+    /// </summary>
+    private static Double Inset(
+        GapRuleAxis axis,
+        Boolean atBound,
+        Boolean start,
+        Double at,
+        IReadOnlyList<GridGapRun> crossings,
+        GapRuleAxis across)
+    {
+        var inset = atBound
+            ? start ? axis.CapStart : axis.CapEnd
+            : start ? axis.JunctionStart : axis.JunctionEnd;
+
+        if (!inset.IsSet)
+        {
+            return 0;
+        }
+
+        if (atBound)
+        {
+            return inset.Resolve(0, 0);
+        }
+
+        for (var index = 0; index < crossings.Count; index++)
+        {
+            var crossing = crossings[index];
+            var touching = start ? Math.Abs(crossing.To - at) < Epsilon : Math.Abs(crossing.From - at) < Epsilon;
+
+            if (touching)
+            {
+                return inset.Resolve(crossing.To - crossing.From, across.At(index, crossings.Count).Width);
+            }
+        }
+
+        return inset.Resolve(0, 0);
     }
 
     /// <summary>
     /// Splits one gap into the stretches its decoration is drawn along: the steps of §3.1.2, from the
     /// endpoints the gap's bounds and crossings make, merged while nothing stands in the way.
     /// </summary>
-    private static List<(Double From, Double To)> Segments(
+    private static List<(Double From, Double To, Boolean FromAtBound, Boolean ToAtBound)> Segments(
         GridGapRun gap,
         IReadOnlyList<GridGapRun> crossings,
         GapRuleBreak breaks,
         IReadOnlyList<Rect> items)
     {
-        var segments = new List<(Double, Double)>();
+        var segments = new List<(Double, Double, Boolean, Boolean)>();
 
         if (breaks == GapRuleBreak.None)
         {
             // Nothing splits the decoration: it runs from one end of the gap to the other, whatever it
             // crosses - including the items, which are painted over it.
-            segments.Add((gap.From, gap.To));
+            segments.Add((gap.From, gap.To, true, true));
             return segments;
         }
 
@@ -143,7 +185,7 @@ internal static class GridGapBands
                 cursor += 2;
             }
 
-            segments.Add((start, end));
+            segments.Add((start, end, Math.Abs(start - gap.From) < Epsilon, Math.Abs(end - gap.To) < Epsilon));
         }
 
         return segments;

@@ -777,11 +777,16 @@ internal sealed class Painter
 
             var centre = centres[index];
 
+            // A multi-column rule runs from one content edge to the other, so both its ends are caps and
+            // the page's cap insets draw them back from those edges (CSS Gaps 1 §3.3).
+            var from = (along ? content.X : content.Y) + axis.CapStart.Resolve(0, 0);
+            var to = (along ? content.X + content.Width : content.Y + content.Height) - axis.CapEnd.Resolve(0, 0);
+
             AddRuleBand(
                 target,
                 along
-                    ? new Rect(content.X, centre - rule.Width / 2, content.Width, rule.Width)
-                    : new Rect(centre - rule.Width / 2, content.Y, rule.Width, content.Height),
+                    ? new Rect(from, centre - rule.Width / 2, to - from, rule.Width)
+                    : new Rect(centre - rule.Width / 2, from, rule.Width, to - from),
                 rule,
                 thinAlongY: along);
         }

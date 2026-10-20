@@ -444,6 +444,81 @@ public sealed class GapRuleTests
         });
     }
 
+    /// <summary>
+    /// An inset draws a decoration's ends back from where they would stand: a length from the cap, and a
+    /// percentage of the crossing gap from a junction (CSS Gaps 1 §3.3).
+    /// </summary>
+    [Test]
+    public async Task AnInsetDrawsTheEndsOfARuleBack()
+    {
+        using var view = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; grid-template-rows:40px 40px; gap:10px;" +
+            " width:110px; height:90px; column-rule:4px solid blue; row-rule-inset-start:10px }</style>" +
+            "<div id='d'><div></div><div></div><div></div><div></div></div>");
+
+        Assert.That(Rules(view).Any(rule => rule.Bounds.Height <= 5.01), Is.False, "no row rule was asked for");
+
+        using var inset = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; grid-template-rows:40px 40px; gap:10px;" +
+            " width:110px; height:90px; column-rule:4px solid blue; column-rule-inset:10px }</style>" +
+            "<div id='d'><div></div><div></div><div></div><div></div></div>");
+
+        var rules = Rules(inset);
+
+        Assert.That(rules, Has.Count.EqualTo(1));
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.Y, Is.EqualTo(10).Within(0.01), "ten in from the top edge");
+            Assert.That(rules[0].Bounds.Bottom, Is.EqualTo(80).Within(0.01), "and ten in from the bottom");
+        });
+    }
+
+    /// <summary>
+    /// Where an end stands at a crossing, its percentage is a share of the crossing gap; where it stands at
+    /// a bound there is no crossing, so the same percentage comes to nothing.
+    /// </summary>
+    [Test]
+    public async Task AnInsetPercentageIsAShareOfTheCrossingGap()
+    {
+        using var view = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; grid-template-rows:40px 40px; gap:10px;" +
+            " width:110px; height:90px; column-rule:4px solid blue; column-rule-break:intersection;" +
+            " column-rule-inset-junction-start:50% }</style>" +
+            "<div id='d'><div></div><div></div><div></div><div></div></div>");
+
+        var rules = Rules(view);
+
+        Assert.That(rules, Has.Count.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.Y, Is.EqualTo(0).Within(0.01), "the cap at the top takes nothing");
+            Assert.That(rules[1].Bounds.Y, Is.EqualTo(55).Within(0.01), "the junction starts half the gap in");
+        });
+    }
+
+    /// <summary>
+    /// <c>overlap-join</c> runs a junction end into the crossing by half the crossing gap plus half the
+    /// crossing rule, so the two decorations that meet there join.
+    /// </summary>
+    [Test]
+    public async Task OverlapJoinMakesTheDecorationsMeetAtACrossing()
+    {
+        using var view = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; grid-template-rows:40px 40px; gap:10px;" +
+            " width:110px; height:90px; column-rule:4px solid blue; row-rule:4px solid red;" +
+            " column-rule-break:intersection; rule-inset:overlap-join }</style>" +
+            "<div id='d'><div></div><div></div><div></div><div></div></div>");
+
+        var rules = Rules(view).Where(rule => rule.Widths.Left > 0).ToList();
+
+        Assert.That(rules, Has.Count.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.Bottom, Is.EqualTo(47).Within(0.01), "40 plus half the gap and half the rule");
+            Assert.That(rules[1].Bounds.Y, Is.EqualTo(43).Within(0.01), "and the next piece runs back to meet it");
+        });
+    }
+
     /// <summary>Gets the commands that draw one side of a band, which is every rule the engine paints.</summary>
     private static List<BorderCommand> Rules(HutuViewInternal view) =>
         view.Paint!.Commands.OfType<BorderCommand>()

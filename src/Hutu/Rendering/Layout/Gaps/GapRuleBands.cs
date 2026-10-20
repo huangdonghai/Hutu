@@ -62,12 +62,20 @@ internal static class GapRuleBands
             var gap = gaps[index];
             var rule = axis.At(index, count);
 
-            if (!rule.Appears || gap.To <= gap.From)
+            if (!rule.Appears)
             {
                 continue;
             }
 
-            target.Add(new GapRuleSegment(Band(rule, gap.CentreIsX, gap.Centre, gap.From, gap.To), rule, isRow));
+            // Both ends of a gap between two boxes stand at the bounds of the gap, so both take the cap
+            // insets; there is no crossing here to take a percentage of.
+            var from = gap.From + axis.CapStart.Resolve(0, 0);
+            var to = gap.To - axis.CapEnd.Resolve(0, 0);
+
+            if (to > from)
+            {
+                target.Add(new GapRuleSegment(Band(rule, gap.CentreIsX, gap.Centre, from, to), rule, isRow));
+            }
         }
     }
 

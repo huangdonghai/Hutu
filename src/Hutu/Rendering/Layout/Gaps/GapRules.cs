@@ -22,6 +22,41 @@ internal enum GapRuleBreak
 }
 
 /// <summary>
+/// How far one end of a decoration is drawn back from where it would otherwise stand (CSS Gaps 1 §3.3).
+/// </summary>
+/// <remarks>
+/// A length or a percentage of the crossing gap takes the end inwards; <c>overlap-join</c> does the
+/// opposite at a junction - it runs the decoration on into the crossing by half the crossing gap and half
+/// the crossing decoration's width, so two decorations that meet there join. At a cap there is no
+/// crossing, so a percentage and <c>overlap-join</c> both come to nothing.
+/// </remarks>
+internal readonly struct GapRuleInset
+{
+    public static readonly GapRuleInset None = default;
+
+    private readonly StyleLength? _length;
+    private readonly Boolean _join;
+
+    internal GapRuleInset(StyleLength length) => (_length, _join) = (length, false);
+
+    private GapRuleInset(Boolean join) => (_length, _join) = (null, join);
+
+    internal static GapRuleInset Join => new(true);
+
+    /// <summary>Gets whether the page stated anything here.</summary>
+    public Boolean IsSet => _length.HasValue || _join;
+
+    /// <summary>
+    /// Gets how far the end moves, given the crossing it stands in. A stated inset moves inwards, so the
+    /// join - which runs the decoration on into the crossing - comes back negative.
+    /// </summary>
+    public Double Resolve(Double crossing, Double crossingRule) =>
+        _join
+            ? -(crossing / 2 + crossingRule / 2)
+            : _length is { } length ? length.Resolve(crossing) : 0;
+}
+
+/// <summary>
 /// The stroke a gap asks to be drawn in the middle of it: how thick, in what style and in what colour
 /// (CSS Gaps 1 §4). A rule is a border side turned to face down the gap, so it takes the same strokes -
 /// a dashed one dashes along its length and a double one is two lines within its width.
@@ -310,16 +345,36 @@ internal sealed class GapRuleAxis
         GapRuleTerms<Double> width,
         GapRuleTerms<BorderLineStyle> style,
         GapRuleTerms<UInt32> color,
-        GapRuleBreak breaks)
+        GapRuleBreak breaks,
+        GapRuleInset capStart,
+        GapRuleInset capEnd,
+        GapRuleInset junctionStart,
+        GapRuleInset junctionEnd)
     {
         _width = width;
         _style = style;
         _color = color;
         Break = breaks;
+        CapStart = capStart;
+        CapEnd = capEnd;
+        JunctionStart = junctionStart;
+        JunctionEnd = junctionEnd;
     }
 
     /// <summary>Gets where a decoration of this axis starts and ends where two gaps cross.</summary>
     public GapRuleBreak Break { get; }
+
+    /// <summary>Gets how far the start end is drawn in, where it stands at a bound of the gap.</summary>
+    public GapRuleInset CapStart { get; }
+
+    /// <summary>Gets how far the end end is drawn in, where it stands at a bound of the gap.</summary>
+    public GapRuleInset CapEnd { get; }
+
+    /// <summary>Gets how far the start end is drawn in, where it stands at a crossing.</summary>
+    public GapRuleInset JunctionStart { get; }
+
+    /// <summary>Gets how far the end end is drawn in, where it stands at a crossing.</summary>
+    public GapRuleInset JunctionEnd { get; }
 
     /// <summary>Gets whether the page asked for decorations along this axis.</summary>
     public Boolean IsStated => _width.IsStated || _style.IsStated || _color.IsStated;
@@ -348,7 +403,46 @@ internal sealed class GapRuleAxis
             GapRuleTerms<Double>.Read(find(prefix + "-width"), InitialWidth, item => ToWidth(item, dimensions, font)),
             GapRuleTerms<BorderLineStyle>.Read(find(prefix + "-style"), BorderLineStyle.None, ToStyle),
             GapRuleTerms<UInt32>.Read(find(prefix + "-color"), ComputedStyle.ToArgb(initial), item => ToColor(item, initial)),
-            BreakOf(find(prefix + "-break")));
+            BreakOf(find(prefix + "-break")),
+            Inset(find, prefix, "cap-start", "start", dimensions, font),
+            Inset(find, prefix, "cap-end", "end", dimensions, font),
+            Inset(find, prefix, "junction-start", "start", dimensions, font),
+            Inset(find, prefix, "junction-end", "end", dimensions, font));
+
+    /// <summary>
+    /// Reads one end's inset: the value written for this kind of end, or the one written for both kinds,
+    /// which is the older spelling of the same property (CSS Gaps 1 §3.3).
+    /// </summary>
+    private static GapRuleInset Inset(
+        Func<String, ICssProperty?> find,
+        String prefix,
+        String name,
+        String fallback,
+        IRenderDimensions dimensions,
+        LengthReader.FontSource font)
+    {
+        var specific = InsetOf(find(prefix + "-inset-" + name), dimensions, font);
+
+        return specific.IsSet ? specific : InsetOf(find(prefix + "-inset-" + fallback), dimensions, font);
+    }
+
+    private static GapRuleInset InsetOf(ICssProperty? declared, IRenderDimensions dimensions, LengthReader.FontSource font)
+    {
+        if (declared?.RawValue is not { } value)
+        {
+            return GapRuleInset.None;
+        }
+
+        if (String.Equals(value.CssText?.Trim(), "overlap-join", StringComparison.OrdinalIgnoreCase))
+        {
+            return GapRuleInset.Join;
+        }
+
+        return LengthReader.TryReadValue(value, RenderMode.Horizontal, dimensions, font, out var length) &&
+            length.HasValue
+                ? new GapRuleInset(length)
+                : GapRuleInset.None;
+    }
 
     private static GapRuleBreak BreakOf(ICssProperty? declared) => declared?.Value?.Trim() switch
     {
@@ -398,12 +492,20 @@ internal sealed class GapRules
             new GapRuleTerms<Double>(GapRuleAxis.InitialWidth, null),
             new GapRuleTerms<BorderLineStyle>(BorderLineStyle.None, null),
             new GapRuleTerms<UInt32>(0, null),
-            GapRuleBreak.Normal),
+            GapRuleBreak.Normal,
+            GapRuleInset.None,
+            GapRuleInset.None,
+            GapRuleInset.None,
+            GapRuleInset.None),
         new GapRuleAxis(
             new GapRuleTerms<Double>(GapRuleAxis.InitialWidth, null),
             new GapRuleTerms<BorderLineStyle>(BorderLineStyle.None, null),
             new GapRuleTerms<UInt32>(0, null),
-            GapRuleBreak.Normal),
+            GapRuleBreak.Normal,
+            GapRuleInset.None,
+            GapRuleInset.None,
+            GapRuleInset.None,
+            GapRuleInset.None),
         false);
 
     internal GapRules(GapRuleAxis column, GapRuleAxis row, Boolean columnOverRow)

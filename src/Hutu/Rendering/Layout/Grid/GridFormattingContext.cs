@@ -176,8 +176,8 @@ internal sealed class GridFormattingContext
 
         var target = new List<GapRuleSegment>();
 
-        GridGapBands.Add(target, rules.Column, isRow: false, columns, rowCrossings, rules.Column.Break, items);
-        GridGapBands.Add(target, rules.Row, isRow: true, rows, columnCrossings, rules.Row.Break, items);
+        GridGapBands.Add(target, rules.Column, rules.Row, isRow: false, columns, rowCrossings, rules.Column.Break, items);
+        GridGapBands.Add(target, rules.Row, rules.Column, isRow: true, rows, columnCrossings, rules.Row.Break, items);
 
         return target.Count > 0 ? target : null;
     }

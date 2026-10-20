@@ -206,6 +206,7 @@ internal sealed partial class FlexFormattingContext
 
         var mainEnd = isRow ? contentX + contentWidth : contentY + contentHeight;
         var splits = new List<List<(Double From, Double To)>>(Math.Max(0, plan.Lines.Count - 1));
+        var lineCrossings = new List<List<(Double From, Double To)>>(splits.Capacity);
 
         for (var index = 0; index + 1 < plan.Lines.Count; index++)
         {
@@ -219,11 +220,14 @@ internal sealed partial class FlexFormattingContext
             // A column gap abutting this one from either line above or below is where an intersecting
             // decoration ends and the next one starts, so the two lines' gaps are joined into the
             // crossings this gap is split at (CSS Gaps 1 §3.1.1).
+            var crossings = Unions(laid[index], laid[index + 1]);
+
             splits.Add(isRow && rules.Row.Break == GapRuleBreak.Intersection
-                ? Complement(mainStart, mainEnd, Unions(laid[index], laid[index + 1]))
+                ? Complement(mainStart, mainEnd, crossings)
                 : !isRow && rules.Column.Break == GapRuleBreak.Intersection
-                    ? Complement(mainStart, mainEnd, Unions(laid[index], laid[index + 1]))
+                    ? Complement(mainStart, mainEnd, crossings)
                     : new List<(Double, Double)> { (mainStart, mainEnd) });
+            lineCrossings.Add(crossings);
         }
 
         var target = new List<GapRuleSegment>();
@@ -251,10 +255,19 @@ internal sealed partial class FlexFormattingContext
 
             foreach (var (from, to) in splits[index])
             {
-                if (to > from)
+                // An end that stands at the container's edge is a cap; one that stands where a column gap
+                // beside it begins is a junction, and takes its percentage of that gap (CSS Gaps 1 §3.3).
+                var startAtBound = Math.Abs(from - mainStart) < 0.01;
+                var endAtBound = Math.Abs(to - mainEnd) < 0.01;
+                var start = from + (startAtBound ? lineAxis.CapStart : lineAxis.JunctionStart)
+                    .Resolve(Crossing(lineCrossings[index], from, true), 0);
+                var end = to - (endAtBound ? lineAxis.CapEnd : lineAxis.JunctionEnd)
+                    .Resolve(Crossing(lineCrossings[index], to, false), 0);
+
+                if (end > start)
                 {
                     target.Add(new GapRuleSegment(
-                        GapRuleBands.Band(rule, gap.CentreIsX, gap.Centre, from, to), rule, lineKind));
+                        GapRuleBands.Band(rule, gap.CentreIsX, gap.Centre, start, end), rule, lineKind));
                 }
             }
         }
@@ -301,6 +314,20 @@ internal sealed partial class FlexFormattingContext
         }
 
         return joined;
+    }
+
+    /// <summary>Gets the width of the crossing that stands at one end of a stretch.</summary>
+    private static Double Crossing(List<(Double From, Double To)> crossings, Double at, Boolean start)
+    {
+        foreach (var crossing in crossings)
+        {
+            if (start ? Math.Abs(crossing.To - at) < 0.01 : Math.Abs(crossing.From - at) < 0.01)
+            {
+                return crossing.To - crossing.From;
+            }
+        }
+
+        return 0;
     }
 
     /// <summary>Gets the stretches of [from, to] the crossings leave uncovered.</summary>
