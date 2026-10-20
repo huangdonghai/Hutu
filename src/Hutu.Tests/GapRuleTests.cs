@@ -417,6 +417,33 @@ public sealed class GapRuleTests
         });
     }
 
+    /// <summary>
+    /// A row gap in a flex container is crossed by the column gaps of the two lines it sits between, and
+    /// an <c>intersection</c> decoration is drawn in the stretches those crossings leave - the shape of
+    /// flex-gap-decorations-050.
+    /// </summary>
+    [Test]
+    public async Task AnIntersectingFlexRowRuleStopsAtTheColumnGapsOfBothLines()
+    {
+        using var view = await Render(
+            "<style>#d { display:flex; flex-wrap:wrap; justify-content:space-between; width:400px;" +
+            " row-gap:10px; row-rule:5px solid red; row-rule-break:intersection }" +
+            ".i { width:70px; height:50px }</style>" +
+            "<div id='d'>" + String.Concat(Enumerable.Repeat("<div class='i'></div>", 9)) + "</div>");
+
+        var rules = Rules(view).Where(rule => rule.Bounds.Height <= 5.01).ToList();
+
+        Assert.That(rules, Has.Count.EqualTo(6), "the five crossings leave six stretches of the row gap");
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.X, Is.EqualTo(0).Within(0.01));
+            Assert.That(rules[0].Bounds.Width, Is.EqualTo(70).Within(0.01), "up to the first line's column gap");
+            Assert.That(rules[1].Bounds.X, Is.EqualTo(110).Within(0.01), "past the second line's wider gap");
+            Assert.That(rules[1].Bounds.Width, Is.EqualTo(42.5).Within(0.01));
+            Assert.That(rules[^1].Bounds.Right, Is.EqualTo(400).Within(0.01), "and the last runs to the edge");
+        });
+    }
+
     /// <summary>Gets the commands that draw one side of a band, which is every rule the engine paints.</summary>
     private static List<BorderCommand> Rules(HutuViewInternal view) =>
         view.Paint!.Commands.OfType<BorderCommand>()

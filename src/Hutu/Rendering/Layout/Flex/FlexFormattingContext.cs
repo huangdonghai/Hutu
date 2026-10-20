@@ -167,6 +167,7 @@ internal sealed partial class FlexFormattingContext
         var crossStart = isRow ? contentY : contentX;
         var itemGaps = new List<Gap>();
         var lineGaps = new List<Gap>();
+        var laid = new List<List<(Double From, Double To)>>(plan.Lines.Count);
 
         foreach (var line in plan.Lines)
         {
@@ -174,6 +175,7 @@ internal sealed partial class FlexFormattingContext
             var lineEnd = lineStart + line.CrossSize;
             var previousLow = Double.NaN;
             var previousHigh = Double.NaN;
+            var intervals = new List<(Double From, Double To)>();
 
             foreach (var item in line.Items)
             {
@@ -192,12 +194,18 @@ internal sealed partial class FlexFormattingContext
                     var to = Math.Max(low, previousLow);
 
                     itemGaps.Add(new Gap(isRow, mainStart + (from + to) / 2, lineStart, lineEnd));
+                    intervals.Add((mainStart + from, mainStart + to));
                 }
 
                 previousLow = low;
                 previousHigh = high;
             }
+
+            laid.Add(intervals);
         }
+
+        var mainEnd = isRow ? contentX + contentWidth : contentY + contentHeight;
+        var splits = new List<List<(Double From, Double To)>>(Math.Max(0, plan.Lines.Count - 1));
 
         for (var index = 0; index + 1 < plan.Lines.Count; index++)
         {
@@ -205,25 +213,126 @@ internal sealed partial class FlexFormattingContext
             var next = plan.Lines[index + 1];
             var from = Math.Min(line.CrossStart + line.CrossSize, next.CrossStart + next.CrossSize);
             var to = Math.Max(line.CrossStart, next.CrossStart);
-            var mainEnd = isRow ? contentX + contentWidth : contentY + contentHeight;
 
             lineGaps.Add(new Gap(!isRow, crossStart + (from + to) / 2, mainStart, mainEnd));
+
+            // A column gap abutting this one from either line above or below is where an intersecting
+            // decoration ends and the next one starts, so the two lines' gaps are joined into the
+            // crossings this gap is split at (CSS Gaps 1 §3.1.1).
+            splits.Add(isRow && rules.Row.Break == GapRuleBreak.Intersection
+                ? Complement(mainStart, mainEnd, Unions(laid[index], laid[index + 1]))
+                : !isRow && rules.Column.Break == GapRuleBreak.Intersection
+                    ? Complement(mainStart, mainEnd, Unions(laid[index], laid[index + 1]))
+                    : new List<(Double, Double)> { (mainStart, mainEnd) });
         }
 
         var target = new List<GapRuleSegment>();
+        var lineAxis = isRow ? rules.Row : rules.Column;
+        var lineKind = isRow;
 
         if (isRow)
         {
             GapRuleBands.Add(target, rules.Column, isRow: false, itemGaps);
-            GapRuleBands.Add(target, rules.Row, isRow: true, lineGaps);
         }
         else
         {
             GapRuleBands.Add(target, rules.Row, isRow: true, itemGaps);
-            GapRuleBands.Add(target, rules.Column, isRow: false, lineGaps);
+        }
+
+        for (var index = 0; index < lineGaps.Count; index++)
+        {
+            var gap = lineGaps[index];
+            var rule = lineAxis.At(index, lineGaps.Count);
+
+            if (!rule.Appears)
+            {
+                continue;
+            }
+
+            foreach (var (from, to) in splits[index])
+            {
+                if (to > from)
+                {
+                    target.Add(new GapRuleSegment(
+                        GapRuleBands.Band(rule, gap.CentreIsX, gap.Centre, from, to), rule, lineKind));
+                }
+            }
         }
 
         return target.Count > 0 ? target : null;
+    }
+
+    /// <summary>
+    /// Joins the intervals the two lines' column gaps take into the crossings a row gap runs through.
+    /// </summary>
+    private static List<(Double From, Double To)> Unions(
+        List<(Double From, Double To)> above,
+        List<(Double From, Double To)> below)
+    {
+        var all = new List<(Double From, Double To)>(above);
+        all.AddRange(below);
+        all.Sort((left, right) => left.From.CompareTo(right.From));
+
+        var joined = new List<(Double From, Double To)>();
+        var from = 0.0;
+        var to = 0.0;
+        var open = false;
+
+        foreach (var interval in all)
+        {
+            if (!open)
+            {
+                (from, to, open) = (interval.From, interval.To, true);
+            }
+            else if (interval.From <= to)
+            {
+                to = Math.Max(to, interval.To);
+            }
+            else
+            {
+                joined.Add((from, to));
+                (from, to) = (interval.From, interval.To);
+            }
+        }
+
+        if (open)
+        {
+            joined.Add((from, to));
+        }
+
+        return joined;
+    }
+
+    /// <summary>Gets the stretches of [from, to] the crossings leave uncovered.</summary>
+    private static List<(Double From, Double To)> Complement(
+        Double from,
+        Double to,
+        List<(Double From, Double To)> crossings)
+    {
+        var pieces = new List<(Double From, Double To)>();
+        var cursor = from;
+
+        foreach (var crossing in crossings)
+        {
+            if (crossing.From > cursor)
+            {
+                pieces.Add((cursor, Math.Min(crossing.From, to)));
+            }
+
+            cursor = Math.Max(cursor, crossing.To);
+
+            if (cursor >= to)
+            {
+                break;
+            }
+        }
+
+        if (cursor < to)
+        {
+            pieces.Add((cursor, to));
+        }
+
+        return pieces;
     }
 
     /// <summary>
