@@ -2648,9 +2648,6 @@ internal readonly struct ComputedStyle
         WhiteSpace.Equals("normal", StringComparison.OrdinalIgnoreCase) ||
         WhiteSpace.Equals("nowrap", StringComparison.OrdinalIgnoreCase);
 
-    public Boolean IsPreformatted =>
-        WhiteSpace.StartsWith("pre", StringComparison.OrdinalIgnoreCase);
-
     /// <summary>
     /// Gets whether the spaces of this white-space mode collapse away: every mode but the pre spellings
     /// that keep them. <c>pre-line</c> keeps its breaks and still collapses the spaces around them.
@@ -2682,6 +2679,17 @@ internal readonly struct ComputedStyle
     public Boolean WrapsLines =>
         !WhiteSpace.Equals("nowrap", StringComparison.OrdinalIgnoreCase) &&
         !WhiteSpace.Equals("pre", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets whether a run of preserved white space breaks between its own characters:
+    /// CSS Text 3 §4.1.3 gives <c>break-spaces</c> a soft wrap opportunity after every preserved white
+    /// space character, adjacent spaces included, where every other mode has one only after the whole
+    /// run. The run's first character is not offered one either way - a break before a space is not a
+    /// break this property can make - so a space that does not fit at all stays where it was written and
+    /// overflows, which is the case the specification's own note calls unavoidable.
+    /// </summary>
+    public Boolean WrapsInsideSpaces =>
+        WhiteSpace.Equals("break-spaces", StringComparison.OrdinalIgnoreCase);
 
     // --- Text -----------------------------------------------------------
 

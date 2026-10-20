@@ -345,7 +345,7 @@ internal sealed class InlineLayout
                     ? WhiteSpaceWidth(item.Style, source, chunk.Start, chunk.Length, maxContent, flow)
                     : Measure(item.Style, source, chunk.Start, chunk.Length, flow);
                 var space = TextChunker.IsCollapsible(source, chunk.Start, chunk.Length);
-                var collapsible = space && !item.Style.IsPreformatted;
+                var collapsible = space && item.Style.CollapsesSpaces;
 
                 // A collapsible space the line would begin with is not drawn, so it asks for no room in
                 // either extent and leaves the break it stands at uncounted as well.
@@ -363,7 +363,26 @@ internal sealed class InlineLayout
                     // what makes a row of `nowrap` labels measure as wide as it reads: the minimum was
                     // being taken as the widest single character, and a flex container was free to shrink
                     // every label down to one of them.
-                    if (item.Style.WrapsLines)
+                    if (item.Style.WrapsInsideSpaces)
+                    {
+                        // The opportunity sits after every character of such a run and before none of them,
+                        // so the run's first character is carried by the piece above it while every other
+                        // one may stand on a line by itself (CSS Text 3 §4.1.3, and Chrome's min-content of
+                        // "A   B" is the width of "A " for exactly that reason).
+                        minContent = Math.Max(
+                            minContent,
+                            unbreakable + WhiteSpaceWidth(item.Style, source, chunk.Start, 1, maxContent, flow));
+
+                        unbreakable = 0;
+
+                        for (var index = chunk.Start + 1; index < chunk.Start + chunk.Length; index++)
+                        {
+                            minContent = Math.Max(
+                                minContent,
+                                WhiteSpaceWidth(item.Style, source, index, 1, 0, flow));
+                        }
+                    }
+                    else if (item.Style.WrapsLines)
                     {
                         minContent = Math.Max(minContent, unbreakable);
                         unbreakable = 0;
@@ -1387,34 +1406,57 @@ internal sealed class InlineLayout
                         continue;
                     }
 
-                    // A space that is taken off, or hung, at the end of a line does not make the line
-                    // wrap: the break opportunity is after it, so it stands at the end of the line it
-                    // would have overflowed (which is also why a `<br>` behind it ends that line rather
-                    // than an empty one). `break-spaces` is the mode whose spaces take room wherever
-                    // they stand, so its spaces wrap like any other content.
-                    var hangs = piece.IsWhiteSpace &&
-                        !item.Style.WhiteSpace.Equals("break-spaces", StringComparison.OrdinalIgnoreCase);
+                    // White space never begins a line of its own: the break opportunity the other modes
+                    // give it is after the run, not before it, so it stands at the end of the line it
+                    // would have overflowed - hung, where the mode hangs its spaces, or taking room,
+                    // where it does not - and takes the following word down with it. That is also why a
+                    // `<br>` behind a space ends the line the space overflowed rather than an empty one.
+                    var insideSpaces = piece.IsWhiteSpace && item.Style.WrapsInsideSpaces;
 
-                    if (room.Room > 0 && builder.ExtentFor(item.Inline) + width > room.Room &&
-                        item.Style.WrapsLines && !hangs)
+                    // A run the mode breaks inside (CSS Text 3 §4.1.3) is placed one character at a time,
+                    // because the opportunity sits after every preserved white space character, adjacent
+                    // spaces included: the characters that fit stay where they are and take up room, which
+                    // is what pushes the word behind them to the line below, and the first character that
+                    // does not fit begins that line. The run's own first character is offered no
+                    // opportunity, so a white space that fits nowhere overflows from where it was written
+                    // and the rest of the run follows it down - the overflow the specification's note
+                    // calls unavoidable.
+                    var splits = insideSpaces && room.Room > 0 &&
+                        builder.ExtentFor(item.Inline) + width > room.Room && item.Style.WrapsLines;
+
+                    var end = run.Start + run.Length;
+
+                    for (var at = run.Start; at < end;)
                     {
-                        if (builder.HasContent)
-                        {
-                            Close(builder);
-                            builder = new LineBuilder(item.Style, carried);
-                        }
-                        else if (room.Shortened)
-                        {
-                            // CSS 2.1 §9.5: a line box a float has shortened, too small for the
-                            // content standing on it, is shifted downward until some content fits
-                            // or no floats are left - the long word beside the floated picture goes
-                            // below it rather than overflowing the room the float left, which is
-                            // the specification's own example of the rule.
-                            room.Drop();
-                        }
-                    }
+                        var taken = splits ? 1 : run.Length;
+                        var advance = splits
+                            ? WhiteSpaceWidth(item.Style, run.Source, at, 1, builder.Width, itemFlow)
+                            : width;
 
-                    builder.Add(piece.Source, piece.Start, piece.Length, width, item.Style, item.Box, piece.Flow, item.Inline);
+                        var breaks = !piece.IsWhiteSpace || (insideSpaces && at > run.Start);
+
+                        if (breaks && room.Room > 0 &&
+                            builder.ExtentFor(item.Inline) + advance > room.Room && item.Style.WrapsLines)
+                        {
+                            if (builder.HasContent)
+                            {
+                                Close(builder);
+                                builder = new LineBuilder(item.Style, carried);
+                            }
+                            else if (room.Shortened)
+                            {
+                                // CSS 2.1 §9.5: a line box a float has shortened, too small for the
+                                // content standing on it, is shifted downward until some content fits
+                                // or no floats are left - the long word beside the floated picture goes
+                                // below it rather than overflowing the room the float left, which is
+                                // the specification's own example of the rule.
+                                room.Drop();
+                            }
+                        }
+
+                        builder.Add(run.Source, at, taken, advance, item.Style, item.Box, piece.Flow, item.Inline);
+                        at += taken;
+                    }
                 }
             }
         }
@@ -3591,12 +3633,15 @@ internal sealed class InlineLayout
         private static String ToSpaces(String source, Int32 start, Int32 length) =>
             source.Substring(start, length).Replace('\t', ' ');
 
+        // White space only collapses into the run before it where the mode collapses it. `break-spaces`
+        // keeps every character of a preserved run, so two of them meeting across an element's edge stay
+        // two, which is what makes the run long enough to break inside.
         private static Boolean EndsInCollapsibleSpace(TextFragment fragment) =>
             !fragment.IsReplaced &&
             fragment.Atomic is null &&
             fragment.Ruby is null &&
             fragment.Length > 0 &&
-            !fragment.Style.IsPreformatted &&
+            fragment.Style.CollapsesSpaces &&
             TextChunker.IsCollapsible(fragment.Source, fragment.Start + fragment.Length - 1, 1);
 
         /// <summary>

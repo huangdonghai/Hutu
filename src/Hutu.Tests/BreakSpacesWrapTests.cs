@@ -1,0 +1,137 @@
+using Hutu.Rendering.Layout;
+using NUnit.Framework;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+namespace Hutu.Tests;
+
+/// <summary>
+/// Covers where a line may break inside the white space a mode keeps: <c>break-spaces</c> offers an
+/// opportunity after every character of such a run, while every mode offers none before the run's first
+/// character, so a space that fits nowhere overflows from where it stands (CSS Text 3 4.1.3).
+/// </summary>
+/// <remarks>
+/// The fake measurer gives every character five pixels and the containers are twenty pixels - or twenty
+/// device pixels of column - across, so a line holds four characters and a run of three spaces between
+/// two words is the case that splits. The same numbers are read back from Chrome, which puts its spaces
+/// in the same places.
+/// </remarks>
+[TestFixture]
+public sealed class BreakSpacesWrapTests
+{
+    [Test]
+    public async Task TheSpacesThatFitStayAndTheRestBeginTheLineBelow()
+    {
+        using var view = await Render(
+            "<style>div { white-space: break-spaces; width: 20px }</style><div>AB   CD</div>");
+
+        Assert.Multiple(() =>
+        {
+            // Before the run could break between its characters, all three spaces jumped down together
+            // and the line above ended short of the room it had been given.
+            Assert.That(Text(view, "AB  ").BorderBox.Width, Is.EqualTo(20), "two spaces fit inside the line");
+            Assert.That(Text(view, " CD").BorderBox.Y, Is.EqualTo(10), "the third begins the line below");
+            Assert.That(Text(view, " CD").BorderBox.Width, Is.EqualTo(15), "and takes room there as it stands");
+        });
+    }
+
+    [Test]
+    public async Task AFirstSpaceNeverMovesOffTheLineItOverflows()
+    {
+        using var view = await Render(
+            "<style>div { white-space: break-spaces; width: 20px }</style><div>ABCD </div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Text(view, "ABCD ").BorderBox.Y, Is.EqualTo(0), "the word and its space stand together");
+            Assert.That(Text(view, "ABCD ").BorderBox.Width, Is.EqualTo(25), "and the space overflows from there");
+        });
+    }
+
+    [Test]
+    public async Task ASpaceBehindAWordThatFitsNowhereGoesDownWithTheWord()
+    {
+        using var view = await Render(
+            "<style>div { white-space: break-spaces; width: 20px }</style><div>ABCDE FG</div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Text(view, "ABCDE ").BorderBox.Width, Is.EqualTo(30), "the long word keeps its space");
+            Assert.That(Text(view, "FG").BorderBox.Y, Is.EqualTo(10), "and only the next word falls to the line below");
+        });
+    }
+
+    [Test]
+    public async Task ASecondTabFallsToTheLineBelowTheFirstThatOverflowed()
+    {
+        using var view = await Render(
+            "<style>div { white-space: break-spaces; width: 20px }</style><div>AB\t\tCD</div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Text(view, "AB ").BorderBox.Width, Is.EqualTo(40), "the first tab runs past the line");
+            Assert.That(Text(view, " ").BorderBox.Y, Is.EqualTo(10), "the second stands alone on the line below");
+            Assert.That(Text(view, " ").BorderBox.Width, Is.EqualTo(40), "and runs to the same stop from the line's start");
+            Assert.That(Text(view, "CD").BorderBox.Y, Is.EqualTo(20), "and the word follows the room the tab took");
+        });
+    }
+
+    [Test]
+    public async Task APreWrapRunStillMovesAsOnePiece()
+    {
+        using var view = await Render(
+            "<style>div { white-space: pre-wrap; width: 20px }</style><div>AB   CD</div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Text(view, "AB").BorderBox.Y, Is.EqualTo(0), "the run stays on the line it was written on");
+            Assert.That(Text(view, "AB").BorderBox.Width, Is.EqualTo(10), "hung, so the line stops at the word");
+            Assert.That(Text(view, "CD").BorderBox.Y, Is.EqualTo(10), "and the run takes none of the room below");
+        });
+    }
+
+    [Test]
+    public async Task AColumnBreaksItsPreservedSpacesBetweenThemToo()
+    {
+        using var view = await Render(
+            "<style>div { writing-mode: vertical-rl; white-space: break-spaces; height: 20px }</style>" +
+            "<div>AB   CD</div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Text(view, "AB  ").BorderBox.Height, Is.EqualTo(20), "two spaces fit inside the column");
+            Assert.That(Text(view, " CD").BorderBox.X, Is.LessThan(Text(view, "AB  ").BorderBox.X), "the third begins the next");
+        });
+    }
+
+    private static async Task<HutuViewInternal> Render(String content)
+    {
+        var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 600);
+        await view.SetHtml(
+            "<html><head><style>div { margin: 0 }</style></head>" +
+            "<body style='margin:0;font-size:10px;line-height:10px'>" + content + "</body></html>");
+        return view;
+    }
+
+    private static LayoutBox Text(HutuViewInternal view, String text) =>
+        Texts(view).First(box => box.Text == text);
+
+    private static IEnumerable<LayoutBox> Texts(HutuViewInternal view) =>
+        Walk(view.Layout!.Root).Where(box => box.Kind == LayoutKind.Text);
+
+    private static IEnumerable<LayoutBox> Walk(LayoutBox node)
+    {
+        yield return node;
+
+        foreach (var child in node.Children)
+        {
+            foreach (var descendant in Walk(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+}
