@@ -205,7 +205,7 @@ public sealed class BackgroundLayerTests
     [TestCase("black, black 50px, white 50px, white", "ff000000@0 ff000000@0.5 ffffffff@0.5 ffffffff@1")]
     [TestCase("black, white 50px, black", "ff000000@0 ffffffff@0.5 ff000000@1")]
     [TestCase("black 0px, gray, gray, white 100px", "ff000000@0 ff808080@0.333 ff808080@0.667 ffffffff@1")]
-    [TestCase("yellow 100px, blue 50%", "ffffff00@0 ff0000ff@1")]
+    [TestCase("yellow 100px, blue 50%", "ffffff00@0 ffffff00@1 ff0000ff@1")]
     [TestCase("blue -5%, yellow -5%", "ffffff00@0 ffffff00@1")]
     [TestCase("blue 150%, yellow 150%", "ff0000ff@0 ff0000ff@1")]
     [TestCase("black -100px, white 100px", "ff808080@0 ffffffff@1")]
@@ -265,6 +265,51 @@ public sealed class BackgroundLayerTests
         await view.SetHtml(
             "<html><body style='margin:0'>" +
             $"<div style='width:100px;height:100px;font-size:10px;background:linear-gradient({stops})'></div>" +
+            "</body></html>");
+
+        Assert.That(Write(SingleGradient(view)), Is.EqualTo(expected));
+    }
+
+    /// <summary>
+    /// A repeating gradient shifts its stops by multiples of the distance between its first and last
+    /// one, in both directions, until the line is covered (CSS Images 3 §3.3). The box here is 100px
+    /// wide and 200px tall and the default line runs down it, so a group 100px long lays two of itself
+    /// down - and where a group ends and the next begins, the colour changes at once rather than fading.
+    /// </summary>
+    [Test]
+    [TestCase("black 0px, black 50px, white 50px, white 100px")]
+    [TestCase("black 100px, black 150px, white 150px, white 200px")]
+    public async Task ARepeatingGradientLaysItsGroupOutAlongTheLine(String stops)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:100px;height:200px;background:repeating-linear-gradient({stops})'></div>" +
+            "</body></html>");
+
+        Assert.That(
+            Write(SingleGradient(view)),
+            Is.EqualTo("ffffffff@0 ff000000@0 ff000000@0.25 ffffffff@0.25 ffffffff@0.5 ff000000@0.5 " +
+                "ff000000@0.75 ffffffff@0.75 ffffffff@1 ff000000@1"));
+    }
+
+    /// <summary>
+    /// A group with no width to repeat leaves the line at its last colour, and one too narrow for the
+    /// device to resolve is drawn as the gradient's own average colour (CSS Images 3 §3.3).
+    /// </summary>
+    [Test]
+    [TestCase("red 20px, blue 20px", "ff0000ff@0 ff0000ff@1")]
+    [TestCase("black 0px, white 0.5px", "ff808080@0 ff808080@1")]
+    public async Task ARepeatingGroupTooNarrowToDrawComesToOneColour(String stops, String expected)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:100px;height:100px;background:repeating-linear-gradient({stops})'></div>" +
             "</body></html>");
 
         Assert.That(Write(SingleGradient(view)), Is.EqualTo(expected));

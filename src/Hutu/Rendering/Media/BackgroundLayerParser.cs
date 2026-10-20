@@ -305,7 +305,10 @@ internal static class BackgroundLayerParser
             return null;
         }
 
-        if (!value[..open].Trim().Equals("linear-gradient", StringComparison.OrdinalIgnoreCase))
+        var name = value[..open].Trim();
+        var repeats = name.StartsWith("repeating-", StringComparison.OrdinalIgnoreCase);
+
+        if (!name.Equals(repeats ? "repeating-linear-gradient" : "linear-gradient", StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
@@ -343,7 +346,7 @@ internal static class BackgroundLayerParser
             stops.Add(stop.Value);
         }
 
-        return new LinearGradientSpec(angle, stops);
+        return new LinearGradientSpec(angle, stops, repeats);
     }
 
     /// <summary>

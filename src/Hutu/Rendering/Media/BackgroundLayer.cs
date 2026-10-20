@@ -119,16 +119,23 @@ public readonly struct ColorStop
 /// </summary>
 public sealed class LinearGradientSpec
 {
-    internal LinearGradientSpec(Double angleDegrees, IReadOnlyList<ColorStop> stops)
+    internal LinearGradientSpec(Double angleDegrees, IReadOnlyList<ColorStop> stops, Boolean repeats = false)
     {
         AngleDegrees = angleDegrees;
         Stops = stops;
+        Repeats = repeats;
     }
 
     /// <summary>Gets the direction, in degrees clockwise from "to top".</summary>
     public Double AngleDegrees { get; }
 
     public IReadOnlyList<ColorStop> Stops { get; }
+
+    /// <summary>
+    /// Gets whether the list of stops repeats itself along the line, which is all
+    /// <c>repeating-linear-gradient()</c> adds to its non-repeating sibling (CSS Images 3 §3.3).
+    /// </summary>
+    public Boolean Repeats { get; }
 
     /// <summary>
     /// Gets the length of the gradient line a box of these sides runs along: the projection of the box
@@ -139,32 +146,33 @@ public sealed class LinearGradientSpec
     public static Double LineLength(Double width, Double height, Double angleDegrees)
     {
         var radians = angleDegrees * Math.PI / 180.0;
+        var along = Math.Sin(radians);
+        var across = Math.Cos(radians);
 
-        return Math.Abs(width * Math.Sin(radians)) + Math.Abs(height * Math.Cos(radians));
+        // The trigonometry of a quarter turn lands on nothing rather than on 1.2e-16, and a line
+        // pointed along an axis is exactly the side it runs along: a stop at 100% of it has to sit on
+        // the edge of the box, not a hair beyond it.
+        if (Math.Abs(along) < 1e-12)
+        {
+            along = 0;
+        }
+
+        if (Math.Abs(across) < 1e-12)
+        {
+            across = 0;
+        }
+
+        return Math.Abs(width * along) + Math.Abs(height * across);
     }
 
     /// <summary>
     /// Gets the stops as fractions of a gradient line <paramref name="length"/> long, in the order a
-    /// painter needs them, and with the two colours the line has come to at each end of the box beside
-    /// them.
+    /// painter needs them: the list first placed by the fixup it is written for, then repeated if the
+    /// notation asks, then kept to what the box of that line shows.
     /// </summary>
-    /// <remarks>
-    /// The fixup CSS Images 3 §3.4.3 asks for runs in its own order: the ends of the list take the ends
-    /// of the line where the author left them, no stop stands behind the largest position before it,
-    /// and a run of stops written without a position spaces itself equally between its neighbours.
-    /// <para>
-    /// The stops that come out are the ones for the window the box shows, which is not the whole line:
-    /// a stop at -5% or 150% is on the line but off the box, and the colour the box starts and ends on
-    /// is whatever the line has come to at those two points. Handing the painter the raw positions
-    /// instead would lose the part of the blend that runs before the box, and clamping them to the ends
-    /// would stop it dead.
-    /// </para>
-    /// </remarks>
     public IReadOnlyList<GradientStop> StopsAt(Double length)
     {
-        var count = Stops.Count;
-
-        if (count == 0)
+        if (Stops.Count == 0)
         {
             return Array.Empty<GradientStop>();
         }
@@ -173,9 +181,23 @@ public sealed class LinearGradientSpec
         {
             // A line with no length has no room to place anything, so every colour lands on it at once
             // and the box is the last one written.
-            return new[] { new GradientStop(0, Stops[count - 1].Color), new GradientStop(1, Stops[count - 1].Color) };
+            return new[] { new GradientStop(0, Stops[Stops.Count - 1].Color), new GradientStop(1, Stops[Stops.Count - 1].Color) };
         }
 
+        var placed = Placed(length);
+
+        return Windowed(Repeats ? Repeated(placed, length) : placed, length);
+    }
+
+    /// <summary>
+    /// Gets where each colour of the list stands on a line <paramref name="length"/> long, after the
+    /// fixup CSS Images 3 §3.4.3 asks for: the ends of the list take the ends of the line where the
+    /// author left them, no stop stands behind the largest position before it, and a run written
+    /// without a position spaces itself equally between its neighbours.
+    /// </summary>
+    private List<(Double At, UInt32 Color)> Placed(Double length)
+    {
+        var count = Stops.Count;
         var at = new Double[count];
 
         for (var index = 0; index < count; index++)
@@ -240,21 +262,164 @@ public sealed class LinearGradientSpec
             from = to;
         }
 
-        var visible = new List<GradientStop>(count + 2) { new(0, ColorAt(at, 0)) };
+        var placed = new List<(Double At, UInt32 Color)>(count);
 
         for (var index = 0; index < count; index++)
         {
-            var fraction = at[index] / length;
+            placed.Add((at[index], Stops[index].Color));
+        }
 
-            // A stop standing on either edge of the box is the colour that edge already carries, so
-            // listing it again would hand the painter the same position twice.
-            if (fraction > 1e-9 && fraction < 1 - 1e-9)
+        return placed;
+    }
+
+    /// <summary>
+    /// Lays the list out again over the whole line, shifted by multiples of the distance between its
+    /// first and last colour stop in both directions (CSS Images 3 §3.3). The last stop of one group and
+    /// the first of the next always coincide, which is what makes the pattern change sharply at each
+    /// boundary when the two are not the same colour.
+    /// </summary>
+    private List<(Double At, UInt32 Color)> Repeated(List<(Double At, UInt32 Color)> placed, Double length)
+    {
+        var period = placed[placed.Count - 1].At - placed[0].At;
+
+        if (period <= 0)
+        {
+            // The group has no width to repeat, so the line never gets past the last colour written.
+            return new List<(Double, UInt32)> { (0, placed[placed.Count - 1].Color), (length, placed[placed.Count - 1].Color) };
+        }
+
+        if (period < 1)
+        {
+            // A group narrower than a device pixel cannot be drawn as a pattern; the spec's answer is
+            // the gradient's own average colour, and one group is all of it that counts.
+            var flat = Average(placed);
+
+            return new List<(Double, UInt32)> { (0, flat), (length, flat) };
+        }
+
+        var repeated = new List<(Double At, UInt32 Color)>(placed.Count * (Int32)Math.Ceiling(length / period) + placed.Count);
+
+        // The groups wanted are the ones with a stop of their own on the line: the last group whose
+        // first stop can still reach it, and the first whose last stop has not gone past it.
+        var opening = (Int32)Math.Floor(-placed[placed.Count - 1].At / period);
+        var closing = (Int32)Math.Ceiling((length - placed[0].At) / period);
+
+        for (var group = opening; group <= closing; group++)
+        {
+            foreach (var (at, color) in placed)
             {
-                visible.Add(new GradientStop(fraction, Stops[index].Color));
+                var stood = at + group * period;
+
+                if (stood >= 0 && stood <= length)
+                {
+                    repeated.Add((stood, color));
+                }
             }
         }
 
-        visible.Add(new GradientStop(1, ColorAt(at, length)));
+        // The groups are laid down in order and each one's last stop stands where the next one's first
+        // does, so the list comes out ascending without a sort - which is as well, since the order of
+        // two stops at one distance is the sharp change the pattern is made of.
+        return repeated;
+    }
+
+    /// <summary>
+    /// Gets the colour a line painted with these stops averages to: each stretch of the blend counted
+    /// as long as it runs, which for a linear one is the mid-point of its two ends (CSS Images 3 §3.3,
+    /// reading §4.1's average colour of an image).
+    /// </summary>
+    private static UInt32 Average(List<(Double At, UInt32 Color)> placed)
+    {
+        var red = 0.0;
+        var green = 0.0;
+        var blue = 0.0;
+        var coverage = 0.0;
+        var runs = 0.0;
+
+        for (var index = 0; index < placed.Count - 1; index++)
+        {
+            var span = placed[index + 1].At - placed[index].At;
+
+            if (span <= 0)
+            {
+                continue;
+            }
+
+            var middle = Blend(placed[index].Color, placed[index + 1].Color, 0.5);
+            var alpha = ((middle >> 24) & 0xFF) / 255.0;
+
+            red += (((middle >> 16) & 0xFF) / 255.0) * alpha * span;
+            green += (((middle >> 8) & 0xFF) / 255.0) * alpha * span;
+            blue += ((middle & 0xFF) / 255.0) * alpha * span;
+            coverage += alpha * span;
+            runs += span;
+        }
+
+        if (runs <= 0)
+        {
+            return placed[placed.Count - 1].Color;
+        }
+
+        if (coverage <= 0)
+        {
+            return 0;
+        }
+
+        Byte Channel(Double folded) =>
+            (Byte)Math.Clamp((Int32)Math.Round(Math.Clamp(folded / coverage, 0.0, 1.0) * 255), 0, 255);
+
+        return (UInt32)(((Byte)Math.Clamp((Int32)Math.Round(coverage / runs * 255), 0, 255) << 24) |
+            (Channel(red) << 16) | (Channel(green) << 8) | Channel(blue));
+    }
+
+    /// <summary>
+    /// Keeps the part of the list the box shows: every stop that stands on it, with the colour the line
+    /// has come to at each edge where the stops do not reach one. A stop at -5% or 150% is on the line
+    /// but off the box, and the blend that runs through it is what the box opens or closes on -
+    /// clamping the position instead would stop the blend dead at the edge.
+    /// </summary>
+    private static List<GradientStop> Windowed(List<(Double At, UInt32 Color)> placed, Double length)
+    {
+        var last = placed.Count - 1;
+        var visible = new List<GradientStop>(placed.Count + 2);
+
+        // Two stops of one colour at one distance say one thing, which is what the boundary between two
+        // groups of a repeating gradient comes to when the pattern ends and begins alike.
+        void Add(Double fraction, UInt32 color)
+        {
+            if (visible.Count == 0 || visible[^1].Offset != fraction || visible[^1].Color != color)
+            {
+                visible.Add(new GradientStop(fraction, color));
+            }
+        }
+
+        if (placed[0].At > 0)
+        {
+            Add(0, placed[0].Color);
+        }
+        else if (placed[0].At < 0)
+        {
+            Add(0, ColorAt(placed, 0));
+        }
+
+        for (var index = 0; index <= last; index++)
+        {
+            var (at, color) = placed[index];
+
+            if (at >= 0 && at <= length)
+            {
+                Add(at / length, color);
+            }
+        }
+
+        if (placed[last].At < length)
+        {
+            Add(1, placed[last].Color);
+        }
+        else if (placed[last].At > length)
+        {
+            Add(1, ColorAt(placed, length));
+        }
 
         return visible;
     }
@@ -265,32 +430,32 @@ public sealed class LinearGradientSpec
     /// premultiplied space (CSS Images 3 §3.4.2). Two stops written at the same distance change over
     /// at that point rather than fading, so the later one is what stands there.
     /// </summary>
-    private UInt32 ColorAt(Double[] at, Double distance)
+    private static UInt32 ColorAt(List<(Double At, UInt32 Color)> placed, Double distance)
     {
-        var count = at.Length;
+        var count = placed.Count;
 
-        if (distance >= at[count - 1])
+        if (distance >= placed[count - 1].At)
         {
-            return Stops[count - 1].Color;
+            return placed[count - 1].Color;
         }
 
-        if (distance < at[0])
+        if (distance < placed[0].At)
         {
-            return Stops[0].Color;
+            return placed[0].Color;
         }
 
         var index = 0;
 
-        while (index < count - 1 && at[index + 1] <= distance)
+        while (index < count - 1 && placed[index + 1].At <= distance)
         {
             index++;
         }
 
-        var span = at[index + 1] - at[index];
+        var span = placed[index + 1].At - placed[index].At;
 
         return span <= 0
-            ? Stops[index + 1].Color
-            : Blend(Stops[index].Color, Stops[index + 1].Color, (distance - at[index]) / span);
+            ? placed[index + 1].Color
+            : Blend(placed[index].Color, placed[index + 1].Color, (distance - placed[index].At) / span);
     }
 
     /// <summary>Blends two packed ARGB colours, with the alpha folded into the channels it rides on.</summary>
