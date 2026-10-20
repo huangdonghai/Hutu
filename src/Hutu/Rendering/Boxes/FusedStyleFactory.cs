@@ -50,6 +50,15 @@ internal sealed class FusedParent
 
     public String WhiteSpace { get; init; } = "normal";
 
+    /// <summary>Gets the parent's <c>overflow-wrap</c>, which every element under it gives its text.</summary>
+    public String OverflowWrap { get; init; } = CssInitialValues.OverflowWrap;
+
+    /// <summary>Gets the parent's <c>word-break</c>, likewise inherited.</summary>
+    public String WordBreak { get; init; } = CssInitialValues.WordBreak;
+
+    /// <summary>Gets the parent's <c>line-break</c>, likewise inherited.</summary>
+    public String LineBreak { get; init; } = CssInitialValues.LineBreak;
+
     /// <summary>Gets the parent's tab length in pixels, or null where the tab is counted in characters.</summary>
     public Double? TabLength { get; init; }
 
@@ -206,6 +215,9 @@ internal sealed class FusedParent
             ? lineHeight
             : LineHeightHit,
         WhiteSpace = style.WhiteSpace,
+        OverflowWrap = style.OverflowWrap,
+        WordBreak = style.WordBreak,
+        LineBreak = style.LineBreak,
         TabLength = style.TabLength,
         TabUnits = style.TabUnits,
         Widows = style.Breaks.Widows,
@@ -398,6 +410,13 @@ internal static class FusedStyleFactory
             var built = new TextArea
             {
                 WhiteSpace = ComputedStyle.ResolveWhiteSpaceFused(find("white-space"), parent.WhiteSpace),
+
+                // The three properties that say where a line may end stand on the same footing as
+                // white-space: each is inherited, and the text below the element is what reads them.
+                OverflowWrap = ComputedStyle.ResolveOverflowWrapFused(
+                    find("overflow-wrap"), find("word-wrap"), parent.OverflowWrap),
+                WordBreak = ComputedStyle.ResolveWordBreakFused(find("word-break"), parent.WordBreak),
+                LineBreak = ComputedStyle.ResolveLineBreakFused(find("line-break"), parent.LineBreak),
                 TabLength = tabLength,
                 TabUnits = tabUnits,
                 Align = all,

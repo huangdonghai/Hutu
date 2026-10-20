@@ -97,6 +97,12 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // CSS Text 3's break-spaces, which AngleSharp's grammar predates: dropped, the declaration
         // would leave the element on the white-space it inherited and its spaces would collapse.
         ["white-space"] = ["break-spaces"],
+        // The two values of the tailorable break properties that AngleSharp's grammars stop short of.
+        // Dropped, an element asking for either inherits `normal` and its words overflow the box, which
+        // is the one thing those values were written to stop.
+        ["overflow-wrap"] = ["anywhere"],
+        ["word-wrap"] = ["anywhere"],
+        ["line-break"] = ["normal"],
     };
 
     /// <summary>

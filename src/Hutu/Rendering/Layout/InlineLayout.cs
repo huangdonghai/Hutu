@@ -337,6 +337,13 @@ internal sealed class InlineLayout
             // per chunk would be characters copied for a number.
             var source = item.Text!;
 
+            // The characters the boundary stands after, kept across the chunks of this one item: where the
+            // text of another element begins, the neighbourhood of the two is what the line will decide,
+            // and the walk holds no answer for it. One is the last unit of the character before, which is
+            // what the rules ask for, and the other its first, which is what a mark is read as.
+            var before = -1;
+            var held = -1;
+
             foreach (var chunk in TextChunker.Ranges(source))
             {
                 // A tab asks the same question here as on a line: how far the content has run decides
@@ -351,6 +358,60 @@ internal sealed class InlineLayout
                 // either extent and leaves the break it stands at uncounted as well.
                 if (collapsible && !sawContent)
                 {
+                    continue;
+                }
+
+                // Where the tailorable properties put a break between the characters of a word, the
+                // narrowest the content can be is no longer the widest word but the widest character of it
+                // - a preserved space excepted, since the rule that forbids a break before one is set aside
+                // only by the values that speak of white space, and punctuation excepted, since
+                // `break-all` speaks of letters (CSS Text 3 §5.4-§5.6, and Chrome measures "X XX X" at two
+                // characters under `break-all` and at one under `overflow-wrap: anywhere`, with "AB., CD"
+                // at three). `overflow-wrap: break-word` is left out: its breaks are the last resort a line
+                // takes, and a line that could have been narrower is not what the property is asked for.
+                if (!collapsible &&
+                    (item.Style.BreaksAnywhere ||
+                        item.Style.BreaksBetweenLetters ||
+                        item.Style.CountsLongWordBreaks) &&
+                    item.Style.WrapsLines)
+                {
+                    var end = chunk.Start + chunk.Length;
+
+                    for (var at = chunk.Start; at < end;)
+                    {
+                        var units = TextClusters.UnitsAt(source, at, end);
+                        var standing = TextChunker.IsCollapsible(source, at, units);
+
+                        // Which side of the boundary the segment ends at: a value that sets the rules aside
+                        // answers for every boundary it meets, wherever the character came from; white space
+                        // gives one only to the values that speak of white space; and `break-all`, which
+                        // speaks of letters, leaves the rules standing - both the rules themselves and the
+                        // neighbourhood the line will settle when the piece was written on another element.
+                        var ends = item.Style.BreaksAnywhere || item.Style.CountsLongWordBreaks
+                            ? true
+                            : standing
+                                ? item.Style.WrapsBeforeSpaces
+                                : before >= 0 &&
+                                    (LineBreaks.MayBreak(source, before, at) ||
+                                        LineBreaks.MayBreakBetweenLetters(source, held, at));
+
+                        if (ends)
+                        {
+                            minContent = Math.Max(minContent, unbreakable);
+                            unbreakable = 0;
+                        }
+
+                        unbreakable += space
+                            ? WhiteSpaceWidth(item.Style, source, at, units, maxContent, flow)
+                            : Measure(item.Style, source, at, units, flow);
+                        held = at;
+                        before = at + units - 1;
+                        at += units;
+                    }
+
+                    maxContent += trailing + width;
+                    trailing = 0;
+                    sawContent = true;
                     continue;
                 }
 
@@ -1411,29 +1472,69 @@ internal sealed class InlineLayout
                     // would have overflowed - hung, where the mode hangs its spaces, or taking room,
                     // where it does not - and takes the following word down with it. That is also why a
                     // `<br>` behind a space ends the line the space overflowed rather than an empty one.
-                    var insideSpaces = piece.IsWhiteSpace && item.Style.WrapsInsideSpaces;
+                    var spaces = piece.IsWhiteSpace;
+                    var stepsSpaces = spaces && item.Style.WrapsInsideSpaces;
 
-                    // A run the mode breaks inside (CSS Text 3 §4.1.3) is placed one character at a time,
-                    // because the opportunity sits after every preserved white space character, adjacent
-                    // spaces included: the characters that fit stay where they are and take up room, which
-                    // is what pushes the word behind them to the line below, and the first character that
-                    // does not fit begins that line. The run's own first character is offered no
-                    // opportunity, so a white space that fits nowhere overflows from where it was written
-                    // and the rest of the run follows it down - the overflow the specification's note
-                    // calls unavoidable.
-                    var splits = insideSpaces && room.Room > 0 &&
+                    // The properties that tailor where a line may end put their opportunities in two different
+                    // places (CSS Text 3 §5.4-§5.6): before the first character of a run of preserved white
+                    // space, to keep a line from overflowing at all, and between the characters of a word.
+                    // Only `word-break: break-all` leaves the first of these alone, because the rule it sets
+                    // aside is the one about words.
+                    var beforeFirst = stepsSpaces && item.Style.WrapsBeforeSpaces;
+
+                    // A word is stepped only where the break inside it is worth something: where the value
+                    // gives it as an opportunity of its own, or where the word will not fit on a line at all
+                    // and so no amount of moving it down would help.
+                    var letters = !spaces &&
+                        (item.Style.BreaksAnywhere || item.Style.BreaksBetweenLetters);
+                    var stepsWord = !spaces &&
+                        (letters || (item.Style.WrapsLongWords && width > room.Room));
+
+                    var steps = (stepsSpaces || stepsWord) && room.Room > 0 &&
                         builder.ExtentFor(item.Inline) + width > room.Room && item.Style.WrapsLines;
 
                     var end = run.Start + run.Length;
+                    var at = run.Start;
+                    var previous = -1;
 
-                    for (var at = run.Start; at < end;)
+                    // A word broken only because nothing else would serve is begun on a line of its own
+                    // first: the room the line had left is not filled with the end of it, which is what
+                    // makes the break inside a word the last resort the property names. Where the licence
+                    // stands between every two characters there is nothing to move down, and the line is
+                    // filled to its end edge and cut there.
+                    var moved = false;
+
+                    if (steps && stepsWord && !letters && builder.HasContent)
                     {
-                        var taken = splits ? 1 : run.Length;
-                        var advance = splits
-                            ? WhiteSpaceWidth(item.Style, run.Source, at, 1, builder.Width, itemFlow)
-                            : width;
+                        Close(builder);
+                        builder = new LineBuilder(item.Style, carried);
+                        moved = true;
+                    }
 
-                        var breaks = !piece.IsWhiteSpace || (insideSpaces && at > run.Start);
+                    while (at < end)
+                    {
+                        var taken = steps ? TextClusters.UnitsAt(run.Source, at, end) : run.Length;
+
+                        // The room a character of the run asks for is asked of the line it stands on: a tab
+                        // runs the line on to its next stop, and the stop is a question about where the line
+                        // has come to rather than about the font.
+                        var advance = !steps
+                            ? width
+                            : spaces
+                                ? WhiteSpaceWidth(item.Style, run.Source, at, taken, builder.Width, itemFlow)
+                                : Measure(item.Style, run.Source, at, taken, itemFlow);
+
+                        // Where the break may be taken, which for a word the script breaks between letters
+                        // is only between two of them: the punctuation keeps the rules it had, as does the
+                        // character that opened the piece, whose boundary the chunking already answered.
+                        var breaks = !spaces
+                            ? at == run.Start
+                                ? !moved
+                                : !item.Style.BreaksBetweenLetters ||
+                                    item.Style.BreaksAnywhere ||
+                                    item.Style.CountsLongWordBreaks ||
+                                    LineBreaks.MayBreakBetweenLetters(run.Source, previous, at)
+                            : at > run.Start ? stepsSpaces : beforeFirst;
 
                         if (breaks && room.Room > 0 &&
                             builder.ExtentFor(item.Inline) + advance > room.Room && item.Style.WrapsLines)
@@ -1442,6 +1543,7 @@ internal sealed class InlineLayout
                             {
                                 Close(builder);
                                 builder = new LineBuilder(item.Style, carried);
+                                moved = false;
                             }
                             else if (room.Shortened)
                             {
@@ -1455,6 +1557,7 @@ internal sealed class InlineLayout
                         }
 
                         builder.Add(run.Source, at, taken, advance, item.Style, item.Box, piece.Flow, item.Inline);
+                        previous = at;
                         at += taken;
                     }
                 }

@@ -132,7 +132,7 @@ internal readonly struct ComputedStyle
     private static readonly String[] TextNames =
         {
             "white-space", "text-align", "text-align-last", "text-justify", "vertical-align",
-            "text-indent", "visibility",
+            "text-indent", "visibility", "overflow-wrap", "word-wrap", "word-break", "line-break",
         };
 
     /// <summary>
@@ -218,6 +218,9 @@ internal readonly struct ComputedStyle
         var text = new TextArea
         {
             WhiteSpace = Keyword("white-space", CssInitialValues.WhiteSpace),
+            OverflowWrap = Keyword("overflow-wrap", Keyword("word-wrap", CssInitialValues.OverflowWrap)),
+            WordBreak = Keyword("word-break", CssInitialValues.WordBreak),
+            LineBreak = Keyword("line-break", CssInitialValues.LineBreak),
             Align = align,
             AlignLast = alignLast,
             TextJustify = Keyword("text-justify", CssInitialValues.TextJustify),
@@ -699,6 +702,27 @@ internal readonly struct ComputedStyle
     /// </summary>
     public static String ResolveWhiteSpaceFused(ICssProperty? declared, String parentValue) =>
         ResolveKeywordFused(declared, parentValue, CssInitialValues.WhiteSpace, inherited: true);
+
+    /// <summary>
+    /// Resolves <c>overflow-wrap</c> from the element's own cascaded declarations, for the fused path.
+    /// The property is inherited, and the legacy <c>word-wrap</c> spells the same thing: the modern name
+    /// wins where a page wrote both, which is what the specification's own compatibility note says.
+    /// </summary>
+    public static String ResolveOverflowWrapFused(ICssProperty? declared, ICssProperty? legacy, String parentValue) =>
+        ResolveKeywordFused(
+            IsBlank(declared) ? legacy : declared, parentValue, CssInitialValues.OverflowWrap, inherited: true);
+
+    /// <summary>Resolves <c>word-break</c>, which is inherited, for the fused path.</summary>
+    public static String ResolveWordBreakFused(ICssProperty? declared, String parentValue) =>
+        ResolveKeywordFused(declared, parentValue, CssInitialValues.WordBreak, inherited: true);
+
+    /// <summary>Resolves <c>line-break</c>, which is inherited, for the fused path.</summary>
+    public static String ResolveLineBreakFused(ICssProperty? declared, String parentValue) =>
+        ResolveKeywordFused(declared, parentValue, CssInitialValues.LineBreak, inherited: true);
+
+    /// <summary>Gets whether a property carries no declaration of the value asked for.</summary>
+    private static Boolean IsBlank(ICssProperty? property) =>
+        property is null || String.IsNullOrWhiteSpace(property.Value);
 
     /// <summary>
     /// Resolves whether a box draws itself from the element's own cascaded declaration, for the fused
@@ -2690,6 +2714,63 @@ internal readonly struct ComputedStyle
     /// </summary>
     public Boolean WrapsInsideSpaces =>
         WhiteSpace.Equals("break-spaces", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Gets how a word too long for its line is treated, as <c>overflow-wrap</c> settled it.</summary>
+    public String OverflowWrap => _values.Text.OverflowWrap;
+
+    /// <summary>Gets how the script's own word rules are applied, as <c>word-break</c> settled it.</summary>
+    public String WordBreak => _values.Text.WordBreak;
+
+    /// <summary>Gets how strictly the breaking rules are read, as <c>line-break</c> settled it.</summary>
+    public String LineBreak => _values.Text.LineBreak;
+
+    /// <summary>
+    /// Gets whether a line may end between any two characters of this element's text at all:
+    /// <c>line-break: anywhere</c> sets the breaking rules themselves aside, the ones about punctuation
+    /// included (CSS Text 3 §5.4), and the breaks it gives are counted as the narrowest size.
+    /// </summary>
+    public Boolean BreaksAnywhere => LineBreak.Equals("anywhere", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets whether this element's text offers a break between any two of its letters:
+    /// <c>word-break: break-all</c> puts the opportunity between the typographic letter units and leaves
+    /// the rules about white space and about punctuation standing, which is what the property says of
+    /// itself (CSS Text 3 §5.6). The breaks count as the narrowest size.
+    /// </summary>
+    public Boolean BreaksBetweenLetters =>
+        WordBreak.Equals("break-all", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets whether a word that will not fit on a line of its own may be broken to keep it from overflowing
+    /// the box (CSS Text 3 §5.5). Where this is the only licence, the word is moved to a line of its own
+    /// first: the break inside it is the last resort the property names, not a filling of the room a
+    /// previous opportunity left. <c>word-break: break-word</c> is the legacy spelling of the licence, read
+    /// as <c>overflow-wrap: anywhere</c> - which of the three a page wrote never changed how the line broke,
+    /// measured.
+    /// </summary>
+    public Boolean WrapsLongWords =>
+        OverflowWrap.Equals("break-word", StringComparison.OrdinalIgnoreCase) ||
+        OverflowWrap.Equals("anywhere", StringComparison.OrdinalIgnoreCase) ||
+        WordBreak.Equals("break-word", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets whether the breaks inside a word are counted as the content's narrowest size.
+    /// <c>overflow-wrap: anywhere</c> and the legacy <c>word-break: break-word</c> say they are where
+    /// <c>overflow-wrap: break-word</c> says it is not (CSS Text 3 §5.5, and Chrome's min-content of the
+    /// same word under the three spellings is one character, one character and the whole of the word).
+    /// </summary>
+    public Boolean CountsLongWordBreaks =>
+        OverflowWrap.Equals("anywhere", StringComparison.OrdinalIgnoreCase) ||
+        WordBreak.Equals("break-word", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets whether an opportunity exists before the first character of a run of preserved white space,
+    /// which the white-space mode alone never offers. <c>overflow-wrap</c> in either of its two values,
+    /// <c>word-break: break-word</c> and <c>line-break: anywhere</c> give it, to keep a line from
+    /// overflowing; <c>word-break: break-all</c> does not, because the rule it sets aside is the one about
+    /// words.
+    /// </summary>
+    public Boolean WrapsBeforeSpaces => WrapsLongWords || BreaksAnywhere;
 
     // --- Text -----------------------------------------------------------
 

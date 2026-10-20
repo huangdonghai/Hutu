@@ -351,6 +351,24 @@ internal sealed record TextArea
 
     /// <summary>Gets how many character widths a tab runs to, which is the initial and the integer form.</summary>
     internal Double TabUnits { get; init; } = 8;
+
+    /// <summary>
+    /// Gets whether a word that no line can hold is broken where it stops fitting: <c>normal</c>,
+    /// <c>break-word</c> or <c>anywhere</c> (CSS Text 3 §5.5).
+    /// </summary>
+    internal String OverflowWrap { get; init; } = CssInitialValues.OverflowWrap;
+
+    /// <summary>
+    /// Gets whether the script's own word rules are set aside so that a line may end between any two
+    /// characters: <c>normal</c>, <c>break-all</c> or <c>keep-all</c> (CSS Text 3 §5.6).
+    /// </summary>
+    internal String WordBreak { get; init; } = CssInitialValues.WordBreak;
+
+    /// <summary>
+    /// Gets how strictly the line-breaking rules are applied: <c>auto</c>, <c>loose</c>, <c>normal</c>,
+    /// <c>strict</c> or <c>anywhere</c> (CSS Text 3 §5.4).
+    /// </summary>
+    internal String LineBreak { get; init; } = CssInitialValues.LineBreak;
 }
 
 /// <summary>

@@ -162,6 +162,25 @@ internal static class LineBreaks
         return true;
     }
 
+    /// <summary>
+    /// Gets whether a line may end between the two characters the indices stand at where the script is set
+    /// to break between letters. The opportunity <c>word-break: break-all</c> asks for stands between two
+    /// of the typographic letter units - the alphabetic, the numeric and the ideographic classes - and the
+    /// property says of itself that it leaves the rules governing the opportunities made by white space and
+    /// by punctuation standing (CSS Text 3 §5.6, [UAX14]). Chrome is measured to keep to that:
+    /// an eleven-letter run fills its line to the character, while "AB.," breaks after the A and nowhere
+    /// near the comma.
+    /// </summary>
+    /// <param name="left">An index of the character the boundary stands after.</param>
+    /// <param name="right">An index of the character the boundary stands before.</param>
+    public static Boolean MayBreakBetweenLetters(String text, Int32 left, Int32 right) =>
+        IsLetterUnit(text, left) && IsLetterUnit(text, right);
+
+    /// <summary>Gets whether the character at an index is one of the letter units the property counts.</summary>
+    private static Boolean IsLetterUnit(String text, Int32 index) =>
+        ClassOf(TextChunker.CodePointAt(text, index))
+            is BreakClass.Al or BreakClass.Nu or BreakClass.Id;
+
     /// <summary>Gets the line breaking class of a code point, resolving the two the table leaves out.</summary>
     private static BreakClass ClassOf(Int32 codePoint)
     {

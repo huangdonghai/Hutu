@@ -43,6 +43,15 @@ internal static class CssInitialValues
     // --- Text --------------------------------------------------------------------------------
     internal const String WhiteSpace = "normal";
 
+    /// <summary>Gets the value a box takes for <c>overflow-wrap</c>, and for its legacy spelling.</summary>
+    internal const String OverflowWrap = "normal";
+
+    /// <summary>Gets the value a box takes for <c>word-break</c>.</summary>
+    internal const String WordBreak = "normal";
+
+    /// <summary>Gets the value a box takes for <c>line-break</c>, which asks the language's own rules.</summary>
+    internal const String LineBreak = "auto";
+
     /// <summary>
     /// The initial value of <c>visibility</c>, which is inherited - so this is what an element reads
     /// when neither it nor any ancestor ever said otherwise.

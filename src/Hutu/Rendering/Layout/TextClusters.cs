@@ -18,6 +18,46 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 public static class TextClusters
 {
+    /// <summary>
+    /// Gets how many of the string's characters the character at an index is made of - the base with the
+    /// marks that stand on it, the joiners that tie it to its neighbour and the selector that says which
+    /// glyph it is drawn with. A line breaks between characters and never inside one, so this is what the
+    /// layout steps by when it cuts text apart (CSS Text 3 §5.1).
+    /// </summary>
+    public static Int32 UnitsAt(String text, Int32 index, Int32 end)
+    {
+        // The two halves of a pair above the BMP are the one character they stand for.
+        var units = TextChunker.UnitsAt(text, index);
+
+        while (index + units < end && Joins(text, index + units))
+        {
+            units += TextChunker.UnitsAt(text, index + units);
+        }
+
+        return units;
+    }
+
+    /// <summary>Gets whether the character at an index is one the character before it is drawn with.</summary>
+    private static Boolean Joins(String text, Int32 index)
+    {
+        // A mark - the accent written after the letter it stands on, the vowel sign that joins the
+        // consonant before it - is not a character a line may be brought apart at.
+        if (Char.GetUnicodeCategory(text, index) is UnicodeCategory.NonSpacingMark
+            or UnicodeCategory.SpacingCombiningMark
+            or UnicodeCategory.EnclosingMark)
+        {
+            return true;
+        }
+
+        var codePoint = Char.IsHighSurrogate(text[index]) && index + 1 < text.Length
+            ? Char.ConvertToUtf32(text[index], text[index + 1])
+            : text[index];
+
+        // The zero-width joiners make an emoji of several, and a variation selector picks the glyph of
+        // the character before it; neither stands on a line of its own.
+        return codePoint is 0x200C or 0x200D or 0xFE0E or 0xFE0F;
+    }
+
     /// <summary>Gets how many characters the range of the text is made of.</summary>
     public static Int32 Count(String text, Int32 start, Int32 length)
     {
