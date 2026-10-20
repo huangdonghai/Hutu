@@ -156,6 +156,10 @@ internal readonly struct FlexStyle
         {
             (grow, shrink, basis, basisIsContent) = keyword;
         }
+        else if (OmittedBasis(style.Specified?.GetProperty("flex-basis")))
+        {
+            basis = StyleLength.FromPercent(0);
+        }
 
         return (grow, shrink, basis, basisIsContent);
     }
@@ -204,6 +208,10 @@ internal readonly struct FlexStyle
         if (KeywordFlex(Text(find("flex"))) is { } keyword)
         {
             (grow, shrink, basis, basisIsContent) = keyword;
+        }
+        else if (OmittedBasis(find("flex-basis")))
+        {
+            basis = StyleLength.FromPercent(0);
         }
 
         return new FlexStyle(
@@ -503,6 +511,16 @@ internal readonly struct FlexStyle
         "initial" => (0.0, 1.0, StyleLength.Auto, false),
         _ => null,
     };
+
+    /// <summary>
+    /// Gets whether a <c>flex-basis</c> declaration is the empty one the <c>flex</c> shorthand leaves
+    /// behind when it is written without its third value. That value is <c>0%</c>, not <c>auto</c> (CSS
+    /// Flexbox 1 §7.1.1) - which is what makes <c>flex: 1 0</c> share a container equally between items
+    /// whose content differs, while still falling back to the content when the container's main size is
+    /// indefinite, since a percentage has nothing to be a percentage of there (§9.2.3).
+    /// </summary>
+    private static Boolean OmittedBasis(ICssProperty? declared) =>
+        declared is not null && String.IsNullOrWhiteSpace(declared.Value);
 
     /// <summary>
     /// The physical keywords <c>justify-content</c> takes beside the alignment ones: <c>right</c>

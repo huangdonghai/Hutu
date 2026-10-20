@@ -36,6 +36,72 @@ public sealed class FlexLayoutTests
         Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(100).Within(0.5));
     }
 
+    /// <summary>
+    /// Margins come off the free space before it is shared: an item's flexible length is its base size
+    /// plus its share of what the container has left once every item's outer hypothetical main size -
+    /// base, borders, padding and margins together - has been taken out of it, and a shortage is
+    /// likewise weighed against the outer sizes (CSS Flexbox 1 §9.2.1 and §9.7.3). Sharing the container
+    /// first and paying each item its own margins afterwards leaves one item wider than its neighbours
+    /// for no reason the page gave.
+    /// </summary>
+    [Test]
+    public async Task MarginsComeOffTheFreeSpaceBeforeItIsShared()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;width:384px'>" +
+            "<div id='a' style='flex:1 1 auto;height:20px'></div>" +
+            "<div id='b' style='flex:1 1 auto;height:20px;margin-left:20px'></div>" +
+            "<div id='c' style='flex:1 1 auto;height:20px;margin-left:20px'></div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(344.0 / 3).Within(0.5),
+            "the three items share what the two margins leave, the first no wider than the rest");
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(344.0 / 3).Within(0.5));
+        Assert.That(Find(view, "c").BorderBox.Width, Is.EqualTo(344.0 / 3).Within(0.5));
+    }
+
+    [Test]
+    public async Task AShortageIsWeighedAgainstTheOuterSizesToo()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;width:200px'>" +
+            "<div id='a' style='flex:1 1 auto;width:100px;height:20px'></div>" +
+            "<div id='b' style='flex:1 1 auto;width:100px;height:20px;margin-left:20px'></div>" +
+            "<div id='c' style='flex:1 1 auto;width:100px;height:20px;margin-left:20px'></div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(100 - 140.0 / 3).Within(0.5),
+            "the deficit is the container short of the three bases and the two margins");
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(100 - 140.0 / 3).Within(0.5));
+        Assert.That(Find(view, "c").BorderBox.Width, Is.EqualTo(100 - 140.0 / 3).Within(0.5));
+    }
+
+    /// <summary>
+    /// A <c>flex</c> shorthand written as numbers and left without its third value sets the basis to
+    /// zero, not to <c>auto</c> (CSS Flexbox 1 §7.1.1) - so two items share the container equally even
+    /// when one of them holds content and the other does not, which is what
+    /// <c>flex: 1 1 auto</c> is for.
+    /// </summary>
+    [Test]
+    public async Task AOmittedBasisInTheShorthandStandsAtZero()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;width:200px'>" +
+            "<div id='a' style='flex:1 0'><div style='width:10px;height:100px'></div></div>" +
+            "<div id='b' style='flex:1 0;height:100px'></div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(100).Within(0.5),
+            "the item with content takes no more than its neighbour, because its basis is zero");
+        Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(100).Within(0.5));
+    }
+
     [Test]
     public async Task GrowSharesTheFreeSpaceBetweenTheItems()
     {

@@ -65,6 +65,13 @@ internal sealed partial class FlexFormattingContext
         var items = line.Items;
         var count = items.Count;
         var sizes = new Double[count];
+
+        // The flex base size, which is what the free space is measured against and what each item's
+        // share is added to - not the hypothetical size, which has already been floored by the item's
+        // minimum and would charge the item for room it is about to be given anyway (CSS Flexbox 1
+        // §9.7). The used size of an item the clamp froze is kept in `sizes` beside it.
+        var bases = new Double[count];
+
         var frozen = new Boolean[count];
         var factors = new Double[count];
         var gaps = count > 1 ? mainGap * (count - 1) : 0;
@@ -74,6 +81,7 @@ internal sealed partial class FlexFormattingContext
         for (var i = 0; i < count; i++)
         {
             sizes[i] = items[i].HypotheticalMain;
+            bases[i] = items[i].BaseMain;
             totalOuter += Outer(items[i], sizes[i]);
         }
 
@@ -126,6 +134,7 @@ internal sealed partial class FlexFormattingContext
             for (var iteration = 0; iteration < MaxFlexIterations; iteration++)
             {
                 var frozenOuter = 0.0;
+                var unfrozenOuter = 0.0;
                 var remainingFactors = 0.0;
 
                 for (var i = 0; i < count; i++)
@@ -136,6 +145,7 @@ internal sealed partial class FlexFormattingContext
                     }
                     else
                     {
+                        unfrozenOuter += Outer(items[i], bases[i]);
                         remainingFactors += factors[i];
                     }
                 }
@@ -145,7 +155,12 @@ internal sealed partial class FlexFormattingContext
                     break;
                 }
 
-                var remaining = inner - frozenOuter;
+                // What the container has left is measured against the outer size of every item, frozen
+                // or not: the margins and borders come off the free space once, before it is shared, and
+                // each unfrozen item adds its share to the base size it was measured at (CSS Flexbox 1
+                // §9.7.3). Taking the container and dividing it out first would make an item with no
+                // margins wider than its neighbours for no reason the page gave.
+                var leftover = inner - frozenOuter - unfrozenOuter;
                 var froze = false;
 
                 for (var i = 0; i < count; i++)
@@ -155,8 +170,7 @@ internal sealed partial class FlexFormattingContext
                         continue;
                     }
 
-                    var share = remaining * factors[i] / remainingFactors;
-                    var target = Math.Max(0, share - items[i].MarginMainStart - items[i].MarginMainEnd - items[i].InsetMain);
+                    var target = Math.Max(0, bases[i] + leftover * factors[i] / remainingFactors);
                     var clamped = items[i].ClampMain(target);
                     sizes[i] = clamped;
 
