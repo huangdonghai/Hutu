@@ -1,3 +1,4 @@
+using Hutu.Rendering;
 using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
@@ -109,6 +110,90 @@ public sealed class MulticolStyleTests
 
         Assert.That(Find(view, "d").Source.Style.Multi.IsMultiColumn, Is.False);
     }
+
+    /// <summary>
+    /// A gap may carry a rule: drawn in the middle of the gap, from one content edge of the container to
+    /// the other, taking no space of its own and appearing only between two columns that both have
+    /// content (CSS Multicol 3 §4). Its stroke is the one a border side takes, so a dashed rule dashes
+    /// down its length and a double one is two lines within its width.
+    /// </summary>
+    [Test]
+    public async Task TheRuleShorthandReachesTheStyle()
+    {
+        using var view = await Render(
+            "<style>div { columns: 3; column-gap: 20px; column-rule: 4px solid red }</style><div id='d'>x</div>");
+
+        var rule = Find(view, "d").Source.Style.Multi.Rule;
+
+        Assert.That(rule.Width, Is.EqualTo(4), "the shorthand's width");
+        Assert.That(rule.Style, Is.EqualTo(BorderLineStyle.Solid), "and its style");
+        Assert.That(rule.Color, Is.EqualTo(0xffff0000u), "and its colour");
+        Assert.That(rule.Appears, Is.True);
+    }
+
+    [Test]
+    public async Task ARuleWithoutAStyleDrawsNothing()
+    {
+        using var view = await Render(
+            "<style>div { columns: 3; column-rule-width: 8px }</style><div id='d'>x</div>");
+
+        var rule = Find(view, "d").Source.Style.Multi.Rule;
+
+        Assert.That(rule.Width, Is.EqualTo(8), "the width stands on its own");
+        Assert.That(rule.Style, Is.EqualTo(BorderLineStyle.None), "but the style is none until it is said");
+        Assert.That(rule.Appears, Is.False);
+    }
+
+    [Test]
+    public async Task ARuleStandsInTheMiddleOfEachColumnGap()
+    {
+        using var view = await Render(
+            "<style>#d { columns: 3; column-gap: 20px; column-rule: 4px solid red; width:200px;height:100px;" +
+            "border:0;padding:0;margin:0 }</style>" +
+            "<div id='d'><p style='margin:0'>one</p><p style='margin:0'>two</p><p style='margin:0'>three</p></div>");
+
+        var rules = Rules(view);
+
+        Assert.That(rules, Has.Count.EqualTo(2), "one rule in each of the two gaps");
+        Assert.Multiple(() =>
+        {
+            // Three columns of 53.33 with 20-pixel gaps: the gap centres are 10 into each gap, and the
+            // four-pixel rule straddles its centre.
+            Assert.That(rules[0].Bounds.X, Is.EqualTo(53.333 + 10 - 2).Within(0.5), "the first rule");
+            Assert.That(rules[1].Bounds.X, Is.EqualTo(2 * 53.333 + 20 + 10 - 2).Within(0.5), "the second");
+            Assert.That(rules[0].Bounds.Width, Is.EqualTo(4).Within(0.01), "as wide as it asked");
+            Assert.That(rules[0].Bounds.Height, Is.EqualTo(100).Within(0.5),
+                "and from one content edge of the container to the other");
+        });
+    }
+
+    [Test]
+    public async Task ARuleAppearsOnlyBetweenColumnsThatHaveContent()
+    {
+        using var view = await Render(
+            "<style>#d { columns: 3; column-gap: 20px; column-fill: auto; column-rule: 4px solid red;" +
+            " width:200px;height:100px;border:0;padding:0;margin:0 }" +
+            "p { margin:0; height:60px }</style>" +
+            "<div id='d'><p>one</p></div>");
+
+        Assert.That(Rules(view), Is.Empty, "one filled column has no neighbour to draw between");
+
+        // Each paragraph is taller than half the column, so the second one the first cannot hold goes
+        // over into the next column - and the two of them share exactly one gap.
+        using var two = await Render(
+            "<style>#d { columns: 3; column-gap: 20px; column-fill: auto; column-rule: 4px solid red;" +
+            " width:200px;height:100px;border:0;padding:0;margin:0 }" +
+            "p { margin:0; height:60px }</style>" +
+            "<div id='d'><p>one</p><p>two</p></div>");
+
+        Assert.That(Rules(two), Has.Count.EqualTo(1), "two filled columns share one gap");
+    }
+
+    private static List<Hutu.Rendering.Paint.BorderCommand> Rules(HutuViewInternal view) =>
+        view.Paint!.Commands.OfType<Hutu.Rendering.Paint.BorderCommand>()
+            .Where(command => command.Widths.Left > 0 && command.Widths.Right == 0 &&
+                command.Widths.Top == 0 && command.Widths.Bottom == 0)
+            .ToList();
 
     private static async Task<HutuViewInternal> Render(String content)
     {

@@ -716,7 +716,7 @@ internal static class FusedStyleFactory
         // - table, inline-table, table-row, table-cell and the rest - carries the word.
         // The column longhands are read for every box: a page that writes none of them costs two lookups,
         // and a box that writes either is a multi-column container whatever its display says.
-        values.Multi = MulticolStyle.ReadFused(find, face, dimensions);
+        values.Multi = MulticolStyle.ReadFused(find, face, dimensions, color);
         values.Breaks = BreakStyle.ReadFused(find, parent.Widows, parent.Orphans);
 
         values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)

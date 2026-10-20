@@ -262,6 +262,11 @@ internal sealed class Painter
             AddBorder(box, style, target);
         }
 
+        // A rule belongs to the gap rather than to the columns: it stands in the middle of it, reaches
+        // from one content edge of the container to the other, and takes no room of its own (CSS Multicol
+        // 3 §4). It is painted just above the container's border and below what the columns hold.
+        AddColumnRules(box, style, target);
+
         // A marker is text, drawn where the layout put it and in the font and colour the rules written for
         // it settled - the item's own where the sheet says nothing about markers, which is the usual page.
         // It stands beside the item rather than in it, so nothing about the box decides where it goes.
@@ -690,6 +695,88 @@ internal sealed class Painter
             style.WordSpacing,
             box.DecorationPlacements,
             style.SkipInk));
+    }
+
+    /// <summary>
+    /// Draws the rule each column gap is asked to carry: a band of the rule's width centred in the gap,
+    /// reaching from one content edge of the container to the other, and only between two columns that
+    /// both have content (CSS Multicol 3 §4).
+    /// </summary>
+    /// <remarks>
+    /// The band is drawn as one side of a box that is nothing but that side, which is what gives a rule
+    /// the same strokes a border takes - a dashed one dashes along its length, a double one is two lines
+    /// within its width - without the painter needing a second set of them. Which columns hold something
+    /// is read from where the fragments were put, so a column the content never reached leaves no rule
+    /// beside it, and a rule is only drawn where two occupied columns are neighbours in the first place.
+    /// </remarks>
+    private static void AddColumnRules(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
+    {
+        var multi = style.Multi;
+        var rule = multi.Rule;
+
+        if (!multi.IsMultiColumn || !rule.Appears)
+        {
+            return;
+        }
+
+        var content = box.ContentBox;
+        var along = box.Flow.IsVertical;
+        var room = along ? content.Height : content.Width;
+        var (count, width) = multi.Used(room);
+        var step = width + multi.Gap;
+
+        if (count < 2 || step <= 0)
+        {
+            return;
+        }
+
+        var stood = new List<Double>();
+
+        foreach (var child in box.Children)
+        {
+            var edge = along ? child.BorderBox.Y : child.BorderBox.X;
+
+            if (child.BorderBox.Height > 0 && child.BorderBox.Width > 0 && !stood.Contains(edge))
+            {
+                stood.Add(edge);
+            }
+        }
+
+        stood.Sort();
+
+        for (var index = 0; index + 1 < stood.Count; index++)
+        {
+            var next = stood[index + 1];
+
+            // Adjacent columns stand one column and one gap apart; anything further is a column the
+            // content never reached, and the rule does not cross it.
+            if (next - stood[index] > step + 0.5)
+            {
+                continue;
+            }
+
+            var centre = (stood[index] + width + next) / 2;
+
+            var band = along
+                ? new Rect(content.X, centre - rule.Width / 2, content.Width, rule.Width)
+                : new Rect(centre - rule.Width / 2, content.Y, rule.Width, content.Height);
+
+            // The band is drawn as the side of a box that is nothing but that side: the top edge for a
+            // rule that runs across the page, the left edge for one that runs down it.
+            target.Add(new BorderCommand(
+                band,
+                along
+                    ? new Thickness(rule.Width, 0, 0, 0)
+                    : new Thickness(0, 0, 0, rule.Width),
+                along
+                    ? new BorderStyles(rule.Style, BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None)
+                    : new BorderStyles(BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None, rule.Style),
+                default,
+                rule.Color,
+                rule.Color,
+                rule.Color,
+                rule.Color));
+        }
     }
 
     private static void AddBorder(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
