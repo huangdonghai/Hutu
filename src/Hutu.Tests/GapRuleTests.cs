@@ -519,6 +519,28 @@ public sealed class GapRuleTests
         });
     }
 
+    /// <summary>
+    /// An axis the page asked to show only between items draws nothing beside an empty column, while
+    /// <c>all</c> and <c>around</c> still do (CSS Gaps 1 §3.4).
+    /// </summary>
+    [Test]
+    public async Task AVisibilityThatAsksForBothSidesSkipsAnEmptyColumn()
+    {
+        const String grid =
+            "<style>#d { display:grid; grid-template-columns:50px 50px 50px; gap:10px; width:170px;" +
+            " column-rule:4px solid blue; rule-visibility-items:%s } .i { height:40px }</style>" +
+            "<div id='d'><div class='i'></div><div class='i' style='grid-column:3'></div></div>";
+
+        using var between = await Render(grid.Replace("%s", "between"));
+        Assert.That(Rules(between), Is.Empty, "neither gap has an item on both sides");
+
+        using var all = await Render(grid.Replace("%s", "all"));
+        Assert.That(Rules(all), Has.Count.EqualTo(2), "every used gap is ruled");
+
+        using var around = await Render(grid.Replace("%s", "around"));
+        Assert.That(Rules(around), Has.Count.EqualTo(2), "each gap has an item on one side");
+    }
+
     /// <summary>Gets the commands that draw one side of a band, which is every rule the engine paints.</summary>
     private static List<BorderCommand> Rules(HutuViewInternal view) =>
         view.Paint!.Commands.OfType<BorderCommand>()

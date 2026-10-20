@@ -22,6 +22,26 @@ internal enum GapRuleBreak
 }
 
 /// <summary>
+/// Which gaps of an axis get their decoration, by whether the areas beside them hold anything
+/// (CSS Gaps 1 §3.4).
+/// </summary>
+internal enum GapRuleVisibility
+{
+    /// <summary>Every gap, occupied or not.</summary>
+    All,
+
+    /// <summary>A gap with an item on at least one side.</summary>
+    Around,
+
+    /// <summary>A gap with items on both sides.</summary>
+    Between,
+
+    /// <summary>Whatever the container type makes of it: grid is <see cref="All"/>, a multi-column
+    /// container's column gaps are <see cref="Between"/> and its row gaps <see cref="All"/>.</summary>
+    Normal,
+}
+
+/// <summary>
 /// How far one end of a decoration is drawn back from where it would otherwise stand (CSS Gaps 1 §3.3).
 /// </summary>
 /// <remarks>
@@ -349,7 +369,8 @@ internal sealed class GapRuleAxis
         GapRuleInset capStart,
         GapRuleInset capEnd,
         GapRuleInset junctionStart,
-        GapRuleInset junctionEnd)
+        GapRuleInset junctionEnd,
+        GapRuleVisibility visibility)
     {
         _width = width;
         _style = style;
@@ -359,6 +380,7 @@ internal sealed class GapRuleAxis
         CapEnd = capEnd;
         JunctionStart = junctionStart;
         JunctionEnd = junctionEnd;
+        Visibility = visibility;
     }
 
     /// <summary>Gets where a decoration of this axis starts and ends where two gaps cross.</summary>
@@ -375,6 +397,9 @@ internal sealed class GapRuleAxis
 
     /// <summary>Gets how far the end end is drawn in, where it stands at a crossing.</summary>
     public GapRuleInset JunctionEnd { get; }
+
+    /// <summary>Gets which of the axis's gaps this axis's decorations appear in.</summary>
+    public GapRuleVisibility Visibility { get; }
 
     /// <summary>Gets whether the page asked for decorations along this axis.</summary>
     public Boolean IsStated => _width.IsStated || _style.IsStated || _color.IsStated;
@@ -407,7 +432,16 @@ internal sealed class GapRuleAxis
             Inset(find, prefix, "cap-start", "start", dimensions, font),
             Inset(find, prefix, "cap-end", "end", dimensions, font),
             Inset(find, prefix, "junction-start", "start", dimensions, font),
-            Inset(find, prefix, "junction-end", "end", dimensions, font));
+            Inset(find, prefix, "junction-end", "end", dimensions, font),
+            VisibilityOf(find(prefix + "-visibility-items")));
+
+    private static GapRuleVisibility VisibilityOf(ICssProperty? declared) => declared?.Value?.Trim() switch
+    {
+        "all" => GapRuleVisibility.All,
+        "around" => GapRuleVisibility.Around,
+        "between" => GapRuleVisibility.Between,
+        _ => GapRuleVisibility.Normal,
+    };
 
     /// <summary>
     /// Reads one end's inset: the value written for this kind of end, or the one written for both kinds,
@@ -496,7 +530,8 @@ internal sealed class GapRules
             GapRuleInset.None,
             GapRuleInset.None,
             GapRuleInset.None,
-            GapRuleInset.None),
+            GapRuleInset.None,
+            GapRuleVisibility.Normal),
         new GapRuleAxis(
             new GapRuleTerms<Double>(GapRuleAxis.InitialWidth, null),
             new GapRuleTerms<BorderLineStyle>(BorderLineStyle.None, null),
@@ -505,7 +540,8 @@ internal sealed class GapRules
             GapRuleInset.None,
             GapRuleInset.None,
             GapRuleInset.None,
-            GapRuleInset.None),
+            GapRuleInset.None,
+            GapRuleVisibility.Normal),
         false);
 
     internal GapRules(GapRuleAxis column, GapRuleAxis row, Boolean columnOverRow)

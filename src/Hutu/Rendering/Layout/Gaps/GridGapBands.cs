@@ -54,9 +54,14 @@ internal static class GridGapBands
         Boolean isRow,
         IReadOnlyList<GridGapRun> gaps,
         IReadOnlyList<GridGapRun> crossings,
+        IReadOnlyList<(Double From, Double To)> before,
+        IReadOnlyList<(Double From, Double To)> after,
         GapRuleBreak breaks,
         IReadOnlyList<Rect> items)
     {
+        // The visibility the axis asked for, with the grid's own reading of `normal`: every gap.
+        var visibility = axis.Visibility == GapRuleVisibility.Normal ? GapRuleVisibility.All : axis.Visibility;
+
         for (var index = 0; index < gaps.Count; index++)
         {
             var gap = gaps[index];
@@ -72,7 +77,7 @@ internal static class GridGapBands
                 var start = from + Inset(axis, fromAtBound, true, from, crossings, across);
                 var end = to - Inset(axis, toAtBound, false, to, crossings, across);
 
-                if (end > start)
+                if (end > start && Shown(visibility, gap, before[index], after[index], start, end, items))
                 {
                     target.Add(new GapRuleSegment(
                         GapRuleBands.Band(rule, gap.CentreIsX, gap.Centre, start, end),
@@ -81,6 +86,56 @@ internal static class GridGapBands
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Gets whether the areas on the two sides of a stretch of the gap hold anything - which is what the
+    /// axis's visibility asks about before a decoration is drawn (CSS Gaps 1 §3.4).
+    /// </summary>
+    private static Boolean Shown(
+        GapRuleVisibility visibility,
+        GridGapRun gap,
+        (Double From, Double To) before,
+        (Double From, Double To) after,
+        Double from,
+        Double to,
+        IReadOnlyList<Rect> items)
+    {
+        if (visibility == GapRuleVisibility.All)
+        {
+            return true;
+        }
+
+        var first = Occupied(gap.CentreIsX, before, from, to, items);
+        var second = Occupied(gap.CentreIsX, after, from, to, items);
+
+        return visibility == GapRuleVisibility.Around ? first || second : first && second;
+    }
+
+    /// <summary>Gets whether an item stands in the area beside the gap, over the stretch in question.</summary>
+    private static Boolean Occupied(
+        Boolean centreIsX,
+        (Double From, Double To) area,
+        Double from,
+        Double to,
+        IReadOnlyList<Rect> items)
+    {
+        foreach (var item in items)
+        {
+            var across = centreIsX
+                ? item.X < area.To && item.Right > area.From
+                : item.Y < area.To && item.Bottom > area.From;
+            var along = centreIsX
+                ? item.Y < to && item.Bottom > from
+                : item.X < to && item.Right > from;
+
+            if (across && along)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

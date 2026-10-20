@@ -127,6 +127,27 @@ internal sealed class GridFormattingContext
     }
 
     /// <summary>
+    /// Gets the stretch of track on either side of each gap: the areas a gap's decoration asks about
+    /// before it is drawn at all (CSS Gaps 1 §3.4).
+    /// </summary>
+    private static (List<(Double From, Double To)> Before, List<(Double From, Double To)> After) Sides(
+        List<TrackGap> gaps,
+        Double origin,
+        Double end)
+    {
+        var before = new List<(Double From, Double To)>(gaps.Count);
+        var after = new List<(Double From, Double To)>(gaps.Count);
+
+        for (var index = 0; index < gaps.Count; index++)
+        {
+            before.Add((origin + (index == 0 ? 0 : gaps[index - 1].To), origin + gaps[index].From));
+            after.Add((origin + gaps[index].To, origin + (index + 1 < gaps.Count ? gaps[index + 1].From : end)));
+        }
+
+        return (before, after);
+    }
+
+    /// <summary>
     /// Works out the decorations of the grid's gaps: the room between each pair of adjacent tracks, run
     /// the whole way across the tracks and split where an item stands in the way or, for the
     /// <c>intersection</c> break, where a perpendicular gap crosses it (CSS Gaps 1 §3.1).
@@ -176,8 +197,11 @@ internal sealed class GridFormattingContext
 
         var target = new List<GapRuleSegment>();
 
-        GridGapBands.Add(target, rules.Column, rules.Row, isRow: false, columns, rowCrossings, rules.Column.Break, items);
-        GridGapBands.Add(target, rules.Row, rules.Column, isRow: true, rows, columnCrossings, rules.Row.Break, items);
+        var (columnBefore, columnAfter) = Sides(plan.ColumnGaps, contentX, plan.TracksWidth);
+        var (rowBefore, rowAfter) = Sides(plan.RowGaps, contentY, plan.TracksHeight);
+
+        GridGapBands.Add(target, rules.Column, rules.Row, isRow: false, columns, rowCrossings, columnBefore, columnAfter, rules.Column.Break, items);
+        GridGapBands.Add(target, rules.Row, rules.Column, isRow: true, rows, columnCrossings, rowBefore, rowAfter, rules.Row.Break, items);
 
         return target.Count > 0 ? target : null;
     }

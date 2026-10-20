@@ -735,47 +735,46 @@ internal sealed class Painter
             return;
         }
 
-        var stood = new List<Double>();
+        // Which of the used columns hold content, by where the boxes that make them stand.
+        var filled = new Boolean[count];
+        var start = along ? content.Y : content.X;
 
         foreach (var child in box.Children)
         {
-            var edge = along ? child.BorderBox.Y : child.BorderBox.X;
-
-            if (child.BorderBox.Height > 0 && child.BorderBox.Width > 0 && !stood.Contains(edge))
-            {
-                stood.Add(edge);
-            }
-        }
-
-        stood.Sort();
-
-        // The gaps the container actually has, which is what the decoration list is read out against.
-        var centres = new List<Double>();
-
-        for (var index = 0; index + 1 < stood.Count; index++)
-        {
-            var next = stood[index + 1];
-
-            // Adjacent columns stand one column and one gap apart; anything further is a column the
-            // content never reached, and the rule does not cross it.
-            if (next - stood[index] > step + 0.5)
+            if (child.BorderBox.Height <= 0 || child.BorderBox.Width <= 0)
             {
                 continue;
             }
 
-            centres.Add((stood[index] + width + next) / 2);
+            var edge = (along ? child.BorderBox.Y : child.BorderBox.X) - start;
+            var column = (Int32)Math.Round(edge / step);
+
+            if (column >= 0 && column < count && Math.Abs(edge - column * step) <= 0.5)
+            {
+                filled[column] = true;
+            }
         }
 
-        for (var index = 0; index < centres.Count; index++)
-        {
-            var rule = axis.At(index, centres.Count);
+        // A multi-column container draws between every pair of used columns whose sides the visibility
+        // asks about; `normal` is the initial value and, for the column gaps, means both sides
+        // (CSS Gaps 1 §3.4).
+        var visibility = axis.Visibility == GapRuleVisibility.Normal ? GapRuleVisibility.Between : axis.Visibility;
+        var gaps = Math.Max(0, count - 1);
 
-            if (!rule.Appears)
+        for (var index = 0; index < gaps; index++)
+        {
+            var rule = axis.At(index, gaps);
+            var shown = visibility == GapRuleVisibility.All ||
+                (visibility == GapRuleVisibility.Around
+                    ? filled[index] || filled[index + 1]
+                    : filled[index] && filled[index + 1]);
+
+            if (!rule.Appears || !shown)
             {
                 continue;
             }
 
-            var centre = centres[index];
+            var centre = start + index * step + width + multi.Gap / 2;
 
             // A multi-column rule runs from one content edge to the other, so both its ends are caps and
             // the page's cap insets draw them back from those edges (CSS Gaps 1 §3.3).
