@@ -176,9 +176,9 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
 
         // Each axis tiles on its own: `repeat-x` runs the tile across and leaves one row of it where
         // the position puts it, which is what a one-pixel column is repeated for.
-        var firstX = layer.RepeatX ? Start(left, area.Left, tile.Width) : left;
+        var firstX = layer.RepeatX ? FirstTile(left, area.Left, tile.Width) : left;
         var lastX = layer.RepeatX ? area.Right : left + tile.Width;
-        var firstY = layer.RepeatY ? Start(top, area.Top, tile.Height) : top;
+        var firstY = layer.RepeatY ? FirstTile(top, area.Top, tile.Height) : top;
         var lastY = layer.RepeatY ? area.Bottom : top + tile.Height;
 
         for (var y = firstY; y < lastY; y += tile.Height)
@@ -193,7 +193,7 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
     }
 
     /// <summary>Gets the first tile at or before the start of the area, so the whole area is covered.</summary>
-    private static Single Start(Single position, Single areaStart, Single size) =>
+    internal static Single FirstTile(Single position, Single areaStart, Single size) =>
         areaStart + ((position - areaStart) % size + size) % size - size;
 
     private static SKSize TileSize(BackgroundLayer layer, ImageSize intrinsic, SKRect area)

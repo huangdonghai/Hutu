@@ -233,7 +233,12 @@ internal static class LayoutDumper
                 break;
             case LinearGradientCommand gradient:
                 text.Append(" ").Append(Number(gradient.AngleDegrees)).Append("deg ")
-                    .Append(gradient.Stops.Count).Append(" stops");
+                    .Append(gradient.Stops.Count).Append(" stops tile ")
+                    .Append(Number(gradient.Tile.X)).Append(',').Append(Number(gradient.Tile.Y))
+                    .Append(' ').Append(Number(gradient.Tile.Width)).Append('x')
+                    .Append(Number(gradient.Tile.Height))
+                    .Append(gradient.RepeatX ? " repeat-x" : String.Empty)
+                    .Append(gradient.RepeatY ? " repeat-y" : String.Empty);
                 break;
         }
     }

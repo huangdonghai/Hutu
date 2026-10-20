@@ -1510,6 +1510,11 @@ public sealed class SkiaPaintExecutor
         }
     }
 
+    /// <summary>
+    /// Draws one gradient layer over the tiles it fills, kept inside the background positioning area.
+    /// A gradient has no picture to place, so a tile of it is not a piece of a larger drawing but the
+    /// whole gradient again - the line it runs along is the one that box asks for.
+    /// </summary>
     private static void DrawGradient(SKCanvas canvas, LinearGradientCommand command)
     {
         if (command.Stops.Count == 0)
@@ -1517,7 +1522,14 @@ public sealed class SkiaPaintExecutor
             return;
         }
 
-        var box = ToRect(command.Bounds);
+        var area = ToRect(command.Bounds);
+        var tile = ToRect(command.Tile);
+
+        if (area.Width <= 0 || area.Height <= 0 || tile.Width <= 0 || tile.Height <= 0)
+        {
+            return;
+        }
+
         var colors = new SKColor[command.Stops.Count];
         var positions = new Single[command.Stops.Count];
 
@@ -1527,15 +1539,40 @@ public sealed class SkiaPaintExecutor
             positions[index] = (Single)Math.Clamp(command.Stops[index].Offset, 0, 1);
         }
 
-        var (start, end) = GradientLine(box, command.AngleDegrees);
+        canvas.Save();
+        SkiaRounded.Clip(canvas, area, command.Radii);
+
+        // Each axis repeats on its own terms, the way an image layer does, and a tile that stands
+        // wholly outside the area is clipped away by the same clip that keeps the rest of it.
+        var firstX = command.RepeatX ? SkiaImageLoader.FirstTile(tile.Left, area.Left, tile.Width) : tile.Left;
+        var lastX = command.RepeatX ? area.Right : tile.Right;
+        var firstY = command.RepeatY ? SkiaImageLoader.FirstTile(tile.Top, area.Top, tile.Height) : tile.Top;
+        var lastY = command.RepeatY ? area.Bottom : tile.Bottom;
+
+        for (var y = firstY; y < lastY; y += tile.Height)
+        {
+            for (var x = firstX; x < lastX; x += tile.Width)
+            {
+                DrawGradientTile(canvas, new SKRect(x, y, x + tile.Width, y + tile.Height), colors, positions, command.AngleDegrees);
+            }
+        }
+
+        canvas.Restore();
+    }
+
+    private static void DrawGradientTile(
+        SKCanvas canvas,
+        SKRect box,
+        SKColor[] colors,
+        Single[] positions,
+        Double angleDegrees)
+    {
+        var (start, end) = GradientLine(box, angleDegrees);
 
         using var shader = SKShader.CreateLinearGradient(start, end, colors, positions, SKShaderTileMode.Clamp);
         using var paint = new SKPaint { Shader = shader, IsAntialias = true };
 
-        canvas.Save();
-        SkiaRounded.Clip(canvas, box, command.Radii);
         canvas.DrawRect(box, paint);
-        canvas.Restore();
     }
 
     /// <summary>

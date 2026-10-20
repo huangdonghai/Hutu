@@ -311,6 +311,33 @@ public sealed class SkiaRenderingTests
         Assert.That(beyond, Is.EqualTo(SKColors.White), "the fill has to stop at the band's edge");
     }
 
+    /// <summary>
+    /// A gradient layer fills the area with as many tiles of itself as its repeat says, and with one
+    /// tile only where it says none.
+    /// </summary>
+    [Test]
+    [TestCase("repeat", true)]
+    [TestCase("no-repeat", false)]
+    public async Task AGradientTileFillsTheAreaOnlyWhereItRepeats(String repeat, Boolean tiles)
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(120, 60);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:40px;height:40px;background:linear-gradient(red,red) 0 0/20px 20px {repeat}'></div>" +
+            "</body></html>");
+
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+
+        Assert.That(bitmap.GetPixel(10, 10), Is.EqualTo(SKColors.Red), "the first tile stands where the position puts it");
+        Assert.That(
+            bitmap.GetPixel(30, 30) == SKColors.Red,
+            Is.EqualTo(tiles),
+            $"`{repeat}` fills the corner a second tile of each axis reaches");
+    }
+
     [Test]
     public async Task AnInlineElementNestedInAnotherIsPaintedOverIt()
     {

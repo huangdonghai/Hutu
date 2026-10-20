@@ -185,12 +185,32 @@ public sealed class BackgroundImageCommand : PaintCommand
     public CornerRadii Radii { get; }
 }
 
-/// <summary>Draws one linear gradient layer across the background positioning area.</summary>
+/// <summary>
+/// Draws one linear gradient layer. <see cref="PaintCommand.Bounds"/> is the background positioning
+/// area the layer is clipped to, and <see cref="Tile"/> is the piece of it the gradient fills and
+/// repeats from.
+/// </summary>
+/// <remarks>
+/// A gradient carries no intrinsic size, so the tile is settled entirely by the declaration and is
+/// therefore the core's to work out (CSS Images 3 §4.1.3); the repeating of it across the area is left
+/// to the backend, which is the one that draws, because a hairline band tiled across a wide box is
+/// thousands of tiles and not thousands of commands.
+/// </remarks>
 public sealed class LinearGradientCommand : PaintCommand
 {
-    internal LinearGradientCommand(Rect bounds, Double angleDegrees, IReadOnlyList<GradientStop> stops, CornerRadii radii)
+    internal LinearGradientCommand(
+        Rect bounds,
+        Rect tile,
+        Boolean repeatX,
+        Boolean repeatY,
+        Double angleDegrees,
+        IReadOnlyList<GradientStop> stops,
+        CornerRadii radii)
         : base(bounds)
     {
+        Tile = tile;
+        RepeatX = repeatX;
+        RepeatY = repeatY;
         AngleDegrees = angleDegrees;
         Stops = stops;
         Radii = radii;
@@ -203,6 +223,15 @@ public sealed class LinearGradientCommand : PaintCommand
 
     /// <summary>Gets the corner radii of the painted area.</summary>
     public CornerRadii Radii { get; }
+
+    /// <summary>Gets the rectangle the gradient is drawn into, where the position puts its first tile.</summary>
+    public Rect Tile { get; }
+
+    /// <summary>Gets whether the tile repeats along the inline axis.</summary>
+    public Boolean RepeatX { get; }
+
+    /// <summary>Gets whether the tile repeats along the block axis.</summary>
+    public Boolean RepeatY { get; }
 }
 
 /// <summary>

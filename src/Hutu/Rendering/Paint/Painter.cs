@@ -1,6 +1,7 @@
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Values;
 using Hutu.Rendering.Layout;
+using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -498,7 +499,10 @@ internal sealed class Painter
 
             if (layer.Gradient is { } gradient)
             {
-                layers.Add(new LinearGradientCommand(area, gradient.AngleDegrees, gradient.Stops, radii));
+                var (tile, repeatX, repeatY) = GradientTile(layer, area);
+
+                layers.Add(new LinearGradientCommand(
+                    area, tile, repeatX, repeatY, gradient.AngleDegrees, gradient.Stops, radii));
             }
             else if (layer.Url is { Length: > 0 })
             {
@@ -526,6 +530,33 @@ internal sealed class Painter
         }
 
         target.AddRange(layers);
+    }
+
+    /// <summary>
+    /// Settles the rectangle a gradient layer fills: the size it states, or the area where an axis is
+    /// left to itself, and placed where its position puts it (CSS Backgrounds 3 §2.4 and §2.6).
+    /// </summary>
+    /// <remarks>
+    /// A gradient has no intrinsic size and no intrinsic ratio, so the default object size every
+    /// <c>auto</c> falls back to is the positioning area itself, and <c>cover</c> and <c>contain</c> -
+    /// which are the two ways of scaling an image to the area - leave it exactly that size too (CSS
+    /// Images 3 §4.1.3). A component of zero is how the reader marks an axis it never resolved, which
+    /// is the same convention the image layers keep between them.
+    /// </remarks>
+    private static (Rect Tile, Boolean RepeatX, Boolean RepeatY) GradientTile(BackgroundLayer layer, Rect area)
+    {
+        var stated = layer.SizeKind == BackgroundLayerSizeKind.Explicit;
+        var width = stated && layer.SizeWidth.Value > 0 ? layer.SizeWidth.Resolve(area.Width) : area.Width;
+        var height = stated && layer.SizeHeight.Value > 0 ? layer.SizeHeight.Resolve(area.Height) : area.Height;
+
+        return (
+            new Rect(
+                area.X + layer.PositionX.Resolve(area.Width - width),
+                area.Y + layer.PositionY.Resolve(area.Height - height),
+                width,
+                height),
+            layer.RepeatX,
+            layer.RepeatY);
     }
 
     /// <summary>

@@ -235,23 +235,34 @@ internal static class BackgroundLayerParser
 
         var parts = CssValueList.SplitWhitespace(keyword);
 
-        if (parts.Count == 0 || parts[0].Equals("auto", StringComparison.OrdinalIgnoreCase))
+        if (parts.Count == 0)
         {
             return (BackgroundLayerSizeKind.Auto, default, default);
         }
 
-        var width = ParseOffset(parts[0], dimensions, fontSize);
+        var first = parts[0];
+        var firstIsAuto = first.Equals("auto", StringComparison.OrdinalIgnoreCase);
 
-        if (width is null)
+        // An axis left to the image is written as `auto` beside the one that is stated, so the second
+        // value still has to reach the reader: read as nothing at all, `auto 40px` sized the layer from
+        // the intrinsic alone. An unset component of a stated size is kept as zero, which is how both
+        // readers know an axis they have to settle themselves.
+        if (firstIsAuto && (parts.Count < 2 || parts[1].Equals("auto", StringComparison.OrdinalIgnoreCase)))
         {
             return (BackgroundLayerSizeKind.Auto, default, default);
         }
 
+        var width = firstIsAuto ? null : ParseOffset(first, dimensions, fontSize);
         var height = parts.Count > 1 && !parts[1].Equals("auto", StringComparison.OrdinalIgnoreCase)
             ? ParseOffset(parts[1], dimensions, fontSize)
             : null;
 
-        return (BackgroundLayerSizeKind.Explicit, width.Value, height ?? default);
+        if (width is null && height is null)
+        {
+            return (BackgroundLayerSizeKind.Auto, default, default);
+        }
+
+        return (BackgroundLayerSizeKind.Explicit, width ?? default, height ?? default);
     }
 
     /// <summary>
