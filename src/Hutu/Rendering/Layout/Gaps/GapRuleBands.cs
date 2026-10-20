@@ -67,11 +67,16 @@ internal static class GapRuleBands
                 continue;
             }
 
-            var band = gap.CentreIsX
-                ? new Rect(gap.Centre - rule.Width / 2, gap.From, rule.Width, gap.To - gap.From)
-                : new Rect(gap.From, gap.Centre - rule.Width / 2, gap.To - gap.From, rule.Width);
-
-            target.Add(new GapRuleSegment(band, rule, isRow));
+            target.Add(new GapRuleSegment(Band(rule, gap.CentreIsX, gap.Centre, gap.From, gap.To), rule, isRow));
         }
     }
+
+    /// <summary>
+    /// Builds the band a rule takes across a gap that stands here: as wide as the rule, centred on the
+    /// gap's midline, and running the stretch the decoration covers.
+    /// </summary>
+    public static Rect Band(GapRule rule, Boolean centreIsX, Double centre, Double from, Double to) =>
+        centreIsX
+            ? new Rect(centre - rule.Width / 2, from, rule.Width, to - from)
+            : new Rect(from, centre - rule.Width / 2, to - from, rule.Width);
 }

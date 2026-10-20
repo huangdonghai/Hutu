@@ -7,6 +7,21 @@ using System;
 namespace Hutu.Rendering.Layout;
 
 /// <summary>
+/// Where a gap's decoration starts and ends at the places two gaps cross (CSS Gaps 1 §3.2).
+/// </summary>
+internal enum GapRuleBreak
+{
+    /// <summary>One decoration from one end of the gap to the other, whatever it crosses.</summary>
+    None,
+
+    /// <summary>What the container type makes of it: a grid breaks at a T and runs through a cross.</summary>
+    Normal,
+
+    /// <summary>Decorations start and end at every crossing.</summary>
+    Intersection,
+}
+
+/// <summary>
 /// The stroke a gap asks to be drawn in the middle of it: how thick, in what style and in what colour
 /// (CSS Gaps 1 §4). A rule is a border side turned to face down the gap, so it takes the same strokes -
 /// a dashed one dashes along its length and a double one is two lines within its width.
@@ -294,12 +309,17 @@ internal sealed class GapRuleAxis
     internal GapRuleAxis(
         GapRuleTerms<Double> width,
         GapRuleTerms<BorderLineStyle> style,
-        GapRuleTerms<UInt32> color)
+        GapRuleTerms<UInt32> color,
+        GapRuleBreak breaks)
     {
         _width = width;
         _style = style;
         _color = color;
+        Break = breaks;
     }
+
+    /// <summary>Gets where a decoration of this axis starts and ends where two gaps cross.</summary>
+    public GapRuleBreak Break { get; }
 
     /// <summary>Gets whether the page asked for decorations along this axis.</summary>
     public Boolean IsStated => _width.IsStated || _style.IsStated || _color.IsStated;
@@ -327,7 +347,15 @@ internal sealed class GapRuleAxis
         new(
             GapRuleTerms<Double>.Read(find(prefix + "-width"), InitialWidth, item => ToWidth(item, dimensions, font)),
             GapRuleTerms<BorderLineStyle>.Read(find(prefix + "-style"), BorderLineStyle.None, ToStyle),
-            GapRuleTerms<UInt32>.Read(find(prefix + "-color"), ComputedStyle.ToArgb(initial), item => ToColor(item, initial)));
+            GapRuleTerms<UInt32>.Read(find(prefix + "-color"), ComputedStyle.ToArgb(initial), item => ToColor(item, initial)),
+            BreakOf(find(prefix + "-break")));
+
+    private static GapRuleBreak BreakOf(ICssProperty? declared) => declared?.Value?.Trim() switch
+    {
+        "none" => GapRuleBreak.None,
+        "intersection" => GapRuleBreak.Intersection,
+        _ => GapRuleBreak.Normal,
+    };
 
     /// <summary>Gets the width a rule whose page said nothing about it takes: <c>medium</c>.</summary>
     internal const Double InitialWidth = 3.0;
@@ -369,11 +397,13 @@ internal sealed class GapRules
         new GapRuleAxis(
             new GapRuleTerms<Double>(GapRuleAxis.InitialWidth, null),
             new GapRuleTerms<BorderLineStyle>(BorderLineStyle.None, null),
-            new GapRuleTerms<UInt32>(0, null)),
+            new GapRuleTerms<UInt32>(0, null),
+            GapRuleBreak.Normal),
         new GapRuleAxis(
             new GapRuleTerms<Double>(GapRuleAxis.InitialWidth, null),
             new GapRuleTerms<BorderLineStyle>(BorderLineStyle.None, null),
-            new GapRuleTerms<UInt32>(0, null)),
+            new GapRuleTerms<UInt32>(0, null),
+            GapRuleBreak.Normal),
         false);
 
     internal GapRules(GapRuleAxis column, GapRuleAxis row, Boolean columnOverRow)

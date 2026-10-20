@@ -121,8 +121,65 @@ internal sealed class GridFormattingContext
             layout.Children.Add(_engine.Arrange(item.Box, rect, itemContext, item.HeightIsDefinite));
         }
 
+        layout.GapDecorations = GapDecorations(box, plan, contentX, contentY);
         ArrangeOutOfFlow(box, layout, contentX, contentY, itemContext);
         return layout;
+    }
+
+    /// <summary>
+    /// Works out the decorations of the grid's gaps: the room between each pair of adjacent tracks, run
+    /// the whole way across the tracks and split where an item stands in the way or, for the
+    /// <c>intersection</c> break, where a perpendicular gap crosses it (CSS Gaps 1 §3.1).
+    /// </summary>
+    private static List<GapRuleSegment>? GapDecorations(Box box, GridPlan plan, Double contentX, Double contentY)
+    {
+        var rules = box.Style.Gap;
+
+        if (!rules.IsStated)
+        {
+            return null;
+        }
+
+        var items = new List<Rect>(plan.Items.Count);
+
+        foreach (var item in plan.Items)
+        {
+            items.Add(new Rect(
+                contentX + item.OffsetX,
+                contentY + item.OffsetY,
+                item.BorderBoxWidth,
+                item.BorderBoxHeight));
+        }
+
+        var columns = new List<GridGapRun>(plan.ColumnGaps.Count);
+        var rows = new List<GridGapRun>(plan.RowGaps.Count);
+        var columnCrossings = new List<GridGapRun>(plan.ColumnGaps.Count);
+        var rowCrossings = new List<GridGapRun>(plan.RowGaps.Count);
+
+        foreach (var gap in plan.ColumnGaps)
+        {
+            var from = contentY;
+            var to = contentY + plan.TracksHeight;
+
+            columns.Add(new GridGapRun(true, contentX + (gap.From + gap.To) / 2, from, to, gap.To - gap.From));
+            columnCrossings.Add(new GridGapRun(true, 0, contentX + gap.From, contentX + gap.To, 0));
+        }
+
+        foreach (var gap in plan.RowGaps)
+        {
+            var from = contentX;
+            var to = contentX + plan.TracksWidth;
+
+            rows.Add(new GridGapRun(false, contentY + (gap.From + gap.To) / 2, from, to, gap.To - gap.From));
+            rowCrossings.Add(new GridGapRun(false, 0, contentY + gap.From, contentY + gap.To, 0));
+        }
+
+        var target = new List<GapRuleSegment>();
+
+        GridGapBands.Add(target, rules.Column, isRow: false, columns, rowCrossings, rules.Column.Break, items);
+        GridGapBands.Add(target, rules.Row, isRow: true, rows, columnCrossings, rules.Row.Break, items);
+
+        return target.Count > 0 ? target : null;
     }
 
     /// <summary>
@@ -267,6 +324,36 @@ internal sealed class GridFormattingContext
             ContentHeight = resolvedHeight,
             MinWidth = minContentWidth,
         };
+
+        // The room between two tracks is the step they stand apart by: the declared gutter plus whatever
+        // the content alignment put between them, which is the gap a decoration centres itself in. Only a
+        // container whose gaps carry decorations is asked for them: a grid of ten thousand tracks costs a
+        // list of ten thousand gaps to describe, and nothing else reads one.
+        var decorated = box.Style.Gap.IsStated;
+
+        for (var index = 0; decorated && index + 1 < columnTracks.Count; index++)
+        {
+            plan.ColumnGaps.Add(new TrackGap(
+                offsetX + Prefix(columnTracks, index, stepX) + columnTracks[index].Base,
+                offsetX + Prefix(columnTracks, index + 1, stepX)));
+        }
+
+        for (var index = 0; decorated && index + 1 < rowTracks.Count; index++)
+        {
+            plan.RowGaps.Add(new TrackGap(
+                offsetY + Prefix(rowTracks, index, stepY) + rowTracks[index].Base,
+                offsetY + Prefix(rowTracks, index + 1, stepY)));
+        }
+
+        if (decorated && columnTracks.Count > 0)
+        {
+            plan.TracksWidth = offsetX + Prefix(columnTracks, columnTracks.Count - 1, stepX) + columnTracks[^1].Base;
+        }
+
+        if (decorated && rowTracks.Count > 0)
+        {
+            plan.TracksHeight = offsetY + Prefix(rowTracks, rowTracks.Count - 1, stepY) + rowTracks[^1].Base;
+        }
 
         plan.Items.AddRange(items);
         return plan;
@@ -1512,7 +1599,33 @@ internal sealed class GridFormattingContext
         /// <summary>The sum of the column base sizes before growth: the grid's min-content inline size.</summary>
         public Double MinWidth;
 
+        /// <summary>Gets how far the column tracks reach, from the content box's start.</summary>
+        public Double TracksWidth;
+
+        /// <summary>Gets how far the row tracks reach, from the content box's start.</summary>
+        public Double TracksHeight;
+
+        /// <summary>Gets the room between adjacent column tracks, in the content box's coordinates.</summary>
+        public List<TrackGap> ColumnGaps { get; } = new();
+
+        /// <summary>Gets the room between adjacent row tracks, in the content box's coordinates.</summary>
+        public List<TrackGap> RowGaps { get; } = new();
+
         public List<GridCell> Items { get; } = new();
+    }
+
+    /// <summary>The room between two adjacent tracks, which is where a gap decoration stands.</summary>
+    internal readonly struct TrackGap
+    {
+        public TrackGap(Double from, Double to)
+        {
+            From = from;
+            To = to;
+        }
+
+        public Double From { get; }
+
+        public Double To { get; }
     }
 
     /// <summary>The resolved cross (column) axis a grid-lanes container borrows from the grid sizer.</summary>

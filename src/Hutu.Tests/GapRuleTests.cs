@@ -315,6 +315,108 @@ public sealed class GapRuleTests
         Assert.That(Rules(view), Is.Empty, "a line of no depth leaves the gap nothing to run along");
     }
 
+    /// <summary>
+    /// A grid's column gap is ruled the whole way across the tracks - not just where the items stand -
+    /// and a grid whose items stand in one row has no crossing to break it at (CSS Gaps 1 §3.1).
+    /// </summary>
+    [Test]
+    public async Task AGridColumnGapIsRuledAcrossTheTracks()
+    {
+        using var view = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; column-gap:10px; width:110px;" +
+            " column-rule:4px solid blue } .i { height:40px }</style>" +
+            "<div id='d'><div class='i'></div><div class='i'></div></div>");
+
+        var rules = Rules(view);
+
+        Assert.That(rules, Has.Count.EqualTo(1));
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.X, Is.EqualTo(53).Within(0.01), "centred in the ten-pixel gap");
+            Assert.That(rules[0].Bounds.Y, Is.EqualTo(0).Within(0.01));
+            Assert.That(rules[0].Bounds.Height, Is.EqualTo(40).Within(0.01), "as deep as the tracks reach");
+            Assert.That(rules[0].Widths.Left, Is.EqualTo(4));
+        });
+    }
+
+    [Test]
+    public async Task AGridIsRuledAlongBothOfItsAxes()
+    {
+        using var view = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; grid-template-rows:40px 40px;" +
+            " gap:10px; width:110px; height:90px; column-rule:4px solid blue; row-rule:4px solid red }</style>" +
+            "<div id='d'><div></div><div></div><div></div><div></div></div>");
+
+        var rules = Rules(view);
+
+        Assert.That(rules, Has.Count.EqualTo(2), "one gap on each axis");
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.X, Is.EqualTo(53).Within(0.01), "the column rule");
+            Assert.That(rules[0].Bounds.Height, Is.EqualTo(90).Within(0.01), "across both rows of tracks");
+            Assert.That(rules[1].Bounds.Y, Is.EqualTo(43).Within(0.01), "the row rule");
+            Assert.That(rules[1].Bounds.Width, Is.EqualTo(110).Within(0.01), "across both columns of tracks");
+        });
+    }
+
+    /// <summary>
+    /// An item that spans the gap stands in the room the decoration would cross, so under the grid's own
+    /// <c>normal</c> the decoration starts again on the far side of it - and a page that asks for no
+    /// breaks gets one rule the whole way, painted under the item (§3.1.2).
+    /// </summary>
+    [Test]
+    public async Task AnItemAcrossTheGapEndsTheRuleUnderTheNormalBreak()
+    {
+        using var view = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; grid-template-rows:40px 40px; gap:10px;" +
+            " width:110px; height:90px; column-rule:4px solid blue }" +
+            ".a { grid-column:1 / 3 }</style>" +
+            "<div id='d'><div class='a'></div><div></div><div></div></div>");
+
+        var rules = Rules(view);
+
+        Assert.That(rules, Has.Count.EqualTo(1));
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.Y, Is.EqualTo(50).Within(0.01), "only the room below the item is ruled");
+            Assert.That(rules[0].Bounds.Height, Is.EqualTo(40).Within(0.01));
+        });
+
+        using var unbroken = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; grid-template-rows:40px 40px; gap:10px;" +
+            " width:110px; height:90px; column-rule:4px solid blue; column-rule-break:none }" +
+            ".a { grid-column:1 / 3 }</style>" +
+            "<div id='d'><div class='a'></div><div></div><div></div></div>");
+
+        var whole = Rules(unbroken);
+
+        Assert.That(whole, Has.Count.EqualTo(1));
+        Assert.That(whole[0].Bounds.Height, Is.EqualTo(90).Within(0.01), "one rule from end to end");
+    }
+
+    /// <summary>
+    /// An <c>intersection</c> decoration starts and ends at every crossing, and the crossing only lets it
+    /// through when items on either side span it - which a grid of separate cells never has (§3.2).
+    /// </summary>
+    [Test]
+    public async Task AnIntersectionBreakSplitsTheRuleAtTheCrossingGap()
+    {
+        using var view = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; grid-template-rows:40px 40px; gap:10px;" +
+            " width:110px; height:90px; column-rule:4px solid blue; column-rule-break:intersection }</style>" +
+            "<div id='d'><div></div><div></div><div></div><div></div></div>");
+
+        var rules = Rules(view);
+
+        Assert.That(rules, Has.Count.EqualTo(2), "one stretch above the crossing and one below");
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.Y, Is.EqualTo(0).Within(0.01));
+            Assert.That(rules[0].Bounds.Height, Is.EqualTo(40).Within(0.01));
+            Assert.That(rules[1].Bounds.Y, Is.EqualTo(50).Within(0.01));
+        });
+    }
+
     /// <summary>Gets the commands that draw one side of a band, which is every rule the engine paints.</summary>
     private static List<BorderCommand> Rules(HutuViewInternal view) =>
         view.Paint!.Commands.OfType<BorderCommand>()
