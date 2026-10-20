@@ -607,6 +607,7 @@ internal sealed class InlineLayout
 
             var open = new List<OpenInline>();
             var origin = line.Offset + line.Left;
+            var last = line.Fragments[^1];
 
             foreach (var fragment in line.Fragments)
             {
@@ -635,7 +636,13 @@ internal sealed class InlineLayout
                     origin += entered.Inset;
                 }
 
-                Place(fragment, open, lineBox, contentBox, flow, line, origin, cursor, context);
+                // The spaces a `pre-wrap` line hangs are drawn where they stand but take none of the
+                // room the line was given, so the box of the run that trails into them is narrowed by
+                // that much: either way the glyphs land where a line without the spaces would have put
+                // them, which is what a right-to-line-end hanging looks like from both directions.
+                var room = ReferenceEquals(fragment, last) ? fragment.Width - line.Hanging : fragment.Width;
+
+                Place(fragment, open, lineBox, contentBox, flow, line, origin, cursor, context, room);
                 origin += fragment.Width;
             }
 
@@ -836,7 +843,8 @@ internal sealed class InlineLayout
         Line line,
         Double origin,
         Double cursor,
-        InlineContext context)
+        InlineContext context,
+        Double room)
     {
         if (fragment.OutOfFlow)
         {
@@ -943,13 +951,15 @@ internal sealed class InlineLayout
 
         Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Text)
         {
-            Text = fragment.Text,
+            Text = fragment.Hanging > 0
+                ? fragment.Source.Substring(fragment.Start, fragment.Length - fragment.Hanging)
+                : fragment.Text,
             Font = fragment.Style.GetFont(),
             Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
             Flow = fragment.Flow,
             Justification = fragment.Justify,
             Justifies = fragment.Expansions,
-            BorderBox = flow.Map(contentBox, origin, fragment.Width, cursor, line.Height),
+            BorderBox = flow.Map(contentBox, origin, room, cursor, line.Height),
         });
     }
 
@@ -2636,6 +2646,13 @@ internal sealed class InlineLayout
         public Int32 Length { get; set; }
 
         /// <summary>
+        /// Gets or sets how many of the fragment's trailing characters hang past the line's advance:
+        /// the spaces a <c>pre-wrap</c> line trails into are neither room the line takes nor ink it
+        /// draws, so the painter is handed the run without them.
+        /// </summary>
+        public Int32 Hanging { get; set; }
+
+        /// <summary>
         /// Gets the fragment's text as a string, which is what the node the painter draws out of wants.
         /// Asked once per fragment, when the line is placed - not once per chunk of it, as it was while
         /// the chunks were being appended one character at a time.
@@ -3156,6 +3173,14 @@ internal sealed class InlineLayout
 
         /// <summary>Gets the extent the line's fragments take along the inline axis, before alignment.</summary>
         public Double Used { get; set; }
+
+        /// <summary>
+        /// Gets or sets how much of the last fragment's width hangs past the line's advance. The spaces
+        /// a <c>pre-wrap</c> line trails into are drawn where they stand but take no room (CSS Text 3
+        /// §4.1.3), so the box that ends the line is narrowed by this much and the glyphs land where a
+        /// line without them would have put them.
+        /// </summary>
+        public Double Hanging { get; set; }
 
         /// <summary>
         /// Gets the distance the line is set in from the edge it begins at, which is the indentation
@@ -3853,7 +3878,10 @@ internal sealed class InlineLayout
             line.BandShifts = bands;
             line.Ascent = reach;
             line.Height = reach + depth;
-            line.Used = used - HangingTrail(measurer);
+
+            var hanging = HangingTrail(measurer);
+            line.Hanging = hanging;
+            line.Used = used - hanging;
             line.Indent = _indent;
             line.Alignment = line.Fragments.Count == 0
                 ? CssInitialValues.TextAlign
@@ -3864,9 +3892,10 @@ internal sealed class InlineLayout
         }
 
         /// <summary>
-        /// Gets the width of the white space the line trails into where its mode hangs it: a
-        /// <c>pre-wrap</c> line keeps those spaces rather than drawing them away, and they take none of
-        /// its advance (CSS Text 3 §4.1.3) - so the room it was given is shared over what does not hang.
+        /// Gets the width of the white space the line trails into where its mode hangs it, marking each
+        /// run it took the room off so that the painter draws the word without it: a `pre-wrap` line
+        /// keeps those spaces rather than drawing them away, and they take none of its advance
+        /// (CSS Text 3 §4.1.3) - so the room it was given is shared over what does not hang.
         /// </summary>
         private Double HangingTrail(ITextMeasurer measurer)
         {
@@ -3891,6 +3920,8 @@ internal sealed class InlineLayout
                 {
                     break;
                 }
+
+                fragment.Hanging = trailing;
 
                 // A fragment that is nothing but the spaces hanging is worth what the layout measured
                 // it at, which for a run carrying tabs is the distance to the last stop rather than a
