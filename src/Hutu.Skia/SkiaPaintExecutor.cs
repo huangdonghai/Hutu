@@ -1,5 +1,6 @@
 using Hutu.Rendering;
 using Hutu.Rendering.Layout;
+using Hutu.Rendering.Media;
 using Hutu.Rendering.Paint;
 using SkiaSharp;
 using Svg.Skia;
@@ -1577,15 +1578,15 @@ public sealed class SkiaPaintExecutor
 
     /// <summary>
     /// Maps a CSS gradient angle onto the gradient line: 0deg points up and 90deg to the right, and
-    /// the line runs through the centre with the length the direction projects onto the box.
+    /// the line runs through the centre with the length the direction projects onto the box. The core
+    /// settles that length, because it is the same length the colour stops were resolved against.
     /// </summary>
     private static (SKPoint Start, SKPoint End) GradientLine(SKRect box, Double angleDegrees)
     {
         var radians = angleDegrees * Math.PI / 180.0;
         var dx = (Single)Math.Sin(radians);
         var dy = (Single)(-Math.Cos(radians));
-
-        var length = Math.Abs(box.Width * dx) + Math.Abs(box.Height * dy);
+        var length = (Single)LinearGradientSpec.LineLength(box.Width, box.Height, angleDegrees);
         var halfX = dx * length / 2;
         var halfY = dy * length / 2;
 

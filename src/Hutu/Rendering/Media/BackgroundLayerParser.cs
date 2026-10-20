@@ -57,7 +57,7 @@ internal static class BackgroundLayerParser
                 continue;
             }
 
-            var gradient = ParseGradient(image);
+            var gradient = ParseGradient(image, dimensions, fontSize);
             var urls = gradient is null ? CssUrlReferences.Extract(image) : new List<String>();
 
             if (gradient is null && urls.Count == 0)
@@ -293,7 +293,10 @@ internal static class BackgroundLayerParser
 
     // --- gradients ------------------------------------------------------
 
-    private static LinearGradientSpec? ParseGradient(String value)
+    private static LinearGradientSpec? ParseGradient(
+        String value,
+        IRenderDimensions dimensions,
+        Double fontSize)
     {
         var open = value.IndexOf('(');
 
@@ -319,16 +322,18 @@ internal static class BackgroundLayerParser
 
         var count = arguments.Count - start;
 
-        if (count < 2)
+        // One colour is a gradient the whole line is that colour of: the fixup leaves the stop where it
+        // stands, and everything before it and after it is that colour anyway.
+        if (count < 1)
         {
             return null;
         }
 
-        var stops = new List<GradientStop>(count);
+        var stops = new List<ColorStop>(count);
 
         for (var index = start; index < arguments.Count; index++)
         {
-            var stop = ParseStop(arguments[index], index - start, count);
+            var stop = ParseStop(arguments[index], dimensions, fontSize);
 
             if (stop is null)
             {
@@ -341,7 +346,17 @@ internal static class BackgroundLayerParser
         return new LinearGradientSpec(angle, stops);
     }
 
-    private static GradientStop? ParseStop(String text, Int32 index, Int32 count)
+    /// <summary>
+    /// Reads one stop: the colour it is, and the length or percentage beside it where the author stood
+    /// it on the line.
+    /// </summary>
+    /// <remarks>
+    /// The position is the last token, because that is where the grammar puts it, and the colour is
+    /// whatever stands before it - spaces and all, since a <c>rgb(0 0 255 / .5)</c> is written with the
+    /// same separators a stop list uses. A token that is no length leaves the whole argument to the
+    /// colour, which is how a stop written without a position is left for the line to place.
+    /// </remarks>
+    private static ColorStop? ParseStop(String text, IRenderDimensions dimensions, Double fontSize)
     {
         var parts = CssValueList.SplitWhitespace(text);
 
@@ -350,21 +365,124 @@ internal static class BackgroundLayerParser
             return null;
         }
 
-        var color = ParseColor(parts[0]);
+        var last = parts.Count - 1;
+        var position = last > 0 ? ParseStopPosition(parts[last], dimensions, fontSize) : null;
+        var color = ParseColor(position is null ? text.Trim() : String.Join(' ', parts.Take(last)));
 
         if (color is null)
         {
             return null;
         }
 
-        var offset = count > 1 ? (Double)index / (count - 1) : 0.0;
+        return new ColorStop(color.Value, position ?? default, position is not null);
+    }
 
-        if (parts.Count > 1 && CssLengthValue.TryParse(parts[1], out var position))
+    /// <summary>Reads one stop's position: a length, a percentage, or a <c>calc()</c> of the two.</summary>
+    private static StopOffset? ParseStopPosition(String text, IRenderDimensions dimensions, Double fontSize)
+    {
+        var trimmed = text.Trim();
+
+        return trimmed.StartsWith("calc(", StringComparison.OrdinalIgnoreCase) && trimmed.EndsWith(")")
+            ? Sum(trimmed[5..^1], dimensions, fontSize)
+            : Of(ParseOffset(trimmed, dimensions, fontSize));
+    }
+
+    private static StopOffset? Of(BackgroundOffset? offset) => offset is not { } stated
+        ? null
+        : stated.IsPercentage
+            ? new StopOffset(0, stated.Value)
+            : new StopOffset(stated.Value, 0);
+
+    /// <summary>
+    /// Adds a calc() up as the distance and the share of the line it comes to. The two are kept apart,
+    /// because <c>calc(30% + 30px)</c> has no answer until a box gives the share something to be a share
+    /// of.
+    /// </summary>
+    private static StopOffset? Sum(String body, IRenderDimensions dimensions, Double fontSize)
+    {
+        var terms = CssValueList.SplitOperators(body, '+', '-');
+        var pixels = 0.0;
+        var percent = 0.0;
+
+        foreach (var term in terms)
         {
-            offset = position.Type == CssLengthValue.Unit.Percent ? position.Value / 100.0 : offset;
+            if (Product(term, dimensions, fontSize) is not { } value)
+            {
+                return null;
+            }
+
+            pixels += value.Pixels;
+            percent += value.Percent;
         }
 
-        return new GradientStop(offset, color.Value);
+        return terms.Count == 0 ? null : new StopOffset(pixels, percent);
+    }
+
+    /// <summary>
+    /// Reads one term of a sum: one length or percentage scaled by the numbers it is multiplied or
+    /// divided by, or the plain number that is what a serialiser leaves a length of nothing. Two
+    /// lengths of a product is not a length, so that leaves the stop to the line rather than to a guess.
+    /// </summary>
+    private static StopOffset? Product(String term, IRenderDimensions dimensions, Double fontSize)
+    {
+        var text = term.Trim();
+        var sign = 1.0;
+
+        if (text.StartsWith('+') || text.StartsWith('-'))
+        {
+            sign = text.StartsWith('-') ? -1 : 1;
+            text = text[1..].Trim();
+        }
+
+        var factors = CssValueList.SplitOperators(text, '*', '/');
+
+        if (factors.Count == 0)
+        {
+            return null;
+        }
+
+        var scale = 1.0;
+        StopOffset? offset = null;
+
+        foreach (var factor in CssValueList.SplitOperators(text, '*', '/'))
+        {
+            var body = factor.Trim();
+            var divides = body.StartsWith('/');
+            var operand = divides || body.StartsWith('*') ? body[1..].Trim() : body;
+
+            if (Number(operand) is { } scalar)
+            {
+                if (divides && scalar == 0)
+                {
+                    return null;
+                }
+
+                scale = divides ? scale / scalar : scale * scalar;
+                continue;
+            }
+
+            if (divides || offset is not null || Atom(operand, dimensions, fontSize) is not { } value)
+            {
+                return null;
+            }
+
+            offset = value;
+        }
+
+        // A term of nothing but numbers is a length whose unit the reader of the declaration dropped:
+        // the fork serialises `calc(0px)` as `calc(0)`, and a number standing alone where a length is
+        // asked for is the zero it came from.
+        return offset is { } position ? position.Scaled(sign * scale) : new StopOffset(sign * scale, 0);
+    }
+
+    /// <summary>Reads the one factor of a product that is no number: a bracketed sum, a length, or a percentage.</summary>
+    private static StopOffset? Atom(String operand, IRenderDimensions dimensions, Double fontSize)
+    {
+        var open = operand.IndexOf('(');
+
+        return open >= 0 && operand.EndsWith(")", StringComparison.Ordinal)
+            ? Sum(operand[(open + 1)..^1], dimensions, fontSize)
+            : Of(ParseOffset(operand, dimensions, fontSize));
     }
 
     private static Boolean TryParseDirection(String text, out Double angle)

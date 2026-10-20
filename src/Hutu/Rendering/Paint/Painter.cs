@@ -500,9 +500,10 @@ internal sealed class Painter
             if (layer.Gradient is { } gradient)
             {
                 var (tile, repeatX, repeatY) = GradientTile(layer, area);
+                var length = LinearGradientSpec.LineLength(tile.Width, tile.Height, gradient.AngleDegrees);
 
                 layers.Add(new LinearGradientCommand(
-                    area, tile, repeatX, repeatY, gradient.AngleDegrees, gradient.Stops, radii));
+                    area, tile, repeatX, repeatY, gradient.AngleDegrees, gradient.StopsAt(length), radii));
             }
             else if (layer.Url is { Length: > 0 })
             {

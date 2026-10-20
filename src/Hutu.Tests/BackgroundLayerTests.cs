@@ -192,6 +192,89 @@ public sealed class BackgroundLayerTests
         Assert.That(layer.RepeatX, Is.False);
     }
 
+    /// <summary>
+    /// A gradient stands each colour where its position puts it along the gradient line, and settles
+    /// the positions its author left out: the first and the last stop at the ends of the line, an
+    /// interior run spaced equally between its neighbours, and any stop that would stand behind the
+    /// largest position before it pulled up to that position (CSS Images 3 §3.4.1 and §3.4.3). A box
+    /// 100px square with the default <c>to bottom</c> line runs from 0 to 100px, so a stop written in
+    /// pixels stands that far along it, and a window whose stops fall outside it opens and closes on
+    /// the colour the line has come to at each end.
+    /// </summary>
+    [Test]
+    [TestCase("black, black 50px, white 50px, white", "ff000000@0 ff000000@0.5 ffffffff@0.5 ffffffff@1")]
+    [TestCase("black, white 50px, black", "ff000000@0 ffffffff@0.5 ff000000@1")]
+    [TestCase("black 0px, gray, gray, white 100px", "ff000000@0 ff808080@0.333 ff808080@0.667 ffffffff@1")]
+    [TestCase("yellow 100px, blue 50%", "ffffff00@0 ff0000ff@1")]
+    [TestCase("blue -5%, yellow -5%", "ffffff00@0 ffffff00@1")]
+    [TestCase("blue 150%, yellow 150%", "ff0000ff@0 ff0000ff@1")]
+    [TestCase("black -100px, white 100px", "ff808080@0 ffffffff@1")]
+    [TestCase("#0000ff 50%", "ff0000ff@0 ff0000ff@0.5 ff0000ff@1")]
+    [TestCase("blue, lime 25%", "ff0000ff@0 ff00ff00@0.25 ff00ff00@1")]
+    public async Task AGradientStopStandsWhereItsPositionPutsIt(String stops, String expected)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:100px;height:100px;background:linear-gradient({stops})'></div>" +
+            "</body></html>");
+
+        Assert.That(Write(SingleGradient(view)), Is.EqualTo(expected));
+    }
+
+    /// <summary>
+    /// A stop written in pixels is measured along the gradient line of the tile it paints, which for a
+    /// corner-pointed line is the projection of the box onto that direction and not the box's own
+    /// diagonal (CSS Images 3 §3.1.1).
+    /// </summary>
+    [Test]
+    public async Task AGradientLineRunsTheLengthTheBoxProjectsOntoItsDirection()
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:400px;height:300px;" +
+            "background:linear-gradient(to bottom right, lime 0px, teal 250px, black 100%)'></div>" +
+            "</body></html>");
+
+        // The line this box projects is 494.97px, so 250px of it lands at 0.505.
+        Assert.That(Write(SingleGradient(view)), Is.EqualTo("ff00ff00@0 ff008080@0.505 ff000000@1"));
+    }
+
+    /// <summary>
+    /// A stop position written as a <c>calc()</c> is added up as the distance and the share of the line
+    /// it comes to, so a sum that mixes the two still waits for the box (CSS Values 4 §10.5 read with
+    /// CSS Images 3 §3.4.1). The box here is 100px square with a 10px font, so its line runs 0 to 100px.
+    /// </summary>
+    [Test]
+    [TestCase("lime calc(100% - 10px), blue", "ff00ff00@0 ff00ff00@0.9 ff0000ff@1")]
+    [TestCase("blue calc(2em), yellow", "ff0000ff@0 ff0000ff@0.2 ffffff00@1")]
+    [TestCase("red calc(30% + 30px)", "ffff0000@0 ffff0000@0.6 ffff0000@1")]
+    [TestCase("red calc(200% / 2 - 40px), blue 60px", "ffff0000@0 ffff0000@0.6 ff0000ff@0.6 ff0000ff@1")]
+    [TestCase("red calc(0px), blue 50px", "ffff0000@0 ff0000ff@0.5 ff0000ff@1")]
+    [TestCase("red calc(20% + 0px), blue", "ffff0000@0 ffff0000@0.2 ff0000ff@1")]
+    public async Task AGradientStopPositionAddsItsCalcUp(String stops, String expected)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:100px;height:100px;font-size:10px;background:linear-gradient({stops})'></div>" +
+            "</body></html>");
+
+        Assert.That(Write(SingleGradient(view)), Is.EqualTo(expected));
+    }
+
+    /// <summary>Writes the stops a gradient paints as the colour and the fraction each was resolved to.</summary>
+    private static String Write(LinearGradientCommand gradient) =>
+        String.Join(" ", gradient.Stops.Select(stop =>
+            $"{stop.Color:x8}@{stop.Offset:0.###}"));
+
     private static void AssertTile(Rect tile, Double x, Double y, Double width, Double height, String where)
     {
         Assert.Multiple(() =>
