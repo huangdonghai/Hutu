@@ -147,10 +147,18 @@ internal static class Fragmentainer
 
             Array.Fill(extents, middle);
 
+            var counts = Fill(children, extents);
+
             // A fragment that takes a child taller than itself overflows on purpose - the flow must make
             // progress - so an extent below the tallest child is no balance even where every child
             // "fits" one to a fragment.
-            if (middle >= tallest && Placed(Fill(children, extents)) >= children.Count)
+            //
+            // What the search does not yet ask is whether the cut it found is one the block being cut
+            // would allow: a two-line block balanced one line to a column leaves the tail short of its
+            // widows, and Chrome keeps such a block whole where it can. Asking that here instead of in
+            // the fill is the open half of this - the columns' own orphans and widows are honoured while
+            // a column is being filled, which is the case `column-fill: auto` states.
+            if (middle >= tallest && Placed(counts) >= children.Count)
             {
                 high = middle;
             }

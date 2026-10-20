@@ -407,7 +407,12 @@ internal sealed class BlockLayout
     /// box's own percentage chain collapses to nothing, because the height it comes out at is read as
     /// one the content decided.
     /// </param>
-    public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight = false)
+    /// <param name="lines">
+    /// The lines of this box's own inline content that the fragment being arranged takes, where the box
+    /// is a block broken across the columns of its parent (CSS Multicol 3 §3.1). Null takes all of them.
+    /// </param>
+    public LayoutBox Arrange(
+        Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight = false, LineRange? lines = null)
     {
         var style = box.Style;
         var flow = box.Flow;
@@ -514,7 +519,11 @@ internal sealed class BlockLayout
                 ? context
                 : context.ForContainingBlock(new Rect(contentX, contentY, contentWidth, usedHeight ?? 0));
 
-            used = _inline.Layout(box, layout, content, flow, new InlineContext(_engine, context, childContext, atomic));
+            var inline = new InlineContext(_engine, context, childContext, atomic);
+
+            used = lines is { } range
+                ? _inline.Layout(box, layout, content, flow, inline, range.From, range.To)
+                : _inline.Layout(box, layout, content, flow, inline);
         }
 
         // Where the content stands along the block axis is asked once the flow has put it somewhere:
@@ -750,15 +759,21 @@ internal sealed class BlockLayout
         return MulticolExtent(box.Style.Multi, columns, heightStated ? declaredHeight : null, children);
     }
 
-    /// <summary>One in-flow child of a multi-column box, measured at the width of a column.</summary>
+    /// <summary>
+    /// One thing a column takes: a whole child, or one of the lines of a child that is broken across the
+    /// columns rather than moved from one to the other in one piece.
+    /// </summary>
     private readonly struct MulticolChild
     {
-        public MulticolChild(Box box, Size size, Thickness margin, FragmentChild fragment)
+        public MulticolChild(
+            Box box, Size size, Thickness margin, FragmentChild fragment, Int32 line, Boolean last)
         {
             Box = box;
             Size = size;
             Margin = margin;
             Fragment = fragment;
+            Line = line;
+            Last = last;
         }
 
         public Box Box { get; }
@@ -767,8 +782,48 @@ internal sealed class BlockLayout
 
         public Thickness Margin { get; }
 
-        /// <summary>Gets the child as the column slicer sees it: its margin box and its break values.</summary>
+        /// <summary>Gets the piece as the column slicer sees it: its outer height and its break values.</summary>
         public FragmentChild Fragment { get; }
+
+        /// <summary>
+        /// Gets which line of the child's own content this piece is, or -1 for a child that stands whole.
+        /// Two pieces of one child that land in the same column are one fragment of it.
+        /// </summary>
+        public Int32 Line { get; }
+
+        /// <summary>
+        /// Gets whether this is the last piece of the child, which is the one that carries the margin and
+        /// the break value the child asks for after itself.
+        /// </summary>
+        public Boolean Last { get; }
+
+        /// <summary>Gets whether the child is broken across the columns.</summary>
+        public Boolean Broken => Line >= 0;
+    }
+
+    /// <summary>
+    /// Gets whether a child of a multi-column box can be broken at its own lines. Only a block whose
+    /// content is a single inline formatting context has lines to break at here - a block with block
+    /// children breaks inside those first, which is the next step of the fragmentainer - and only one
+    /// that brings nothing to be drawn or honoured at the edges of a fragment: a height the box states
+    /// for itself, padding, a border or a background would each have to be shared over the fragments by
+    /// <c>box-decoration-break</c> (CSS Break 3 §4.7), which the columns do not do yet, so such a child
+    /// stays whole rather than be painted wrong.
+    /// </summary>
+    private static Boolean FragmentsInColumns(Box child, Double basis)
+    {
+        var style = child.Style;
+
+        return !HasBlockChildren(child) &&
+            !child.IsReplaced &&
+            style.Height.IsAuto &&
+            !style.MinHeight.HasValue &&
+            !style.MaxHeight.HasValue &&
+            style.Breaks.Inside == BreakValue.Auto &&
+            style.Backgrounds.Count == 0 &&
+            style.BackgroundColor is not { A: > 0 } &&
+            style.Padding.Resolve(basis).Vertical == 0 &&
+            BorderOf(child).Vertical == 0;
     }
 
     private List<MulticolChild> MulticolChildren(Box box, Double share, Double declaredHeight, LayoutContext context)
@@ -776,6 +831,10 @@ internal sealed class BlockLayout
         var childContext = context.ForContainingBlock(new Size(share, declaredHeight));
         var constraints = MeasureConstraints.FitWidth(share);
         var children = new List<MulticolChild>(box.Children.Count);
+
+        // Which child a run of lines belongs to, so that the slicer can tell one block's lines from its
+        // neighbour's and keep the orphans and widows each of them asks for.
+        var runs = 0;
 
         foreach (var child in box.Children)
         {
@@ -797,11 +856,50 @@ internal sealed class BlockLayout
                 used.Left);
             var breaks = child.Style.Breaks;
 
+            // A child that can be broken contributes one piece per line of its own, so the column ends
+            // between two of them (CSS Multicol 3 §3.1). The lines are those the plan makes at the width
+            // of a column, which is the plan the arrangement lays out again - the same container at the
+            // same extent, so the two passes agree without being told to.
+            if (FragmentsInColumns(child, share))
+            {
+                var run = runs++;
+                var lines = _inline.LineHeights(
+                    child, share, child.Flow, new InlineContext(_engine, childContext, childContext, childContext));
+
+                for (var line = 0; line < lines.Count; line++)
+                {
+                    var last = line == lines.Count - 1;
+
+                    children.Add(new MulticolChild(
+                        child,
+                        new Size(size.Width, lines[line]),
+                        new Thickness(
+                            line == 0 ? margin.Top : 0,
+                            margin.Right,
+                            last ? margin.Bottom : 0,
+                            margin.Left),
+                        new FragmentChild(
+                            lines[line] + (line == 0 ? margin.Top : 0) + (last ? margin.Bottom : 0),
+                            line == 0 ? breaks.Before : BreakValue.Auto,
+                            last ? breaks.After : BreakValue.Auto,
+                            BreakValue.Auto,
+                            run,
+                            breaks.Orphans,
+                            breaks.Widows),
+                        line,
+                        last));
+                }
+
+                continue;
+            }
+
             children.Add(new MulticolChild(
                 child,
                 size,
                 margin,
-                new FragmentChild(size.Height + margin.Top + margin.Bottom, breaks.Before, breaks.After, breaks.Inside)));
+                new FragmentChild(size.Height + margin.Top + margin.Bottom, breaks.Before, breaks.After, breaks.Inside),
+                -1,
+                last: true));
         }
 
         return children;
@@ -1260,10 +1358,32 @@ internal sealed class BlockLayout
                 // rather than folded into the margin run the column before ended with.
                 y += child.Margin.Top;
 
-                var rect = new Rect(x + child.Margin.Left, y, child.Size.Width, child.Size.Height);
+                var width = child.Size.Width;
+                var height = child.Size.Height;
 
-                parent.Children.Add(_engine.Arrange(child.Box, rect, childContext));
-                y += child.Size.Height + child.Margin.Bottom;
+                // The lines of one broken child that fall in the same column are one fragment of it:
+                // they stand in the box drawn once for them, and only the fragment's own first and last
+                // line carry the child's edges.
+                var to = child.Broken ? child.Line + 1 : -1;
+
+                while (child.Broken && index + 1 < counts[column] && children[from].Broken &&
+                    ReferenceEquals(children[from].Box, child.Box))
+                {
+                    var next = children[from++];
+                    index++;
+                    height += next.Size.Height;
+                    to = next.Line + 1;
+                }
+
+                var rect = new Rect(x + child.Margin.Left, y, width, height);
+
+                parent.Children.Add(_engine.Arrange(
+                    child.Box,
+                    rect,
+                    childContext,
+                    definiteHeight: false,
+                    lines: child.Broken ? new LineRange(child.Line, to) : null));
+                y += height + child.Margin.Bottom;
             }
         }
 

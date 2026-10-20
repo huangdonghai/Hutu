@@ -1115,17 +1115,22 @@ internal sealed record LayoutProfile(
     /// case for a grid or flex item stretched to its area (CSS Sizing 3 §5.2), where a percentage inside
     /// has to resolve against that stretched height rather than collapse.
     /// </summary>
-    internal LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight)
+    /// <param name="lines">
+    /// The lines of the box's own inline content this fragment takes, where the box is a block broken
+    /// across its parent's columns (CSS Multicol 3 §3.1). Null takes the whole of its content.
+    /// </param>
+    internal LayoutBox Arrange(
+        Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight, LineRange? lines = null)
     {
         // An anonymous box borrows its parent's style; honouring the positioning it inherits would
         // displace the wrapper a second time, because the parent's own displacement already took it
         // along.
         if (box.IsAnonymous)
         {
-            return ArrangeCore(box, borderBox, context, definiteHeight);
+            return ArrangeCore(box, borderBox, context, definiteHeight, lines);
         }
 
-        var layout = ArrangeCore(box, borderBox, context, definiteHeight);
+        var layout = ArrangeCore(box, borderBox, context, definiteHeight, lines);
 
         var position = box.Style.Position;
 
@@ -1198,7 +1203,8 @@ internal sealed record LayoutProfile(
         _positioned.Arrange(box, staticPosition, context);
 
     /// <summary>Produces the geometry of a measured box inside the given border box.</summary>
-    private LayoutBox ArrangeCore(Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight)
+    private LayoutBox ArrangeCore(
+        Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight, LineRange? lines)
     {
         return box.Kind switch
         {
@@ -1208,7 +1214,7 @@ internal sealed record LayoutProfile(
             BoxKind.Table => _table.Arrange(box, borderBox, context),
             _ => box.IsReplaced
                 ? ArrangeReplaced(box, borderBox, context)
-                : _block.Arrange(box, borderBox, context, definiteHeight),
+                : _block.Arrange(box, borderBox, context, definiteHeight, lines),
         };
     }
 

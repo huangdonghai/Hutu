@@ -526,6 +526,42 @@ internal sealed class InlineLayout
         return LayoutCore(container, parent, contentBox, flow, context);
     }
 
+    /// <summary>
+    /// Gets how tall each of the container's lines stands at the given width. A block whose parent is
+    /// multi-column is broken between its own lines (CSS Multicol 3 §3.1, CSS Break 3 §4.4), and the
+    /// parent needs those heights to know where a column ends.
+    /// </summary>
+    public IReadOnlyList<Double> LineHeights(
+        Box container, Double maxInline, WritingModeInfo flow, InlineContext context) =>
+        Heights(Plan(container, maxInline, flow, context, Indentation(container, flow, context)));
+
+    /// <summary>
+    /// Lays the lines numbered <paramref name="from"/> up to <paramref name="to"/> into the given content
+    /// box, which is one fragment of a block broken across columns. The plan is the whole content's, so
+    /// the line a fragment ends on is not the line the block ends on and is not aligned as one; the
+    /// fragment that resumes a break starts where its first line stands rather than under a trimmed
+    /// leading, which belongs to the fragment that begins the block.
+    /// </summary>
+    public Double Layout(
+        Box container,
+        LayoutBox parent,
+        Rect contentBox,
+        WritingModeInfo flow,
+        InlineContext context,
+        Int32 from,
+        Int32 to)
+    {
+        var maxInline = flow.InlineExtent(contentBox.Width, contentBox.Height);
+        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context));
+
+        AlignLastLines(lines, maxInline);
+        DistributeSpace(lines);
+
+        var (trimStart, _) = Trim(container, lines);
+
+        return PlaceLines(container, parent, lines, from, to, contentBox, flow, context, from == 0 ? -trimStart : 0);
+    }
+
     private Double LayoutCore(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow, InlineContext context)
     {
         var maxInline = flow.InlineExtent(contentBox.Width, contentBox.Height);
