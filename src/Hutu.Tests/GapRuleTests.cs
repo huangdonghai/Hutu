@@ -38,6 +38,64 @@ public sealed class GapRuleTests
         Assert.That(widths.IsStated, Is.False);
     }
 
+    [Test]
+    public async Task AnIntegerRepeaterStandsForItsValuesWrittenOut()
+    {
+        using var view = await Render(
+            "<style>#d { display:flex; flex-direction:column; row-rule-color: red, repeat(2, green, blue), gold;" +
+            " row-rule-style: solid }</style><div id='d'>x</div>");
+
+        var colors = Find(view, "d").Source.Style.Gap.Row;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(colors.At(0, 6).Color, Is.EqualTo(0xffff0000u), "the value before the repeat");
+            Assert.That(colors.At(1, 6).Color, Is.EqualTo(0xff008000u), "the first turn of it");
+            Assert.That(colors.At(2, 6).Color, Is.EqualTo(0xff0000ffu));
+            Assert.That(colors.At(3, 6).Color, Is.EqualTo(0xff008000u), "the second turn");
+            Assert.That(colors.At(4, 6).Color, Is.EqualTo(0xff0000ffu));
+            Assert.That(colors.At(5, 6).Color, Is.EqualTo(0xffffd700u), "and the value after it");
+        });
+    }
+
+    /// <summary>
+    /// An <c>auto</c> repeater takes the gaps no other value reaches - the first and last values keep the
+    /// gaps they were written beside, however many gaps there turn out to be (CSS Gaps 1 §4.6).
+    /// </summary>
+    [Test]
+    public async Task AnAutoRepeaterTakesTheGapsTheOthersDoNotReach()
+    {
+        using var view = await Render(
+            "<style>#d { display:flex; flex-direction:column; row-rule-color: red, repeat(auto, green, blue), gold;" +
+            " row-rule-style: solid }</style><div id='d'>x</div>");
+
+        var colors = Find(view, "d").Source.Style.Gap.Row;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(colors.At(0, 5).Color, Is.EqualTo(0xffff0000u), "the leading value");
+            Assert.That(colors.At(1, 5).Color, Is.EqualTo(0xff008000u), "the repeater starts");
+            Assert.That(colors.At(2, 5).Color, Is.EqualTo(0xff0000ffu));
+            Assert.That(colors.At(3, 5).Color, Is.EqualTo(0xff008000u), "and turns again");
+            Assert.That(colors.At(4, 5).Color, Is.EqualTo(0xffffd700u), "the trailing value keeps the last gap");
+        });
+    }
+
+    [Test]
+    public async Task AnAutoRepeaterAloneColoursEveryGap()
+    {
+        using var view = await Render(
+            "<style>#d { display:flex; gap:20px; width:340px; column-rule-color: repeat(auto, red);" +
+            " column-rule-style: solid; column-rule-width: 10px }" +
+            ".i { width:100px; height:100px }</style>" +
+            "<div id='d'><div class='i'></div><div class='i'></div><div class='i'></div></div>");
+
+        var rules = Rules(view);
+
+        Assert.That(rules, Has.Count.EqualTo(2), "one rule in each of the two gaps");
+        Assert.That(rules.Select(rule => rule.LeftColor), Is.All.EqualTo(0xffff0000u));
+    }
+
     /// <summary>
     /// The shorthand is expanded into its three longhands by the cascade, so a rule written whole reaches
     /// the axis it names - and the axis it does not name keeps the initials it was never told about.

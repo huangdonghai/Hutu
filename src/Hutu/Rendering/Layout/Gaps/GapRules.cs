@@ -41,32 +41,220 @@ internal readonly struct GapRule
 /// </summary>
 /// <remarks>
 /// A gap decoration property takes a comma-separated list, one decoration per gap (CSS Gaps 1 §4.5), and
-/// a gap that runs past the end of the list takes the list again from its start (§4.6). The number of
-/// gaps is only known once the container has been laid out, so the list is kept as it was read and the
-/// gap asks for its own value by number.
+/// a gap that runs past the end of the list takes the list again from its start (§4.6). A <c>repeat()</c>
+/// notation is written out as it is read - an integer repeater stands for its values that many times -
+/// unless its count is <c>auto</c>: that one stands for the gaps no other value reaches, so how many times
+/// it turns is only known once the container holding the gaps has been laid out.
 /// </remarks>
 internal sealed class GapRuleTerms<T> where T : struct
 {
-    private static readonly T[] None = Array.Empty<T>();
+    private static readonly T[] Empty = Array.Empty<T>();
 
     private readonly T[] _values;
+    private readonly T[] _leading;
+    private readonly T[] _auto;
+    private readonly T[] _trailing;
     private readonly T _initial;
 
     internal GapRuleTerms(T initial, T[]? values)
+        : this(initial, values, null, null)
     {
-        _values = values ?? None;
+    }
+
+    internal GapRuleTerms(T initial, T[]? leading, T[]? auto, T[]? trailing)
+    {
         _initial = initial;
+        _leading = leading ?? Empty;
+        _auto = auto ?? Empty;
+        _trailing = trailing ?? Empty;
+
+        // With no auto repeater the values are one list and a gap takes it again from the start; that is
+        // the common case, and keeping the two ends joined answers it without a branch per gap.
+        _values = _auto.Length == 0 ? Joined(_leading, _trailing) : Empty;
     }
 
     /// <summary>Gets whether the page wrote this property at all.</summary>
-    public Boolean IsStated => _values.Length > 0;
+    public Boolean IsStated => _values.Length > 0 || _auto.Length > 0;
 
     /// <summary>
     /// Gets the value the <paramref name="index"/>th gap takes. A property the page wrote nothing about
     /// keeps its initial value for every gap, which is how a list of colours and a list of widths, read
     /// from lists of different lengths, still come to one decoration per gap.
     /// </summary>
-    public T At(Int32 index, Int32 count) => _values.Length == 0 ? _initial : _values[index % _values.Length];
+    public T At(Int32 index, Int32 count)
+    {
+        if (_values.Length > 0)
+        {
+            return _values[index % _values.Length];
+        }
+
+        if (_auto.Length == 0)
+        {
+            return _initial;
+        }
+
+        // The values written before the auto repeater take the first gaps, those written after it take the
+        // last ones, and the repeater itself takes everything between them (§4.6).
+        var leading = _leading.Length;
+
+        if (index < leading)
+        {
+            return _leading[index];
+        }
+
+        var trailing = Math.Max(leading, count - _trailing.Length);
+
+        return index >= trailing
+            ? _trailing[index - trailing]
+            : _auto[(index - leading) % _auto.Length];
+    }
+
+    /// <summary>
+    /// Reads one property: its list with the integer repeaters written out and the automatic one kept
+    /// apart, ready for the gaps to ask for their own values.
+    /// </summary>
+    internal static GapRuleTerms<T> Read(ICssProperty? declared, T initial, Func<ICssValue, T> value)
+    {
+        var items = Items(declared);
+
+        if (items is null)
+        {
+            return new GapRuleTerms<T>(initial, null);
+        }
+
+        var leading = new List<T>();
+        var auto = default(List<T>);
+        var trailing = new List<T>();
+        var section = leading;
+
+        foreach (var item in items)
+        {
+            if (Repeats(item, out var count, out var inner))
+            {
+                if (count is null)
+                {
+                    auto ??= new List<T>();
+                    section = auto;
+                    Expand(section, inner, 1, value);
+                }
+                else
+                {
+                    Expand(section, inner, Math.Clamp(count.Value, 0, MaxRepeat), value);
+                }
+
+                continue;
+            }
+
+            if (auto is not null && ReferenceEquals(section, auto))
+            {
+                section = trailing;
+            }
+
+            section.Add(value(item));
+        }
+
+        return new GapRuleTerms<T>(initial, Frozen(leading), Frozen(auto), Frozen(trailing));
+    }
+
+    /// <summary>
+    /// Keeps an integer repeater from asking for more values than a page could ever show: the notation is
+    /// written out, so an enormous count would otherwise be an enormous list.
+    /// </summary>
+    private const Int32 MaxRepeat = 1000;
+
+    private static void Expand(List<T> target, IReadOnlyList<ICssValue> inner, Int32 times, Func<ICssValue, T> value)
+    {
+        for (var turn = 0; turn < times; turn++)
+        {
+            foreach (var one in inner)
+            {
+                target.Add(value(one));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads a <c>repeat()</c> notation: the count it turns (<c>null</c> where it is <c>auto</c>) and the
+    /// values it holds. Anything else is not one.
+    /// </summary>
+    private static Boolean Repeats(ICssValue item, out Int32? count, out IReadOnlyList<ICssValue> values)
+    {
+        count = null;
+        values = Array.Empty<ICssValue>();
+
+        if (item is not ICssFunctionValue function ||
+            !String.Equals(function.Name, "repeat", StringComparison.OrdinalIgnoreCase) ||
+            function.Arguments is not { Length: 2 } arguments)
+        {
+            return false;
+        }
+
+        var written = arguments[0].CssText?.Trim();
+
+        if (String.Equals(written, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            values = Inner(arguments[1]);
+            return true;
+        }
+
+        if (!Int32.TryParse(written, out var turns))
+        {
+            return false;
+        }
+
+        count = turns;
+        values = Inner(arguments[1]);
+        return true;
+    }
+
+    private static IReadOnlyList<ICssValue> Inner(ICssValue value) =>
+        LengthReader.Items(value) ?? new[] { value };
+
+    private static ICssValue[]? Items(ICssProperty? declared)
+    {
+        var value = declared?.RawValue;
+
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (LengthReader.Items(value) is { } list)
+        {
+            var items = new ICssValue[list.Count];
+
+            for (var index = 0; index < items.Length; index++)
+            {
+                items[index] = list[index];
+            }
+
+            return items;
+        }
+
+        return new[] { value };
+    }
+
+    private static T[]? Frozen(List<T>? values) => values is null || values.Count == 0 ? null : values.ToArray();
+
+    private static T[] Joined(T[] leading, T[] trailing)
+    {
+        if (trailing.Length == 0)
+        {
+            return leading;
+        }
+
+        if (leading.Length == 0)
+        {
+            return trailing;
+        }
+
+        var joined = new T[leading.Length + trailing.Length];
+
+        leading.CopyTo(joined, 0);
+        trailing.CopyTo(joined, leading.Length);
+
+        return joined;
+    }
 }
 
 /// <summary>
@@ -137,45 +325,12 @@ internal sealed class GapRuleAxis
         IRenderDimensions dimensions,
         CssColorValue initial) =>
         new(
-            new GapRuleTerms<Double>(InitialWidth, Widths(Items(find(prefix + "-width")), dimensions, font)),
-            new GapRuleTerms<BorderLineStyle>(BorderLineStyle.None, Styles(Items(find(prefix + "-style")))),
-            new GapRuleTerms<UInt32>(ComputedStyle.ToArgb(initial), Colors(Items(find(prefix + "-color")), initial)));
+            GapRuleTerms<Double>.Read(find(prefix + "-width"), InitialWidth, item => ToWidth(item, dimensions, font)),
+            GapRuleTerms<BorderLineStyle>.Read(find(prefix + "-style"), BorderLineStyle.None, ToStyle),
+            GapRuleTerms<UInt32>.Read(find(prefix + "-color"), ComputedStyle.ToArgb(initial), item => ToColor(item, initial)));
 
     /// <summary>Gets the width a rule whose page said nothing about it takes: <c>medium</c>.</summary>
     internal const Double InitialWidth = 3.0;
-
-    private static ICssValue[]? Items(ICssProperty? declared)
-    {
-        var value = declared?.RawValue;
-
-        if (value is null)
-        {
-            return null;
-        }
-
-        if (LengthReader.Items(value) is { } list)
-        {
-            var items = new ICssValue[list.Count];
-
-            for (var index = 0; index < items.Length; index++)
-            {
-                items[index] = list[index];
-            }
-
-            return items;
-        }
-
-        return new[] { value };
-    }
-
-    private static Double[]? Widths(ICssValue[]? items, IRenderDimensions dimensions, LengthReader.FontSource font) =>
-        items is null ? null : Array.ConvertAll(items, item => ToWidth(item, dimensions, font));
-
-    private static BorderLineStyle[]? Styles(ICssValue[]? items) =>
-        items is null ? null : Array.ConvertAll(items, ToStyle);
-
-    private static UInt32[]? Colors(ICssValue[]? items, CssColorValue initial) =>
-        items is null ? null : Array.ConvertAll(items, item => ToColor(item, initial));
 
     private static Double ToWidth(ICssValue item, IRenderDimensions dimensions, LengthReader.FontSource font) =>
         item.CssText?.Trim() switch
