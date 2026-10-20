@@ -1,0 +1,274 @@
+using AngleSharp.Css;
+using AngleSharp.Css.Dom;
+using AngleSharp.Css.Values;
+using Hutu.Rendering.Media;
+using System;
+
+namespace Hutu.Rendering.Layout;
+
+/// <summary>
+/// The stroke a gap asks to be drawn in the middle of it: how thick, in what style and in what colour
+/// (CSS Gaps 1 §4). A rule is a border side turned to face down the gap, so it takes the same strokes -
+/// a dashed one dashes along its length and a double one is two lines within its width.
+/// </summary>
+internal readonly struct GapRule
+{
+    internal GapRule(Double width, BorderLineStyle style, UInt32 color)
+    {
+        Width = Math.Max(0, width);
+        Style = style;
+        Color = color;
+    }
+
+    /// <summary>Gets how thick the rule is, in pixels.</summary>
+    public Double Width { get; }
+
+    /// <summary>Gets the stroke it is drawn in.</summary>
+    public BorderLineStyle Style { get; }
+
+    /// <summary>Gets the colour it is drawn in, as packed ARGB.</summary>
+    public UInt32 Color { get; }
+
+    /// <summary>
+    /// Gets whether anything is drawn at all: a rule of no width, or one in the style that says nothing,
+    /// is no rule.
+    /// </summary>
+    public Boolean Appears => Width > 0 && Style != BorderLineStyle.None;
+}
+
+/// <summary>
+/// The list of values one gap decoration property holds, read out of the cascaded declaration.
+/// </summary>
+/// <remarks>
+/// A gap decoration property takes a comma-separated list, one decoration per gap (CSS Gaps 1 §4.5), and
+/// a gap that runs past the end of the list takes the list again from its start (§4.6). The number of
+/// gaps is only known once the container has been laid out, so the list is kept as it was read and the
+/// gap asks for its own value by number.
+/// </remarks>
+internal sealed class GapRuleTerms<T> where T : struct
+{
+    private static readonly T[] None = Array.Empty<T>();
+
+    private readonly T[] _values;
+    private readonly T _initial;
+
+    internal GapRuleTerms(T initial, T[]? values)
+    {
+        _values = values ?? None;
+        _initial = initial;
+    }
+
+    /// <summary>Gets whether the page wrote this property at all.</summary>
+    public Boolean IsStated => _values.Length > 0;
+
+    /// <summary>
+    /// Gets the value the <paramref name="index"/>th gap takes. A property the page wrote nothing about
+    /// keeps its initial value for every gap, which is how a list of colours and a list of widths, read
+    /// from lists of different lengths, still come to one decoration per gap.
+    /// </summary>
+    public T At(Int32 index, Int32 count) => _values.Length == 0 ? _initial : _values[index % _values.Length];
+}
+
+/// <summary>
+/// One gap's decoration, standing where the container's layout put the gap.
+/// </summary>
+internal readonly struct GapRuleSegment
+{
+    internal GapRuleSegment(Rect band, GapRule rule, Boolean isRow)
+    {
+        Band = band;
+        Rule = rule;
+        IsRow = isRow;
+    }
+
+    /// <summary>Gets the band the rule is drawn in: as wide as the rule, centred on the gap.</summary>
+    public Rect Band { get; }
+
+    /// <summary>Gets the stroke it is drawn with.</summary>
+    public GapRule Rule { get; }
+
+    /// <summary>
+    /// Gets whether this decorates a row gap - one that separates along the block axis, and which stands
+    /// above a column decoration where the two cross unless the page says otherwise.
+    /// </summary>
+    public Boolean IsRow { get; }
+}
+
+/// <summary>
+/// The three lists of one axis's gap decorations, and the rule the gap at a given number comes to.
+/// </summary>
+internal sealed class GapRuleAxis
+{
+    private readonly GapRuleTerms<Double> _width;
+    private readonly GapRuleTerms<BorderLineStyle> _style;
+    private readonly GapRuleTerms<UInt32> _color;
+
+    internal GapRuleAxis(
+        GapRuleTerms<Double> width,
+        GapRuleTerms<BorderLineStyle> style,
+        GapRuleTerms<UInt32> color)
+    {
+        _width = width;
+        _style = style;
+        _color = color;
+    }
+
+    /// <summary>Gets whether the page asked for decorations along this axis.</summary>
+    public Boolean IsStated => _width.IsStated || _style.IsStated || _color.IsStated;
+
+    /// <summary>Gets the decoration the <paramref name="index"/>th gap of <paramref name="count"/> takes.</summary>
+    public GapRule At(Int32 index, Int32 count) =>
+        new(_width.At(index, count), _style.At(index, count), _color.At(index, count));
+
+    /// <summary>
+    /// Reads one axis, from the longhands the page wrote.
+    /// </summary>
+    /// <remarks>
+    /// A shorthand needs no reading here: AngleSharp expands <c>row-rule: 5px solid gold</c> into the
+    /// three longhands it stands for, so the width, style and colour below are already the values the
+    /// cascade settled - which is what lets a longhand written beside a shorthand, or a shorthand written
+    /// <c>!important</c> over a longhand, come out the way the cascade ordered them.
+    /// </remarks>
+    /// <param name="initial">The colour a gap whose list ran out takes: <c>currentcolor</c>.</param>
+    internal static GapRuleAxis Read(
+        Func<String, ICssProperty?> find,
+        String prefix,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions,
+        CssColorValue initial) =>
+        new(
+            new GapRuleTerms<Double>(InitialWidth, Widths(Items(find(prefix + "-width")), dimensions, font)),
+            new GapRuleTerms<BorderLineStyle>(BorderLineStyle.None, Styles(Items(find(prefix + "-style")))),
+            new GapRuleTerms<UInt32>(ComputedStyle.ToArgb(initial), Colors(Items(find(prefix + "-color")), initial)));
+
+    /// <summary>Gets the width a rule whose page said nothing about it takes: <c>medium</c>.</summary>
+    internal const Double InitialWidth = 3.0;
+
+    private static ICssValue[]? Items(ICssProperty? declared)
+    {
+        var value = declared?.RawValue;
+
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (LengthReader.Items(value) is { } list)
+        {
+            var items = new ICssValue[list.Count];
+
+            for (var index = 0; index < items.Length; index++)
+            {
+                items[index] = list[index];
+            }
+
+            return items;
+        }
+
+        return new[] { value };
+    }
+
+    private static Double[]? Widths(ICssValue[]? items, IRenderDimensions dimensions, LengthReader.FontSource font) =>
+        items is null ? null : Array.ConvertAll(items, item => ToWidth(item, dimensions, font));
+
+    private static BorderLineStyle[]? Styles(ICssValue[]? items) =>
+        items is null ? null : Array.ConvertAll(items, ToStyle);
+
+    private static UInt32[]? Colors(ICssValue[]? items, CssColorValue initial) =>
+        items is null ? null : Array.ConvertAll(items, item => ToColor(item, initial));
+
+    private static Double ToWidth(ICssValue item, IRenderDimensions dimensions, LengthReader.FontSource font) =>
+        item.CssText?.Trim() switch
+        {
+            "thin" => 1.0,
+            "medium" => 3.0,
+            "thick" => 5.0,
+            _ => LengthReader.TryReadValue(item, RenderMode.Horizontal, dimensions, font, out var stated) &&
+                stated.HasValue
+                    ? Math.Max(0, stated.Resolve(0))
+                    : 0.0,
+        };
+
+    private static BorderLineStyle ToStyle(ICssValue item) =>
+        ComputedStyle.ToLineStyle(item.CssText?.Trim() ?? String.Empty);
+
+    private static UInt32 ToColor(ICssValue item, CssColorValue initial) =>
+        item is CssColorValue color
+            ? ComputedStyle.ToArgb(color == CssColorValue.CurrentColor ? initial : color)
+            : BackgroundLayerParser.ParseColor(item.CssText ?? String.Empty) ?? ComputedStyle.ToArgb(initial);
+}
+
+/// <summary>
+/// The gap decorations of a container: the rules each of its two axes asks for, and which of the two
+/// stands above the other where they cross (CSS Gaps 1 §3, §4).
+/// </summary>
+/// <remarks>
+/// The rules are read for the container and drawn per gap by the layout that makes the gaps, because a
+/// gap's decoration is the gap's own entry in a list - and only the layout knows how many gaps there are
+/// and where each of them stands.
+/// </remarks>
+internal sealed class GapRules
+{
+    /// <summary>The rules of a box the page said nothing about: nothing is drawn anywhere.</summary>
+    internal static readonly GapRules None = new(
+        new GapRuleAxis(
+            new GapRuleTerms<Double>(GapRuleAxis.InitialWidth, null),
+            new GapRuleTerms<BorderLineStyle>(BorderLineStyle.None, null),
+            new GapRuleTerms<UInt32>(0, null)),
+        new GapRuleAxis(
+            new GapRuleTerms<Double>(GapRuleAxis.InitialWidth, null),
+            new GapRuleTerms<BorderLineStyle>(BorderLineStyle.None, null),
+            new GapRuleTerms<UInt32>(0, null)),
+        false);
+
+    internal GapRules(GapRuleAxis column, GapRuleAxis row, Boolean columnOverRow)
+    {
+        Column = column;
+        Row = row;
+        ColumnOverRow = columnOverRow;
+    }
+
+    /// <summary>Gets the decorations of the gaps between columns.</summary>
+    public GapRuleAxis Column { get; }
+
+    /// <summary>Gets the decorations of the gaps between rows.</summary>
+    public GapRuleAxis Row { get; }
+
+    /// <summary>Gets whether column decorations are painted above the row ones (CSS Gaps 1 §3.5).</summary>
+    public Boolean ColumnOverRow { get; }
+
+    /// <summary>Gets whether the page asked for any gap decoration on this box.</summary>
+    public Boolean IsStated => Column.IsStated || Row.IsStated;
+
+    /// <summary>
+    /// Reads the two axes' decorations and the overlap order from the cascaded declarations. A box that
+    /// writes none of them gets nothing: <see cref="None"/>, whose rules are all of no style.
+    /// </summary>
+    public static GapRules Read(
+        Func<String, ICssProperty?> find,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions,
+        CssColorValue color)
+    {
+        var rules = new GapRules(
+            GapRuleAxis.Read(find, "column-rule", font, dimensions, color),
+            GapRuleAxis.Read(find, "row-rule", font, dimensions, color),
+            IsColumnOverRow(find("rule-overlap")));
+
+        return rules.IsStated ? rules : None;
+    }
+
+    /// <summary>
+    /// Reads the decorations of a style the box builder resolved rather than fused. The same longhands
+    /// answer both paths, so a rule a page asks for stands wherever its container puts a gap, whichever
+    /// way the style came together.
+    /// </summary>
+    public static GapRules Read(ComputedStyle style) => Read(
+        name => style.Declaration.TryGetProperty(name),
+        new LengthReader.FontSource(style),
+        style.Dimensions,
+        style.Color);
+
+    private static Boolean IsColumnOverRow(ICssProperty? declared) =>
+        String.Equals(declared?.Value?.Trim(), "column-over-row", StringComparison.OrdinalIgnoreCase);
+}

@@ -116,6 +116,9 @@ internal sealed partial class FlexFormattingContext
             insetCross,
             itemContext);
 
+        layout.GapDecorations = GapDecorations(
+            style.Gap, flex, plan, contentWidth, contentHeight, contentX, contentY);
+
         foreach (var item in plan.Items)
         {
             var rect = new Rect(
@@ -129,6 +132,98 @@ internal sealed partial class FlexFormattingContext
 
         ArrangeOutOfFlow(box, layout, contentX, contentY, itemContext);
         return layout;
+    }
+
+    /// <summary>
+    /// Works out the decorations of the gaps this container made. The room between two boxes standing
+    /// next to each other is the gap - whether the page asked for it or the distribution left it, which
+    /// is why a <c>justify-content</c> that spreads items apart rules the spaces it opened, while the
+    /// room <c>align-content</c> leaves outside the lines is between no two boxes and gets nothing.
+    /// </summary>
+    /// <remarks>
+    /// A gap between two items of a line runs the line's whole cross stretch, so a line whose items stand
+    /// at different depths still has one rule across it; a gap between two lines runs the container's
+    /// whole main stretch. Both are read in the order the container placed its boxes, because that is the
+    /// order the decoration list is given out in (CSS Gaps 1 §4.6) - and a reversed direction reverses
+    /// the order along with the boxes.
+    /// </remarks>
+    private static List<GapRuleSegment>? GapDecorations(
+        GapRules rules,
+        FlexStyle flex,
+        FlexPlan plan,
+        Double contentWidth,
+        Double contentHeight,
+        Double contentX,
+        Double contentY)
+    {
+        if (!rules.IsStated)
+        {
+            return null;
+        }
+
+        var isRow = flex.IsRow;
+        var reversed = flex.IsReversed;
+        var mainStart = isRow ? contentX : contentY;
+        var crossStart = isRow ? contentY : contentX;
+        var itemGaps = new List<Gap>();
+        var lineGaps = new List<Gap>();
+
+        foreach (var line in plan.Lines)
+        {
+            var lineStart = crossStart + line.CrossStart;
+            var lineEnd = lineStart + line.CrossSize;
+            var previousLow = Double.NaN;
+            var previousHigh = Double.NaN;
+
+            foreach (var item in line.Items)
+            {
+                var main = isRow ? item.OffsetX : item.OffsetY;
+                var size = isRow ? item.BorderBoxWidth : item.BorderBoxHeight;
+                var leading = reversed ? item.MarginMainEnd : item.MarginMainStart;
+                var trailing = reversed ? item.MarginMainStart : item.MarginMainEnd;
+                var low = main - leading;
+                var high = main + size + trailing;
+
+                if (!Double.IsNaN(previousLow))
+                {
+                    // The two boxes face each other across the space between them, whichever side of that
+                    // space each of them stands on - a reversed container has placed the later one before.
+                    var from = Math.Min(high, previousHigh);
+                    var to = Math.Max(low, previousLow);
+
+                    itemGaps.Add(new Gap(isRow, mainStart + (from + to) / 2, lineStart, lineEnd));
+                }
+
+                previousLow = low;
+                previousHigh = high;
+            }
+        }
+
+        for (var index = 0; index + 1 < plan.Lines.Count; index++)
+        {
+            var line = plan.Lines[index];
+            var next = plan.Lines[index + 1];
+            var from = Math.Min(line.CrossStart + line.CrossSize, next.CrossStart + next.CrossSize);
+            var to = Math.Max(line.CrossStart, next.CrossStart);
+            var mainEnd = isRow ? contentX + contentWidth : contentY + contentHeight;
+
+            lineGaps.Add(new Gap(!isRow, crossStart + (from + to) / 2, mainStart, mainEnd));
+        }
+
+        var target = new List<GapRuleSegment>();
+
+        if (isRow)
+        {
+            GapRuleBands.Add(target, rules.Column, isRow: false, itemGaps);
+            GapRuleBands.Add(target, rules.Row, isRow: true, lineGaps);
+        }
+        else
+        {
+            GapRuleBands.Add(target, rules.Row, isRow: true, itemGaps);
+            GapRuleBands.Add(target, rules.Column, isRow: false, lineGaps);
+        }
+
+        return target.Count > 0 ? target : null;
     }
 
     /// <summary>
@@ -234,6 +329,7 @@ internal sealed partial class FlexFormattingContext
         };
 
         plan.Items.AddRange(items);
+        plan.Lines.AddRange(lines);
         return plan;
     }
 

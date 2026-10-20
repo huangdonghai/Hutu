@@ -14,6 +14,13 @@ internal sealed class FlexPlan
 
     /// <summary>Gets the items, in order, with their placement resolved.</summary>
     public List<FlexItem> Items { get; } = new();
+
+    /// <summary>
+    /// Gets the lines the items came to, in the order the container placed them. The gaps between lines
+    /// are what a container's row or column decorations stand in, so the lines are what a caller that
+    /// wants those decorations has to have.
+    /// </summary>
+    public List<FlexLine> Lines { get; } = new();
 }
 
 /// <summary>A single flex line: the items that share a main-axis run, and the line's cross size.</summary>

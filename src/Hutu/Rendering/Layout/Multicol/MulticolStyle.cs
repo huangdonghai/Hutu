@@ -7,36 +7,6 @@ using System;
 namespace Hutu.Rendering.Layout;
 
 /// <summary>
-/// The stroke a gap asks to be drawn in the middle of it: how thick, in what style and in what colour
-/// (CSS Multicol 3 §4). A rule is a border side turned to face down the gap, so it takes the same
-/// strokes - a dashed one dashes along its length and a double one is two lines within its width.
-/// </summary>
-internal readonly struct GapRule
-{
-    internal GapRule(Double width, BorderLineStyle style, UInt32 color)
-    {
-        Width = Math.Max(0, width);
-        Style = style;
-        Color = color;
-    }
-
-    /// <summary>Gets how thick the rule is, in pixels.</summary>
-    public Double Width { get; }
-
-    /// <summary>Gets the stroke it is drawn in.</summary>
-    public BorderLineStyle Style { get; }
-
-    /// <summary>Gets the colour it is drawn in, as packed ARGB.</summary>
-    public UInt32 Color { get; }
-
-    /// <summary>
-    /// Gets whether anything is drawn at all: a rule of no width, or one in the style that says nothing,
-    /// is no rule.
-    /// </summary>
-    public Boolean Appears => Width > 0 && Style != BorderLineStyle.None;
-}
-
-/// <summary>
 /// The multi-column longhands of a box, and the column count and width they come to for a given content
 /// extent (CSS Multicol 3 §3.4).
 /// </summary>
@@ -44,16 +14,17 @@ internal readonly struct GapRule
 /// <c>column-count</c> and <c>column-width</c> are both optional and answer each other: whichever is
 /// <c>auto</c> is worked out from the other and from the room the columns have. A box that writes
 /// neither is no multi-column container, which is what <see cref="IsMultiColumn"/> says.
+/// The stroke a column gap asks for is not read here: CSS Gaps 1 §4 takes the <c>column-rule</c>
+/// properties over for every container that has gaps, so <see cref="GapRules"/> holds them.
 /// </remarks>
 internal readonly struct MulticolStyle
 {
-    internal MulticolStyle(Int32? count, Double? width, Double gap, Boolean fills, GapRule rule = default)
+    internal MulticolStyle(Int32? count, Double? width, Double gap, Boolean fills)
     {
         Count = count is { } declared ? Math.Max(1, declared) : null;
         Width = width is { } sized ? Math.Max(0, sized) : null;
         Gap = Math.Max(0, gap);
         Fills = fills;
-        Rule = rule;
     }
 
     /// <summary>Gets the declared column count, or null where it is <c>auto</c>.</summary>
@@ -68,9 +39,6 @@ internal readonly struct MulticolStyle
     /// <summary>Gets whether <c>column-fill</c> is <c>auto</c>: columns are filled to the container's
     /// height in turn rather than balanced.</summary>
     public Boolean Fills { get; }
-
-    /// <summary>Gets the rule the column gaps are asked to carry.</summary>
-    public GapRule Rule { get; }
 
     /// <summary>Gets whether the box asks for columns at all.</summary>
     public Boolean IsMultiColumn => Count is not null || Width is not null;
@@ -122,8 +90,7 @@ internal readonly struct MulticolStyle
     public static MulticolStyle? ReadFused(
         Func<String, ICssProperty?> find,
         LengthReader.FontSource font,
-        IRenderDimensions dimensions,
-        CssColorValue color)
+        IRenderDimensions dimensions)
     {
         var count = CountOf(find("column-count"));
         var width = WidthOf(find("column-width"), font, dimensions);
@@ -142,49 +109,7 @@ internal readonly struct MulticolStyle
         var fill = find("column-fill")?.Value?.Trim();
         var fills = String.Equals(fill, "auto", StringComparison.OrdinalIgnoreCase);
 
-        return new MulticolStyle(count, width, gap, fills, RuleOf(find, font, dimensions, color));
-    }
-
-    /// <summary>
-    /// Reads the three <c>column-rule</c> longhands. The shorthand expands into exactly these, and the
-    /// values it leaves out land on the longhands' own initials - <c>medium</c>, <c>none</c> and the
-    /// text's own colour - which is the default the shorthand asks for (§4.5).
-    /// </summary>
-    private static GapRule RuleOf(
-        Func<String, ICssProperty?> find,
-        LengthReader.FontSource font,
-        IRenderDimensions dimensions,
-        CssColorValue color)
-    {
-        var style = find("column-rule-style")?.Value?.Trim();
-
-        var stroke = String.IsNullOrEmpty(style)
-            ? BorderLineStyle.None
-            : ComputedStyle.ToLineStyle(style);
-
-        // The three keywords a border width takes, and the length it usually is. `medium` is what the
-        // property's initial value says, so a page that states a style and no width gets a rule of three.
-        var declared = find("column-rule-width")?.Value?.Trim();
-
-        var width = declared switch
-        {
-            null or "" => 3.0,
-            "thin" => 1.0,
-            "medium" => 3.0,
-            "thick" => 5.0,
-            _ => LengthReader.TryReadProperty(find("column-rule-width")!, RenderMode.Horizontal, dimensions, font, out var stated) &&
-                stated.HasValue
-                    ? stated.Resolve(0)
-                    : 0.0,
-        };
-
-        var painted = find("column-rule-color")?.Value?.Trim();
-
-        var ruleColor = String.IsNullOrEmpty(painted) || BackgroundLayerParser.ParseColor(painted!) is not { } argb
-            ? ComputedStyle.ToArgb(color)
-            : argb;
-
-        return new GapRule(width, stroke, ruleColor);
+        return new MulticolStyle(count, width, gap, fills);
     }
 
     private static Int32? CountOf(ICssProperty? declared)

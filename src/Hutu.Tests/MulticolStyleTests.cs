@@ -115,7 +115,9 @@ public sealed class MulticolStyleTests
     /// A gap may carry a rule: drawn in the middle of the gap, from one content edge of the container to
     /// the other, taking no space of its own and appearing only between two columns that both have
     /// content (CSS Multicol 3 §4). Its stroke is the one a border side takes, so a dashed rule dashes
-    /// down its length and a double one is two lines within its width.
+    /// down its length and a double one is two lines within its width. The three properties that say it
+    /// belong to CSS Gaps 1 §4 now, so they are read for every container that has gaps and reached here
+    /// through the same list the flex and grid gaps read.
     /// </summary>
     [Test]
     public async Task TheRuleShorthandReachesTheStyle()
@@ -123,7 +125,7 @@ public sealed class MulticolStyleTests
         using var view = await Render(
             "<style>div { columns: 3; column-gap: 20px; column-rule: 4px solid red }</style><div id='d'>x</div>");
 
-        var rule = Find(view, "d").Source.Style.Multi.Rule;
+        var rule = Find(view, "d").Source.Style.Gap.Column.At(0, 1);
 
         Assert.That(rule.Width, Is.EqualTo(4), "the shorthand's width");
         Assert.That(rule.Style, Is.EqualTo(BorderLineStyle.Solid), "and its style");
@@ -137,7 +139,7 @@ public sealed class MulticolStyleTests
         using var view = await Render(
             "<style>div { columns: 3; column-rule-width: 8px }</style><div id='d'>x</div>");
 
-        var rule = Find(view, "d").Source.Style.Multi.Rule;
+        var rule = Find(view, "d").Source.Style.Gap.Column.At(0, 1);
 
         Assert.That(rule.Width, Is.EqualTo(8), "the width stands on its own");
         Assert.That(rule.Style, Is.EqualTo(BorderLineStyle.None), "but the style is none until it is said");

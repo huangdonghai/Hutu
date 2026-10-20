@@ -295,6 +295,13 @@ internal sealed class LayoutBox
     /// which may be a row's or a column's rather than this box's.</summary>
     public BorderStyles? BorderStyles { get; set; }
 
+    /// <summary>
+    /// Gets or sets the decorations the container laid out its gaps with. Only a context that makes gaps
+    /// - and knows how many of them there are and where each one stands - can say which of the container's
+    /// rule list a gap takes, so it hands the finished bands to the painter here.
+    /// </summary>
+    public List<GapRuleSegment>? GapDecorations { get; set; }
+
     public Rect ContentBox => new(
         BorderBox.X + Border.Left + Padding.Left,
         BorderBox.Y + Border.Top + Padding.Top,

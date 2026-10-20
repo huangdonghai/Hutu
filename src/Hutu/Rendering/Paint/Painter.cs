@@ -267,6 +267,11 @@ internal sealed class Painter
         // 3 §4). It is painted just above the container's border and below what the columns hold.
         AddColumnRules(box, style, target);
 
+        // The same for the gaps of a flex, grid or grid-lanes container, whose rules the context that
+        // made the gaps worked out: where each one stands, how wide, in what stroke, and which of the two
+        // axes' decorations the page asked to have on top.
+        AddGapDecorations(box, style, target);
+
         // A marker is text, drawn where the layout put it and in the font and colour the rules written for
         // it settled - the item's own where the sheet says nothing about markers, which is the usual page.
         // It stands beside the item rather than in it, so nothing about the box decides where it goes.
@@ -712,9 +717,9 @@ internal sealed class Painter
     private static void AddColumnRules(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
     {
         var multi = style.Multi;
-        var rule = multi.Rule;
+        var axis = style.Gap.Column;
 
-        if (!multi.IsMultiColumn || !rule.Appears)
+        if (!multi.IsMultiColumn || !axis.IsStated)
         {
             return;
         }
@@ -744,6 +749,9 @@ internal sealed class Painter
 
         stood.Sort();
 
+        // The gaps the container actually has, which is what the decoration list is read out against.
+        var centres = new List<Double>();
+
         for (var index = 0; index + 1 < stood.Count; index++)
         {
             var next = stood[index + 1];
@@ -755,28 +763,83 @@ internal sealed class Painter
                 continue;
             }
 
-            var centre = (stood[index] + width + next) / 2;
-
-            var band = along
-                ? new Rect(content.X, centre - rule.Width / 2, content.Width, rule.Width)
-                : new Rect(centre - rule.Width / 2, content.Y, rule.Width, content.Height);
-
-            // The band is drawn as the side of a box that is nothing but that side: the top edge for a
-            // rule that runs across the page, the left edge for one that runs down it.
-            target.Add(new BorderCommand(
-                band,
-                along
-                    ? new Thickness(rule.Width, 0, 0, 0)
-                    : new Thickness(0, 0, 0, rule.Width),
-                along
-                    ? new BorderStyles(rule.Style, BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None)
-                    : new BorderStyles(BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None, rule.Style),
-                default,
-                rule.Color,
-                rule.Color,
-                rule.Color,
-                rule.Color));
+            centres.Add((stood[index] + width + next) / 2);
         }
+
+        for (var index = 0; index < centres.Count; index++)
+        {
+            var rule = axis.At(index, centres.Count);
+
+            if (!rule.Appears)
+            {
+                continue;
+            }
+
+            var centre = centres[index];
+
+            AddRuleBand(
+                target,
+                along
+                    ? new Rect(content.X, centre - rule.Width / 2, content.Width, rule.Width)
+                    : new Rect(centre - rule.Width / 2, content.Y, rule.Width, content.Height),
+                rule,
+                thinAlongY: along);
+        }
+    }
+
+    /// <summary>
+    /// Paints the decorations a container's layout worked out for its gaps (CSS Gaps 1 §3).
+    /// </summary>
+    private static void AddGapDecorations(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
+    {
+        if (box.GapDecorations is not { Count: > 0 } segments)
+        {
+            return;
+        }
+
+        var vertical = box.Flow.IsVertical;
+        var columnOverRow = style.Gap.ColumnOverRow;
+
+        // Two passes, so the axis the page asked to have on top is laid down last and its decorations
+        // cover the others where a row gap and a column gap cross.
+        for (var pass = 0; pass < 2; pass++)
+        {
+            var wantsRow = pass == 0 ? columnOverRow : !columnOverRow;
+
+            foreach (var segment in segments)
+            {
+                if (segment.IsRow == wantsRow)
+                {
+                    // A row gap separates along the block axis, so its rule is thin along that axis:
+                    // across the page in a horizontal flow, down it in a vertical one.
+                    AddRuleBand(target, segment.Band, segment.Rule, thinAlongY: segment.IsRow != vertical);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Draws a rule as the side of a box that is nothing but that side: the top edge for a rule that runs
+    /// across the page, the left edge for one that runs down it. Turning the band into a border side is
+    /// what gives a dashed rule its dashes and a double rule its two lines.
+    /// </summary>
+    private static void AddRuleBand(List<PaintCommand> target, Rect band, GapRule rule, Boolean thinAlongY)
+    {
+        var width = rule.Width;
+
+        target.Add(new BorderCommand(
+            band,
+            thinAlongY
+                ? new Thickness(width, 0, 0, 0)
+                : new Thickness(0, 0, 0, width),
+            thinAlongY
+                ? new BorderStyles(rule.Style, BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None)
+                : new BorderStyles(BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None, rule.Style),
+            default,
+            rule.Color,
+            rule.Color,
+            rule.Color,
+            rule.Color));
     }
 
     private static void AddBorder(LayoutBox box, ComputedStyle style, List<PaintCommand> target)

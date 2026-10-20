@@ -716,7 +716,7 @@ internal static class FusedStyleFactory
         // - table, inline-table, table-row, table-cell and the rest - carries the word.
         // The column longhands are read for every box: a page that writes none of them costs two lookups,
         // and a box that writes either is a multi-column container whatever its display says.
-        values.Multi = MulticolStyle.ReadFused(find, face, dimensions, color);
+        values.Multi = MulticolStyle.ReadFused(find, face, dimensions);
         values.Breaks = BreakStyle.ReadFused(find, parent.Widows, parent.Orphans);
 
         values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)
@@ -734,11 +734,21 @@ internal static class FusedStyleFactory
 
         // The grid longhands are read for a container - every spelling carries the word - while an
         // item is recognised by its parent's display and asked only for its own placement.
-        values.Grid = display.Display.Contains("grid", StringComparison.OrdinalIgnoreCase)
+        var grid = display.Display.Contains("grid", StringComparison.OrdinalIgnoreCase);
+
+        values.Grid = grid
             ? GridStyle.ReadFused(find, face, dimensions)
             : null;
 
         values.GridItem = parent.InGrid ? GridItemStyle.ReadFused(find) : null;
+
+        // The gap decorations belong to the four kinds of box that can put a gap between anything: a
+        // flex container, a grid one - the grid lanes spellings carry the same word - and a
+        // multi-column one. Nine lookups for a paragraph that is none of those would be paid by every
+        // box on the page for a rule that is never drawn, so the display says when to ask.
+        values.Gap = flex || grid || values.Multi is { IsMultiColumn: true }
+            ? GapRules.Read(find, face, dimensions, color)
+            : null;
 
         values.Fused = keywords;
 

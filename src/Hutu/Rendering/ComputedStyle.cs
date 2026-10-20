@@ -2387,6 +2387,8 @@ internal readonly struct ComputedStyle
 
         internal MulticolStyle? Multi;
 
+        internal GapRules? Gap;
+
         internal BreakStyle Breaks;
 
         internal PositionStyle? Position;
@@ -3331,6 +3333,14 @@ internal readonly struct ComputedStyle
     /// </remarks>
     public MulticolStyle Multi =>
         _values.Fused is null ? default : _values.Multi ?? default;
+
+    /// <summary>
+    /// Gets the decorations the box's gaps ask for. Only a box that puts a gap between anything - a flex
+    /// or grid container, a grid lanes one, a multi-column one - is read for them; every other box gets
+    /// the set whose rules all have no style, which draws nothing.
+    /// </summary>
+    public GapRules Gap =>
+        _values.Fused is null ? _values.Gap ??= GapRules.Read(this) : _values.Gap ?? GapRules.None;
 
     /// <summary>Gets where the box lets a fragmentainer break around and inside it.</summary>
     public BreakStyle Breaks => _values.Breaks;
