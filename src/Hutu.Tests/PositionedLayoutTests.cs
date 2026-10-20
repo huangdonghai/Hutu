@@ -357,6 +357,38 @@ public sealed class PositionedLayoutTests
         Assert.That(a.BorderBox.X, Is.EqualTo(270).Within(0.5), "the absolute child is out of the grid flow");
     }
 
+    /// <summary>
+    /// A content keyword sizes the box to what its content asks rather than leaving it to the offsets it
+    /// stands between: <c>min-content</c> and its siblings are sizes the content settles (CSS Sizing 3
+    /// §4), and naming one for the axis the text runs along means the same thing as naming the side it
+    /// lies on (CSS Logical 1 §4).
+    /// </summary>
+    /// <remarks>
+    /// The axis spelling is the one that reaches the layout here: the parser's grammar for
+    /// <c>height</c> is the plain <c>auto | &lt;length-percentage&gt;</c> one and rejects the content
+    /// keywords outright, so a page that writes <c>height: min-content</c> has the declaration dropped
+    /// before it is read. <c>width</c> and the two axis names take them.
+    /// </remarks>
+    [Test]
+    [TestCase("block-size:min-content", 200)]
+    [TestCase("block-size:max-content", 200)]
+    [TestCase("block-size:fit-content", 200)]
+    [TestCase("block-size:210px", 210)]
+    [TestCase("height:auto", 600)]
+    public async Task AContentSizedAbsoluteBoxIsNotStretchedByItsOffsets(String sizes, Double height)
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div id='a' style='position:absolute;inset:0;{sizes}'>" +
+            "<div style='height:200px'></div></div></body></html>");
+
+        Assert.That(
+            Find(view, "a").BorderBox.Height,
+            Is.EqualTo(height).Within(0.5),
+            $"`{sizes}` between four zero offsets, where an unstretched box is 600 tall");
+    }
+
     private static HutuViewInternal CreateView(Int32 width, Int32 height = 600)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

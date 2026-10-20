@@ -279,8 +279,9 @@ internal sealed class PositionedLayout
         var top = hasTop ? position.Top.Resolve(containingBlock.Height) : 0;
         var bottom = hasBottom ? position.Bottom.Resolve(containingBlock.Height) : 0;
 
-        var declared = style.Height.HasValue &&
-            !(style.Height.Kind == StyleLengthKind.Percent && containingBlock.Height <= 0);
+        var declared = style.Height.IsContentSized ||
+            (style.Height.HasValue &&
+                !(style.Height.Kind == StyleLengthKind.Percent && containingBlock.Height <= 0));
 
         var tentative = !declared && hasTop && hasBottom
             ? Math.Max(0, containingBlock.Height - top - bottom - margin.Vertical)

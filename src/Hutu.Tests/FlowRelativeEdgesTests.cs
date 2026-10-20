@@ -129,6 +129,72 @@ public sealed class FlowRelativeEdgesTests
             "and the side it named by axis is the one the axis name is for");
     }
 
+    /// <summary>
+    /// A size named for the axis the text runs along measures the side that axis lies on: the inline
+    /// axis is the width of a row and the height of a column, and the block axis the other way round
+    /// (CSS Logical 1 §4). Where the page names both the side and the axis it lies on, the axis is the
+    /// statement it meant, as it is for the margins.
+    /// </summary>
+    [Test]
+    public async Task ARowSizesTheAxisItRunsAlongAsItsOwnWidth()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='kid' style='inline-size:100px;block-size:50px'></div></body></html>");
+
+        var kid = Box(view, "kid");
+
+        Assert.That(kid.BorderBox.Width, Is.EqualTo(100).Within(0.01), "the inline axis of a row is its width");
+        Assert.That(kid.BorderBox.Height, Is.EqualTo(50).Within(0.01), "and its block axis is its height");
+    }
+
+    [Test]
+    public async Task AColumnTurnsTheAxisSizesOntoTheSidesTheyLieOn()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='kid' style='writing-mode:vertical-rl;inline-size:100px;block-size:50px'></div></body></html>");
+
+        var kid = Box(view, "kid");
+
+        Assert.That(kid.BorderBox.Height, Is.EqualTo(100).Within(0.01), "the line runs down the page, so the inline axis is the height");
+        Assert.That(kid.BorderBox.Width, Is.EqualTo(50).Within(0.01), "and the columns advance across the block axis");
+    }
+
+    [Test]
+    public async Task AnAxisNamedSizeOutranksTheSideItLiesOn()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='kid' style='width:30px;height:30px;inline-size:100px;block-size:50px'></div></body></html>");
+
+        var kid = Box(view, "kid");
+
+        Assert.That(kid.BorderBox.Width, Is.EqualTo(100).Within(0.01), "the axis is the statement the page meant");
+        Assert.That(kid.BorderBox.Height, Is.EqualTo(50).Within(0.01), "on both of its sides");
+    }
+
+    [Test]
+    public async Task AnAxisNamedLimitHoldsTheSideItLiesOn()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='kid' style='width:100px;height:10px;max-inline-size:40px;min-block-size:60px'></div></body></html>");
+
+        var kid = Box(view, "kid");
+
+        Assert.That(kid.BorderBox.Width, Is.EqualTo(40).Within(0.01), "the inline axis caps the width of a row");
+        Assert.That(kid.BorderBox.Height, Is.EqualTo(60).Within(0.01), "and the block axis floors its height");
+    }
+
     private static HutuViewInternal CreateView()
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

@@ -521,27 +521,37 @@ internal static class FusedStyleFactory
         {
             // The two axes the replaced sizing asks about separately: a declaration there means the page
             // spoke about that axis, and its absence is what leaves room for the element's own attribute.
-            var widthDeclaration = find("width");
-            var heightDeclaration = find("height");
+            // A size named for the axis the text runs along is the statement about the side that axis lies
+            // on, and where the page names both, the axis is what it meant (CSS Logical 1 §4, the same
+            // order the margins of this engine keep).
+            var alongWidth = flow.IsVertical ? "block-size" : "inline-size";
+            var alongHeight = flow.IsVertical ? "inline-size" : "block-size";
+
+            var widthDeclaration = find(alongWidth) ?? find("width");
+            var heightDeclaration = find(alongHeight) ?? find("height");
 
             // The size a legacy attribute hints at for a table. A cell's or a row's attribute is not read
             // here: it sizes a column or a row, not the box, and travels on the box for the table to read.
-            var widthHint = PresentationalHints.Size(element, "width");
-            var heightHint = PresentationalHints.Size(element, "height");
+            var widthHint = widthDeclaration is null ? PresentationalHints.Size(element, "width") : null;
+            var heightHint = heightDeclaration is null ? PresentationalHints.Size(element, "height") : null;
 
             var built = new BoxModelArea
             {
                 BoxSizing = ComputedStyle.ResolveBoxSizingFused(find("box-sizing")),
                 Width = ComputedStyle.ResolveBoxLengthFused(widthDeclaration, RenderMode.Horizontal, face, dimensions,
-                    widthDeclaration is null ? widthHint ?? StyleLength.Auto : StyleLength.Auto),
+                    widthHint ?? StyleLength.Auto),
                 Height = ComputedStyle.ResolveBoxLengthFused(heightDeclaration, RenderMode.Vertical, face, dimensions,
-                    heightDeclaration is null ? heightHint ?? StyleLength.Auto : StyleLength.Auto),
+                    heightHint ?? StyleLength.Auto),
                 WidthDeclared = widthDeclaration is not null || widthHint is not null,
                 HeightDeclared = heightDeclaration is not null || heightHint is not null,
-                MinWidth = ComputedStyle.ResolveBoxLengthFused(find("min-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
-                MaxWidth = ComputedStyle.ResolveBoxLengthFused(find("max-width"), RenderMode.Horizontal, size, dimensions, StyleLength.None),
-                MinHeight = ComputedStyle.ResolveBoxLengthFused(find("min-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),
-                MaxHeight = ComputedStyle.ResolveBoxLengthFused(find("max-height"), RenderMode.Vertical, size, dimensions, StyleLength.None),
+                MinWidth = ComputedStyle.ResolveBoxLengthFused(find("min-" + alongWidth) ?? find("min-width"),
+                    RenderMode.Horizontal, size, dimensions, StyleLength.None),
+                MaxWidth = ComputedStyle.ResolveBoxLengthFused(find("max-" + alongWidth) ?? find("max-width"),
+                    RenderMode.Horizontal, size, dimensions, StyleLength.None),
+                MinHeight = ComputedStyle.ResolveBoxLengthFused(find("min-" + alongHeight) ?? find("min-height"),
+                    RenderMode.Vertical, size, dimensions, StyleLength.None),
+                MaxHeight = ComputedStyle.ResolveBoxLengthFused(find("max-" + alongHeight) ?? find("max-height"),
+                    RenderMode.Vertical, size, dimensions, StyleLength.None),
                 Margin = ComputedStyle.ResolveThicknessFused(find, element, face, dimensions, flow, "margin", StyleLength.Zero),
 
                 // The room a cell keeps is its table's, and the room it keeps where its table says nothing

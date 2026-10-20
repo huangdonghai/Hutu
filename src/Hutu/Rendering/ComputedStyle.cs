@@ -2211,7 +2211,7 @@ internal readonly struct ComputedStyle
     /// what a name begins with.
     /// </summary>
     private static readonly String[] BoxModelNames =
-        { "margin", "padding", "width", "height", "min-", "max-", "box-sizing" };
+        { "margin", "padding", "width", "height", "min-", "max-", "box-sizing", "inline-size", "block-size" };
 
     private void ResolveBorder(StyleIntern? pool)
     {
@@ -2258,8 +2258,16 @@ internal readonly struct ComputedStyle
             return;
         }
 
-        var declaredWidth = ReadDeclared("width", RenderMode.Horizontal);
-        var declaredHeight = ReadDeclared("height", RenderMode.Vertical);
+        // A size named for the axis the text runs along is the statement about the side that axis lies on,
+        // and where the page names both, the axis is what it meant (CSS Logical 1 §4, the same order the
+        // thicknesses below keep).
+        var alongWidth = Flow.IsVertical ? "block-size" : "inline-size";
+        var alongHeight = Flow.IsVertical ? "inline-size" : "block-size";
+
+        var declaredWidth = ReadDeclared(alongWidth, RenderMode.Horizontal) ??
+            ReadDeclared("width", RenderMode.Horizontal);
+        var declaredHeight = ReadDeclared(alongHeight, RenderMode.Vertical) ??
+            ReadDeclared("height", RenderMode.Vertical);
 
         var model = new BoxModelArea
         {
@@ -2268,10 +2276,14 @@ internal readonly struct ComputedStyle
             Height = declaredHeight ?? StyleLength.Auto,
             WidthDeclared = declaredWidth is not null,
             HeightDeclared = declaredHeight is not null,
-            MinWidth = ReadLength("min-width", RenderMode.Horizontal, StyleLength.None),
-            MaxWidth = ReadLength("max-width", RenderMode.Horizontal, StyleLength.None),
-            MinHeight = ReadLength("min-height", RenderMode.Vertical, StyleLength.None),
-            MaxHeight = ReadLength("max-height", RenderMode.Vertical, StyleLength.None),
+            MinWidth = ReadLength("min-" + alongWidth, RenderMode.Horizontal,
+                ReadLength("min-width", RenderMode.Horizontal, StyleLength.None)),
+            MaxWidth = ReadLength("max-" + alongWidth, RenderMode.Horizontal,
+                ReadLength("max-width", RenderMode.Horizontal, StyleLength.None)),
+            MinHeight = ReadLength("min-" + alongHeight, RenderMode.Vertical,
+                ReadLength("min-height", RenderMode.Vertical, StyleLength.None)),
+            MaxHeight = ReadLength("max-" + alongHeight, RenderMode.Vertical,
+                ReadLength("max-height", RenderMode.Vertical, StyleLength.None)),
             Margin = ReadThickness("margin", StyleLength.Zero),
             Padding = ReadThickness("padding", StyleLength.Zero),
         };

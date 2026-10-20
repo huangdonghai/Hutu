@@ -181,12 +181,12 @@ internal static class LengthReader
 
             case CssLengthValue css:
                 // `auto`, `normal` and `content` share the length type but carry no number, and the
-                // only way to tell them apart is the text they serialise to.
+                // only way to tell them apart is the text they serialise to - which is also how
+                // `min-content` and its siblings reach here, since the grammar that takes them hands
+                // them over as a length with no number in it.
                 if (Double.IsNaN(css.Value) || Double.IsInfinity(css.Value))
                 {
-                    length = css.CssText.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase)
-                        ? StyleLength.Auto
-                        : StyleLength.None;
+                    length = KeywordLength(css.CssText) ?? StyleLength.None;
                     return true;
                 }
 
@@ -203,48 +203,43 @@ internal static class LengthReader
                 return true;
 
             case CssConstantValue<CssLengthValue> constant when Double.IsNaN(constant.Value.Value):
-                length = constant.Value.CssText.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase)
-                    ? StyleLength.Auto
-                    : StyleLength.None;
+                length = KeywordLength(constant.Value.CssText) ?? StyleLength.None;
                 return true;
 
-            // A keyword standing alone where a length is read: only `auto` and `none` serialise
-            // to exactly themselves, so either one is itself. This catches the constant shapes
-            // (a selected enum rather than a length) that the cases above do not name - `margin:
-            // auto` arrives as one, where the computed declaration the old path falls back to has
-            // already normalised it into the length above.
-            case ICssValue keyword when keyword.CssText.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase):
-                length = StyleLength.Auto;
-                return true;
-
-            case ICssValue keyword when keyword.CssText.Trim().Equals("none", StringComparison.OrdinalIgnoreCase):
-                length = StyleLength.None;
-                return true;
-
-            // The content keywords are sizes the content settles rather than lengths a containing block
-            // settles, so they are carried as themselves and the layout engine reads them where it has
-            // the content in hand (CSS Sizing 3 §4).
-            case ICssValue keyword when keyword.CssText.Trim().Equals("max-content", StringComparison.OrdinalIgnoreCase):
-                length = StyleLength.MaxContent;
-                return true;
-
-            case ICssValue keyword when keyword.CssText.Trim().Equals("min-content", StringComparison.OrdinalIgnoreCase):
-                length = StyleLength.MinContent;
-                return true;
-
-            case ICssValue keyword when keyword.CssText.Trim().Equals("fit-content", StringComparison.OrdinalIgnoreCase):
-                length = StyleLength.FitContent;
-                return true;
-
-            // fit-content(<length>) is the same keyword with an argument that caps it, which the
-            // layout engine reads as a max-width would be read.
-            case ICssValue keyword when keyword.CssText.Trim().StartsWith("fit-content(", StringComparison.OrdinalIgnoreCase):
-                length = StyleLength.FitContent;
+            // A keyword standing alone where a length is read. This catches the constant shapes (a
+            // selected enum rather than a length) that the cases above do not name - `margin: auto`
+            // arrives as one, where the computed declaration the old path falls back to has already
+            // normalised it into the length above.
+            case ICssValue keyword when KeywordLength(keyword.CssText) is { } stated:
+                length = stated;
                 return true;
 
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Gets the length a keyword stands for, or null when the text names none. `auto` and `none` are the
+    /// two a containing block answers; the rest are sizes the content settles rather than lengths the
+    /// reader can resolve, so they travel as themselves and the layout engine answers them where it has
+    /// the content in hand (CSS Sizing 3 §4). <c>fit-content(&lt;length&gt;)</c> is the same keyword with
+    /// an argument that caps it, which the layout engine reads as a max-width would be read.
+    /// </summary>
+    private static StyleLength? KeywordLength(String? text)
+    {
+        var keyword = text?.Trim();
+
+        return keyword switch
+        {
+            { Length: > 0 } named when named.Equals("auto", StringComparison.OrdinalIgnoreCase) => StyleLength.Auto,
+            { Length: > 0 } named when named.Equals("none", StringComparison.OrdinalIgnoreCase) => StyleLength.None,
+            { Length: > 0 } named when named.Equals("max-content", StringComparison.OrdinalIgnoreCase) => StyleLength.MaxContent,
+            { Length: > 0 } named when named.Equals("min-content", StringComparison.OrdinalIgnoreCase) => StyleLength.MinContent,
+            { Length: > 0 } named when named.Equals("fit-content", StringComparison.OrdinalIgnoreCase) => StyleLength.FitContent,
+            { Length: > 0 } named when named.StartsWith("fit-content(", StringComparison.OrdinalIgnoreCase) => StyleLength.FitContent,
+            _ => null,
+        };
     }
 
     /// <summary>
