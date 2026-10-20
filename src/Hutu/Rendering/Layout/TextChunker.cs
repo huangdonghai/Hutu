@@ -151,9 +151,9 @@ internal readonly struct ChunkRange
     /// the carriage return U+000D standing in for a space in all respects). A no-break space
     /// (U+00A0), the ideographic space (U+3000) and the rest of the Unicode Zs spaces are "other
     /// space separators": white space to the eye, but never collapsed into a neighbour, never
-    /// trimmed off either end of a line and never a place a line may break - which is the whole
-    /// point of writing one. Treating them as collapsible folds five no-break spaces into one and
-    /// hangs the end of a line with a space that was written to stay.
+    /// trimmed off either end of a line, and a break after one is up to <see cref="IsBreakSpace"/>
+    /// rather than to this predicate. Treating them as collapsible folds five no-break spaces into one
+    /// and hangs the end of a line with a space that was written to stay.
     /// <para>
     /// The control characters are left out for the other half of the same rule: §4.2 asks that a
     /// control character other than the tab, the line feed and the carriage return be drawn as a
@@ -165,6 +165,54 @@ internal readonly struct ChunkRange
     /// </remarks>
     public static Boolean IsCollapsible(Char c) =>
         c == ' ' || c == '\t' || c == '\n' || c == '\r';
+
+    /// <summary>
+    /// Gets whether the character is a space that a line may end after: the collapsible white space, and
+    /// the other space separators of CSS Text 3 §4.1.1 - the general/four-per-em/three-per-em/six-per-em/
+    /// figure/punctuation/thin/hair spaces, the narrow no-break space, the medium mathematical space and
+    /// the ideographic space. §4.1.3 puts a soft wrap opportunity after every one of them where the mode
+    /// keeps its spaces, adjacent separators included.
+    /// </summary>
+    /// <remarks>
+    /// The no-break space is left out, though §4.1.1 counts it among the separators: it is written to hold
+    /// the two sides together, its Unicode class is GL, and Chrome breaks neither after it nor between two
+    /// of them (measured: "X\u00A0\u00A0X" in a box three characters wide stays one line and measures four
+    /// wide, while the same with U+2000 breaks between the two spaces).
+    /// </remarks>
+    /// <summary>
+    /// Gets whether the character is a space that a line may end after: the collapsible white space, and
+    /// the other space separators of CSS Text 3 §4.1.1 - the ogham space mark, the en/em/three-per-em/
+    /// four-per-em/six-per-em/punctuation/thin/hair spaces, the medium mathematical space and the
+    /// ideographic space. §4.1.3 puts a soft wrap opportunity after every one of them where the mode keeps
+    /// its spaces, adjacent separators included.
+    /// </summary>
+    /// <remarks>
+    /// The three separators whose Unicode line breaking class is GL - the no-break space, the figure space
+    /// and the narrow no-break space - are left out: the rules hold those to the character before them, and
+    /// neither Chrome nor the corpus breaks after one (measured: "X\u00A0\u00A0X" in a box three characters
+    /// wide stays one line and measures four, while the same with U+2000 breaks between the two spaces).
+    /// </remarks>
+    public static Boolean IsBreakSpace(Char c) =>
+        IsCollapsible(c) ||
+        c == '\u1680' ||
+        (c >= '\u2000' && c <= '\u2006') ||
+        (c >= '\u2008' && c <= '\u200A') ||
+        c == '\u205F' ||
+        c == '\u3000';
+
+    /// <summary>Gets whether the range holds a character a line may end after.</summary>
+    public static Boolean HoldsBreakSpace(String text, Int32 start, Int32 length)
+    {
+        for (var index = start; index < start + length; index++)
+        {
+            if (IsBreakSpace(text[index]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Gets the code point at an index, joining a surrogate pair into the one character it stands for.

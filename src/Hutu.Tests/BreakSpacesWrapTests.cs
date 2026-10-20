@@ -106,6 +106,37 @@ public sealed class BreakSpacesWrapTests
         });
     }
 
+    [Test]
+    public async Task ALineEndsAfterAnIdeographicSpace()
+    {
+        // The mode's opportunity stands after every other space separator too, not only after the
+        // collapsible white space, and the chunker keeps the separator with the word before it - so the
+        // piece that has to move is "word, two ideographic spaces" and the break falls between the two.
+        using var view = await Render(
+            "<style>div { white-space: break-spaces; width: 15px }</style>" +
+            "<div>AB\u3000\u3000CD</div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Text(view, "AB\u3000").BorderBox.Width, Is.EqualTo(15), "the first space ends the line");
+            Assert.That(Text(view, "\u3000CD").BorderBox.Y, Is.EqualTo(10), "the second begins the next, taking room");
+        });
+    }
+
+    [Test]
+    public async Task ANoBreakSpaceHoldsTheLineTogether()
+    {
+        using var view = await Render(
+            "<style>div { white-space: break-spaces; width: 15px }</style>" +
+            "<div>AB\u00A0\u00A0CD</div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Text(view, "AB\u00A0\u00A0CD").BorderBox.Y, Is.EqualTo(0), "the piece never breaks");
+            Assert.That(Text(view, "AB\u00A0\u00A0CD").BorderBox.Width, Is.EqualTo(30), "and overflows from where it stands");
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

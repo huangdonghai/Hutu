@@ -362,9 +362,9 @@ internal sealed class InlineLayout
                 }
 
                 // Where the tailorable properties put a break between the characters of a word, the
-                // narrowest the content can be is no longer the widest word but the widest character of it
-                // - a preserved space excepted, since the rule that forbids a break before one is set aside
-                // only by the values that speak of white space, and punctuation excepted, since
+                // narrowest the content can be is no longer the widest word but the widest piece between
+                // those breaks - a preserved space excepted, since the rule that forbids a break before one
+                // is set aside only by the values that speak of white space, and punctuation excepted, since
                 // `break-all` speaks of letters (CSS Text 3 §5.4-§5.6, and Chrome measures "X XX X" at two
                 // characters under `break-all` and at one under `overflow-wrap: anywhere`, with "AB., CD"
                 // at three). `overflow-wrap: break-word` is left out: its breaks are the last resort a line
@@ -383,10 +383,11 @@ internal sealed class InlineLayout
                         var standing = TextChunker.IsCollapsible(source, at, units);
 
                         // Which side of the boundary the segment ends at: a value that sets the rules aside
-                        // answers for every boundary it meets, wherever the character came from; white space
-                        // gives one only to the values that speak of white space; and `break-all`, which
-                        // speaks of letters, leaves the rules standing - both the rules themselves and the
-                        // neighbourhood the line will settle when the piece was written on another element.
+                        // answers for every boundary it meets, wherever the character came from; the mode
+                        // answers after every space it keeps, its own or another separator; and
+                        // `break-all`, which speaks of letters, leaves the rules standing - both the rules
+                        // themselves and the neighbourhood the line will settle when the piece was written
+                        // on another element.
                         var ends = item.Style.BreaksAnywhere || item.Style.CountsLongWordBreaks
                             ? true
                             : standing
@@ -1473,7 +1474,13 @@ internal sealed class InlineLayout
                     // where it does not - and takes the following word down with it. That is also why a
                     // `<br>` behind a space ends the line the space overflowed rather than an empty one.
                     var spaces = piece.IsWhiteSpace;
-                    var stepsSpaces = spaces && item.Style.WrapsInsideSpaces;
+
+                    // A run the mode breaks inside is one that holds a character a line may end after:
+                    // §4.1.3 gives `break-spaces` that opportunity after every preserved white space
+                    // character *and* after every other space separator, so a piece the chunker left as
+                    // "two letters and two ideographic spaces" is stepped as well.
+                    var inside = item.Style.WrapsInsideSpaces;
+                    var stepsSpaces = inside && TextChunker.HoldsBreakSpace(run.Source, run.Start, run.Length);
 
                     // The properties that tailor where a line may end put their opportunities in two different
                     // places (CSS Text 3 §5.4-§5.6): before the first character of a run of preserved white
@@ -1524,20 +1531,33 @@ internal sealed class InlineLayout
                                 ? WhiteSpaceWidth(item.Style, run.Source, at, taken, builder.Width, itemFlow)
                                 : Measure(item.Style, run.Source, at, taken, itemFlow);
 
-                        // Where the break may be taken, which for a word the script breaks between letters
-                        // is only between two of them: the punctuation keeps the rules it had, as does the
-                        // character that opened the piece, whose boundary the chunking already answered.
-                        var breaks = !spaces
-                            ? at == run.Start
-                                ? !moved
-                                : !item.Style.BreaksBetweenLetters ||
-                                    item.Style.BreaksAnywhere ||
-                                    item.Style.CountsLongWordBreaks ||
-                                    LineBreaks.MayBreakBetweenLetters(run.Source, previous, at)
-                            : at > run.Start ? stepsSpaces : beforeFirst;
+                        // Where the break may be taken. The mode's own licence stands after a space it keeps,
+                        // whichever piece that space was written in; the tailorable ones stand inside a word
+                        // they were asked about, and for a word the script breaks between letters only between
+                        // two of them - the punctuation keeps the rules it had, as does the character that
+                        // opened the piece, whose boundary the chunking already answered.
+                        var breaks = at == run.Start
+                            ? spaces ? beforeFirst : !moved
+                            : (inside && TextChunker.IsBreakSpace(run.Source[previous])) ||
+                                (stepsWord &&
+                                    (!item.Style.BreaksBetweenLetters ||
+                                        item.Style.BreaksAnywhere ||
+                                        item.Style.CountsLongWordBreaks ||
+                                        LineBreaks.MayBreakBetweenLetters(run.Source, previous, at)));
+
+                        // A run that opens with content asks for the room the whole of it needs before it is
+                        // stepped: the opportunity inside it is what the line falls back on once the run
+                        // stands on a line of its own and still does not fit, not a licence to fill the last
+                        // of the line above with the end of it. A run that opens with the space itself is the
+                        // mode's own case - every character of it takes room where it stands. Where the value
+                        // gives the break as an opportunity of its own, the line is filled to its end edge.
+                        var asks = at == run.Start && !spaces && !letters &&
+                            !TextChunker.IsBreakSpace(run.Source[run.Start])
+                            ? width
+                            : advance;
 
                         if (breaks && room.Room > 0 &&
-                            builder.ExtentFor(item.Inline) + advance > room.Room && item.Style.WrapsLines)
+                            builder.ExtentFor(item.Inline) + asks > room.Room && item.Style.WrapsLines)
                         {
                             if (builder.HasContent)
                             {
