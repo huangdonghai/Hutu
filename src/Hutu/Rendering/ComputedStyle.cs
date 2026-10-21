@@ -2389,6 +2389,8 @@ internal readonly struct ComputedStyle
 
         internal GapRules? Gap;
 
+        internal ContainStyle? Contain;
+
         internal BreakStyle Breaks;
 
         internal PositionStyle? Position;
@@ -3341,6 +3343,34 @@ internal readonly struct ComputedStyle
     /// </summary>
     public GapRules Gap =>
         _values.Fused is null ? _values.Gap ??= GapRules.Read(this) : _values.Gap ?? GapRules.None;
+
+    /// <summary>
+    /// Gets the size containment the box asks for, and the intrinsic size it states for the axes it
+    /// contains. A box that writes no <c>contain</c> gets a value that contains nothing.
+    /// </summary>
+    public ContainStyle Contain
+    {
+        get
+        {
+            if (_values.Fused is not null)
+            {
+                return _values.Contain ?? default;
+            }
+
+            if (_values.Contain is { } known)
+            {
+                return known;
+            }
+
+            var declaration = Declaration;
+            var font = new LengthReader.FontSource(this);
+            var contain = ContainStyle.ReadFused(name => declaration?.TryGetProperty(name), font, Dimensions) ?? default;
+
+            _values.Contain = contain;
+
+            return contain;
+        }
+    }
 
     /// <summary>Gets where the box lets a fragmentainer break around and inside it.</summary>
     public BreakStyle Breaks => _values.Breaks;

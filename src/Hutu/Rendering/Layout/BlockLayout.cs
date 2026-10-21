@@ -68,6 +68,18 @@ internal sealed class BlockLayout
         var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insets.Vertical);
 
+        // A box that contains its block size is not measured from its content either: it comes to the
+        // height it states for itself, which is nothing where it states none (CSS Contain 2 §2.1).
+        if (ContainsBlockSize(box) && declaredHeight is null)
+        {
+            var stated = style.Contain.Height;
+            var contained = stated is { } intrinsic ? Math.Max(0, intrinsic.Resolve(0)) : 0.0;
+
+            return new Size(
+                BoxModel.ClampWidth(style, contentWidth + insets.Horizontal, basisWidth, insets.Horizontal),
+                BoxModel.ClampHeight(style, contained, basisHeight, insets.Vertical) + insets.Vertical);
+        }
+
         // CSS 2.1 §10.7: a tentative height above max-height (or below min-height) is worked out
         // again with that constraint standing in for the computed height, so the height the box
         // comes out at is settled before the content is measured - and the content is measured
@@ -299,8 +311,38 @@ internal sealed class BlockLayout
         return ContentIntrinsic(box, basis, insets, context);
     }
 
+    /// <summary>
+    /// Gets whether size containment reaches the box's inline size. An internal table box is not
+    /// contained at all: its size is the table's business (CSS Contain 1 §3.2).
+    /// </summary>
+    private static Boolean ContainsInlineSize(Box box) =>
+        box.Style.Contain.Inline && !IsInternalTable(box.Style);
+
+    /// <summary>Gets whether size containment reaches the box's block size, for the same reason.</summary>
+    private static Boolean ContainsBlockSize(Box box) =>
+        box.Style.Contain.Block && !IsInternalTable(box.Style);
+
+    // Size containment does not apply to a table box or an internal table box: the table's own layout
+    // decides those sizes (CSS Contain 1 §3.2).
+    private static Boolean IsInternalTable(ComputedStyle style) =>
+        style.Display.Contains("table", StringComparison.OrdinalIgnoreCase);
+
     private IntrinsicSize ContentIntrinsic(Box box, Double basis, Double insets, LayoutContext context)
     {
+        // A box that contains its size is not measured from its content: it answers with the intrinsic
+        // size the page stated for the axis it contains, and with nothing where it stated none
+        // (CSS Contain 2 §2.1, CSS Sizing 4 §5).
+        var contain = box.Style.Contain;
+
+        if (ContainsInlineSize(box))
+        {
+            var stated = box.Flow.IsVertical ? contain.Height : contain.Width;
+            var inline = stated is { } length ? Math.Max(0, length.Resolve(0)) : 0.0;
+            var outer = inline + insets;
+
+            return new IntrinsicSize(outer, outer);
+        }
+
         Double min;
         Double max;
 

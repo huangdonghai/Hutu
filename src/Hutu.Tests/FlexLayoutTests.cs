@@ -472,6 +472,33 @@ public sealed class FlexLayoutTests
         Assert.That(item.BorderBox.Height, Is.EqualTo(60).Within(0.5), "the line is the container's content height");
     }
 
+    /// <summary>
+    /// A size-contained item is not measured from its (empty) content: its base comes from
+    /// `contain-intrinsic-size`, in a row from the width and in a column from the height.
+    /// </summary>
+    [Test]
+    public async Task AContainedItemTakesItsBaseFromTheIntrinsicSize()
+    {
+        var view = CreateView(600);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='row' style='display:flex;width:200px;height:50px'>" +
+            "<div id='a' style='contain:size;contain-intrinsic-size:55px 11px'></div>" +
+            "<div id='b' style='contain:size;contain-intrinsic-size:66px 22px'></div></div>" +
+            "<div id='column' style='display:flex;flex-direction:column;width:50px;height:200px'>" +
+            "<div id='c' style='contain:size;contain-intrinsic-size:55px 11px'></div>" +
+            "<div id='d' style='contain:size;contain-intrinsic-size:66px 22px'></div></div>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(55).Within(0.5), "the row's base");
+            Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(66).Within(0.5));
+            Assert.That(Find(view, "c").BorderBox.Height, Is.EqualTo(11).Within(0.5), "the column's base");
+            Assert.That(Find(view, "d").BorderBox.Height, Is.EqualTo(22).Within(0.5));
+        });
+    }
+
     private static HutuViewInternal CreateView(int viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

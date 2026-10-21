@@ -750,6 +750,10 @@ internal static class FusedStyleFactory
             ? GapRules.Read(find, face, dimensions, color)
             : null;
 
+        // Size containment is one lookup for every box and a second only where the page asked for it,
+        // so a page that writes none pays next to nothing for the feature.
+        values.Contain = ContainStyle.ReadFused(find, face, dimensions);
+
         values.Fused = keywords;
 
         return new ComputedStyle(dimensions, element, keywords, values, faces);
