@@ -214,7 +214,14 @@ public sealed class SkiaPaintExecutor
 
                 case PushClipCommand clip:
                     canvas.Save();
-                    SkiaRounded.Clip(canvas, ToRect(clip.Bounds), clip.Radii);
+
+                    // A square clip cuts whole pixels, on the same terms as the fill that is cut by it:
+                    // an edge left inside a pixel row anti-aliases the row instead, and a box drawn at a
+                    // fractional edge then shows the ink it stands over through the seam the clip leaves.
+                    SkiaRounded.Clip(
+                        canvas,
+                        clip.Radii.IsZero ? Snap(ToRect(clip.Bounds)) : ToRect(clip.Bounds),
+                        clip.Radii);
                     break;
 
                 case PopClipCommand:

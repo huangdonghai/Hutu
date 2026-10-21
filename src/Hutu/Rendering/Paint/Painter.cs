@@ -230,7 +230,42 @@ internal sealed class Painter
         PaintBoxContent(box, list, target, deferred);
     }
 
+    /// <summary>
+    /// Paints a box inside the rectangle its <c>clip</c> cuts it to, if it states one.
+    /// </summary>
+    /// <remarks>
+    /// The legacy <c>clip</c> reaches further than an overflow does: it cuts the box's own background,
+    /// borders, text decoration and outline as well as its content and descendants, and it does that from
+    /// the border box rather than the padding one (CSS 2.1 §11.1.1, CSS Masking 1 §1.3). Only an
+    /// absolutely positioned box answers to it - a box that stayed in the flow is clipped by its
+    /// ancestors, not by itself.
+    /// </remarks>
     private void PaintBoxContent(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred)
+    {
+        var area = box.Position is PositionMode.Absolute or PositionMode.Fixed
+            ? box.Source.Style.Clip?.ClipOf(box.BorderBox)
+            : null;
+
+        if (area is { } clip)
+        {
+            target.Add(new PushClipCommand(clip, CornerRadii.None));
+
+            // A descendant lifted into a stacking context above is painted from that layer, so it carries
+            // this clip with it the same way it carries an overflow clip - and no more, once this box has
+            // been cut, which is what the removal below gives back.
+            deferred?.ActiveClips.Add(new ClipEdge(clip, CornerRadii.None));
+        }
+
+        PaintBoxPresentation(box, list, target, deferred);
+
+        if (area is { } cut)
+        {
+            target.Add(new PopClipCommand(cut));
+            deferred?.ActiveClips.RemoveAt(deferred.ActiveClips.Count - 1);
+        }
+    }
+
+    private void PaintBoxPresentation(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred)
     {
         // A box that is not seen draws nothing of itself - no background, border, image, text, marker
         // or outline - and still lets what is inside it draw, because a descendant can ask to be seen

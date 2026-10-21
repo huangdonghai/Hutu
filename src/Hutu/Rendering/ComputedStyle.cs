@@ -2000,6 +2000,84 @@ internal readonly struct ComputedStyle
             : null;
 
     /// <summary>
+    /// Resolves the rectangle a <c>clip</c> declaration states, for the fused path. The property is not
+    /// inherited, so a box that says nothing is not clipped whatever its parent was - the one answer that
+    /// does reach down is <c>inherit</c>, which takes the parent's four distances and applies them to this
+    /// box's own border box.
+    /// </summary>
+    public static ClipShape? ResolveClipFused(
+        ICssProperty? declared,
+        IRenderDimensions dimensions,
+        LengthReader.FontSource font,
+        ClipShape? parent)
+    {
+        if (declared is null)
+        {
+            return null;
+        }
+
+        if (declared.RawValue is CssShapeValue shape)
+        {
+            return ReadShape(shape, dimensions, font);
+        }
+
+        return IsInheritWord(declared.RawValue) ? parent : null;
+    }
+
+    /// <summary>
+    /// Reads the four offsets of a clip shape. A side that is neither the keyword that leaves it to the
+    /// edge nor a length the device can fold is no clip at all, which is also what the grammar says.
+    /// </summary>
+    private static ClipShape? ReadShape(CssShapeValue shape, IRenderDimensions dimensions, LengthReader.FontSource font)
+    {
+        if (!ReadSide(shape.Top, dimensions, font, out var top) ||
+            !ReadSide(shape.Right, dimensions, font, out var right) ||
+            !ReadSide(shape.Bottom, dimensions, font, out var bottom) ||
+            !ReadSide(shape.Left, dimensions, font, out var left))
+        {
+            return null;
+        }
+
+        return new ClipShape(top, right, bottom, left);
+    }
+
+    /// <summary>
+    /// Reads one side of a clip shape, which is a length - the <c>auto</c> keyword arrives as a length with
+    /// no number in it - or nothing at all where the side is left to the edge of the box.
+    /// </summary>
+    private static Boolean ReadSide(
+        ICssValue? value,
+        IRenderDimensions dimensions,
+        LengthReader.FontSource font,
+        out Double? offset)
+    {
+        offset = null;
+
+        if (value is null)
+        {
+            return false;
+        }
+
+        if (!LengthReader.TryReadValue(value, RenderMode.Horizontal, dimensions, font, out var length))
+        {
+            return false;
+        }
+
+        if (length.IsAuto)
+        {
+            return true;
+        }
+
+        if (length.Kind != StyleLengthKind.Pixels)
+        {
+            return false;
+        }
+
+        offset = length.Value;
+        return true;
+    }
+
+    /// <summary>
     /// Resolves the text stroke - the width the glyphs are ringed with and the colour of that ring - for
     /// the fused path. Both are inherited, and the shorthand <c>-webkit-text-stroke</c> can set either;
     /// a longhand written beside it wins for its own half, and anything left unsaid comes from the parent.
@@ -2570,6 +2648,12 @@ internal readonly struct ComputedStyle
 
         /// <summary>Gets the shadows the element's text is drawn with, inherited like every other value here.</summary>
         internal IReadOnlyList<Shadow> TextShadows = Array.Empty<Shadow>();
+
+        /// <summary>
+        /// Gets the rectangle this box cuts itself to, or null where it states none. The distances are the
+        /// element's own; the area they come to is worked out when the box is painted.
+        /// </summary>
+        internal ClipShape? Clip;
         internal CursorKind Cursor;
         internal RubyPosition Ruby;
         internal CssColorValue OutlineColor = CssColorValue.Black;
@@ -3447,6 +3531,33 @@ internal readonly struct ComputedStyle
         return ReadShadowList(_specified?.GetProperty(name)?.RawValue, _dimensions, font, Color) ??
             ReadShadowList(_style.GetProperty(name)?.RawValue, _dimensions, font, Color) ??
             Array.Empty<Shadow>();
+    }
+
+    /// <summary>
+    /// Gets the rectangle the box cuts itself to, or null where it states none. The property reaches an
+    /// absolutely positioned box and nothing else, and what it states are four distances rather than a
+    /// rectangle - the box they measure has to be laid out before it has an edge to measure from, so the
+    /// painter is the one that works out the area (CSS 2.1 §11.1.1, CSS Masking 1 §1.3).
+    /// </summary>
+    public ClipShape? Clip => _values.Fused is { } fused ? fused.Clip : CascadedClip();
+
+    /// <summary>
+    /// Reads the clip off the declarations of a style that was not built fused. The shape is the only
+    /// answer this can give: <c>auto</c> and <c>inherit</c> arrive as keywords, and the computed
+    /// declaration has resolved the inheritance the same way it does for any other property.
+    /// </summary>
+    private ClipShape? CascadedClip()
+    {
+        var font = FontSourceOf();
+
+        if (_specified?.GetProperty("clip")?.RawValue is CssShapeValue stated)
+        {
+            return ReadShape(stated, _dimensions, font);
+        }
+
+        return _style.GetProperty("clip")?.RawValue is CssShapeValue computed
+            ? ReadShape(computed, _dimensions, font)
+            : null;
     }
 
     public Boolean HasUnderline => _values.Decoration.Underline;

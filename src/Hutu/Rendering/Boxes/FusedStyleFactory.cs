@@ -120,6 +120,13 @@ internal sealed class FusedParent
     public Boolean Collapses { get; init; }
 
     /// <summary>
+    /// Gets the parent's own clip. The property is not inherited, so this travels for one reason only: a
+    /// child that writes <c>clip: inherit</c> takes the four distances the parent was clipped by - and
+    /// measures them from its own border box, since a distance belongs to the box it was read on.
+    /// </summary>
+    public ClipShape? Clip { get; init; }
+
+    /// <summary>
     /// Whether the parent is a flex container, which is what makes this element a flex item - the
     /// only thing in the cascade that says so, and the only reason <c>flex-grow</c>, <c>flex-shrink</c>,
     /// <c>flex-basis</c>, <c>order</c> and <c>align-self</c> mean anything on it.
@@ -226,6 +233,7 @@ internal sealed class FusedParent
         TextFillColor = style.TextFillColor,
         TextShadows = style.WrittenTextShadows,
         BoxShadows = style.WrittenBoxShadows,
+        Clip = style.Clip,
 
         // The nearest declaration at or above this element, not merely its own. A number is the form
         // that is re-read at every element - its computed value is the number, and each element it
@@ -701,6 +709,9 @@ internal static class FusedStyleFactory
                 find("box-shadow"), dimensions, face, color, parent.BoxShadows, inherits: false),
             TextShadows = ComputedStyle.ResolveShadowsFused(
                 find("text-shadow"), dimensions, face, color, parent.TextShadows, inherits: true),
+
+            // The clip is the box's own: not inherited, so a box that says nothing is clipped by nothing.
+            Clip = ComputedStyle.ResolveClipFused(find("clip"), dimensions, face, parent.Clip),
             Cursor = ComputedStyle.ResolveCursorFused(element, find("cursor"), parent.Cursor),
             Ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position"), parent.Ruby),
             OutlineColor = ComputedStyle.ResolveOutlineColorFused(find("outline-color"), color),
