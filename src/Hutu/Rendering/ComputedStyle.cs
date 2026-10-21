@@ -1246,7 +1246,7 @@ internal readonly struct ComputedStyle
     /// <summary>
     /// Resolves the text colour from the element's own cascaded declaration, for the fused
     /// path. Links without their own colour take the link colour; anything else without one
-    /// takes the parent's resolved colour.
+    /// takes the parent's resolved colour, which is also what <c>currentcolor</c> writes.
     /// </summary>
     public static CssColorValue ResolveColorFused(
         IElement? element, ICssProperty? declared, CssColorValue? parentColor)
@@ -1265,13 +1265,23 @@ internal readonly struct ComputedStyle
         // A wide keyword stands for a value: `inherit`/`unset`/`revert` name the parent's
         // colour, `initial` the initial one. The cascade resolves these; the fused path must
         // too, since it reads the declaration as written.
-        if (declared.RawValue is { } raw && IsInheritKeyword(raw))
+        if (declared.RawValue is { } raw && (IsInheritKeyword(raw) || IsCurrentColorKeyword(raw)))
         {
             return parentColor ?? CssColorValue.Black;
         }
 
         return declared.RawValue is CssColorValue color ? color : CssColorValue.Black;
     }
+
+    /// <summary>
+    /// Gets whether a declared value is the <c>currentcolor</c> keyword. On the colour property that
+    /// keyword cannot stand for the element's own colour, which is what it would then be defined by:
+    /// CSS Color 4 §4 gives its used value there as the resolved inherited one.
+    /// </summary>
+    private static Boolean IsCurrentColorKeyword(ICssValue value) =>
+        (value is CssColorValue ink && ink == CssColorValue.CurrentColor) ||
+        (value is not CssLengthValue &&
+         value.CssText.Trim().Equals("currentcolor", StringComparison.OrdinalIgnoreCase));
 
     private static Boolean IsFollowableLink(IElement? element) =>
         element is IHtmlAnchorElement anchor && anchor.HasAttribute("href");

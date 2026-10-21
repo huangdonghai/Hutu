@@ -92,7 +92,10 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
     private static readonly Dictionary<String, String[]> KeywordExtraValues = new(StringComparer.OrdinalIgnoreCase)
     {
         ["background-clip"] = ["text"],
-        ["color"] = ["-moz-default-color"],
+        // `currentcolor` is part of the color production (CSS Color 4 §4) but AngleSharp's colour
+        // grammar stops short of it, so a page writing `color: currentcolor` had the declaration
+        // dropped and the link drawn in the engine's own colour. The colour reader resolves the keyword.
+        ["color"] = ["-moz-default-color", "currentcolor"],
         ["background-color"] = ["-moz-default-background-color"],
         // CSS Text 3's break-spaces, which AngleSharp's grammar predates: dropped, the declaration
         // would leave the element on the white-space it inherited and its spaces would collapse.
