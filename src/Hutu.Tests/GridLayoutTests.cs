@@ -620,6 +620,68 @@ public sealed class GridLayoutTests
         Assert.That(a.BorderBox.Right, Is.EqualTo(300).Within(0.5), "and the -end line closes it");
     }
 
+    [Test]
+    public async Task AnAbsolutePathChildStandsWhereItsPlacementNamesIt()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;position:relative;width:300px;height:200px;padding:10px;" +
+            "grid-template-columns:100px 100px;grid-template-rows:50px 50px'>" +
+            "<div id='a' style='position:absolute;top:0;left:0;width:20px;height:20px;" +
+            "grid-column:2;grid-row:2'>a</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        // The area the child names is what its offsets count from (CSS Grid 2 §10.1), so top and left of
+        // zero put it on the second track's corners rather than on the container's own.
+        Assert.That(a.BorderBox.X, Is.EqualTo(10 + 100).Within(0.5), "the column line the placement names");
+        Assert.That(a.BorderBox.Y, Is.EqualTo(10 + 50).Within(0.5), "and the row line");
+    }
+
+    [Test]
+    public async Task AnUnplacedAbsolutePathChildStandsInItsContainersContentBox()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;position:relative;width:300px;height:200px;padding:10px;" +
+            "grid-template-columns:100px 100px;grid-template-rows:50px 50px'>" +
+            "<div id='a' style='position:absolute;width:20px;height:20px'>a</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        // Nothing placed it, so the area it stands in is the content box (CSS Grid 2 §10.2): the padding
+        // edge is where its offsets would count from, and it has none.
+        Assert.That(a.BorderBox.X, Is.EqualTo(10).Within(0.5), "the content edge is where it stands");
+        Assert.That(a.BorderBox.Y, Is.EqualTo(10).Within(0.5), "on both axes");
+    }
+
+    [Test]
+    public async Task AFixedChildOfAGridIsNotOffsetFromTheAreaItNames()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;position:relative;width:300px;height:200px;padding:10px;" +
+            "grid-template-columns:100px 100px;grid-template-rows:50px 50px'>" +
+            "<div id='a' style='position:fixed;top:0;left:0;width:20px;height:20px;" +
+            "grid-column:2;grid-row:2'>a</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        // A `fixed` box is offset from the viewport, so the grid lends it no containing block; where it
+        // stands is the content box, which is the place a box with no area of its own would have.
+        Assert.That(a.BorderBox.X, Is.EqualTo(0).Within(0.5), "the viewport is what top and left count from");
+        Assert.That(a.BorderBox.Y, Is.EqualTo(0).Within(0.5), "on both axes");
+    }
+
     private static LayoutBox Find(HutuViewInternal view, String id)
     {
         foreach (var node in Walk(view))

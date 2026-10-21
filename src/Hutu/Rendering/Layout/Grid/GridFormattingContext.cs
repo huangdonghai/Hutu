@@ -97,17 +97,22 @@ internal sealed class GridFormattingContext
         var contentX = borderBox.X + border.Left + padding.Left;
         var contentY = borderBox.Y + border.Top + padding.Top;
 
-        var plan = Compute(box, contentWidth, contentHeight, context, definiteWidth: true, sizeRows: true);
+        var plan = Compute(
+            box, contentWidth, contentHeight, context, definiteWidth: true, sizeRows: true, forOutOfFlow: true);
         var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
         // A positioned grid container is what an absolutely positioned child anchors to.
+        var anchored = false;
+
         if (box.Style.IsTransformed)
         {
             itemContext = itemContext.WithTransformedContainingBlock(layout.BorderBox);
+            anchored = true;
         }
         else if (PositionedLayout.IsPositioned(box))
         {
             itemContext = itemContext.WithAbsoluteContainingBlock(layout.PaddingBox);
+            anchored = true;
         }
 
         foreach (var item in plan.Items)
@@ -122,9 +127,128 @@ internal sealed class GridFormattingContext
         }
 
         layout.GapDecorations = GapDecorations(box, plan, contentX, contentY);
-        ArrangeOutOfFlow(box, layout, contentX, contentY, itemContext);
+        ArrangeOutOfFlow(box, layout, plan, layout.PaddingBox, anchored, contentX, contentY, itemContext);
         return layout;
     }
+
+    /// <summary>
+    /// Places the absolutely and fixed positioned children, which are not grid items: they take no room
+    /// in the grid and contribute nothing to its tracks. An <c>absolute</c> child's place in it is still
+    /// the grid's own - <c>grid-row</c> and <c>grid-column</c> name the area that is its containing block
+    /// (CSS Grid 2 §10.1) and the area it stands in for its static position. A <c>fixed</c> child is
+    /// offset from the viewport, so the grid lends it nothing but a place to stand: the content edges,
+    /// which is where a box with no room of its own in the grid would sit.
+    /// </summary>
+    /// <param name="anchored">
+    /// Whether this container is what the child's offsets count from. A container that is neither
+    /// positioned nor transformed generates no containing block, and then the child anchors to an
+    /// ancestor further up and only its static position is the grid's business.
+    /// </param>
+    private void ArrangeOutOfFlow(
+        Box box,
+        LayoutBox parent,
+        GridPlan plan,
+        Rect paddingBox,
+        Boolean anchored,
+        Double contentX,
+        Double contentY,
+        LayoutContext context)
+    {
+        var grid = box.Style.Grid;
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || !PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (!child.Style.Position.IsAbsolute)
+            {
+                parent.Children.Add(
+                    _engine.ArrangePositioned(child, new Offset(contentX, contentY), context));
+                continue;
+            }
+
+            var (block, standing) = OutFlowArea(child.Style.GridItem, grid, plan, paddingBox, contentX, contentY);
+            var childContext = anchored ? context.WithAbsoluteContainingBlock(block) : context;
+
+            parent.Children.Add(
+                _engine.ArrangePositioned(child, new Offset(standing.X, standing.Y), childContext));
+        }
+    }
+
+    /// <summary>
+    /// Gets the two areas an out-of-flow child's placement names: the containing block its offsets count
+    /// from and the area its static position stands in. A side named by a line number, a line name or an
+    /// area line is the track edge it lands on; a side left auto - or one naming a line the grid has no
+    /// room for, which is what the specification says to treat as auto instead of building implicit
+    /// tracks for an out-of-flow box (§10.1) - is the container's padding edge. Where nothing in either
+    /// axis is placed, the area the child stands in is the content box instead, as if it were the sole
+    /// grid item in it (§10.2).
+    /// </summary>
+    private static (Rect Block, Rect Standing) OutFlowArea(
+        GridItemStyle item,
+        GridStyle grid,
+        GridPlan plan,
+        Rect paddingBox,
+        Double contentX,
+        Double contentY)
+    {
+        var contentRight = contentX + plan.ContentWidth;
+        var contentBottom = contentY + plan.ContentHeight;
+
+        var (blockLeft, leftPlaced) = Edge(
+            item.ColumnStart, grid, plan.ColumnLines, horizontal: true, atEnd: false, contentX, paddingBox.X);
+        var (blockRight, rightPlaced) = Edge(
+            item.ColumnEnd, grid, plan.ColumnLines, horizontal: true, atEnd: true, contentX, paddingBox.Right);
+        var (blockTop, topPlaced) = Edge(
+            item.RowStart, grid, plan.RowLines, horizontal: false, atEnd: false, contentY, paddingBox.Y);
+        var (blockBottom, bottomPlaced) = Edge(
+            item.RowEnd, grid, plan.RowLines, horizontal: false, atEnd: true, contentY, paddingBox.Bottom);
+
+        var block = Between(blockLeft, blockRight, blockTop, blockBottom);
+
+        // A placement named on no side at all has no area of its own to stand in, and the content edges
+        // answer for it; the moment one side is named, the child stands where that area begins.
+        var standing = leftPlaced || rightPlaced || topPlaced || bottomPlaced
+            ? block
+            : Between(contentX, contentRight, contentY, contentBottom);
+
+        return (block, standing);
+    }
+
+    /// <summary>Gets a rect between two edges, holding it at nothing rather than letting it cross over.</summary>
+    private static Rect Between(Double left, Double right, Double top, Double bottom) =>
+        new(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
+
+    /// <summary>
+    /// Gets where one side of an out-of-flow child's placement stands, and whether the side was placed at
+    /// all: a named line is the track edge it lands on, and anything else is the container's padding
+    /// edge, which is the special line an auto side contributes (§10.1).
+    /// </summary>
+    /// <param name="origin">
+    /// Where the line list's own zero stands on the page: the content box's start along this axis.
+    /// </param>
+    private static (Double At, Boolean Placed) Edge(
+        GridLine side,
+        GridStyle grid,
+        List<Double> lines,
+        Boolean horizontal,
+        Boolean atEnd,
+        Double origin,
+        Double paddingEdge)
+    {
+        var resolved = grid.Resolve(side, horizontal, atEnd).Resolve(lines.Count);
+
+        if (resolved is null || resolved < 1 || resolved > lines.Count)
+        {
+            return (paddingEdge, false);
+        }
+
+        return (origin + lines[resolved.Value - 1], true);
+    }
+
 
     /// <summary>
     /// Gets the stretch of track on either side of each gap: the areas a gap's decoration asks about
@@ -207,21 +331,6 @@ internal sealed class GridFormattingContext
     }
 
     /// <summary>
-    /// Places the absolutely and fixed positioned children, which are not grid items. Their static
-    /// position is the content box's start corner, since the grid placement does not apply to them.
-    /// </summary>
-    private void ArrangeOutOfFlow(Box box, LayoutBox parent, Double contentX, Double contentY, LayoutContext context)
-    {
-        foreach (var child in box.Children)
-        {
-            if (child.IsBlockLevel && PositionedLayout.IsOutOfFlow(child))
-            {
-                parent.Children.Add(_engine.ArrangePositioned(child, new Offset(contentX, contentY), context));
-            }
-        }
-    }
-
-    /// <summary>
     /// The intrinsic inline sizes. The max-content size is what the tracks come to when each is as big
     /// as what it holds; the min-content size is the sum of the tracks' base sizes before any of them
     /// is grown - each one its min sizing function resolved, so a <c>minmax(0, 1fr)</c> track, whose
@@ -262,7 +371,8 @@ internal sealed class GridFormattingContext
         Double? contentHeight,
         LayoutContext context,
         Boolean definiteWidth,
-        Boolean sizeRows)
+        Boolean sizeRows,
+        Boolean forOutOfFlow = false)
     {
         var grid = box.Style.Grid;
         var items = new List<GridCell>();
@@ -355,6 +465,11 @@ internal sealed class GridFormattingContext
         // list of ten thousand gaps to describe, and nothing else reads one.
         var decorated = box.Style.Gap.IsStated;
 
+        // An out-of-flow child is placed against the grid's lines, so they have to be remembered where
+        // one exists: only the pass that arranges the container is asked, because a grid whose frame is
+        // written with a clamped repetition has more lines to record than anything reads them for.
+        var placed = forOutOfFlow && HasOutOfFlowChild(box);
+
         for (var index = 0; decorated && index + 1 < columnTracks.Count; index++)
         {
             plan.ColumnGaps.Add(new TrackGap(
@@ -379,8 +494,45 @@ internal sealed class GridFormattingContext
             plan.TracksHeight = offsetY + Prefix(rowTracks, rowTracks.Count - 1, stepY) + rowTracks[^1].Base;
         }
 
+        if (placed)
+        {
+            Lines(plan.ColumnLines, columnTracks, offsetX, stepX);
+            Lines(plan.RowLines, rowTracks, offsetY, stepY);
+        }
+
         plan.Items.AddRange(items);
         return plan;
+    }
+
+    /// <summary>
+    /// Writes where each line of one axis stands: the edge of every track in order and then the edge the
+    /// last one ends at, which is the axis's last line.
+    /// </summary>
+    private static void Lines(List<Double> target, List<Track> tracks, Double offset, Double step)
+    {
+        for (var index = 0; index < tracks.Count; index++)
+        {
+            target.Add(offset + Prefix(tracks, index, step));
+        }
+
+        if (tracks.Count > 0)
+        {
+            target.Add(offset + Prefix(tracks, tracks.Count - 1, step) + tracks[^1].Base);
+        }
+    }
+
+    /// <summary>Gets whether the container has a child that its placement should position an offset from.</summary>
+    private static Boolean HasOutOfFlowChild(Box box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.IsBlockLevel && PositionedLayout.IsOutOfFlow(child))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -1634,6 +1786,17 @@ internal sealed class GridFormattingContext
 
         /// <summary>Gets the room between adjacent row tracks, in the content box's coordinates.</summary>
         public List<TrackGap> RowGaps { get; } = new();
+
+        /// <summary>
+        /// Gets where each column line stands, from the content box's start, the last of them at the end
+        /// of the last track. Only a container with an out-of-flow child is asked for them: what reads a
+        /// line's place is an absolutely positioned child's own placement, and a grid of ten thousand
+        /// tracks costs ten thousand positions to describe.
+        /// </summary>
+        public List<Double> ColumnLines { get; } = new();
+
+        /// <inheritdoc cref="ColumnLines"/>
+        public List<Double> RowLines { get; } = new();
 
         public List<GridCell> Items { get; } = new();
     }

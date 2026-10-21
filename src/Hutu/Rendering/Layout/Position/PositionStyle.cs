@@ -62,6 +62,9 @@ internal readonly struct PositionStyle
     /// <summary>Gets whether the box is removed from normal flow (<c>absolute</c> or <c>fixed</c>).</summary>
     public Boolean IsOutOfFlow => Position is PositionMode.Absolute or PositionMode.Fixed;
 
+    /// <summary>Gets whether the box is offset from a containing block of its own, rather than the viewport.</summary>
+    public Boolean IsAbsolute => Position == PositionMode.Absolute;
+
     /// <summary>
     /// What a box that says nothing about positioning is: in flow, at the place the flow gives it, with
     /// no edge set and no stacking level of its own.
