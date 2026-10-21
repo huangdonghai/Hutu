@@ -201,7 +201,7 @@ public sealed class SkiaPaintExecutor
                     break;
 
                 case BackgroundImageCommand background:
-                    _images?.DrawBackground(canvas, background.Layer, ToRect(background.Bounds), background.Radii);
+                    _images?.DrawBackground(canvas, background.Layer, ToRect(background.Placement), ToRect(background.Bounds), background.Radii);
                     break;
 
                 case LinearGradientCommand gradient:
@@ -315,8 +315,8 @@ public sealed class SkiaPaintExecutor
     /// <summary>
     /// Draws one shadow of a box, which is the same operation read from the two opposite ends: an outer one
     /// fills the shape it was cast from and cuts the box out of it, an inner one fills the box and cuts the
-    /// shape out of that. Either cut has to happen inside a layer of its own, or the same
-    /// <see cref="SKBlendMode.Clear"/> that takes the shadow off the box would take the page off with it.
+    /// shape out of that. Either cut has to happen inside a layer of its own, or the mode that takes the
+    /// shadow off the box would take the page off with it.
     /// </summary>
     /// <remarks>
     /// The blur is a Gaussian whose standard deviation is half the radius the declaration named, which is
@@ -337,7 +337,11 @@ public sealed class SkiaPaintExecutor
             IsAntialias = true,
         };
 
-        using var cut = new SKPaint { BlendMode = SKBlendMode.Clear, IsAntialias = true };
+        // The cut is a `DstOut` rather than a `Clear`: the shape being taken out is blurred, and Skia applies
+        // a filter over the whole bounds it is given, which a `Clear` would then erase to nothing - the box
+        // left with no shadow at all, and no fill either. `DstOut` takes off only as much as the shape
+        // leaves behind, which is the softer answer the blur asks for.
+        using var cut = new SKPaint { BlendMode = SKBlendMode.DstOut, IsAntialias = true };
 
         if (command.Inset)
         {
@@ -1637,7 +1641,7 @@ public sealed class SkiaPaintExecutor
                 break;
 
             case BackgroundImageCommand background:
-                _images?.DrawBackground(canvas, background.Layer, ToRect(background.Bounds), background.Radii);
+                _images?.DrawBackground(canvas, background.Layer, ToRect(background.Placement), ToRect(background.Bounds), background.Radii);
                 break;
         }
     }

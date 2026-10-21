@@ -233,16 +233,27 @@ public sealed class BoxShadowCommand : PaintCommand
 /// Draws one background image layer. A background brings its own size, position and repeat rules,
 /// which is a different placement model from <c>object-fit</c>, so it carries the parsed layer.
 /// </summary>
+/// <remarks>
+/// The two areas are apart because CSS keeps them apart: <see cref="PaintCommand.Bounds"/> is the area
+/// the layer is painted over and clipped to, while <see cref="Placement"/> is the box the image is sized
+/// and stood against. For a box they are the same rectangle, and only the background the canvas wears
+/// makes them differ - where the picture covers the whole surface while the root's own box still decides
+/// where the first tile begins (CSS Backgrounds 3 §2.4, §2.11.1).
+/// </remarks>
 public sealed class BackgroundImageCommand : PaintCommand
 {
-    internal BackgroundImageCommand(Rect bounds, BackgroundLayer layer, CornerRadii radii)
+    internal BackgroundImageCommand(Rect bounds, Rect placement, BackgroundLayer layer, CornerRadii radii)
         : base(bounds)
     {
+        Placement = placement;
         Layer = layer;
         Radii = radii;
     }
 
     public BackgroundLayer Layer { get; }
+
+    /// <summary>Gets the area the image is sized and placed against.</summary>
+    public Rect Placement { get; }
 
     /// <summary>Gets the corner radii of the painted area.</summary>
     public CornerRadii Radii { get; }
@@ -254,10 +265,16 @@ public sealed class BackgroundImageCommand : PaintCommand
 /// repeats from.
 /// </summary>
 /// <remarks>
+/// <see cref="PaintCommand.Bounds"/> is the area the layer is painted over and clipped to - the box's
+/// background positioning area as a rule, and the whole canvas for the background the canvas wears - while
+/// <see cref="Tile"/> is where the position stood the first copy of it, which is always settled against the
+/// box the declaration was written on.
+/// <para>
 /// A gradient carries no intrinsic size, so the tile is settled entirely by the declaration and is
 /// therefore the core's to work out (CSS Images 3 §4.1.3); the repeating of it across the area is left
 /// to the backend, which is the one that draws, because a hairline band tiled across a wide box is
 /// thousands of tiles and not thousands of commands.
+/// </para>
 /// </remarks>
 public sealed class LinearGradientCommand : PaintCommand
 {

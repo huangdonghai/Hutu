@@ -15,13 +15,22 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 internal readonly struct ContainStyle
 {
-    internal ContainStyle(Boolean inline, Boolean block, StyleLength? width, StyleLength? height)
+    internal ContainStyle(Boolean inline, Boolean block, StyleLength? width, StyleLength? height, Boolean stated)
     {
         Inline = inline;
         Block = block;
         Width = width;
         Height = height;
+        Stated = stated;
     }
+
+    /// <summary>
+    /// Gets whether the box asks for any containment at all, of whichever kind. Only the two size axes
+    /// reach the layout, but the canvas background reads the whole answer: CSS Backgrounds 3 §2.11.2's note
+    /// says a body with containment has no background to hand to the canvas, and the containment that stops
+    /// the handing is any of it - paint, layout, style or size - not only the size the layout contains.
+    /// </summary>
+    public Boolean Stated { get; }
 
     /// <summary>Gets whether the box's inline size comes from its stated intrinsic size.</summary>
     public Boolean Inline { get; }
@@ -66,7 +75,12 @@ internal readonly struct ContainStyle
             size || Has(contain!, "inline-size"),
             size || Has(contain!, "block-size"),
             stated.Count > 0 ? stated[0] : LengthOf(find("contain-intrinsic-width"), dimensions, font),
-            stated.Count > 1 ? stated[1] : stated.Count > 0 ? stated[0] : LengthOf(find("contain-intrinsic-height"), dimensions, font));
+            stated.Count > 1 ? stated[1] : stated.Count > 0 ? stated[0] : LengthOf(find("contain-intrinsic-height"), dimensions, font),
+            // Any containment at all, not only the axes the layout contains: the canvas background asks the
+            // whole question - §2.11.2's note says containment disables the body's special handling, whether
+            // the containment is of paint, layout, style or size - and `none` is the only answer that says
+            // nothing.
+            !Has(contain!, "none"));
     }
 
     private static Boolean Has(String text, String keyword) =>

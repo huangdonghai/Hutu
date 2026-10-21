@@ -1529,6 +1529,49 @@ public sealed class SkiaRenderingTests
     }
 
     /// <summary>
+    /// The background handed to the canvas reaches every edge of the picture, including below a document
+    /// shorter than the window - which is the whole difference between painting a surface and painting a box.
+    /// </summary>
+    [Test]
+    public async Task TheCanvasColourReachesEveryCornerOfThePicture()
+    {
+        var green = new SKColor(0, 128, 0);
+        using var picture = await Picture("<style>body{background-color:#008000}</style><p>x</p>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(picture.GetPixel(4, 4), Is.EqualTo(green), "the top of the page is the canvas, coloured");
+            Assert.That(picture.GetPixel(199, 159), Is.EqualTo(green), "and so is the page under a document shorter than the window");
+        });
+    }
+
+    /// <summary>
+    /// A spread wider than the box leaves no shape to take out of it, so a blurred inner shadow fills the
+    /// whole of the box with its colour - and the blur is on the shape that is missing, not on the box's own
+    /// edge (§6.1.1). The band beside it is the same drawing with a shape that does exist: a soft edge
+    /// running in from the box's own, and the middle the shape leaves untouched.
+    /// </summary>
+    [Test]
+    public async Task ABlurredInnerShadowFillsTheBoxWhoseShapeTheSpreadLeftWithNothing()
+    {
+        var lime = new SKColor(0, 255, 0);
+
+        using var filled = await Picture(
+            "<style>#wide{position:absolute;top:8px;left:8px;width:120px;height:120px;background:black;" +
+            "box-shadow:inset 0 0 20px 200px lime}</style><div id='wide'></div>");
+        using var band = await Picture(
+            "<style>#thin{position:absolute;top:8px;left:8px;width:120px;height:120px;background:black;" +
+            "box-shadow:inset 0 0 20px 0 lime}</style><div id='thin'></div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(filled.GetPixel(68, 68), Is.EqualTo(lime), "the box the shape cannot fit is shadow all over");
+            Assert.That(band.GetPixel(68, 68), Is.EqualTo(SKColors.Black), "the middle a shape does cover is left to the box");
+            Assert.That(band.GetPixel(10, 68).Green, Is.GreaterThan(40), "and the band beside its edge runs out soft");
+        });
+    }
+
+    /// <summary>
     /// Draws a page through the real backend and hands over the picture it came to, in the window the tests
     /// that read it are written against.
     /// </summary>

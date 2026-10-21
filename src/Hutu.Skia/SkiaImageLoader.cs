@@ -144,7 +144,19 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
     /// position and repeat - which is a different model from <c>object-fit</c>, so this does not go
     /// through <see cref="Draw"/>.
     /// </summary>
-    public void DrawBackground(SKCanvas canvas, BackgroundLayer layer, SKRect area, CornerRadii radii)
+    /// <remarks>
+    /// The two areas are the two CSS keeps apart: the image is sized and stood within
+    /// <paramref name="area"/>, the background positioning area, and what reaches beyond it is kept or cut
+    /// by <paramref name="clip"/>, the painting area. For a box they are the one rectangle; for the
+    /// background the canvas wears they are not, because the picture covers the whole surface while the
+    /// root's box still decides where the first tile begins (CSS Backgrounds 3 §2.4, §2.11.1).
+    /// </remarks>
+    public void DrawBackground(
+        SKCanvas canvas,
+        BackgroundLayer layer,
+        SKRect area,
+        SKRect clip,
+        CornerRadii radii)
     {
         if (layer.Url is not { Length: > 0 } url)
         {
@@ -156,7 +168,7 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
             return;
         }
 
-        if (area.Width <= 0 || area.Height <= 0)
+        if (area.Width <= 0 || area.Height <= 0 || clip.Width <= 0 || clip.Height <= 0)
         {
             return;
         }
@@ -172,14 +184,14 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
         var top = area.Top + (Single)layer.PositionY.Resolve(area.Height - tile.Height);
 
         canvas.Save();
-        SkiaRounded.Clip(canvas, area, radii);
+        SkiaRounded.Clip(canvas, clip, radii);
 
         // Each axis tiles on its own: `repeat-x` runs the tile across and leaves one row of it where
         // the position puts it, which is what a one-pixel column is repeated for.
         var firstX = layer.RepeatX ? FirstTile(left, area.Left, tile.Width) : left;
-        var lastX = layer.RepeatX ? area.Right : left + tile.Width;
+        var lastX = layer.RepeatX ? clip.Right : left + tile.Width;
         var firstY = layer.RepeatY ? FirstTile(top, area.Top, tile.Height) : top;
-        var lastY = layer.RepeatY ? area.Bottom : top + tile.Height;
+        var lastY = layer.RepeatY ? clip.Bottom : top + tile.Height;
 
         for (var y = firstY; y < lastY; y += tile.Height)
         {

@@ -1,5 +1,6 @@
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Values;
+using Hutu.Rendering.Boxes;
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
@@ -49,8 +50,134 @@ internal sealed class Painter
             Bounds = new Rect(0, 0, layout.Width, layout.Height),
         };
 
+        // The canvas is the surface the document is drawn on and no element owns it, so CSS Backgrounds 3
+        // §2.11 gives its background to the root element - and to the body under it where the root says
+        // nothing of a background at all. The box that hands its background over then paints none of its
+        // own, and what is handed over covers the whole canvas while its layers are still placed against the
+        // root's box (§2.11.1).
+        var donor = CanvasDonor(layout.Root);
+
+        _canvas = donor?.Source;
+
+        if (donor is { } box)
+        {
+            PaintCanvas(box, layout.Root, list.Bounds, list.Commands);
+        }
+
         PaintBox(layout.Root, list, list.Commands);
+
+        _canvas = null;
         return list;
+    }
+
+    /// <summary>The box whose background the canvas wears, and which therefore keeps none of its own.</summary>
+    private Box? _canvas;
+
+    /// <summary>
+    /// Gets the box whose background the canvas is painted with: the root's own when the root states a
+    /// background, and otherwise the body's, which §2.11.2 hands to the canvas and takes away from the body's
+    /// own box.
+    /// </summary>
+    /// <remarks>
+    /// A body with containment hands nothing over - the note to that chapter says containment disables the
+    /// special handling of the body element, and a root that is contained gives the same answer. A body that
+    /// generated no box at all, being hidden or <c>display: contents</c>, has no background to hand over
+    /// either, and a root that generated none leaves the document with no canvas at all (§2.11).
+    /// </remarks>
+    private static LayoutBox? CanvasDonor(LayoutBox root)
+    {
+        var style = root.Source.Style;
+
+        if (StatesBackground(style))
+        {
+            return root;
+        }
+
+        if (style.Contain.Stated)
+        {
+            return null;
+        }
+
+        var body = BodyUnder(root);
+
+        return body is not null &&
+               !body.Source.Style.Contain.Stated &&
+               StatesBackground(body.Source.Style)
+            ? body
+            : null;
+    }
+
+    /// <summary>
+    /// Gets the root's body box - the first child of the root that is an HTML body - or null where the
+    /// document has none. The body is found by the element rather than by the shape of the box because that
+    /// is what the chapter names: it is the first <c>BODY</c> child of the root element. A body that left no
+    /// box behind - being hidden, or set out of the box tree altogether - has no background to hand over,
+    /// which is the same answer as having written none (§2.11).
+    /// </summary>
+    private static LayoutBox? BodyUnder(LayoutBox root)
+    {
+        foreach (var child in root.Children)
+        {
+            if (child.Source.Element?.LocalName.Equals("body", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return child;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets whether a style states a background the canvas could be painted with: a colour with any ink in
+    /// it, or a layer naming an image or a gradient. §2.11.2 asks exactly this of the root - the hand over
+    /// happens where its <c>background-image</c> is <c>none</c> and its <c>background-color</c> is
+    /// transparent - and a colour with no ink in it is the same nothing as the absence of one.
+    /// </summary>
+    private static Boolean StatesBackground(ComputedStyle style) =>
+        style.BackgroundColor is { } colour && colour.A != 0 ||
+        style.Backgrounds.Any(layer => layer.Url is { Length: > 0 } || layer.Gradient is not null);
+
+    /// <summary>
+    /// Paints the canvas with the background a box handed over. The area is the whole canvas and the corners
+    /// are square, since the surface has no box of its own to round; the layers inside it are placed and
+    /// sized against the root's border box as if the root were the only thing painted, which is how a margin
+    /// on the root moves where a background begins without narrowing what it covers (§2.11.1).
+    /// </summary>
+    private static void PaintCanvas(LayoutBox donor, LayoutBox root, Rect canvas, List<PaintCommand> target)
+    {
+        var style = donor.Source.Style;
+        var placement = root.BorderBox;
+
+        // Gathered last-first for the same reason a box gathers its own: the first layer the page wrote is
+        // the one on top, and the canvas is painted before anything else on it.
+        var layers = new List<PaintCommand>();
+
+        if (style.BackgroundColor is { } colour && colour.A != 0)
+        {
+            layers.Add(new FillCommand(canvas, ToArgb(colour), CornerRadii.None));
+        }
+
+        var declared = style.Backgrounds;
+
+        for (var index = declared.Count - 1; index >= 0; index--)
+        {
+            var layer = declared[index];
+
+            if (layer.Gradient is { } gradient)
+            {
+                var (tile, repeatX, repeatY) = GradientTile(layer, placement);
+                var length = LinearGradientSpec.LineLength(tile.Width, tile.Height, gradient.AngleDegrees);
+
+                layers.Add(new LinearGradientCommand(
+                    canvas, tile, repeatX, repeatY, gradient.AngleDegrees, gradient.StopsAt(length), CornerRadii.None));
+            }
+            else if (layer.Url is { Length: > 0 })
+            {
+                layers.Add(new BackgroundImageCommand(canvas, placement, layer, CornerRadii.None));
+            }
+        }
+
+        target.AddRange(layers);
     }
 
     /// <summary>One overflow clip standing around the place a box was found, kept so it can be put
@@ -562,8 +689,16 @@ internal sealed class Painter
     /// paints the first declared layer on top, so the layers are emitted last-first and the colour
     /// always ends up underneath all of them.
     /// </summary>
-    private static void PaintBackground(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
+    private void PaintBackground(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
     {
+        // The box whose background the canvas wears paints none of its own: §2.11 hands that background to
+        // the surface, and the chapter says so twice - the root "does not paint this background again", and
+        // the used values of a body that handed its over are the initial ones.
+        if (ReferenceEquals(box.Source, _canvas))
+        {
+            return;
+        }
+
         // The radii follow the area: the border box rounds off along the outer curve, the padding box
         // along the one the border leaves behind, and the content box along the one the padding adds.
         var area = box.BorderBox;
@@ -608,7 +743,7 @@ internal sealed class Painter
             }
             else if (layer.Url is { Length: > 0 })
             {
-                layers.Add(new BackgroundImageCommand(area, layer, radii));
+                layers.Add(new BackgroundImageCommand(area, area, layer, radii));
             }
         }
 
