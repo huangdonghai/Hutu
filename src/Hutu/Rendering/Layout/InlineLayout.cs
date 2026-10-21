@@ -349,14 +349,13 @@ internal sealed class InlineLayout
             // per chunk would be characters copied for a number.
             var source = item.Text!;
 
-            // The characters the boundary stands after, kept across the chunks of this one item: where the
+            // The character the boundary stands after, kept across the chunks of this one item: where the
             // text of another element begins, the neighbourhood of the two is what the line will decide,
-            // and the walk holds no answer for it. One is the last unit of the character before, which is
-            // what the rules ask for, and the other its first, which is what a mark is read as.
+            // and the walk holds no answer for it. It is the last unit of the character before, which is
+            // what the rules ask for - a mark written after it is read as that character's own.
             var before = -1;
-            var held = -1;
 
-            foreach (var chunk in TextChunker.Ranges(source, item.Style.KeepsWordsWhole))
+            foreach (var chunk in TextChunker.Ranges(source, item.Style.WordBreakingRules))
             {
                 // A tab asks the same question here as on a line: how far the content has run decides
                 // where the next stop is.
@@ -397,16 +396,14 @@ internal sealed class InlineLayout
                         // Which side of the boundary the segment ends at: a value that sets the rules aside
                         // answers for every boundary it meets, wherever the character came from; the mode
                         // answers after every space it keeps, its own or another separator; and
-                        // `break-all`, which speaks of letters, leaves the rules standing - both the rules
-                        // themselves and the neighbourhood the line will settle when the piece was written
-                        // on another element.
+                        // `word-break` leaves the rules standing - both the rules themselves and the
+                        // neighbourhood the line will settle when the piece was written on another element.
                         var ends = item.Style.BreaksAnywhere || item.Style.CountsLongWordBreaks
                             ? true
                             : standing
                                 ? item.Style.WrapsBeforeSpaces
                                 : before >= 0 &&
-                                    (LineBreaks.MayBreak(source, before, at, item.Style.KeepsWordsWhole) ||
-                                        LineBreaks.MayBreakBetweenLetters(source, held, at));
+                                    LineBreaks.MayBreak(source, before, at, item.Style.WordBreakingRules);
 
                         if (ends)
                         {
@@ -417,7 +414,6 @@ internal sealed class InlineLayout
                         unbreakable += space
                             ? WhiteSpaceWidth(item.Style, source, at, units, maxContent, flow)
                             : Measure(item.Style, source, at, units, flow);
-                        held = at;
                         before = at + units - 1;
                         at += units;
                     }
@@ -1517,7 +1513,7 @@ internal sealed class InlineLayout
             var itemFlow = item.Box.Flow;
             var font = item.Style.GetFont();
 
-            foreach (var chunk in TextChunker.Ranges(item.Text!, item.Style.KeepsWordsWhole))
+            foreach (var chunk in TextChunker.Ranges(item.Text!, item.Style.WordBreakingRules))
             {
                 foreach (var run in new OrientedPieces(item.Text!, chunk.Start, chunk.Length, itemFlow))
                 {
@@ -1617,7 +1613,7 @@ internal sealed class InlineLayout
                                     (!item.Style.BreaksBetweenLetters ||
                                         item.Style.BreaksAnywhere ||
                                         item.Style.CountsLongWordBreaks ||
-                                        LineBreaks.MayBreakBetweenLetters(run.Source, previous, at)));
+                                        LineBreaks.MayBreak(run.Source, previous, at, item.Style.WordBreakingRules)));
 
                         // A run that opens with content asks for the room the whole of it needs before it is
                         // stepped: the opportunity inside it is what the line falls back on once the run

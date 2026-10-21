@@ -43,12 +43,13 @@ internal readonly struct ChunkRange
     /// the chunk after it. A string is made where one is really asked for - by the measurer, and by the
     /// layout node the painter draws text out of.
     /// </remarks>
-    /// <param name="keepAll">
-    /// Whether the words of this text are to be held together (CSS Text 3 §5.6): a chunk is what a line
-    /// may not be ended inside, so the opportunity the property sets aside has to be set aside here too
-    /// rather than only where a line is measured.
+    /// <param name="word">
+    /// What the text asks of the breaks inside its words, which decides how the letters are classed: a
+    /// chunk is what a line may not be ended inside, so a property that moves those boundaries has to be
+    /// answered here and not only where a line is measured (CSS Text 3 §5.6).
     /// </param>
-    public static ChunkRanges Ranges(String text, Boolean keepAll = false) => new(text, keepAll);
+    public static ChunkRanges Ranges(String text, LineBreaks.WordBreaking word = LineBreaks.WordBreaking.Normal)
+        => new(text, word);
 
     public static IEnumerable<String> Chunks(String text)
     {
@@ -314,29 +315,29 @@ internal readonly struct ChunkRanges
     {
         private readonly String _text;
 
-        private readonly Boolean _keepAll;
+        private readonly LineBreaks.WordBreaking _word;
 
-        public ChunkRanges(String text, Boolean keepAll)
+        public ChunkRanges(String text, LineBreaks.WordBreaking word)
         {
             _text = text;
-            _keepAll = keepAll;
+            _word = word;
         }
 
-        public Enumerator GetEnumerator() => new(_text, _keepAll);
+        public Enumerator GetEnumerator() => new(_text, _word);
 
         /// <summary>The walk itself: the same rule <see cref="Chunks"/> applies, over indices.</summary>
 internal struct Enumerator
         {
             private readonly String _text;
 
-            private readonly Boolean _keepAll;
+            private readonly LineBreaks.WordBreaking _word;
 
             private Int32 _index;
 
-            public Enumerator(String text, Boolean keepAll)
+            public Enumerator(String text, LineBreaks.WordBreaking word)
             {
                 _text = text;
-                _keepAll = keepAll;
+                _word = word;
                 _index = 0;
                 Current = default;
             }
@@ -381,7 +382,7 @@ internal struct Enumerator
 
                     if (next >= text.Length ||
                         IsCollapsible(text[next]) ||
-                        (next > start && LineBreaks.MayBreak(text, index, next, _keepAll)))
+                        (next > start && LineBreaks.MayBreak(text, index, next, _word)))
                     {
                         _index = next;
                         Current = new ChunkRange(start, next - start);

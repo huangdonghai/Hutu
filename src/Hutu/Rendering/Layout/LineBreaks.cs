@@ -37,16 +37,36 @@ namespace Hutu.Rendering.Layout;
 internal static class LineBreaks
 {
     /// <summary>
+    /// What the page asked of the breaks inside its words, which the Unicode rules are read through.
+    /// </summary>
+    /// <remarks>
+    /// The two values of <c>word-break</c> work on the same pair of characters from opposite ends:
+    /// <c>break-all</c> takes the letter units and reads them as ideographic, so the rules run on their
+    /// neighbourhood as they would on a run of CJK text; <c>keep-all</c> sets the break those rules give
+    /// between two such units aside (CSS Text 3 §5.6).
+    /// </remarks>
+    internal enum WordBreaking : Byte
+    {
+        /// <summary>Nothing was asked: the rules stand as they are.</summary>
+        Normal,
+
+        /// <summary><c>word-break: break-all</c> - the letter units are read as ideographic.</summary>
+        BreakAll,
+
+        /// <summary><c>word-break: keep-all</c> - no implicit break between two letter units.</summary>
+        KeepAll,
+    }
+    /// <summary>
     /// Gets whether a line may end between the code point at <paramref name="left"/> and the one at
     /// <paramref name="right"/>, which is the next code point in the string.
     /// </summary>
-    /// <param name="keepAll">
-    /// Whether the page asked for its words to be kept whole, which sets the opportunity LB31 gives
-    /// between two of the letter units aside (CSS Text 3 §5.6).
+    /// <param name="word">
+    /// What the page asked of the breaks inside its words, which decides how the letters themselves are
+    /// classed (CSS Text 3 §5.6).
     /// </param>
-    public static Boolean MayBreak(String text, Int32 left, Int32 right, Boolean keepAll = false)
+    public static Boolean MayBreak(String text, Int32 left, Int32 right, WordBreaking word = WordBreaking.Normal)
     {
-        var after = ClassOf(TextChunker.CodePointAt(text, right));
+        var after = ClassOf(TextChunker.CodePointAt(text, right), word);
 
         // LB9, LB10: a mark does not begin a line, whatever it would have stood for on its own.
         if (after is BreakClass.Cm or BreakClass.Zwj)
@@ -57,14 +77,14 @@ internal static class LineBreaks
         // LB8a, LB9: a joiner or a mark written after a character is written onto it, and nothing may
         // come between the two. A mark with a character before it in the same piece is read as that
         // character, which is what lets a line end after an accented letter and not inside it.
-        var own = ClassOf(TextChunker.CodePointAt(text, left));
+        var own = ClassOf(TextChunker.CodePointAt(text, left), word);
 
         if (own is BreakClass.Zwj)
         {
             return false;
         }
 
-        var before = own is BreakClass.Cm ? Base(text, left) : own;
+        var before = own is BreakClass.Cm ? Base(text, left, word) : own;
 
         // LB11: a word joiner holds both sides of itself.
         if (before is BreakClass.Wj || after is BreakClass.Wj)
@@ -106,7 +126,7 @@ internal static class LineBreaks
         }
 
         // LB20a: a hyphen that begins a word begins it, and does not break after itself.
-        if (before is BreakClass.Hy or BreakClass.Hh && after is BreakClass.Al && StartsWord(text, left))
+        if (before is BreakClass.Hy or BreakClass.Hh && after is BreakClass.Al && StartsWord(text, left, word))
         {
             return false;
         }
@@ -117,7 +137,7 @@ internal static class LineBreaks
             return false;
         }
 
-        if (EndsNumber(text, left, before))
+        if (EndsNumber(text, left, before, word))
         {
             // LB23, LB25: a number is one thing - the digits, the letter stuck to the end of them, the
             // sign that counts them and the bracket that closes them.
@@ -157,7 +177,7 @@ internal static class LineBreaks
         }
 
         // LB25 again, from the other side: a sign before a bracketed number holds to the bracket.
-        if (before is BreakClass.Pr or BreakClass.Po && after is BreakClass.Op && StartsNumber(text, right))
+        if (before is BreakClass.Pr or BreakClass.Po && after is BreakClass.Op && StartsNumber(text, right, word))
         {
             return false;
         }
@@ -165,7 +185,7 @@ internal static class LineBreaks
         // LB31: everywhere else a line may end - except that a page asking for its words to be kept
         // whole sets exactly this opportunity aside between two of the letter units, which is what makes
         // a run of CJK characters one word rather than a word at every character.
-        return !keepAll || !HoldsTogether(before, after);
+        return word is not WordBreaking.KeepAll || !HoldsTogether(before, after);
     }
 
     /// <summary>
@@ -181,32 +201,26 @@ internal static class LineBreaks
         classification is BreakClass.Al or BreakClass.Nu or BreakClass.Id;
 
     /// <summary>
-    /// Gets whether a line may end between the two characters the indices stand at where the script is set
-    /// to break between letters. The opportunity <c>word-break: break-all</c> asks for stands between two
-    /// of the typographic letter units - the alphabetic, the numeric and the ideographic classes - and the
-    /// property says of itself that it leaves the rules governing the opportunities made by white space and
-    /// by punctuation standing (CSS Text 3 §5.6, [UAX14]). Chrome is measured to keep to that:
-    /// an eleven-letter run fills its line to the character, while "AB.," breaks after the A and nowhere
-    /// near the comma.
+    /// Gets the line breaking class of a code point, resolving the two the table leaves out and reading
+    /// the letters as the page asked them to be read.
     /// </summary>
-    /// <param name="left">An index of the character the boundary stands after.</param>
-    /// <param name="right">An index of the character the boundary stands before.</param>
-    public static Boolean MayBreakBetweenLetters(String text, Int32 left, Int32 right) =>
-        IsLetterUnit(text, left) && IsLetterUnit(text, right);
-
-    /// <summary>Gets whether the character at an index is one of the letter units the property counts.</summary>
-    private static Boolean IsLetterUnit(String text, Int32 index) =>
-        ClassOf(TextChunker.CodePointAt(text, index))
-            is BreakClass.Al or BreakClass.Nu or BreakClass.Id;
-
-    /// <summary>Gets the line breaking class of a code point, resolving the two the table leaves out.</summary>
-    private static BreakClass ClassOf(Int32 codePoint)
+    /// <remarks>
+    /// <c>break-all</c> is the property's own mechanism rather than a licence laid on top of the rules:
+    /// the typographic letter units - and the numeric, alphabetic and Southeast Asian classes, which this
+    /// table reads as alphabetic where it does not name them - are treated as ideographic. The rules that
+    /// speak of the alphabetic class therefore step back from them, which is what gives the break between
+    /// two letters, and the ones that forbid a break before a closing mark or after an opening one hold
+    /// over them, which is what withholds it (CSS Text 3 §5.6, [UAX14]). Chrome is measured to keep to
+    /// exactly that: an eleven-letter run fills its line to the character, while "AB.," breaks after the
+    /// A and nowhere near the comma.
+    /// </remarks>
+    private static BreakClass ClassOf(Int32 codePoint, WordBreaking word)
     {
         var named = LineBreakTable.Of(codePoint);
 
         if (named is not null)
         {
-            return named.Value;
+            return Held(named.Value, word);
         }
 
         // LB1: the marks and the controls the table does not name are marks, and a mark is its base
@@ -217,8 +231,14 @@ internal static class LineBreaks
             return BreakClass.Cm;
         }
 
-        return TextChunker.IsCjk(codePoint) ? BreakClass.Id : BreakClass.Al;
+        return Held(TextChunker.IsCjk(codePoint) ? BreakClass.Id : BreakClass.Al, word);
     }
+
+    /// <summary>Gets the class a letter unit stands for, which is its own unless the page broke within words.</summary>
+    private static BreakClass Held(BreakClass classification, WordBreaking word) =>
+        word is WordBreaking.BreakAll && classification is BreakClass.Al or BreakClass.Nu
+            ? BreakClass.Id
+            : classification;
 
     private static Boolean IsMark(Char character) =>
         Char.GetUnicodeCategory(character) is
@@ -229,13 +249,13 @@ internal static class LineBreaks
     /// Gets the class of the character a mark stands on, which is the class the sequence of the two is
     /// read as (LB9).
     /// </summary>
-    private static BreakClass Base(String text, Int32 index)
+    private static BreakClass Base(String text, Int32 index, WordBreaking word)
     {
         var start = index;
 
         while (start > 0)
         {
-            var classification = ClassOf(TextChunker.CodePointAt(text, start));
+            var classification = ClassOf(TextChunker.CodePointAt(text, start), word);
 
             if (classification is not (BreakClass.Cm or BreakClass.Zwj))
             {
@@ -254,11 +274,11 @@ internal static class LineBreaks
             start -= PreviousLength(text, start);
         }
 
-        return ClassOf(TextChunker.CodePointAt(text, start));
+        return ClassOf(TextChunker.CodePointAt(text, start), word);
     }
 
     /// <summary>Gets whether a number - digits, and the marks written between digits - ends here.</summary>
-    private static Boolean EndsNumber(String text, Int32 index, BreakClass at)
+    private static Boolean EndsNumber(String text, Int32 index, BreakClass at, WordBreaking word)
     {
         // A digit is a number whole by itself; the rest of the question is whether the marks behind it
         // are the ones a number is written between - and a character with nothing behind it, the first
@@ -285,7 +305,7 @@ internal static class LineBreaks
         while (walk > 0)
         {
             var length = PreviousLength(text, walk);
-            var previous = ClassOf(CodePointBefore(text, walk));
+            var previous = ClassOf(CodePointBefore(text, walk), word);
 
             if (previous is BreakClass.Nu)
             {
@@ -304,9 +324,9 @@ internal static class LineBreaks
     }
 
     /// <summary>Gets whether an opening bracket at an index is the one a number is written inside.</summary>
-    private static Boolean StartsNumber(String text, Int32 index)
+    private static Boolean StartsNumber(String text, Int32 index, WordBreaking word)
     {
-        if (ClassOf(TextChunker.CodePointAt(text, index)) is not BreakClass.Op)
+        if (ClassOf(TextChunker.CodePointAt(text, index), word) is not BreakClass.Op)
         {
             return false;
         }
@@ -314,19 +334,19 @@ internal static class LineBreaks
         var after = index + TextChunker.UnitsAt(text, index);
 
         while (after < text.Length &&
-               ClassOf(TextChunker.CodePointAt(text, after)) is BreakClass.Op or BreakClass.Sy or BreakClass.Is)
+               ClassOf(TextChunker.CodePointAt(text, after), word) is BreakClass.Op or BreakClass.Sy or BreakClass.Is)
         {
             after += TextChunker.UnitsAt(text, after);
         }
 
-        return after < text.Length && ClassOf(TextChunker.CodePointAt(text, after)) is BreakClass.Nu;
+        return after < text.Length && ClassOf(TextChunker.CodePointAt(text, after), word) is BreakClass.Nu;
     }
 
     /// <summary>
     /// Gets whether the character before a position begins a word, which is what makes a leading hyphen a
     /// minus sign rather than a place to break.
     /// </summary>
-    private static Boolean StartsWord(String text, Int32 index)
+    private static Boolean StartsWord(String text, Int32 index, WordBreaking word)
     {
         if (index == 0)
         {
@@ -338,7 +358,7 @@ internal static class LineBreaks
         // A space is where the document already broke the word, and an opening mark is what a word is
         // written inside of, as "(self-" reads.
         return TextChunker.IsCollapsible((Char)before) ||
-               ClassOf(before) is BreakClass.Op or BreakClass.Gl;
+               ClassOf(before, word) is BreakClass.Op or BreakClass.Gl;
     }
 
     /// <summary>Gets the code point standing before an index, joining a pair into the one it stands for.</summary>

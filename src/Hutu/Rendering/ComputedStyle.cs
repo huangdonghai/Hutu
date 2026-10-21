@@ -2782,6 +2782,24 @@ internal readonly struct ComputedStyle
         WordBreak.Equals("keep-all", StringComparison.OrdinalIgnoreCase) && !BreaksAnywhere;
 
     /// <summary>
+    /// Gets what this element's text asks of the breaks inside its words, which is how the line-breaking
+    /// rules are to be read (CSS Text 3 §5.6).
+    /// </summary>
+    /// <remarks>
+    /// <c>line-break: anywhere</c> answers first and alone: it sets the rules aside rather than trimming
+    /// the opportunities they give, so no value of <c>word-break</c> has anything left to say about where
+    /// a line may end.
+    /// </remarks>
+    public LineBreaks.WordBreaking WordBreakingRules =>
+        BreaksAnywhere
+            ? LineBreaks.WordBreaking.Normal
+            : BreaksBetweenLetters
+                ? LineBreaks.WordBreaking.BreakAll
+                : KeepsWordsWhole
+                    ? LineBreaks.WordBreaking.KeepAll
+                    : LineBreaks.WordBreaking.Normal;
+
+    /// <summary>
     /// Gets whether a word that will not fit on a line of its own may be broken to keep it from overflowing
     /// the box (CSS Text 3 §5.5). Where this is the only licence, the word is moved to a line of its own
     /// first: the break inside it is the last resort the property names, not a filling of the room a
