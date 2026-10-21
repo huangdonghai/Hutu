@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>layout primitives, placed</title>
+<style>
+  /* The same picture with nothing to work out: the clipped box already cut to what survives its edge,
+     the far box already where right and bottom put it, the row already divided, and the two overlapping
+     boxes written in the order they have to be drawn - which is the stacking levels' answer, stated by
+     hand. */
+  html, body { margin: 0 }
+  div { position: absolute }
+
+  #field { left: 0; top: 0; width: 80px; height: 80px; background: #eeeeee }
+  #clipped { left: 20px; top: 20px; width: 60px; height: 60px; background: #ff0000 }
+  #far { left: 330px; top: 230px; width: 50px; height: 40px; background: #00ff00 }
+  #a { left: 100px; top: 250px; width: 100px; height: 30px; background: #0000ff }
+  #b { left: 200px; top: 250px; width: 100px; height: 30px; background: #ff00ff }
+  #over { left: 300px; top: 10px; width: 60px; height: 60px; background: #000000 }
+  #under { left: 320px; top: 30px; width: 60px; height: 60px; background: #ffffff }
+</style>
+<div id="field"></div>
+<div id="clipped"></div>
+<div id="far"></div>
+<div id="a"></div>
+<div id="b"></div>
+<div id="over"></div>
+<div id="under"></div>
