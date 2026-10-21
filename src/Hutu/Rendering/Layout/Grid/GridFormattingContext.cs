@@ -171,6 +171,16 @@ internal sealed class GridFormattingContext
             }
 
             var (block, standing) = OutFlowArea(child.Style.GridItem, grid, plan, paddingBox, contentX, contentY);
+
+            // A container that generates no containing block for the child lends it no area either: the
+            // child's place is then the content edges it would have stood against as the sole grid item
+            // in the grid (CSS Grid 2 §10.2), and the offsets it is given count from wherever an ancestor
+            // further up puts them.
+            if (!anchored)
+            {
+                standing = new Rect(contentX, contentY, plan.ContentWidth, plan.ContentHeight);
+            }
+
             var childContext = anchored ? context.WithAbsoluteContainingBlock(block) : context;
 
             // A box with no offsets of its own is put by its own alignment within the area it stands in,

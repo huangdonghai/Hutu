@@ -786,6 +786,29 @@ public sealed class GridLayoutTests
         Assert.That(a.BorderBox.Height, Is.EqualTo(50).Within(0.5), "normal stretches an item to its area");
     }
 
+    [Test]
+    public async Task AnAbsolutePathChildOfAnUnpositionedGridStandsInItsContentBox()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;width:300px;height:200px;padding:10px;" +
+            "grid-template-columns:100px 100px;grid-template-rows:50px 50px'>" +
+            "<div id='a' style='position:absolute;width:20px;height:20px;" +
+            "grid-column:2/3;grid-row:2/3;justify-self:end;align-self:center'>a</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        // The container is static, so it generates no containing block for the child and lends it no area
+        // either: the child stands as the sole grid item in the content box would, aligned within it
+        // (CSS Grid 2 §10.2), while its offsets - none here - would count from wherever an ancestor puts
+        // them.
+        Assert.That(a.BorderBox.X, Is.EqualTo(10 + 300 - 20).Within(0.5), "at the content box's inline end");
+        Assert.That(a.BorderBox.Y, Is.EqualTo(10 + (200 - 20) / 2).Within(0.5), "and centred along the block axis");
+    }
+
     private static LayoutBox Find(HutuViewInternal view, String id)
     {
         foreach (var node in Walk(view))
