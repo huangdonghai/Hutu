@@ -43,7 +43,12 @@ internal readonly struct ChunkRange
     /// the chunk after it. A string is made where one is really asked for - by the measurer, and by the
     /// layout node the painter draws text out of.
     /// </remarks>
-    public static ChunkRanges Ranges(String text) => new(text);
+    /// <param name="keepAll">
+    /// Whether the words of this text are to be held together (CSS Text 3 §5.6): a chunk is what a line
+    /// may not be ended inside, so the opportunity the property sets aside has to be set aside here too
+    /// rather than only where a line is measured.
+    /// </param>
+    public static ChunkRanges Ranges(String text, Boolean keepAll = false) => new(text, keepAll);
 
     public static IEnumerable<String> Chunks(String text)
     {
@@ -309,19 +314,29 @@ internal readonly struct ChunkRanges
     {
         private readonly String _text;
 
-        public ChunkRanges(String text) => _text = text;
+        private readonly Boolean _keepAll;
 
-        public Enumerator GetEnumerator() => new(_text);
+        public ChunkRanges(String text, Boolean keepAll)
+        {
+            _text = text;
+            _keepAll = keepAll;
+        }
+
+        public Enumerator GetEnumerator() => new(_text, _keepAll);
 
         /// <summary>The walk itself: the same rule <see cref="Chunks"/> applies, over indices.</summary>
 internal struct Enumerator
         {
             private readonly String _text;
+
+            private readonly Boolean _keepAll;
+
             private Int32 _index;
 
-            public Enumerator(String text)
+            public Enumerator(String text, Boolean keepAll)
             {
                 _text = text;
+                _keepAll = keepAll;
                 _index = 0;
                 Current = default;
             }
@@ -366,7 +381,7 @@ internal struct Enumerator
 
                     if (next >= text.Length ||
                         IsCollapsible(text[next]) ||
-                        (next > start && LineBreaks.MayBreak(text, index, next)))
+                        (next > start && LineBreaks.MayBreak(text, index, next, _keepAll)))
                     {
                         _index = next;
                         Current = new ChunkRange(start, next - start);

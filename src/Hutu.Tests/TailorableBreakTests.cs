@@ -224,6 +224,48 @@ public sealed class TailorableBreakTests
         Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(10), "the two stand as one piece");
     }
 
+    [Test]
+    public async Task CharactersKeptWholeRunOnTogether()
+    {
+        using var view = await Render(
+            "<style>div { width: 15px; word-break: keep-all }</style><div>汉字符文</div>");
+
+        var lines = Texts(view).ToList();
+
+        // The opportunity keep-all sets aside is the implicit one between two of the letter units, which
+        // is what a run of CJK characters is made of: the run becomes one word, and a word no line can
+        // hold is not cut by this property (CSS Text 3 §5.6).
+        Assert.That(lines, Has.Count.EqualTo(1), "the run is one word");
+        Assert.That(lines[0].Text, Is.EqualTo("汉字符文"), "and it stands whole");
+        Assert.That(lines[0].BorderBox.Width, Is.EqualTo(20), "overflowing the fifteen it was given");
+    }
+
+    [Test]
+    public async Task KeepingWordsWholeStillBreaksWhereASpaceStands()
+    {
+        using var view = await Render(
+            "<style>div { width: 15px; word-break: keep-all }</style><div>汉字 符文 字</div>");
+
+        var lines = Texts(view).ToList();
+
+        Assert.That(lines.Select(box => box.Text).ToList(), Is.EqualTo(new[] { "汉字", "符文", "字" }),
+            "the spaces go on offering the breaks, and each word fills a line");
+    }
+
+    [Test]
+    public async Task AnywhereBreaksAWordThePageAskedToKeepWhole()
+    {
+        using var view = await Render(
+            "<style>div { width: 15px; word-break: keep-all; line-break: anywhere }</style><div>汉字符文</div>");
+
+        var lines = Texts(view).ToList();
+
+        // `anywhere` is the one line-breaking setting keep-all bows to: it sets the rules themselves
+        // aside, so the breaks it gives stand even inside a word the page asked to keep whole.
+        Assert.That(lines.Select(box => box.Text).ToList(), Is.EqualTo(new[] { "汉字符", "文" }),
+            "the run is cut where the room gives out");
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

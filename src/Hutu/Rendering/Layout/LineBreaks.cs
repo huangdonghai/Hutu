@@ -40,7 +40,11 @@ internal static class LineBreaks
     /// Gets whether a line may end between the code point at <paramref name="left"/> and the one at
     /// <paramref name="right"/>, which is the next code point in the string.
     /// </summary>
-    public static Boolean MayBreak(String text, Int32 left, Int32 right)
+    /// <param name="keepAll">
+    /// Whether the page asked for its words to be kept whole, which sets the opportunity LB31 gives
+    /// between two of the letter units aside (CSS Text 3 §5.6).
+    /// </param>
+    public static Boolean MayBreak(String text, Int32 left, Int32 right, Boolean keepAll = false)
     {
         var after = ClassOf(TextChunker.CodePointAt(text, right));
 
@@ -158,9 +162,23 @@ internal static class LineBreaks
             return false;
         }
 
-        // LB31: everywhere else a line may end.
-        return true;
+        // LB31: everywhere else a line may end - except that a page asking for its words to be kept
+        // whole sets exactly this opportunity aside between two of the letter units, which is what makes
+        // a run of CJK characters one word rather than a word at every character.
+        return !keepAll || !HoldsTogether(before, after);
     }
+
+    /// <summary>
+    /// Gets whether a pair of classes is the kind <c>keep-all</c> holds: a typographic letter unit, or a
+    /// character of the numeric, alphabetic, ambiguous or ideographic class. The engine reads the
+    /// ambiguous class and the Southeast Asian letters as alphabetic, so the three it names are the four
+    /// the property does.
+    /// </summary>
+    private static Boolean HoldsTogether(BreakClass before, BreakClass after) =>
+        IsHeld(before) && IsHeld(after);
+
+    private static Boolean IsHeld(BreakClass classification) =>
+        classification is BreakClass.Al or BreakClass.Nu or BreakClass.Id;
 
     /// <summary>
     /// Gets whether a line may end between the two characters the indices stand at where the script is set

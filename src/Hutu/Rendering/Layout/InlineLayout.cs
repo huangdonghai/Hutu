@@ -356,7 +356,7 @@ internal sealed class InlineLayout
             var before = -1;
             var held = -1;
 
-            foreach (var chunk in TextChunker.Ranges(source))
+            foreach (var chunk in TextChunker.Ranges(source, item.Style.KeepsWordsWhole))
             {
                 // A tab asks the same question here as on a line: how far the content has run decides
                 // where the next stop is.
@@ -405,7 +405,7 @@ internal sealed class InlineLayout
                             : standing
                                 ? item.Style.WrapsBeforeSpaces
                                 : before >= 0 &&
-                                    (LineBreaks.MayBreak(source, before, at) ||
+                                    (LineBreaks.MayBreak(source, before, at, item.Style.KeepsWordsWhole) ||
                                         LineBreaks.MayBreakBetweenLetters(source, held, at));
 
                         if (ends)
@@ -1517,7 +1517,7 @@ internal sealed class InlineLayout
             var itemFlow = item.Box.Flow;
             var font = item.Style.GetFont();
 
-            foreach (var chunk in TextChunker.Ranges(item.Text!))
+            foreach (var chunk in TextChunker.Ranges(item.Text!, item.Style.KeepsWordsWhole))
             {
                 foreach (var run in new OrientedPieces(item.Text!, chunk.Start, chunk.Length, itemFlow))
                 {

@@ -2767,6 +2767,21 @@ internal readonly struct ComputedStyle
         WordBreak.Equals("break-all", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Gets whether this element's text is to be held together within its words:
+    /// <c>word-break: keep-all</c> sets the implicit opportunity between two of the letter units aside,
+    /// so a run the script would break between every one of its characters runs on as one word instead,
+    /// while the opportunities white space and the rules about punctuation make are left standing
+    /// (CSS Text 3 §5.6).
+    /// </summary>
+    /// <remarks>
+    /// <c>line-break: anywhere</c> is the one setting that says otherwise: it sets the breaking rules
+    /// themselves aside rather than trimming the opportunities they give, and the property says so of
+    /// itself - "regardless of line-break settings other than anywhere".
+    /// </remarks>
+    public Boolean KeepsWordsWhole =>
+        WordBreak.Equals("keep-all", StringComparison.OrdinalIgnoreCase) && !BreaksAnywhere;
+
+    /// <summary>
     /// Gets whether a word that will not fit on a line of its own may be broken to keep it from overflowing
     /// the box (CSS Text 3 §5.5). Where this is the only licence, the word is moved to a line of its own
     /// first: the break inside it is the last resort the property names, not a filling of the room a
