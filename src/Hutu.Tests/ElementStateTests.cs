@@ -334,6 +334,60 @@ public sealed class ElementStateTests
     }
 
     [Test]
+    public async Task AnAnchorThatNamesThePageItStandsInIsToldAsRead()
+    {
+        using var view = CreateView();
+        await view.SetHtml(
+            "<html><body style='margin:0'><style>a:visited{color:#008000}</style>" +
+            "<a href=''>here</a><a href='#top'>there</a><a>plain</a></body></html>",
+            "index.htm");
+
+        // An href with nothing in it names the document it is written in, and a reader who is reading
+        // that document has been to it - which is the whole of what an href="" link can be told. The
+        // press has nowhere to go, but the state is not about the press.
+        Assert.That(PaintedColour(view, "here"), Is.EqualTo(0xFF0000EEu), "nothing has been read yet");
+
+        view.IsVisited = url => url.EndsWith("index.htm", StringComparison.Ordinal);
+
+        Assert.That(
+            view.RefreshVisited(),
+            Is.True,
+            "the page names itself, so the address the host has been to is the one the link carries");
+        Assert.That(PaintedColour(view, "here"), Is.EqualTo(0xFF008000u), "and the visited rule is what is drawn");
+        Assert.That(
+            PaintedColour(view, "there"),
+            Is.EqualTo(0xFF008000u),
+            "a name inside this page is this page, read like the rest of it");
+        Assert.That(
+            PaintedColour(view, "plain"),
+            Is.EqualTo(0xFF000000u),
+            "an anchor with no href names no address, so nothing has been read to it");
+    }
+
+    [Test]
+    public async Task ALinkThatHasBeenReadIsNoLongerOneThatHasNot()
+    {
+        using var view = CreateView();
+        await view.SetHtml(
+            "<html><body style='margin:0'><style>a:link{color:#ff00ff}</style>" +
+            "<a href=''>here</a></body></html>",
+            "index.htm");
+
+        Assert.That(PaintedColour(view, "here"), Is.EqualTo(0xFFFF00FFu), "unread, so the :link rule is drawn");
+
+        view.IsVisited = _ => true;
+        view.RefreshVisited();
+
+        // The two states are mutually exclusive: a rule written for a link that has not been read is
+        // not a rule about this element any more, and what is left is the engine's own colour for a
+        // link the reader has been to.
+        Assert.That(
+            PaintedColour(view, "here"),
+            Is.EqualTo(0xFF551A8Bu),
+            "read, so the :link rule is off it and the read colour is on");
+    }
+
+    [Test]
     public async Task TheWordsInsideALinkArePaintedWithTheLink()
     {
         using var view = CreateView();

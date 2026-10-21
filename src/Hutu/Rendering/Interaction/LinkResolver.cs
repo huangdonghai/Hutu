@@ -15,7 +15,49 @@ namespace Hutu.Rendering.Interaction;
 /// </remarks>
 internal static class LinkResolver
 {
-    /// <summary>Gets the link an element declares, or null when it declares none.</summary>
+    /// <summary>
+    /// Gets the address a link's visited state is judged against, or null when the element declares no
+    /// link at all.
+    /// </summary>
+    /// <remarks>
+    /// This is a wider question than the one <see cref="Resolve"/> answers, and the difference is the
+    /// empty href. To press a link with nothing to follow is to go nowhere, so that anchor is no link
+    /// for the gesture; to have been somewhere is a fact about the address it names, and <c>href=""</c>,
+    /// a bare <c>#</c> and <c>#name</c> all name the document the anchor sits in - which a reader who is
+    /// reading it has therefore been to. <c>:visited</c> is matched against that address.
+    /// <para>
+    /// The answer is the page rather than the anchor within it: a reader's history is kept per document,
+    /// so anything after the hash is set aside before the host is asked.
+    /// </para>
+    /// </remarks>
+    public static String? VisitedAddress(IElement element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+
+        if (element is not IHtmlAnchorElement anchor || anchor.GetAttribute("href") is not { } attribute)
+        {
+            return null;
+        }
+
+        var href = attribute.Trim();
+        var baseUrl = element.BaseUrl;
+
+        // An href that names this document cannot be resolved against it: Url takes a relative reference
+        // onto the path of a hierarchical scheme, and an opaque address like res: keeps its own where that
+        // resolution cannot see it. The document's address is the answer either way, so it is read back.
+        if (href.Length == 0 || href[0] == '#')
+        {
+            return baseUrl is null ? null : Address(baseUrl);
+        }
+
+        var address = baseUrl is null ? new Url(href) : new Url(baseUrl, href);
+
+        return address.IsInvalid ? null : Address(address);
+    }
+
+    /// <summary>
+    /// Gets the link an element declares, or null when it declares none.
+    /// </summary>
     public static LinkTarget? Resolve(IElement element)
     {
         ArgumentNullException.ThrowIfNull(element);

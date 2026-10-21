@@ -79,6 +79,13 @@ internal sealed class EngineReader : IDisposable
 
     public async Task LoadAsync(String html, String baseAddress)
     {
+        // A reftest run has been to exactly one address: the page it is drawing. That is the answer the
+        // corpus's visited-link tests are written against - href="" names the page and is read, a name
+        // beside it like href="unvisited" is not - and both sides of a pair are drawn under it, as
+        // Chrome draws both. Anything after the hash names a place in this page rather than another one.
+        var page = baseAddress.Split('#')[0];
+        _view.IsVisited = url => String.Equals(url.Split('#')[0], page, StringComparison.Ordinal);
+
         await _view.SetHtmlDocumentAsync(html, baseAddress);
 
         // A reftest that reaches a picture through a file beside the page draws it; one that would

@@ -337,13 +337,14 @@ public class HutuView : ScrollViewer
     /// Records that an address has been read, so that every link to it is painted as visited.
     /// </summary>
     /// <remarks>
-    /// The address is the whole one - what a link resolves to rather than what its href says - because
-    /// that is what is compared against. Recording an address that is already there changes nothing, so
+    /// What is recorded is the document the address names, with anything after the hash set aside: a
+    /// reader's history is a list of pages rather than of places within them, and that is the shape the
+    /// engine asks a link's address in. Recording an address that is already there changes nothing, so
     /// reloading a page is not a repaint of every link on it.
     /// </remarks>
     public void MarkVisited(string url)
     {
-        if (string.IsNullOrWhiteSpace(url) || !_visited.Add(url))
+        if (string.IsNullOrWhiteSpace(url) || !_visited.Add(url.Split('#')[0]))
         {
             return;
         }

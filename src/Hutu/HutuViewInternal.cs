@@ -68,6 +68,11 @@ public sealed class HutuViewInternal : IDisposable
     /// </summary>
     /// <remarks>
     /// Without an answer no link is ever marked visited, which is a page that shows everything as new.
+    /// <para>
+    /// The address the host is asked about is a document rather than a place within one: a reader's
+    /// history is a list of pages, so anything after the hash is set aside first and a link that names
+    /// the page it stands in - an empty href, a bare hash, a name - is asked about that page.
+    /// </para>
     /// </remarks>
     public Func<String, Boolean>? IsVisited { get; set; }
 

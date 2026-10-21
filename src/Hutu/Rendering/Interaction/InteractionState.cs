@@ -69,8 +69,8 @@ internal sealed class InteractionState
     /// <remarks>
     /// Where a reader has been is the host's to know - it is browsing history rather than anything the
     /// page says - so the answer is asked for per link and only the marks are kept here. A link that
-    /// resolves to no address at all cannot carry the mark: an anchor with nothing to follow is not a
-    /// link, and marking it would paint a placeholder as if it had been read.
+    /// names no address at all cannot carry the mark: an anchor with no href is a placeholder, and
+    /// marking it would paint a linkless element as if it had been read.
     /// </remarks>
     public Boolean Visited(IEnumerable<IElement> links, Func<String, Boolean> isVisited)
     {
@@ -78,7 +78,7 @@ internal sealed class InteractionState
 
         foreach (var link in links)
         {
-            if (LinkResolver.Resolve(link) is { } target && isVisited(target.Url))
+            if (LinkResolver.VisitedAddress(link) is { } target && isVisited(target))
             {
                 visited.Add(link);
             }
