@@ -31,6 +31,7 @@ namespace Hutu.Tests;
 public sealed class ClipRectTests
 {
     private const UInt32 Blue = 0xFF00_00FF;
+    private const UInt32 Red = 0xFFFF_0000;
 
     [Test]
     public async Task TheFourOffsetsAreReadInTheOrderThePageWroteThem()
@@ -324,6 +325,54 @@ public sealed class ClipRectTests
             Assert.That(Edges(cut!.Bounds), Is.EqualTo((0d, 0d, 100d, 100d)));
             Assert.That(lifted.OfType<PopClipCommand>().Count(), Is.EqualTo(1), "and the pair is balanced");
         });
+    }
+
+    /// <summary>
+    /// The second box is taken out of the flow inside the first, so the context above answers it and it is
+    /// painted from another pass than the cut it stands under - which the cut has to follow, because a
+    /// <c>clip</c> reaches the whole of the subtree it was written on (CSS Masking 1 §1.3, and what
+    /// <c>gecko/bugs/372063-1</c> is built to catch).
+    /// </summary>
+    [Test]
+    public async Task ACutIsLaidAgainAroundABoxHoistedOutOfTheBoxThatWroteIt()
+    {
+        using var view = await Drawn(
+            "#outer{position:absolute;top:0;left:0;width:100px;height:100px;clip:rect(0, 50px, 100px, 0)}" +
+                "#b{position:absolute;top:0;left:0;width:100px;height:100px;background-color:rgb(255 0 0)}",
+            "<div id='outer'><div id='b'></div></div>");
+
+        Assert.That(
+            Standing(view),
+            Is.EquivalentTo(new[] { new Rect(0, 0, 50, 100) }),
+            "the box hoisted into another pass is painted inside a pair of the cut it stands under");
+    }
+
+    /// <summary>
+    /// Gets the cuts standing over the first ink the page draws in red - the clip pairs a box is painted
+    /// inside, read off the list rather than off the geometry.
+    /// </summary>
+    private static List<Rect> Standing(HutuViewInternal view)
+    {
+        var standing = new List<Rect>();
+
+        foreach (var command in view.Paint!.Commands)
+        {
+            switch (command)
+            {
+                case PushClipCommand pushed:
+                    standing.Add(pushed.Bounds);
+                    break;
+
+                case PopClipCommand:
+                    standing.RemoveAt(standing.Count - 1);
+                    break;
+
+                case FillCommand ink when ink.Color == Red:
+                    return standing;
+            }
+        }
+
+        return standing;
     }
 
     [Test]

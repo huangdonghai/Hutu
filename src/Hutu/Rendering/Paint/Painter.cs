@@ -82,6 +82,14 @@ internal sealed class Painter
     /// </summary>
     private List<Rect> _cuts = [];
 
+    /// <summary>
+    /// How many of <see cref="_cuts"/> are already laid around the list being painted. A clip is a
+    /// rectangle of the page rather than of the box it was written on, so a cut that stands around a box
+    /// needs no second pair around what is painted inside it - but the moment the painting moves to another
+    /// list, or to another pass of this one, the standing cuts have to be put down again from the first.
+    /// </summary>
+    private Int32 _cutDepth;
+
     /// <summary>No box above this one was written to be cut.</summary>
     private static readonly List<Rect> NoCuts = [];
 
@@ -213,20 +221,37 @@ internal sealed class Painter
     /// clips standing along the walk that reaches each of them.</summary>
     private sealed class DeferredStack
     {
-        /// <summary>Gets the boxes waiting for the layer, in the order they were written.</summary>
+        /// <summary>Gets the boxes naming a negative level, in the order they were gathered. They reach
+        /// under the whole of the content that stayed in the flow, however deep they stand.</summary>
+        public List<DeferredBox> Below { get; } = [];
+
+        /// <summary>Gets the boxes waiting for the layer, in the order they were gathered.</summary>
         public List<DeferredBox> Pending { get; } = [];
 
         /// <summary>
-        /// Gets the boxes met deeper that name a level above the layer, in the order they were written.
-        /// A level is answered by the context the box belongs to, and a box that stands inside one which
-        /// forms no context of its own belongs to the context above - painting it where it happens to
-        /// stand puts it under content that should have gone beneath it.
+        /// Gets the boxes naming a level above the layer, in the order they were gathered. A level is
+        /// answered by the context the box belongs to, and a box that stands inside one which forms no
+        /// context of its own belongs to the context above - painting it where it happens to stand puts it
+        /// under content that should have gone beneath it.
         /// </summary>
         public List<DeferredBox> Above { get; } = [];
 
         /// <summary>Gets the clips of the boxes climbed through on the way down that hide their
         /// overflow, outermost first.</summary>
         public List<ClipEdge> ActiveClips { get; } = [];
+
+        /// <summary>
+        /// Gets the clips that reach a box taken out of the flow found at this depth, outermost first. A
+        /// box like that is clipped along its containing block chain and not along the boxes it merely
+        /// stands in (CSS 2.1 §11.1.1, CSS Overflow 1 §3.2), and its containing block is the nearest
+        /// positioned ancestor - so only a box that is itself a containing block puts its own clip on this
+        /// list, and the static ones between it and the descendant stay off it.
+        /// </summary>
+        public List<ClipEdge> ChainClips { get; } = [];
+
+        /// <summary>Gets whether the walk found no level for this context to answer, which is the common
+        /// case and the one that leaves the document order to be the paint order.</summary>
+        public Boolean IsEmpty => Below.Count == 0 && Pending.Count == 0 && Above.Count == 0;
     }
 
     private static readonly List<ClipEdge> NoClips = [];
@@ -242,16 +267,54 @@ internal sealed class Painter
         // out-of-flow descendants belong to: the subtree is painted self-contained (it is not handed to
         // an ancestor's deferred stack) so it lands under the same matrix, which is what CSS Transforms
         // asks of an element whose transform is not none.
+        var cut = CutOf(box);
+
         if (box.Transform is { } transform)
         {
             target.Add(new PushTransformCommand(box.BorderBox, transform, box.TransformOrigin));
+
+            // The cut is measured in the page, the matrix in the box: inside the transform the rectangle
+            // the box was cut to travels with it, which is what the pair of commands below lays down.
+            if (cut is { } moved)
+            {
+                _cuts.Add(moved);
+            }
+
             PaintBoxContent(box, list, target, deferred: null);
+
+            if (cut is not null)
+            {
+                _cuts.RemoveAt(_cuts.Count - 1);
+            }
+
             target.Add(new PopTransformCommand(box.BorderBox));
             return;
         }
 
+        if (cut is { } standing)
+        {
+            _cuts.Add(standing);
+        }
+
         PaintBoxContent(box, list, target, deferred);
+
+        if (cut is not null)
+        {
+            _cuts.RemoveAt(_cuts.Count - 1);
+        }
     }
+
+    /// <summary>
+    /// Gets the rectangle the box cuts its subtree to, or null where it states none. Only a box taken out of
+    /// the flow answers to the legacy <c>clip</c>, and the area is the border box the offsets were read
+    /// against, which the layout has to have settled first (§11.1.1, CSS Masking 1 §1.3). The gather walk
+    /// and the painting both answer from here, so the cut a box is painted with is the one its descendants
+    /// were gathered under.
+    /// </summary>
+    private static Rect? CutOf(LayoutBox box) =>
+        box.Position is PositionMode.Absolute or PositionMode.Fixed
+            ? box.Source.Style.Clip?.ClipOf(box.BorderBox)
+            : null;
 
     /// <summary>
     /// Paints a box inside the rectangle its <c>clip</c> cuts it to, if it states one.
@@ -265,28 +328,25 @@ internal sealed class Painter
     /// </remarks>
     private void PaintBoxContent(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred)
     {
-        var area = box.Position is PositionMode.Absolute or PositionMode.Fixed
-            ? box.Source.Style.Clip?.ClipOf(box.BorderBox)
-            : null;
+        // The box's own cut is already on the standing chain; what is laid here is every cut of that chain
+        // the list has not been given yet.
+        var from = _cutDepth;
 
-        if (area is { } clip)
+        for (var i = from; i < _cuts.Count; i++)
         {
-            target.Add(new PushClipCommand(clip, CornerRadii.None));
-
-            // A descendant lifted into a stacking context above is painted from that layer, so it carries
-            // this clip with it the same way it carries an overflow clip - and no more, once this box has
-            // been cut, which is what the removal below gives back.
-            deferred?.ActiveClips.Add(new ClipEdge(clip, CornerRadii.None));
-            _cuts.Add(clip);
+            target.Add(new PushClipCommand(_cuts[i], CornerRadii.None));
         }
+
+        var outside = _cutDepth;
+        _cutDepth = _cuts.Count;
 
         PaintBoxPresentation(box, list, target, deferred);
 
-        if (area is { } cut)
+        _cutDepth = outside;
+
+        for (var i = _cuts.Count - 1; i >= from; i--)
         {
-            target.Add(new PopClipCommand(cut));
-            deferred?.ActiveClips.RemoveAt(deferred.ActiveClips.Count - 1);
-            _cuts.RemoveAt(_cuts.Count - 1);
+            target.Add(new PopClipCommand(_cuts[i]));
         }
     }
 
@@ -347,29 +407,16 @@ internal sealed class Painter
                 break;
 
             case LayoutKind.Line:
-                // A line box has no decorations of its own; only its runs are painted. A box taken out
-                // of the flow that stands on the line - the place it would have had, which is where its
-                // static position comes from - is left for the stacking context above, exactly as one
-                // standing among blocks is: it is here only to say where it belongs.
-                foreach (var child in box.Children)
-                {
-                    if (deferred is not null && child.Position == PositionMode.Absolute && child.ZIndex >= 0)
-                    {
-                        // The box stands at the place the line would have given it, which is only its
-                        // static position: it belongs to a layer of the context, at its own level.
-                        (child.ZIndex > 0 ? deferred.Above : deferred.Pending)
-                            .Add(new DeferredBox(child, NoClips, CutsHere()));
-                        continue;
-                    }
-
-                    // Routed through PaintChild, not PaintBox, so a fixed child lands in the viewport
-                    // layer rather than the line's own commands: a fixed box is clipped only by an
-                    // ancestor that is its containing block, never by a plain overflow:hidden wrapper
-                    // that merely holds its static position (CSS 2.1 11.1.1). Painting it inline here
-                    // is what cut a fixed sidebar down to the height of such a wrapper.
-                    PaintChild(child, list, target, deferred);
-                }
-
+                // A line box has no decorations of its own; only its runs are painted. A box taken out of
+                // the flow that stands on the line - the place it would have had, which is where its static
+                // position comes from - is left for the stacking context that gathered it, exactly as one
+                // standing among blocks is: the line is here only to say where it belongs. Routed through
+                // PaintChild rather than PaintBox, so that a fixed child lands in the viewport layer instead
+                // of the line's own commands: a fixed box is clipped only by an ancestor that is its
+                // containing block, never by a plain overflow:hidden wrapper that merely holds its static
+                // position (CSS 2.1 11.1.1). Painting it inline here is what cut a fixed sidebar down to
+                // the height of such a wrapper.
+                PaintInFlow(box, list, target, deferred);
                 break;
 
             default:
@@ -582,152 +629,232 @@ internal sealed class Painter
     }
 
     /// <summary>
-    /// Paints a box's children in stacking order, clipped to the box when it hides its overflow. With
-    /// no positioned child the document order is already the paint order, so the fast path avoids the
-    /// four passes the layering needs.
+    /// Paints a box's children, clipped to the box when it hides its overflow, in the passes CSS 2.1
+    /// §Appendix E gives a stacking context: the negative levels, the content that stayed in the flow, the
+    /// automatic level in the order the document wrote it, then the positive levels lowest first.
     /// </summary>
+    /// <remarks>
+    /// The positioned descendants are gathered by a walk of their own before any of them is painted, because
+    /// a level is answered by the context the box belongs to rather than by the box it happens to stand in -
+    /// and a negative one belongs under content the painting walk would otherwise have reached already.
+    /// Nothing gathered is a level to answer, and the plain walk paints in document order, which is then the
+    /// paint order.
+    /// </remarks>
     private void PaintChildren(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred = null)
     {
         // The clip covers the children only: the box's own background and border were painted before
         // it, which is what keeps a border from being cut off by the radius it draws.
         var clipped = box.ClipsOverflow && box.Children.Count > 0;
+        var edge = new ClipEdge(box.PaddingBox, box.PaddingRadii);
 
         if (clipped)
         {
             target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
-
-            // While climbing on behalf of a stacking context above, the children are about to be lifted
-            // off this clip into that context's layer. The clip is noted, so that a descendant it still
-            // reaches - one whose containing block sits inside this box - gets it back when it is painted.
-            deferred?.ActiveClips.Add(new ClipEdge(box.PaddingBox, box.PaddingRadii));
         }
 
         if (deferred is not null)
         {
-            // Walking the in-flow content of a box on behalf of the stacking context above it. A box
-            // taken out of the flow (absolute or fixed) belongs to that context's positioned layer,
-            // however deep it stands in here, so it is left for the caller rather than painted where it
-            // happens to sit - which is how a box that should be covered ends up on top. Its containing
-            // block may sit outside this box, so it is left outside the clip too: a clip reaches only
-            // the descendants whose containing block is inside the box that clips.
-            //
-            // A relatively positioned box is not taken out of the flow - its containing block is the
-            // place it already stands - so every clip between it and the layer reaches it. It is left
-            // carrying those clips, which are put back around it when the layer is painted.
-            foreach (var child in box.Children)
-            {
-                if (child.Position == PositionMode.Static)
-                {
-                    PaintChild(child, list, target, deferred);
-                    continue;
-                }
-
-                var clips = child.Position == PositionMode.Relative
-                    ? new List<ClipEdge>(deferred.ActiveClips)
-                    : NoClips;
-
-                // A box that names a level of its own waits for that level above the layer; one that
-                // names none - `auto`, or `0`, which paint the same - waits in the layer itself.
-                (child.ZIndex > 0 ? deferred.Above : deferred.Pending).Add(new DeferredBox(child, clips, CutsHere()));
-            }
-        }
-        else if (HasPositionedChild(box))
-        {
-            PaintStackedChildren(box, list, target);
+            // Walking the in-flow content on behalf of the context above it: every box taken out of the
+            // flow was gathered by that context already and is painted from its own level there.
+            PaintInFlow(box, list, target, deferred);
         }
         else
         {
-            foreach (var child in box.Children)
+            var stack = new DeferredStack();
+
+            if (clipped)
             {
-                PaintChild(child, list, target);
+                stack.ActiveClips.Add(edge);
+
+                if (box.Position != PositionMode.Static)
+                {
+                    stack.ChainClips.Add(edge);
+                }
+            }
+
+            Collect(box, stack);
+
+            if (clipped)
+            {
+                stack.ActiveClips.RemoveAt(stack.ActiveClips.Count - 1);
+
+                if (box.Position != PositionMode.Static)
+                {
+                    stack.ChainClips.RemoveAt(stack.ChainClips.Count - 1);
+                }
+            }
+
+            if (stack.IsEmpty)
+            {
+                PaintInFlow(box, list, target, null);
+            }
+            else
+            {
+                PaintStackedChildren(box, list, target, stack);
             }
         }
 
         if (clipped)
         {
             target.Add(new PopClipCommand(box.PaddingBox));
-            deferred?.ActiveClips.RemoveAt(deferred.ActiveClips.Count - 1);
-        }
-    }
-
-    private void PaintStackedChildren(LayoutBox box, PaintList list, List<PaintCommand> target)
-    {
-        // 1. A negative z-index paints below the in-flow content.
-        foreach (var child in box.Children)
-        {
-            if (child.Position != PositionMode.Static && child.ZIndex < 0)
-            {
-                PaintChild(child, list, target);
-            }
-        }
-
-        // 2. The in-flow, non-positioned content. A box taken out of the flow with an automatic level is
-        //    not part of it, however deep it stands: it belongs to this stacking context's positioned
-        //    layer, and painting it here would put it beneath a positioned sibling that comes later in
-        //    the document - which is how a box that should be covered ends up on top.
-        var deferred = new DeferredStack();
-
-        foreach (var child in box.Children)
-        {
-            if (child.Position != PositionMode.Static)
-            {
-                // A negative level was drawn below the content already; an automatic one waits for
-                // this layer; a positive one belongs to the level above it.
-                if (child.ZIndex > 0)
-                {
-                    deferred.Above.Add(new DeferredBox(child, NoClips, CutsHere()));
-                }
-                else if (child.ZIndex == 0)
-                {
-                    deferred.Pending.Add(new DeferredBox(child, NoClips, CutsHere()));
-                }
-
-                continue;
-            }
-
-            PaintChild(child, list, target, deferred);
-        }
-
-        // 3. Positioned boxes with `z-index: auto` or `0`, in document order: a box this box holds
-        //    itself, then the ones the walk above met deeper in the tree. Depth is not the order - the
-        //    document is - so the layer is emitted in the order the boxes were written. A relatively
-        //    positioned box met deeper carries the overflow clips of the boxes it stands in, which are
-        //    put back around it here: the layer does not lift it out of a clip that reaches it.
-        foreach (var entry in deferred.Pending)
-        {
-            PaintDeferred(entry, list, target);
-        }
-
-        // 4. The positive levels, lowest first. Both the boxes this one holds and the ones the walk met
-        //    deeper are answered from here: a box that stands inside another which forms no context of
-        //    its own belongs to this context, and a context the walk stopped at painted its own levels
-        //    already. `OrderBy` is stable and both lists came out of one document-order walk, so equal
-        //    levels keep that order.
-        foreach (var entry in deferred.Above.OrderBy(entry => entry.Box.ZIndex))
-        {
-            PaintDeferred(entry, list, target);
         }
     }
 
     /// <summary>
-    /// Paints one box the walk left for this context, with the overflow clips that still reach it put
-    /// back around it, and the cuts it was found inside put back around what it lifts into a layer.
+    /// Gathers the positioned descendants whose level this context answers, in the order the document
+    /// writes them, with the overflow clips and the legacy cuts that stood around each where it was found.
     /// </summary>
-    private void PaintDeferred(DeferredBox entry, PaintList list, List<PaintCommand> target)
+    /// <remarks>
+    /// The walk goes down through any box that forms no context of its own - including a positioned box
+    /// whose level is <c>auto</c>, which paints at level zero but is no barrier, so the levels written
+    /// inside it belong to the context above (§Appendix E). It stops at a box that does form one, which
+    /// answers its own descendants when it is painted.
+    /// </remarks>
+    private void Collect(LayoutBox box, DeferredStack stack)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.Position != PositionMode.Static)
+            {
+                // A relatively positioned box is not taken out of the flow - its containing block is the
+                // place it already stands - so every clip between it and the layer reaches it. One taken
+                // right out is clipped along its containing block chain only: the boxes it merely stands in,
+                // being static, hide nothing from it. A box fixed to the viewport is out of the document's
+                // chain altogether. What a box carries is what stood around it where it was found - its own
+                // clip and its own overflow belong to the painting of it, not to the list put back around
+                // it.
+                var reached = child.Position switch
+                {
+                    PositionMode.Relative => CopiesOf(stack.ActiveClips),
+                    PositionMode.Absolute => CopiesOf(stack.ChainClips),
+                    _ => NoClips,
+                };
+
+                var waits = child.ZIndex < 0 ? stack.Below : child.ZIndex == 0 ? stack.Pending : stack.Above;
+
+                waits.Add(new DeferredBox(child, reached, CutsHere()));
+            }
+
+            if (!child.EstablishesStackingContext)
+            {
+                var cut = CutOf(child);
+                ClipEdge? hiding = child.ClipsOverflow ? new ClipEdge(child.PaddingBox, child.PaddingRadii) : null;
+
+                if (cut is { } standing)
+                {
+                    _cuts.Add(standing);
+                }
+
+                if (hiding is { } edge)
+                {
+                    stack.ActiveClips.Add(edge);
+
+                    if (child.Position != PositionMode.Static)
+                    {
+                        stack.ChainClips.Add(edge);
+                    }
+                }
+
+                Collect(child, stack);
+
+                if (hiding is not null)
+                {
+                    stack.ActiveClips.RemoveAt(stack.ActiveClips.Count - 1);
+
+                    if (child.Position != PositionMode.Static)
+                    {
+                        stack.ChainClips.RemoveAt(stack.ChainClips.Count - 1);
+                    }
+                }
+
+                if (cut is not null)
+                {
+                    _cuts.RemoveAt(_cuts.Count - 1);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the clips standing around a box that stayed in the flow, or no clips where none do - the list
+    /// a gathered box carries is only ever read, so an empty one needs no copy.
+    /// </summary>
+    private static List<ClipEdge> CopiesOf(List<ClipEdge> clips) => clips.Count > 0 ? [.. clips] : NoClips;
+
+    /// <summary>
+    /// Paints the children that stay in the flow, in document order. A box taken out of it is left out
+    /// wherever a context has gathered it; with no gathering - the plain walk, and each box that forms a
+    /// context of its own - every child is painted where it stands.
+    /// </summary>
+    private void PaintInFlow(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? owner)
+    {
+        foreach (var child in box.Children)
+        {
+            if (owner is not null && child.Position != PositionMode.Static)
+            {
+                continue;
+            }
+
+            PaintChild(child, list, target, owner);
+        }
+    }
+
+    /// <summary>
+    /// Paints one context's four passes over the levels its gather walk found.
+    /// </summary>
+    private void PaintStackedChildren(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack stack)
+    {
+        // 1. The negative levels, in the order the document wrote them. These reach under the content of
+        //    the boxes they stand in, however deep, which is why they are gathered before any painting.
+        foreach (var entry in stack.Below)
+        {
+            PaintDeferred(entry, list, target, stack);
+        }
+
+        // 2. The content that stayed in the flow, the box's own background and border having been painted
+        //    by the caller before it asked for any of this.
+        PaintInFlow(box, list, target, stack);
+
+        // 3. The automatic level - `auto` and `0` paint as one - in document order. Depth is not that
+        //    order, so the layer is emitted in the order the gather walk met the boxes, and a relatively
+        //    positioned box met deeper carries the overflow clips of the boxes it stands in, which are put
+        //    back around it here: the layer does not lift it out of a clip that reaches it.
+        foreach (var entry in stack.Pending)
+        {
+            PaintDeferred(entry, list, target, stack);
+        }
+
+        // 4. The positive levels, lowest first. `OrderBy` is stable and the list came out of one walk in
+        //    document order, so equal levels keep that order.
+        foreach (var entry in stack.Above.OrderBy(entry => entry.Box.ZIndex))
+        {
+            PaintDeferred(entry, list, target, stack);
+        }
+    }
+
+    /// <summary>
+    /// Paints one box its context gathered, with the overflow clips that still reach it put back around it,
+    /// the cuts it was found inside put back around what it lifts into a layer, and the context handed down
+    /// so that the boxes it holds are left to their own levels rather than painted twice.
+    /// </summary>
+    private void PaintDeferred(DeferredBox entry, PaintList list, List<PaintCommand> target, DeferredStack stack)
     {
         foreach (var clip in entry.Clips)
         {
             target.Add(new PushClipCommand(clip.Bounds, clip.Radii));
         }
 
-        // The walk has moved on since this box was found, and a cut travels with the subtree it was
-        // written on rather than with the layer it is painted from.
+        // The walk has moved on since this box was found: the cuts of that place travel with it, and this
+        // pass is painted outside the pairs they were laid in, so they are laid again here.
         var where = _cuts;
+        var depth = _cutDepth;
         _cuts = entry.Cuts;
+        _cutDepth = 0;
 
-        PaintChild(entry.Box, list, target);
+        PaintChild(entry.Box, list, target, entry.Box.EstablishesStackingContext ? null : stack);
 
         _cuts = where;
+        _cutDepth = depth;
 
         for (var i = entry.Clips.Count - 1; i >= 0; i--)
         {
@@ -748,30 +875,13 @@ internal sealed class Painter
     /// </summary>
     private void PaintLifted(LayoutBox box, PaintList list, List<PaintCommand> target)
     {
-        foreach (var cut in _cuts)
-        {
-            target.Add(new PushClipCommand(cut, CornerRadii.None));
-        }
+        // The layer starts with nothing laid down, so every cut standing around the box goes into it.
+        var outside = _cutDepth;
+        _cutDepth = 0;
 
         PaintBox(box, list, target);
 
-        for (var i = _cuts.Count - 1; i >= 0; i--)
-        {
-            target.Add(new PopClipCommand(_cuts[i]));
-        }
-    }
-
-    private static Boolean HasPositionedChild(LayoutBox box)
-    {
-        foreach (var child in box.Children)
-        {
-            if (child.Position != PositionMode.Static)
-            {
-                return true;
-            }
-        }
-
-        return false;
+        _cutDepth = outside;
     }
 
     /// <summary>

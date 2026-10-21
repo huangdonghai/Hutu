@@ -486,6 +486,120 @@ public sealed class PositionedLayoutTests
         });
     }
 
+    /// <summary>
+    /// A box taken out of the flow is clipped along its containing block chain and not along the boxes it
+    /// merely stands in, so the layer it is painted from has to carry the clips of that chain: the positioned
+    /// box that hides its overflow cuts it, and a static one above its containing block does not
+    /// (CSS 2.1 §11.1.1, CSS Overflow 1 §3.2 - the shape <c>gecko/pagination/bfc-004</c> is built on).
+    /// </summary>
+    [Test]
+    public async Task TheClipsOfTheContainingBlockChainTravelWithABoxTakenOutOfTheFlow()
+    {
+        var flown = "<div style='position:absolute;top:0;left:0;width:200px;height:200px;background:#ff0000'></div>";
+
+        using var inChain = await Painted(
+            "<div id='c' style='position:relative;overflow:hidden;width:50px;height:50px'>" + flown + "</div>");
+        using var offChain = await Painted(
+            "<div id='c' style='overflow:hidden;width:50px;height:50px'>" + flown + "</div>");
+
+        var cut = Find(inChain, "c").PaddingBox;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(CutAround(inChain, 0xFFFF_0000u), Is.True,
+                "the positioned box the flow was left from is the containing block, and its clip is put back");
+            Assert.That(inChain.Paint!.Commands.OfType<PushClipCommand>().Any(clip => clip.Bounds.Equals(cut)),
+                Is.True, "and the clip put back around it is that box's own padding box");
+            Assert.That(CutAround(offChain, 0xFFFF_0000u), Is.False,
+                "a static box that hides its overflow is not in the chain, and clips nothing taken out");
+        });
+    }
+
+    /// <summary>
+    /// Gets whether the ink of the given colour is drawn inside a clip pair - which is how these tests tell
+    /// a clip that reaches a box from the pair a clipping box pushes around content the box was left out of.
+    /// </summary>
+    private static Boolean CutAround(HutuViewInternal view, UInt32 ink)
+    {
+        var depth = 0;
+
+        foreach (var command in view.Paint!.Commands)
+        {
+            switch (command)
+            {
+                case PushClipCommand:
+                    depth++;
+                    break;
+
+                case PopClipCommand:
+                    depth--;
+                    break;
+
+                case FillCommand fill when fill.Color == ink:
+                    return depth > 0;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// A positioned box whose level is <c>auto</c> paints at level zero but forms no context, so a level
+    /// written inside it is answered by the context above - the whole of
+    /// <c>css-masking/clip-no-stacking-context</c>, and the reason a context's levels are gathered by a walk
+    /// that goes down through the boxes that name none.
+    /// </summary>
+    [Test]
+    public async Task ALevelInsideAnAutomaticBoxIsAnsweredAboveIt()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p>x</p>" +
+            "<div style='position:absolute;width:100px;height:100px;background:#ff0000;z-index:1'></div>" +
+            "<div style='position:absolute'>" +
+            "<div style='position:absolute;width:100px;height:100px;background:#008000;z-index:3'></div>" +
+            "</div></body></html>");
+
+        var fills = view.Paint!.Commands.OfType<FillCommand>().ToList();
+
+        var levelled = fills.FindIndex(fill => fill.Color == 0xFFFF_0000u);
+        var inside = fills.FindIndex(fill => fill.Color == 0xFF00_8000u);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(levelled, Is.GreaterThanOrEqualTo(0), "both boxes are painted");
+            Assert.That(inside, Is.GreaterThan(levelled),
+                "and the higher level inside the automatic box is the context above that answers (§Appendix E)");
+        });
+    }
+
+    /// <summary>
+    /// A negative level reaches under the whole of the content of its context, however deep the box stands -
+    /// which is what gathering the levels before any painting buys the engine.
+    /// </summary>
+    [Test]
+    public async Task ANegativeLevelDeepInTheFlowReachesUnderTheContent()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:200px;height:100px;background:#0000ff'>" +
+            "<div style='position:absolute;z-index:-1;width:100px;height:100px;background:#ff0000'></div>" +
+            "</div></body></html>");
+
+        var fills = view.Paint!.Commands.OfType<FillCommand>().ToList();
+
+        var negative = fills.FindIndex(fill => fill.Color == 0xFFFF_0000u);
+        var flowed = fills.FindIndex(fill => fill.Color == 0xFF00_00FFu);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(negative, Is.GreaterThanOrEqualTo(0));
+            Assert.That(negative, Is.LessThan(flowed), "the negative level goes under the block it stands in");
+        });
+    }
+
     [Test]
     public async Task AnAbsoluteChildOfAFlexContainerIsNotAFlexItem()
     {
@@ -554,6 +668,18 @@ public sealed class PositionedLayoutTests
             Find(view, "a").BorderBox.Height,
             Is.EqualTo(height).Within(0.5),
             $"`{sizes}` between four zero offsets, where an unstretched box is 600 tall");
+    }
+
+    /// <summary>
+    /// Draws a body of the given markup and hands back the view, so a test can read the commands the page
+    /// was painted with.
+    /// </summary>
+    private static async Task<HutuViewInternal> Painted(String body)
+    {
+        var view = CreateView(400);
+        await view.SetHtml($"<html><body style='margin:0'>{body}</body></html>");
+
+        return view;
     }
 
     private static HutuViewInternal CreateView(Int32 width, Int32 height = 600)
