@@ -74,6 +74,18 @@ internal sealed class Painter
     private Box? _canvas;
 
     /// <summary>
+    /// The legacy <c>clip</c> of every box the walk currently stands inside, outermost first. An overflow
+    /// clip cuts only the descendants whose containing block is inside the box that hides its overflow, and
+    /// a box lifted to another layer escapes it; a <c>clip</c> cuts the whole subtree it was written on,
+    /// and a descendant painted from the viewport layer is still inside that subtree, so the cut has to
+    /// travel with it (CSS Masking 1 §1.3, which is what `clip-fixed-pos-transform-descendant-001` asks).
+    /// </summary>
+    private List<Rect> _cuts = [];
+
+    /// <summary>No box above this one was written to be cut.</summary>
+    private static readonly List<Rect> NoCuts = [];
+
+    /// <summary>
     /// Gets the box whose background the canvas is painted with: the root's own when the root states a
     /// background, and otherwise the body's, which §2.11.2 hands to the canvas and takes away from the body's
     /// own box.
@@ -186,12 +198,15 @@ internal sealed class Painter
 
     /// <summary>A positioned box left for an ancestor's stacking context to paint, with the overflow
     /// clips that still reach it - those of the boxes it stands in that lie between it and the
-    /// layer, which the layer must not lift it out of.</summary>
-    private sealed class DeferredBox(LayoutBox box, List<ClipEdge> clips)
+    /// layer, which the layer must not lift it out of - and the legacy cuts it was found inside.</summary>
+    private sealed class DeferredBox(LayoutBox box, List<ClipEdge> clips, List<Rect> cuts)
     {
         public LayoutBox Box { get; } = box;
 
         public List<ClipEdge> Clips { get; } = clips;
+
+        /// <summary>Gets the legacy <c>clip</c> of the boxes this one was found inside, outermost first.</summary>
+        public List<Rect> Cuts { get; } = cuts;
     }
 
     /// <summary>Collects the positioned boxes a stacking context paints in its layer, and the overflow
@@ -262,6 +277,7 @@ internal sealed class Painter
             // this clip with it the same way it carries an overflow clip - and no more, once this box has
             // been cut, which is what the removal below gives back.
             deferred?.ActiveClips.Add(new ClipEdge(clip, CornerRadii.None));
+            _cuts.Add(clip);
         }
 
         PaintBoxPresentation(box, list, target, deferred);
@@ -270,6 +286,7 @@ internal sealed class Painter
         {
             target.Add(new PopClipCommand(cut));
             deferred?.ActiveClips.RemoveAt(deferred.ActiveClips.Count - 1);
+            _cuts.RemoveAt(_cuts.Count - 1);
         }
     }
 
@@ -341,7 +358,7 @@ internal sealed class Painter
                         // The box stands at the place the line would have given it, which is only its
                         // static position: it belongs to a layer of the context, at its own level.
                         (child.ZIndex > 0 ? deferred.Above : deferred.Pending)
-                            .Add(new DeferredBox(child, NoClips));
+                            .Add(new DeferredBox(child, NoClips, CutsHere()));
                         continue;
                     }
 
@@ -611,7 +628,7 @@ internal sealed class Painter
 
                 // A box that names a level of its own waits for that level above the layer; one that
                 // names none - `auto`, or `0`, which paint the same - waits in the layer itself.
-                (child.ZIndex > 0 ? deferred.Above : deferred.Pending).Add(new DeferredBox(child, clips));
+                (child.ZIndex > 0 ? deferred.Above : deferred.Pending).Add(new DeferredBox(child, clips, CutsHere()));
             }
         }
         else if (HasPositionedChild(box))
@@ -658,11 +675,11 @@ internal sealed class Painter
                 // this layer; a positive one belongs to the level above it.
                 if (child.ZIndex > 0)
                 {
-                    deferred.Above.Add(new DeferredBox(child, NoClips));
+                    deferred.Above.Add(new DeferredBox(child, NoClips, CutsHere()));
                 }
                 else if (child.ZIndex == 0)
                 {
-                    deferred.Pending.Add(new DeferredBox(child, NoClips));
+                    deferred.Pending.Add(new DeferredBox(child, NoClips, CutsHere()));
                 }
 
                 continue;
@@ -694,7 +711,7 @@ internal sealed class Painter
 
     /// <summary>
     /// Paints one box the walk left for this context, with the overflow clips that still reach it put
-    /// back around it.
+    /// back around it, and the cuts it was found inside put back around what it lifts into a layer.
     /// </summary>
     private void PaintDeferred(DeferredBox entry, PaintList list, List<PaintCommand> target)
     {
@@ -703,11 +720,44 @@ internal sealed class Painter
             target.Add(new PushClipCommand(clip.Bounds, clip.Radii));
         }
 
+        // The walk has moved on since this box was found, and a cut travels with the subtree it was
+        // written on rather than with the layer it is painted from.
+        var where = _cuts;
+        _cuts = entry.Cuts;
+
         PaintChild(entry.Box, list, target);
+
+        _cuts = where;
 
         for (var i = entry.Clips.Count - 1; i >= 0; i--)
         {
             target.Add(new PopClipCommand(entry.Clips[i].Bounds));
+        }
+    }
+
+    /// <summary>
+    /// Keeps the cuts standing around the place a box was found, for the layer that is to paint it after
+    /// the walk has climbed out of them.
+    /// </summary>
+    private List<Rect> CutsHere() => _cuts.Count > 0 ? [.. _cuts] : NoCuts;
+
+    /// <summary>
+    /// Paints a box that is lifted into a layer of its own - the viewport's, or a pinned one - inside the
+    /// cuts standing around it. Those are commands of the layer rather than of the walk, because the list
+    /// they belong to is not the one the walk is filling.
+    /// </summary>
+    private void PaintLifted(LayoutBox box, PaintList list, List<PaintCommand> target)
+    {
+        foreach (var cut in _cuts)
+        {
+            target.Add(new PushClipCommand(cut, CornerRadii.None));
+        }
+
+        PaintBox(box, list, target);
+
+        for (var i = _cuts.Count - 1; i >= 0; i--)
+        {
+            target.Add(new PopClipCommand(_cuts[i]));
         }
     }
 
@@ -733,12 +783,12 @@ internal sealed class Painter
         switch (child.Position)
         {
             case PositionMode.Fixed:
-                PaintBox(child, list, list.FixedCommands);
+                PaintLifted(child, list, list.FixedCommands);
                 break;
 
             case PositionMode.Sticky when child.Sticky is { } constraint:
                 var layer = new StickyLayer(constraint);
-                PaintBox(child, list, layer.Commands);
+                PaintLifted(child, list, layer.Commands);
                 list.Sticky.Add(layer);
                 break;
 

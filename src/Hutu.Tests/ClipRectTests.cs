@@ -303,6 +303,30 @@ public sealed class ClipRectTests
     }
 
     [Test]
+    public async Task ACutReachesTheSubtreeItWasWrittenOnEvenIntoTheViewportLayer()
+    {
+        // The pair this stands for is `clip-fixed-pos-transform-descendant-001`: a box cut to its own
+        // border box holds a child fixed to the viewport, and that child is painted from a layer of its
+        // own - which does not let it out of the cut above it, because a `clip` cuts the subtree it was
+        // written on rather than the descendants whose containing block stands inside (CSS Masking 1
+        // §1.3). An overflow clip is the opposite, and reaches nowhere near it.
+        using var view = await Drawn(
+            "#outer{position:absolute;top:0;left:0;width:100px;height:100px;clip:rect(0, 100px, 100px, 0)}" +
+                "#b{position:fixed;top:10px;left:10px;width:200px;height:200px;background-color:rgb(255 0 0)}",
+            "<div id='outer'><div id='b'></div></div>");
+
+        var lifted = view.Paint!.FixedCommands;
+        var cut = lifted.OfType<PushClipCommand>().SingleOrDefault();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut, Is.Not.Null, "the fixed box is painted inside the cut its ancestor wrote");
+            Assert.That(Edges(cut!.Bounds), Is.EqualTo((0d, 0d, 100d, 100d)));
+            Assert.That(lifted.OfType<PopClipCommand>().Count(), Is.EqualTo(1), "and the pair is balanced");
+        });
+    }
+
+    [Test]
     public async Task TheCutOfAClipThatLeavesNothingToDrawTakesTheBoxOutOfThePictureEntirely()
     {
         var commands = await Laid("#b{position:absolute;top:0;left:0;width:100px;height:100px;background-color:#008000;clip:rect(0, 0, 0, 0)}");
