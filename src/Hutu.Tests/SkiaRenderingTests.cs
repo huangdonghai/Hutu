@@ -421,6 +421,43 @@ public sealed class SkiaRenderingTests
     }
 
     [Test]
+    public async Task ACornerWhoseTwoSidesDifferInWidthKeepsItsInkAcrossTheMitre()
+    {
+        // Three sides of one colour and three different widths, which is the shape half the borrowed
+        // references are built from. The mitre that divides two sides of a border is a line drawn between
+        // two inks, and where the two are one ink there is nothing on either side of it for a reader to
+        // see - cutting the corner apart along it was only ever a seam for the background underneath the
+        // border to show through, which CSS Backgrounds 3 6.2 puts there because the border covers it.
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(240, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:100px;height:100px;background:blue;border-top:50px solid white;" +
+            "border-left:100px solid white;border-right:20px solid white'></div>" +
+            "</body></html>");
+
+        var box = Boxes(view, "div").Single();
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+
+        // The top-left mitre runs from the corner of the border box to the corner of the padding box, so
+        // the pixel above that line belongs to the top side and the one below it to the left side.
+        var above = bitmap.GetPixel((Int32)(box.BorderBox.X + 60), (Int32)(box.BorderBox.Y + 24));
+        var along = bitmap.GetPixel((Int32)(box.BorderBox.X + 60), (Int32)(box.BorderBox.Y + 30));
+        var below = bitmap.GetPixel((Int32)(box.BorderBox.X + 60), (Int32)(box.BorderBox.Y + 36));
+        var content = bitmap.GetPixel((Int32)(box.ContentBox.X + 50), (Int32)(box.ContentBox.Y + 50));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(above, Is.EqualTo(SKColors.White), "the side the line belongs to on one side");
+            Assert.That(along, Is.EqualTo(SKColors.White), "and the side it belongs to on the other");
+            Assert.That(below, Is.EqualTo(SKColors.White), "and along the line itself");
+            Assert.That(content, Is.EqualTo(SKColors.Blue), "the background is left where the border leaves it");
+        });
+    }
+
+    [Test]
     public async Task ALetterSpacedRunPaintsItsGlyphsApart()
     {
         using var measurer = new SkiaTextMeasurer();

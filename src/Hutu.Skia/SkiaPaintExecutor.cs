@@ -392,8 +392,8 @@ public sealed class SkiaPaintExecutor
     /// <remarks>
     /// A border follows the corner radii of the box, so it is the area between two rounded rectangles -
     /// the border box outside and the padding box inside - rather than four rectangles that overlap at
-    /// the corners. Sides that are all alike are drawn in one pass; when they differ, each side is
-    /// confined to its own quarter by the diagonals the corner would miter along. A side that is dashed
+    /// the corners. A border that lays one flat ink across square corners is four rectangles; otherwise
+    /// each side is confined to the quarter the corner's mitre gives it. A side that is dashed
     /// or dotted is stroked along the middle of the border instead of filled, which is what lets the
     /// pattern run around the curve; on a corner whose radius is smaller than half the border width
     /// that middle line degenerates and the pattern straightens out, which is the one visible
@@ -401,9 +401,14 @@ public sealed class SkiaPaintExecutor
     /// </remarks>
     private static void DrawBorder(SKCanvas canvas, BorderCommand command)
     {
-        // The plain case - square corners and four unbroken strokes - is by far the most common one on
-        // a page, and four rectangles are a good deal cheaper than two rounded paths.
-        if (command.Radii.IsZero && command.Styles.IsSolid)
+        // The plain case - square corners and strokes that need no pattern - is by far the most common
+        // one on a page, and four rectangles are a good deal cheaper than two rounded paths. The sides
+        // may differ in width, and any number of them may be left unwritten, so long as the ink they
+        // lay is one colour: across the corner that colour is all there is to see, and the rectangles
+        // cover it whole. Cutting the sides apart along the mitre there leaves nothing to see but the
+        // seam two anti-aliased edges make where they meet, and the background that CSS paints under
+        // the border shows through it.
+        if (command.Radii.IsZero && (command.Styles.IsSolid || IsOneFlatStroke(command)))
         {
             DrawSquareBorder(canvas, command);
             return;
@@ -434,6 +439,49 @@ public sealed class SkiaPaintExecutor
             DrawBorderStroke(canvas, command.Widths.Side(side), command.ColorOf(side), command.Styles.Side(side), ring, middle);
             canvas.Restore();
         }
+    }
+
+    /// <summary>
+    /// Gets whether every side that lays any ink lays one flat colour along one unbroken stroke - which
+    /// is what lets the four sides be drawn as rectangles over the whole box rather than cut apart at the
+    /// corners. A side written with no stroke, or with a band of no width, lays none: it has no colour to
+    /// disagree with and no corner to split, and three sides of a border are as common as four.
+    /// </summary>
+    private static Boolean IsOneFlatStroke(BorderCommand command)
+    {
+        UInt32? ink = null;
+
+        foreach (var side in BorderSides.All)
+        {
+            var style = command.Styles.Side(side);
+
+            // A side that is written with no stroke, or with a band no wider than nothing, lays no ink at
+            // all, so it neither has a colour to disagree with nor a corner to split.
+            if (style == BorderLineStyle.None || command.Widths.Side(side) == 0)
+            {
+                continue;
+            }
+
+            if (style != BorderLineStyle.Solid)
+            {
+                return false;
+            }
+
+            var colour = command.ColorOf(side);
+
+            if (ink is null)
+            {
+                ink = colour;
+                continue;
+            }
+
+            if (ink != colour)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Draws the four sides as overlapping rectangles, which is right only when nothing rounds.</summary>
