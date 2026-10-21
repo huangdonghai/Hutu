@@ -266,6 +266,23 @@ public sealed class TailorableBreakTests
             "the run is cut where the room gives out");
     }
 
+    [Test]
+    public async Task AWordThatCannotBeCutInsideIsMovedDownEvenUnderBreakAll()
+    {
+        using var view = await Render(
+            "<style>div { width: 20px; word-break: break-all }</style><div>AB CD..</div>");
+
+        var lines = Texts(view).ToList();
+
+        // The licence to break inside a word is only a licence where the word can actually be cut.
+        // A period takes no break before itself and none between its own two marks, so "D.." is one
+        // piece: filling the line with it would overflow the line rather than end it, and the piece
+        // goes down to a line of its own (CSS Text 3 §5.6 read with [UAX14] LB13).
+        Assert.That(lines.Select(box => box.Text).ToList(), Is.EqualTo(new[] { "AB C", "D.." }),
+            "the line ends where the room gives out and the uncuttable piece follows on the line below");
+        Assert.That(lines[0].BorderBox.Width, Is.EqualTo(20), "nothing overflowed the twenty it was given");
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
