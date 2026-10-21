@@ -170,6 +170,34 @@ public sealed class MulticolStyleTests
     }
 
     /// <summary>
+    /// The lines of inline content run through the same grid: down a column box, on into the next
+    /// column, and then into the next row (CSS Multicol 2 §3). The last box keeps two lines, because a
+    /// single line left alone at the end of a run is what widows forbid.
+    /// </summary>
+    [Test]
+    public async Task LinesOfTextRunThroughTheColumnBoxes()
+    {
+        var lines = String.Join("<br>", Enumerable.Range(0, 9).Select(index => "a"));
+
+        using var view = await Render(
+            "<style>#d { border:0; padding:0; margin:0; width:130px; height:90px; column-count:2;" +
+            " column-width:60px; column-height:40px; column-gap:10px; row-gap:10px; column-wrap:wrap }</style>" +
+            "<div id='d'>" + lines + "</div>");
+
+        var boxes = Find(view, "d").Children;
+
+        Assert.That(boxes, Has.Count.EqualTo(9), "one box per line");
+        Assert.Multiple(() =>
+        {
+            Assert.That(boxes[4].BorderBox.X, Is.EqualTo(70).Within(0.01), "the fifth line starts the second column");
+            Assert.That(boxes[4].BorderBox.Y, Is.EqualTo(0).Within(0.01));
+            Assert.That(boxes[7].BorderBox.X, Is.EqualTo(0).Within(0.01), "the eighth starts the next row");
+            Assert.That(boxes[7].BorderBox.Y, Is.EqualTo(50).Within(0.01), "a column height and a row gap down");
+            Assert.That(boxes[8].BorderBox.Y, Is.EqualTo(60).Within(0.01), "with the widow beside it");
+        });
+    }
+
+    /// <summary>
     /// A container that states a column height and wraps its columns makes a grid of column boxes: the
     /// content runs down a box, then on into the next column, and a row of boxes further down the page
     /// (CSS Multicol 2 §3).

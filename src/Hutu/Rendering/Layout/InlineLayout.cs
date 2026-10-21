@@ -196,6 +196,18 @@ internal sealed class InlineLayout
                 var fillsToHeight = !height.IsAuto &&
                     (height.Kind != StyleLengthKind.Percent || context.Containing.ContainingBlock.Height > 0);
 
+                // Columns that wrap make a grid of column boxes, so the content comes to the rows of
+                // boxes it needed rather than one stack shared over the columns (CSS Multicol 2 §3).
+                if (multi.Wraps && multi.Height is { } statedHeight && statedHeight > 0)
+                {
+                    var boxes = Math.Max(1, (Int32)Math.Ceiling(Total(heights) / statedHeight));
+                    var rows = (Int32)Math.Ceiling((Double)boxes / columns);
+
+                    return new InlineContentSize(
+                        inline,
+                        Math.Max(0, rows * (statedHeight + multi.RowGap) - multi.RowGap - columnTrimStart - columnTrimEnd));
+                }
+
                 if (multi.Fills && !fillsToHeight)
                 {
                     return new InlineContentSize(inline, Math.Max(0, Total(heights) - columnTrimStart - columnTrimEnd));
@@ -627,25 +639,45 @@ internal sealed class InlineLayout
         var breaks = container.Style.Breaks;
         var starts = Leadings(container, lines, atStart: true);
         var ends = Leadings(container, lines, atStart: false);
-        var extent = multi.Fills
-            ? contentBox.Height
-            : Fragmentainer.BalanceLines(heights, columns, breaks.Orphans, breaks.Widows, starts, ends);
+        // A container that wraps its columns makes a grid of column boxes, one `column-height` tall,
+        // and the lines run down a box, on into the next column and then into the next row.
+        var columnHeight = multi.Wraps && multi.Height is { } stated ? stated : 0.0;
+        var wraps = columnHeight > 0;
+        var rows = wraps && contentBox.Height > 0
+            ? Math.Max(1, (Int32)Math.Floor((contentBox.Height + multi.RowGap) / (columnHeight + multi.RowGap)))
+            : 1;
+
+        var extent = wraps
+            ? columnHeight
+            : multi.Fills
+                ? contentBox.Height
+                : Fragmentainer.BalanceLines(heights, columns, breaks.Orphans, breaks.Widows, starts, ends);
 
         // A fill is not held to the column count: content that does not fit the stated columns spills
         // into more of them, which is how Chrome lays a run too long for its `column-count` out.
         var counts = Fragmentainer.FillLines(
-            heights, extent, multi.Fills ? Int32.MaxValue : columns, breaks.Orphans, breaks.Widows, starts, ends);
+            heights,
+            extent,
+            wraps ? columns * rows : multi.Fills ? Int32.MaxValue : columns,
+            breaks.Orphans,
+            breaks.Widows,
+            starts,
+            ends);
 
         // Each column trims the leading off its own first and last lines (CSS Inline 3 §6.2), so every
         // column begins with its first line standing where that line's text edge asks.
         var (trimStart, trimEnd) = Trim(container, lines);
         var from = 0;
 
-        for (var column = 0; column < counts.Count; column++)
+        for (var cell = 0; cell < counts.Count; cell++)
         {
-            var count = counts[column];
+            var count = counts[cell];
+            var area = new Rect(
+                contentBox.X + (cell % columns) * (share + multi.Gap),
+                contentBox.Y + (cell / columns) * (columnHeight + multi.RowGap),
+                share,
+                extent);
 
-            var area = new Rect(contentBox.X + column * (share + multi.Gap), contentBox.Y, share, extent);
             PlaceLines(container, parent, lines, from, from + count, area, flow, context, -starts[from]);
             from += count;
         }
