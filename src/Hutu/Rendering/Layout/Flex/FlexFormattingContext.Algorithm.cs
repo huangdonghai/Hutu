@@ -441,7 +441,7 @@ internal sealed partial class FlexFormattingContext
             {
                 var align = item.AlignSelf == FlexAlignment.Auto ? alignItems : item.AlignSelf;
 
-                if (align == FlexAlignment.Stretch && item.AutoCross &&
+                if (align is FlexAlignment.Stretch or FlexAlignment.Normal && item.AutoCross &&
                     !item.AutoMarginCrossStart && !item.AutoMarginCrossEnd)
                 {
                     item.UsedCross = item.ClampCross(Math.Max(

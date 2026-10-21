@@ -747,6 +747,45 @@ public sealed class GridLayoutTests
         Assert.That(a.BorderBox.X, Is.EqualTo(expected).Within(0.5), $"'{keyword}' stands on that edge");
     }
 
+    [Test]
+    public async Task ANormalAlignmentOnAnAbsolutePathChildStandsAtTheAreaStartEdge()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;position:relative;width:300px;height:200px;padding:10px;" +
+            "align-items:center;grid-template-columns:100px 100px;grid-template-rows:50px 50px'>" +
+            "<div id='a' style='position:absolute;width:20px;height:20px;" +
+            "grid-column:2/3;grid-row:2/3;align-self:normal'>a</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        // `normal` is the box's own answer and not the container's: an out-of-flow box written with it
+        // stands at the area's start edge even where the container centres its items (CSS Align 3 §5.1).
+        Assert.That(a.BorderBox.Y, Is.EqualTo(60).Within(0.5), "normal is not auto, which would centre");
+    }
+
+    [Test]
+    public async Task ANormalAlignmentOnAGridItemFillsTheAreaItWasGiven()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;width:300px;height:200px;align-items:center;" +
+            "grid-template-columns:100px 100px;grid-template-rows:50px 50px'>" +
+            "<div id='a' style='align-self:normal'>a</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        // For an item that is in flow, `normal` is the one that stretches: it fills the row the item was
+        // placed in, whatever the container's items value says.
+        Assert.That(a.BorderBox.Height, Is.EqualTo(50).Within(0.5), "normal stretches an item to its area");
+    }
+
     private static LayoutBox Find(HutuViewInternal view, String id)
     {
         foreach (var node in Walk(view))

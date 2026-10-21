@@ -26,6 +26,12 @@ internal enum FlexAlignment : byte
     SpaceEvenly,
     Stretch,
     Baseline,
+    /// <summary>
+    /// The <c>normal</c> keyword, kept apart from <see cref="Auto"/> because the two answer differently:
+    /// <c>auto</c> asks the container what to do, and <c>normal</c> is the layout's own answer - stretch
+    /// for an item in flow, the start edge for an out-of-flow box (CSS Align 3 §5.1).
+    /// </summary>
+    Normal,
 }
 
 /// <summary>
@@ -494,6 +500,7 @@ internal readonly struct FlexStyle
         "space-evenly" => FlexAlignment.SpaceEvenly,
         "stretch" => FlexAlignment.Stretch,
         "baseline" => FlexAlignment.Baseline,
+        "normal" => FlexAlignment.Normal,
         _ => fallback,
     };
 

@@ -107,13 +107,15 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         ["word-wrap"] = ["anywhere"],
         ["line-break"] = ["normal"],
         // The spellings of alignment AngleSharp's grammar for these properties stops short of: the two
-        // physical edges (CSS Box Alignment 3 §6.2) and the two that name the item's own line
+        // physical edges (CSS Box Alignment 3 §6.2), the two that name the item's own line
         // (`self-start`, `self-end`, which its FlexContentMode lists but its keyword converter does
-        // not). Dropped, an item asking for the end edge is left on the container's default instead.
-        ["align-self"] = ["left", "right", "self-start", "self-end"],
-        ["justify-self"] = ["left", "right", "self-start", "self-end"],
-        ["align-items"] = ["left", "right", "self-start", "self-end"],
-        ["justify-items"] = ["left", "right", "self-start", "self-end"],
+        // not), and `normal`, which its converter reads as `auto` - losing the difference between the
+        // layout's own answer and the container's. Dropped or merged, an item asking for one of them is
+        // left on the container's default instead of the edge it named.
+        ["align-self"] = ["left", "right", "self-start", "self-end", "normal"],
+        ["justify-self"] = ["left", "right", "self-start", "self-end", "normal"],
+        ["align-items"] = ["left", "right", "self-start", "self-end", "normal"],
+        ["justify-items"] = ["left", "right", "self-start", "self-end", "normal"],
         ["align-content"] = ["left", "right", "self-start", "self-end"],
         ["justify-content"] = ["left", "right", "self-start", "self-end"],
     };

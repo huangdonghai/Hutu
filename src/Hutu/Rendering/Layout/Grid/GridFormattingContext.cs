@@ -1336,7 +1336,7 @@ internal sealed class GridFormattingContext
             free = containerSize - Total(tracks, gap);
         }
 
-        if (free > Epsilon && alignment is FlexAlignment.Stretch or FlexAlignment.Auto)
+        if (free > Epsilon && alignment is FlexAlignment.Stretch or FlexAlignment.Auto or FlexAlignment.Normal)
         {
             StretchAuto(tracks, free);
         }
@@ -1534,7 +1534,7 @@ internal sealed class GridFormattingContext
         // to resolve against the area it was stretched to rather than collapse to nothing.
         item.HeightIsDefinite =
             (HasHeight(item.Box) && !(style.Height.Kind == StyleLengthKind.Percent && areaHeight <= 0)) ||
-            align is FlexAlignment.Stretch or FlexAlignment.Auto;
+            align is FlexAlignment.Stretch or FlexAlignment.Auto or FlexAlignment.Normal;
 
         var outerX = width + margin.Left + margin.Right;
         var outerY = height + margin.Top + margin.Bottom;
@@ -1567,7 +1567,7 @@ internal sealed class GridFormattingContext
             var resolved = Math.Max(0, style.Width.Resolve(area));
             value = isBorderBox ? resolved : resolved + insets;
         }
-        else if (align is FlexAlignment.Stretch or FlexAlignment.Auto)
+        else if (align is FlexAlignment.Stretch or FlexAlignment.Auto or FlexAlignment.Normal)
         {
             value = space;
         }
@@ -1601,7 +1601,7 @@ internal sealed class GridFormattingContext
             return BoxModel.ClampHeight(style, content, area, insets) + insets;
         }
 
-        if (align is FlexAlignment.Stretch or FlexAlignment.Auto)
+        if (align is FlexAlignment.Stretch or FlexAlignment.Auto or FlexAlignment.Normal)
         {
             return space;
         }
