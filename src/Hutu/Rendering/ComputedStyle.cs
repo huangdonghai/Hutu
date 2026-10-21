@@ -1302,11 +1302,30 @@ internal readonly struct ComputedStyle
     /// fused path. A miss takes the colour a legacy <c>bgcolor</c> attribute hints at, and nothing
     /// where the element writes neither.
     /// </summary>
+    /// <remarks>
+    /// A background is not an inherited property, so <c>unset</c> and <c>initial</c> are the property's
+    /// own first value - nothing painted - where <c>inherit</c> is the box above, carried down as the
+    /// value it was cascaded rather than the colour it was painted with: a <c>currentcolor</c> handed
+    /// down that way stays the keyword, and each box answers for its own ink (CSS Color 4 5).
+    /// </remarks>
     public static CssColorValue? ResolveBackgroundColorFused(
-        IElement? element, ICssProperty? declared) =>
-        declared is not null
-            ? declared.RawValue is CssColorValue color ? color : null
-            : PresentationalHints.BackgroundColor(element);
+        IElement? element, ICssProperty? declared, CssColorValue? parentBackground = null)
+    {
+        if (declared is null)
+        {
+            return PresentationalHints.BackgroundColor(element);
+        }
+
+        if (declared.RawValue is CssColorValue color)
+        {
+            return color;
+        }
+
+        return IsInheritWord(declared.RawValue) ? parentBackground : null;
+    }
+
+    private static Boolean IsInheritWord(ICssValue? value) =>
+        value is not null && value.CssText.Trim().Equals("inherit", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Resolves the text decoration flags from the element's own cascaded declarations, for
@@ -3112,9 +3131,29 @@ internal readonly struct ComputedStyle
         }
     }
 
-    public CssColorValue? BackgroundColor => _values.Fused is { } fused
+    /// <summary>
+    /// Gets the background colour the element is painted with. A <c>currentcolor</c> written here is the
+    /// element's own ink rather than the ink it was handed, and it is read at this value's time for the
+    /// same reason: a page that inherits the keyword down a tree wants each box to paint in the colour of
+    /// its own text (CSS Color 4 5).
+    /// </summary>
+    public CssColorValue? BackgroundColor => ResolveCurrentColor(CascadedBackgroundColor);
+
+    /// <summary>
+    /// Gets the background colour as the cascade left it, where <c>currentcolor</c> is still the keyword.
+    /// This is what <c>background-color: inherit</c> hands down, so a box under one painted with its own
+    /// ink is painted with its own rather than with the colour above.
+    /// </summary>
+    internal CssColorValue? CascadedBackgroundColor => _values.Fused is { } fused
         ? fused.BackgroundColor
         : ColorValue("background-color") ?? PresentationalHints.BackgroundColor(_element);
+
+    /// <summary>
+    /// Takes a colour that names the element's own ink and gives the ink, and leaves any other colour -
+    /// and the absence of one - as it was.
+    /// </summary>
+    private CssColorValue? ResolveCurrentColor(CssColorValue? colour) =>
+        colour == CssColorValue.CurrentColor ? Color : colour;
 
     /// <summary>
     /// Gets the background layers in declaration order. The first layer paints on top of the ones

@@ -28,6 +28,13 @@ internal sealed class FusedParent
 
     public Double FontSize { get; init; }
     public CssColorValue? Color { get; init; }
+
+    /// <summary>
+    /// Gets the background colour a child takes when it writes <c>inherit</c>. The keyword is what
+    /// travels here rather than the colour it stood for: a box painted in its own ink hands down the
+    /// asking, not the answer (CSS Color 4 5).
+    /// </summary>
+    public CssColorValue? Background { get; init; }
     public String FontFamily { get; init; } = "sans-serif";
     public Double LetterSpacing { get; init; }
     public Double WordSpacing { get; init; }
@@ -188,6 +195,7 @@ internal sealed class FusedParent
         Stands = stands,
         FontSize = style.FontSize,
         Color = style.Color,
+        Background = style.CascadedBackgroundColor,
         FontFamily = style.FontFamily,
         LetterSpacing = style.LetterSpacing,
         WordSpacing = style.WordSpacing,
@@ -661,7 +669,8 @@ internal static class FusedStyleFactory
             Orientation = orientation,
             CombinesUpright = combine,
             Color = color,
-            BackgroundColor = ComputedStyle.ResolveBackgroundColorFused(element, find("background-color")),
+            BackgroundColor = ComputedStyle.ResolveBackgroundColorFused(
+                element, find("background-color"), parent.Background),
             Backgrounds = ComputedStyle.ResolveBackgroundsFused(find, element, dimensions, size),
             Cursor = ComputedStyle.ResolveCursorFused(element, find("cursor"), parent.Cursor),
             Ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position"), parent.Ruby),

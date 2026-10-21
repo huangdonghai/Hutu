@@ -1,7 +1,9 @@
 using Hutu.Rendering;
+using Hutu.Rendering.Layout;
 using Hutu.Rendering.Paint;
 using NUnit.Framework;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -60,6 +62,71 @@ public sealed class CurrentColorTests
                 "<div><a href='next.htm'>link</a></div>"),
             Is.EqualTo(EngineBlue),
             "the keyword is what asks for the parent; a link declaring nothing takes the colour a link is given");
+    }
+
+    [Test]
+    public async Task CurrentcolorWrittenOnTheBackgroundIsTheInkOfTheBoxThatPaintsIt()
+    {
+        Assert.That(
+            await Back("<style>#outer{width:60px;height:60px}#inner{width:30px;height:30px}" +
+                "#outer{color:red;background-color:red}" +
+                "#inner{color:green;background-color:currentColor}</style>" +
+                "<div id='outer'><div id='inner'>x</div></div>"),
+            Is.EqualTo(Green),
+            "a box written with the keyword is painted in its own ink, not the ink above it (CSS Color 4 5)");
+    }
+
+    [Test]
+    public async Task TheKeywordGoesDownATreeThatInheritsItAndIsReadAtEveryBox()
+    {
+        using var view = await Rendered("<style>#outer{width:60px;height:60px}" +
+            "#middle{width:50px;height:50px}#inner{width:40px;height:40px}" +
+            "#outer{color:red;background-color:currentColor}" +
+            "#middle{background-color:inherit}" +
+            "#inner{color:green;background-color:inherit}</style>" +
+            "<div id='outer'><div id='middle'><div id='inner'>x</div></div></div>");
+
+        Assert.Multiple(() =>
+        {
+            // What `background-color: inherit` hands down is the keyword rather than the colour the box
+            // above it ended up with, so each of the three answers for itself.
+            Assert.That(Paint(view, "middle"), Is.EqualTo(Red), "the middle box is red, as its own ink says");
+            Assert.That(Paint(view, "inner"), Is.EqualTo(Green), "and the inner one is green");
+        });
+    }
+
+    private static async Task<HutuViewInternal> Rendered(String body)
+    {
+        var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 600);
+        await view.SetHtml("<html>" + body + "</html>");
+        return view;
+    }
+
+    private static async Task<UInt32> Back(String body) => Paint(await Rendered(body), "inner");
+
+    private static UInt32 Paint(HutuViewInternal view, String id)
+    {
+        var box = Walk(view.Layout!.Root).First(node => node.Source.Element?.GetAttribute("id") == id);
+        var area = box.BorderBox;
+
+        return view.Paint!.Commands.OfType<FillCommand>()
+            .First(command => command.Bounds.X == area.X && command.Bounds.Y == area.Y
+                && command.Bounds.Width == area.Width && command.Bounds.Height == area.Height)
+            .Color;
+    }
+
+    private static IEnumerable<LayoutBox> Walk(LayoutBox node)
+    {
+        yield return node;
+
+        foreach (var child in node.Children)
+        {
+            foreach (var descendant in Walk(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 
     private static async Task<UInt32> Ink(String body)
