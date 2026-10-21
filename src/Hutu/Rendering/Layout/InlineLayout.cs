@@ -1578,10 +1578,13 @@ internal sealed class InlineLayout
                     // first: the room the line had left is not filled with the end of it, which is what
                     // makes the break inside a word the last resort the property names. Where the licence
                     // stands between every two characters there is nothing to move down, and the line is
-                    // filled to its end edge and cut there.
+                    // filled to its end edge and cut there - but the licence to break between letters is
+                    // worth nothing inside a run the rules hold together, and such a run is one unit the
+                    // line has no business filling the remainder of with its head.
+                    var movesWhole = !letters || !CutsInside(run.Source, run.Start, run.Length, item.Style);
                     var moved = false;
 
-                    if (steps && stepsWord && !letters && builder.HasContent)
+                    if (steps && stepsWord && movesWhole && builder.HasContent)
                     {
                         Close(builder);
                         builder = new LineBuilder(item.Style, carried);
@@ -1663,6 +1666,45 @@ internal sealed class InlineLayout
 
         MarkSlices(lines, maxInline);
         return lines;
+    }
+
+    /// <summary>
+    /// Gets whether the stepping could cut the run anywhere inside it, which is what the line asks before
+    /// it fills its remaining room with the head of a run that will not fit.
+    /// </summary>
+    /// <remarks>
+    /// The two break values that license a cut answer for the run themselves: <c>line-break: anywhere</c>
+    /// sets the rules aside and <c>overflow-wrap: anywhere</c> reaches every character of a word, so every
+    /// boundary inside it is open. <c>word-break: break-all</c> is the one that leaves them standing, and
+    /// it gives nothing to a run the rules hold together - a period takes no break before itself and none
+    /// between its own marks ([UAX14] LB13), so "X.." is one unit however the page spells its break value,
+    /// which is how Chrome lays it out (CSS Text 3 §5.6).
+    /// </remarks>
+    /// <param name="source">The text the run was cut from.</param>
+    /// <param name="start">The index the run begins at.</param>
+    /// <param name="length">How many characters the run holds.</param>
+    /// <param name="style">The style the run is set in, which is what gives the cut its licence.</param>
+    private static Boolean CutsInside(String source, Int32 start, Int32 length, ComputedStyle style)
+    {
+        var end = start + length;
+        var previous = start;
+        var at = start + TextClusters.UnitsAt(source, start, end);
+
+        while (at < end)
+        {
+            // The same answer the walk gives at a boundary inside the run, read for every one of them.
+            if ((style.WrapsInsideSpaces && TextChunker.IsBreakSpace(source[previous])) ||
+                !style.BreaksBetweenLetters || style.BreaksAnywhere || style.CountsLongWordBreaks ||
+                LineBreaks.MayBreak(source, previous, at, style.WordBreakingRules))
+            {
+                return true;
+            }
+
+            previous = at;
+            at += TextClusters.UnitsAt(source, at, end);
+        }
+
+        return false;
     }
 
     /// <summary>

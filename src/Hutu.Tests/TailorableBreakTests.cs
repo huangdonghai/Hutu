@@ -283,6 +283,54 @@ public sealed class TailorableBreakTests
         Assert.That(lines[0].BorderBox.Width, Is.EqualTo(20), "nothing overflowed the twenty it was given");
     }
 
+    [Test]
+    public async Task ARunThatCannotBeCutInsideIsMovedDownWholeWhereTheRoomOnlyFitsItsHead()
+    {
+        using var view = await Render(
+            "<style>div { width: 20px; word-break: break-all }</style><div>AB X..</div>");
+
+        var lines = Texts(view).ToList();
+
+        // The line has room for the first character of "X.." and for nothing more of it, and break-all
+        // has no opportunity to offer inside the piece, so the piece is moved down whole rather than
+        // begun on the line and hung over its end edge with two thirds of it. Chrome gives the same page
+        // "AB" and then "X.." (CSS Text 3 §5.6 read with [UAX14] LB13).
+        Assert.That(lines.Select(box => box.Text).ToList(), Is.EqualTo(new[] { "AB", "X.." }),
+            "the whole piece stands on the line below");
+        Assert.That(lines[1].BorderBox.Width, Is.EqualTo(15), "and it is as wide there as it was written");
+        Assert.That(lines.Sum(box => box.BorderBox.Width), Is.EqualTo(25),
+            "the two lines together are the content, with nothing overflowing");
+    }
+
+    [Test]
+    public async Task ACuttableRunStaysAndFillsTheLineTheValueLicensedItFor()
+    {
+        using var view = await Render(
+            "<style>div { width: 20px; word-break: break-all; overflow-wrap: anywhere }</style><div>AB X..</div>");
+
+        var lines = Texts(view).ToList();
+
+        // The same piece where a value does give the cut is filled onto the line and broken there, which
+        // is what shows the test above is a question of what can be cut and not of the room left: Chrome
+        // cuts "X..." after the character the line still holds.
+        Assert.That(lines.Select(box => box.Text).ToList(), Is.EqualTo(new[] { "AB X", ".." }),
+            "the head of the run fills the line and the rest carries on below");
+    }
+
+    [Test]
+    public async Task AColumnMovesAnUncuttableRunDownToTheNextOne()
+    {
+        using var view = await Render(
+            "<style>div { writing-mode: vertical-rl; height: 20px; word-break: break-all }</style>" +
+            "<div>AB X..</div>");
+
+        var lines = Texts(view).ToList();
+
+        // The same piece in a column: the room that only fits its head is not filled with it.
+        Assert.That(lines.Select(box => box.Text).ToList(), Is.EqualTo(new[] { "AB", "X.." }),
+            "the column ends where the room gives out and the piece goes on in the next");
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
