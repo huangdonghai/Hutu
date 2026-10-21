@@ -342,10 +342,15 @@ internal sealed class PositionedLayout
     /// but the two that move a box along leave it where the area began, which is what a box with no room
     /// to be stretched into, and no line of text to join, comes to.
     /// </summary>
+    /// <remarks>
+    /// The room left over is not held at zero: a box bigger than the area it was aligned in overflows
+    /// that area on both edges when it is centred, and past its far edge when it is pushed there, which
+    /// is what a browser draws and the corpus's negative margins stand for.
+    /// </remarks>
     private static Double Stand(FlexAlignment align, Double free) => align switch
     {
-        FlexAlignment.Center => Math.Max(0, free) / 2,
-        FlexAlignment.End => Math.Max(0, free),
+        FlexAlignment.Center => free / 2,
+        FlexAlignment.End => free,
         _ => 0,
     };
 }

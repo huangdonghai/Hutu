@@ -106,6 +106,16 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         ["overflow-wrap"] = ["anywhere"],
         ["word-wrap"] = ["anywhere"],
         ["line-break"] = ["normal"],
+        // The spellings of alignment AngleSharp's grammar for these properties stops short of: the two
+        // physical edges (CSS Box Alignment 3 §6.2) and the two that name the item's own line
+        // (`self-start`, `self-end`, which its FlexContentMode lists but its keyword converter does
+        // not). Dropped, an item asking for the end edge is left on the container's default instead.
+        ["align-self"] = ["left", "right", "self-start", "self-end"],
+        ["justify-self"] = ["left", "right", "self-start", "self-end"],
+        ["align-items"] = ["left", "right", "self-start", "self-end"],
+        ["justify-items"] = ["left", "right", "self-start", "self-end"],
+        ["align-content"] = ["left", "right", "self-start", "self-end"],
+        ["justify-content"] = ["left", "right", "self-start", "self-end"],
     };
 
     /// <summary>

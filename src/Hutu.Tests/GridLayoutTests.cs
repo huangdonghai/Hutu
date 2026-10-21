@@ -723,6 +723,30 @@ public sealed class GridLayoutTests
         Assert.That(a.BorderBox.X, Is.EqualTo(110).Within(0.5), "and left where the column line begins");
     }
 
+    [TestCase("self-start", 110)]
+    [TestCase("left", 110)]
+    [TestCase("self-end", 190)]
+    [TestCase("right", 190)]
+    public async Task AnAbsolutePathChildStandsOnTheEdgeItsKeywordNames(String keyword, Double expected)
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;position:relative;width:300px;height:200px;padding:10px;" +
+            "grid-template-columns:100px 100px;grid-template-rows:50px 50px'>" +
+            $"<div id='a' style='position:absolute;width:20px;height:20px;" +
+            $"grid-column:2/3;grid-row:2/3;justify-self:{keyword}'>a</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        // The area runs from 110 to 210 and the box is 20 wide, so the edge the keyword names is the edge
+        // it stands against - and the two physical spellings name the same edges here because the axis
+        // they run along is the one the page is written in.
+        Assert.That(a.BorderBox.X, Is.EqualTo(expected).Within(0.5), $"'{keyword}' stands on that edge");
+    }
+
     private static LayoutBox Find(HutuViewInternal view, String id)
     {
         foreach (var node in Walk(view))

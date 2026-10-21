@@ -481,8 +481,13 @@ internal readonly struct FlexStyle
 
     private static FlexAlignment ParseKeyword(String text, FlexAlignment fallback) => text switch
     {
-        "flex-start" or "start" => FlexAlignment.Start,
-        "flex-end" or "end" => FlexAlignment.End,
+        "flex-start" or "start" or "self-start" => FlexAlignment.Start,
+        "flex-end" or "end" or "self-end" => FlexAlignment.End,
+        // The two physical spellings name the left and the right edge of the area rather than its start
+        // and end along an axis. Writing modes and right-to-left tracks are not carried apart from one
+        // another here, so the edge each names is the edge the box is placed against.
+        "left" => FlexAlignment.Start,
+        "right" => FlexAlignment.End,
         "center" => FlexAlignment.Center,
         "space-between" => FlexAlignment.SpaceBetween,
         "space-around" => FlexAlignment.SpaceAround,

@@ -32,9 +32,8 @@ internal readonly struct StaticStanding
     /// Resolves the alignment one axis of an out-of-flow box asks for. <c>auto</c> takes what the
     /// container says for that axis; every keyword that would otherwise stretch the box or set it on a
     /// line of text stands at the area's start edge instead, because an out-of-flow box has no line to
-    /// join and no room it is expected to fill. The spellings that name an axis rather than an edge -
-    /// <c>left</c>, <c>right</c>, <c>self-start</c>, <c>flex-end</c> and the rest - are not read apart
-    /// from one another yet, and come to the same start edge.
+    /// join and no room it is expected to fill. <c>last baseline</c> is not read apart from a plain
+    /// <c>baseline</c> yet, and comes to the same start edge.
     /// </summary>
     public static FlexAlignment Resolve(FlexAlignment self, FlexAlignment container) =>
         (self == FlexAlignment.Auto ? container : self) switch
