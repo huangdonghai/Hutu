@@ -1426,6 +1426,21 @@ internal sealed class BlockLayout
 
         _engine.PublishFloats(box, null);
 
+        // The rules of the gaps the columns left, worked out here where the columns are known. A
+        // wrapping run is as tall as the rows of boxes it filled, whatever a balance made of the same
+        // content in a single row of them.
+        var wrapHeight = multi.Wraps && multi.Height is { } wrapStated ? wrapStated : 0.0;
+        var runHeight = wrapHeight > 0 && declaredHeight > 0
+            ? Math.Max(1, (Int32)Math.Floor((declaredHeight + multi.RowGap) / (wrapHeight + multi.RowGap))) *
+                (wrapHeight + multi.RowGap) - multi.RowGap
+            : extent;
+
+        MulticolRules.Add(
+            parent,
+            box.Style,
+            content,
+            new List<(Double, Double)> { (content.Y, content.Y + runHeight) });
+
         return extent;
     }
 

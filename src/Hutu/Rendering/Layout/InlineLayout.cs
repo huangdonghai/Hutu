@@ -682,6 +682,12 @@ internal sealed class InlineLayout
             from += count;
         }
 
+        MulticolRules.Add(
+            parent,
+            container.Style,
+            contentBox,
+            new List<(Double, Double)> { (contentBox.Y, contentBox.Y + extent) });
+
         return Math.Max(0, extent - trimStart - trimEnd);
     }
 
