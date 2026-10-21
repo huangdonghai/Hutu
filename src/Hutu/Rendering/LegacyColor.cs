@@ -29,14 +29,20 @@ internal static class LegacyColor
 {
     private static readonly char[] Whitespace = { '\t', '\n', '\f', '\r', ' ' };
 
-    /// <summary>The CSS2 system colours, which HTML says name no colour in these attributes.</summary>
+    /// <summary>
+    /// The system colours, which HTML says name no colour in these attributes. Every one of the names
+    /// CSS Color 4 added has to stand here too: the list is what keeps a page written
+    /// <c>color="canvas"</c> on the reading Chrome gives it - the digits, not the name - and a name that
+    /// only became parseable when the colour itself became one is the easiest of them to forget.
+    /// </summary>
     private static readonly HashSet<String> SystemColors = new(StringComparer.OrdinalIgnoreCase)
     {
-        "activeborder", "activecaption", "appworkspace", "background", "buttonface",
-        "buttonhighlight", "buttonshadow", "buttontext", "captiontext", "graytext",
-        "highlight", "highlighttext", "inactiveborder", "inactivecaption", "inactivecaptiontext",
-        "infobackground", "infotext", "menu", "menutext", "scrollbar", "threeddarkshadow",
-        "threedface", "threedhighlight", "threedlightshadow", "threedshadow", "window",
+        "accentcolor", "accentcolortext", "activeborder", "activecaption", "appworkspace", "background",
+        "buttonborder", "buttonface", "buttonhighlight", "buttonshadow", "buttontext", "canvas",
+        "canvastext", "captiontext", "field", "fieldtext", "graytext", "highlight", "highlighttext",
+        "inactiveborder", "inactivecaption", "inactivecaptiontext", "infobackground", "infotext",
+        "linktext", "mark", "marktext", "menu", "menutext", "scrollbar", "selecteditem", "threeddarkshadow",
+        "threedface", "threedhighlight", "threedlightshadow", "threedshadow", "visitedtext", "window",
         "windowframe", "windowtext",
     };
 
