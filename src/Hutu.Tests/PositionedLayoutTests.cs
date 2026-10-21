@@ -414,6 +414,8 @@ public sealed class PositionedLayoutTests
             "<div id='will' style='will-change:transform;width:10px;height:10px'></div>" +
             "<div id='contained' style='will-change:contain;width:10px;height:10px'></div>" +
             "<div id='blurred' style='will-change:backdrop-filter;width:10px;height:10px'></div>" +
+            "<div id='levelled' style='position:relative;will-change:z-index;width:10px;height:10px'></div>" +
+            "<div id='height' style='will-change:height;width:10px;height:10px'></div>" +
             "<div id='style' style='transform-style:preserve-3d;width:10px;height:10px'></div>" +
             "<div id='plain' style='width:10px;height:10px'></div>" +
             "</body></html>");
@@ -425,6 +427,10 @@ public sealed class PositionedLayoutTests
             Assert.That(Find(view, "contained").EstablishesStackingContext, Is.True,
                 "and a hint of a property that would form one counts, whether or not the box uses it");
             Assert.That(Find(view, "blurred").EstablishesStackingContext, Is.True, "the same for a backdrop filter");
+            Assert.That(Find(view, "levelled").EstablishesStackingContext, Is.True,
+                "and for a level, once the box is positioned enough for one to mean anything");
+            Assert.That(Find(view, "height").EstablishesStackingContext, Is.False,
+                "a property that forms no context hints at none (CSS Will Change 1 2)");
             Assert.That(Find(view, "style").EstablishesStackingContext, Is.True,
                 "a box that keeps its third dimension is the frame for what stands in it (CSS Transforms 2)");
             Assert.That(Find(view, "plain").EstablishesStackingContext, Is.False, "a box that says none of them");

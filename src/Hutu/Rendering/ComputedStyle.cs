@@ -2764,27 +2764,42 @@ internal readonly struct ComputedStyle
     }
 
     /// <summary>
-    /// Gets whether the box asks the device to get ready for a change that would make it a stacking
-    /// context if it had happened (CSS Will Change 1 §2). <c>will-change</c> changes nothing about the
-    /// picture, and that is exactly why the levels inside such a box are its own to answer.
+    /// Gets whether the box asks the device to get ready for a change that would make it a stacking context
+    /// if it had happened (CSS Will Change 1 §2). <c>will-change</c> changes nothing about the picture, and
+    /// that is exactly why the levels inside such a box are its own to answer.
     /// </summary>
-    public Boolean WillChangeNamesALayer
+    /// <param name="positioned">
+    /// Whether the box is out of the static flow. <c>z-index</c> and <c>position</c> are the two hints that
+    /// only come to a context for a box that is positioned, because the properties they name do nothing to a
+    /// box that is not.
+    /// </param>
+    private Boolean WillChangeNamesALayer(Boolean positioned)
     {
-        get
-        {
-            var stated = _values.Fused is { } fused
-                ? fused.WillChange
-                : _style.GetPropertyValue("will-change");
+        var stated = _values.Fused is { } fused
+            ? fused.WillChange
+            : _style.GetPropertyValue("will-change");
 
-            if (String.IsNullOrEmpty(stated))
+        if (String.IsNullOrEmpty(stated))
+        {
+            return false;
+        }
+
+        foreach (var token in stated!.Split([','], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var hint = token.Trim();
+
+            if (!LayeredProperties.Contains(hint, StringComparer.OrdinalIgnoreCase))
             {
-                return false;
+                continue;
             }
 
-            return Array.Exists(
-                stated!.Split([','], StringSplitOptions.RemoveEmptyEntries),
-                token => LayeredProperties.Contains(token.Trim(), StringComparer.OrdinalIgnoreCase));
+            if (positioned || !String.Equals(hint, "z-index", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
         }
+
+        return false;
     }
 
     /// <summary>
@@ -2792,52 +2807,57 @@ internal readonly struct ComputedStyle
     /// answered at one level of the context above, and the levels its descendants name are its own to
     /// answer (CSS 2.1 §Appendix E). The ways the engine reads one are a positioned box that states a
     /// level; a transform, an offset path or a <c>transform-style</c> that keeps the third dimension;
-    /// containment of layout or paint (CSS Contain 2 §2.5, §2.6); and a <c>will-change</c> naming any of
-    /// those.
+    /// containment of layout or paint (CSS Contain 2 §2.5, §2.6); and a <c>will-change</c> naming any
+    /// property that would do it.
     /// </summary>
-    /// <remarks>
-    /// <c>opacity</c>, a filter and a blend are read here only as a hint, because the engine paints none
-    /// of them: a box that asks for a translucent picture is a context too, and when that picture is
-    /// drawn this answer has to grow.
-    /// </remarks>
     public Boolean EstablishesStackingContext
     {
         get
         {
             var position = Position;
+            var positioned = position.Position != PositionMode.Static;
 
-            if (position.Position != PositionMode.Static && position.HasZIndex)
+            if (positioned && position.HasZIndex)
             {
                 return true;
             }
 
-            if (IsTransformed || PreservesThirdDimension || WillChangeNamesALayer)
+            if (IsTransformed || PreservesThirdDimension || WillChangeNamesALayer(positioned))
             {
                 return true;
             }
 
-            var contain = Contain;
-
-            // Containment is a property of boxes: a non-atomic inline level is not one, and a span that
-            // contains its paint forms no context and clips nothing (CSS Contain 2 §2.6; the
-            // `contain-*-ignored-cases-ib-split` pairs are the engine's reminder). An inline box that
-            // gets split - by a block standing inside it, or by its own white space - comes back as
-            // anonymous blocks, and an anonymous box borrows the style it was split from without
-            // borrowing its author's declarations, so the split cannot smuggle the containment back in.
-            if (Display.Equals("inline", StringComparison.OrdinalIgnoreCase))
+            // Containment is a property of the principal box: a non-atomic inline level is not one, and
+            // neither is a box the display leaves out altogether, so a span or a `display: contents`
+            // element that contains its paint forms no context and clips nothing (CSS Contain 2 §2.4,
+            // §2.6 - which is what `contain-*-ignored-cases-ib-split` and `...-no-principal-box-001`
+            // measure). An inline box that gets split - by a block standing inside it, or by its own white
+            // space - comes back as anonymous blocks, and an anonymous box borrows the geometry and the
+            // font of the style it was split from rather than the element's declarations, so the split
+            // cannot smuggle the containment back in.
+            if (Display.Equals("inline", StringComparison.OrdinalIgnoreCase) ||
+                Display.Equals("contents", StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
+
+            var contain = Contain;
 
             return contain.Layout || contain.Paint;
         }
     }
 
-    /// <summary>The properties whose value would put a box on a layer of its own.</summary>
+    /// <summary>
+    /// The properties whose non-initial value would put a box on a layer of its own, and whose
+    /// <c>will-change</c> hint does the same (CSS Will Change 1 §2, read against CSS 2.1 §Appendix E,
+    /// CSS Transforms 1, CSS Masking 1 and CSS Contain 2 - the list is what the
+    /// <c>css-will-change/will-change-stacking-context-*</c> family measures pair by pair).
+    /// </summary>
     private static readonly String[] LayeredProperties =
     [
-        "transform", "opacity", "filter", "backdrop-filter", "mix-blend-mode", "isolation", "clip-path",
-        "mask", "contain",
+        "transform", "translate", "rotate", "scale", "perspective", "transform-style", "offset-path",
+        "opacity", "filter", "backdrop-filter", "mix-blend-mode", "isolation", "mask",
+        "mask-image", "clip-path", "position", "z-index", "contain", "view-transition-name",
     ];
 
     /// <summary>Gets the underlying declaration, for values this wrapper does not surface.</summary>
