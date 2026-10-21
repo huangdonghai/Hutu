@@ -1457,4 +1457,94 @@ public sealed class SkiaRenderingTests
 
         return count;
     }
+
+    /// <summary>
+    /// A shadow a box casts is knocked out of the box it was cast from, so that a box with nothing behind
+    /// it still shows the page rather than the shadow: the two are the same picture drawn by different roads.
+    /// </summary>
+    [Test]
+    public async Task AnOuterShadowLeavesTheBoxItWasCastFromUnmarked()
+    {
+        using var picture = await Picture(
+            "<div style='position:absolute;top:10px;left:10px;width:20px;height:20px;box-shadow:10px 0 0 black'></div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(picture.GetPixel(35, 20), Is.EqualTo(SKColors.Black), "the band the box does not stand on is the shadow");
+            Assert.That(picture.GetPixel(15, 20), Is.EqualTo(SKColors.White), "and where the box stands the shadow is cut out (CSS Backgrounds 3 §6.1.1)");
+        });
+    }
+
+    /// <summary>
+    /// A blur radius softens the edge of a shadow over the width its Gaussian reaches - roughly twice the
+    /// radius, from the colour inside to nothing outside (CSS Backgrounds 3 §6.1.2) - which is what a
+    /// picture of one looks like: a hard edge has no middle to it.
+    /// </summary>
+    [Test]
+    public async Task AShadowIsSoftenedAcrossTheWidthItsRadiusSays()
+    {
+        using var picture = await Picture(
+            "<div style='position:absolute;top:10px;left:10px;width:20px;height:20px;box-shadow:10px 0 4px black'></div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(picture.GetPixel(30, 20).Red, Is.LessThan(12), "well inside the shape the shadow is still its whole colour");
+            Assert.That(picture.GetPixel(40, 20).Red, Is.GreaterThan(30).And.LessThan(225), "and at its edge it is between that and the page");
+            Assert.That(picture.GetPixel(48, 20), Is.EqualTo(SKColors.White), "while beyond the reach of the blur there is nothing");
+        });
+    }
+
+    /// <summary>
+    /// An inner shadow is the canvas cast onto the box: a band along the inside edge, kept wholly within the
+    /// padding box, and nothing at all over the middle the shape leaves clear (§6.1.1).
+    /// </summary>
+    [Test]
+    public async Task AnInnerShadowRingsTheBoxAndLeavesItsMiddleClear()
+    {
+        using var picture = await Picture(
+            "<div style='position:absolute;top:10px;left:10px;width:40px;height:40px;box-shadow:inset 0 0 0 4px black'></div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(picture.GetPixel(12, 30), Is.EqualTo(SKColors.Black), "four pixels in from the edge is the band");
+            Assert.That(picture.GetPixel(30, 30), Is.EqualTo(SKColors.White), "and the middle of the box is the page again");
+        });
+    }
+
+    /// <summary>
+    /// The shadow of a run of text is the ink of the words cast again beside them, drawn even where the words
+    /// themselves are the colour of the page they stand on.
+    /// </summary>
+    [Test]
+    public async Task TextIsShadowedOntoThePageBesideTheWordsThemselves()
+    {
+        using var shadowed = await Picture("<p style='margin:0;color:white;text-shadow:2px 2px black'>Shadowed</p>");
+        using var plain = await Picture("<p style='margin:0;color:white'>Shadowed</p>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(CountNonWhite(plain), Is.EqualTo(0), "white glyphs on a white page leave nothing to see");
+            Assert.That(CountNonWhite(shadowed), Is.GreaterThan(0), "and the same words moved two pixels down and right in black do");
+        });
+    }
+
+    /// <summary>
+    /// Draws a page through the real backend and hands over the picture it came to, in the window the tests
+    /// that read it are written against.
+    /// </summary>
+    private static async Task<SKBitmap> Picture(String body)
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(200, 160);
+        await view.SetHtml($"<html><body style='margin:0'>{body}</body></html>");
+
+        using var surface = SKSurface.Create(new SKImageInfo(200, 160));
+        new SkiaPaintExecutor(measurer).Execute(view.Paint!, surface.Canvas);
+
+        return SKBitmap.FromImage(surface.Snapshot());
+    }
+
+    /// <summary>Gets how much of a picture is not the page it was drawn on.</summary>
+    private static Int32 CountNonWhite(SKBitmap bitmap) => bitmap.Pixels.Count(pixel => pixel != SKColors.White);
 }

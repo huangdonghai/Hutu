@@ -50,7 +50,8 @@ internal static class FirstLine
         Boolean Color,
         Boolean Background,
         Boolean Fill,
-        Boolean Stroke);
+        Boolean Stroke,
+        Boolean Shadow);
 
     /// <summary>
     /// Resolves the style an arm ending in <c>::first-line</c> came to for this block and keeps it on the
@@ -94,7 +95,8 @@ internal static class FirstLine
             Declares(pseudo, "background") || Declares(pseudo, "background-color"),
             Declares(pseudo, "-webkit-text-fill-color"),
             Declares(pseudo, "-webkit-text-stroke") || Declares(pseudo, "-webkit-text-stroke-color") ||
-                Declares(pseudo, "-webkit-text-stroke-width"));
+                Declares(pseudo, "-webkit-text-stroke-width"),
+            Declares(pseudo, "text-shadow"));
     }
 
     /// <summary>Gets whether the block's own cascade - not one inherited down - writes a property.</summary>

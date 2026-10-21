@@ -93,6 +93,32 @@ public readonly struct CornerRadii
             Resolve(specified.BottomRight, width, height),
             Resolve(specified.BottomLeft, width, height));
 
+        return Fit(radii, width, height);
+    }
+
+    /// <summary>
+    /// Gets the radii of the shape a shadow is drawn from: every corner moved out by the distance its edges
+    /// were moved, or back toward the corner where that distance is negative, and the four then fitted to the
+    /// size that leaves. Moving them together is what keeps a spread shadow the shape of the box it was cast
+    /// from, sharp corners and all (CSS Backgrounds 3 §6.1.1).
+    /// </summary>
+    internal CornerRadii Spread(Double distance, Double width, Double height) =>
+        Fit(new CornerRadii(
+            Spread(TopLeft, distance),
+            Spread(TopRight, distance),
+            Spread(BottomRight, distance),
+            Spread(BottomLeft, distance)),
+            width,
+            height);
+
+    private static CornerRadius Spread(CornerRadius radius, Double distance) =>
+        Normalize(radius.Horizontal + distance, radius.Vertical + distance);
+
+    /// <summary>
+    /// Gets the radii of a box that has them, or four square corners where it has none to speak of.
+    /// </summary>
+    private static CornerRadii Fit(CornerRadii radii, Double width, Double height)
+    {
         if (radii.IsZero)
         {
             return None;

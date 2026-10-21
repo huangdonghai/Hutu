@@ -180,6 +180,10 @@ public sealed class SkiaPaintExecutor
                     Fill(canvas, fill);
                     break;
 
+                case BoxShadowCommand shadow:
+                    DrawBoxShadow(canvas, shadow);
+                    break;
+
                 case BorderCommand border:
                     DrawBorder(canvas, border);
                     break;
@@ -307,6 +311,69 @@ public sealed class SkiaPaintExecutor
         (Single)Math.Round(rect.Top),
         (Single)Math.Round(rect.Right),
         (Single)Math.Round(rect.Bottom));
+
+    /// <summary>
+    /// Draws one shadow of a box, which is the same operation read from the two opposite ends: an outer one
+    /// fills the shape it was cast from and cuts the box out of it, an inner one fills the box and cuts the
+    /// shape out of that. Either cut has to happen inside a layer of its own, or the same
+    /// <see cref="SKBlendMode.Clear"/> that takes the shadow off the box would take the page off with it.
+    /// </summary>
+    /// <remarks>
+    /// The blur is a Gaussian whose standard deviation is half the radius the declaration named, which is
+    /// the one answer the specification pins down for a shadow's soft edge - and it asks only that each
+    /// pixel come within five percent of what that Gaussian would give, so the filter is Skia's own
+    /// (CSS Backgrounds 3 §6.1.2). An inner shadow is blurred only where the shape is taken out; the edge
+    /// the shadow is clipped to stays sharp, which is what fills a box whose shape the spread has shrunk to
+    /// nothing with the whole of its colour.
+    /// </remarks>
+    private static void DrawBoxShadow(SKCanvas canvas, BoxShadowCommand command)
+    {
+        var area = ToRect(command.Area);
+        var shape = ToRect(command.Shape);
+
+        using var paint = new SKPaint
+        {
+            Color = new SKColor(command.Color),
+            IsAntialias = true,
+        };
+
+        using var cut = new SKPaint { BlendMode = SKBlendMode.Clear, IsAntialias = true };
+
+        if (command.Inset)
+        {
+            canvas.Save();
+            SkiaRounded.Clip(canvas, area, command.AreaRadii);
+
+            var layer = canvas.SaveLayer(area, null);
+
+            SkiaRounded.Fill(canvas, area, command.AreaRadii, paint);
+
+            // The box is filled plain, and it is the shape that is softened - so that the ring the shadow
+            // leaves keeps the edge of the box it was thrown from, and only its inner edge runs out soft.
+            cut.ImageFilter = Blur(command.Blur);
+            SkiaRounded.Fill(canvas, shape, command.ShapeRadii, cut);
+
+            canvas.RestoreToCount(layer);
+            canvas.Restore();
+            return;
+        }
+
+        paint.ImageFilter = Blur(command.Blur);
+
+        var bounds = canvas.SaveLayer(ToRect(command.Bounds), null);
+
+        SkiaRounded.Fill(canvas, shape, command.ShapeRadii, paint);
+        SkiaRounded.Fill(canvas, area, command.AreaRadii, cut);
+
+        canvas.RestoreToCount(bounds);
+    }
+
+    /// <summary>
+    /// Gets the filter that softens a shadow's edge, or null where the radius names none - a sharp shadow is
+    /// drawn without one, which is both what the specification asks for and a good deal cheaper to draw.
+    /// </summary>
+    private static SKImageFilter? Blur(Double radius) =>
+        radius > 0 ? SKImageFilter.CreateBlur((Single)(radius / 2), (Single)(radius / 2)) : null;
 
     /// <summary>
     /// Draws the border of a box.
@@ -776,11 +843,14 @@ public sealed class SkiaPaintExecutor
             // underlines and overlines under the text and the line-through over it. A text stroke is drawn
             // before - and so behind - the fill. A transparent stroke paints nothing of its own and is
             // skipped; its width still matters, but only to a background clipped to the text, which
-            // widens to it in its own pass.
+            // widens to it in its own pass. A shadow is the ink of the run cast again, so it stands under
+            // the run and over the lines drawn beneath it.
+            DrawShadows(canvas, command, metrics);
+
             StrokeRun(canvas, command);
 
             paint.Color = new SKColor(command.Color);
-            DrawRunBlob(canvas, command, baseline, paint, command.LetterSpacing, command.WordSpacing);
+            DrawRun(canvas, command, metrics, paint);
 
             DrawDecorations(canvas, paint, command, metrics, baseline, alongLine: true, ink, through: true);
 
@@ -796,24 +866,85 @@ public sealed class SkiaPaintExecutor
 
         DrawDecorations(canvas, paint, command, metrics, across, alongLine: false, beside, through: false);
 
+        DrawShadows(canvas, command, metrics);
+
         StrokeRun(canvas, command);
 
         paint.Color = new SKColor(command.Color);
+        DrawRun(canvas, command, metrics, paint);
+
+        DrawDecorations(canvas, paint, command, metrics, across, alongLine: false, beside, through: true);
+    }
+
+    /// <summary>
+    /// Draws the glyphs of a run with the paint it is handed - the whole of the run, whichever way it is set
+    /// out: across a line, turned down a column, stood upright in one, or combined into the width of a
+    /// single character.
+    /// </summary>
+    /// <remarks>
+    /// A shadow of the run is drawn by the same road as the run itself, which is the only way it lands on
+    /// the same pixels the layout measured out: a justified line, a column of turned glyphs and a run set
+    /// with letter spacing each put their ink where that ink stands, moved by nothing but the offset the
+    /// shadow asks for.
+    /// </remarks>
+    private void DrawRun(SKCanvas canvas, TextCommand command, FontMetrics metrics, SKPaint paint)
+    {
+        if (!command.Flow.IsVertical)
+        {
+            DrawRunBlob(canvas, command, (Single)(command.Bounds.Y + command.Baseline), paint, command.LetterSpacing, command.WordSpacing);
+            return;
+        }
 
         if (command.Flow.CombinesUpright)
         {
             DrawCombined(canvas, command, metrics, paint);
-        }
-        else if (command.Flow.Orientation == TextOrientation.Upright)
-        {
-            DrawUprightColumn(canvas, command, metrics, paint);
-        }
-        else
-        {
-            DrawTurned(canvas, command, paint);
+            return;
         }
 
-        DrawDecorations(canvas, paint, command, metrics, across, alongLine: false, beside, through: true);
+        if (command.Flow.Orientation == TextOrientation.Upright)
+        {
+            DrawUprightColumn(canvas, command, metrics, paint);
+            return;
+        }
+
+        DrawTurned(canvas, command, paint);
+    }
+
+    /// <summary>
+    /// Draws the shadows the run of text is drawn with, each of them the whole run again moved by its own
+    /// offsets and softened by its own radius, and every one of them under the ink it shadows.
+    /// </summary>
+    /// <remarks>
+    /// They are laid last-first, because the list is written front to back and the first shadow is the one
+    /// on top (CSS Text Decoration 4 §4.1). The offsets are physical rather than logical, so a column's
+    /// shadow falls down and to the right exactly as a line's does; the run is moved by the canvas rather
+    /// than by the place each glyph is drawn, which is what keeps a turned column's shadow in one piece.
+    /// </remarks>
+    private void DrawShadows(SKCanvas canvas, TextCommand command, FontMetrics metrics)
+    {
+        for (var index = command.Shadows.Count - 1; index >= 0; index--)
+        {
+            var shadow = command.Shadows[index];
+
+            // A shadow with no ink in it is asked to draw nothing, and the run would be set out twice to find
+            // out that it shows nowhere.
+            if ((shadow.Color & 0xFF00_0000) == 0)
+            {
+                continue;
+            }
+
+            using var paint = new SKPaint
+            {
+                Color = new SKColor(shadow.Color),
+                IsAntialias = true,
+                ImageFilter = Blur(shadow.Blur),
+            };
+
+            canvas.Save();
+            canvas.Translate((Single)shadow.OffsetX, (Single)shadow.OffsetY);
+            DrawRun(canvas, command, metrics, paint);
+            canvas.Restore();
+        }
     }
 
     /// <summary>

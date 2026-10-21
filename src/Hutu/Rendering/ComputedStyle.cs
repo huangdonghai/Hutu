@@ -1890,6 +1890,116 @@ internal readonly struct ComputedStyle
     }
 
     /// <summary>
+    /// Resolves the shadows a declaration lists for the fused path. A shadow list is a whole: an item the
+    /// grammar refuses takes the declaration down with it rather than leaving the well-formed ones, which
+    /// is what makes <c>box-shadow: 10px, 1px 1px red</c> say nothing at all.
+    /// </summary>
+    /// <remarks>
+    /// What the two properties differ in is inheritance and nothing else: <c>text-shadow</c> is inherited,
+    /// so a box that says nothing is drawn with the list its parent was, while <c>box-shadow</c> begins
+    /// again at none. <c>inherit</c> asks for the parent's list whichever of the two it is written on.
+    /// </remarks>
+    public static IReadOnlyList<Shadow> ResolveShadowsFused(
+        ICssProperty? declared,
+        IRenderDimensions dimensions,
+        LengthReader.FontSource font,
+        CssColorValue ink,
+        IReadOnlyList<Shadow> parent,
+        Boolean inherits)
+    {
+        if (declared is null)
+        {
+            return inherits ? parent : Array.Empty<Shadow>();
+        }
+
+        var read = ReadShadowList(declared.RawValue, dimensions, font, ink);
+
+        if (read is not null)
+        {
+            return read;
+        }
+
+        // <c>unset</c> takes the parent's list only where the property inherits; on <c>box-shadow</c>,
+        // which does not, it means the initial value - and <c>none</c>, <c>initial</c> and a declaration
+        // the grammar dropped all come to the same nothing.
+        return IsInheritWord(declared.RawValue) || inherits && IsInheritKeyword(declared.RawValue!)
+            ? parent
+            : Array.Empty<Shadow>();
+    }
+
+    /// <summary>
+    /// Reads the shadows of a value, or null where the value lists none: the keyword <c>none</c>, a wide
+    /// keyword and a declaration the grammar refused are all answers this cannot give from the value alone.
+    /// </summary>
+    /// <remarks>
+    /// The lengths are read from the declaration rather than from its computed self, because a computed
+    /// <c>em</c> was folded against the device's root size instead of the element's own; a percentage is
+    /// no answer at all, since the grammar asks for a length and nothing else. A blur that stands below
+    /// zero is refused the same way, for the grammar bounds it at zero (CSS Backgrounds 3 §6.1).
+    /// </remarks>
+    private static IReadOnlyList<Shadow>? ReadShadowList(
+        ICssValue? value,
+        IRenderDimensions dimensions,
+        LengthReader.FontSource font,
+        CssColorValue ink)
+    {
+        if (value is not ICssMultipleValue written || written.Count == 0)
+        {
+            return null;
+        }
+
+        var shadows = new List<Shadow>(written.Count);
+
+        for (var index = 0; index < written.Count; index++)
+        {
+            if (written[index] is not CssShadowValue item)
+            {
+                return null;
+            }
+
+            var x = ShadowLength(item.OffsetX, dimensions, font);
+            var y = ShadowLength(item.OffsetY, dimensions, font);
+            var blur = item.BlurRadius is { } blurred ? ShadowLength(blurred, dimensions, font) : 0.0;
+            var spread = item.SpreadRadius is { } spreadBy ? ShadowLength(spreadBy, dimensions, font) : 0.0;
+
+            if (x is null || y is null || blur is null || spread is null || blur < 0)
+            {
+                return null;
+            }
+
+            var asked = item.DeclaredColor;
+            var follows = asked is null || asked == CssColorValue.CurrentColor;
+
+            shadows.Add(new Shadow
+            {
+                OffsetX = x.Value,
+                OffsetY = y.Value,
+                Blur = blur.Value,
+                Spread = spread.Value,
+                // The colour a shadow left out is the element's own ink, and so is the keyword that asks for
+                // it (§6.1: "omitted colors default to currentColor") - but the asking is what travels down
+                // a tree that inherits the shadow, and the ink is each box's own, so the answer kept here is
+                // only the one for the box the declaration was read on.
+                Color = follows ? ToArgb(ink) : ToArgb(asked!.Value),
+                FollowsInk = follows,
+                Inset = item.IsInset,
+            });
+        }
+
+        return shadows;
+    }
+
+    /// <summary>
+    /// Gets the shadow length a value states, or null where it states none. A percentage, a keyword and a
+    /// length the device cannot convert are all answers null.
+    /// </summary>
+    private static Double? ShadowLength(ICssValue? value, IRenderDimensions dimensions, LengthReader.FontSource font) =>
+        value is not null && LengthReader.TryReadValue(value, RenderMode.Horizontal, dimensions, font, out var length) &&
+        length.Kind == StyleLengthKind.Pixels
+            ? length.Value
+            : null;
+
+    /// <summary>
     /// Resolves the text stroke - the width the glyphs are ringed with and the colour of that ring - for
     /// the fused path. Both are inherited, and the shorthand <c>-webkit-text-stroke</c> can set either;
     /// a longhand written beside it wins for its own half, and anything left unsaid comes from the parent.
@@ -2429,6 +2539,13 @@ internal readonly struct ComputedStyle
         // declaration answer from here when it is present, so a style assembled from matched
         // declarations and inheritance carries no declaration at all. Null on the render-tree path.
         internal FusedKeywords? Fused;
+
+        // The shadows with every colour that asked for the ink settled to this element's own, which is what
+        // a box is painted with. Kept because the asking travels down a tree that inherits a shadow while
+        // the answer does not: a shadow written in red and inherited by a green box is drawn green. Null
+        // until one is asked for, since a list that asks for nothing is already the answer.
+        internal IReadOnlyList<Shadow>? BoxPaint;
+        internal IReadOnlyList<Shadow>? TextPaint;
     }
 
     /// <summary>
@@ -2444,6 +2561,15 @@ internal readonly struct ComputedStyle
         internal CssColorValue Color = CssColorValue.Black;
         internal CssColorValue? BackgroundColor;
         internal IReadOnlyList<BackgroundLayer> Backgrounds = Array.Empty<BackgroundLayer>();
+
+        /// <summary>
+        /// Gets the shadows the box is drawn with. The property is not inherited, so this is the element's
+        /// own answer whatever its parent came to.
+        /// </summary>
+        internal IReadOnlyList<Shadow> BoxShadows = Array.Empty<Shadow>();
+
+        /// <summary>Gets the shadows the element's text is drawn with, inherited like every other value here.</summary>
+        internal IReadOnlyList<Shadow> TextShadows = Array.Empty<Shadow>();
         internal CursorKind Cursor;
         internal RubyPosition Ruby;
         internal CssColorValue OutlineColor = CssColorValue.Black;
@@ -2658,7 +2784,36 @@ internal readonly struct ComputedStyle
             mine.Cursor == theirs.Cursor &&
             mine.TextStrokeWidth == theirs.TextStrokeWidth &&
             mine.TextStrokeColor == theirs.TextStrokeColor &&
+            SameShadows(mine.TextShadows, theirs.TextShadows) &&
             mine.TextFillColor == theirs.TextFillColor;
+    }
+
+    /// <summary>
+    /// Gets whether two shadow lists draw the same thing. The answer is by value rather than by reference,
+    /// because two elements that each wrote the same declaration hold two lists of it; a box that wrote
+    /// nothing holds its parent's instance, which is where the reference test pays.
+    /// </summary>
+    private static Boolean SameShadows(IReadOnlyList<Shadow> mine, IReadOnlyList<Shadow> theirs)
+    {
+        if (ReferenceEquals(mine, theirs))
+        {
+            return true;
+        }
+
+        if (mine.Count != theirs.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < mine.Count; index++)
+        {
+            if (mine[index] != theirs[index])
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Gets what an item of this element's list is marked with, as the name or string written.</summary>
@@ -3198,6 +3353,100 @@ internal readonly struct ComputedStyle
             _dimensions,
             FontSize,
             element is null ? null : url => ImageUrlResolver.Resolve(element, url));
+    }
+
+    /// <summary>
+    /// Gets the shadows the box is drawn with, in the order the page wrote them - and the first of those is
+    /// the one that ends up on top (CSS Backgrounds 3 §6.1.3).
+    /// </summary>
+    public IReadOnlyList<Shadow> BoxShadows
+    {
+        get
+        {
+            var written = WrittenBoxShadows;
+
+            return AnyFollowsInk(written) ? _values.BoxPaint ??= Inked(written) : written;
+        }
+    }
+
+    /// <summary>
+    /// Gets the shadows the element's text is drawn with. The property is inherited, so an ancestor that
+    /// wrote a shadow gives it to every word below it as surely as the element that wrote it.
+    /// </summary>
+    public IReadOnlyList<Shadow> TextShadows
+    {
+        get
+        {
+            var written = WrittenTextShadows;
+
+            return AnyFollowsInk(written) ? _values.TextPaint ??= Inked(written) : written;
+        }
+    }
+
+    /// <summary>
+    /// Gets the box's shadows as the declaration left them, with any colour that asks for the ink still
+    /// asking. This is what a child inherits, and what the accessor above settles to each box's own ink.
+    /// </summary>
+    internal IReadOnlyList<Shadow> WrittenBoxShadows =>
+        _values.Fused is { } fused ? fused.BoxShadows : CascadedShadows("box-shadow");
+
+    /// <summary>Gets the text's shadows as the declaration left them. See <see cref="WrittenBoxShadows"/>.</summary>
+    internal IReadOnlyList<Shadow> WrittenTextShadows =>
+        _values.Fused is { } fused ? fused.TextShadows : CascadedShadows("text-shadow");
+
+    /// <summary>
+    /// Gets whether any shadow of the list asks for the ink of the box it is drawn with - which most do not,
+    /// and a list that none does is already the answer and needs no copy.
+    /// </summary>
+    private static Boolean AnyFollowsInk(IReadOnlyList<Shadow> shadows)
+    {
+        for (var index = 0; index < shadows.Count; index++)
+        {
+            if (shadows[index].FollowsInk)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Gives every shadow that asks for it the ink of this element, leaving the rest as they were.
+    /// </summary>
+    private IReadOnlyList<Shadow> Inked(IReadOnlyList<Shadow> shadows)
+    {
+        var ink = ToArgb(Color);
+
+        var settled = new List<Shadow>(shadows.Count);
+
+        for (var index = 0; index < shadows.Count; index++)
+        {
+            var shadow = shadows[index];
+
+            settled.Add(shadow.FollowsInk ? shadow with { Color = ink, FollowsInk = false } : shadow);
+        }
+
+        return settled;
+    }
+
+    /// <summary>
+    /// Reads a shadow list off the declarations of a style that was not built fused.
+    /// </summary>
+    /// <remarks>
+    /// The specified declaration is asked first, because a computed one has already folded the element's
+    /// own <c>em</c> against the root rather than the size the length is written in. Where the author put a
+    /// wide keyword there instead of a list - and <c>inherit</c>, which is what carries a text shadow down a
+    /// tree, is the usual one - the answer is not in it, so the computed declaration is read: it has
+    /// resolved the inheritance already.
+    /// </remarks>
+    private IReadOnlyList<Shadow> CascadedShadows(String name)
+    {
+        var font = FontSourceOf();
+
+        return ReadShadowList(_specified?.GetProperty(name)?.RawValue, _dimensions, font, Color) ??
+            ReadShadowList(_style.GetProperty(name)?.RawValue, _dimensions, font, Color) ??
+            Array.Empty<Shadow>();
     }
 
     public Boolean HasUnderline => _values.Decoration.Underline;

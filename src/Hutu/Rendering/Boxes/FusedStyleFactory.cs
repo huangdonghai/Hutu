@@ -48,6 +48,18 @@ internal sealed class FusedParent
 
     /// <summary>Gets the parent's text fill colour, null where neither it nor an ancestor set one.</summary>
     public UInt32? TextFillColor { get; init; }
+
+    /// <summary>
+    /// Gets the shadows the parent's text was drawn with. The property is inherited, so this is the only
+    /// channel through which a shadow written on an ancestor reaches the words below it.
+    /// </summary>
+    public IReadOnlyList<Shadow> TextShadows { get; init; } = Array.Empty<Shadow>();
+
+    /// <summary>
+    /// Gets the parent's own box shadows. The property is not inherited, so this travels for one reason
+    /// only: a child that writes <c>box-shadow: inherit</c> takes the list the parent was drawn with.
+    /// </summary>
+    public IReadOnlyList<Shadow> BoxShadows { get; init; } = Array.Empty<Shadow>();
     public ICssProperty? LineHeightHit { get; init; }
     /// <summary>Gets the fewest lines a fragment keeps at its end, which every block under the page inherits.</summary>
     public Int32 Widows { get; init; } = 2;
@@ -99,6 +111,13 @@ internal sealed class FusedParent
     public Double? UnderlineOffset { get; init; }
 
     public DecorationSkip Skip { get; init; }
+
+    /// <summary>
+    /// Gets whether the parent's table collapses its borders. The property is inherited, so this is how the
+    /// state reaches the rows and cells under a table - and it is one of the two answers that decide what
+    /// those boxes paint, since an outer shadow has no effect on an internal element of a collapsing table.
+    /// </summary>
+    public Boolean Collapses { get; init; }
 
     /// <summary>
     /// Whether the parent is a flex container, which is what makes this element a flex item - the
@@ -205,6 +224,8 @@ internal sealed class FusedParent
         TextStrokeWidth = style.TextStrokeWidth,
         TextStrokeColor = style.TextStrokeColor,
         TextFillColor = style.TextFillColor,
+        TextShadows = style.WrittenTextShadows,
+        BoxShadows = style.WrittenBoxShadows,
 
         // The nearest declaration at or above this element, not merely its own. A number is the form
         // that is re-read at every element - its computed value is the number, and each element it
@@ -239,6 +260,7 @@ internal sealed class FusedParent
         Skip = style.SkipInk,
         InFlex = style.Display.Contains("flex", StringComparison.OrdinalIgnoreCase),
         InGrid = style.Display.Contains("grid", StringComparison.OrdinalIgnoreCase),
+        Collapses = style.Table.Collapse,
         Indent = style.TextIndent,
         Direction = style.Direction,
         WritingMode = style.WritingMode,
@@ -672,6 +694,13 @@ internal static class FusedStyleFactory
             BackgroundColor = ComputedStyle.ResolveBackgroundColorFused(
                 element, find("background-color"), parent.Background),
             Backgrounds = ComputedStyle.ResolveBackgroundsFused(find, element, dimensions, size),
+
+            // The two shadow lists are read the same way and differ only in inheritance: a text shadow
+            // reaches a box from the ancestor that wrote it, a box shadow is the box's own.
+            BoxShadows = ComputedStyle.ResolveShadowsFused(
+                find("box-shadow"), dimensions, face, color, parent.BoxShadows, inherits: false),
+            TextShadows = ComputedStyle.ResolveShadowsFused(
+                find("text-shadow"), dimensions, face, color, parent.TextShadows, inherits: true),
             Cursor = ComputedStyle.ResolveCursorFused(element, find("cursor"), parent.Cursor),
             Ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position"), parent.Ruby),
             OutlineColor = ComputedStyle.ResolveOutlineColorFused(find("outline-color"), color),
@@ -729,7 +758,18 @@ internal static class FusedStyleFactory
         values.Breaks = BreakStyle.ReadFused(find, parent.Widows, parent.Orphans);
 
         values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)
-            ? TableStyle.ReadFused(find, text.VerticalAlign, face, dimensions, PresentationalHints.Spacing(element) ?? 0, PresentationalHints.Collapses(element))
+            ? TableStyle.ReadFused(
+                find,
+                text.VerticalAlign,
+                face,
+                dimensions,
+                PresentationalHints.Spacing(element) ?? 0,
+                // `border-collapse` is inherited, so a row, a cell or a group of either that writes no
+                // longhand of its own collapses because the table around it does; the attribute that hints at
+                // the state is the table's own to answer for (CSS Tables 3 §2.2).
+                display.Display is "table" or "inline-table"
+                    ? PresentationalHints.Collapses(element)
+                    : parent.Collapses)
             : null;
 
         // The flex longhands are read for a flex container - every spelling carries the word - and

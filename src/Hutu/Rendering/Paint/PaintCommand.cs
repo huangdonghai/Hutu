@@ -167,6 +167,69 @@ public sealed class SvgCommand : PaintCommand
 }
 
 /// <summary>
+/// Draws one shadow of a box - the shape the box casts, or the shape it is cast by.
+/// </summary>
+/// <remarks>
+/// Both halves of the geometry travel with it, because the two kinds of shadow are the same operation read
+/// from opposite ends: an outer one is <see cref="Shape"/> drawn and <see cref="Area"/> cut out of it, so
+/// that nothing shows where the box itself stands; an inner one is <see cref="Area"/> filled and
+/// <see cref="Shape"/> cut out of that, so that nothing shows beyond the edge the shadow was thrown from.
+/// The area is the border box for the outer kind and the padding box for the inner one, which is what
+/// §6.1.1 says each is drawn from, and the shape is that area moved by the offsets and grown or shrunk by
+/// the spread, with its corners grown or shrunk to match (CSS Backgrounds 3 §6.1.1).
+/// <para>
+/// <see cref="PaintCommand.Bounds"/> is neither of the two but the whole of what the command can put ink
+/// on: the shape, with the blur added on every side it reaches - which is why it is the rectangle a
+/// backend is culled against and the smaller one would cut a soft edge short.
+/// </para>
+/// </remarks>
+public sealed class BoxShadowCommand : PaintCommand
+{
+    internal BoxShadowCommand(
+        Rect bounds,
+        Rect area,
+        CornerRadii areaRadii,
+        Rect shape,
+        CornerRadii shapeRadii,
+        Double blur,
+        UInt32 color,
+        Boolean inset)
+        : base(bounds)
+    {
+        Area = area;
+        AreaRadii = areaRadii;
+        Shape = shape;
+        ShapeRadii = shapeRadii;
+        Blur = blur;
+        Color = color;
+        Inset = inset;
+    }
+
+    /// <summary>Gets the box's own area: the border box of an outer shadow, the padding box of an inner one.</summary>
+    public Rect Area { get; }
+
+    /// <summary>Gets the corner radii of <see cref="Area"/>.</summary>
+    public CornerRadii AreaRadii { get; }
+
+    /// <summary>Gets the shape the shadow is drawn from, moved by the offsets and moved again by the spread.</summary>
+    public Rect Shape { get; }
+
+    /// <summary>Gets the corner radii of <see cref="Shape"/>.</summary>
+    public CornerRadii ShapeRadii { get; }
+
+    /// <summary>
+    /// Gets the blur radius in pixels, of which the backend makes a Gaussian whose standard deviation is
+    /// half it (CSS Backgrounds 3 §6.1.2). Zero draws a sharp edge.
+    /// </summary>
+    public Double Blur { get; }
+
+    public UInt32 Color { get; }
+
+    /// <summary>Gets whether the shadow lies inside the box rather than under it.</summary>
+    public Boolean Inset { get; }
+}
+
+/// <summary>
 /// Draws one background image layer. A background brings its own size, position and repeat rules,
 /// which is a different placement model from <c>object-fit</c>, so it carries the parsed layer.
 /// </summary>
@@ -351,6 +414,11 @@ public sealed class TextCommand : PaintCommand
     /// Both come from <c>-webkit-text-stroke</c>; a zero width is no stroke. The ring is drawn under the
     /// fill, and its width also widens the ink a background clipped to the text is kept to.
     /// </param>
+    /// <param name="shadows">
+    /// The shadows the run's text is drawn with, in the order the page wrote them. Each is the whole of the
+    /// run again, moved by its own offsets and blurred by its own radius, laid under the one before it and
+    /// under the glyphs last of all (CSS Text Decoration 4 §4.1).
+    /// </param>
     internal TextCommand(
         Rect bounds,
         String text,
@@ -367,7 +435,8 @@ public sealed class TextCommand : PaintCommand
         String expand = "auto",
         Double wordSpacing = 0,
         IReadOnlyList<DecorationPlacement>? placements = null,
-        DecorationSkip skip = DecorationSkip.Auto)
+        DecorationSkip skip = DecorationSkip.Auto,
+        IReadOnlyList<Shadow>? shadows = null)
         : base(bounds)
     {
         Text = text;
@@ -385,6 +454,7 @@ public sealed class TextCommand : PaintCommand
         WordSpacing = wordSpacing;
         Placements = placements ?? Array.Empty<DecorationPlacement>();
         Skip = skip;
+        Shadows = shadows ?? Array.Empty<Shadow>();
     }
 
     public String Text { get; }
@@ -461,4 +531,11 @@ public sealed class TextCommand : PaintCommand
     /// nothing to say draws each line where its own face puts it.
     /// </summary>
     public IReadOnlyList<DecorationPlacement> Placements { get; }
+
+    /// <summary>
+    /// Gets the shadows the run's text is drawn with, in the order the page wrote them: the first of them
+    /// is the one on top, so a backend lays them last-first, each under the glyphs it shadows. Empty, which
+    /// is what a box with no <c>text-shadow</c> of its own or above it comes to, draws the text plain.
+    /// </summary>
+    public IReadOnlyList<Shadow> Shadows { get; }
 }

@@ -126,13 +126,17 @@ internal sealed class Painter
                 break;
 
             case LayoutKind.HorizontalRule:
+                AddShadows(box, box.Source.Style, target, inset: false);
+                AddShadows(box, box.Source.Style, target, inset: true);
                 AddBorder(box, box.Source.Style, target);
                 break;
 
             case LayoutKind.Image:
                 // An image box can carry a background and a border of its own, which paint under the
                 // image itself.
+                AddShadows(box, box.Source.Style, target, inset: false);
                 PaintBackground(box, box.Source.Style, target);
+                AddShadows(box, box.Source.Style, target, inset: true);
                 AddBorder(box, box.Source.Style, target);
                 PaintImage(box, target);
                 break;
@@ -140,7 +144,9 @@ internal sealed class Painter
             case LayoutKind.Svg:
                 // An inline SVG is a replaced box like an image: its own background and border paint
                 // under the vector content, which is drawn from the markup the box carries.
+                AddShadows(box, box.Source.Style, target, inset: false);
                 PaintBackground(box, box.Source.Style, target);
+                AddShadows(box, box.Source.Style, target, inset: true);
                 AddBorder(box, box.Source.Style, target);
                 PaintSvg(box, target);
                 break;
@@ -191,6 +197,85 @@ internal sealed class Painter
         if (box.Kind is not (LayoutKind.Line or LayoutKind.Text))
         {
             AddOutline(box, box.Source.Style, target);
+        }
+    }
+
+    /// <summary>
+    /// Emits the shadows of one kind a box is drawn with - the outer ones, or the inner - in the order a
+    /// backend has to lay them down.
+    /// </summary>
+    /// <remarks>
+    /// The list a page wrote is ordered front to back, "the first shadow is on top" (CSS Backgrounds 3
+    /// §6.1.3), so it is emitted last-first: the shadow standing furthest back is the first ink on the page
+    /// and the one the author wrote first is the last laid, over the rest.
+    /// <para>
+    /// Each shadow is drawn from the box's own area - the border box for an outer one, the padding box for
+    /// an inner one, which is what §6.1.1 says each is a copy of - moved by the offsets, and moved again by
+    /// the spread, which outsets the outer shape and insetting the inner one. The size the spread leaves is
+    /// floored at nothing: a spread wider than the box it was written on leaves a line or a point rather
+    /// than a rectangle of negative size, and it is the corners that carry the rest of the shape, grown or
+    /// shrunk along with the edges.
+    /// </para>
+    /// </remarks>
+    private static void AddShadows(LayoutBox box, ComputedStyle style, List<PaintCommand> target, Boolean inset)
+    {
+        var shadows = style.BoxShadows;
+
+        if (shadows.Count == 0)
+        {
+            return;
+        }
+
+        // An outer shadow has no effect on an internal table element of a table whose borders collapse
+        // (§6.1.3) - and the table itself, which is not internal, still casts one.
+        if (!inset && box.Kind is LayoutKind.TableCell or LayoutKind.TableRow or LayoutKind.TableRowGroup &&
+            style.Table.Collapse)
+        {
+            return;
+        }
+
+        var area = inset ? box.PaddingBox : box.BorderBox;
+        var radii = inset ? box.PaddingRadii : box.Radii;
+
+        for (var index = shadows.Count - 1; index >= 0; index--)
+        {
+            var shadow = shadows[index];
+
+            // A shadow with nothing to draw is not a shadow: the box it was cast from is transparent, and the
+            // layer, the blur and the cut made for it would come to the same picture as not making them.
+            if (shadow.Inset != inset || (shadow.Color & 0xFF00_0000) == 0)
+            {
+                continue;
+            }
+
+            // An inner shadow's spread works the other way: expanding the shadow is the same as contracting
+            // the shape it is drawn from (§6.1).
+            var distance = inset ? -shadow.Spread : shadow.Spread;
+            var width = Math.Max(0, area.Width + distance * 2);
+            var height = Math.Max(0, area.Height + distance * 2);
+            var shape = new Rect(
+                area.X - distance + shadow.OffsetX,
+                area.Y - distance + shadow.OffsetY,
+                width,
+                height);
+
+            // The area the command covers is the shape with as much blur around it as the blur can reach -
+            // which is the answer a backend culls against, and one taken from the shape alone would cut a
+            // soft edge short. An inner shadow never leaves the box it is clipped to, whatever its blur.
+            var reach = shadow.Blur * 2;
+            var bounds = inset
+                ? area
+                : new Rect(shape.X - reach, shape.Y - reach, width + reach * 2, height + reach * 2);
+
+            target.Add(new BoxShadowCommand(
+                bounds,
+                area,
+                radii,
+                shape,
+                radii.Spread(distance, width, height),
+                shadow.Blur,
+                shadow.Color,
+                inset));
         }
     }
 
@@ -252,10 +337,18 @@ internal sealed class Painter
 
         // An empty cell under `empty-cells: hide` paints neither its background nor, in the separated
         // border model, its border. Every other box paints both.
+        //
+        // A shadow is presentation of the box as much as its background is, so it goes where the
+        // specification puts it: the outer ones immediately below the background and the inner ones
+        // immediately above it, still below the border (CSS Backgrounds 3 §6.1.3).
+        AddShadows(box, style, target, inset: false);
+
         if (!box.SuppressBackground)
         {
             PaintBackground(box, style, target);
         }
+
+        AddShadows(box, style, target, inset: true);
 
         if (!box.SuppressBorder)
         {
@@ -291,7 +384,8 @@ internal sealed class Painter
                 box.Flow,
                 marked.LetterSpacing,
                 wordSpacing: marked.WordSpacing,
-                skip: marked.SkipInk));
+                skip: marked.SkipInk,
+                shadows: marked.TextShadows));
         }
 
         PaintChildren(box, list, target, deferred);
@@ -696,7 +790,8 @@ internal sealed class Painter
             style.TextJustify,
             style.WordSpacing,
             box.DecorationPlacements,
-            style.SkipInk));
+            style.SkipInk,
+            (line is { Shadow: true } cast ? cast.Style : style).TextShadows));
     }
 
     /// <summary>
