@@ -319,6 +319,167 @@ public sealed class PositionedLayoutTests
         Assert.That(negative, Is.LessThan(flow), "a negative level goes under the normal flow");
     }
 
+    /// <summary>
+    /// A box that names a level is painted from that level of the stacking context it belongs to, even
+    /// when the walk reaches it through a box that names none - the structure
+    /// `css-transforms/transform-stacking-002` is built out of, and the whole of what it asserts.
+    /// </summary>
+    [Test]
+    public async Task ALevelMetInsideAPlainBoxIsPaintedFromThatLevel()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div><div style='position:relative;z-index:1;width:10px;height:10px;background:#00ff00'></div></div>" +
+            "<div style='position:relative;width:10px;height:10px;background:#ff0000'></div>" +
+            "</body></html>");
+
+        var fills = view.Paint!.Commands.OfType<FillCommand>().ToList();
+
+        var automatic = fills.FindIndex(fill => fill.Color == 0xFFFF_0000u);
+        var levelled = fills.FindIndex(fill => fill.Color == 0xFF00_FF00u);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(automatic, Is.GreaterThanOrEqualTo(0));
+            Assert.That(levelled, Is.GreaterThan(automatic), "a level is a layer of its own, wherever the walk met the box");
+        });
+    }
+
+    /// <summary>
+    /// Gets the same answer for a box taken out of the flow that stands on a line, which is where the
+    /// place it would have had - and so its static position - is recorded.
+    /// </summary>
+    [Test]
+    public async Task ALevelMetOnALineIsPaintedFromThatLevel()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:relative;width:10px;height:10px;background:#ff0000'></div>" +
+            "<div><span style='position:absolute;top:0;left:0;width:10px;height:10px;" +
+            "background:#00ff00;z-index:3'></span></div>" +
+            "</body></html>");
+
+        var fills = view.Paint!.Commands.OfType<FillCommand>().ToList();
+
+        var automatic = fills.FindIndex(fill => fill.Color == 0xFFFF_0000u);
+        var levelled = fills.FindIndex(fill => fill.Color == 0xFF00_FF00u);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(automatic, Is.GreaterThanOrEqualTo(0));
+            Assert.That(levelled, Is.GreaterThan(automatic), "the line holds the place, and the level holds the paint");
+        });
+    }
+
+    /// <summary>
+    /// The walk that carries a level up to the context stops at a box that forms one of its own: this is
+    /// the whole of what `css-contain/contain-paint-stacking-context-001a` asserts, and the same shape
+    /// answers <c>contain: layout</c>, a <c>transform-style</c> that keeps the third dimension and a
+    /// <c>will-change</c> that names a layer.
+    /// </summary>
+    [Test]
+    public async Task ABoxThatContainsItsPaintAnswersTheLevelsInsideIt()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='front' style='position:absolute;z-index:10;width:100px;height:100px;background:#008000'></div>" +
+            "<div id='back' style='contain:paint;width:100px;height:100px'>" +
+            "<div id='inside' style='position:absolute;z-index:1000;width:100px;height:100px;background:#ff0000'></div>" +
+            "</div></body></html>");
+
+        var fills = view.Paint!.Commands.OfType<FillCommand>().ToList();
+
+        var inside = fills.FindIndex(fill => fill.Color == 0xFFFF_0000u);
+        var front = fills.FindIndex(fill => fill.Color == 0xFF00_8000u);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(inside, Is.GreaterThanOrEqualTo(0), "the red box is painted");
+            Assert.That(front, Is.GreaterThan(inside),
+                "and the contained level of 1000 stays under the context's own level of 10 (CSS Contain 2 2.6)");
+            Assert.That(Find(view, "back").EstablishesStackingContext, Is.True);
+            Assert.That(Find(view, "front").EstablishesStackingContext, Is.True, "a positioned box that states a level");
+        });
+    }
+
+    [Test]
+    public async Task AHintAtALayerFormsAContextThoughNothingHasChangedYet()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='will' style='will-change:transform;width:10px;height:10px'></div>" +
+            "<div id='contained' style='will-change:contain;width:10px;height:10px'></div>" +
+            "<div id='blurred' style='will-change:backdrop-filter;width:10px;height:10px'></div>" +
+            "<div id='style' style='transform-style:preserve-3d;width:10px;height:10px'></div>" +
+            "<div id='plain' style='width:10px;height:10px'></div>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "will").EstablishesStackingContext, Is.True,
+                "the hint alone is the answer (CSS Will Change 1 2)");
+            Assert.That(Find(view, "contained").EstablishesStackingContext, Is.True,
+                "and a hint of a property that would form one counts, whether or not the box uses it");
+            Assert.That(Find(view, "blurred").EstablishesStackingContext, Is.True, "the same for a backdrop filter");
+            Assert.That(Find(view, "style").EstablishesStackingContext, Is.True,
+                "a box that keeps its third dimension is the frame for what stands in it (CSS Transforms 2)");
+            Assert.That(Find(view, "plain").EstablishesStackingContext, Is.False, "a box that says none of them");
+        });
+    }
+
+    [Test]
+    public async Task AnAutomaticLevelIsNotAContextOfItsOwn()
+    {
+        // `z-index: auto` paints at level zero but forms no context, which is the distinction
+        // `css-masking/clip-no-stacking-context` is built to test: the levels inside such a box belong to
+        // the context above.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='auto' style='position:absolute;width:10px;height:10px'></div>" +
+            "<div id='zero' style='position:absolute;z-index:0;width:10px;height:10px'></div>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "auto").EstablishesStackingContext, Is.False, "an automatic level");
+            Assert.That(Find(view, "zero").EstablishesStackingContext, Is.True, "and a stated zero are not the same answer");
+            Assert.That(Find(view, "auto").ZIndex, Is.EqualTo(Find(view, "zero").ZIndex), "though they paint at one level");
+        });
+    }
+
+    /// <summary>
+    /// Containment is a property of boxes: a span that contains its paint forms no context, and the levels
+    /// written inside it are answered by the context above, as
+    /// <c>contain-paint-ignored-cases-ib-split-001</c> measures (CSS Contain 2 §2.6).
+    /// </summary>
+    [Test]
+    public async Task ContainmentOnAnInlineLevelFormsNoContext()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:absolute;z-index:10;width:100px;height:100px;background:#008000'></div>" +
+            "<span style='contain:paint'>" +
+            "<div style='position:absolute;z-index:1000;width:100px;height:100px;background:#ff0000'></div>" +
+            "</span></body></html>");
+
+        var fills = view.Paint!.Commands.OfType<FillCommand>().ToList();
+
+        var inside = fills.FindIndex(fill => fill.Color == 0xFFFF_0000u);
+        var front = fills.FindIndex(fill => fill.Color == 0xFF00_8000u);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(inside, Is.GreaterThanOrEqualTo(0));
+            Assert.That(inside, Is.GreaterThan(front), "the span holds nothing back, level included");
+        });
+    }
+
     [Test]
     public async Task AnAbsoluteChildOfAFlexContainerIsNotAFlexItem()
     {

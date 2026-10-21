@@ -80,6 +80,11 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // transform grammar rejects an unresolved var() and discards the declaration to `none`, which
         // would leave nothing for our substitution to resolve.
         "transform",
+        // CSS Will Change 1's hint list, kept as the text the page wrote: AngleSharp reads the list
+        // against the property names it knows, and rejects the ones its own registry does not carry
+        // (`contain`, `backdrop-filter`), which would drop half of a hint that the stacking answer needs
+        // whole. The style reads the names itself.
+        "will-change",
     };
 
     /// <summary>

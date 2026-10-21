@@ -201,6 +201,14 @@ internal sealed class Painter
         /// <summary>Gets the boxes waiting for the layer, in the order they were written.</summary>
         public List<DeferredBox> Pending { get; } = [];
 
+        /// <summary>
+        /// Gets the boxes met deeper that name a level above the layer, in the order they were written.
+        /// A level is answered by the context the box belongs to, and a box that stands inside one which
+        /// forms no context of its own belongs to the context above - painting it where it happens to
+        /// stand puts it under content that should have gone beneath it.
+        /// </summary>
+        public List<DeferredBox> Above { get; } = [];
+
         /// <summary>Gets the clips of the boxes climbed through on the way down that hide their
         /// overflow, outermost first.</summary>
         public List<ClipEdge> ActiveClips { get; } = [];
@@ -328,9 +336,12 @@ internal sealed class Painter
                 // standing among blocks is: it is here only to say where it belongs.
                 foreach (var child in box.Children)
                 {
-                    if (deferred is not null && child.Position == PositionMode.Absolute && child.ZIndex == 0)
+                    if (deferred is not null && child.Position == PositionMode.Absolute && child.ZIndex >= 0)
                     {
-                        deferred.Pending.Add(new DeferredBox(child, NoClips));
+                        // The box stands at the place the line would have given it, which is only its
+                        // static position: it belongs to a layer of the context, at its own level.
+                        (child.ZIndex > 0 ? deferred.Above : deferred.Pending)
+                            .Add(new DeferredBox(child, NoClips));
                         continue;
                     }
 
@@ -598,7 +609,9 @@ internal sealed class Painter
                     ? new List<ClipEdge>(deferred.ActiveClips)
                     : NoClips;
 
-                deferred.Pending.Add(new DeferredBox(child, clips));
+                // A box that names a level of its own waits for that level above the layer; one that
+                // names none - `auto`, or `0`, which paint the same - waits in the layer itself.
+                (child.ZIndex > 0 ? deferred.Above : deferred.Pending).Add(new DeferredBox(child, clips));
             }
         }
         else if (HasPositionedChild(box))
@@ -641,8 +654,13 @@ internal sealed class Painter
         {
             if (child.Position != PositionMode.Static)
             {
-                // Its own layer is one of the other three passes; only an automatic level waits here.
-                if (child.ZIndex == 0)
+                // A negative level was drawn below the content already; an automatic one waits for
+                // this layer; a positive one belongs to the level above it.
+                if (child.ZIndex > 0)
+                {
+                    deferred.Above.Add(new DeferredBox(child, NoClips));
+                }
+                else if (child.ZIndex == 0)
                 {
                     deferred.Pending.Add(new DeferredBox(child, NoClips));
                 }
@@ -660,24 +678,36 @@ internal sealed class Painter
         //    put back around it here: the layer does not lift it out of a clip that reaches it.
         foreach (var entry in deferred.Pending)
         {
-            foreach (var clip in entry.Clips)
-            {
-                target.Add(new PushClipCommand(clip.Bounds, clip.Radii));
-            }
-
-            PaintChild(entry.Box, list, target);
-
-            for (var i = entry.Clips.Count - 1; i >= 0; i--)
-            {
-                target.Add(new PopClipCommand(entry.Clips[i].Bounds));
-            }
+            PaintDeferred(entry, list, target);
         }
 
-        // 4. The positive z-index layer, lowest first. `OrderBy` is stable, so equal levels keep
-        // their document order.
-        foreach (var child in box.Children.Where(child => child.Position != PositionMode.Static && child.ZIndex > 0).OrderBy(child => child.ZIndex))
+        // 4. The positive levels, lowest first. Both the boxes this one holds and the ones the walk met
+        //    deeper are answered from here: a box that stands inside another which forms no context of
+        //    its own belongs to this context, and a context the walk stopped at painted its own levels
+        //    already. `OrderBy` is stable and both lists came out of one document-order walk, so equal
+        //    levels keep that order.
+        foreach (var entry in deferred.Above.OrderBy(entry => entry.Box.ZIndex))
         {
-            PaintChild(child, list, target);
+            PaintDeferred(entry, list, target);
+        }
+    }
+
+    /// <summary>
+    /// Paints one box the walk left for this context, with the overflow clips that still reach it put
+    /// back around it.
+    /// </summary>
+    private void PaintDeferred(DeferredBox entry, PaintList list, List<PaintCommand> target)
+    {
+        foreach (var clip in entry.Clips)
+        {
+            target.Add(new PushClipCommand(clip.Bounds, clip.Radii));
+        }
+
+        PaintChild(entry.Box, list, target);
+
+        for (var i = entry.Clips.Count - 1; i >= 0; i--)
+        {
+            target.Add(new PopClipCommand(entry.Clips[i].Bounds));
         }
     }
 
@@ -713,7 +743,10 @@ internal sealed class Painter
                 break;
 
             default:
-                PaintBox(child, list, target, deferred);
+                // A box that forms a stacking context answers the levels inside itself, so the walk that
+                // carries boxes up to a layer stops here; a box that forms none - a positioned box whose
+                // level is `auto` - carries on, because its descendants belong to the context above.
+                PaintBox(child, list, target, child.EstablishesStackingContext ? null : deferred);
                 break;
         }
     }

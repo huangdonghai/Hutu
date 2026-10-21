@@ -15,13 +15,22 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 internal readonly struct ContainStyle
 {
-    internal ContainStyle(Boolean inline, Boolean block, StyleLength? width, StyleLength? height, Boolean stated)
+    internal ContainStyle(
+        Boolean inline,
+        Boolean block,
+        StyleLength? width,
+        StyleLength? height,
+        Boolean stated,
+        Boolean layout,
+        Boolean paint)
     {
         Inline = inline;
         Block = block;
         Width = width;
         Height = height;
         Stated = stated;
+        Layout = layout;
+        Paint = paint;
     }
 
     /// <summary>
@@ -48,6 +57,18 @@ internal readonly struct ContainStyle
     public Boolean IsContained => Inline || Block;
 
     /// <summary>
+    /// Gets whether the box contains its layout, which makes it a stacking context and the containing
+    /// block for any descendant taken out of the flow (CSS Contain 2 §2.5).
+    /// </summary>
+    public Boolean Layout { get; }
+
+    /// <summary>
+    /// Gets whether the box contains its paint, which is layout containment and a clip to its own box
+    /// (§2.6).
+    /// </summary>
+    public Boolean Paint { get; }
+
+    /// <summary>
     /// Reads the containment from the box's own declarations, or null where the page asked for none -
     /// which is every box that writes no <c>contain</c> at all.
     /// </summary>
@@ -66,6 +87,8 @@ internal readonly struct ContainStyle
         // `strict` is size, layout, paint and style; `content` is the other three without size, so it
         // does not contain either axis.
         var size = Has(contain!, "size") || Has(contain!, "strict");
+        var layout = Has(contain!, "layout") || Has(contain!, "strict") || Has(contain!, "content");
+        var paint = Has(contain!, "paint") || Has(contain!, "strict") || Has(contain!, "content");
 
         // The shorthand states one size for both axes or one for each; it is not expanded into the
         // longhands by the parser, so it is read whole and taken apart here.
@@ -80,7 +103,9 @@ internal readonly struct ContainStyle
             // whole question - §2.11.2's note says containment disables the body's special handling, whether
             // the containment is of paint, layout, style or size - and `none` is the only answer that says
             // nothing.
-            !Has(contain!, "none"));
+            !Has(contain!, "none"),
+            layout,
+            paint);
     }
 
     private static Boolean Has(String text, String keyword) =>

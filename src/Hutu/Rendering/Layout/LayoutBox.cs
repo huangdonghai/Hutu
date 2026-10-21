@@ -106,6 +106,12 @@ internal sealed class LayoutBox
     /// <summary>Gets or sets the rule that pins a sticky box to the viewport as the page scrolls.</summary>
     public StickyConstraint? Sticky { get; set; }
 
+    /// <summary>
+    /// Gets or sets whether the box forms a stacking context: the levels its descendants name are its own
+    /// to answer, and the walk that reached it carries nothing past it (CSS 2.1 §Appendix E).
+    /// </summary>
+    public Boolean EstablishesStackingContext { get; set; }
+
     /// <summary>Gets whether the box was taken out of normal flow by <c>absolute</c> or <c>fixed</c>.</summary>
     public Boolean IsOutOfFlow => Position is PositionMode.Absolute or PositionMode.Fixed;
 

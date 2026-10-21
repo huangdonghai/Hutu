@@ -720,6 +720,8 @@ internal static class FusedStyleFactory
             TextStrokeColor = strokeColor,
             TextFillColor = fillColor,
             Transform = find("transform")?.Value,
+            WillChange = find("will-change")?.Value,
+            TransformStyle = find("transform-style")?.Value,
             TransformOrigin = find("transform-origin")?.Value,
             OffsetPath = find("offset-path")?.Value,
             OffsetDistance = find("offset-distance")?.Value,
