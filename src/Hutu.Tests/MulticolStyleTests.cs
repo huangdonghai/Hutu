@@ -198,6 +198,23 @@ public sealed class MulticolStyleTests
     }
 
     /// <summary>
+    /// Content that forces more column breaks than the container has columns comes to the tallest
+    /// stretch between two of them, rather than stretching the columns to hold everything.
+    /// </summary>
+    [Test]
+    public async Task ForcedBreaksBeyondTheColumnCountDoNotStretchTheColumns()
+    {
+        using var view = await Render(
+            "<style>#d { columns:2; column-gap:0; width:100px }</style>" +
+            "<div id='d'>" +
+            "<div style='height:100px'></div>" +
+            "<div style='break-before:column; height:90px'></div>" +
+            "<div style='break-before:column; height:10px'></div></div>");
+
+        Assert.That(Find(view, "d").BorderBox.Height, Is.EqualTo(100).Within(0.01));
+    }
+
+    /// <summary>
     /// A container that states a column height and wraps its columns makes a grid of column boxes: the
     /// content runs down a box, then on into the next column, and a row of boxes further down the page
     /// (CSS Multicol 2 §3).

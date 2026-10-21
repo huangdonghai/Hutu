@@ -136,6 +136,16 @@ internal static class Fragmentainer
             return Total(children);
         }
 
+        // A forced break starts a fragment of its own, so content that states more of them than there
+        // are columns cannot be balanced at all: the container comes to the tallest stretch between two
+        // forced breaks rather than stretching to hold everything.
+        var (runs, tallestRun) = ForcedRuns(children);
+
+        if (runs > fragments)
+        {
+            return tallestRun;
+        }
+
         var extents = new Double[fragments];
         var tallest = Tallest(children);
         var low = 0.0;
@@ -175,6 +185,31 @@ internal static class Fragmentainer
     /// Gets the break a block's start carries: its own value combined with the one its first in-flow
     /// child states (CSS Break 3 §3.1.1). A forced value wins over an avoid, and an avoid over auto.
     /// </summary>
+    /// <summary>
+    /// Gets the stretches a forced break makes and the height of the tallest of them: what a container
+    /// comes to when the breaks need more fragments than it has.
+    /// </summary>
+    private static (Int32 Runs, Double Tallest) ForcedRuns(IReadOnlyList<FragmentChild> children)
+    {
+        var runs = 1;
+        var tallest = 0.0;
+        var current = 0.0;
+
+        foreach (var child in children)
+        {
+            if (Forced(child.Before) && current > 0)
+            {
+                tallest = Math.Max(tallest, current);
+                current = 0;
+                runs++;
+            }
+
+            current += child.Height;
+        }
+
+        return (runs, Math.Max(tallest, current));
+    }
+
     public static BreakValue Before(IReadOnlyList<FragmentChild> children, BreakValue own) =>
         children.Count == 0 ? own : Combine(own, children[0].Before);
 
