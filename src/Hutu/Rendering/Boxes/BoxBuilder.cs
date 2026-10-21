@@ -135,11 +135,19 @@ internal static partial class BoxBuilder
         return false;
     }
 
-    private static Boolean HasBlockLevel(List<Box> children)
+    /// <summary>
+    /// Gets whether the children hold content that cannot sit in a line, which is what makes an inline
+    /// box a block container rather than one. A box that left the flow is not such content: it is laid out
+    /// against a containing block of its own and takes no part in the lines of the box it stands in, so a
+    /// span that holds nothing but an absolutely positioned box stays the inline box the page wrote - with
+    /// its own padding painting outward, and with the place in the line the out-of-flow box would have had
+    /// standing as that box's static position (CSS 2.1 §9.2.1.1, §9.4.1, §10.3.7).
+    /// </summary>
+    private static Boolean HasInFlowBlockLevel(List<Box> children)
     {
         foreach (var child in children)
         {
-            if (child.IsBlockLevel)
+            if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child))
             {
                 return true;
             }

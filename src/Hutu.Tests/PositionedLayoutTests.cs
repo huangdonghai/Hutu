@@ -600,6 +600,64 @@ public sealed class PositionedLayoutTests
         });
     }
 
+    /// <summary>
+    /// A span whose only block-level child left the flow is still the inline box the page wrote: its
+    /// vertical padding paints outward without moving its own text, the line it sits on keeps the height
+    /// the line-height asks for, and the out-of-flow child's static position is the place in that line
+    /// rather than a fresh one below the padding (CSS 2.1 §9.2.1.1, §10.3.7). Measured against Chrome on
+    /// 2026-10-22: the block three lines of `line-height: 1` tall, the box taken out of the flow standing
+    /// at the head of the second of them.
+    /// </summary>
+    [Test]
+    public async Task AnInlineBoxHoldingOnlyAnOutOfFlowChildStaysInline()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='p' style='position:relative;top:30px;left:20px;width:200px;font:16px/1 Arial'>" +
+            "one<br><span style='padding-top:60px'>two" +
+            "<span id='c' style='position:absolute;width:5px;height:5px'></span></span><br>three" +
+            "</div></body></html>");
+
+        var lines = Find(view, "p");
+        var flown = Find(view, "c");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines.BorderBox.Height, Is.EqualTo(48), "three lines of 16px, padding included in nothing");
+            Assert.That(flown.BorderBox.Y, Is.EqualTo(46), "the second line's top, not 60px below it");
+            Assert.That(flown.BorderBox.X, Is.GreaterThan(20), "and along the line, where the text had stood");
+        });
+    }
+
+    /// <summary>
+    /// An inline box that forms a stacking context answers the levels written inside it, the same answer a
+    /// block gives - which the painting can only know if the line layout carries the flag onto the box it
+    /// builds (CSS Will Change 1 §2, measured by `will-change-stacking-context-opacity-2`).
+    /// </summary>
+    [Test]
+    public async Task AnInlineBoxThatFormsAContextHoldsItsOwnLevels()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:absolute;width:100px;height:100px;background:#008000;z-index:1'></div>" +
+            "<span style='will-change:opacity'>" +
+            "<div style='position:absolute;width:100px;height:100px;background:#ff0000;z-index:3'></div>" +
+            "</span></body></html>");
+
+        var fills = view.Paint!.Commands.OfType<FillCommand>().ToList();
+
+        var indicator = fills.FindIndex(fill => fill.Color == 0xFF00_8000u);
+        var inside = fills.FindIndex(fill => fill.Color == 0xFFFF_0000u);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(inside, Is.GreaterThanOrEqualTo(0), "the box inside the inline context is painted");
+            Assert.That(inside, Is.LessThan(indicator), "and not lifted over the level it belongs to");
+        });
+    }
+
     [Test]
     public async Task AnAbsoluteChildOfAFlexContainerIsNotAFlexItem()
     {

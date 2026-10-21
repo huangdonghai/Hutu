@@ -292,7 +292,7 @@ internal static partial class BoxBuilder
             }
         }
 
-        if (kind == BoxKind.Inline && HasBlockLevel(children))
+        if (kind == BoxKind.Inline && HasInFlowBlockLevel(children))
         {
             kind = BoxKind.Block;
         }

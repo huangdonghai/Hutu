@@ -936,6 +936,11 @@ internal sealed class InlineLayout
             Border = ancestor.BorderFor(cutStart, cutEnd),
             SlicesInlineStart = cutStart,
             SlicesInlineEnd = cutEnd,
+
+            // The painting walks the box tree rather than re-reading styles, and an inline box is built
+            // here rather than arranged, so this is where it says whether it forms a context of its own -
+            // which decides whether the levels written inside it are answered by the context above.
+            EstablishesStackingContext = ancestor.Box.Style.EstablishesStackingContext,
         };
 
         // Everything opened before this one on the line encloses it, so the box just inside it - or the
