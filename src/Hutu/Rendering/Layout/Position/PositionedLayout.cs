@@ -52,9 +52,14 @@ internal sealed class PositionedLayout
 
     /// <summary>
     /// Lays an out-of-flow box out against its containing block. The static position is where the box
-    /// would have sat had it stayed in flow, which is what an unset offset falls back to.
+    /// would have sat had it stayed in flow, which is what an unset offset falls back to; where the
+    /// container lends an area of its own, the box's own alignment moves it along that area first.
     /// </summary>
-    public LayoutBox Arrange(Box box, Offset staticPosition, LayoutContext context)
+    public LayoutBox Arrange(
+        Box box,
+        Offset staticPosition,
+        LayoutContext context,
+        StaticStanding? standing = null)
     {
         var position = box.Style.Position;
 
@@ -79,8 +84,10 @@ internal sealed class PositionedLayout
         var insetWidth = padding.Horizontal + border.Horizontal;
         var insetHeight = padding.Vertical + border.Vertical;
 
-        var (width, x) = Horizontal(position, style, containingBlock, staticPosition.X, measured.Width, margin, insetWidth);
-        var (height, y) = Vertical(position, style, containingBlock, staticPosition.Y, measured.Height, margin, insetHeight);
+        var (width, x) = Horizontal(
+            position, style, containingBlock, staticPosition.X, measured.Width, margin, insetWidth, standing);
+        var (height, y) = Vertical(
+            position, style, containingBlock, staticPosition.Y, measured.Height, margin, insetHeight, standing);
 
         var placed = _engine.Arrange(box, new Rect(x, y, width, height), childContext);
 
@@ -212,7 +219,8 @@ internal sealed class PositionedLayout
         Double staticX,
         Double measuredWidth,
         Thickness margin,
-        Double insets)
+        Double insets,
+        StaticStanding? standing)
     {
         var hasLeft = position.Left.HasValue;
         var hasRight = position.Right.HasValue;
@@ -257,7 +265,12 @@ internal sealed class PositionedLayout
         }
         else
         {
-            x = staticX + margin.Left;
+            // Neither edge is set, so the box stands where the container left it - moved along the area
+            // it was lent by the alignment it asks for, since a box with no offsets of its own is aligned
+            // within that area rather than dropped at its start (CSS Align 3 §5.2).
+            x = staticX + margin.Left + (standing is { } area
+                ? Stand(area.Justify, area.Area.Width - width - margin.Horizontal)
+                : 0);
         }
 
         return (width, x);
@@ -272,7 +285,8 @@ internal sealed class PositionedLayout
         Double staticY,
         Double measuredHeight,
         Thickness margin,
-        Double insets)
+        Double insets,
+        StaticStanding? standing)
     {
         var hasTop = position.Top.HasValue;
         var hasBottom = position.Bottom.HasValue;
@@ -315,9 +329,23 @@ internal sealed class PositionedLayout
         }
         else
         {
-            y = staticY + margin.Top;
+            y = staticY + margin.Top + (standing is { } area
+                ? Stand(area.Align, area.Area.Height - height - margin.Vertical)
+                : 0);
         }
 
         return (height, y);
     }
+
+    /// <summary>
+    /// Gets how far from its area's start edge a box stands for the alignment it resolved to. Anything
+    /// but the two that move a box along leave it where the area began, which is what a box with no room
+    /// to be stretched into, and no line of text to join, comes to.
+    /// </summary>
+    private static Double Stand(FlexAlignment align, Double free) => align switch
+    {
+        FlexAlignment.Center => Math.Max(0, free) / 2,
+        FlexAlignment.End => Math.Max(0, free),
+        _ => 0,
+    };
 }

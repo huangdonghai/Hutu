@@ -682,6 +682,47 @@ public sealed class GridLayoutTests
         Assert.That(a.BorderBox.Y, Is.EqualTo(0).Within(0.5), "on both axes");
     }
 
+    [Test]
+    public async Task AnAbsolutePathChildIsAlignedWithinTheAreaItStandsIn()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;position:relative;width:300px;height:200px;padding:10px;" +
+            "grid-template-columns:100px 100px;grid-template-rows:50px 50px'>" +
+            "<div id='a' style='position:absolute;width:20px;height:20px;" +
+            "grid-column:2/3;grid-row:2/3;justify-self:center;align-self:end'>a</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        // The area runs from 110 to 210 and from 60 to 110, and the child has no offsets to count from,
+        // so its own alignment is what moves it along it (CSS Align 3 §5.2).
+        Assert.That(a.BorderBox.X, Is.EqualTo(110 + (100 - 20) / 2).Within(0.5), "centred along the column");
+        Assert.That(a.BorderBox.Y, Is.EqualTo(60 + (50 - 20)).Within(0.5), "and pushed to the row's end edge");
+    }
+
+    [Test]
+    public async Task AnAbsolutePathChildTakesTheAlignmentItsContainerIsGiven()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;position:relative;width:300px;height:200px;padding:10px;" +
+            "align-items:center;grid-template-columns:100px 100px;grid-template-rows:50px 50px'>" +
+            "<div id='a' style='position:absolute;width:20px;height:20px;grid-column:2/3;grid-row:2/3'>a</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        // `auto` is not the box's own answer: it takes what the container says for that axis, and the
+        // normal that a grid item would stretch to stands an out-of-flow box on the area's start edge.
+        Assert.That(a.BorderBox.Y, Is.EqualTo(60 + (50 - 20) / 2).Within(0.5), "centred by the container");
+        Assert.That(a.BorderBox.X, Is.EqualTo(110).Within(0.5), "and left where the column line begins");
+    }
+
     private static LayoutBox Find(HutuViewInternal view, String id)
     {
         foreach (var node in Walk(view))

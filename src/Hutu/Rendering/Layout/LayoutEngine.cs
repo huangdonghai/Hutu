@@ -1199,8 +1199,12 @@ internal sealed record LayoutProfile(
     /// this, once the in-flow children have been placed, because an <c>absolute</c> or <c>fixed</c>
     /// box takes no part in their stacking.
     /// </summary>
-    internal LayoutBox ArrangePositioned(Box box, Offset staticPosition, LayoutContext context) =>
-        _positioned.Arrange(box, staticPosition, context);
+    internal LayoutBox ArrangePositioned(
+        Box box,
+        Offset staticPosition,
+        LayoutContext context,
+        StaticStanding? standing = null) =>
+        _positioned.Arrange(box, staticPosition, context, standing);
 
     /// <summary>Produces the geometry of a measured box inside the given border box.</summary>
     private LayoutBox ArrangeCore(

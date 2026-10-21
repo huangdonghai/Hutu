@@ -173,8 +173,17 @@ internal sealed class GridFormattingContext
             var (block, standing) = OutFlowArea(child.Style.GridItem, grid, plan, paddingBox, contentX, contentY);
             var childContext = anchored ? context.WithAbsoluteContainingBlock(block) : context;
 
+            // A box with no offsets of its own is put by its own alignment within the area it stands in,
+            // which is the one place a grid child's justify-self and align-self reach without the child
+            // being a grid item at all (CSS Align 3 §5.2).
+            var item = child.Style.GridItem;
+            var placed = new StaticStanding(
+                standing,
+                StaticStanding.Resolve(item.JustifySelf, grid.JustifyItems),
+                StaticStanding.Resolve(item.AlignSelf, grid.AlignItems));
+
             parent.Children.Add(
-                _engine.ArrangePositioned(child, new Offset(standing.X, standing.Y), childContext));
+                _engine.ArrangePositioned(child, new Offset(standing.X, standing.Y), childContext, placed));
         }
     }
 
