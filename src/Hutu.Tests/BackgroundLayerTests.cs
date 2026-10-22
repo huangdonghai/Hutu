@@ -429,6 +429,90 @@ public sealed class BackgroundLayerTests
         Assert.That(stops[2].Offset, Is.EqualTo(1).Within(0.001), "and the list still ends on its last colour");
     }
 
+    /// <summary>
+    /// A gradient head that opens with <c>in</c> names the space its colours are mixed in, and the ramp the
+    /// box is painted with is that mix (CSS Images 3 §3.4, CSS Color 4 §13.2). The prefix may stand beside a
+    /// direction, take a hue method with it, or be all the head says; a line 100 pixels long is sampled at
+    /// least every other pixel, so the fraction asked for below always has a stop standing on it.
+    /// </summary>
+    [Test]
+    [TestCase("in oklab to right, red, blue", 0.5, 0xFF8C53A2)]
+    [TestCase("in oklab to right, red, blue", 0.25, 0xFFC6496D)]
+    [TestCase("in oklab to right, red, yellow, blue", 0.5, 0xFFFFFF00)]
+    [TestCase("in oklab to right, red, yellow, blue", 0.25, 0xFFFFA000)]
+    [TestCase("in oklab to right, red, yellow, blue", 0.75, 0xFF6CABC7)]
+    [TestCase("in lab to right, red, blue", 0.5, 0xFFC10088)]
+    [TestCase("in lch to right, red, blue", 0.5, 0xFFF50086)]
+    [TestCase("in srgb-linear to right, red, blue", 0.5, 0xFFBC00BC)]
+    [TestCase("in display-p3 to right, red, blue", 0.5, 0xFF800A91)]
+    [TestCase("in hsl, red, blue", 0.5, 0xFFFF00FF)]
+    [TestCase("in hsl longer hue, red, blue", 0.5, 0xFF00FF00)]
+    [TestCase("in oklch, red, blue", 0.5, 0xFFBA00C2)]
+    [TestCase("in oklch longer hue, red, blue", 0.5, 0xFF009300)]
+    public async Task AGradientMixedInTheSpaceItsHeadNames(String stops, Double at, UInt32 expected)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:100px;height:100px;background-image:linear-gradient({stops})'></div>" +
+            "</body></html>");
+
+        AssertRampAt(view, at, expected, stops);
+    }
+
+    /// <summary>
+    /// The space a radial gradient mixes in is measured along its radius, and a conic one round its sweep;
+    /// both are the same prefix in a head that names a shape or an angle instead of a direction (CSS Images
+    /// 3 §3.4). The farthest corner of a 100 by 100 box is what the ramp is stretched over.
+    /// </summary>
+    [Test]
+    [TestCase("radial-gradient(in oklab circle, red, blue)", 0xFF8C53A2)]
+    [TestCase("radial-gradient(in hsl longer hue, red, blue)", 0xFF00FF00)]
+    [TestCase("conic-gradient(in oklch longer hue, red, blue)", 0xFF009300)]
+    [TestCase("conic-gradient(in oklab from 90deg, red, blue)", 0xFF8C53A2)]
+    public async Task ASweepOrARadiusMixedInTheSpaceItsHeadNames(String image, UInt32 expected)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:100px;height:100px;background-image:{image}'></div>" +
+            "</body></html>");
+
+        AssertRampAt(view, 0.5, expected, image);
+    }
+
+    /// <summary>
+    /// A space the chapter has no definition for names no colour space at all, so the whole declaration is
+    /// invalid and the layer it stood on is the one thing the box loses (CSS Color 4 §13.2).
+    /// </summary>
+    [Test]
+    public async Task AGradientNamingASpaceNobodyDefinesPaintsNothing()
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:100px;height:100px;background-image:linear-gradient(in not-a-colour-space, red, blue)'></div>" +
+            "</body></html>");
+
+        Assert.That(view.Paint!.Commands.OfType<GradientCommand>(), Is.Empty);
+    }
+
+    /// <summary>Checks the colour the painted ramp holds at the fraction asked for.</summary>
+    private static void AssertRampAt(HutuViewInternal view, Double at, UInt32 expected, String where)
+    {
+        var stops = SingleGradient(view).Stops;
+        var standing = stops.Where(stop => Math.Abs(stop.Offset - at) < 1e-9).ToList();
+
+        Assert.That(standing, Has.Count.EqualTo(1), $"the ramp is sampled finely enough to stand a stop on {at}");
+        Assert.That(standing[0].Color, Is.EqualTo(expected), where);
+    }
+
     /// <summary>Writes the stops a gradient paints as the colour and the fraction each was resolved to.</summary>
     private static String Write(GradientCommand gradient) =>
         String.Join(" ", gradient.Stops.Select(stop =>

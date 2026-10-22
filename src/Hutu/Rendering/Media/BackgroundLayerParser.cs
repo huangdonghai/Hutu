@@ -15,8 +15,7 @@ namespace Hutu.Rendering.Media;
 /// repeated for the remaining layers, which is how the shorthand expands them.
 /// <para>
 /// Anything that is not understood is skipped rather than thrown on: an unsupported gradient means
-/// one layer is not painted, never that the page fails. <c>radial-gradient</c> and
-/// <c>conic-gradient</c> are deliberately not supported.
+/// one layer is not painted, never that the page fails.
 /// </para>
 /// </remarks>
 internal static class BackgroundLayerParser
@@ -325,6 +324,15 @@ internal static class BackgroundLayerParser
         }
 
         var arguments = CssValueList.SplitTopLevel(value[(open + 1)..^1]);
+
+        // The space the colours are mixed in stands at the front of the head, glued to whatever else the
+        // head says or alone where the head says nothing. It is taken off first, and what is left of that
+        // argument is the direction, the shape or the first colour it was written beside.
+        if (!TakeInterpolation(arguments, out var space, out var hue))
+        {
+            return null;
+        }
+
         var start = 0;
 
         // A line points down unless the page turns it; a sweep starts at the top and goes round.
@@ -405,8 +413,106 @@ internal static class BackgroundLayerParser
             Ending = hasHead ? radialHead.Ending : RadialEnding.FarthestCorner,
             RadiusX = radialHead.RadiusX,
             RadiusY = radialHead.RadiusY,
+            InterpolationSpace = space,
+            InterpolationHue = hue,
         };
     }
+
+    /// <summary>
+    /// Reads the <c>in &lt;color-space&gt; [hue method]</c> a gradient head may open with off the front of
+    /// its first argument, and takes it out of the list so the rest of the reader never sees it.
+    /// </summary>
+    /// <returns>
+    /// False when the prefix is written but comes to nothing - a space the chapter does not define, or a
+    /// hue method beside a space that has no hue - which makes the whole function invalid rather than one
+    /// of its parts. True with the sRGB defaults where no prefix was written at all.
+    /// </returns>
+    private static Boolean TakeInterpolation(List<String> arguments, out ColorSpace space, out HueMethod hue)
+    {
+        space = ColorSpace.Srgb;
+        hue = HueMethod.Shorter;
+
+        if (arguments.Count == 0)
+        {
+            return true;
+        }
+
+        var words = CssValueList.SplitWhitespace(arguments[0]);
+
+        if (words.Count == 0 || !Is(words[0], "in"))
+        {
+            return true;
+        }
+
+        if (words.Count < 2 || Space(words[1]) is not { } named)
+        {
+            return false;
+        }
+
+        space = named;
+
+        var read = 2;
+
+        if (words.Count > read && Hue(words[read]) is { } method)
+        {
+            // A hue method is two words, and belongs to a space whose third axis is a hue angle at all.
+            // Anything else that stands beside the space is the head, not the method, and is left for the
+            // reader of the head to take.
+            if (!IsPolar(named) || read + 1 >= words.Count || !Is(words[read + 1], "hue"))
+            {
+                return false;
+            }
+
+            hue = method;
+            read += 2;
+        }
+
+        if (read >= words.Count)
+        {
+            arguments.RemoveAt(0);
+        }
+        else
+        {
+            arguments[0] = String.Join(" ", words.GetRange(read, words.Count - read));
+        }
+
+        return true;
+    }
+
+    /// <summary>Gets the space a word of an <c>in</c> prefix names, or nothing where it names none.</summary>
+    private static ColorSpace? Space(String word) => word.ToLowerInvariant() switch
+    {
+        "srgb" => ColorSpace.Srgb,
+        "srgb-linear" => ColorSpace.SrgbLinear,
+        "display-p3" => ColorSpace.DisplayP3,
+        "display-p3-linear" => ColorSpace.DisplayP3Linear,
+        "a98-rgb" => ColorSpace.A98Rgb,
+        "prophoto-rgb" => ColorSpace.ProPhotoRgb,
+        "rec2020" => ColorSpace.Rec2020,
+        "xyz" or "xyz-d65" => ColorSpace.XyzD65,
+        "xyz-d50" => ColorSpace.XyzD50,
+        "lab" => ColorSpace.Lab,
+        "lch" => ColorSpace.Lch,
+        "oklab" => ColorSpace.Oklab,
+        "oklch" => ColorSpace.Oklch,
+        "hsl" => ColorSpace.Hsl,
+        "hwb" => ColorSpace.Hwb,
+        _ => null,
+    };
+
+    /// <summary>Gets the way round the circle a hue method names, or nothing where the word names none.</summary>
+    private static HueMethod? Hue(String word) => word.ToLowerInvariant() switch
+    {
+        "shorter" => HueMethod.Shorter,
+        "longer" => HueMethod.Longer,
+        "increasing" => HueMethod.Increasing,
+        "decreasing" => HueMethod.Decreasing,
+        _ => null,
+    };
+
+    /// <summary>Whether the space has a hue for a method to speak about (CSS Color 4 §13.2).</summary>
+    private static Boolean IsPolar(ColorSpace space) =>
+        space is ColorSpace.Hsl or ColorSpace.Hwb or ColorSpace.Lch or ColorSpace.Oklch;
 
     /// <summary>What the first argument of a radial gradient came to.</summary>
     private readonly record struct RadialHead(

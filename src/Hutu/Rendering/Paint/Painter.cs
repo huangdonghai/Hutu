@@ -247,7 +247,7 @@ internal sealed class Painter
                     gradient.AngleDegrees,
                     tile.X + gradient.CenterX.Resolve(tile.Width),
                     tile.Y + gradient.CenterY.Resolve(tile.Height),
-                    gradient.StopsAt(length),
+                    gradient.StopsAt(length, RampPixels(gradient, tile, length)),
                     CornerRadii.None,
                     radiusX,
                     radiusY));
@@ -1133,7 +1133,7 @@ internal sealed class Painter
                     gradient.AngleDegrees,
                     tile.X + gradient.CenterX.Resolve(tile.Width),
                     tile.Y + gradient.CenterY.Resolve(tile.Height),
-                    gradient.StopsAt(length),
+                    gradient.StopsAt(length, RampPixels(gradient, tile, length)),
                     radii,
                     radiusX,
                     radiusY));
@@ -1192,6 +1192,17 @@ internal sealed class Painter
             layer.RepeatX,
             layer.RepeatY);
     }
+
+    /// <summary>
+    /// Gets how far the ramp of a gradient is stretched in what the box is drawn with, which is how finely
+    /// a mix in another colour space has to be told before its steps show. A line and a radius are measured
+    /// along themselves; a turn is measured by the widest circle the box holds, whose radius the diagonal
+    /// stands for wherever the centre was put.
+    /// </summary>
+    private static Double RampPixels(GradientSpec gradient, Rect tile, Double length) =>
+        gradient.Shape != GradientShape.Conic
+            ? length
+            : 2 * Math.PI * Math.Sqrt(tile.Width * tile.Width + tile.Height * tile.Height);
 
     /// <summary>
     /// Gathers the runs of text under a box, in the flow each was set, as the shapes a text-clipped

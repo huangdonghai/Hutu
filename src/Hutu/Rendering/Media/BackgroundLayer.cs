@@ -244,6 +244,19 @@ public sealed class GradientSpec
     public BackgroundOffset RadiusY { get; internal init; }
 
     /// <summary>
+    /// Gets the space the colours between the stops are mixed in, which the head of the gradient may name
+    /// with <c>in</c> (CSS Color 4 §13.2). The one the painter blends in is what a head that says nothing
+    /// asks for.
+    /// </summary>
+    internal ColorSpace InterpolationSpace { get; init; } = ColorSpace.Srgb;
+
+    /// <summary>
+    /// Gets which way round the circle a hue of this ramp is taken, beside the space that has one
+    /// (CSS Color 4 §13.5).
+    /// </summary>
+    internal HueMethod InterpolationHue { get; init; } = HueMethod.Shorter;
+
+    /// <summary>
     /// Gets the ending shape of a radial gradient in a box of these sides: the two radii the colour stops
     /// are measured against, and the shape the 100% stop is drawn on (CSS Images 3 §3.4).
     /// </summary>
@@ -397,9 +410,17 @@ public sealed class GradientSpec
     /// <summary>
     /// Gets the stops as fractions of a gradient line <paramref name="length"/> long, in the order a
     /// painter needs them: the list first placed by the fixup it is written for, then repeated if the
-    /// notation asks, then kept to what the box of that line shows.
+    /// notation asks, then kept to what the box of that line shows, and then sampled - only when the ramp
+    /// is mixed in a space other than the one the painter blends in - at the places the box draws it.
     /// </summary>
-    public IReadOnlyList<GradientStop> StopsAt(Double length)
+    /// <param name="length">
+    /// The distance the stops are measured along, which is what a position of theirs is a fraction of.
+    /// </param>
+    /// <param name="pixels">
+    /// How far the line runs in what the box is drawn with, which decides how finely a ramp has to be
+    /// told before its steps show.
+    /// </param>
+    public IReadOnlyList<GradientStop> StopsAt(Double length, Double pixels)
     {
         if (Stops.Count == 0)
         {
@@ -422,7 +443,56 @@ public sealed class GradientSpec
             return Array.Empty<GradientStop>();
         }
 
-        return Windowed(Repeats ? Repeated(placed, length) : placed, length);
+        return Sampled(Windowed(Repeats ? Repeated(placed, length) : placed, length), pixels);
+    }
+
+    /// <summary>
+    /// Gets the ramp the painter blends, told at every point it is drawn across: the shader only knows how
+    /// to mix the eight bits it is handed, so a ramp that is mixed in another space has to say what it
+    /// comes to between its own stops (CSS Color 4 §13.2). A step every other pixel of the box is too fine
+    /// for the eye to pick out of the blend, and the count stays a power of two so that a stop the page
+    /// stood on a plain fraction of the line is still stood on one.
+    /// </summary>
+    private List<GradientStop> Sampled(List<GradientStop> windowed, Double pixels)
+    {
+        if (InterpolationSpace == ColorSpace.Srgb || windowed.Count < 2)
+        {
+            return windowed;
+        }
+
+        var mixed = new List<GradientStop>(windowed.Count * 2);
+
+        for (var index = 0; index < windowed.Count; index++)
+        {
+            var stop = windowed[index];
+            var next = index + 1 < windowed.Count ? windowed[index + 1] : default;
+            var span = next.Offset - stop.Offset;
+
+            mixed.Add(stop);
+
+            if (span <= 0)
+            {
+                continue;
+            }
+
+            var steps = 1;
+
+            while (steps < 256 && pixels * span / steps > 2)
+            {
+                steps *= 2;
+            }
+
+            for (var at = 1; at < steps; at++)
+            {
+                var of = (Double)at / steps;
+
+                mixed.Add(new GradientStop(
+                    stop.Offset + span * of,
+                    ColorMixing.Mix(stop.Color, next.Color, of, InterpolationSpace, InterpolationHue)));
+            }
+        }
+
+        return mixed;
     }
 
     /// <summary>
@@ -538,42 +608,12 @@ public sealed class GradientSpec
 
             placed.Insert(
                 between,
-                (Math.Clamp(where, left.At, right.At), Midpoint(left.Color, right.Color)));
+                (Math.Clamp(where, left.At, right.At),
+                    ColorMixing.Mix(left.Color, right.Color, 0.5, InterpolationSpace, InterpolationHue)));
         }
 
         return placed;
     }
-
-    /// <summary>
-    /// Gets the colour halfway between two, on the same ground the painter interpolates over: a
-    /// translucent colour is weighed by its own alpha, so a hint between a colour and its transparent twin
-    /// asks for that colour at half its strength rather than for a grey (CSS Images 3 §3.4).
-    /// </summary>
-    internal static UInt32 Midpoint(UInt32 left, UInt32 right)
-    {
-        var alphaLeft = Channel(left, 24) / 255.0;
-        var alphaRight = Channel(right, 24) / 255.0;
-        var alpha = (alphaLeft + alphaRight) / 2.0;
-
-        if (alpha <= 0)
-        {
-            return 0;
-        }
-
-        UInt32 mixed = 0;
-
-        for (var shift = 0; shift < 24; shift += 8)
-        {
-            var premultiplied = (Channel(left, shift) * alphaLeft + Channel(right, shift) * alphaRight) / 2.0;
-            var channel = Math.Clamp(Math.Round(premultiplied / alpha, MidpointRounding.AwayFromZero), 0, 255);
-
-            mixed |= (UInt32)channel << shift;
-        }
-
-        return mixed | (UInt32)Math.Round(alpha * 255.0, MidpointRounding.AwayFromZero) << 24;
-    }
-
-    private static Double Channel(UInt32 color, Int32 shift) => (color >> shift) & 0xFF;
 
     /// <summary>
     /// Lays the list out again over the whole line, shifted by multiples of the distance between its
