@@ -1254,11 +1254,7 @@ internal sealed class InlineLayout
             // its own. It is kept as an item of no extent so the place it would have had is still known -
             // that place is the static position an offset left unset falls back to - while the line it
             // sits on is neither wider nor taller for it.
-            //
-            // A run of text is never one of them, however the style it carries reads: `position` is not
-            // inherited, but a fused style hands a child the words its parent declared, and taking those
-            // literally would drop every run inside a positioned box off its own line.
-            if (child.Kind is not (BoxKind.Text or BoxKind.LineBreak) && PositionedLayout.IsOutOfFlow(child))
+            if (PositionedLayout.IsOutOfFlow(child))
             {
                 items.Add(InlineItem.CreateOutOfFlow(child, chain));
                 continue;

@@ -499,6 +499,35 @@ public sealed class FlexLayoutTests
         });
     }
 
+    /// <summary>
+    /// A container that left the flow is a container still: every child of it is an item, so a run of
+    /// bare words is wrapped in an anonymous block and stood beside the others (CSS Flexbox 1 §4). The
+    /// run borrows the container's style, and that style's <c>position</c> is the container's own - read
+    /// literally it makes the word a box that left the flow as well, which the item scan refuses and the
+    /// positioning pass never reaches, because a text run is not a block. The label is then placed by
+    /// neither, and an axis written as a positioned flex container loses every word on it.
+    /// </summary>
+    [Test]
+    public async Task AWordsInAContainerThatLeftTheFlowIsStillAnItem()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:relative;width:400px;height:200px'>" +
+            "<div id='c' style='position:absolute;top:40px;left:0;width:200px;height:24px;" +
+            "display:flex'>Q1</div>" +
+            "</div></body></html>");
+
+        var word = TextUnder(Find(view, "c"), "Q1");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(word, Is.Not.Null, "the container's word is laid out at all");
+            Assert.That(word!.BorderBox.Y, Is.EqualTo(40).Within(0.5), "inside the container it was given");
+            Assert.That(word.BorderBox.X, Is.EqualTo(0).Within(0.5));
+        });
+    }
+
     private static HutuViewInternal CreateView(int viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
@@ -521,6 +550,20 @@ public sealed class FlexLayoutTests
         }
 
         Assert.Fail($"no box with id '{id}' was laid out");
+        return null!;
+    }
+
+    private static LayoutBox TextUnder(LayoutBox container, String word)
+    {
+        foreach (var node in Walk(container))
+        {
+            if (node.Text == word)
+            {
+                return node;
+            }
+        }
+
+        Assert.Fail($"nothing reading '{word}' was laid out inside the container");
         return null!;
     }
 

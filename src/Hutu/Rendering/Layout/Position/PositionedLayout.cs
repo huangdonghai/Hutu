@@ -22,14 +22,28 @@ internal sealed class PositionedLayout
     public PositionedLayout(LayoutEngine engine) => _engine = engine;
 
     /// <summary>
-    /// Gets whether the box is removed from normal flow by <c>absolute</c> or <c>fixed</c>. An
-    /// anonymous box never is: it borrows its parent's style, and taking that style literally would
-    /// move a wrapper the parent itself already moved.
+    /// Gets whether the box is removed from normal flow by <c>absolute</c> or <c>fixed</c>.
     /// </summary>
-    public static Boolean IsOutOfFlow(Box box) => !box.IsAnonymous && box.Style.Position.IsOutOfFlow;
+    /// <remarks>
+    /// Only a box that stands on its own can leave the flow, so a borrowed style is not read literally:
+    /// an anonymous wrapper would otherwise be moved a second time by the declaration that moved the box
+    /// it wraps, and a run of words - which is content of the line box rather than a box in it, and is
+    /// fused from the style its container declared - would be taken for a box that left the flow too.
+    /// Nothing places it then: the flex and grid item scans ask a child to stay in flow, and the
+    /// positioning pass only walks the block-level ones, so an axis written as a positioned flex
+    /// container loses every label it was given.
+    /// </remarks>
+    public static Boolean IsOutOfFlow(Box box) => CarriesItsOwn(box) && box.Style.Position.IsOutOfFlow;
 
     /// <summary>Gets whether the box takes part in the stacking order, i.e. is anything but static.</summary>
-    public static Boolean IsPositioned(Box box) => !box.IsAnonymous && box.Style.Position.IsPositioned;
+    public static Boolean IsPositioned(Box box) => CarriesItsOwn(box) && box.Style.Position.IsPositioned;
+
+    /// <summary>
+    /// Gets whether the box carries a style of its own, so that what its <c>position</c> says is a
+    /// statement about this box rather than about the one it was made from.
+    /// </summary>
+    private static Boolean CarriesItsOwn(Box box) =>
+        !box.IsAnonymous && box.Kind is not (BoxKind.Text or BoxKind.LineBreak);
 
     /// <summary>
     /// Gets the context a box's children see: the frame the box lends its descendants, if it lends one.
