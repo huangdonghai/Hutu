@@ -6,11 +6,17 @@ namespace Hutu.Conformance;
 /// <summary>
 /// What two pages came to when they were drawn.
 /// </summary>
-/// <param name="Matched">Whether every pixel of the two pictures agreed.</param>
+/// <param name="Matched">Whether every pixel of the two pictures agreed, or agreed as far as the pair allows.</param>
 /// <param name="Differing">How many pixels disagreed, which is the size of the lie.</param>
+/// <param name="Widest">The largest difference in one colour channel of one of those pixels.</param>
 /// <param name="Detail">Where the first disagreement was, and what each side drew there.</param>
 /// <param name="DiffPath">A picture of the difference, when there was one to picture.</param>
-internal sealed record ReftestComparison(Boolean Matched, Int32 Differing, String? Detail, String? DiffPath);
+internal sealed record ReftestComparison(
+    Boolean Matched,
+    Int32 Differing,
+    Int32 Widest,
+    String? Detail,
+    String? DiffPath);
 
 /// <summary>
 /// Draws a page and compares the drawing with another one - the reftest method, in which the oracle
@@ -110,16 +116,27 @@ internal static class ReftestRunner
     /// candidates only needs the count and the coordinate, and writing a picture for each would cost more
     /// than the run it is part of.
     /// </param>
-    public static ReftestComparison Compare(SKBitmap test, SKBitmap reference, String label, Boolean writeDiff = true)
+    /// <param name="allowance">
+    /// The difference the pair allows itself, when it states one: a page that draws a gradient is drawn
+    /// a little differently by every engine that draws it, and a pair may say how much of a difference
+    /// it will accept. A pair that states none has to match outright.
+    /// </param>
+    public static ReftestComparison Compare(
+        SKBitmap test,
+        SKBitmap reference,
+        String label,
+        Boolean writeDiff = true,
+        FuzzyAllowance? allowance = null)
     {
         if (test.Width != reference.Width || test.Height != reference.Height)
         {
-            return new ReftestComparison(false, 0,
+            return new ReftestComparison(false, 0, 0,
                 $"the two pages came to different sizes: {test.Width}x{test.Height} against " +
                 $"{reference.Width}x{reference.Height}", null);
         }
 
         var differing = 0;
+        var widest = 0;
         String? first = null;
         var marks = new bool[test.Width, test.Height];
 
@@ -127,26 +144,42 @@ internal static class ReftestRunner
         {
             for (var x = 0; x < test.Width; x++)
             {
-                if (test.GetPixel(x, y) == reference.GetPixel(x, y))
+                var drawn = test.GetPixel(x, y);
+                var against = reference.GetPixel(x, y);
+
+                if (drawn == against)
                 {
                     continue;
                 }
 
                 marks[x, y] = true;
                 differing++;
+                widest = Math.Max(widest, Widest(drawn, against));
 
-                first ??= $"first at {x},{y}: the test drew {Hex(test.GetPixel(x, y))} where the " +
-                          $"reference drew {Hex(reference.GetPixel(x, y))}";
+                first ??= $"first at {x},{y}: the test drew {Hex(drawn)} where the " +
+                          $"reference drew {Hex(against)}";
             }
         }
 
         if (differing == 0)
         {
-            return new ReftestComparison(true, 0, null, null);
+            return new ReftestComparison(true, 0, 0, null, null);
         }
 
-        return new ReftestComparison(false, differing, first, writeDiff ? Write(test, marks, label) : null);
+        // The allowance is the pair's own: a difference the page says it accepts is not a difference it
+        // failed on, and a difference it did not accept is not one it forgives.
+        if (allowance is { } allowed && allowed.Allows(differing, widest))
+        {
+            return new ReftestComparison(true, differing, widest, null, null);
+        }
+
+        return new ReftestComparison(false, differing, widest, first, writeDiff ? Write(test, marks, label) : null);
     }
+
+    /// <summary>Gets the largest difference in one colour channel between two pixels.</summary>
+    private static Int32 Widest(SKColor one, SKColor other) =>
+        Math.Max(Math.Abs(one.Red - other.Red),
+            Math.Max(Math.Abs(one.Green - other.Green), Math.Abs(one.Blue - other.Blue)));
 
     /// <summary>
     /// A picture of the difference: the test's own drawing faded back, with every disagreeing pixel in

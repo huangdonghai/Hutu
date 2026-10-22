@@ -42,7 +42,13 @@ public sealed class ReftestTests
         using var drawn = ReftestRunner.Draw(test);
         using var against = ReftestRunner.Draw(reference);
 
-        var comparison = ReftestRunner.Compare(drawn, against, relative);
+        // A pair may state how much of a difference it accepts: the pages here are hand-written, but a
+        // page copied from another suite may still come with the allowance it was written under.
+        var comparison = ReftestRunner.Compare(
+            drawn,
+            against,
+            relative,
+            allowance: FuzzyAllowance.Of(File.ReadAllText(test)));
 
         // The claim on record flips what the run should have shown: a pair registered as failing is a
         // pair the engine is expected to draw differently, and a mismatch pair is expected to differ

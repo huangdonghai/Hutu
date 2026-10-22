@@ -227,10 +227,18 @@ public sealed class ImportedCorpusTests
             Save(drawn, Path.Combine(folder, name + "-test.png"));
             Save(against, Path.Combine(folder, name + "-ref.png"));
 
-            var comparison = ReftestRunner.Compare(drawn, against, name, writeDiff: true);
+            var comparison = ReftestRunner.Compare(
+                drawn,
+                against,
+                name,
+                writeDiff: true,
+                allowance: FuzzyAllowance.Of(File.ReadAllText(pair.Path)));
 
             TestContext.Out.WriteLine(comparison.Matched
-                ? "   the two agree"
+                ? comparison.Differing == 0
+                    ? "   the two agree"
+                    : $"   the two agree as far as the pair allows: {comparison.Differing} pixels differ, by at " +
+                      $"most {comparison.Widest} in one channel"
                 : $"   {comparison.Differing} pixels differ, {comparison.Detail}");
 
             if (!comparison.Matched)
@@ -533,7 +541,12 @@ public sealed class ImportedCorpusTests
 
             // No picture of the difference: this draws thousands of pairs, and a thousand png files is
             // not what anybody asked for.
-            var comparison = ReftestRunner.Compare(drawn, against, String.Empty, writeDiff: false);
+            var comparison = ReftestRunner.Compare(
+                drawn,
+                against,
+                String.Empty,
+                writeDiff: false,
+                allowance: FuzzyAllowance.Of(File.ReadAllText(test)));
 
             // What the pair declares is the question, not whether the two pictures happened to match: an
             // upstream pair written as "these two must differ" is satisfied by a difference.
