@@ -333,6 +333,7 @@ internal static partial class BoxBuilder
             Flow = flow,
             IsInlineOuter = inlineOuter,
             TableRole = tableRole,
+            IsInTable = inTable,
             HintedWidth = hintedWidth,
             HintedHeight = hintedHeight,
         };

@@ -1371,7 +1371,7 @@ internal sealed record LayoutProfile(
         {
             if (!length.HasValue ||
                 (length.ReadsContainingBlock && context.BasisIsHypothetical) ||
-                (length.Kind == StyleLengthKind.Percent && basis <= 0))
+                (length.ReadsContainingBlock && basis <= 0))
             {
                 return null;
             }

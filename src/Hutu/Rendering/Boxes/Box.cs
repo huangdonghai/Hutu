@@ -325,6 +325,15 @@ internal sealed class Box
     public BoxKind? TableRole { get; init; }
 
     /// <summary>
+    /// Gets whether the box stands in a table, which is what the table's algorithms read to lay it out.
+    /// </summary>
+    /// <remarks>
+    /// A cell that is not in a table is a block: it is a cell only for what the cells around it are
+    /// (CSS Display 3 §2.7), and the anonymous table they make is what gives it a place to stand.
+    /// </remarks>
+    public Boolean IsInTable { get; init; }
+
+    /// <summary>
     /// Gets whether the box has an inline outer role: <c>inline-flex</c>, <c>inline-grid</c>,
     /// <c>inline-table</c> and <c>inline</c> masonry keep the container they are named after inside,
     /// but take part in the surrounding line box as one atomic piece rather than stacking as a block.

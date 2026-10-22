@@ -84,6 +84,35 @@ internal static class BoxModel
     }
 
     /// <summary>
+    /// Gets the main size a box takes from its aspect ratio, or null when the ratio settles nothing.
+    /// </summary>
+    /// <remarks>
+    /// The size a ratio gives is the one the layout does not decide: a flex container whose main size
+    /// the page left to the content takes it from the ratio when its cross size is known (CSS Sizing 4
+    /// §4). The ratio is of the box the sizing applies to, so the insets come off the cross size before
+    /// the ratio is applied.
+    /// </remarks>
+    /// <param name="style">The style that states the ratio and the sizes.</param>
+    /// <param name="crossSize">The cross size the box has come to, or null where it has none.</param>
+    /// <param name="insets">The padding and border around the content, along the main axis.</param>
+    public static Double? MainFromRatio(ComputedStyle style, Double? crossSize, Double insets)
+    {
+        if (style.AspectRatio is not { } ratio || ratio.Value <= 0 || crossSize is not { } cross)
+        {
+            return null;
+        }
+
+        if (style.HasDeclaredHeight)
+        {
+            return null;
+        }
+
+        return IsBorderBox(style)
+            ? Math.Max(0, (cross + insets) / ratio.Value - insets)
+            : Math.Max(0, cross / ratio.Value);
+    }
+
+    /// <summary>
     /// Resolves a width into the width of the border box and of the content box. An <c>auto</c>
     /// width fills the containing block minus the margins and the insets; a declared one is taken as
     /// the content box, or as the border box under <c>box-sizing: border-box</c>. The min and max
@@ -179,7 +208,7 @@ internal static class BoxModel
     {
         var height = style.Height;
 
-        if (!height.HasValue || (height.Kind == StyleLengthKind.Percent && containingBlockHeight <= 0))
+        if (!height.HasValue || (height.ReadsContainingBlock && containingBlockHeight <= 0))
         {
             return null;
         }
@@ -197,7 +226,7 @@ internal static class BoxModel
     {
         var width = style.Width;
 
-        if (!width.HasValue || (width.Kind == StyleLengthKind.Percent && containingBlockWidth <= 0))
+        if (!width.HasValue || (width.ReadsContainingBlock && containingBlockWidth <= 0))
         {
             return null;
         }
@@ -247,7 +276,7 @@ internal static class BoxModel
 
         if (!width.HasValue ||
             (width.ReadsContainingBlock && basisIsHypothetical) ||
-            (width.Kind == StyleLengthKind.Percent && basis <= 0))
+            (width.ReadsContainingBlock && basis <= 0))
         {
             return null;
         }

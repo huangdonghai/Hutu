@@ -187,7 +187,7 @@ internal static class ReplacedSizing
         }
 
         // A percentage against a containing block with no definite size behaves as `auto`.
-        if (length.Kind == StyleLengthKind.Percent && basis <= 0)
+        if (length.ReadsContainingBlock && basis <= 0)
         {
             return null;
         }

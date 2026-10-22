@@ -58,6 +58,13 @@ internal sealed partial class FlexFormattingContext
             ? null
             : BoxModel.WidthFromRatio(style, declaredHeight, insetH);
 
+        // A column container whose height the page left to the content takes that height from its ratio
+        // when its width is known, and a row container whose width was left to the content takes that
+        // width from its ratio when its height is known (CSS Sizing 4 §4).
+        var ratioMain = !flex.IsRow
+            ? BoxModel.MainFromRatio(style, contentWidth, insetV)
+            : null;
+
         var insetMain = flex.IsRow ? insetH : insetV;
         var insetCross = flex.IsRow ? insetV : insetH;
         var mainSize = flex.IsRow ? contentWidth : declaredHeight;
@@ -80,6 +87,13 @@ internal sealed partial class FlexFormattingContext
         else if (!flex.IsRow && ratioWidth is { } wide)
         {
             contentCross = wide;
+        }
+        else if (!flex.IsRow && ratioMain is { } fromRatio)
+        {
+            // A column container whose height the page left to the content takes that height from its
+            // ratio when its width is known: the ratio settles the size the flex layout does not
+            // (CSS Sizing 4 §4).
+            contentMain = fromRatio;
         }
 
         var width = (flex.IsRow ? contentMain : contentCross) + insetH;
