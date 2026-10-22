@@ -107,11 +107,12 @@ public readonly struct StopOffset
 /// </summary>
 public readonly struct ColorStop
 {
-    internal ColorStop(UInt32 color, StopOffset position, Boolean isStated)
+    internal ColorStop(UInt32 color, StopOffset position, Boolean isStated, Boolean isHint = false)
     {
         Color = color;
         Position = position;
         IsStated = isStated;
+        IsHint = isHint;
     }
 
     /// <summary>Gets the colour as packed ARGB.</summary>
@@ -122,6 +123,13 @@ public readonly struct ColorStop
 
     /// <summary>Gets whether a position was written at all, which the fixup of the list settles.</summary>
     public Boolean IsStated { get; }
+
+    /// <summary>
+    /// Gets whether this entry is an interpolation hint rather than a colour: a place where the ramp
+    /// between the two colours on either side of it is pulled to their midpoint, which states no colour of
+    /// its own (CSS Images 3 §3.4).
+    /// </summary>
+    public Boolean IsHint { get; }
 }
 
 /// <summary>How the colours of a gradient are laid out across the box it fills.</summary>
@@ -407,6 +415,13 @@ public sealed class GradientSpec
 
         var placed = Placed(length);
 
+        if (placed.Count == 0)
+        {
+            // Nothing in the list carried a colour - every argument was a hint - so there is no ramp to
+            // draw at all.
+            return Array.Empty<GradientStop>();
+        }
+
         return Windowed(Repeats ? Repeated(placed, length) : placed, length);
     }
 
@@ -418,12 +433,30 @@ public sealed class GradientSpec
     /// </summary>
     private List<(Double At, UInt32 Color)> Placed(Double length)
     {
-        var count = Stops.Count;
+        // A hint is no part of this fixup: it stands between two colours and says nothing about where
+        // either of them is. It is taken out first, the colours are laid down without it, and it comes
+        // back as the colour the ramp reaches at the place it wrote (CSS Images 3 §3.4).
+        var hints = new List<(Int32 Between, Double At)>();
+        var stops = new List<ColorStop>(Stops.Count);
+
+        for (var index = 0; index < Stops.Count; index++)
+        {
+            if (Stops[index].IsHint)
+            {
+                hints.Add((stops.Count, Stops[index].Position.Resolve(length)));
+            }
+            else
+            {
+                stops.Add(Stops[index]);
+            }
+        }
+
+        var count = stops.Count;
         var at = new Double[count];
 
         for (var index = 0; index < count; index++)
         {
-            at[index] = Stops[index].IsStated ? Stops[index].Position.Resolve(length) : Double.NaN;
+            at[index] = stops[index].IsStated ? stops[index].Position.Resolve(length) : Double.NaN;
         }
 
         if (Double.IsNaN(at[0]))
@@ -483,15 +516,64 @@ public sealed class GradientSpec
             from = to;
         }
 
-        var placed = new List<(Double At, UInt32 Color)>(count);
+        var placed = new List<(Double At, UInt32 Color)>(count + hints.Count);
 
         for (var index = 0; index < count; index++)
         {
-            placed.Add((at[index], Stops[index].Color));
+            placed.Add((at[index], stops[index].Color));
+        }
+
+        // A hint is clamped into the stretch of the ramp it was written between - the only place its
+        // midpoint colour can stand - and is inserted there, so the order of the list stays the order the
+        // page wrote and two colours on one place keep the second of them on top.
+        foreach (var (between, where) in hints)
+        {
+            if (between < 1 || between >= count)
+            {
+                continue;
+            }
+
+            var left = placed[between - 1];
+            var right = placed[between];
+
+            placed.Insert(
+                between,
+                (Math.Clamp(where, left.At, right.At), Midpoint(left.Color, right.Color)));
         }
 
         return placed;
     }
+
+    /// <summary>
+    /// Gets the colour halfway between two, on the same ground the painter interpolates over: a
+    /// translucent colour is weighed by its own alpha, so a hint between a colour and its transparent twin
+    /// asks for that colour at half its strength rather than for a grey (CSS Images 3 §3.4).
+    /// </summary>
+    internal static UInt32 Midpoint(UInt32 left, UInt32 right)
+    {
+        var alphaLeft = Channel(left, 24) / 255.0;
+        var alphaRight = Channel(right, 24) / 255.0;
+        var alpha = (alphaLeft + alphaRight) / 2.0;
+
+        if (alpha <= 0)
+        {
+            return 0;
+        }
+
+        UInt32 mixed = 0;
+
+        for (var shift = 0; shift < 24; shift += 8)
+        {
+            var premultiplied = (Channel(left, shift) * alphaLeft + Channel(right, shift) * alphaRight) / 2.0;
+            var channel = Math.Clamp(Math.Round(premultiplied / alpha, MidpointRounding.AwayFromZero), 0, 255);
+
+            mixed |= (UInt32)channel << shift;
+        }
+
+        return mixed | (UInt32)Math.Round(alpha * 255.0, MidpointRounding.AwayFromZero) << 24;
+    }
+
+    private static Double Channel(UInt32 color, Int32 shift) => (color >> shift) & 0xFF;
 
     /// <summary>
     /// Lays the list out again over the whole line, shifted by multiples of the distance between its

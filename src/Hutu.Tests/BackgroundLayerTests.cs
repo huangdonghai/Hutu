@@ -404,6 +404,31 @@ public sealed class BackgroundLayerTests
             "and the last of them stands on the ending shape");
     }
 
+    /// <summary>
+    /// An interpolation hint - a bare position standing between two colours - pulls the midpoint of their
+    /// transition to itself (CSS Images 3 §3.4). It is no colour stop of its own, so the reader that
+    /// insists every stop carry a colour loses the whole declaration and the box paints nothing where the
+    /// page asked for a ramp.
+    /// </summary>
+    [Test]
+    public async Task AHintStandsBetweenTheColoursItBelongsTo()
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:100px;height:50px;background-image:linear-gradient(to right, red, 30%, blue)'></div>" +
+            "</body></html>");
+
+        var stops = SingleGradient(view).Stops;
+
+        Assert.That(stops.Count, Is.EqualTo(3), "the hint becomes the colour the ramp reaches there");
+        Assert.That(stops[1].Offset, Is.EqualTo(0.3).Within(0.001), "at the place the page wrote");
+        Assert.That(stops[1].Color, Is.EqualTo(0xFF800080), "halfway between the two beside it");
+        Assert.That(stops[2].Offset, Is.EqualTo(1).Within(0.001), "and the list still ends on its last colour");
+    }
+
     /// <summary>Writes the stops a gradient paints as the colour and the fraction each was resolved to.</summary>
     private static String Write(GradientCommand gradient) =>
         String.Join(" ", gradient.Stops.Select(stop =>

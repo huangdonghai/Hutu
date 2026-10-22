@@ -768,7 +768,12 @@ internal static class BackgroundLayerParser
 
         if (color is null)
         {
-            return null;
+            // A position with no colour beside it is an interpolation hint: it says where the ramp
+            // between the two colours on either side reaches their midpoint, and is neither of them
+            // (CSS Images 3 §3.4).
+            return last == 0 && ParseStopPosition(parts[0], dimensions, fontSize, conic) is { } hint
+                ? new ColorStop(0, hint, true, isHint: true)
+                : null;
         }
 
         return new ColorStop(color.Value, position ?? default, position is not null);
