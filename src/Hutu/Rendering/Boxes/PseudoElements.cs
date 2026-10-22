@@ -622,15 +622,24 @@ internal static class GeneratedContent
         // §4: a tree-abiding pseudo-element inherits what its originating element inherited, and
         // takes the initial value of everything else - which is what `Next` hands over, since it is
         // the same hand an element's own children are dealt by.
+        //
+        // A custom property the pseudo-element declares is its own (CSS Variables 1 §3), and one it
+        // reads is answered where it stands - so the arm opens a link under the element's scope rather
+        // than being read through the element's own. `Open` hands the parent back untouched when the
+        // arm declares and names nothing, which is every arm but the page that leans on variables.
+        var scope = VariableScope.Open(pseudo, variables, parser);
+
         var pseudoStyle = FusedStyleFactory.Build(
             element,
             pseudo,
-            parent.Next(style, pseudo, variables, state.Tag(element.LocalName), false),
+            parent.Next(style, pseudo, scope, state.Tag(element.LocalName), false),
             device,
             faces,
             state.Pool,
             state.Cache,
-            variables);
+            scope,
+            applies: null,
+            pseudoElement: arm == PseudoArm.Before ? "::before" : "::after");
 
         // `content: none`, and the `normal` it computes to when the sheet says nothing, inhibit the
         // pseudo-element "as if it had display: none" (Content 3 §1); `display: none` says the same
@@ -640,11 +649,22 @@ internal static class GeneratedContent
             return;
         }
 
-        // `display` is not inherited, so what the pseudo-element gets is the initial value unless a
-        // rule gives it one - and the initial value is `inline`, which is what §4.1 means by "since
-        // the initial value of display is inline, this will generate an inline box".
+        // `display` is not inherited, so what the pseudo-element gets is the initial value unless a rule
+        // gives it one - and the initial value is `inline`, which is what §4.1 means by "since the initial
+        // value of display is inline, this will generate an inline box".
         var declared = pseudo.Find("display")?.Value;
-        var kind = String.IsNullOrWhiteSpace(declared) ? BoxKind.Inline : KindOf(declared!.Trim());
+        var kind = KindOf(String.IsNullOrWhiteSpace(declared) ? "inline" : declared!.Trim(), pseudoStyle);
+
+        // An item of a flex or grid container has its inline outer role taken away before it is laid out
+        // (CSS Flexbox 1 §4, CSS Grid 1 §9), and a generated box is an item of the same container as the
+        // element's own children are. Left inline it is a run on a line rather than a box the container
+        // sizes, and the height it states has nothing to be a share of - which is how the spacer a chart
+        // stands its value label on came to be nothing at all.
+        if (box.Kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry &&
+            kind is BoxKind.Inline or BoxKind.InlineBlock)
+        {
+            kind = BoxKind.Block;
+        }
 
         // One image and nothing else replaces the contents rather than joining them: Content 3 §1
         // reads a lone <image> as a <content-replacement>, and §2 makes that "an anonymous inline
@@ -697,6 +717,20 @@ internal static class GeneratedContent
             }
         }
 
+        // `content: ""` generates an empty box, and the box is the point: an overlay drawn by a
+        // pseudo-element's own background, border or clip-path has no words to hold, and Pseudo-Elements
+        // 4 §4.1 suppresses the box only for `none` and `normal`. Left out here, the box the page styled
+        // never exists and nothing of it is painted.
+        if (runs.Count == 0)
+        {
+            runs.Add(new Box(BoxKind.Inline, pseudoStyle)
+            {
+                Element = element,
+                Flow = flow,
+                IsGenerated = true,
+            });
+        }
+
         Insert(arm, box, runs);
     }
 
@@ -739,14 +773,12 @@ internal static class GeneratedContent
     /// the way it is read for an element - the same table <see cref="BoxBuilder"/> walks, minus the
     /// kinds only a tag can ask for. The outer role the engine does not model is dropped the same way
     /// it is for an element: <c>inline-flex</c> is a flex container, <c>inline-table</c> a table.
+    /// <param name="display">The display the pseudo-element states, or <c>inline</c> when it states none.</param>
+    /// <param name="style">The pseudo-element's own style, whose position and float blockify an inline
+    /// outer role exactly as they do for an element.</param>
     /// </remarks>
-    private static BoxKind KindOf(String display)
+    private static BoxKind KindOf(String display, ComputedStyle style)
     {
-        if (display.Equals("inline-block", StringComparison.OrdinalIgnoreCase))
-        {
-            return BoxKind.InlineBlock;
-        }
-
         if (display.StartsWith("flex", StringComparison.OrdinalIgnoreCase) ||
             display.StartsWith("inline-flex", StringComparison.OrdinalIgnoreCase))
         {
@@ -763,6 +795,23 @@ internal static class GeneratedContent
             display.StartsWith("inline-table", StringComparison.OrdinalIgnoreCase))
         {
             return BoxKind.Table;
+        }
+
+        // An inline outer role is blockified before the box is generated wherever the box leaves the
+        // flow (CSS Display 3 §3), and a pseudo-element is a box like any other. `inset: 0` over an
+        // `inset: 0` parent is how an overlay is written, and the overlay states no display at all -
+        // so this is reached with the initial `inline`, and an overlay that stayed inline would be a
+        // run on a line rather than a box placed against the block it belongs to.
+        if (display.StartsWith("inline", StringComparison.OrdinalIgnoreCase) &&
+            (style.Position.Position is PositionMode.Absolute or PositionMode.Fixed ||
+             style.Float != FloatSide.None))
+        {
+            return BoxKind.Block;
+        }
+
+        if (display.Equals("inline-block", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.InlineBlock;
         }
 
         return display.StartsWith("inline", StringComparison.OrdinalIgnoreCase) ? BoxKind.Inline : BoxKind.Block;

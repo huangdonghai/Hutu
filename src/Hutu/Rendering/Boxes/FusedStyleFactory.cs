@@ -322,7 +322,8 @@ internal static class FusedStyleFactory
         StyleIntern? pool,
         FusedAreaCache? cache = null,
         VariableScope? variables = null,
-        Func<String, Boolean>? applies = null)
+        Func<String, Boolean>? applies = null,
+        String? pseudoElement = null)
     {
         // The scope is read through only where one exists: a page that declares no custom property
         // never asks for a substitution, and the cascade's own lookup - with the answers it remembers -
@@ -345,13 +346,29 @@ internal static class FusedStyleFactory
             // A longhand that the cascade holds with no text at all is the shadow a shorthand written
             // as a variable leaves behind: <c>padding: var(--pad)</c> reaches the declaration list as
             // four empty children, because the expansion cannot be worked out until the variable can be
-            // - and the shorthand itself is nowhere in the list to be read through. Computing this one
-            // element's style is what expands it, and doing it only here keeps every other name on the
-            // fused path's own cheap reading.
+            // - and the shorthand itself is nowhere in the list to be read through. The reading is this
+            // engine's own: a <c>var()</c> on a longhand is already substituted here rather than by the
+            // CSSOM, and a shorthand has to be read the same way or the same page answers twice. Doing
+            // it only for these children keeps every other name on the fused path's own cheap reading.
             if (property is not null && String.IsNullOrEmpty(property.Value))
             {
-                computed ??= element.Owner?.DefaultView?.GetComputedStyle(element, String.Empty);
-                property = computed?.GetProperty(name) ?? property;
+                // The text the shorthand was written with is kept behind its empty longhands, so the
+                // substitution is made on that and parsed back into the name asked for.
+                if (property.TryGetPendingShorthand(out var shorthandName, out var shorthandText))
+                {
+                    property = variables?.ReadShorthandLonghand(cascade, name, shorthandName, shorthandText) ?? property;
+                }
+
+                // Where nothing answers - a name this engine's scope does not reach, which is what a
+                // registered property's initial value comes to here - the CSSOM is asked, and it is asked
+                // for the box being read: a background written as a variable on a ::before is not the
+                // originating element's background, and reading the element instead comes to transparent,
+                // which draws nothing on an overlay.
+                if (String.IsNullOrEmpty(property?.Value))
+                {
+                    computed ??= element.Owner?.DefaultView?.GetComputedStyle(element, pseudoElement ?? String.Empty);
+                    property = computed?.GetProperty(name) ?? property;
+                }
             }
 
             return property;

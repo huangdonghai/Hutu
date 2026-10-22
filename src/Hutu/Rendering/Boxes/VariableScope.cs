@@ -194,6 +194,52 @@ internal sealed class VariableScope
     }
 
     /// <summary>
+    /// Reads a longhand the cascade holds only as the shadow of a shorthand written as a variable: the
+    /// shorthand's own text, substituted in this scope, parsed, and taken apart for the name asked.
+    /// </summary>
+    /// <remarks>
+    /// The parser cannot split a value it cannot read, so <c>background: var(--color, var(--color-1))</c>
+    /// reaches the declaration as empty longhands with the whole of the shorthand's text kept behind them
+    /// (CSS Variables 1 §3). The CSSOM expands that for an element, but the boxes it has no computed style
+    /// for - a generated one whose arm carries a positional pseudo-class, a marker, a first line - come
+    /// only to this engine's own reading. Substituting here is what gives those boxes the value the page
+    /// wrote, in the scope the declaration stands in.
+    /// </remarks>
+    internal ICssProperty? ReadShorthandLonghand(
+        MatchedCascade cascade,
+        String name,
+        String shorthandName,
+        String shorthandText)
+    {
+        // The name of a shorthand is not a property this scope is otherwise asked for, so the two
+        // readings cannot collide in the one table.
+        var key = new Request(cascade, shorthandName + ":" + name);
+
+        if (_read is not null && _read.TryGetValue(key, out var remembered))
+        {
+            return remembered;
+        }
+
+        var substituted = Substitute(shorthandText, this, 0);
+        ICssProperty? resolved = null;
+
+        if (substituted is not null)
+        {
+            try
+            {
+                resolved = _parser.ParseDeclaration(shorthandName + ":" + substituted)?.GetProperty(name);
+            }
+            catch (Exception)
+            {
+                resolved = null;
+            }
+        }
+
+        (_read ??= new Dictionary<Request, ICssProperty?>())[key] = resolved;
+        return resolved;
+    }
+
+    /// <summary>
     /// Replaces every <c>var()</c> in a value with what the scope resolves its name to, or with that
     /// reference's own fallback. Null for a reference the scope cannot answer, which is what makes the
     /// whole declaration invalid rather than one of its parts.
