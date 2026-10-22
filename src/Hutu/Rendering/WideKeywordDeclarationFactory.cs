@@ -180,6 +180,17 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
 
         var info = _inner.Create(propertyName);
 
+        // A name AngleSharp has no grammar for is marked unknown on the declaration it hands back, and a
+        // supports condition reads that mark off the converter's identity: `Object.Equals(converter,
+        // ValueConverters.Any)` is how it answers that the property is not one this engine knows. Wrapping
+        // the converter - which is what every known property gets below - hides that identity, and a name
+        // nobody recognizes then answers as a feature the page can claim to have (CSS Conditional 3 §3).
+        if (info.Flags.HasFlag(PropertyFlags.Unknown))
+        {
+            _cache[propertyName] = info;
+            return info;
+        }
+
         // A known property whose grammar stops short of a keyword the requirements accept is wrapped so
         // only that keyword is taken aside - every other value goes to AngleSharp as before, leaving its
         // own grammar and a shorthand's decomposition through it untouched. The rest keep their wide-keyword
