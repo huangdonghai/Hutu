@@ -393,9 +393,12 @@ internal static partial class BoxBuilder
                     : OuterRole(display);
             }
 
-            // The page wrote something else, and that is the outer role: a row group written
-            // `display: flex` is a flex container, and the rows inside it are rows of nothing.
-            return role == BoxKind.TableCell ? role : OuterRole(display);
+            // The page wrote something else, and that is the role the box takes: a row group written
+            // `display: flex` is a flex container, and the rows inside it are rows of nothing. A cell
+            // written `display: flex` is one too - measured in Chrome on 2026-10-23, where the two spans
+            // it holds stand side by side as items while the table still gives the cell its column - so
+            // the spelling the page wrote wins for a cell exactly as it does for the parts above it.
+            return OuterRole(display);
         }
 
         // The table spellings are matched before the inline test, because `inline-table` starts with

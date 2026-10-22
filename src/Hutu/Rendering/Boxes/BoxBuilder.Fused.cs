@@ -313,9 +313,16 @@ internal static partial class BoxBuilder
         // Cells that are not in a table form an anonymous table among themselves, which is what puts
         // them side by side instead of one under the other (CSS Display 3 §2.7, and the anonymous
         // table objects of CSS 2.1 §17.2.1). A run of them is one table; a cell that stands between
-        // two others breaks the run. A container of its own is the exception: the children of a flex
-        // or grid container are its items, and an item is not wrapped in anything.
-        if (!inTable && kind is not (BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry))
+        // two others breaks the run. What is grouped is the box that is a cell, not the element that
+        // was written as one: a `td` the page gave `display: flex` to is a flex container and joins
+        // the block it stands in, and wrapping it in a table would hand it columns it never asked
+        // for.
+        //
+        // The question is what these children stand *in*, so it is the container's own role that
+        // answers it, not the role its parent was: the cells of a table are in that table already and
+        // the fixup below is the one that gives them rows, and the children of a flex or grid
+        // container are its items, which are wrapped in nothing.
+        if (!childInTable && kind is not (BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry))
         {
             children = AnonymousTable(children, style, flow);
         }
@@ -442,7 +449,7 @@ internal static partial class BoxBuilder
 
         foreach (var child in children)
         {
-            if (child.TableRole == BoxKind.TableCell)
+            if (child.Kind == BoxKind.TableCell)
             {
                 hasCell = true;
                 break;
@@ -464,7 +471,12 @@ internal static partial class BoxBuilder
                 return;
             }
 
-            var table = new Box(BoxKind.Table, style) { IsAnonymous = true, Flow = flow };
+            // The table's own rows are made by the fixup, which wraps the cells in an anonymous row.
+            // The box carries no border, padding or background of its own: it stands for the table the
+            // page did not write, and the style it borrows is the container's - whose border and
+            // spacing would otherwise inset the cells a second time inside the box that already has
+            // them.
+            var table = new Box(BoxKind.Table, style.AsAnonymous()) { IsAnonymous = true, Flow = flow };
 
             foreach (var cell in run)
             {
@@ -479,7 +491,7 @@ internal static partial class BoxBuilder
 
         foreach (var child in children)
         {
-            if (child.TableRole == BoxKind.TableCell)
+            if (child.Kind == BoxKind.TableCell)
             {
                 run.Add(child);
                 continue;

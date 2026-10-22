@@ -65,6 +65,29 @@ public sealed class TablePartDisplayTests
     }
 
     [Test]
+    public async Task ACellWrittenAsAFlexContainerLaysItsChildrenAsItems()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='width:400px'><tbody><tr>" +
+            "<td style='display:flex'>" +
+                "<span style='display:block;width:100px'>1</span>" +
+                "<span style='display:block;width:100px'>2</span></td><td>x</td>" +
+            "</tr></tbody></table></body></html>");
+
+        var items = Find(view, "span")
+            .Where(node => node.Kind is not LayoutKind.Line)
+            .OrderBy(node => node.BorderBox.X)
+            .ToList();
+
+        Assert.That(items.Count, Is.EqualTo(2), "the cell holds the two spans it was written with");
+        Assert.That(items[1].BorderBox.X, Is.GreaterThanOrEqualTo(items[0].BorderBox.Right),
+            "and they stand side by side as the items of one flex line, not as two blocks stacked - " +
+            "which is what Chrome does with a cell written `display: flex` (measured 2026-10-23)");
+    }
+
+    [Test]
     public async Task ACellWrittenAsARowIsARow()
     {
         using var view = CreateView(400);
