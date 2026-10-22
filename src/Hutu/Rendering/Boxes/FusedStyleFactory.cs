@@ -508,13 +508,27 @@ internal static class FusedStyleFactory
             }
         }
 
-        // A border is read from the cascade and the font size alone - the size is in the key because a
-        // width in em is that many pixels of it - so an element that matched the same cascade at the
-        // same size as an earlier one has nothing left to resolve. The parent's border rides in the key
-        // as well, for the one value that reaches across to it: a width the child inherits is the parent's
-        // computed length, not the child's own. What the cache holds is the interned instance, so a hit
-        // hands back the very object the value table would have found.
-        var key = new AreaKey(cascade, size, parent.Border, identity: cache?.Hints(element), variables: variables);
+        // The flow an element's text runs in, resolved once. The box model needs it to map its four
+        // logical sides onto physical ones, the border needs it for the same reason and the keywords need
+        // it as they stand, so it is worked out here rather than where each reader asks - a heading's
+        // margins asked for it twice over, and the mode it lives in depends on a property that was being
+        // read a third time below.
+        var writingMode = ComputedStyle.ResolveWritingModeFused(find("writing-mode"), parent.WritingMode);
+        var direction = ComputedStyle.ResolveDirectionFused(element, find("direction"), parent.Direction);
+        var orientation = ComputedStyle.ResolveTextOrientationFused(find("text-orientation"), parent.Orientation);
+        var combine = ComputedStyle.ResolveTextCombineFused(find("text-combine-upright"), parent.CombinesUpright);
+        var flow = Flow(writingMode, direction, orientation, combine);
+        var borderSides = ComputedStyle.AxisSides(flow);
+
+        // A border is read from the cascade, the font size and the flow its sides are mapped through -
+        // the size is in the key because a width in em is that many pixels of it - so an element that
+        // matched the same cascade at the same size and in the same kind of place has nothing left to
+        // resolve. The parent's border rides in the key as well, for the one value that reaches across to
+        // it: a width the child inherits is the parent's computed length, not the child's own. What the
+        // cache holds is the interned instance, so a hit hands back the very object the value table would
+        // have found.
+        var key = new AreaKey(
+            cascade, size, parent.Border, identity: cache?.Hints(element), stamp: FlowStamp(parent), variables: variables);
 
         if (cache is not null && cache.TryBorder(key, out var border))
         {
@@ -523,9 +537,9 @@ internal static class FusedStyleFactory
         }
         else
         {
-            var borderStyles = ComputedStyle.ResolveBorderStylesFused(find, element);
+            var borderStyles = ComputedStyle.ResolveBorderStylesFused(find, element, flow);
             var borderWidths = ComputedStyle.ResolveBorderWidthsFused(
-                find, borderStyles, face, dimensions, parent.Border, PresentationalHints.Border(element));
+                find, borderStyles, face, dimensions, parent.Border, PresentationalHints.Border(element), flow);
             var built = new BorderArea
             {
                 TopStyle = borderStyles.Top,
@@ -562,16 +576,6 @@ internal static class FusedStyleFactory
             ListItemSet = ComputedStyle.ResolveListItemCounterFused(find("counter-set"), 0),
             ListItemIncrement = ComputedStyle.ResolveListItemCounterFused(find("counter-increment"), 1),
         };
-
-        // The flow an element's text runs in, resolved once. The box model needs it to map its four
-        // logical sides onto physical ones and the keywords need it as they stand, so it is worked out
-        // here rather than where each reader asks - a heading's margins asked for it twice over, and the
-        // mode it lives in depends on a property that was being read a third time below.
-        var writingMode = ComputedStyle.ResolveWritingModeFused(find("writing-mode"), parent.WritingMode);
-        var direction = ComputedStyle.ResolveDirectionFused(element, find("direction"), parent.Direction);
-        var orientation = ComputedStyle.ResolveTextOrientationFused(find("text-orientation"), parent.Orientation);
-        var combine = ComputedStyle.ResolveTextCombineFused(find("text-combine-upright"), parent.CombinesUpright);
-        var flow = Flow(writingMode, direction, orientation, combine);
 
         // A box model is decided by four things: the declarations, the size a percentage or an em is
         // measured at, the flow its sides are mapped through, and which element it is - its own tag name,
@@ -769,10 +773,10 @@ internal static class FusedStyleFactory
             OffsetAnchor = find("offset-anchor")?.Value,
             OffsetPosition = find("offset-position")?.Value,
             Offset = find("offset")?.Value,
-            BorderTopColor = ComputedStyle.ResolveBorderColorFused(find("border-top-color"), color) ?? PresentationalHints.BorderColor(element),
-            BorderRightColor = ComputedStyle.ResolveBorderColorFused(find("border-right-color"), color) ?? PresentationalHints.BorderColor(element),
-            BorderBottomColor = ComputedStyle.ResolveBorderColorFused(find("border-bottom-color"), color) ?? PresentationalHints.BorderColor(element),
-            BorderLeftColor = ComputedStyle.ResolveBorderColorFused(find("border-left-color"), color) ?? PresentationalHints.BorderColor(element),
+            BorderTopColor = ComputedStyle.ResolveBorderColorFused(ComputedStyle.BorderSideDeclaration(find, borderSides.Top, "top", "color"), color) ?? PresentationalHints.BorderColor(element),
+            BorderRightColor = ComputedStyle.ResolveBorderColorFused(ComputedStyle.BorderSideDeclaration(find, borderSides.Right, "right", "color"), color) ?? PresentationalHints.BorderColor(element),
+            BorderBottomColor = ComputedStyle.ResolveBorderColorFused(ComputedStyle.BorderSideDeclaration(find, borderSides.Bottom, "bottom", "color"), color) ?? PresentationalHints.BorderColor(element),
+            BorderLeftColor = ComputedStyle.ResolveBorderColorFused(ComputedStyle.BorderSideDeclaration(find, borderSides.Left, "left", "color"), color) ?? PresentationalHints.BorderColor(element),
         };
 
         var values = new ComputedStyle.StyleValues();

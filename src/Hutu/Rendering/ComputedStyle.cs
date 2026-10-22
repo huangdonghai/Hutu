@@ -913,24 +913,68 @@ internal readonly struct ComputedStyle
     }
 
     /// <summary>
+    /// The axis name each physical side of the box goes by, in the order a thickness is read - top,
+    /// right, bottom, left.
+    /// </summary>
+    /// <remarks>
+    /// A sheet written for a vertical book, or for a line that reads right to left, states a side by the
+    /// axis it stands on: the foot of a page is the head of a column. Nothing in AngleSharp folds one
+    /// name onto the other, so a border written <c>border-block-end</c> reaches no side at all and an
+    /// axis drawn that way is simply missing. Which side an axis name lands on is the element's own flow,
+    /// and where a page names a side both ways the axis is the statement it meant - the order the
+    /// thicknesses and the sizes of this engine already keep (CSS Logical 1 §4).
+    /// </remarks>
+    public static (String Top, String Right, String Bottom, String Left) AxisSides(WritingModeInfo flow)
+    {
+        var (inlineStart, inlineEnd) = flow.InlineSign > 0
+            ? ("inline-start", "inline-end")
+            : ("inline-end", "inline-start");
+
+        if (!flow.IsVertical)
+        {
+            // The line runs across the page, so the block axis is the vertical pair, and it begins at the
+            // top whichever way the line itself reads.
+            return ("block-start", inlineEnd, "block-end", inlineStart);
+        }
+
+        var (blockStart, blockEnd) = flow.BlockSign < 0
+            ? ("block-start", "block-end")
+            : ("block-end", "block-start");
+
+        return (inlineStart, blockStart, inlineEnd, blockEnd);
+    }
+
+    /// <summary>
+    /// Gets the declaration that named one side of the border, under the name of its axis where the page
+    /// used that one.
+    /// </summary>
+    public static ICssProperty? BorderSideDeclaration(
+        Func<String, ICssProperty?> find,
+        String side,
+        String physical,
+        String channel) =>
+        find("border-" + side + "-" + channel) ?? find("border-" + physical + "-" + channel);
+
+    /// <summary>
     /// Resolves the four border styles from the element's own cascaded declarations, for the
     /// fused path. Borders are not inherited: a miss takes the initial value, verbatim -
     /// wide keywords included, as the old path reads them.
     /// </summary>
     public static (String Top, String Right, String Bottom, String Left) ResolveBorderStylesFused(
-        Func<String, ICssProperty?> find, IElement? element)
+        Func<String, ICssProperty?> find, IElement? element, WritingModeInfo flow)
     {
         // The style a legacy border attribute asks for - a bevel, or the flat line a frame or a rule
         // draws - stands in on every side the page left unwritten, and on those sides only: a rule that
         // speaks of one side of the border takes that side back whatever the attributes say.
         var hinted = PresentationalHints.Border(element);
+        var sides = AxisSides(flow);
 
         return
         (
-            KeywordText(find("border-top-style"), CssInitialValues.BorderStyle, hinted?.TopStyle),
-            KeywordText(find("border-right-style"), CssInitialValues.BorderStyle, hinted?.RightStyle),
-            KeywordText(find("border-bottom-style"), CssInitialValues.BorderStyle, hinted?.BottomStyle),
-            KeywordText(find("border-left-style"), CssInitialValues.BorderStyle, hinted?.LeftStyle)
+            KeywordText(BorderSideDeclaration(find, sides.Top, "top", "style"), CssInitialValues.BorderStyle, hinted?.TopStyle),
+            KeywordText(BorderSideDeclaration(find, sides.Right, "right", "style"), CssInitialValues.BorderStyle, hinted?.RightStyle),
+            KeywordText(BorderSideDeclaration(find, sides.Bottom, "bottom", "style"), CssInitialValues.BorderStyle, hinted?.BottomStyle),
+            KeywordText(BorderSideDeclaration(find, sides.Left, "left", "style"), CssInitialValues.BorderStyle, hinted?.LeftStyle)
         );
     }
 
@@ -959,13 +1003,19 @@ internal readonly struct ComputedStyle
         LengthReader.FontSource font,
         IRenderDimensions dimensions,
         BorderArea? parent,
-        PresentationalHints.Ring? hint) =>
-    (
-        BorderWidthFused(styles.Top, find("border-top-width"), font, dimensions, parent?.TopWidth, hint?.Top),
-        BorderWidthFused(styles.Right, find("border-right-width"), font, dimensions, parent?.RightWidth, hint?.Right),
-        BorderWidthFused(styles.Bottom, find("border-bottom-width"), font, dimensions, parent?.BottomWidth, hint?.Bottom),
-        BorderWidthFused(styles.Left, find("border-left-width"), font, dimensions, parent?.LeftWidth, hint?.Left)
-    );
+        PresentationalHints.Ring? hint,
+        WritingModeInfo flow)
+    {
+        var sides = AxisSides(flow);
+
+        return
+        (
+            BorderWidthFused(styles.Top, BorderSideDeclaration(find, sides.Top, "top", "width"), font, dimensions, parent?.TopWidth, hint?.Top),
+            BorderWidthFused(styles.Right, BorderSideDeclaration(find, sides.Right, "right", "width"), font, dimensions, parent?.RightWidth, hint?.Right),
+            BorderWidthFused(styles.Bottom, BorderSideDeclaration(find, sides.Bottom, "bottom", "width"), font, dimensions, parent?.BottomWidth, hint?.Bottom),
+            BorderWidthFused(styles.Left, BorderSideDeclaration(find, sides.Left, "left", "width"), font, dimensions, parent?.LeftWidth, hint?.Left)
+        );
+    }
 
     private static Double BorderWidthFused(
         String style,
@@ -2461,10 +2511,12 @@ internal readonly struct ComputedStyle
             return;
         }
 
-        var topStyle = Keyword("border-top-style", CssInitialValues.BorderStyle);
-        var rightStyle = Keyword("border-right-style", CssInitialValues.BorderStyle);
-        var bottomStyle = Keyword("border-bottom-style", CssInitialValues.BorderStyle);
-        var leftStyle = Keyword("border-left-style", CssInitialValues.BorderStyle);
+        var sides = AxisSides(Flow);
+
+        var topStyle = Keyword(BorderSide(sides.Top, "top", "style"), CssInitialValues.BorderStyle);
+        var rightStyle = Keyword(BorderSide(sides.Right, "right", "style"), CssInitialValues.BorderStyle);
+        var bottomStyle = Keyword(BorderSide(sides.Bottom, "bottom", "style"), CssInitialValues.BorderStyle);
+        var leftStyle = Keyword(BorderSide(sides.Left, "left", "style"), CssInitialValues.BorderStyle);
 
         var border = new BorderArea
         {
@@ -2472,10 +2524,10 @@ internal readonly struct ComputedStyle
             RightStyle = rightStyle,
             BottomStyle = bottomStyle,
             LeftStyle = leftStyle,
-            TopWidth = BorderWidth(topStyle, "border-top-width"),
-            RightWidth = BorderWidth(rightStyle, "border-right-width"),
-            BottomWidth = BorderWidth(bottomStyle, "border-bottom-width"),
-            LeftWidth = BorderWidth(leftStyle, "border-left-width"),
+            TopWidth = BorderWidth(topStyle, BorderSide(sides.Top, "top", "width")),
+            RightWidth = BorderWidth(rightStyle, BorderSide(sides.Right, "right", "width")),
+            BottomWidth = BorderWidth(bottomStyle, BorderSide(sides.Bottom, "bottom", "width")),
+            LeftWidth = BorderWidth(leftStyle, BorderSide(sides.Left, "left", "width")),
             Lines = new BorderStyles(
                 ToLineStyle(topStyle),
                 ToLineStyle(rightStyle),
@@ -4393,19 +4445,19 @@ internal readonly struct ComputedStyle
 
     public CssColorValue? BorderTopColor => _values.Fused is { } fused
         ? fused.BorderTopColor
-        : ResolveBorderColor(ColorValue("border-top-color"));
+        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Top, "top", "color")));
 
     public CssColorValue? BorderRightColor => _values.Fused is { } fused
         ? fused.BorderRightColor
-        : ResolveBorderColor(ColorValue("border-right-color"));
+        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Right, "right", "color")));
 
     public CssColorValue? BorderBottomColor => _values.Fused is { } fused
         ? fused.BorderBottomColor
-        : ResolveBorderColor(ColorValue("border-bottom-color"));
+        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Bottom, "bottom", "color")));
 
     public CssColorValue? BorderLeftColor => _values.Fused is { } fused
         ? fused.BorderLeftColor
-        : ResolveBorderColor(ColorValue("border-left-color"));
+        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Left, "left", "color")));
 
     public Boolean BorderTopVisible => BorderArea.Draws(_values.Border.TopStyle);
 
@@ -5027,6 +5079,25 @@ internal readonly struct ComputedStyle
     /// </summary>
     private Double BorderWidth(String style, String widthName) =>
         BorderArea.Draws(style) ? Length(widthName, RenderMode.Horizontal, 0) : 0;
+
+    /// <summary>
+    /// Gets the name one channel of one border side is read under: the name of the axis the side lies on
+    /// where the page named it that way, and the side's own name wherever it did not.
+    /// </summary>
+    /// <remarks>
+    /// The computed style answers an undeclared property with its initial value, which is a value rather
+    /// than a statement, so the declaration is what tells the two apart here - a page that named the
+    /// foot of a column <c>border-block-end</c> has said nothing about <c>border-bottom</c>, and the one
+    /// thing the fold must not do is let the silence win.
+    /// </remarks>
+    private String BorderSide(String side, String physical, String channel)
+    {
+        var byAxis = "border-" + side + "-" + channel;
+
+        return String.IsNullOrWhiteSpace(_specified?.GetPropertyValue(byAxis))
+            ? "border-" + physical + "-" + channel
+            : byAxis;
+    }
 
     internal static BorderLineStyle ToLineStyle(String keyword) => keyword.ToLowerInvariant() switch
     {

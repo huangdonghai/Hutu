@@ -195,6 +195,66 @@ public sealed class FlowRelativeEdgesTests
         Assert.That(kid.BorderBox.Height, Is.EqualTo(60).Within(0.01), "and the block axis floors its height");
     }
 
+    /// <summary>
+    /// A border side named by the axis it lies on. <c>border-block-end</c> is the foot of a row and the
+    /// head of a column, so the stroke has to land where the element's own flow sends the name (CSS
+    /// Logical 1 §4) - which is how a chart draws its axis, the engine reading only the four physical
+    /// longhands leaving the line unwritten.
+    /// </summary>
+    [Test]
+    public async Task AnAxisNamedBorderStandsOnTheSideItLiesOn()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='row' style='width:100px;height:10px;border-block-end:2px solid black'></div>" +
+            "<div id='column' style='writing-mode:vertical-rl;width:100px;height:80px;border-block-end:2px solid black'></div>" +
+            "<div id='axis' style='width:100px;height:10px;border-inline-end:3px solid black'></div>" +
+            "<div id='both' style='width:100px;height:10px;border-bottom:1px solid red;border-block-end:4px solid black'></div>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Box(view, "row").Border.Bottom, Is.EqualTo(2), "the block axis is the foot of a row");
+            Assert.That(Box(view, "row").Border.Top, Is.Zero, "and nothing else of the border");
+            Assert.That(Box(view, "column").Border.Left, Is.EqualTo(2), "the same name heads a column, whose block axis runs right to left");
+            Assert.That(Box(view, "axis").Border.Right, Is.EqualTo(3), "the inline axis ends at the right of a line that reads leftward");
+            Assert.That(Box(view, "both").Border.Bottom, Is.EqualTo(4), "a side named both ways is the axis the page meant");
+        });
+    }
+
+    /// <summary>
+    /// The style and the ink of an axis-named side travel with it. A chart states all three channels of
+    /// its axis as custom properties, so a reader that folded only the width would draw a border of the
+    /// right thickness in the wrong colour, or none at all: a side whose style is <c>none</c> is zero.
+    /// </summary>
+    [Test]
+    public async Task AnAxisNamedBorderCarriesItsOwnStyleAndInk()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='row' style='--w:2px;--s:solid;--c:green;width:100px;height:10px;" +
+            "border-block-end:var(--w) var(--s) var(--c)'></div>" +
+            "<div id='foot' style='--w:2px;--s:solid;--c:green;width:100px;height:10px;" +
+            "border-bottom:var(--w) var(--s) var(--c)'></div>" +
+            "</body></html>");
+
+        var laid = Box(view, "row");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(laid.Border.Bottom, Is.EqualTo(2), "the width the property carries");
+            Assert.That(laid.Source.Style.BorderBottomStyle, Is.EqualTo("solid"), "the style it names");
+            Assert.That(
+                laid.Source.Style.BorderBottomColor,
+                Is.EqualTo(Box(view, "foot").Source.Style.BorderBottomColor),
+                "and the ink, the same one the side's own name gives it");
+        });
+    }
+
     private static HutuViewInternal CreateView()
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
