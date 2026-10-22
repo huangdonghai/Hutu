@@ -72,6 +72,13 @@ internal sealed class FusedParent
     /// <summary>Gets the parent's <c>overflow-wrap</c>, which every element under it gives its text.</summary>
     public String OverflowWrap { get; init; } = CssInitialValues.OverflowWrap;
 
+    /// <summary>
+    /// Gets the two keywords the parent's overflow axes came to. The property is not inherited, so these
+    /// travel for the one keyword that asks for them: a child that writes <c>overflow: inherit</c> is
+    /// clipped, or not, exactly as the box above was.
+    /// </summary>
+    public (String X, String Y) Overflow { get; init; } = (CssInitialValues.Overflow, CssInitialValues.Overflow);
+
     /// <summary>Gets the parent's <c>word-break</c>, likewise inherited.</summary>
     public String WordBreak { get; init; } = CssInitialValues.WordBreak;
 
@@ -268,6 +275,7 @@ internal sealed class FusedParent
             : LineHeightHit,
         WhiteSpace = style.WhiteSpace,
         OverflowWrap = style.OverflowWrap,
+        Overflow = (style.OverflowX, style.OverflowY),
         WordBreak = style.WordBreak,
         LineBreak = style.LineBreak,
         TabLength = style.TabLength,
@@ -647,7 +655,10 @@ internal static class FusedStyleFactory
         // Neither an overflow nor a fit nor a display keyword is a length, so these two read the cascade
         // alone: the key is the bare one, which keeps them to one entry per cascade rather than one per
         // size the page happens to set.
-        var plain = new AreaKey(cascade, 0, variables: variables);
+        // The display, the float, the clear and the overflow are decided by the declarations alone -
+        // except for the one keyword that reaches past them, `overflow: inherit`, so the two axes the
+        // parent was left with ride in the key as a packed stamp.
+        var plain = new AreaKey(cascade, 0, stamp: OverflowStamp(parent), variables: variables);
 
         if (cache is not null && cache.TryDisplay(plain, out var display))
         {
@@ -655,14 +666,23 @@ internal static class FusedStyleFactory
         }
         else
         {
-            var scrolls = ComputedStyle.ResolveScrollsFused(find("overflow-x"), find("overflow-y"));
+            // `overflow: initial`, `unset` and `revert` are the property's own first value - `visible`,
+            // which is no clip - and `inherit` is the box above, which travels down for that keyword
+            // alone. Taking the word for the value clipped every table an author's sheet resets with
+            // `overflow: initial`, and a round chart body one caption taller than its table lost the
+            // bottom of the circle to it.
+            var overflowX = ComputedStyle.ResolveOverflowAxisFused(find("overflow-x"), parent.Overflow.X);
+            var overflowY = ComputedStyle.ResolveOverflowAxisFused(find("overflow-y"), parent.Overflow.Y);
+            var scrolls = ComputedStyle.ResolveScrollsFused(overflowX, overflowY);
             var built = new DisplayPositioningArea
             {
                 Display = ComputedStyle.ResolveDisplayFused(find("display")),
                 Float = ComputedStyle.ResolveFloatFused(find("float"), PresentationalHints.Float(element)),
                 Clear = ComputedStyle.ResolveClearFused(find("clear")),
                 ObjectFit = ComputedStyle.ResolveObjectFitFused(find("object-fit")),
-                ClipsOverflow = ComputedStyle.ResolveClipsOverflowFused(find("overflow-x"), find("overflow-y")),
+                ClipsOverflow = ComputedStyle.ResolveClipsOverflowFused(overflowX, overflowY),
+                OverflowX = overflowX,
+                OverflowY = overflowY,
                 ScrollsInline = scrolls.Inline,
                 ScrollsBlock = scrolls.Block,
 
@@ -864,6 +884,23 @@ internal static class FusedStyleFactory
 
         return new ComputedStyle(dimensions, element, keywords, values, faces);
     }
+
+    /// <summary>
+    /// Packs the two overflow axes a parent passes down into the number a key holds them in: five
+    /// keywords each, so three bits apiece, and no two pairs come out alike.
+    /// </summary>
+    private static Int32 OverflowStamp(FusedParent parent) =>
+        OverflowCode(parent.Overflow.X) | (OverflowCode(parent.Overflow.Y) << 3);
+
+    private static Int32 OverflowCode(String keyword) => keyword.ToLowerInvariant() switch
+    {
+        "visible" => 0,
+        "hidden" => 1,
+        "clip" => 2,
+        "scroll" => 3,
+        "auto" => 4,
+        _ => 5,
+    };
 
     /// <summary>
     /// Packs the flow a parent passes down into the number a key holds it in: the writing mode, the

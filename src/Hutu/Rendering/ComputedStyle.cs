@@ -1126,19 +1126,26 @@ internal readonly struct ComputedStyle
         };
 
     /// <summary>
-    /// Resolves whether either overflow axis clips, from the element's own cascaded
-    /// declarations, for the fused path. A miss takes visible.
+    /// Resolves whether either overflow axis clips, from the keywords the two axes come to, for the fused
+    /// path. A miss takes visible.
     /// </summary>
-    public static Boolean ResolveClipsOverflowFused(ICssProperty? x, ICssProperty? y) =>
-        !IsOverflowVisibleText(x?.Value) || !IsOverflowVisibleText(y?.Value);
+    public static Boolean ResolveClipsOverflowFused(String? x, String? y) =>
+        !IsOverflowVisibleText(x) || !IsOverflowVisibleText(y);
 
     /// <summary>
     /// Which axes are scroll axes (hidden/scroll/auto) for the automatic minimum size of a flex or grid
     /// item. <c>clip</c> is deliberately excluded - it is not a scroll container, and behaves like
     /// <c>visible</c> for sizing (CSS Overflow 3, and the WPT <c>min-size-auto-overflow-clip</c>).
     /// </summary>
-    public static (Boolean Inline, Boolean Block) ResolveScrollsFused(ICssProperty? x, ICssProperty? y) =>
-        (IsScrollOverflowText(x?.Value), IsScrollOverflowText(y?.Value));
+    public static (Boolean Inline, Boolean Block) ResolveScrollsFused(String? x, String? y) =>
+        (IsScrollOverflowText(x), IsScrollOverflowText(y));
+
+    /// <summary>
+    /// Gets whether a cascaded overflow value is a keyword that stands for another value rather than
+    /// naming one, which is the moment the two axes have to be read from the computed style instead.
+    /// </summary>
+    private static Boolean IsOverflowWideKeyword(String? text) =>
+        text is not null && CssWideKeyword.Is(text.Trim());
 
     private static Boolean IsScrollOverflowText(String? text) =>
         text is not null &&
@@ -2448,8 +2455,8 @@ internal readonly struct ComputedStyle
             Float = ToFloat(Keyword("float", CssInitialValues.Float)),
             Clear = ToClear(Keyword("clear", CssInitialValues.Clear)),
             ClipsOverflow = !IsOverflowVisible("overflow-x") || !IsOverflowVisible("overflow-y"),
-            ScrollsInline = IsScrollOverflowText(ReadKeyword("overflow-x")),
-            ScrollsBlock = IsScrollOverflowText(ReadKeyword("overflow-y")),
+            ScrollsInline = IsScrollOverflowText(OverflowKeyword("overflow-x")),
+            ScrollsBlock = IsScrollOverflowText(OverflowKeyword("overflow-y")),
             AlignContent = FlexStyle.ReadAlignment(this, "align-content", CssInitialValues.AlignContent),
             ObjectFit = value.ToLowerInvariant() switch
             {
@@ -4410,6 +4417,12 @@ internal readonly struct ComputedStyle
     /// </remarks>
     public Boolean ClipsOverflow => _values.DisplayPositioning.ClipsOverflow;
 
+    /// <summary>Gets the keyword the box's inline overflow axis was left with.</summary>
+    public String OverflowX => _values.DisplayPositioning.OverflowX;
+
+    /// <summary>Gets the keyword the box's block overflow axis was left with.</summary>
+    public String OverflowY => _values.DisplayPositioning.OverflowY;
+
     /// <summary>Gets whether the inline (x) axis is a scroll axis, which zeroes a flex/grid item's
     /// automatic minimum size on that axis. <c>clip</c> does not count (it sizes like <c>visible</c>).</summary>
     public Boolean ScrollsInline => _values.DisplayPositioning.ScrollsInline;
@@ -5164,8 +5177,51 @@ internal readonly struct ComputedStyle
 
     private Boolean IsOverflowVisible(String name)
     {
-        var value = ReadKeyword(name);
+        var value = OverflowKeyword(name);
         return value is null || value.Equals("visible", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Gets the overflow one axis comes to, read through a keyword that states none of its own.
+    /// </summary>
+    /// <remarks>
+    /// <c>initial</c> and <c>unset</c> on this non-inherited property are its first value -
+    /// <c>visible</c>, which is no clip - and <c>inherit</c> is the box above, which is what computing the
+    /// style has already worked out. Taking the word for the value made every table the author's sheet
+    /// resets with <c>overflow: initial</c> clip its own descendants.
+    /// </remarks>
+    private String? OverflowKeyword(String name)
+    {
+        var text = ReadKeyword(name);
+
+        return IsOverflowWideKeyword(text) ? _style.GetPropertyValue(name)?.Trim() : text;
+    }
+
+    /// <summary>
+    /// Resolves one overflow axis from its cascaded text, for the fused path.
+    /// </summary>
+    /// <remarks>
+    /// The same reading <see cref="OverflowKeyword"/> comes to by asking the computed style, answered
+    /// without leaving the cascade so the answer stays a function of the declarations and the box above -
+    /// which is what the area cache keys on.
+    /// </remarks>
+    public static String ResolveOverflowAxisFused(ICssProperty? declared, String parent)
+    {
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrEmpty(text))
+        {
+            return CssInitialValues.Overflow;
+        }
+
+        if (!CssWideKeyword.Is(text))
+        {
+            return text;
+        }
+
+        // Of the four, only `inherit` reaches past the property's own first value (CSS Values 4 §4.1);
+        // `revert` hands the axis back to the user agent sheet, which leaves it visible as well.
+        return text.Equals("inherit", StringComparison.OrdinalIgnoreCase) ? parent : CssInitialValues.Overflow;
     }
 
     private Boolean Is(String name, String keyword)

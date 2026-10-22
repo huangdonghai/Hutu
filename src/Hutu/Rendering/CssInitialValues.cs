@@ -40,6 +40,9 @@ internal static class CssInitialValues
 
     internal const String Clear = "none";
 
+    /// <summary>Gets the value an axis of <c>overflow</c> takes when the page says nothing.</summary>
+    internal const String Overflow = "visible";
+
     // --- Text --------------------------------------------------------------------------------
     internal const String WhiteSpace = "normal";
 

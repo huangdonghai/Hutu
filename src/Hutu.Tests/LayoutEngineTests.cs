@@ -242,6 +242,32 @@ public sealed class LayoutEngineTests
         Assert.That(lines, Is.EqualTo(new[] { "slice (the initial value)" }));
     }
 
+    /// <summary>
+    /// <c>overflow: initial</c> states no keyword of its own: it is the property's first value, which for
+    /// this non-inherited one is <c>visible</c> (CSS Values 4 §4.1, CSS Overflow 3 §3.2). Reading the word
+    /// as though it named a clip is what cut the bottom off a round chart body - the sheet resets the
+    /// table with <c>overflow: initial</c>, the circle is a caption taller than the table, and the table
+    /// then clipped a descendant it was never asked to hold.
+    /// </summary>
+    [Test]
+    public async Task AResetOverflowHoldsNothingIn()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='first' style='overflow: initial;height:20px'><div style='height:80px'></div></div>" +
+            "<div id='unset' style='overflow: unset;height:20px'><div style='height:80px'></div></div>" +
+            "<div id='hidden' style='overflow: hidden;height:20px'><div style='height:80px'></div></div>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ById(view, "first").ClipsOverflow, Is.False, "`initial` is the first value, `visible`");
+            Assert.That(ById(view, "unset").ClipsOverflow, Is.False, "and so is `unset` on a property nothing inherits");
+            Assert.That(ById(view, "hidden").ClipsOverflow, Is.True, "the keyword that does clip still clips");
+        });
+    }
+
     private static HutuViewInternal CreateView(int viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

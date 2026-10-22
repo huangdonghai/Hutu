@@ -200,6 +200,16 @@ internal sealed record DisplayPositioningArea
     /// <c>overflow</c>: it scrolls the document rather than the box.</summary>
     internal Boolean ClipsOverflow { get; init; }
 
+    /// <summary>
+    /// Gets the keyword the inline axis of the box was left with. The two are kept because the property is
+    /// not inherited and still has a keyword - <c>inherit</c> - that asks for the box above: what travels
+    /// down is these two words, and a child that asks takes them rather than a guess.
+    /// </summary>
+    internal String OverflowX { get; init; } = CssInitialValues.Overflow;
+
+    /// <summary>Gets the keyword the block axis of the box was left with.</summary>
+    internal String OverflowY { get; init; } = CssInitialValues.Overflow;
+
     /// <summary>Gets whether the inline (x) axis is a scroll axis - <c>hidden</c>/<c>scroll</c>/<c>auto</c>,
     /// but not <c>visible</c> or <c>clip</c>. A scroll axis zeroes a flex/grid item's automatic minimum
     /// size on that axis (CSS Flexbox 4.5); <c>clip</c> behaves like <c>visible</c> for sizing.</summary>
