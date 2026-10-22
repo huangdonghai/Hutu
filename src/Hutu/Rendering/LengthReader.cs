@@ -404,7 +404,7 @@ internal static class LengthReader
     }
 
     /// <summary>Reads a single argument of a length function, which is always plain text.</summary>
-    private static StyleLength? FromText(String text, RenderMode mode, IRenderDimensions dimensions, FontSource font)
+    internal static StyleLength? FromText(String text, RenderMode mode, IRenderDimensions dimensions, FontSource font)
     {
         var trimmed = text.Trim();
 

@@ -343,6 +343,51 @@ public sealed class TextClippedBackgroundCommand : PaintCommand
 }
 
 /// <summary>
+/// How one piece of an outlined clip continues from the point the last piece left off: a corner of the
+/// shape, a straight edge to the next one, a curve through the two controls it was drawn with, or the
+/// closing of the sub-shape the piece began.
+/// </summary>
+public enum ClipEdge
+{
+    /// <summary>Starts a sub-shape at this point.</summary>
+    Begin,
+
+    /// <summary>Runs straight to this point.</summary>
+    Line,
+
+    /// <summary>Runs to this point along the curve whose controls are the first two points.</summary>
+    Curve,
+
+    /// <summary>Closes the sub-shape, joining its last point back to the first.</summary>
+    Close,
+}
+
+/// <summary>A point of an outlined clip, in document coordinates, with the edge it carries into.</summary>
+public readonly record struct ClipSegment(
+    ClipEdge Edge,
+    Double X,
+    Double Y,
+    Double Control1X,
+    Double Control1Y,
+    Double Control2X,
+    Double Control2Y)
+{
+    /// <summary>Gets the corner of a shape that a straight edge is drawn to.</summary>
+    public static ClipSegment To(ClipEdge edge, Double x, Double y) => new(edge, x, y, 0, 0, 0, 0);
+
+    /// <summary>Gets the corner a curve is drawn to, through the two controls it was written with.</summary>
+    public static ClipSegment Curving(Double x, Double y, Double control1X, Double control1Y, Double control2X, Double control2Y) =>
+        new(ClipEdge.Curve, x, y, control1X, control1Y, control2X, control2Y);
+
+    /// <summary>Gets the sub-shape-closing piece, which needs no point of its own.</summary>
+    public static ClipSegment Closed => To(ClipEdge.Close, 0, 0);
+
+    /// <summary>Gets the same piece of edge, moved by the given distance.</summary>
+    public ClipSegment Shifted(Double x, Double y) =>
+        new(Edge, X + x, Y + y, Control1X + x, Control1Y + y, Control2X + x, Control2Y + y);
+}
+
+/// <summary>
 /// Clips everything that follows to a rounded rectangle, until the matching
 /// <see cref="PopClipCommand"/>: what a box with an <c>overflow</c> other than <c>visible</c> asks for.
 /// </summary>
@@ -351,14 +396,36 @@ public sealed class TextClippedBackgroundCommand : PaintCommand
 /// onto its own save and restore without having to balance them at the end of a walk. Clipping a
 /// descendant that is diverted to another layer - a fixed box, say - is deliberately not part of this:
 /// a fixed box is positioned against the viewport rather than the clipping box.
+/// <para>
+/// Where the cut is an outline rather than a box, <see cref="Outline"/> says what the edge is and the
+/// rectangle is only the area it covers: that is how a <c>clip-path</c> that named a
+/// <c>polygon()</c> or a <c>path()</c> reaches the canvas. An oval needs no outline of its own, because a
+/// rectangle whose four corners are each turned a quarter of the way round is the oval.
+/// </para>
 /// </remarks>
 public sealed class PushClipCommand : PaintCommand
 {
     internal PushClipCommand(Rect bounds, CornerRadii radii)
-        : base(bounds) => Radii = radii;
+        : this(bounds, radii, null, false)
+    {
+    }
+
+    internal PushClipCommand(Rect bounds, CornerRadii radii, IReadOnlyList<ClipSegment>? outline, Boolean evenOdd)
+        : base(bounds)
+    {
+        Radii = radii;
+        Outline = outline;
+        EvenOdd = evenOdd;
+    }
 
     /// <summary>Gets the corner radii of the clip, relative to <see cref="PaintCommand.Bounds"/>.</summary>
     public CornerRadii Radii { get; }
+
+    /// <summary>Gets the edge the cut follows, where no rectangle is one.</summary>
+    public IReadOnlyList<ClipSegment>? Outline { get; }
+
+    /// <summary>Gets whether the inside of an outline is decided by the even-odd rule rather than by winding.</summary>
+    public Boolean EvenOdd { get; }
 }
 
 /// <summary>Ends the clip the nearest preceding <see cref="PushClipCommand"/> opened.</summary>

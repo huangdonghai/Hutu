@@ -215,13 +215,26 @@ public sealed class SkiaPaintExecutor
                 case PushClipCommand clip:
                     canvas.Save();
 
-                    // A square clip cuts whole pixels, on the same terms as the fill that is cut by it:
-                    // an edge left inside a pixel row anti-aliases the row instead, and a box drawn at a
-                    // fractional edge then shows the ink it stands over through the seam the clip leaves.
-                    SkiaRounded.Clip(
-                        canvas,
-                        clip.Radii.IsZero ? Snap(ToRect(clip.Bounds)) : ToRect(clip.Bounds),
-                        clip.Radii);
+                    if (clip.Outline is { } edge)
+                    {
+                        // An edge that is not a box's own is drawn as it was given, and anti-aliased: the
+                        // cut a clip-path asks for falls where the shape says it falls, not on a pixel.
+                        using (var path = OutlineOf(edge, clip.EvenOdd))
+                        {
+                            canvas.ClipPath(path, SKClipOperation.Intersect, antialias: true);
+                        }
+                    }
+                    else
+                    {
+                        // A square clip cuts whole pixels, on the same terms as the fill that is cut by it:
+                        // an edge left inside a pixel row anti-aliases the row instead, and a box drawn at a
+                        // fractional edge then shows the ink it stands over through the seam the clip leaves.
+                        SkiaRounded.Clip(
+                            canvas,
+                            clip.Radii.IsZero ? Snap(ToRect(clip.Bounds)) : ToRect(clip.Bounds),
+                            clip.Radii);
+                    }
+
                     break;
 
                 case PopClipCommand:
@@ -265,6 +278,57 @@ public sealed class SkiaPaintExecutor
             }
         }
     }
+
+    /// <summary>
+    /// Builds the path an outlined clip is cut to: the edge the shape was given, walked in the order it was
+    /// written, with the inside decided by the rule the shape named.
+    /// </summary>
+    /// <remarks>
+    /// Every point is put on a whole pixel, as a square clip is: a shape's numbers come from the box it was
+    /// drawn against, and the ink of that box was laid down on the same grid, so a cut kept at the fraction
+    /// the layout left would anti-alias a row the fill had already decided whole. A diagonal edge keeps its
+    /// slope, since both of its ends are moved by less than half a pixel.
+    /// </remarks>
+    private static SKPath OutlineOf(IReadOnlyList<ClipSegment> outline, Boolean evenOdd)
+    {
+        var path = new SKPath
+        {
+            FillType = evenOdd ? SKPathFillType.EvenOdd : SKPathFillType.Winding,
+        };
+
+        foreach (var piece in outline)
+        {
+            switch (piece.Edge)
+            {
+                case ClipEdge.Begin:
+                    path.MoveTo(Whole(piece.X), Whole(piece.Y));
+                    break;
+
+                case ClipEdge.Line:
+                    path.LineTo(Whole(piece.X), Whole(piece.Y));
+                    break;
+
+                case ClipEdge.Curve:
+                    path.CubicTo(
+                        Whole(piece.Control1X),
+                        Whole(piece.Control1Y),
+                        Whole(piece.Control2X),
+                        Whole(piece.Control2Y),
+                        Whole(piece.X),
+                        Whole(piece.Y));
+                    break;
+
+                case ClipEdge.Close:
+                    path.Close();
+                    break;
+            }
+        }
+
+        return path;
+    }
+
+    private static Single Whole(Double value) =>
+        (Single)Math.Round(value, MidpointRounding.AwayFromZero);
 
     /// <summary>
     /// Gets whether a command draws anything inside the given area of the document.

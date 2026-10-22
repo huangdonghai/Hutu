@@ -117,7 +117,7 @@ public readonly struct CornerRadii
     /// <summary>
     /// Gets the radii of a box that has them, or four square corners where it has none to speak of.
     /// </summary>
-    private static CornerRadii Fit(CornerRadii radii, Double width, Double height)
+    internal static CornerRadii Fit(CornerRadii radii, Double width, Double height)
     {
         if (radii.IsZero)
         {
@@ -152,7 +152,7 @@ public readonly struct CornerRadii
     private static CornerRadius Shrink(CornerRadius radius, Double vertical, Double horizontal) =>
         Normalize(radius.Horizontal - horizontal, radius.Vertical - vertical);
 
-    private static CornerRadius Resolve(StyleCornerRadius specified, Double width, Double height) =>
+    internal static CornerRadius Resolve(StyleCornerRadius specified, Double width, Double height) =>
         Normalize(specified.Horizontal.Resolve(width), specified.Vertical.Resolve(height));
 
     private static CornerRadius Normalize(Double horizontal, Double vertical) =>

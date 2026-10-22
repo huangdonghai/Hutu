@@ -2025,6 +2025,30 @@ internal readonly struct ComputedStyle
     }
 
     /// <summary>
+    /// Resolves the shape a <c>clip-path</c> declaration states, for the fused path. The property is not
+    /// inherited, so a box that says nothing is cut by nothing; <c>inherit</c> is the one answer that does
+    /// reach down, and it hands the parent's shape to a box that would otherwise have had none.
+    /// </summary>
+    public static ClipPathShape? ResolveClipPathFused(
+        ICssProperty? declared,
+        IRenderDimensions dimensions,
+        LengthReader.FontSource font,
+        ClipPathShape? parent)
+    {
+        if (declared is null)
+        {
+            return null;
+        }
+
+        if (IsInheritWord(declared.RawValue))
+        {
+            return parent;
+        }
+
+        return ClipPathShape.Read(declared.RawValue?.CssText, dimensions, font);
+    }
+
+    /// <summary>
     /// Reads the four offsets of a clip shape. A side that is neither the keyword that leaves it to the
     /// edge nor a length the device can fold is no clip at all, which is also what the grammar says.
     /// </summary>
@@ -2654,6 +2678,12 @@ internal readonly struct ComputedStyle
         /// element's own; the area they come to is worked out when the box is painted.
         /// </summary>
         internal ClipShape? Clip;
+
+        /// <summary>
+        /// Gets the shape this box cuts its own picture to, or null where it states none. The shape keeps
+        /// its percentages until the box it belongs to has been laid out.
+        /// </summary>
+        internal ClipPathShape? ClipPath;
         internal CursorKind Cursor;
         internal RubyPosition Ruby;
         internal CssColorValue OutlineColor = CssColorValue.Black;
@@ -2978,7 +3008,10 @@ internal readonly struct ComputedStyle
                 return true;
             }
 
-            if (IsTransformed || IsFiltered || IsTransparent || PreservesThirdDimension ||
+            // A shape is a cut the whole of the box's picture has to sit inside, and CSS Masking 1 §5.1
+            // gives the box that has one a stacking context of its own the same way opacity does - which is
+            // also what keeps anything the box paints from being answered a level above the cut.
+            if (IsTransformed || IsFiltered || IsTransparent || HasClipPath || PreservesThirdDimension ||
                 WillChangeNamesALayer(positioned))
             {
                 return true;
@@ -3819,6 +3852,31 @@ internal readonly struct ComputedStyle
     /// painter is the one that works out the area (CSS 2.1 §11.1.1, CSS Masking 1 §1.3).
     /// </summary>
     public ClipShape? Clip => _values.Fused is { } fused ? fused.Clip : CascadedClip();
+
+    /// <summary>
+    /// Gets the shape the box cuts its own picture to, or null where it states none. The numbers are folded
+    /// against the box rather than against the style, so the area is only worked out when the box is painted
+    /// (CSS Masking 1 §5.1, CSS Shapes 1 §3).
+    /// </summary>
+    public ClipPathShape? ClipPath =>
+        _values.Fused is { } fused
+            ? fused.ClipPath
+            : ClipPathShape.Read(ClipPathText, _dimensions, FontSourceOf());
+
+    /// <summary>Gets the words a <c>clip-path</c> declaration was written with, or null where it says nothing.</summary>
+    public String? ClipPathText => _style.GetPropertyValue("clip-path");
+
+    /// <summary>
+    /// Gets whether the box cuts its own picture to a shape - which is what puts it on a layer of its own
+    /// and keeps everything it paints inside the cut, whatever the shape turns out to be.
+    /// </summary>
+    public Boolean HasClipPath =>
+        _values.Fused is { } fused
+            ? fused.ClipPath is not null
+            : SaysAClip(ClipPathText);
+
+    private static Boolean SaysAClip(String? stated) =>
+        stated is { Length: > 0 } && !stated.Equals("none", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Reads the clip off the declarations of a style that was not built fused. The shape is the only

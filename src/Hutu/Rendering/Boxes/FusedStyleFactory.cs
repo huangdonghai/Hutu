@@ -127,6 +127,13 @@ internal sealed class FusedParent
     public ClipShape? Clip { get; init; }
 
     /// <summary>
+    /// Gets the parent's own clip shape, travelling for the same one reason <see cref="Clip"/> does: a
+    /// child that writes <c>clip-path: inherit</c> takes the shape the parent was cut to, and measures it
+    /// from its own boxes.
+    /// </summary>
+    public ClipPathShape? ClipPath { get; init; }
+
+    /// <summary>
     /// Whether the parent is a flex container, which is what makes this element a flex item - the
     /// only thing in the cascade that says so, and the only reason <c>flex-grow</c>, <c>flex-shrink</c>,
     /// <c>flex-basis</c>, <c>order</c> and <c>align-self</c> mean anything on it.
@@ -234,6 +241,7 @@ internal sealed class FusedParent
         TextShadows = style.WrittenTextShadows,
         BoxShadows = style.WrittenBoxShadows,
         Clip = style.Clip,
+        ClipPath = style.ClipPath,
 
         // The nearest declaration at or above this element, not merely its own. A number is the form
         // that is re-read at every element - its computed value is the number, and each element it
@@ -712,6 +720,7 @@ internal static class FusedStyleFactory
 
             // The clip is the box's own: not inherited, so a box that says nothing is clipped by nothing.
             Clip = ComputedStyle.ResolveClipFused(find("clip"), dimensions, face, parent.Clip),
+            ClipPath = ComputedStyle.ResolveClipPathFused(find("clip-path"), dimensions, face, parent.ClipPath),
             Cursor = ComputedStyle.ResolveCursorFused(element, find("cursor"), parent.Cursor),
             Ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position"), parent.Ruby),
             OutlineColor = ComputedStyle.ResolveOutlineColorFused(find("outline-color"), color),

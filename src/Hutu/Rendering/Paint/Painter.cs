@@ -66,6 +66,19 @@ internal sealed class Painter
         // around both halves here, so the box's own pass does not open a second one inside.
         _faded = donor is { } handing && handing.Opacity < 1 ? handing : null;
 
+        // The shape the document element was cut to cuts the backdrop as well as what the element holds:
+        // the background it handed to the canvas is still its own picture, and a shape is a cut through the
+        // whole of what the element paints (CSS Masking 1 §5.1, and what the clip-path-document-element pair
+        // measures). It is opened around both halves here, so the box's own pass keeps from cutting twice.
+        var page = ShapeOf(layout.Root);
+
+        _page = page is null ? null : layout.Root;
+
+        if (page is { } framed)
+        {
+            AddCut(list.Commands, framed);
+        }
+
         if (_faded is { } faded)
         {
             list.Commands.Add(new PushLayerCommand(list.Bounds, faded.Opacity));
@@ -83,13 +96,25 @@ internal sealed class Painter
             list.Commands.Add(new PopLayerCommand(list.Bounds));
         }
 
+        if (page is { } cut)
+        {
+            AddPop(list.Commands, cut.Bounds);
+        }
+
         _faded = null;
+        _page = null;
         _canvas = null;
         return list;
     }
 
     /// <summary>The box whose background the canvas wears, and which therefore keeps none of its own.</summary>
     private Box? _canvas;
+
+    /// <summary>
+    /// The box whose <c>clip-path</c> the whole page is cut to, when the document element wears a shape -
+    /// the backdrop it handed over is part of the picture the shape cuts.
+    /// </summary>
+    private LayoutBox? _page;
 
     /// <summary>
     /// The box whose <c>opacity</c> the whole page picture is laid down through, when the background it
@@ -304,7 +329,7 @@ internal sealed class Painter
                 _cuts.Add(moved);
             }
 
-            PaintFaded(box, list, target, deferred: null);
+            PaintClipped(box, list, target, deferred: null);
 
             if (cut is not null)
             {
@@ -320,12 +345,83 @@ internal sealed class Painter
             _cuts.Add(standing);
         }
 
-        PaintFaded(box, list, target, deferred);
+        PaintClipped(box, list, target, deferred);
 
         if (cut is not null)
         {
             _cuts.RemoveAt(_cuts.Count - 1);
         }
+    }
+
+    /// <summary>
+    /// Paints a box inside the shape its <c>clip-path</c> cuts it to, if it states one.
+    /// </summary>
+    /// <remarks>
+    /// The cut covers the whole of the box's picture - its background, borders, outline and shadow, its
+    /// content and everything inside them - because a shape is what the element was cut to rather than a
+    /// limit put on what it contains (CSS Masking 1 §5.1). The box that carries one stands a stacking
+    /// context of its own, so nothing it paints is answered a level above the cut: the pair below is the
+    /// whole of where the box's ink may reach.
+    /// </remarks>
+    private void PaintClipped(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred)
+    {
+        if (ReferenceEquals(box, _page))
+        {
+            // The page was opened on this very cut, and the document's whole picture - the backdrop
+            // included - is what sits inside it.
+            PaintFaded(box, list, target, deferred);
+            return;
+        }
+
+        if (ShapeOf(box) is not { } cut)
+        {
+            PaintFaded(box, list, target, deferred);
+            return;
+        }
+
+        AddCut(target, cut);
+
+        PaintFaded(box, list, target, deferred);
+
+        AddPop(target, cut.Bounds);
+    }
+
+    /// <summary>
+    /// Gets the area a <c>clip-path</c> came to on the box it was written on, or null where the box states
+    /// no shape. The cut covers the box's own background, borders, outline and shadow, its content and
+    /// everything inside them - which is why it is asked of the box rather than of what it contains.
+    /// </summary>
+    private static ClipCut? ShapeOf(LayoutBox box) =>
+        box.Source.Style.ClipPath is { } shape ? shape.Cut(BoxesOf(box)) : null;
+
+    private static void AddCut(List<PaintCommand> target, ClipCut cut) =>
+        target.Add(
+            cut.Outline is { } outline
+                ? new PushClipCommand(cut.Bounds, cut.Radii, outline, cut.EvenOdd)
+                : new PushClipCommand(cut.Bounds, cut.Radii));
+
+    private static void AddPop(List<PaintCommand> target, Rect bounds) =>
+        target.Add(new PopClipCommand(bounds));
+
+    /// <summary>
+    /// Gets the four boxes a <c>clip-path</c> may be told to measure itself against. The margin box is not
+    /// one the layout keeps: it is the border box with the margins the box was given put back around it,
+    /// and a shape written against it reaches past the box whatever the box was cut to.
+    /// </summary>
+    private static ClipBoxes BoxesOf(LayoutBox box)
+    {
+        var border = box.BorderBox;
+        var margin = box.Margin;
+
+        return new ClipBoxes(
+            border,
+            box.PaddingBox,
+            box.ContentBox,
+            new Rect(
+                border.X - margin.Left,
+                border.Y - margin.Top,
+                border.Width + margin.Left + margin.Right,
+                border.Height + margin.Top + margin.Bottom));
     }
 
     /// <summary>
