@@ -1847,13 +1847,44 @@ public sealed class SkiaPaintExecutor
         Single[] positions,
         GradientCommand command)
     {
-        using var shader = command.Shape == GradientShape.Conic
-            ? SweepShader(box, colors, positions, command)
-            : LinearShader(box, colors, positions, command.AngleDegrees);
+        using var shader = command.Shape switch
+        {
+            GradientShape.Conic => SweepShader(box, colors, positions, command),
+            GradientShape.Radial => RadialShader(box, colors, positions, command),
+            _ => LinearShader(box, colors, positions, command.AngleDegrees),
+        };
 
         using var paint = new SKPaint { Shader = shader, IsAntialias = true };
 
         canvas.DrawRect(box, paint);
+    }
+
+    /// <summary>
+    /// Turns one radial gradient: the ending shape the core settled is drawn as a unit circle squashed onto
+    /// it, so a stop's fraction of that shape lands where CSS Images 3 §3.4 stands it - along the radius
+    /// for a circle, and along the corresponding axis for an ellipse.
+    /// </summary>
+    private static SKShader RadialShader(SKRect box, SKColor[] colors, Single[] positions, GradientCommand command)
+    {
+        var center = new SKPoint(
+            box.Left + (Single)(command.CenterX - command.Tile.X),
+            box.Top + (Single)(command.CenterY - command.Tile.Y));
+        var radiusX = Math.Max((Single)command.RadiusX, 1e-4f);
+        var radiusY = Math.Max((Single)command.RadiusY, 1e-4f);
+
+        // The shader is built on a unit circle at the origin and sent to the ending shape by the matrix,
+        // which is what an ellipse is: a circle with one axis stretched. A degenerate radius is kept off
+        // zero because Skia answers a zero-radius gradient with nothing at all, and a shape flattened to
+        // a line still paints the colour its last stop carries.
+        var toShape = SKMatrix.CreateScaleTranslation(radiusX, radiusY, center.X, center.Y);
+
+        return SKShader.CreateRadialGradient(
+            SKPoint.Empty,
+            1f,
+            colors,
+            positions,
+            SKShaderTileMode.Clamp,
+            toShape);
     }
 
     private static SKShader LinearShader(SKRect box, SKColor[] colors, Single[] positions, Double angleDegrees)

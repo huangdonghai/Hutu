@@ -317,8 +317,9 @@ internal static class BackgroundLayerParser
         var repeats = name.StartsWith("repeating-", StringComparison.OrdinalIgnoreCase);
         var kind = (repeats ? name["repeating-".Length..] : name).Trim().ToLowerInvariant();
         var conic = kind == "conic-gradient";
+        var radial = kind == "radial-gradient";
 
-        if (kind is not ("linear-gradient" or "conic-gradient"))
+        if (kind is not ("linear-gradient" or "conic-gradient" or "radial-gradient"))
         {
             return null;
         }
@@ -330,8 +331,26 @@ internal static class BackgroundLayerParser
         var angle = conic ? 0.0 : 180.0;
         var centerX = new BackgroundOffset(0, 0.5);
         var centerY = new BackgroundOffset(0, 0.5);
+        var radialHead = default(RadialHead);
+        var hasHead = false;
 
-        if (arguments.Count > 0 && conic)
+        if (arguments.Count > 0 && radial)
+        {
+            if (ParseRadialHead(arguments[0], dimensions, fontSize) is { } head)
+            {
+                if (!head.Ok)
+                {
+                    return null;
+                }
+
+                centerX = head.X;
+                centerY = head.Y;
+                radialHead = head;
+                hasHead = true;
+                start = 1;
+            }
+        }
+        else if (arguments.Count > 0 && conic)
         {
             if (ParseSweepHead(arguments[0], dimensions, fontSize) is not { } head)
             {
@@ -378,14 +397,174 @@ internal static class BackgroundLayerParser
             stops.Add(stop.Value);
         }
 
-        return new GradientSpec(
-            conic ? GradientShape.Conic : GradientShape.Linear,
-            angle,
-            stops,
-            repeats,
-            centerX,
-            centerY);
+        var shape = conic ? GradientShape.Conic : radial ? GradientShape.Radial : GradientShape.Linear;
+
+        return new GradientSpec(shape, angle, stops, repeats, centerX, centerY)
+        {
+            IsCircle = hasHead && radialHead.IsCircle,
+            Ending = hasHead ? radialHead.Ending : RadialEnding.FarthestCorner,
+            RadiusX = radialHead.RadiusX,
+            RadiusY = radialHead.RadiusY,
+        };
     }
+
+    /// <summary>What the first argument of a radial gradient came to.</summary>
+    private readonly record struct RadialHead(
+        Boolean Ok,
+        Boolean IsCircle,
+        RadialEnding Ending,
+        BackgroundOffset RadiusX,
+        BackgroundOffset RadiusY,
+        BackgroundOffset X,
+        BackgroundOffset Y);
+
+    /// <summary>
+    /// Reads the head of a radial gradient: the shape, the size and the centre, in any order and any
+    /// subset of the three (CSS Images 3 §3.4).
+    /// </summary>
+    /// <returns>
+    /// Null when the argument is no head at all - which is how a shape that opens on its first colour is
+    /// told from one whose head was written broken - and the head otherwise, with
+    /// <see cref="RadialHead.Ok"/> saying whether it stood up.
+    /// </returns>
+    private static RadialHead? ParseRadialHead(String text, IRenderDimensions dimensions, Double fontSize)
+    {
+        var words = CssValueList.SplitWhitespace(text);
+
+        var first = words.Count == 0 ? String.Empty : words[0];
+
+        // A colour is none of these: not a shape, not a size, not an `at`, and not a number a radius could
+        // be. So a first argument that opens on anything else is no head at all, and the first colour of
+        // the shape is where the argument list begins.
+        if (first.Length == 0 ||
+            (Ending(first) is null && !Is(first, "circle") && !Is(first, "ellipse") && !Is(first, "at") &&
+             Radius(first, dimensions, fontSize) is null))
+        {
+            return null;
+        }
+
+        var broken = new RadialHead(false, false, RadialEnding.FarthestCorner, default, default, default, default);
+        var circle = false;
+        var shapeWritten = false;
+        var ending = RadialEnding.FarthestCorner;
+        var radiusX = default(BackgroundOffset);
+        var radiusY = default(BackgroundOffset);
+        var radii = 0;
+        var x = new BackgroundOffset(0, 0.5);
+        var y = new BackgroundOffset(0, 0.5);
+        var index = 0;
+
+        while (index < words.Count)
+        {
+            var word = words[index];
+
+            if (Is(word, "circle") || Is(word, "ellipse"))
+            {
+                if (shapeWritten || radii > 0)
+                {
+                    return broken;
+                }
+
+                circle = Is(word, "circle");
+                shapeWritten = true;
+            }
+            else if (Ending(word) is { } size)
+            {
+                if (radii > 0 || ending != RadialEnding.FarthestCorner)
+                {
+                    return broken;
+                }
+
+                ending = size;
+            }
+            else if (Is(word, "at"))
+            {
+                var place = new List<String>();
+
+                // Everything that follows an `at` is the centre until a word that can only belong to the
+                // shape or the size turns up - the numbers of a position are the position.
+                while (index + 1 < words.Count &&
+                       !Is(words[index + 1], "at") &&
+                       !Is(words[index + 1], "circle") &&
+                       !Is(words[index + 1], "ellipse") &&
+                       Ending(words[index + 1]) is null)
+                {
+                    place.Add(words[++index]);
+                }
+
+                if (!TryParsePlace(place, dimensions, fontSize, out x, out y))
+                {
+                    return broken;
+                }
+            }
+            else if (Radius(word, dimensions, fontSize) is { } radius)
+            {
+                if (radii > 0 && ending != RadialEnding.Explicit)
+                {
+                    // The second number of a size stands beside the first; after a keyword that already
+                    // said how far the shape reaches it names nothing.
+                    return broken;
+                }
+
+                if (radii == 0)
+                {
+                    radiusX = radius;
+                }
+                else if (radii > 1 || circle)
+                {
+                    // A circle has one radius, and an ellipse has two: a third number is no size at all.
+                    return broken;
+                }
+                else
+                {
+                    radiusY = radius;
+                }
+
+                radii++;
+                ending = RadialEnding.Explicit;
+            }
+            else
+            {
+                return broken;
+            }
+
+            index++;
+        }
+
+        if (radii == 1)
+        {
+            // One number names a shape of equal radii, and where the page did not say which shape it is a
+            // circle - the only one of the two a single number can draw (CSS Images 3 §3.4).
+            radiusY = radiusX;
+            circle = circle || !shapeWritten;
+        }
+
+        return new RadialHead(true, circle, ending, radiusX, radiusY, x, y);
+    }
+
+    /// <summary>
+    /// Gets the radius a token of a radial head is, or null where it is no number. The length reader
+    /// answers zero to any word it does not know - <c>red</c> comes back as <c>0</c> - so the shape of the
+    /// token is asked first, or the first colour of a gradient is read as its size.
+    /// </summary>
+    private static BackgroundOffset? Radius(String text, IRenderDimensions dimensions, Double fontSize) =>
+        text.Length > 0 && (Char.IsDigit(text[0]) || text[0] is '.' or '+' or '-')
+            ? Offset(text, dimensions, fontSize, conic: false)
+            : null;
+
+    /// <summary>
+    /// Gets which ending a size keyword stands for, or null where the word is no size. The two legacy
+    /// words are read as the sides they meant: <c>contain</c> keeps to the nearest side and <c>cover</c>
+    /// reaches the farthest.
+    /// </summary>
+    private static RadialEnding? Ending(String word) => word.ToLowerInvariant() switch
+    {
+        "closest-side" or "contain" => RadialEnding.ClosestSide,
+        "farthest-side" or "cover" => RadialEnding.FarthestSide,
+        "closest-corner" => RadialEnding.ClosestCorner,
+        "farthest-corner" => RadialEnding.FarthestCorner,
+        _ => null,
+    };
 
     /// <summary>What the first argument of a conic gradient came to.</summary>
     private readonly record struct SweepHead(Boolean Ok, Double Angle, BackgroundOffset X, BackgroundOffset Y);

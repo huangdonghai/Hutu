@@ -236,6 +236,7 @@ internal sealed class Painter
             {
                 var (tile, repeatX, repeatY) = GradientTile(layer, placement);
                 var length = gradient.LineLength(tile.Width, tile.Height);
+                var (radiusX, radiusY) = gradient.EndingRadii(tile.Width, tile.Height);
 
                 layers.Add(new GradientCommand(
                     canvas,
@@ -247,7 +248,9 @@ internal sealed class Painter
                     tile.X + gradient.CenterX.Resolve(tile.Width),
                     tile.Y + gradient.CenterY.Resolve(tile.Height),
                     gradient.StopsAt(length),
-                    CornerRadii.None));
+                    CornerRadii.None,
+                    radiusX,
+                    radiusY));
             }
             else if (layer.Url is { Length: > 0 })
             {
@@ -1119,6 +1122,7 @@ internal sealed class Painter
             {
                 var (tile, repeatX, repeatY) = GradientTile(layer, area);
                 var length = gradient.LineLength(tile.Width, tile.Height);
+                var (radiusX, radiusY) = gradient.EndingRadii(tile.Width, tile.Height);
 
                 layers.Add(new GradientCommand(
                     area,
@@ -1130,7 +1134,9 @@ internal sealed class Painter
                     tile.X + gradient.CenterX.Resolve(tile.Width),
                     tile.Y + gradient.CenterY.Resolve(tile.Height),
                     gradient.StopsAt(length),
-                    radii));
+                    radii,
+                    radiusX,
+                    radiusY));
             }
             else if (layer.Url is { Length: > 0 })
             {

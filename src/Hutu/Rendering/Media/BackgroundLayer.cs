@@ -134,6 +134,32 @@ public enum GradientShape
     /// A turn about a centre, the colours standing at the angle they were given (CSS Images 3 §3.4).
     /// </summary>
     Conic,
+
+    /// <summary>
+    /// A shape grown out from a centre, the colours standing at the radius they were given. The shape is
+    /// a circle when the page says so or writes one radius, and an ellipse otherwise, and how far it
+    /// reaches is one of the four keywords or the radius the page measured (CSS Images 3 §3.4).
+    /// </summary>
+    Radial,
+}
+
+/// <summary>How far out a radial gradient's ending shape reaches (CSS Images 3 §3.4).</summary>
+public enum RadialEnding
+{
+    /// <summary>The radius the page wrote, which is the shape and needs no room to grow into.</summary>
+    Explicit,
+
+    /// <summary>The shape that just touches the nearest side of the box.</summary>
+    ClosestSide,
+
+    /// <summary>The shape that reaches the side farthest from its centre.</summary>
+    FarthestSide,
+
+    /// <summary>The shape that just touches the nearest corner.</summary>
+    ClosestCorner,
+
+    /// <summary>The shape that reaches the farthest corner, which is what a size left unwritten means.</summary>
+    FarthestCorner,
 }
 
 /// <summary>
@@ -195,11 +221,142 @@ public sealed class GradientSpec
     public BackgroundOffset CenterY { get; }
 
     /// <summary>
-    /// Gets the length the stops of this gradient are stood along: the projection of a box of these
-    /// sides onto the line a linear gradient runs along, or the one turn a conic one sweeps.
+    /// Gets whether a radial gradient's ending shape is a circle. The page says so, or writes one radius
+    /// and no second; otherwise the shape is an ellipse whose two radii stand on their own axes.
     /// </summary>
-    public Double LineLength(Double width, Double height) =>
-        Shape == GradientShape.Conic ? 360 : LineLength(width, height, AngleDegrees);
+    public Boolean IsCircle { get; internal init; }
+
+    /// <summary>Gets how far out a radial gradient's ending shape reaches.</summary>
+    public RadialEnding Ending { get; internal init; } = RadialEnding.FarthestCorner;
+
+    /// <summary>Gets the radius the page wrote along the box's inline axis, for an explicit size.</summary>
+    public BackgroundOffset RadiusX { get; internal init; }
+
+    /// <summary>Gets the radius the page wrote down the box, for an explicit size on an ellipse.</summary>
+    public BackgroundOffset RadiusY { get; internal init; }
+
+    /// <summary>
+    /// Gets the ending shape of a radial gradient in a box of these sides: the two radii the colour stops
+    /// are measured against, and the shape the 100% stop is drawn on (CSS Images 3 §3.4).
+    /// </summary>
+    /// <remarks>
+    /// The centre the page placed may stand outside the box, which is why the distances to the sides are
+    /// absolute rather than the plain gaps. A corner keyword keeps the ratio of the farthest-side ellipse
+    /// and scales it until it just reaches the corner the keyword names - the shape is an ellipse of the
+    /// same proportions either way, which is the whole difference between the four keywords and two
+    /// numbers.
+    /// </remarks>
+    public (Double RadiusX, Double RadiusY) EndingShape(Double width, Double height)
+    {
+        var cx = CenterX.Resolve(width);
+        var cy = CenterY.Resolve(height);
+
+        if (Ending == RadialEnding.Explicit)
+        {
+            var stated = Math.Max(0, RadiusX.Resolve(width));
+
+            return (stated, IsCircle ? stated : Math.Max(0, RadiusY.Resolve(height)));
+        }
+
+        var left = Math.Abs(cx);
+        var right = Math.Abs(width - cx);
+        var top = Math.Abs(cy);
+        var bottom = Math.Abs(height - cy);
+
+        if (IsCircle)
+        {
+            var nearestSide = Math.Min(Math.Min(left, right), Math.Min(top, bottom));
+            var furthestSide = Math.Max(Math.Max(left, right), Math.Max(top, bottom));
+
+            var radius = Ending switch
+            {
+                RadialEnding.ClosestSide => nearestSide,
+                RadialEnding.FarthestSide => furthestSide,
+                RadialEnding.ClosestCorner => Corner(left, right, top, bottom, Math.Min),
+                _ => Corner(left, right, top, bottom, Math.Max),
+            };
+
+            return (radius, radius);
+        }
+
+        var x = Ending == RadialEnding.ClosestSide ? Math.Min(left, right) : Math.Max(left, right);
+        var y = Ending == RadialEnding.ClosestSide ? Math.Min(top, bottom) : Math.Max(top, bottom);
+
+        if (Ending is RadialEnding.ClosestSide or RadialEnding.FarthestSide)
+        {
+            return (x, y);
+        }
+
+        var farX = Math.Max(left, right);
+        var farY = Math.Max(top, bottom);
+
+        if (farX <= 0 || farY <= 0)
+        {
+            // The centre stands on one of the ellipse's own axes, so no scaling of the degenerate shape
+            // reaches a corner: the radius that is left is the one the page can mean.
+            return (farX, farY);
+        }
+
+        var reach = Double.NaN;
+
+        foreach (var (cornerX, cornerY) in new[]
+        {
+            (0.0, 0.0), (width, 0.0), (0.0, height), (width, height),
+        })
+        {
+            var along = (cornerX - cx) / farX;
+            var across = (cornerY - cy) / farY;
+            var at = Math.Sqrt(along * along + across * across);
+
+            reach = Double.IsNaN(reach)
+                ? at
+                : Ending == RadialEnding.ClosestCorner
+                    ? Math.Min(reach, at)
+                    : Math.Max(reach, at);
+        }
+
+        return (farX * reach, farY * reach);
+    }
+
+    /// <summary>
+    /// Gets the ending shape of a radial gradient in a box of these sides, or nothing for the shapes that
+    /// have no radius - so a painter builds one command for every shape and asks the question once.
+    /// </summary>
+    public (Double RadiusX, Double RadiusY) EndingRadii(Double width, Double height) =>
+        Shape == GradientShape.Radial ? EndingShape(width, height) : (0, 0);
+
+    /// <summary>Gets the distance from the centre to the nearest or the farthest corner of the box.</summary>
+    private static Double Corner(
+        Double left,
+        Double right,
+        Double top,
+        Double bottom,
+        Func<Double, Double, Double> which)
+    {
+        var across = Math.Sqrt(left * left + top * top);
+        var other = Math.Sqrt(right * right + top * top);
+        var below = Math.Sqrt(left * left + bottom * bottom);
+        var opposite = Math.Sqrt(right * right + bottom * bottom);
+
+        return which(which(across, other), which(below, opposite));
+    }
+
+    /// <summary>
+    /// Gets the length the stops of this gradient are stood along: the projection of a box of these
+    /// sides onto the line a linear gradient runs along, the radius a radial one ends on, or the one turn
+    /// a conic one sweeps.
+    /// </summary>
+    /// <remarks>
+    /// A radial gradient's stops are measured along the horizontal radius, which is the one axis a length
+    /// has a plain meaning on: a percentage is a fraction of the ending shape and so needs no axis, and a
+    /// circle - the case where a length is written at all - has the two radii equal anyway.
+    /// </remarks>
+    public Double LineLength(Double width, Double height) => Shape switch
+    {
+        GradientShape.Conic => 360,
+        GradientShape.Radial => EndingShape(width, height).RadiusX,
+        _ => LineLength(width, height, AngleDegrees),
+    };
 
     /// <summary>
     /// Gets the length of the gradient line a box of these sides runs along: the projection of the box

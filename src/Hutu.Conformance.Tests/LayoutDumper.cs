@@ -240,9 +240,17 @@ internal static class LayoutDumper
                 break;
             case GradientCommand gradient:
                 text.Append(" ").Append(Number(gradient.AngleDegrees)).Append("deg ")
-                    .Append(gradient.Shape == Hutu.Rendering.Media.GradientShape.Conic
-                        ? " sweep " + Number(gradient.CenterX) + ',' + Number(gradient.CenterY) + ' '
-                        : String.Empty)
+                    .Append(gradient.Shape switch
+                    {
+                        // A sweep is read by where it turns about, and a shape by the ending radius it
+                        // grows to - neither of which the angle says.
+                        Hutu.Rendering.Media.GradientShape.Conic =>
+                            " sweep " + Number(gradient.CenterX) + ',' + Number(gradient.CenterY) + ' ',
+                        Hutu.Rendering.Media.GradientShape.Radial =>
+                            " radial " + Number(gradient.CenterX) + ',' + Number(gradient.CenterY) +
+                            " r " + Number(gradient.RadiusX) + 'x' + Number(gradient.RadiusY) + ' ',
+                        _ => String.Empty,
+                    })
                     .Append(gradient.Stops.Count).Append(" stops tile ")
                     .Append(Number(gradient.Tile.X)).Append(',').Append(Number(gradient.Tile.Y))
                     .Append(' ').Append(Number(gradient.Tile.Width)).Append('x')

@@ -288,7 +288,9 @@ public sealed class GradientCommand : PaintCommand
         Double centerX,
         Double centerY,
         IReadOnlyList<GradientStop> stops,
-        CornerRadii radii)
+        CornerRadii radii,
+        Double radiusX = 0,
+        Double radiusY = 0)
         : base(bounds)
     {
         Tile = tile;
@@ -300,6 +302,8 @@ public sealed class GradientCommand : PaintCommand
         CenterY = centerY;
         Stops = stops;
         Radii = radii;
+        RadiusX = radiusX;
+        RadiusY = radiusY;
     }
 
     /// <summary>Gets whether the colours run along a line or around the centre.</summary>
@@ -316,6 +320,15 @@ public sealed class GradientCommand : PaintCommand
 
     /// <summary>Gets where a sweep turns around, in page coordinates.</summary>
     public Double CenterY { get; }
+
+    /// <summary>
+    /// Gets how far a radial gradient's ending shape reaches along the inline axis, in page coordinates.
+    /// The two are the box the shape was settled against already, so the backend has only to draw it.
+    /// </summary>
+    public Double RadiusX { get; }
+
+    /// <summary>Gets how far a radial gradient's ending shape reaches down the box.</summary>
+    public Double RadiusY { get; }
 
     public IReadOnlyList<GradientStop> Stops { get; }
 

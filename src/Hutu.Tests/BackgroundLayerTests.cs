@@ -72,9 +72,11 @@ public sealed class BackgroundLayerTests
 
         await view.SetHtml(
             "<html><body style='margin:0'>" +
-            "<div style='height:50px;background:radial-gradient(circle,#ffffff,#000000)'></div>" +
+            "<div style='height:50px;background:radial-gradient(circle closest-side farthest-corner, #fff, #000)'></div>" +
             "</body></html>");
 
+        // A head that names two sizes stands for nothing, and the layer that cannot read it is left out
+        // rather than drawn as some other shape - which is also what keeps the page laying out.
         Assert.That(view.Paint!.Commands.OfType<GradientCommand>(), Is.Empty);
     }
 
@@ -334,6 +336,72 @@ public sealed class BackgroundLayerTests
             "</body></html>");
 
         Assert.That(Write(SingleGradient(view)), Is.EqualTo(expected));
+    }
+
+    /// <summary>
+    /// A radial gradient ends on the shape its size names, in the box the layer fills: the default reaches
+    /// the farthest corner, <c>closest-side</c> keeps to the nearest side, one number is a circle of that
+    /// radius and two are an ellipse's axes (CSS Images 3 §3.4). A colour is none of these - the reader
+    /// that turns a word it does not know into a zero length would otherwise take the first colour of
+    /// <c>radial-gradient(red, blue)</c> for a radius of nothing, and the box comes back one flat colour.
+    /// </summary>
+    [Test]
+    [TestCase("red, blue", 133.64, 35.36, 94.5, 25)]
+    [TestCase("circle, red, blue", 97.75, 97.75, 94.5, 25)]
+    [TestCase("closest-side at 30% 30%, red, blue", 56.7, 15, 56.7, 15)]
+    [TestCase("30px at center, red, blue", 30, 30, 94.5, 25)]
+    [TestCase("50px 20px at 0 0, red, blue", 50, 20, 0, 0)]
+    public async Task ARadialGradientEndsOnTheShapeItsSizeNames(
+        String declaration,
+        Double radiusX,
+        Double radiusY,
+        Double centerX,
+        Double centerY)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:189px;height:50px;background-image:radial-gradient({declaration})'></div>" +
+            "</body></html>");
+
+        var gradient = SingleGradient(view);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(gradient.Shape, Is.EqualTo(GradientShape.Radial), declaration);
+            Assert.That(gradient.RadiusX, Is.EqualTo(radiusX).Within(0.5), "the radius along the box");
+            Assert.That(gradient.RadiusY, Is.EqualTo(radiusY).Within(0.5), "and down it");
+            Assert.That(gradient.CenterX, Is.EqualTo(centerX).Within(0.5), "where the page put the centre");
+            Assert.That(gradient.CenterY, Is.EqualTo(centerY).Within(0.5));
+        });
+    }
+
+    /// <summary>
+    /// A repeating radial gradient tiles its stop list out to the ending shape, which is the one thing
+    /// <c>repeating-radial-gradient()</c> adds: the list ends where its last stop stands, and the rings
+    /// after it are that span again and again until the shape the size names (CSS Images 3 §3.3).
+    /// </summary>
+    [Test]
+    public async Task ARepeatingRadialGradientRunsItsRingsOutToTheEndingShape()
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:189px;height:50px;" +
+            "background-image:repeating-radial-gradient(circle, red 0 10px, blue 10px 20px)'></div>" +
+            "</body></html>");
+
+        var gradient = SingleGradient(view);
+
+        // The span of the list is 20px and the farthest-corner circle is 97.75px across, so several
+        // repeats of the two-stop pair stand on the radius before it holds at the last colour.
+        Assert.That(gradient.Stops.Count, Is.GreaterThanOrEqualTo(8), "the list is laid down again and again");
+        Assert.That(gradient.Stops[gradient.Stops.Count - 1].Offset, Is.EqualTo(1).Within(0.001),
+            "and the last of them stands on the ending shape");
     }
 
     /// <summary>Writes the stops a gradient paints as the colour and the fraction each was resolved to.</summary>
