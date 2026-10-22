@@ -234,7 +234,8 @@ internal static class FirstLetter
 
     /// <summary>
     /// Gets whether two styles would put the same glyphs on the page: the colour, the font it is drawn in,
-    /// the room between the characters, the background it stands on and whether it is seen at all.
+    /// the room between the characters, the background it stands on, how strongly it is laid down and
+    /// whether it is seen at all.
     /// </summary>
     /// <remarks>
     /// This is the question the split has to answer before it breaks a shaped word in two (CSS Text 3 §4.4
@@ -254,6 +255,7 @@ internal static class FirstLetter
         from.LineHeight == to.LineHeight &&
         from.TextFillColor == to.TextFillColor &&
         from.TextStrokeWidth == to.TextStrokeWidth &&
+        from.Opacity == to.Opacity &&
         from.Visibility == to.Visibility;
 
     /// <summary>Gets the length of the grapheme cluster beginning at <paramref name="at"/>.</summary>

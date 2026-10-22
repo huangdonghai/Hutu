@@ -368,6 +368,40 @@ public sealed class SkiaRenderingTests
         Assert.That(overlap.Red, Is.LessThan(100));
     }
 
+    /// <summary>
+    /// An <c>opacity</c> below one lays its box down as one picture at that strength rather than writing the
+    /// strength into each thing the box draws (CSS Compositing 1 §9.1). The two come apart where two
+    /// translucent children overlap: composited as a group the pair reaches three quarters of the ink and
+    /// the layer then halves it, where dimming each leaf on its own would take the overlap a quarter below
+    /// that again - a difference the chapter calls out and the reference tests of the family measure.
+    /// </summary>
+    [Test]
+    public async Task ATranslucentGroupIsLaidDownOnceRatherThanOncePerLeaf()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(200, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='opacity:.5'>" +
+            "<div style='position:absolute;top:0;left:0;width:60px;height:60px;background:rgba(0,0,0,.5)'></div>" +
+            "<div style='position:absolute;top:30px;left:30px;width:60px;height:60px;background:rgba(0,0,0,.5)'></div>" +
+            "</div></body></html>");
+
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+
+        var single = bitmap.GetPixel(10, 10);
+        var both = bitmap.GetPixel(40, 40);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(single.Red, Is.EqualTo(191).Within(3), "one child under the half-strength layer");
+            Assert.That(both.Red, Is.EqualTo(159).Within(3), "and the two together, darkened inside the layer");
+            Assert.That(single.Red, Is.GreaterThan(both.Red), "the pair is the darker of the two");
+        });
+    }
+
     [Test]
     public async Task TheInlineDecorationsOfTheTypographyPageReachTheCanvas()
     {

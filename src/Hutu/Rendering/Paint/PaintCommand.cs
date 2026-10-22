@@ -410,6 +410,40 @@ public sealed class PopTransformCommand : PaintCommand
     }
 }
 
+/// <summary>
+/// Draws everything that follows through one layer laid down at the given strength, until the matching
+/// <see cref="PopLayerCommand"/>: what a box whose <c>opacity</c> is below one asks of its own picture and
+/// of everything inside it (CSS Compositing 1 §9.1).
+/// </summary>
+/// <remarks>
+/// The group is the meaning rather than an optimisation: the subtree is drawn into the layer at full
+/// strength and the layer is then laid down as one, so two translucent children that overlap come to the
+/// darker of the two and not to the product of both. Like the clip and the transform, the two commands are
+/// always a balanced pair inside one list, which is also why nothing from inside escapes to a level above -
+/// a box below full strength stands its subtree on a layer of its own.
+/// </remarks>
+public sealed class PushLayerCommand : PaintCommand
+{
+    internal PushLayerCommand(Rect bounds, Double alpha)
+        : base(bounds) => Alpha = alpha;
+
+    /// <summary>Gets how strongly the layer is laid down, from nought to one.</summary>
+    public Double Alpha { get; }
+}
+
+/// <summary>Ends the layer the nearest preceding <see cref="PushLayerCommand"/> opened.</summary>
+public sealed class PopLayerCommand : PaintCommand
+{
+    /// <summary>
+    /// Creates the command that closes a layer. The area is carried along so that the command still
+    /// describes where it applies, even though undoing a layer needs no geometry.
+    /// </summary>
+    internal PopLayerCommand(Rect bounds)
+        : base(bounds)
+    {
+    }
+}
+
 /// <summary>A run of text drawn on a single baseline.</summary>
 public sealed class TextCommand : PaintCommand
 {

@@ -59,6 +59,18 @@ internal sealed class Painter
 
         _canvas = donor?.Source;
 
+        // The strength of the box that hands its background to the canvas is what the whole page is laid
+        // down at: the backdrop and everything drawn over it come to one picture, which is what CSS
+        // Compositing 1 §9.1 asks of a group - and what Chrome draws for a root that fades, where the
+        // background reaches the canvas and the opacity still reaches the background. The layer is opened
+        // around both halves here, so the box's own pass does not open a second one inside.
+        _faded = donor is { } handing && handing.Opacity < 1 ? handing : null;
+
+        if (_faded is { } faded)
+        {
+            list.Commands.Add(new PushLayerCommand(list.Bounds, faded.Opacity));
+        }
+
         if (donor is { } box)
         {
             PaintCanvas(box, layout.Root, list.Bounds, list.Commands);
@@ -66,12 +78,24 @@ internal sealed class Painter
 
         PaintBox(layout.Root, list, list.Commands);
 
+        if (_faded is not null)
+        {
+            list.Commands.Add(new PopLayerCommand(list.Bounds));
+        }
+
+        _faded = null;
         _canvas = null;
         return list;
     }
 
     /// <summary>The box whose background the canvas wears, and which therefore keeps none of its own.</summary>
     private Box? _canvas;
+
+    /// <summary>
+    /// The box whose <c>opacity</c> the whole page picture is laid down through, when the background it
+    /// hands to the canvas means that strength belongs to the canvas rather than to the box's own pass.
+    /// </summary>
+    private LayoutBox? _faded;
 
     /// <summary>
     /// The legacy <c>clip</c> of every box the walk currently stands inside, outermost first. An overflow
@@ -280,7 +304,7 @@ internal sealed class Painter
                 _cuts.Add(moved);
             }
 
-            PaintBoxContent(box, list, target, deferred: null);
+            PaintFaded(box, list, target, deferred: null);
 
             if (cut is not null)
             {
@@ -296,12 +320,37 @@ internal sealed class Painter
             _cuts.Add(standing);
         }
 
-        PaintBoxContent(box, list, target, deferred);
+        PaintFaded(box, list, target, deferred);
 
         if (cut is not null)
         {
             _cuts.RemoveAt(_cuts.Count - 1);
         }
+    }
+
+    /// <summary>
+    /// Paints a box through the one layer its <c>opacity</c> asks for, if it asks for one.
+    /// </summary>
+    /// <remarks>
+    /// The pair covers the whole of the box's picture - its own background, borders and content and
+    /// everything inside them - which is what the group strength means (CSS Compositing 1 §9.1). Nothing
+    /// that belongs to the box is painted outside it: a box below full strength stands a stacking context of
+    /// its own, so the walk that gathers levels stops here and keeps what is named inside to be answered
+    /// inside. What leaves by another rule does not ride along: an ancestor's opacity gives no box a frame
+    /// to resolve against, so a <c>fixed</c> descendant is still drawn in the viewport's own pass and keeps
+    /// full strength.
+    /// </remarks>
+    private void PaintFaded(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred)
+    {
+        if (box.Opacity >= 1 || ReferenceEquals(box, _faded))
+        {
+            PaintBoxContent(box, list, target, deferred);
+            return;
+        }
+
+        target.Add(new PushLayerCommand(box.BorderBox, box.Opacity));
+        PaintBoxContent(box, list, target, deferred);
+        target.Add(new PopLayerCommand(box.BorderBox));
     }
 
     /// <summary>

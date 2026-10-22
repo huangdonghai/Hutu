@@ -1137,6 +1137,7 @@ internal sealed record LayoutProfile(
         layout.Position = position.Position;
         layout.ZIndex = position.HasZIndex ? position.ZIndex : 0;
         layout.EstablishesStackingContext = box.Style.EstablishesStackingContext;
+        layout.Opacity = box.Style.Opacity;
 
         // A transform (and a motion-path offset transform) changes only how the box is drawn, never
         // where the layout put it, so the matrix is resolved here - once the border box has its size,

@@ -1046,6 +1046,71 @@ public sealed class PositionedLayoutTests
         });
     }
 
+    /// <summary>
+    /// An <c>opacity</c> below one stands its box on a level of its own and draws its whole picture through
+    /// one layer (CSS Compositing 1 §9.1, CSS 2.1 §Appendix E) - the two consequences the chapters give the
+    /// one value. Chrome answers both for a div and for a span, which
+    /// <c>build/probe-filter-layer.html</c> reads back through <c>document.elementFromPoint</c>.
+    /// </summary>
+    [Test]
+    public async Task AFadedBoxAnswersTheLevelsWrittenInsideIt(
+        [Values("div", "span")] String tag)
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:absolute;width:100px;height:100px;background:#008000;z-index:1'></div>" +
+            $"<{tag} style='opacity:.5'>" +
+            "<div style='position:absolute;width:100px;height:100px;background:#ff0000;z-index:3'></div>" +
+            $"</{tag}></body></html>");
+
+        var fills = view.Paint!.Commands.OfType<FillCommand>().ToList();
+
+        var indicator = fills.FindIndex(fill => fill.Color == 0xFF00_8000u);
+        var inside = fills.FindIndex(fill => fill.Color == 0xFFFF_0000u);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(inside, Is.GreaterThanOrEqualTo(0), "the box inside the faded element is painted");
+            Assert.That(inside, Is.LessThan(indicator), $"and stays under the level above, from a {tag}");
+        });
+    }
+
+    /// <summary>
+    /// The layer covers the box's own picture and everything drawn inside it, and only that: the pair is
+    /// laid around the subtree rather than written into each command, because the group is the meaning of
+    /// the number.
+    /// </summary>
+    [Test]
+    public async Task AFadedBoxWrapsItsPictureInOneLayer()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='f' style='opacity:.25;background:#ffff00;width:100px;height:100px'>" +
+            "<div id='in' style='background:#0000ff;width:50px;height:50px'></div></div>" +
+            "<div id='out' style='background:#ff0000;width:20px;height:20px'></div></body></html>");
+
+        var commands = view.Paint!.Commands;
+        var layer = commands.OfType<PushLayerCommand>().SingleOrDefault();
+
+        Assert.That(layer, Is.Not.Null, "the faded box opens a layer");
+        Assert.That(layer!.Alpha, Is.EqualTo(0.25).Within(0.001), "at the strength the page wrote");
+
+        var opened = commands.IndexOf(layer);
+        var closed = commands.IndexOf(commands.OfType<PopLayerCommand>().Single());
+        var inside = commands.ToList().FindIndex(
+            command => command is FillCommand fill && fill.Color == 0xFF00_00FFu);
+        var outside = commands.ToList().FindIndex(
+            command => command is FillCommand fill && fill.Color == 0xFFFF_0000u);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(inside, Is.InRange(opened, closed), "what is drawn inside the box rides on the layer");
+            Assert.That(outside, Is.GreaterThan(closed).Or.LessThan(opened), "and the box beside it does not");
+        });
+    }
+
     [Test]
     public async Task AnAbsoluteChildOfAFlexContainerIsNotAFlexItem()
     {

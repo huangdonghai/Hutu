@@ -2683,6 +2683,9 @@ internal readonly struct ComputedStyle
         /// <summary>Gets the declared <c>backdrop-filter</c>, or null when the box carries none.</summary>
         internal String? BackdropFilter;
 
+        /// <summary>Gets the declared <c>opacity</c>, or null when the box says nothing of its own.</summary>
+        internal String? Opacity;
+
         /// <summary>Gets the declared <c>will-change</c> list, or null where the page wrote nothing.</summary>
         internal String? WillChange;
 
@@ -2755,6 +2758,50 @@ internal readonly struct ComputedStyle
 
     private static Boolean SaysAFilter(String? stated) =>
         stated is { Length: > 0 } && !stated.Equals("none", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets the declared <c>opacity</c> text, or null/empty when the box carries none. Read as text on
+    /// both style paths, the way <c>filter</c> is; the number is what the drawing wants, not a length,
+    /// so there is nothing for the style layer to resolve first.
+    /// </summary>
+    public String? OpacityText =>
+        _values.Fused is { } fused ? fused.Opacity : _style.GetPropertyValue("opacity");
+
+    /// <summary>
+    /// Gets how strongly the box is laid down, one for a box that asks for nothing less. The number is
+    /// clamped at computed-value time - what is written above one or below nought comes to that bound -
+    /// and a percentage is the same value over a hundred (CSS Color 3 §4.4, CSS Compositing 1 §9.1).
+    /// Text that is a number in none of these shapes leaves the box at full strength.
+    /// </summary>
+    public Double Opacity
+    {
+        get
+        {
+            var stated = OpacityText?.Trim();
+
+            if (stated is not { Length: > 0 })
+            {
+                return 1;
+            }
+
+            if (stated.EndsWith("%", StringComparison.OrdinalIgnoreCase) &&
+                Double.TryParse(stated[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var share))
+            {
+                return Math.Clamp(share / 100, 0d, 1d);
+            }
+
+            return Double.TryParse(stated, NumberStyles.Float, CultureInfo.InvariantCulture, out var alpha)
+                ? Math.Clamp(alpha, 0d, 1d)
+                : 1;
+        }
+    }
+
+    /// <summary>
+    /// Gets whether the box is drawn through one layer at less than full strength - which stands it on a
+    /// level of its own as well, though it gives its descendants no frame to resolve against
+    /// (CSS Compositing 1 §9.1, CSS 2.1 §Appendix E).
+    /// </summary>
+    public Boolean IsTransparent => Opacity < 1;
 
     /// <summary>
     /// Gets whether the box is the frame its absolute and fixed descendants resolve against whatever its
@@ -2915,8 +2962,9 @@ internal readonly struct ComputedStyle
     /// answer (CSS 2.1 §Appendix E). The ways the engine reads one are a positioned box that states a
     /// level; a transform, an offset path or a <c>transform-style</c> that keeps the third dimension; a
     /// filter or a backdrop filter, which the chapter gives both consequences for one value
-    /// (CSS Filter Effects 1 §2.4); containment of layout or paint (CSS Contain 2 §2.5, §2.6); and a
-    /// <c>will-change</c> naming any property that would do it.
+    /// (CSS Filter Effects 1 §2.4); an <c>opacity</c> below one (CSS Compositing 1 §9.1); containment of
+    /// layout or paint (CSS Contain 2 §2.5, §2.6); and a <c>will-change</c> naming any property that
+    /// would do it.
     /// </summary>
     public Boolean EstablishesStackingContext
     {
@@ -2930,7 +2978,8 @@ internal readonly struct ComputedStyle
                 return true;
             }
 
-            if (IsTransformed || IsFiltered || PreservesThirdDimension || WillChangeNamesALayer(positioned))
+            if (IsTransformed || IsFiltered || IsTransparent || PreservesThirdDimension ||
+                WillChangeNamesALayer(positioned))
             {
                 return true;
             }

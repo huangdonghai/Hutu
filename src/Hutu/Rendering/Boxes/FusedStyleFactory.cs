@@ -722,6 +722,7 @@ internal static class FusedStyleFactory
             Transform = find("transform")?.Value,
             Filter = find("filter")?.Value,
             BackdropFilter = find("backdrop-filter")?.Value,
+            Opacity = find("opacity")?.Value,
             WillChange = find("will-change")?.Value,
             TransformStyle = find("transform-style")?.Value,
             TransformOrigin = find("transform-origin")?.Value,

@@ -960,6 +960,7 @@ internal sealed class InlineLayout
             // here rather than arranged, so this is where it says whether it forms a context of its own -
             // which decides whether the levels written inside it are answered by the context above.
             EstablishesStackingContext = ancestor.Box.Style.EstablishesStackingContext,
+            Opacity = ancestor.Box.Style.Opacity,
         };
 
         // Everything opened before this one on the line encloses it, so the box just inside it - or the

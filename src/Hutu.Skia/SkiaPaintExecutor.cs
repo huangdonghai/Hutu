@@ -240,6 +240,25 @@ public sealed class SkiaPaintExecutor
                     canvas.Restore();
                     break;
 
+                case PushLayerCommand layer:
+                    // The subtree is drawn into the layer untouched and the layer is then laid down at
+                    // that strength as one picture, which is what keeps two translucent children from
+                    // darkening each other where they overlap. Skia copies the paint when the layer is
+                    // opened, so the paint does not have to outlive the call.
+                    using (var fade = new SKPaint
+                    {
+                        Color = SKColors.White.WithAlpha((Byte)Math.Round(layer.Alpha * 255, MidpointRounding.AwayFromZero)),
+                    })
+                    {
+                        canvas.SaveLayer(fade);
+                    }
+
+                    break;
+
+                case PopLayerCommand:
+                    canvas.Restore();
+                    break;
+
                 case TextCommand text:
                     DrawText(canvas, text);
                     break;
@@ -271,7 +290,8 @@ public sealed class SkiaPaintExecutor
     /// </remarks>
     public static Boolean IsVisible(PaintCommand command, Offset offset, Rect visible)
     {
-        if (command is PushClipCommand or PopClipCommand or PushTransformCommand or PopTransformCommand)
+        if (command is PushClipCommand or PopClipCommand or PushTransformCommand or PopTransformCommand or
+            PushLayerCommand or PopLayerCommand)
         {
             return true;
         }

@@ -112,6 +112,13 @@ internal sealed class LayoutBox
     /// </summary>
     public Boolean EstablishesStackingContext { get; set; }
 
+    /// <summary>
+    /// Gets or sets how strongly the box is laid down. Below one, the box and everything drawn inside it go
+    /// through one layer at that strength, which is what <c>opacity</c> asks of them (CSS Compositing 1
+    /// §9.1); one, the default, draws them at full strength and asks for no layer at all.
+    /// </summary>
+    public Double Opacity { get; set; } = 1;
+
     /// <summary>Gets whether the box was taken out of normal flow by <c>absolute</c> or <c>fixed</c>.</summary>
     public Boolean IsOutOfFlow => Position is PositionMode.Absolute or PositionMode.Fixed;
 
