@@ -161,6 +161,13 @@ internal sealed partial class ClipPathShape
         };
     }
 
+    /// <summary>
+    /// Gets the box the shape measures itself against, in the coordinates the caller works in. A float's
+    /// area needs this on its own: where a clip cuts the whole of the shape, an area is cut to the box the
+    /// float already took, and the two are asked of the same four boxes at two different times.
+    /// </summary>
+    public Rect ReferenceOf(ClipBoxes boxes) => Of(boxes);
+
     /// <summary>Gets the box the page named, in the coordinates the paint list is drawn in.</summary>
     private Rect Of(ClipBoxes boxes) =>
         Box switch
@@ -405,8 +412,16 @@ internal sealed partial class ClipPathShape
     }
 
     /// <summary>Gets the box named by a value that is nothing but a box; null where it names a shape.</summary>
-    internal static ClipBox? BoxNamed(String value) =>
-        value.ToLowerInvariant() switch
+    internal static ClipBox? BoxNamed(String value) => BoxNamed(value, shapesOnly: false);
+
+    /// <summary>
+    /// Gets the box a value named, read either by the grammar of masking - which adds the three boxes an
+    /// SVG element answers - or by that of a shape, whose <c>&lt;shape-box&gt;</c> is the four CSS boxes and
+    /// no others (CSS Shapes 1 §5).
+    /// </summary>
+    internal static ClipBox? BoxNamed(String value, Boolean shapesOnly)
+    {
+        var box = value.ToLowerInvariant() switch
         {
             "border-box" => ClipBox.Border,
             "padding-box" => ClipBox.Padding,
@@ -415,6 +430,11 @@ internal sealed partial class ClipPathShape
             "fill-box" => ClipBox.Fill,
             "stroke-box" => ClipBox.Stroke,
             "view-box" => ClipBox.View,
-            _ => null,
+            _ => (ClipBox?)null,
         };
+
+        return box is { } found && shapesOnly && found is ClipBox.Fill or ClipBox.Stroke or ClipBox.View
+            ? null
+            : box;
+    }
 }

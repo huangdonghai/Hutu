@@ -1185,9 +1185,118 @@ internal sealed class BlockLayout
         // An auto margin on a float is zero rather than a share of what the width left over: the
         // constraint equation that makes <c>margin: 0 auto</c> centre a block has no part for a box
         // that is not in flow to solve.
-        var box = tracks.Place(style.Float, size.Width, size.Height, margin, y);
+        var box = tracks.Place(style.Float, size.Width, size.Height, margin, y, StandsClear(child.Style, contentWidth));
 
         return (box, size);
+    }
+
+    /// <summary>
+    /// Gets the builder for the area a float's lines stand clear of, or null where the float states no
+    /// shape. The area cannot be settled before the placement, because the boxes the shape measures itself
+    /// against - and the margin box it is cut to - are only known once the float has been put on its edge.
+    /// </summary>
+    private static Func<Rect, FloatArea?>? StandsClear(ComputedStyle style, Double basis) =>
+        style.ShapeOutside is { } shape
+            ? border => ShapeArea(shape, style, border, basis)
+            : null;
+
+    /// <summary>
+    /// Works the shape a float states out onto the box it was put at, and folds the two things the chapter
+    /// adds to it: the distance the shape is stood outward, and the float's own margin box the shape can
+    /// only ever reduce (CSS Shapes 1 §2, §6.3).
+    /// </summary>
+    private static FloatArea? ShapeArea(ClipPathShape shape, ComputedStyle style, Rect border, Double basis)
+    {
+        var edges = new Thickness(
+            style.BorderTopWidth,
+            style.BorderRightWidth,
+            style.BorderBottomWidth,
+            style.BorderLeftWidth);
+        var padding = style.Padding.Resolve(basis);
+        var margin = style.Margin.Resolve(basis);
+
+        var boxes = new ClipBoxes(
+            border,
+            new Rect(
+                border.X + edges.Left,
+                border.Y + edges.Top,
+                Math.Max(0, border.Width - edges.Horizontal),
+                Math.Max(0, border.Height - edges.Vertical)),
+            default,
+            new Rect(
+                border.X - margin.Left,
+                border.Y - margin.Top,
+                border.Width + margin.Horizontal,
+                border.Height + margin.Vertical));
+
+        var content = new Rect(
+            boxes.Padding.X + padding.Left,
+            boxes.Padding.Y + padding.Top,
+            Math.Max(0, boxes.Padding.Width - padding.Horizontal),
+            Math.Max(0, boxes.Padding.Height - padding.Vertical));
+
+        boxes = boxes with { Content = content };
+
+        // A shape measured from a box that has one of its own - the four the grammar names - follows that
+        // box's edge, curvature and all; a basic shape is read the way a clip reads it (CSS Shapes 1 §5).
+        var cut = shape.Form == ClipForm.Box
+            ? new ClipCut(shape.ReferenceOf(boxes), CornersOf(shape.Box, style, border, edges, padding, margin, boxes), null, false)
+            : shape.Cut(boxes);
+
+        return FloatArea.Of(cut, style.ShapeMargin?.Resolve(basis) ?? 0.0, boxes.Margin);
+    }
+
+    /// <summary>
+    /// Gets the corner the box a float names came to, with the curvature that box carries. The three inner
+    /// boxes take the border-box radii less the insets they stand inside, and the margin box is the one
+    /// whose corners are worked out of the margin itself, because a radius does not simply grow by the
+    /// distance around it (CSS Shapes 1 §5).
+    /// </summary>
+    private static CornerRadii CornersOf(
+        ClipBox box,
+        ComputedStyle style,
+        Rect border,
+        Thickness border_,
+        Thickness padding,
+        Thickness margin,
+        ClipBoxes boxes)
+    {
+        var radii = CornerRadii.Resolve(style.BorderRadius, border.Width, border.Height);
+
+        return box switch
+        {
+            ClipBox.Padding => radii.Shrink(border_),
+            ClipBox.Content => radii.Shrink(new Thickness(
+                border_.Top + padding.Top,
+                border_.Right + padding.Right,
+                border_.Bottom + padding.Bottom,
+                border_.Left + padding.Left)),
+            ClipBox.Margin => CornerRadii.Fit(MarginCorners(radii, margin), boxes.Margin.Width, boxes.Margin.Height),
+            _ => radii,
+        };
+    }
+
+    private static CornerRadii MarginCorners(CornerRadii radii, Thickness margin) =>
+        new(
+            new CornerRadius(Margin(radii.TopLeft.Horizontal, margin.Left), Margin(radii.TopLeft.Vertical, margin.Top)),
+            new CornerRadius(Margin(radii.TopRight.Horizontal, margin.Right), Margin(radii.TopRight.Vertical, margin.Top)),
+            new CornerRadius(Margin(radii.BottomRight.Horizontal, margin.Right), Margin(radii.BottomRight.Vertical, margin.Bottom)),
+            new CornerRadius(Margin(radii.BottomLeft.Horizontal, margin.Left), Margin(radii.BottomLeft.Vertical, margin.Bottom)));
+
+    /// <summary>
+    /// Gets the radius of a margin box corner: the border radius moved out by the margin it stands in, with
+    /// the two curves the chapter gives for the ratio between them (§5).
+    /// </summary>
+    private static Double Margin(Double radius, Double margin)
+    {
+        if (margin <= 0 || radius / margin >= 1)
+        {
+            return Math.Max(radius + margin, 0);
+        }
+
+        var ratio = radius / margin;
+
+        return radius + margin * (1 + Math.Pow(ratio - 1, 3));
     }
 
     /// <summary>

@@ -2684,6 +2684,16 @@ internal readonly struct ComputedStyle
         /// its percentages until the box it belongs to has been laid out.
         /// </summary>
         internal ClipPathShape? ClipPath;
+
+        /// <summary>
+        /// Gets the shape the lines beside this float stand clear of, or null where it states none. Like the
+        /// clip above it keeps its percentages, but they are folded at the float's placement rather than at
+        /// its painting, because the area is what a line is measured against.
+        /// </summary>
+        internal ClipPathShape? ShapeOutside;
+
+        /// <summary>Gets how much further out the shape above is stood, kept as the value it was parsed to.</summary>
+        internal ICssValue? ShapeMargin;
         internal CursorKind Cursor;
         internal RubyPosition Ruby;
         internal CssColorValue OutlineColor = CssColorValue.Black;
@@ -3865,6 +3875,57 @@ internal readonly struct ComputedStyle
 
     /// <summary>Gets the words a <c>clip-path</c> declaration was written with, or null where it says nothing.</summary>
     public String? ClipPathText => _style.GetPropertyValue("clip-path");
+
+    /// <summary>
+    /// Gets the shape the lines beside this float stand clear of, or null where it states none. The numbers
+    /// are shares of a box the placement has not settled yet, so the area is worked out where the float is
+    /// put down (CSS Shapes 1 §6.1).
+    /// </summary>
+    public ClipPathShape? ShapeOutside =>
+        _values.Fused is { } fused
+            ? fused.ShapeOutside
+            : ClipPathShape.ReadForFloat(ShapeOutsideText, _dimensions, FontSourceOf());
+
+    /// <summary>Gets the words a <c>shape-outside</c> declaration was written with.</summary>
+    public String? ShapeOutsideText => _style.GetPropertyValue("shape-outside");
+
+    /// <summary>
+    /// Gets how much further out a float's shape is stood, or null where the box states none. A percentage is
+    /// a share of the containing block's inline size, which only the placement has, so the distance is kept
+    /// as it was written (CSS Shapes 1 §6.3).
+    /// </summary>
+    public StyleLength? ShapeMargin =>
+        _values.Fused is { } fused ? ReadShapeMargin(fused.ShapeMargin) : ReadDeclared("shape-margin", RenderMode.Horizontal);
+
+    private StyleLength? ReadShapeMargin(ICssValue? stated) =>
+        stated is not null &&
+        LengthReader.TryReadValue(stated, RenderMode.Horizontal, _dimensions, FontSourceOf(), out var length)
+            ? length
+            : null;
+
+    /// <summary>
+    /// Resolves the shape a <c>shape-outside</c> declaration states for the fused path. The property is not
+    /// inherited, and <c>inherit</c> is the one answer that reaches down and hands a float the shape of the
+    /// box it came out of.
+    /// </summary>
+    public static ClipPathShape? ResolveShapeOutsideFused(
+        ICssProperty? declared,
+        IRenderDimensions dimensions,
+        LengthReader.FontSource font,
+        ClipPathShape? parent)
+    {
+        if (declared is null)
+        {
+            return null;
+        }
+
+        if (IsInheritWord(declared.RawValue))
+        {
+            return parent;
+        }
+
+        return ClipPathShape.ReadForFloat(declared.RawValue?.CssText, dimensions, font);
+    }
 
     /// <summary>
     /// Gets whether the box cuts its own picture to a shape - which is what puts it on a layer of its own

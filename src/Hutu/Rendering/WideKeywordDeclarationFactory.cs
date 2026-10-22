@@ -85,6 +85,11 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // (`contain`, `backdrop-filter`), which would drop half of a hint that the stacking answer needs
         // whole. The style reads the names itself.
         "will-change",
+        // CSS Shapes 1 §6.1's float area. AngleSharp's grammar for this one recognizes only the keyword
+        // `none`, so every shape a page draws a float's edge with - and the images, which are the second
+        // alternative of the same grammar - would be dropped at the parse and the float would keep its
+        // margin box. The shape reader takes the text from here.
+        "shape-outside",
     };
 
     /// <summary>

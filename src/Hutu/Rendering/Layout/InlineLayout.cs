@@ -1503,6 +1503,8 @@ internal sealed class InlineLayout
                 var inlineSize = flow.InlineExtent(width, height);
                 var blockSize = flow.BlockExtent(width, height);
 
+                room.Grow(blockSize);
+
                 if (room.Room > 0 && builder.ExtentFor(item.Inline) + inlineSize > room.Room)
                 {
                     if (builder.HasContent)
@@ -1537,6 +1539,10 @@ internal sealed class InlineLayout
                 var line = room.Room <= 0 ? Double.PositiveInfinity : room.Room;
 
                 var atomic = MeasureInlineBlock(item.Box, maxInline, line, flow, context);
+
+                // The height the box gives the line is asked of the shape before the box is put on the
+                // line, because the room the line has is the room across the whole band it stands in.
+                room.Grow(atomic.BlockSize + atomic.BlockStartMargin + atomic.BlockEndMargin);
 
                 if (room.Room > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > room.Room &&
                     item.Style.WrapsLines)
@@ -1577,6 +1583,8 @@ internal sealed class InlineLayout
                 var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
                 var extent = Math.Max(baseWidth, annotation.Width);
 
+                room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()) + annotation.Block);
+
                 if (room.Room > 0 && builder.ExtentFor(item.Inline) + extent > room.Room &&
                     item.Style.WrapsLines)
                 {
@@ -1603,6 +1611,10 @@ internal sealed class InlineLayout
             // taken once for the item, because every piece of it is set in that one font.
             var itemFlow = item.Box.Flow;
             var font = item.Style.GetFont();
+
+            // The words a line carries make it as tall as the line height their own style asks for, and
+            // that band is what a shape beside the line is read across.
+            room.Grow(LineBoxHeight(item.Style, font));
 
             foreach (var chunk in TextChunker.Ranges(item.Text!, item.Style.WordBreakingRules))
             {
@@ -2376,6 +2388,22 @@ internal sealed class InlineLayout
     /// upright - so it is measured the same way any other run is and keeps the orientation its first
     /// run resolved to.
     /// </remarks>
+    /// <summary>
+    /// Gets how tall a line of text set in the given style is - the band the words it carries stand in,
+    /// which is the line height the style asks for and the font's own height where it asks for none.
+    /// </summary>
+    private Double LineBoxHeight(ComputedStyle style, FontStyle font)
+    {
+        if (style.LineHeight is { } stated)
+        {
+            return stated;
+        }
+
+        var metrics = _measurer.GetMetrics(font);
+
+        return metrics.Ascent + metrics.Descent;
+    }
+
     private RubyAnnotation MeasureAnnotation(InlineItem item)
     {
         var style = item.AnnotationStyle;
@@ -3557,6 +3585,9 @@ internal sealed class InlineLayout
         private readonly FloatBand? _band;
         private readonly Double _max;
 
+        /// <summary>How far down the band the open line stands, which is what a shape is read across.</summary>
+        private Double _height;
+
         public LineRoom(FloatBand? band, Double max)
         {
             _band = band;
@@ -3580,12 +3611,36 @@ internal sealed class InlineLayout
         public void Next(Double height)
         {
             Top += height;
+            _height = 0;
             Open();
+        }
+
+        /// <summary>
+        /// Stands the content that is about to be placed on the line, and asks the room again over the
+        /// band it makes: a line box is shortened to avoid the whole of the float area it stands in, so
+        /// the height a piece of content gives the line is part of the question the room answers, and not
+        /// something the line discovers after it has been filled (CSS Shapes 1 §1.3).
+        /// </summary>
+        public void Grow(Double height)
+        {
+            if (height <= _height)
+            {
+                return;
+            }
+
+            _height = height;
+
+            if (_band is { } band)
+            {
+                Room = band.Room(Top, _height, _max, out var inset);
+                Inset = inset;
+            }
         }
 
         private void Open()
         {
             Gap = 0;
+            _height = 0;
 
             if (_band is not { } band)
             {
@@ -3594,7 +3649,7 @@ internal sealed class InlineLayout
                 return;
             }
 
-            Room = band.Room(Top, _max, out var inset);
+            Room = band.Room(Top, _height, _max, out var inset);
             Inset = inset;
 
             if (Room > 0)
@@ -3609,7 +3664,7 @@ internal sealed class InlineLayout
                 Gap = below - Top;
                 Top = below;
 
-                Room = band.Room(Top, _max, out inset);
+                Room = band.Room(Top, _height, _max, out inset);
                 Inset = inset;
             }
 
@@ -3649,7 +3704,7 @@ internal sealed class InlineLayout
             Gap = below - Top;
             Top = below;
 
-            Room = band.Room(Top, _max, out var inset);
+            Room = band.Room(Top, _height, _max, out var inset);
             Inset = inset;
 
             if (Room <= 0)

@@ -31,8 +31,18 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 internal sealed class FloatTracks
 {
-    private readonly List<Rect> _left = new();
-    private readonly List<Rect> _right = new();
+    /// <summary>
+    /// One float's place in the run, and the area its own lines stand clear of.
+    /// </summary>
+    /// <remarks>
+    /// The box is the float's margin box, and it is what the next float, a clearing box and a block that
+    /// keeps its own formatting context are measured against (CSS 2.1 §9.4): a shape narrows only the room a
+    /// line has and never the place a float is put at, which is the difference CSS Shapes 1 §2 draws.
+    /// </remarks>
+    private readonly record struct FloatTrack(Rect Box, FloatArea? Area);
+
+    private readonly List<FloatTrack> _left = new();
+    private readonly List<FloatTrack> _right = new();
 
     private readonly Double _edgeLeft;
     private readonly Double _edgeRight;
@@ -52,12 +62,12 @@ internal sealed class FloatTracks
 
             foreach (var track in _left)
             {
-                deepest = Math.Max(deepest, track.Bottom);
+                deepest = Math.Max(deepest, track.Box.Bottom);
             }
 
             foreach (var track in _right)
             {
-                deepest = Math.Max(deepest, track.Bottom);
+                deepest = Math.Max(deepest, track.Box.Bottom);
             }
 
             return deepest;
@@ -68,6 +78,10 @@ internal sealed class FloatTracks
     /// Gets the free span at the height a box of the given extent would start, between the floats
     /// already standing beside it.
     /// </summary>
+    /// <remarks>
+    /// This is the margin-box answer, which is what a float standing beside another and a box that keeps
+    /// its own formatting context are measured against; a line box asks <see cref="LineSpanAt"/> instead.
+    /// </remarks>
     public (Double Left, Double Right) FreeSpanAt(Double top, Double height)
     {
         var left = _edgeLeft;
@@ -75,21 +89,77 @@ internal sealed class FloatTracks
 
         foreach (var track in _left)
         {
-            if (Intersects(track, top, height))
+            if (Intersects(track.Box, top, height))
             {
-                left = Math.Max(left, track.Right);
+                left = Math.Max(left, track.Box.Right);
             }
         }
 
         foreach (var track in _right)
         {
-            if (Intersects(track, top, height))
+            if (Intersects(track.Box, top, height))
             {
-                right = Math.Min(right, track.X);
+                right = Math.Min(right, track.Box.X);
             }
         }
 
         return right < left ? (left, left) : (left, right);
+    }
+
+    /// <summary>
+    /// Gets the span a line box standing between the two heights has left beside the floats, read against
+    /// each float's area where it has one.
+    /// </summary>
+    /// <remarks>
+    /// A line is shortened as necessary to avoid the float area, and the area is what a shape came to
+    /// rather than the box it was drawn on: a band that meets nothing of the shape is left its whole
+    /// width, and one that meets it is held at the shape's furthest reach across the band (CSS Shapes 1
+    /// §1.3, §2).
+    /// </remarks>
+    public (Double Left, Double Right) LineSpanAt(Double top, Double height)
+    {
+        var left = _edgeLeft;
+        var right = _edgeRight;
+
+        foreach (var track in _left)
+        {
+            var edge = EdgeOf(track, top, height, left: true);
+
+            if (edge > left)
+            {
+                left = Math.Min(edge, right);
+            }
+        }
+
+        foreach (var track in _right)
+        {
+            var edge = EdgeOf(track, top, height, left: false);
+
+            if (edge < right)
+            {
+                right = Math.Max(edge, left);
+            }
+        }
+
+        return right < left ? (left, left) : (left, right);
+    }
+
+    /// <summary>
+    /// Gets how far one float reaches into the band a line stands in, or where it stands at the float's own
+    /// margin box edge where the float states no shape.
+    /// </summary>
+    private static Double EdgeOf(FloatTrack track, Double top, Double height, Boolean left)
+    {
+        if (track.Area is not { } area)
+        {
+            return Intersects(track.Box, top, height)
+                ? left ? track.Box.Right : track.Box.X
+                : left ? Double.NegativeInfinity : Double.PositiveInfinity;
+        }
+
+        return left
+            ? area.Furthest(top, top + Math.Max(height, 0.001))
+            : area.Nearest(top, top + Math.Max(height, 0.001));
     }
 
     /// <summary>
@@ -138,7 +208,7 @@ internal sealed class FloatTracks
         {
             foreach (var track in _left)
             {
-                below = Math.Max(below, track.Bottom);
+                below = Math.Max(below, track.Box.Bottom);
             }
         }
 
@@ -146,7 +216,7 @@ internal sealed class FloatTracks
         {
             foreach (var track in _right)
             {
-                below = Math.Max(below, track.Bottom);
+                below = Math.Max(below, track.Box.Bottom);
             }
         }
 
@@ -154,11 +224,16 @@ internal sealed class FloatTracks
     }
 
     /// <summary>
-    /// Places a float at the given edge and reserves the room it takes. The returned rectangle is the
+    /// Places a float at the given edge and reserves the room it takes. The rectangle returned is the
     /// float's border box; the reservation covers its margin box, which is the area later floats and
     /// clearing boxes have to stay out of.
     /// </summary>
-    public Rect Place(FloatSide side, Double width, Double height, Thickness margin, Double top)
+    /// <param name="area">
+    /// Asked once the float's place is settled with its border box, for the area the float's own lines
+    /// stand clear of. A float states one only where it asks for a shape, and the shape is measured from
+    /// the boxes the placement leaves it - which is why it is asked here rather than handed in.
+    /// </param>
+    public Rect Place(FloatSide side, Double width, Double height, Thickness margin, Double top, Func<Rect, FloatArea?>? area = null)
     {
         var y = top + margin.Top;
 
@@ -176,14 +251,7 @@ internal sealed class FloatTracks
 
             if (fits || attempt == _left.Count + _right.Count)
             {
-                var reserved = new Rect(
-                    x - margin.Left,
-                    y - margin.Top,
-                    margin.Left + width + margin.Right,
-                    margin.Top + height + margin.Bottom);
-
-                (side == FloatSide.Left ? _left : _right).Add(reserved);
-                return new Rect(x, y, width, height);
+                return Reserved(side, x, y, width, height, margin, area);
             }
 
             var next = NextBottom(y, height);
@@ -199,18 +267,31 @@ internal sealed class FloatTracks
         // Nothing below the blocked heights had room either, which only happens when the float is
         // wider than the container: it keeps the place it was asked for and overflows the way a
         // browser lets one overflow, rather than being pushed into a track of its own.
-        var overflow = new Rect(
-            (side == FloatSide.Left ? _edgeLeft : _edgeRight - width) - margin.Left,
+        return Reserved(
+            side,
+            side == FloatSide.Left ? _edgeLeft : _edgeRight - width,
+            y,
+            width,
+            height,
+            margin,
+            area);
+    }
+
+    /// <summary>Records the float's margin box in the track it belongs to and hands back its border box.</summary>
+    private Rect Reserved(FloatSide side, Double x, Double y, Double width, Double height, Thickness margin, Func<Rect, FloatArea?>? area)
+    {
+        var border = new Rect(x, y, width, height);
+
+        var reserved = new Rect(
+            x - margin.Left,
             y - margin.Top,
             margin.Left + width + margin.Right,
             margin.Top + height + margin.Bottom);
 
-        (side == FloatSide.Left ? _left : _right).Add(overflow);
-        return new Rect(
-            side == FloatSide.Left ? _edgeLeft : _edgeRight - width,
-            y,
-            width,
-            height);
+        (side == FloatSide.Left ? _left : _right).Add(
+            new FloatTrack(reserved, area is null ? null : area(border)));
+
+        return border;
     }
 
     /// <summary>
@@ -231,18 +312,23 @@ internal sealed class FloatTracks
     {
         foreach (var track in other._left)
         {
-            _left.Add(new Rect(track.X + dx, track.Y + dy, track.Width, track.Height));
+            _left.Add(Moved(track, dx, dy));
         }
 
         foreach (var track in other._right)
         {
-            _right.Add(new Rect(track.X + dx, track.Y + dy, track.Width, track.Height));
+            _right.Add(Moved(track, dx, dy));
         }
     }
 
-    /// <summary>Gets whether the track stands in the band the float would occupy.</summary>
-    private static Boolean Intersects(Rect track, Double top, Double height) =>
-        track.Bottom > top && track.Y < top + Math.Max(height, 0.001);
+    private static FloatTrack Moved(FloatTrack track, Double dx, Double dy) =>
+        new(
+            new Rect(track.Box.X + dx, track.Box.Y + dy, track.Box.Width, track.Box.Height),
+            track.Area?.Shifted(dx, dy));
+
+    /// <summary>Gets whether the float stands in the band the box would occupy.</summary>
+    private static Boolean Intersects(Rect box, Double top, Double height) =>
+        box.Bottom > top && box.Y < top + Math.Max(height, 0.001);
 
     /// <summary>
     /// Gets the lowest float bottom that would still block the band starting here. Stepping to it
@@ -254,17 +340,17 @@ internal sealed class FloatTracks
 
         foreach (var track in _left)
         {
-            if (Intersects(track, top, height) && track.Bottom > top && track.Bottom < next)
+            if (Intersects(track.Box, top, height) && track.Box.Bottom > top && track.Box.Bottom < next)
             {
-                next = track.Bottom;
+                next = track.Box.Bottom;
             }
         }
 
         foreach (var track in _right)
         {
-            if (Intersects(track, top, height) && track.Bottom > top && track.Bottom < next)
+            if (Intersects(track.Box, top, height) && track.Box.Bottom > top && track.Box.Bottom < next)
             {
-                next = track.Bottom;
+                next = track.Box.Bottom;
             }
         }
 

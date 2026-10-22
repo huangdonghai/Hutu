@@ -19,7 +19,25 @@ namespace Hutu.Rendering;
 internal sealed partial class ClipPathShape
 {
     /// <summary>Reads the declaration's text, or null where it states no shape this engine can draw.</summary>
-    public static ClipPathShape? Read(String? text, IRenderDimensions dimensions, LengthReader.FontSource font)
+    public static ClipPathShape? Read(String? text, IRenderDimensions dimensions, LengthReader.FontSource font) =>
+        Read(text, dimensions, font, ClipBox.Border, shapesOnly: false);
+
+    /// <summary>
+    /// Reads a <c>shape-outside</c> declaration, whose grammar is the shapes above with a different box
+    /// vocabulary: <c>&lt;shape-box&gt;</c> names the four CSS boxes and no SVG ones, and where the page names
+    /// none the shape measures itself against the margin box rather than the border box (CSS Shapes 1 §6.1).
+    /// An <c>&lt;image&gt;</c> is the third alternative the grammar offers and is read as no shape, which is
+    /// what the chapter says a fetch that yields nothing leaves: the float area unaffected.
+    /// </summary>
+    public static ClipPathShape? ReadForFloat(String? text, IRenderDimensions dimensions, LengthReader.FontSource font) =>
+        Read(text, dimensions, font, ClipBox.Margin, shapesOnly: true);
+
+    private static ClipPathShape? Read(
+        String? text,
+        IRenderDimensions dimensions,
+        LengthReader.FontSource font,
+        ClipBox stated,
+        Boolean shapesOnly)
     {
         var value = text?.Trim();
 
@@ -31,13 +49,13 @@ internal sealed partial class ClipPathShape
         // A box on its own is the whole of the value. Anything else is a shape with an optional box beside
         // it, and CSS Masking 1 §5.1 gives the two as `<basic-shape> || <geometry-box>`, so either may come
         // first.
-        if (BoxNamed(value) is { } whole)
+        if (BoxNamed(value, shapesOnly) is { } whole)
         {
             return new ClipPathShape { Form = ClipForm.Box, Box = whole };
         }
 
         var terms = new Reader(dimensions, font);
-        var (shape, box) = TakeBox(value);
+        var (shape, box) = TakeBox(value, stated, shapesOnly);
 
         var open = shape.IndexOf('(');
         var last = shape.Length - 1;
@@ -78,24 +96,24 @@ internal sealed partial class ClipPathShape
     }
 
     /// <summary>Splits the value into the shape it wrote and the box it named, whichever end the box is on.</summary>
-    private static (String Shape, ClipBox Box) TakeBox(String value)
+    private static (String Shape, ClipBox Box) TakeBox(String value, ClipBox stated, Boolean shapesOnly)
     {
         var words = Words(value);
 
         if (words.Count > 1)
         {
-            if (BoxNamed(words[0]) is { } first)
+            if (BoxNamed(words[0], shapesOnly) is { } first)
             {
                 return (Join(words, 1, words.Count), first);
             }
 
-            if (BoxNamed(words[^1]) is { } last)
+            if (BoxNamed(words[^1], shapesOnly) is { } last)
             {
                 return (Join(words, 0, words.Count - 1), last);
             }
         }
 
-        return (value, ClipBox.Border);
+        return (value, stated);
     }
 
     /// <summary>Reads <c>inset()</c>, and <c>rect()</c>, which names the same four edges as places.</summary>

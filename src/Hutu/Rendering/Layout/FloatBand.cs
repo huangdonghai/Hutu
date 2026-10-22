@@ -15,9 +15,9 @@ namespace Hutu.Rendering.Layout;
 /// that does, with its own offset added, which is what makes a paragraph inside a floated column read
 /// beside a picture it never mentions.
 /// <para>
-/// A line's room is asked at a point rather than over its height: the lines of a block stack downward
-/// from the top, so a line whose top is below a float can never overlap it, and one whose top is
-/// inside it always does. That makes the top edge alone enough to decide how far the line reaches.
+/// A line's room is asked over the height the line takes, not at its top edge alone: a rectangular float
+/// leaves the same room at every height of its own, so only a shape makes the height matter - and a shape
+/// makes it matter the whole way down the band the line stands in.
 /// </para>
 /// <para>
 /// When a block has floats of its own, its children are told about those and not about the ancestors'
@@ -45,13 +45,19 @@ internal sealed class FloatBand
     public Double Left { get; }
 
     /// <summary>
-    /// Gets how far a line standing <paramref name="top"/> down from the block's content box may reach,
-    /// and where it has to begin: the inset is given back in the block's own frame, which is where the
-    /// line box and every run on it are placed.
+    /// Gets how far a line standing <paramref name="top"/> down from the block's content box, and taking
+    /// <paramref name="height"/> across it, may reach along that box - and where it has to begin: the inset
+    /// is given back in the block's own frame, which is where the line box and every run on it are placed.
     /// </summary>
-    public Double Room(Double top, Double maxInline, out Double inset)
+    /// <remarks>
+    /// A rectangular float leaves the same room at every height of its own, so the band the line takes is
+    /// only asked of a shape: a line box is shortened to avoid the whole area it stands in, which is the
+    /// shape's furthest reach across the line's height rather than its width at the line's top edge (CSS
+    /// Shapes 1 §1.3).
+    /// </remarks>
+    public Double Room(Double top, Double height, Double maxInline, out Double inset)
     {
-        var (left, right) = Tracks.FreeSpanAt(OriginY + top, 0.001);
+        var (left, right) = Tracks.LineSpanAt(OriginY + top, height);
 
         inset = Math.Max(0, left - Left);
 
