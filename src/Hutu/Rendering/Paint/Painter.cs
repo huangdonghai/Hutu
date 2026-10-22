@@ -1174,8 +1174,8 @@ internal sealed class Painter
     private static (Rect Tile, Boolean RepeatX, Boolean RepeatY) GradientTile(BackgroundLayer layer, Rect area)
     {
         var stated = layer.SizeKind == BackgroundLayerSizeKind.Explicit;
-        var width = stated && layer.SizeWidth.Value > 0 ? layer.SizeWidth.Resolve(area.Width) : area.Width;
-        var height = stated && layer.SizeHeight.Value > 0 ? layer.SizeHeight.Resolve(area.Height) : area.Height;
+        var width = stated && layer.SizeWidth.IsStated ? layer.SizeWidth.Resolve(area.Width) : area.Width;
+        var height = stated && layer.SizeHeight.IsStated ? layer.SizeHeight.Resolve(area.Height) : area.Height;
 
         return (
             new Rect(

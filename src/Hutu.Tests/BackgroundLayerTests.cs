@@ -104,6 +104,7 @@ public sealed class BackgroundLayerTests
     [TestCase("0 0", 0, 0, 100, 50)]
     [TestCase("right bottom/20px 20px no-repeat", 80, 30, 20, 20)]
     [TestCase("50% 25%/25% 50% no-repeat", 37.5, 6.25, 25, 25)]
+    [TestCase("0 0/calc(100% / 4) calc(50% - 10px) no-repeat", 0, 0, 25, 15)]
     public async Task AGradientLayerTakesTheSizeItStates(
         String declaration,
         Double x,
@@ -124,6 +125,26 @@ public sealed class BackgroundLayerTests
         AssertTile(layer.Tile, x, y, width, height, declaration);
         Assert.That(layer.Bounds, Is.EqualTo(new Rect(0, 0, 100, 50)),
             "the layer is clipped to the positioning area wherever its tile stands");
+    }
+
+    /// <summary>
+    /// The same size written as its own longhand, which is how a chart states its gridlines:
+    /// <c>background-size: 100% calc(100% / 4)</c> lays four bands down the area, each carrying one line
+    /// at its head. Read as nothing at all the area stays one tile, and every line but the first vanishes.
+    /// </summary>
+    [Test]
+    public async Task ABackgroundSizeOfItsOwnSplitsTheAreaIntoBands()
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:100px;height:200px;background-image:linear-gradient(black,black);" +
+            "background-size:100% calc(100% / 4)'></div>" +
+            "</body></html>");
+
+        AssertTile(SingleGradient(view).Tile, 0, 0, 100, 50, "a size in quarters");
     }
 
     [Test]

@@ -20,11 +20,13 @@ public enum BackgroundLayerSizeKind
 }
 
 /// <summary>
-/// One component of a background position or size: a length, or a percentage of the free space.
+/// One component of a background position or size: the distance it adds and the share of the box it
+/// stands on, which a <c>calc()</c> can mix.
 /// </summary>
 /// <remarks>
-/// The distinction matters because a percentage is relative to the positioning area, not to the
-/// viewport, so it cannot be resolved when the value is read - only when the box is known.
+/// Neither part has a number until the box is known: a percentage is a share of the positioning area
+/// rather than of the viewport, and the distance beside it is measured in (CSS Values 4 §10.8). The two
+/// are kept apart for the same reason a colour stop's position is - see <see cref="StopOffset"/>.
 /// <para>
 /// It is built while the declaration is parsed, so a backend reads one rather than making it; that is
 /// also why only <see cref="Resolve"/> is a host's to call.
@@ -32,18 +34,27 @@ public enum BackgroundLayerSizeKind
 /// </remarks>
 public readonly struct BackgroundOffset
 {
-    internal BackgroundOffset(Double value, Boolean isPercentage)
+    internal BackgroundOffset(Double pixels, Double percent)
     {
-        Value = value;
-        IsPercentage = isPercentage;
+        Pixels = pixels;
+        Percent = percent;
     }
 
-    public Double Value { get; }
+    /// <summary>Gets the distance the component adds, in pixels.</summary>
+    public Double Pixels { get; }
 
-    public Boolean IsPercentage { get; }
+    /// <summary>Gets the share of the axis the component is measured along, as a fraction.</summary>
+    public Double Percent { get; }
 
-    /// <summary>Resolves the offset against the space left over by the content.</summary>
-    public Double Resolve(Double freeSpace) => IsPercentage ? Value * freeSpace : Value;
+    /// <summary>
+    /// Gets whether the component states a distance at all. An axis of a stated size that the image is
+    /// left to settle - <c>auto 40px</c> - is kept as zero, which is how the painter knows to take it from
+    /// the intrinsic size instead.
+    /// </summary>
+    public Boolean IsStated => Pixels > 0 || Percent > 0;
+
+    /// <summary>Resolves the component against the space it is measured in.</summary>
+    public Double Resolve(Double space) => Pixels + Percent * space;
 }
 
 /// <summary>

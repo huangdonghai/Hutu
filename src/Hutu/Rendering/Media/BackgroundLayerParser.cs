@@ -172,8 +172,8 @@ internal static class BackgroundLayerParser
 
             // A lone vertical keyword leaves the horizontal axis centred, and vice versa.
             return IsVertical(parts[0])
-                ? (new BackgroundOffset(0.5, true), single)
-                : (single, new BackgroundOffset(0.5, true));
+                ? (new BackgroundOffset(0, 0.5), single)
+                : (single, new BackgroundOffset(0, 0.5));
         }
 
         var first = Component(parts[0], dimensions, fontSize);
@@ -188,18 +188,18 @@ internal static class BackgroundLayerParser
         if (part.Equals("left", StringComparison.OrdinalIgnoreCase) ||
             part.Equals("top", StringComparison.OrdinalIgnoreCase))
         {
-            return new BackgroundOffset(0, true);
+            return new BackgroundOffset(0, 0);
         }
 
         if (part.Equals("right", StringComparison.OrdinalIgnoreCase) ||
             part.Equals("bottom", StringComparison.OrdinalIgnoreCase))
         {
-            return new BackgroundOffset(1, true);
+            return new BackgroundOffset(0, 1);
         }
 
         if (part.Equals("center", StringComparison.OrdinalIgnoreCase))
         {
-            return new BackgroundOffset(0.5, true);
+            return new BackgroundOffset(0, 0.5);
         }
 
         return ParseOffset(part, dimensions, fontSize) ?? default;
@@ -271,6 +271,14 @@ internal static class BackgroundLayerParser
     /// </summary>
     private static BackgroundOffset? ParseOffset(String text, IRenderDimensions dimensions, Double fontSize)
     {
+        // A position or a size written as arithmetic keeps its two parts apart: `calc(100% / 4)` is a
+        // share of a box the style has not been told the size of yet (CSS Values 4 §10.8), so the sum is
+        // read as words and added up where the box is known.
+        if (CalcText.Read(text, atom => Length(atom, dimensions, fontSize, conic: false)) is { } sum)
+        {
+            return new BackgroundOffset(sum.Distance, sum.Share);
+        }
+
         if (!CssLengthValue.TryParse(text, out var length))
         {
             return null;
@@ -278,12 +286,12 @@ internal static class BackgroundLayerParser
 
         if (length.Type == CssLengthValue.Unit.Percent)
         {
-            return new BackgroundOffset(length.Value / 100.0, true);
+            return new BackgroundOffset(0, length.Value / 100.0);
         }
 
         try
         {
-            return new BackgroundOffset(LengthReader.ToPixel(length, RenderMode.Horizontal, dimensions, fontSize), false);
+            return new BackgroundOffset(LengthReader.ToPixel(length, RenderMode.Horizontal, dimensions, fontSize), 0);
         }
         catch (Exception)
         {
@@ -320,8 +328,8 @@ internal static class BackgroundLayerParser
 
         // A line points down unless the page turns it; a sweep starts at the top and goes round.
         var angle = conic ? 0.0 : 180.0;
-        var centerX = new BackgroundOffset(0.5, true);
-        var centerY = new BackgroundOffset(0.5, true);
+        var centerX = new BackgroundOffset(0, 0.5);
+        var centerY = new BackgroundOffset(0, 0.5);
 
         if (arguments.Count > 0 && conic)
         {
@@ -402,8 +410,8 @@ internal static class BackgroundLayerParser
 
         var broken = new SweepHead(false, 0, default, default);
         var angle = 0.0;
-        var x = new BackgroundOffset(0.5, true);
-        var y = new BackgroundOffset(0.5, true);
+        var x = new BackgroundOffset(0, 0.5);
+        var y = new BackgroundOffset(0, 0.5);
         var index = 0;
 
         while (index < words.Count)
@@ -450,8 +458,8 @@ internal static class BackgroundLayerParser
         out BackgroundOffset centerX,
         out BackgroundOffset centerY)
     {
-        centerX = new BackgroundOffset(0.5, true);
-        centerY = new BackgroundOffset(0.5, true);
+        centerX = new BackgroundOffset(0, 0.5);
+        centerY = new BackgroundOffset(0, 0.5);
 
         if (words.Count == 0 || words.Count > 4)
         {
@@ -470,24 +478,24 @@ internal static class BackgroundLayerParser
             // and stands for the axis a keyword beside it left out.
             if (Is(word, "left") || Is(word, "right"))
             {
-                centerX = new BackgroundOffset(Is(word, "left") ? 0 : 1, true);
+                centerX = new BackgroundOffset(0, Is(word, "left") ? 0 : 1);
                 horizontal = true;
             }
             else if (Is(word, "top") || Is(word, "bottom"))
             {
-                centerY = new BackgroundOffset(Is(word, "top") ? 0 : 1, true);
+                centerY = new BackgroundOffset(0, Is(word, "top") ? 0 : 1);
                 vertical = true;
             }
             else if (Is(word, "center"))
             {
                 if (!horizontal)
                 {
-                    centerX = new BackgroundOffset(0.5, true);
+                    centerX = new BackgroundOffset(0, 0.5);
                     horizontal = true;
                 }
                 else
                 {
-                    centerY = new BackgroundOffset(0.5, true);
+                    centerY = new BackgroundOffset(0, 0.5);
                     vertical = true;
                 }
             }
@@ -606,14 +614,12 @@ internal static class BackgroundLayerParser
         Double fontSize,
         Boolean conic) =>
         conic && Angle(text) is { } degrees
-            ? new BackgroundOffset(degrees, false)
+            ? new BackgroundOffset(degrees, 0)
             : ParseOffset(text, dimensions, fontSize);
 
     private static StopOffset? Of(BackgroundOffset? offset) => offset is not { } stated
         ? null
-        : stated.IsPercentage
-            ? new StopOffset(0, stated.Value)
-            : new StopOffset(stated.Value, 0);
+        : new StopOffset(stated.Pixels, stated.Percent);
 
     /// <summary>Reads one operand of a <c>calc()</c> as the distance or the share of the line it comes to.</summary>
     private static StyleLength? Length(
@@ -623,9 +629,9 @@ internal static class BackgroundLayerParser
         Boolean conic) =>
         Offset(atom, dimensions, fontSize, conic) is not { } stated
             ? null
-            : stated.IsPercentage
-                ? StyleLength.FromPercent(stated.Value)
-                : StyleLength.FromPixels(stated.Value);
+            : stated.Percent != 0
+                ? StyleLength.FromPercent(stated.Percent)
+                : StyleLength.FromPixels(stated.Pixels);
 
     private static Boolean TryParseDirection(String text, out Double angle)
     {

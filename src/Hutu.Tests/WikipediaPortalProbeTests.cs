@@ -242,7 +242,7 @@ public sealed class WikipediaPortalProbeTests
 
             Line($"    {Truncate(String.Join(".", node.Source.Element!.ClassList), 44),-44} " +
                  $"box {node.BorderBox.Width:F0}x{node.BorderBox.Height:F0}  " +
-                 $"{(layer is null ? "no background layer" : $"{layer.SizeKind} at {layer.PositionX.Value:F0},{layer.PositionY.Value:F0}")}");
+                 $"{(layer is null ? "no background layer" : $"{layer.SizeKind} at {layer.PositionX.Resolve(node.BorderBox.Width):F0},{layer.PositionY.Resolve(node.BorderBox.Height):F0}")}");
         }
 
         Line("");
@@ -342,9 +342,15 @@ public sealed class WikipediaPortalProbeTests
             {
                 foreach (var layer in frameNode.Source.Style.Backgrounds)
                 {
+                    var area = frameBox!.Value;
+                    var width = layer.SizeWidth.Resolve(area.Width);
+                    var height = layer.SizeHeight.Resolve(area.Height);
+
                     Line($"  engine    layer      {(layer.Url is null ? "gradient" : Path.GetFileName(layer.Url))} " +
-                         $"{layer.SizeKind} {layer.SizeWidth.Value}x{layer.SizeHeight.Value} " +
-                         $"at {layer.PositionX.Value:F0},{layer.PositionY.Value:F0} repeat={layer.RepeatX}/{layer.RepeatY}");
+                         $"{layer.SizeKind} {width:F0}x{height:F0} " +
+                         $"at {area.X + layer.PositionX.Resolve(area.Width - width):F0}," +
+                         $"{area.Y + layer.PositionY.Resolve(area.Height - height):F0} " +
+                         $"repeat={layer.RepeatX}/{layer.RepeatY}");
                 }
             }
         }
