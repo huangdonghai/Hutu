@@ -964,7 +964,20 @@ internal sealed partial class ClipPathShape
 
             // A function argument keeps its unit, so a percentage among them is still a percentage when the
             // box it belongs to is measured - which is the whole of what the shape is waiting for.
-            return CssMathLengths.Evaluate(trimmed, Fold) ?? Fold(trimmed);
+            if (CssMathLengths.Evaluate(trimmed, Fold) is { } math)
+            {
+                return math;
+            }
+
+            // The arithmetic of a `calc()` is read as words rather than folded by the CSSOM, which resolves
+            // every percentage inside it against the viewport: a point is a share of the box the shape is
+            // cut against, and the style has not been told what that box is.
+            if (CalcText.Read(trimmed, Fold) is { } calc)
+            {
+                return CalcText.ToLength(calc);
+            }
+
+            return Fold(trimmed);
         }
 
         private StyleLength? Fold(String atom) =>

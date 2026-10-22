@@ -250,6 +250,33 @@ public sealed class ClipPathTests
     }
 
     [Test]
+    public async Task APolygonPointFoldsACalcOverTheBoxItWasDrawnAgainst()
+    {
+        using var view = await Drawn(
+            "#b{--f:.5;clip-path:polygon(0% 0%, 100% calc(100% * 0.5), 100% calc(100% * var(--f)), 0% 100%)}" +
+            Box200x200);
+
+        var points = Only(CutOf(view, "b")).Outline!.Where(edge => edge.Edge != ClipEdge.Close).ToList();
+
+        Assert.That(points.Select(edge => (edge.X, edge.Y)),
+            Is.EquivalentTo(new[] { (0d, 0d), (200d, 100d), (200d, 100d), (0d, 200d) }),
+            "a calc over the box is the box's own share, however it was written");
+    }
+
+    [Test]
+    public async Task APolygonPointFoldsACalcThatBarsAPercentWithALength()
+    {
+        using var view = await Drawn(
+            "#b{clip-path:polygon(0% 0%, 100% calc(100% - 20px), 100% calc(50px * 2), 0% 100%)}" + Box200x200);
+
+        var points = Only(CutOf(view, "b")).Outline!.Where(edge => edge.Edge != ClipEdge.Close).ToList();
+
+        Assert.That(points.Select(edge => (edge.X, edge.Y)),
+            Is.EquivalentTo(new[] { (0d, 0d), (200d, 180d), (200d, 100d), (0d, 200d) }),
+            "a sum of a share and a distance keeps both: the share waits for the box, the distance does not");
+    }
+
+    [Test]
     public async Task APolygonKeepsTheWindingRuleThePageNamed()
     {
         var even = Only(await Shaped("#b{clip-path:polygon(evenodd, 0 0, 200px 0, 200px 200px, 0 200px)}", Box200x100));

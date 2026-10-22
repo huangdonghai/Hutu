@@ -46,6 +46,14 @@ internal enum StyleMathFunction : byte
     Min,
     Max,
     Clamp,
+
+    /// <summary>
+    /// The terms of a <c>calc()</c> added up. A sum of a share and a distance is the one math function
+    /// whose answer is not one of its arguments, and it keeps both: <c>calc(100% - 20px)</c> is a share
+    /// of the box <em>and</em> a distance, neither of which has a number until the box is known
+    /// (CSS Values 4 §10.8).
+    /// </summary>
+    Sum,
 }
 
 /// <summary>
@@ -188,6 +196,13 @@ internal readonly struct StyleLength : IEquatable<StyleLength>
         new(StyleMathFunction.Clamp, Copy(operands));
 
     /// <summary>
+    /// Gets the length a <c>calc()</c> comes to: its terms added up, each keeping the unit it was written
+    /// in so the share waits for the box it belongs to.
+    /// </summary>
+    public static StyleLength Sum(IReadOnlyList<StyleLength> operands) =>
+        new(StyleMathFunction.Sum, Copy(operands));
+
+    /// <summary>
     /// Resolves to pixels against the size a percentage is measured from. Returns zero for
     /// <see cref="Auto"/> and <see cref="None"/>, which the caller has to handle before it gets here:
     /// they are not lengths.
@@ -223,6 +238,18 @@ internal readonly struct StyleLength : IEquatable<StyleLength>
         }
 
         var first = operands[0].Resolve(basis);
+
+        if (_function == StyleMathFunction.Sum)
+        {
+            var total = first;
+
+            for (var index = 1; index < operands.Length; index++)
+            {
+                total += operands[index].Resolve(basis);
+            }
+
+            return total;
+        }
 
         if (_function == StyleMathFunction.Clamp)
         {
