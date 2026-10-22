@@ -37,8 +37,13 @@ public sealed class LayoutProbe
         }
 
         // The same window and the same measurer a reftest is drawn with, so the tree is the one the
-        // comparison was made from rather than the one a golden would use.
-        using var engine = EngineReader.WithTypefaces(ReftestRunner.Width, ReftestRunner.Height);
+        // comparison was made from rather than the one a golden would use. A taller page is looked at
+        // with `HUTU_PROBE_WIDTH`/`HUTU_PROBE_HEIGHT`, which is how a picture cut off at the bottom of
+        // a 300-pixel window is told from a box that never got there.
+        var width = Size("HUTU_PROBE_WIDTH", (Int32)ReftestRunner.Width);
+        var height = Size("HUTU_PROBE_HEIGHT", (Int32)ReftestRunner.Height);
+
+        using var engine = EngineReader.WithTypefaces(width, height);
 
         engine.LoadAsync(File.ReadAllText(page), new Uri(page).AbsoluteUri).GetAwaiter().GetResult();
 
@@ -58,7 +63,7 @@ public sealed class LayoutProbe
 
         if (!String.IsNullOrWhiteSpace(picture))
         {
-            using var drawn = engine.Render(ReftestRunner.Width, ReftestRunner.Height);
+            using var drawn = engine.Render(width, height);
             using var image = SkiaSharp.SKImage.FromBitmap(drawn);
             using var stream = File.Create(picture);
 
@@ -67,4 +72,10 @@ public sealed class LayoutProbe
 
         TestContext.Out.WriteLine(dump);
     }
+
+    /// <summary>Reads one side of the window the page is looked at in, or the reftest's own.</summary>
+    private static Int32 Size(String name, Int32 fallback) =>
+    Int32.TryParse(Environment.GetEnvironmentVariable(name), out var stated) && stated > 0
+        ? stated
+        : fallback;
 }

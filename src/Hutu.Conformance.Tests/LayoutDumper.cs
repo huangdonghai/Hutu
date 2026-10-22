@@ -214,6 +214,13 @@ internal static class LayoutDumper
             case BorderCommand border:
                 text.Append(" w:").Append(BoxEdges(border.Widths))
                     .Append(" #").Append(border.TopColor.ToString("x8"));
+
+                // A box with one side drawn - the foot of a table row carrying an axis - says nothing
+                // about its top, so the top's ink is the text colour and tells the reader nothing about
+                // the stroke. Each other side is named where it differs.
+                SideInk(text, "r", border.TopColor, border.RightColor);
+                SideInk(text, "b", border.TopColor, border.BottomColor);
+                SideInk(text, "l", border.TopColor, border.LeftColor);
                 break;
             case TextCommand run:
                 text.Append(" \"").Append(Quote(run.Text))
@@ -243,6 +250,18 @@ internal static class LayoutDumper
                     .Append(gradient.RepeatX ? " repeat-x" : String.Empty)
                     .Append(gradient.RepeatY ? " repeat-y" : String.Empty);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Writes one side's ink when it is not the ink the top was drawn with, labelled with the side it
+    /// stands on.
+    /// </summary>
+    private static void SideInk(StringBuilder text, String side, UInt32 top, UInt32 ink)
+    {
+        if (ink != top)
+        {
+            text.Append(' ').Append(side).Append('#').Append(ink.ToString("x8"));
         }
     }
 
