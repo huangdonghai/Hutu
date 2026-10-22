@@ -2913,9 +2913,10 @@ internal readonly struct ComputedStyle
     /// Gets whether the box forms a stacking context: its own picture and everything inside it is
     /// answered at one level of the context above, and the levels its descendants name are its own to
     /// answer (CSS 2.1 §Appendix E). The ways the engine reads one are a positioned box that states a
-    /// level; a transform, an offset path or a <c>transform-style</c> that keeps the third dimension;
-    /// containment of layout or paint (CSS Contain 2 §2.5, §2.6); and a <c>will-change</c> naming any
-    /// property that would do it.
+    /// level; a transform, an offset path or a <c>transform-style</c> that keeps the third dimension; a
+    /// filter or a backdrop filter, which the chapter gives both consequences for one value
+    /// (CSS Filter Effects 1 §2.4); containment of layout or paint (CSS Contain 2 §2.5, §2.6); and a
+    /// <c>will-change</c> naming any property that would do it.
     /// </summary>
     public Boolean EstablishesStackingContext
     {
@@ -2929,7 +2930,7 @@ internal readonly struct ComputedStyle
                 return true;
             }
 
-            if (IsTransformed || PreservesThirdDimension || WillChangeNamesALayer(positioned))
+            if (IsTransformed || IsFiltered || PreservesThirdDimension || WillChangeNamesALayer(positioned))
             {
                 return true;
             }

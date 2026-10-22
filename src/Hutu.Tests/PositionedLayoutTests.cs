@@ -1014,6 +1014,38 @@ public sealed class PositionedLayoutTests
         });
     }
 
+    /// <summary>
+    /// A filter stands its box on a layer of its own, so the levels written inside it are its own to
+    /// answer - at either display. The filter chapter writes the consequence twice over for one value
+    /// (CSS Filter Effects 1 §2.4: "the creation of a containing block for absolute and fixed positioned
+    /// descendants, and the creation of a stacking context"), and Chrome draws it that way for a div and a
+    /// span alike, which <c>build/probe-filter-layer.html</c> reads back through
+    /// <c>document.elementFromPoint</c> over the middle of the box inside.
+    /// </summary>
+    [Test]
+    public async Task AFilteredBoxAnswersTheLevelsWrittenInsideIt(
+        [Values("div", "span")] String tag)
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:absolute;width:100px;height:100px;background:#008000;z-index:1'></div>" +
+            $"<{tag} style='filter:brightness(100%)'>" +
+            "<div style='position:absolute;width:100px;height:100px;background:#ff0000;z-index:3'></div>" +
+            $"</{tag}></body></html>");
+
+        var fills = view.Paint!.Commands.OfType<FillCommand>().ToList();
+
+        var indicator = fills.FindIndex(fill => fill.Color == 0xFF00_8000u);
+        var inside = fills.FindIndex(fill => fill.Color == 0xFFFF_0000u);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(inside, Is.GreaterThanOrEqualTo(0), "the box inside the filtered element is painted");
+            Assert.That(inside, Is.LessThan(indicator), $"and stays under the level above, from a {tag}");
+        });
+    }
+
     [Test]
     public async Task AnAbsoluteChildOfAFlexContainerIsNotAFlexItem()
     {
