@@ -47,7 +47,7 @@ internal static class TableFixup
 
             // A run of content that is not a cell becomes one anonymous cell, not one per box: bare
             // text between two rows must occupy a single column, the way a browser places it.
-            var cell = new Box(BoxKind.TableCell, parent.Style.AsAnonymous()) { IsAnonymous = true };
+            var cell = new Box(BoxKind.TableCell, parent.Style) { IsAnonymous = true };
             BoxBuilder.GroupChildren(cell, run);
             run.Clear();
             row.Add(cell);
@@ -70,7 +70,7 @@ internal static class TableFixup
             }
             else
             {
-                var anonymous = new Box(BoxKind.TableRow, parent.Style.AsAnonymous()) { IsAnonymous = true };
+                var anonymous = new Box(BoxKind.TableRow, parent.Style) { IsAnonymous = true };
                 anonymous.Children.AddRange(row);
                 normalized.Add(anonymous);
             }
