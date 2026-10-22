@@ -567,7 +567,14 @@ internal sealed class InlineLayout
 
         var (trimStart, _) = Trim(container, lines);
 
-        return PlaceLines(container, parent, lines, from, to, contentBox, flow, context, from == 0 ? -trimStart : 0);
+        // A block broken across columns is placed one fragment at a time, so the inline elements it
+        // holds are whole only within the fragment being placed. What that costs is written up under
+        // Placement.
+        var placement = new Placement(context.Engine);
+        var used = PlaceLines(container, parent, lines, from, to, contentBox, flow, context, from == 0 ? -trimStart : 0, placement);
+        placement.Finish(flow);
+
+        return used;
     }
 
     private Double LayoutCore(Box container, LayoutBox parent, Rect contentBox, WritingModeInfo flow, InlineContext context)
@@ -607,7 +614,13 @@ internal sealed class InlineLayout
         // lines stand with their text edge on the block's edge. The line box is not resized - the lines
         // simply start above the block's start and the block's height ends at the last text edge.
         var (trimStart, trimEnd) = Trim(container, lines);
-        var cursor = PlaceLines(container, parent, lines, 0, lines.Count, contentBox, flow, context, -trimStart);
+        var placement = new Placement(context.Engine);
+        var cursor = PlaceLines(container, parent, lines, 0, lines.Count, contentBox, flow, context, -trimStart, placement);
+
+        // Whatever the lines held back is placed once the whole of the content stands where it does, and
+        // the displaced elements are moved before the container's height is handed back - which is a
+        // question of where the drawing lands, not of how tall the block came out.
+        placement.Finish(flow);
 
         return Math.Max(0, cursor - trimEnd);
     }
@@ -665,6 +678,10 @@ internal sealed class InlineLayout
         var (trimStart, trimEnd) = Trim(container, lines);
         var from = 0;
 
+        // The columns share one placement, because an inline element reaching down past the end of one
+        // is one box standing in several of them - and the boxes it holds are anchored to the whole of it.
+        var placement = new Placement(context.Engine);
+
         for (var cell = 0; cell < counts.Count; cell++)
         {
             var count = counts[cell];
@@ -674,10 +691,11 @@ internal sealed class InlineLayout
                 share,
                 extent);
 
-            PlaceLines(container, parent, lines, from, from + count, area, flow, context, -starts[from]);
+            PlaceLines(container, parent, lines, from, from + count, area, flow, context, -starts[from], placement);
             from += count;
         }
 
+        placement.Finish(flow);
         MulticolRules.Add(
             parent,
             container.Style,
@@ -725,7 +743,8 @@ internal sealed class InlineLayout
         Rect contentBox,
         WritingModeInfo flow,
         InlineContext context,
-        Double start)
+        Double start,
+        Placement placement)
     {
         var cursor = start;
         var step = new InlineStep();
@@ -776,7 +795,7 @@ internal sealed class InlineLayout
                 foreach (var left in step.Closed)
                 {
                     origin += left.Ancestor.InlineEndInset;
-                    CloseBox(left, origin, contentBox, flow, line, cursor, context);
+                    CloseBox(left, origin, contentBox, flow, line, cursor, context, placement);
                     origin += left.Ancestor.InlineEndMargin;
                 }
 
@@ -793,7 +812,7 @@ internal sealed class InlineLayout
                 // them, which is what a right-to-line-end hanging looks like from both directions.
                 var room = ReferenceEquals(fragment, last) ? fragment.Width - line.Hanging : fragment.Width;
 
-                Place(fragment, open, lineBox, contentBox, flow, line, origin, cursor, context, room);
+                Place(fragment, open, lineBox, contentBox, flow, line, origin, cursor, context, room, placement);
                 origin += fragment.Width;
             }
 
@@ -805,7 +824,7 @@ internal sealed class InlineLayout
                 var cut = line.ContinuesToNext?.Contains(left.Ancestor) == true;
 
                 origin += cut ? 0 : left.Ancestor.InlineEndInset;
-                CloseBox(left, origin, contentBox, flow, line, cursor, context);
+                CloseBox(left, origin, contentBox, flow, line, cursor, context, placement);
 
                 if (!cut)
                 {
@@ -961,7 +980,8 @@ internal sealed class InlineLayout
         WritingModeInfo flow,
         Line line,
         Double cursor,
-        InlineContext context)
+        InlineContext context,
+        Placement placement)
     {
         var ancestor = item.Ancestor;
 
@@ -976,16 +996,24 @@ internal sealed class InlineLayout
 
         item.Node!.BorderBox = flow.Map(contentBox, item.Start, end - item.Start, blockOffset, blockSize);
 
+        // Where this fragment stands is what the boxes flown out of the element will be anchored to, so
+        // the fragment is written up before anything moves it (CSS Positioned Layout 3 2.1).
+        placement.Fragment(ancestor, item.Node);
+
         // A relative element keeps the place it had in the flow - the lines and the boxes around it are
         // measured as though it never moved - and is drawn where its offset puts it. Its fragments are
         // made one per line here rather than by the pass that arranges every other kind of box, so this
         // is where each of them is moved, and what is drawn through the fragment goes with it: the text,
         // the line under it, whatever background the element asks for (CSS 2.1 §9.4.3).
+        //
+        // The move itself waits for the boxes held back under the element, because those are arranged
+        // against the place the element had and then carried along by it - which is what an offset on an
+        // ancestor does to everything inside it.
         var position = ancestor.Box.Style.Position;
 
         if (position.Position == PositionMode.Relative)
         {
-            PositionedLayout.Translate(item.Node, PositionedLayout.RelativeOffset(position, context.Containing.ContainingBlock));
+            placement.Shift(item.Node, PositionedLayout.RelativeOffset(position, context.Containing.ContainingBlock));
         }
     }
 
@@ -1000,7 +1028,8 @@ internal sealed class InlineLayout
         Double origin,
         Double cursor,
         InlineContext context,
-        Double room)
+        Double room,
+        Placement placement)
     {
         if (fragment.OutOfFlow)
         {
@@ -1010,11 +1039,25 @@ internal sealed class InlineLayout
             // where that was - the box's own geometry, and whatever offsets it declares, are the
             // positioning pass's business.
             var stood = flow.Map(contentBox, origin, 0, cursor, 0);
+            var against = context.Absolute ?? context.Containing;
 
-            Attach(open, lineBox, context.Engine.ArrangePositioned(
-                fragment.Box,
-                new Offset(stood.X, stood.Y),
-                context.Absolute ?? context.Containing));
+            // An inline element the run sits inside answers for the box when it is the nearest one
+            // positioned - which the line cannot settle on its own, since the rectangle is drawn over
+            // every fragment of that element (CSS Positioned Layout 3 2.1).
+            var anchor = AnchoredBy(fragment.Inline);
+
+            if (anchor is null)
+            {
+                Attach(open, lineBox, context.Engine.ArrangePositioned(
+                    fragment.Box,
+                    new Offset(stood.X, stood.Y),
+                    against));
+            }
+            else
+            {
+                var (owner, index) = Standing(open, lineBox);
+                placement.Hold(fragment.Box, anchor, owner, index, against, new Offset(stood.X, stood.Y));
+            }
 
             return;
         }
@@ -1025,15 +1068,26 @@ internal sealed class InlineLayout
             // children with it - and the line only decides where it goes: the margins along the line
             // are taken out of the room the line reserved, and the box's own baseline is put on the
             // line's, which is what makes its text sit with the text around it.
-            Attach(open, lineBox, context.Engine.Arrange(
-                fragment.Box,
-                flow.Map(
-                    contentBox,
-                    origin + atomic.InlineStartMargin,
-                    atomic.InlineSize - atomic.InlineStartMargin - atomic.InlineEndMargin,
-                    cursor + line.Ascent - atomic.Ascent,
-                    atomic.BlockSize),
-                context.Atomic));
+            var frame = flow.Map(
+                contentBox,
+                origin + atomic.InlineStartMargin,
+                atomic.InlineSize - atomic.InlineStartMargin - atomic.InlineEndMargin,
+                cursor + line.Ascent - atomic.Ascent,
+                atomic.BlockSize);
+
+            // Its own content is under the same inline element, so whatever leaves the flow inside the
+            // atomic box anchors to that element too - which waits for the element to be whole.
+            var anchor = AnchoredBy(fragment.Inline);
+
+            if (anchor is null)
+            {
+                Attach(open, lineBox, context.Engine.Arrange(fragment.Box, frame, context.Atomic));
+            }
+            else
+            {
+                var (owner, index) = Standing(open, lineBox);
+                placement.Hold(fragment.Box, anchor, owner, index, context.Atomic, frame);
+            }
 
             return;
         }
@@ -1122,6 +1176,37 @@ internal sealed class InlineLayout
     /// <summary>Adds a node inside the innermost inline element still open, or inside the line itself.</summary>
     private static void Attach(List<OpenInline> open, LayoutBox lineBox, LayoutBox node) =>
         (open.Count > 0 ? open[^1].Node! : lineBox).Children.Add(node);
+
+    /// <summary>
+    /// Gets the node a run's box belongs inside, and how many boxes already stood in it when the run came
+    /// to be placed - which is where a box held back to the end of the container goes again, so that the
+    /// content of the line reads in the order the line was built in.
+    /// </summary>
+    private static (LayoutBox Owner, Int32 Index) Standing(List<OpenInline> open, LayoutBox lineBox)
+    {
+        var owner = open.Count > 0 ? open[^1].Node! : lineBox;
+
+        return (owner, owner.Children.Count);
+    }
+
+    /// <summary>
+    /// Gets the innermost inline element a run sits inside that holds the boxes flown out of it, or null
+    /// when none of them does. A box taken out of the flow anchors to the nearest ancestor whose
+    /// <c>position</c> is anything but static (CSS 2.1 10.3.7), and an inline element is one of those
+    /// whatever its display.
+    /// </summary>
+    private static InlineAncestor? AnchoredBy(InlineAncestor? chain)
+    {
+        for (var ancestor = chain; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (PositionedLayout.IsPositioned(ancestor.Box))
+            {
+                return ancestor;
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Builds the box that draws a ruby's annotation beside its base, centred within the room the pair
@@ -1914,6 +1999,148 @@ internal sealed class InlineLayout
 
         /// <summary>Gets or sets the node the element draws through. Only the placing pass makes one.</summary>
         public LayoutBox? Node { get; set; }
+    }
+
+    /// <summary>
+    /// The boxes one container's walk could not place when it met them, with the inline elements they
+    /// were waiting for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An inline element whose <c>position</c> is not static is the containing block for the boxes flown
+    /// out of its content, and the rectangle they resolve their offsets against is drawn from the start
+    /// edges of the element's first fragment to the end edges of its last (CSS Positioned Layout 3 2.1).
+    /// Neither end of that is known while a single line is being placed: the element may carry on past the
+    /// line it stands on, or past the column. So a box that anchors to an inline element is held here till
+    /// the walk has put down the last fragment, and an atomic inline standing under one is held with it,
+    /// because the content it arranges flies to the same rectangle.
+    /// </para>
+    /// <para>
+    /// The displacement a relative element takes is held back for the same reason. It carries everything
+    /// drawn through the element, and a box arranged once the element had moved would ride on none of it -
+    /// so the anchors are read from the places the fragments had before any of them moved, and the move
+    /// then takes the held boxes along with the text, exactly as it takes the fragments themselves.
+    /// </para>
+    /// </remarks>
+    private sealed class Placement
+    {
+        private readonly LayoutEngine _engine;
+        private readonly Dictionary<InlineAncestor, Ends> _anchors = new();
+        private readonly List<Held> _held = new();
+        private readonly List<(LayoutBox Box, Offset Shift)> _shifts = new();
+
+        public Placement(LayoutEngine engine) => _engine = engine;
+
+        /// <summary>
+        /// Notes one fragment of an inline element: the first one the walk hands over is kept as the start
+        /// of the rectangle and every later one takes the end of it.
+        /// </summary>
+        public void Fragment(InlineAncestor ancestor, LayoutBox fragment)
+        {
+            if (!PositionedLayout.IsPositioned(ancestor.Box))
+            {
+                return;
+            }
+
+            var box = fragment.PaddingBox;
+
+            _anchors[ancestor] = _anchors.TryGetValue(ancestor, out var seen)
+                ? new Ends(seen.First, box)
+                : new Ends(box, box);
+        }
+
+        /// <summary>Holds back the place a relative element's offset gives its whole subtree.</summary>
+        public void Shift(LayoutBox fragment, Offset offset)
+        {
+            if (offset.X != 0 || offset.Y != 0)
+            {
+                _shifts.Add((fragment, offset));
+            }
+        }
+
+        /// <summary>
+        /// Holds a box that left the flow, with the place on the line it stood in - which is the static
+        /// position an offset it does not declare falls back to.
+        /// </summary>
+        /// <param name="against">
+        /// The context the box would have been placed against had the inline element above it not answered
+        /// for it, which is where the offsets the element does not settle are still read from.
+        /// </param>
+        /// <param name="index">
+        /// How many boxes already stood in <paramref name="owner"/> when the line came to this one, which
+        /// is where it goes again so that the line reads in the order it was built in.
+        /// </param>
+        public void Hold(Box box, InlineAncestor anchor, LayoutBox owner, Int32 index, LayoutContext against, Offset stood) =>
+            _held.Add(new Held(box, anchor, owner, index, against, stood, null));
+
+        /// <summary>Holds an atomic inline box, with the frame the line gave it.</summary>
+        /// <inheritdoc cref="Hold(Box, InlineAncestor, LayoutBox, Int32, LayoutContext, Offset)" path="/param[@name='against']"/>
+        /// <inheritdoc cref="Hold(Box, InlineAncestor, LayoutBox, Int32, LayoutContext, Offset)" path="/param[@name='index']"/>
+        public void Hold(Box box, InlineAncestor anchor, LayoutBox owner, Int32 index, LayoutContext against, Rect frame) =>
+            _held.Add(new Held(box, anchor, owner, index, against, default, frame));
+
+        /// <summary>Places every box that was held, then moves the fragments their offsets displace.</summary>
+        public void Finish(WritingModeInfo flow)
+        {
+            var placed = new Dictionary<LayoutBox, Int32>();
+
+            foreach (var held in _held)
+            {
+                var against = held.Against.WithAbsoluteContainingBlock(AnchorOf(held.Anchor, flow));
+                var node = held.Frame is { } frame
+                    ? _engine.Arrange(held.Box, frame, against)
+                    : _engine.ArrangePositioned(held.Box, held.Stood, against);
+
+                // The siblings placed while the box waited are not the ones it stood among, so the place it
+                // was counted at moves along by the boxes already put back into that owner.
+                var before = placed.TryGetValue(held.Owner, out var seen) ? seen : 0;
+                held.Owner.Children.Insert(Math.Min(held.Index + before, held.Owner.Children.Count), node);
+                placed[held.Owner] = before + 1;
+            }
+
+            foreach (var (box, shift) in _shifts)
+            {
+                PositionedLayout.Translate(box, shift);
+            }
+        }
+
+        /// <summary>
+        /// Gets the rectangle an inline element's out-of-flow descendants resolve their offsets against:
+        /// the first fragment's start edges to the last fragment's end edges, in the direction the
+        /// container's text runs. Fragments on different lines leave nothing between their inline edges -
+        /// an element broken over two lines gives a box that starts where its first fragment starts, which
+        /// is what the rule comes to and what Chrome draws.
+        /// </summary>
+        private Rect AnchorOf(InlineAncestor anchor, WritingModeInfo flow)
+        {
+            var (first, last) = _anchors[anchor];
+
+            var inline = Math.Max(0,
+                flow.InlineSign * flow.InlineStart(last) + flow.InlineExtent(last.Width, last.Height) -
+                flow.InlineSign * flow.InlineStart(first));
+            var block = Math.Max(0,
+                flow.BlockSign * flow.BlockStart(last) + flow.BlockExtent(last.Width, last.Height) -
+                flow.BlockSign * flow.BlockStart(first));
+
+            return flow.Map(first, 0, inline, 0, block);
+        }
+
+        /// <summary>The padding boxes of the first and the last fragment an inline element left.</summary>
+        private readonly record struct Ends(Rect First, Rect Last);
+
+        /// <summary>
+        /// A box the walk held back. <see cref="Stood"/> is what a box that left the flow is placed from,
+        /// and <see cref="Frame"/> the frame an atomic inline was given - one of the two is always there,
+        /// and which it is is answered by the frame standing empty.
+        /// </summary>
+        private readonly record struct Held(
+            Box Box,
+            InlineAncestor Anchor,
+            LayoutBox Owner,
+            Int32 Index,
+            LayoutContext Against,
+            Offset Stood,
+            Rect? Frame);
     }
 
     /// <summary>What one step between two chains of inline elements did to the elements it left and entered.</summary>

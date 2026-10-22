@@ -631,6 +631,168 @@ public sealed class PositionedLayoutTests
     }
 
     /// <summary>
+    /// A span is a containing block for the boxes flown out of its content whatever its display: the
+    /// rectangle they resolve their offsets against is its own padding box, and nothing about being an
+    /// inline-level box excuses it (CSS 2.1 10.3.7, CSS Positioned Layout 3 2.1). Before this the line
+    /// layout asked only the block chain, so a box inside a positioned span flew to the page corner.
+    /// </summary>
+    [Test]
+    public async Task ABoxFlownOutOfAPositionedSpanAnchorsToTheSpan()
+    {
+        var (fragments, flown) = await Anchored("", "456<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(flown.X, Is.EqualTo(fragments[0].X), "along from where the span's first fragment begins");
+            Assert.That(flown.Y, Is.EqualTo(fragments[0].Y), "and down from where it begins");
+            Assert.That(flown.X, Is.GreaterThan(0), "which is past the text the span starts after, not the page corner");
+        });
+    }
+
+    /// <summary>
+    /// The rectangle an inline element gives its flown boxes is drawn from the start edges of its first
+    /// fragment to the end edges of its last, so the whole of the element answers for them - not the line,
+    /// and not the fragment the box happened to stand in (CSS Positioned Layout 3 2.1, measured against
+    /// Chrome on a span broken over two lines).
+    /// </summary>
+    [Test]
+    public async Task AFlownBoxReadsTheWholeOfTheSpanThatHoldsIt()
+    {
+        const string flown = "<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div>";
+        const string right = "<div id='a' style='position:absolute;top:0;right:0;width:5px;height:5px'></div>";
+        const string below = "<div id='a' style='position:absolute;top:0;bottom:0;left:0;width:5px'></div>";
+
+        var (broken, brokenEnd) = await Anchored("", "456<br>7" + right);
+        var (single, singleEnd) = await Anchored("", "456" + right);
+        var (_, belowBoth) = await Anchored("", "456<br>7" + below);
+        var (_, atStart) = await Anchored("", "456<br>7" + flown);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(brokenEnd.Right, Is.EqualTo(broken[0].X),
+                "two lines leave nothing between the span's inline edges, so its end edge is where it began");
+            Assert.That(singleEnd.Right, Is.EqualTo(single[0].Right),
+                "one fragment is its own containing block, end edge and all");
+            Assert.That(belowBoth.Bottom, Is.EqualTo(broken[^1].Bottom),
+                "and the far end of the block axis is the last fragment stands at");
+            Assert.That(atStart.X, Is.EqualTo(broken[0].X), "still starting where the first fragment starts");
+        });
+    }
+
+    /// <summary>
+    /// A relative offset on an inline element carries the boxes flown out of it along with its text, the
+    /// same ride every block gives its own absolute children (CSS 2.1 9.4.3 with 10.3).
+    /// </summary>
+    [Test]
+    public async Task APositionedSpanCarriesItsFlownBoxWithItsOffset()
+    {
+        const string flown = "<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div>";
+
+        var (plain, plainBox) = await Anchored("", "456<br>7" + flown);
+        var (moved, movedBox) = await Anchored("top:10px;left:20px;", "456<br>7" + flown);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(movedBox.X, Is.EqualTo(plainBox.X + 20), "the offset moves the box the fragment moves by");
+            Assert.That(movedBox.Y, Is.EqualTo(plainBox.Y + 10), "along both axes");
+            Assert.That(moved[1].Y, Is.GreaterThan(moved[0].Y), "the second fragment is on a later line");
+            Assert.That(movedBox.X, Is.EqualTo(moved[0].X), "and the box stands at the edge the fragment was moved to");
+        });
+    }
+
+    /// <summary>
+    /// Content flown inside an inline-block standing under a positioned span flies to the span as well:
+    /// the nearest positioned ancestor is a question about the tree, and the atomic box's own border does
+    /// not answer it while it is static (measured against `wpt/css-multicol/multicol-oof-inline-cb-001`).
+    /// </summary>
+    [Test]
+    public async Task ABoxFlownInsideAnInlineBlockUnderASpanFliesToTheSpan()
+    {
+        var (fragments, flown) = await Anchored(
+            "",
+            "456<br>7<span style='display:inline-block;width:20px;height:20px'>" +
+            "<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div></span>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(flown.X, Is.EqualTo(fragments[0].X), "the span's first fragment, not the inline-block beside it");
+            Assert.That(flown.Y, Is.EqualTo(fragments[0].Y), "and its start on the block axis");
+        });
+    }
+
+    /// <summary>
+    /// The nearest positioned ancestor wins, so an inner span holds what the outer one would otherwise
+    /// take - which is the same rule the block chain follows, read through an inline element.
+    /// </summary>
+    [Test]
+    public async Task TheInnermostPositionedSpanHoldsTheBoxFlownOutOfIt()
+    {
+        const string inner =
+            "AA<span id='i' style='position:relative'>BB" +
+            "<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div></span>";
+
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='width:300px;font:16px/16px Arial'>123" +
+            "<span id='o' style='position:relative'>" + inner + "</span></div></body></html>");
+
+        var outer = FragmentsOf(view, "o")[0].PaddingBox;
+        var held = FragmentsOf(view, "i")[0].PaddingBox;
+        var flown = Find(view, "a").BorderBox;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(held.X, Is.GreaterThan(outer.X), "the two spans start at different places");
+            Assert.That(flown.X, Is.EqualTo(held.X), "and the box goes to the nearer one");
+            Assert.That(flown.Y, Is.EqualTo(held.Y), "on both axes");
+        });
+    }
+
+    /// <summary>
+    /// Down a column the same answer holds, since the rectangle is drawn along the axis the element's own
+    /// text runs - which the lines of a column run down, not across.
+    /// </summary>
+    [Test]
+    public async Task AFlownBoxInAColumnAnchorsToTheSpanThatHoldsIt()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='height:300px;writing-mode:vertical-rl;font:16px/16px Arial'>123" +
+            "<span id='c' style='position:relative'>456" +
+            "<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div></span></div></body></html>");
+
+        var fragment = FragmentsOf(view, "c")[0].PaddingBox;
+        var flown = Find(view, "a").BorderBox;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(flown.X, Is.EqualTo(fragment.X), "the side of the fragment the text runs back from");
+            Assert.That(flown.Y, Is.EqualTo(fragment.Y), "and the end of the column it begins at");
+        });
+    }
+
+    /// <summary>
+    /// Draws a line holding a positioned span with the given style and content, and hands back every box
+    /// the span was drawn through together with the one box inside it that left the flow. The container is
+    /// a div rather than a p, because a div inside a p closes the p and takes the box out of the span.
+    /// </summary>
+    private static async Task<(List<Rect> Fragments, Rect Flown)> Anchored(String span, String content)
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:300px;font:16px/16px Arial'>123" +
+            $"<span id='c' style='position:relative;{span}'>{content}</span></div></body></html>");
+
+        return (FragmentsOf(view, "c").Select(node => node.PaddingBox).ToList(), Find(view, "a").BorderBox);
+    }
+
+    /// <summary>Gets every box the element with this id was drawn through, in the order the lines put them.</summary>
+    private static List<LayoutBox> FragmentsOf(HutuViewInternal view, String id) =>
+        Walk(view.Layout!.Root).Where(node => node.Source.Element?.Id == id).ToList();
+
+    /// <summary>
     /// An inline box that forms a stacking context answers the levels written inside it, the same answer a
     /// block gives - which the painting can only know if the line layout carries the flag onto the box it
     /// builds (CSS Will Change 1 §2, measured by `will-change-stacking-context-opacity-2`).
