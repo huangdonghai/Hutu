@@ -56,8 +56,13 @@ internal static class BackgroundLayerParser
                 continue;
             }
 
-            var gradient = ParseGradient(image, dimensions, fontSize);
-            var urls = gradient is null ? CssUrlReferences.Extract(image) : new List<String>();
+            if (Drawn(image, dimensions, fontSize) is not { } drawn)
+            {
+                continue;
+            }
+
+            var gradient = ParseGradient(drawn, dimensions, fontSize);
+            var urls = gradient is null ? CssUrlReferences.Extract(drawn) : new List<String>();
 
             if (gradient is null && urls.Count == 0)
             {
@@ -299,6 +304,56 @@ internal static class BackgroundLayerParser
     }
 
     // --- gradients ------------------------------------------------------
+
+    /// <summary>
+    /// Gets the picture a layer draws when the page wrote an <c>image-set()</c>: the first of its
+    /// candidates this engine can draw, as the text it would have been written as on its own (CSS Images
+    /// 4 §4). An image that is no set is handed back as it stands, and a set whose every candidate names
+    /// something the engine cannot draw - a resolution on its own, an <c>element()</c> - comes back as
+    /// nothing, which the layer treats the way it treats any image it does not understand.
+    /// </summary>
+    /// <remarks>
+    /// The candidates are tried in the order the page wrote them rather than by the resolution beside
+    /// them: a box is drawn at one resolution here, so the choice between them has nothing to weigh.
+    /// </remarks>
+    private static String? Drawn(String image, IRenderDimensions dimensions, Double fontSize)
+    {
+        var open = image.IndexOf('(');
+
+        if (open <= 0 ||
+            !image.EndsWith(")", StringComparison.Ordinal) ||
+            !image[..open].Trim().Equals("image-set", StringComparison.OrdinalIgnoreCase))
+        {
+            return image;
+        }
+
+        foreach (var option in CssValueList.SplitTopLevel(image[(open + 1)..^1]))
+        {
+            var words = CssValueList.SplitWhitespace(option);
+
+            if (words.Count == 0)
+            {
+                continue;
+            }
+
+            var candidate = words[0];
+
+            // A candidate written as a bare string names the file a url() would name it by; the
+            // resolution and the type() that may follow belong to the choice between candidates.
+            if (candidate.Length > 1 && candidate[0] is '"' or '\'')
+            {
+                return "url(" + candidate + ")";
+            }
+
+            if (ParseGradient(candidate, dimensions, fontSize) is not null ||
+                CssUrlReferences.Extract(candidate).Count > 0)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
 
     private static GradientSpec? ParseGradient(
         String value,

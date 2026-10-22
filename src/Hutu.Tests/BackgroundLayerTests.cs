@@ -564,6 +564,57 @@ public sealed class BackgroundLayerTests
         });
     }
 
+    /// <summary>
+    /// An <c>image-set()</c> names one picture at more than one resolution (CSS Images 4 §4), and the
+    /// engine has no resolutions to choose between: it pays the first candidate it can draw. A reader that
+    /// does not know the function leaves the whole layer unpainted, which is what the six corpus pairs
+    /// that name a gradient through a set were comparing.
+    /// </summary>
+    [Test]
+    [TestCase("image-set(linear-gradient(green, lightgreen) 1x)")]
+    [TestCase("image-set(radial-gradient(green, lightgreen) 1x)")]
+    [TestCase("image-set(conic-gradient(green, lightgreen) 1x)")]
+    [TestCase("image-set(repeating-conic-gradient(red, blue 25%) 1x)")]
+    public async Task AGradientNamedInsideAnImageSetIsDrawn(String image)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:100px;height:100px;background-image:{image}'></div>" +
+            "</body></html>");
+
+        Assert.That(SingleGradient(view).Stops, Is.Not.Empty, image);
+    }
+
+    /// <summary>
+    /// The candidates an image-set names may be files as well as gradients, and the one the engine draws is
+    /// the first of them it can - a file it can fetch, a gradient it can paint, or a file named as a
+    /// string, which names the same picture a <c>url()</c> would (CSS Images 4 §4).
+    /// </summary>
+    [Test]
+    [TestCase("image-set(url(Images/landscape.svg) 1x, linear-gradient(red, blue) 2x)", false)]
+    [TestCase("image-set(\"Images/landscape.svg\" 1x, linear-gradient(red, blue) 2x)", false)]
+    public async Task AnImageSetIsDrawnFromTheFirstCandidateTheEngineCanDraw(String image, Boolean gradient)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:100px;height:100px;background-image:{image}'></div>" +
+            "</body></html>");
+
+        var commands = view.Paint!.Commands;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(commands.OfType<BackgroundImageCommand>().Any(), Is.EqualTo(!gradient), image);
+            Assert.That(commands.OfType<GradientCommand>().Any(), Is.EqualTo(gradient), image);
+        });
+    }
+
     /// <summary>Checks the colour the painted ramp holds at the fraction asked for.</summary>
     private static void AssertRampAt(HutuViewInternal view, Double at, UInt32 expected, String where)
     {
