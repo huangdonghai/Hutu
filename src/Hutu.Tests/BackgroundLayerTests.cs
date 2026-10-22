@@ -503,6 +503,67 @@ public sealed class BackgroundLayerTests
         Assert.That(view.Paint!.Commands.OfType<GradientCommand>(), Is.Empty);
     }
 
+    /// <summary>
+    /// A position written as arithmetic stands where the arithmetic says (CSS Values 4 §10.8): the same
+    /// sum in a <c>background-size</c> was resolved already, while a position whose reader takes the word
+    /// <c>calc</c> for a keyword of its own loses the whole declaration and the layer stands at zero.
+    /// </summary>
+    [Test]
+    [TestCase("calc(10px + 10px) 0", 20)]
+    [TestCase("calc(50% + 10px) 0", 50)]
+    public async Task ABackgroundPositionStandsWhereItsArithmeticPutsIt(String position, Double expected)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:100px;height:40px;background:linear-gradient(red,red) {position}/20px 20px no-repeat'></div>" +
+            "</body></html>");
+
+        AssertTile(SingleGradient(view).Tile, expected, 0, 20, 20, position);
+    }
+
+    /// <summary>The same reader asked for the same sum down the box rather than along it.</summary>
+    [Test]
+    public async Task ABackgroundPositionDownTheBoxStandsWhereItsArithmeticPutsIt()
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:100px;height:40px;background:linear-gradient(red,red) 0 calc(50% - 8px)/20px 20px no-repeat'></div>" +
+            "</body></html>");
+
+        AssertTile(SingleGradient(view).Tile, 0, 2, 20, 20, "half of what is left of the box, less 8px");
+    }
+
+    /// <summary>
+    /// The centre a gradient head places may be written as arithmetic too, which is the same reader asked
+    /// for the same sum in another place (CSS Values 4 §10.8).
+    /// </summary>
+    [Test]
+    public async Task AGradientHeadStandsItsCentreWhereItsArithmeticPutsIt()
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:100px;height:20px;" +
+            "background-image:radial-gradient(circle farthest-side at calc(50px + 50%) calc(100% - 30px), red, green)'></div>" +
+            "</body></html>");
+
+        var gradient = SingleGradient(view);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(gradient.CenterX, Is.EqualTo(100).Within(0.01), "50px and half the box along it");
+            Assert.That(gradient.CenterY, Is.EqualTo(-10).Within(0.01), "and 30px back from the bottom");
+        });
+    }
+
     /// <summary>Checks the colour the painted ramp holds at the fraction asked for.</summary>
     private static void AssertRampAt(HutuViewInternal view, Double at, UInt32 expected, String where)
     {
