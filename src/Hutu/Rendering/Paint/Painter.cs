@@ -235,10 +235,19 @@ internal sealed class Painter
             if (layer.Gradient is { } gradient)
             {
                 var (tile, repeatX, repeatY) = GradientTile(layer, placement);
-                var length = LinearGradientSpec.LineLength(tile.Width, tile.Height, gradient.AngleDegrees);
+                var length = gradient.LineLength(tile.Width, tile.Height);
 
-                layers.Add(new LinearGradientCommand(
-                    canvas, tile, repeatX, repeatY, gradient.AngleDegrees, gradient.StopsAt(length), CornerRadii.None));
+                layers.Add(new GradientCommand(
+                    canvas,
+                    tile,
+                    repeatX,
+                    repeatY,
+                    gradient.Shape,
+                    gradient.AngleDegrees,
+                    tile.X + gradient.CenterX.Resolve(tile.Width),
+                    tile.Y + gradient.CenterY.Resolve(tile.Height),
+                    gradient.StopsAt(length),
+                    CornerRadii.None));
             }
             else if (layer.Url is { Length: > 0 })
             {
@@ -1109,10 +1118,19 @@ internal sealed class Painter
             if (layer.Gradient is { } gradient)
             {
                 var (tile, repeatX, repeatY) = GradientTile(layer, area);
-                var length = LinearGradientSpec.LineLength(tile.Width, tile.Height, gradient.AngleDegrees);
+                var length = gradient.LineLength(tile.Width, tile.Height);
 
-                layers.Add(new LinearGradientCommand(
-                    area, tile, repeatX, repeatY, gradient.AngleDegrees, gradient.StopsAt(length), radii));
+                layers.Add(new GradientCommand(
+                    area,
+                    tile,
+                    repeatX,
+                    repeatY,
+                    gradient.Shape,
+                    gradient.AngleDegrees,
+                    tile.X + gradient.CenterX.Resolve(tile.Width),
+                    tile.Y + gradient.CenterY.Resolve(tile.Height),
+                    gradient.StopsAt(length),
+                    radii));
             }
             else if (layer.Url is { Length: > 0 })
             {

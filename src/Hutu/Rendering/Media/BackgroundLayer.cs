@@ -113,29 +113,82 @@ public readonly struct ColorStop
     public Boolean IsStated { get; }
 }
 
-/// <summary>
-/// A linear gradient as declared in CSS. Like the stops it is made of, it is what the parser produces
-/// and what a backend draws, not something a host assembles.
-/// </summary>
-public sealed class LinearGradientSpec
+/// <summary>How the colours of a gradient are laid out across the box it fills.</summary>
+public enum GradientShape
 {
-    internal LinearGradientSpec(Double angleDegrees, IReadOnlyList<ColorStop> stops, Boolean repeats = false)
+    /// <summary>A line across the box, pointed by the angle the page wrote.</summary>
+    Linear,
+
+    /// <summary>
+    /// A turn about a centre, the colours standing at the angle they were given (CSS Images 3 §3.4).
+    /// </summary>
+    Conic,
+}
+
+/// <summary>
+/// A gradient as declared in CSS. Like the stops it is made of, it is what the parser produces and what
+/// a backend draws, not something a host assembles.
+/// </summary>
+/// <remarks>
+/// The two shapes share everything but the geometry: the stop list, the fixup that spaces the ones left
+/// without a position, and the repetition <c>repeating-*</c> asks for are the same reading of the same
+/// grammar. What differs is what the stops are resolved <em>along</em> - a line projected onto the box
+/// for a linear one, and one full turn for a conic one - which is why <see cref="LineLength"/> answers
+/// for both and the painter only has to ask it once.
+/// </remarks>
+public sealed class GradientSpec
+{
+    internal GradientSpec(Double angleDegrees, IReadOnlyList<ColorStop> stops, Boolean repeats)
+        : this(GradientShape.Linear, angleDegrees, stops, repeats, default, default)
     {
+    }
+
+    internal GradientSpec(
+        GradientShape shape,
+        Double angleDegrees,
+        IReadOnlyList<ColorStop> stops,
+        Boolean repeats,
+        BackgroundOffset centerX,
+        BackgroundOffset centerY)
+    {
+        Shape = shape;
         AngleDegrees = angleDegrees;
         Stops = stops;
         Repeats = repeats;
+        CenterX = centerX;
+        CenterY = centerY;
     }
 
-    /// <summary>Gets the direction, in degrees clockwise from "to top".</summary>
+    /// <summary>Gets whether the colours run along a line or around a centre.</summary>
+    public GradientShape Shape { get; }
+
+    /// <summary>
+    /// Gets the angle the gradient is written at, clockwise from up: for a linear one the direction the
+    /// line points, and for a conic one where its first colour starts.
+    /// </summary>
     public Double AngleDegrees { get; }
 
     public IReadOnlyList<ColorStop> Stops { get; }
 
     /// <summary>
-    /// Gets whether the list of stops repeats itself along the line, which is all
-    /// <c>repeating-linear-gradient()</c> adds to its non-repeating sibling (CSS Images 3 §3.3).
+    /// Gets whether the list of stops repeats itself along the gradient, which is all
+    /// <c>repeating-linear-gradient()</c> and <c>repeating-conic-gradient()</c> add to their
+    /// non-repeating siblings (CSS Images 3 §3.3).
     /// </summary>
     public Boolean Repeats { get; }
+
+    /// <summary>Gets where the sweep of a conic gradient turns around, along the box.</summary>
+    public BackgroundOffset CenterX { get; }
+
+    /// <summary>Gets where the sweep of a conic gradient turns around, down the box.</summary>
+    public BackgroundOffset CenterY { get; }
+
+    /// <summary>
+    /// Gets the length the stops of this gradient are stood along: the projection of a box of these
+    /// sides onto the line a linear gradient runs along, or the one turn a conic one sweeps.
+    /// </summary>
+    public Double LineLength(Double width, Double height) =>
+        Shape == GradientShape.Conic ? 360 : LineLength(width, height, AngleDegrees);
 
     /// <summary>
     /// Gets the length of the gradient line a box of these sides runs along: the projection of the box
@@ -499,7 +552,7 @@ public sealed class BackgroundLayer
     public String? Url { get; internal init; }
 
     /// <summary>Gets the gradient to draw, or null for an image layer.</summary>
-    public LinearGradientSpec? Gradient { get; internal init; }
+    public GradientSpec? Gradient { get; internal init; }
 
     public BackgroundLayerSizeKind SizeKind { get; internal init; }
 

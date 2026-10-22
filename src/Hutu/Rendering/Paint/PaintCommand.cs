@@ -276,14 +276,17 @@ public sealed class BackgroundImageCommand : PaintCommand
 /// thousands of tiles and not thousands of commands.
 /// </para>
 /// </remarks>
-public sealed class LinearGradientCommand : PaintCommand
+public sealed class GradientCommand : PaintCommand
 {
-    internal LinearGradientCommand(
+    internal GradientCommand(
         Rect bounds,
         Rect tile,
         Boolean repeatX,
         Boolean repeatY,
+        GradientShape shape,
         Double angleDegrees,
+        Double centerX,
+        Double centerY,
         IReadOnlyList<GradientStop> stops,
         CornerRadii radii)
         : base(bounds)
@@ -291,13 +294,28 @@ public sealed class LinearGradientCommand : PaintCommand
         Tile = tile;
         RepeatX = repeatX;
         RepeatY = repeatY;
+        Shape = shape;
         AngleDegrees = angleDegrees;
+        CenterX = centerX;
+        CenterY = centerY;
         Stops = stops;
         Radii = radii;
     }
 
-    /// <summary>Gets the direction, in degrees clockwise from "to top".</summary>
+    /// <summary>Gets whether the colours run along a line or around the centre.</summary>
+    public GradientShape Shape { get; }
+
+    /// <summary>
+    /// Gets the angle, in degrees clockwise from "to top": the direction of a line, and the start of a
+    /// sweep.
+    /// </summary>
     public Double AngleDegrees { get; }
+
+    /// <summary>Gets where a sweep turns around, in page coordinates.</summary>
+    public Double CenterX { get; }
+
+    /// <summary>Gets where a sweep turns around, in page coordinates.</summary>
+    public Double CenterY { get; }
 
     public IReadOnlyList<GradientStop> Stops { get; }
 

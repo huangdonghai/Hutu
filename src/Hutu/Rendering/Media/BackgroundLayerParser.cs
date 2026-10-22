@@ -293,7 +293,7 @@ internal static class BackgroundLayerParser
 
     // --- gradients ------------------------------------------------------
 
-    private static LinearGradientSpec? ParseGradient(
+    private static GradientSpec? ParseGradient(
         String value,
         IRenderDimensions dimensions,
         Double fontSize)
@@ -307,17 +307,41 @@ internal static class BackgroundLayerParser
 
         var name = value[..open].Trim();
         var repeats = name.StartsWith("repeating-", StringComparison.OrdinalIgnoreCase);
+        var kind = (repeats ? name["repeating-".Length..] : name).Trim().ToLowerInvariant();
+        var conic = kind == "conic-gradient";
 
-        if (!name.Equals(repeats ? "repeating-linear-gradient" : "linear-gradient", StringComparison.OrdinalIgnoreCase))
+        if (kind is not ("linear-gradient" or "conic-gradient"))
         {
             return null;
         }
 
         var arguments = CssValueList.SplitTopLevel(value[(open + 1)..^1]);
         var start = 0;
-        var angle = 180.0;
 
-        if (arguments.Count > 0 && TryParseDirection(arguments[0], out var parsed))
+        // A line points down unless the page turns it; a sweep starts at the top and goes round.
+        var angle = conic ? 0.0 : 180.0;
+        var centerX = new BackgroundOffset(0.5, true);
+        var centerY = new BackgroundOffset(0.5, true);
+
+        if (arguments.Count > 0 && conic)
+        {
+            if (ParseSweepHead(arguments[0], dimensions, fontSize) is not { } head)
+            {
+                // No head was written, so the first argument is the first colour of the sweep.
+            }
+            else if (!head.Ok)
+            {
+                return null;
+            }
+            else
+            {
+                angle = head.Angle;
+                centerX = head.X;
+                centerY = head.Y;
+                start = 1;
+            }
+        }
+        else if (arguments.Count > 0 && TryParseDirection(arguments[0], out var parsed))
         {
             angle = parsed;
             start = 1;
@@ -336,7 +360,7 @@ internal static class BackgroundLayerParser
 
         for (var index = start; index < arguments.Count; index++)
         {
-            var stop = ParseStop(arguments[index], dimensions, fontSize);
+            var stop = ParseStop(arguments[index], dimensions, fontSize, conic);
 
             if (stop is null)
             {
@@ -346,8 +370,186 @@ internal static class BackgroundLayerParser
             stops.Add(stop.Value);
         }
 
-        return new LinearGradientSpec(angle, stops, repeats);
+        return new GradientSpec(
+            conic ? GradientShape.Conic : GradientShape.Linear,
+            angle,
+            stops,
+            repeats,
+            centerX,
+            centerY);
     }
+
+    /// <summary>What the first argument of a conic gradient came to.</summary>
+    private readonly record struct SweepHead(Boolean Ok, Double Angle, BackgroundOffset X, BackgroundOffset Y);
+
+    /// <summary>
+    /// Reads the head of a conic gradient, <c>from &lt;angle&gt;</c> and <c>at &lt;position&gt;</c> in
+    /// either order (CSS Images 3 §3.4).
+    /// </summary>
+    /// <returns>
+    /// Null when the argument is no head at all - which is how a sweep that opens on its first colour is
+    /// told from one whose head was written broken - and the head, with <see cref="SweepHead.Ok"/> saying
+    /// whether it stood up, otherwise.
+    /// </returns>
+    private static SweepHead? ParseSweepHead(String text, IRenderDimensions dimensions, Double fontSize)
+    {
+        var words = CssValueList.SplitWhitespace(text);
+
+        if (words.Count == 0 || (!Is(words[0], "from") && !Is(words[0], "at")))
+        {
+            return null;
+        }
+
+        var broken = new SweepHead(false, 0, default, default);
+        var angle = 0.0;
+        var x = new BackgroundOffset(0.5, true);
+        var y = new BackgroundOffset(0.5, true);
+        var index = 0;
+
+        while (index < words.Count)
+        {
+            if (Is(words[index], "from"))
+            {
+                if (index + 1 >= words.Count || Angle(words[++index]) is not { } degrees)
+                {
+                    return broken;
+                }
+
+                angle = degrees;
+            }
+            else if (Is(words[index], "at"))
+            {
+                var place = new List<String>();
+
+                while (index + 1 < words.Count && !Is(words[index + 1], "from") && !Is(words[index + 1], "at"))
+                {
+                    place.Add(words[++index]);
+                }
+
+                if (!TryParsePlace(place, dimensions, fontSize, out x, out y))
+                {
+                    return broken;
+                }
+            }
+            else
+            {
+                return broken;
+            }
+
+            index++;
+        }
+
+        return new SweepHead(true, angle, x, y);
+    }
+
+    /// <summary>Turns the one, two or four tokens of a `<position>` into the two offsets it stands for.</summary>
+    private static Boolean TryParsePlace(
+        List<String> words,
+        IRenderDimensions dimensions,
+        Double fontSize,
+        out BackgroundOffset centerX,
+        out BackgroundOffset centerY)
+    {
+        centerX = new BackgroundOffset(0.5, true);
+        centerY = new BackgroundOffset(0.5, true);
+
+        if (words.Count == 0 || words.Count > 4)
+        {
+            return false;
+        }
+
+        var at = 0;
+        var horizontal = false;
+        var vertical = false;
+
+        while (at < words.Count)
+        {
+            var word = words[at];
+
+            // A keyword of one axis names that axis and nothing else; `center` is the middle of both,
+            // and stands for the axis a keyword beside it left out.
+            if (Is(word, "left") || Is(word, "right"))
+            {
+                centerX = new BackgroundOffset(Is(word, "left") ? 0 : 1, true);
+                horizontal = true;
+            }
+            else if (Is(word, "top") || Is(word, "bottom"))
+            {
+                centerY = new BackgroundOffset(Is(word, "top") ? 0 : 1, true);
+                vertical = true;
+            }
+            else if (Is(word, "center"))
+            {
+                if (!horizontal)
+                {
+                    centerX = new BackgroundOffset(0.5, true);
+                    horizontal = true;
+                }
+                else
+                {
+                    centerY = new BackgroundOffset(0.5, true);
+                    vertical = true;
+                }
+            }
+            else if (Offset(word, dimensions, fontSize, conic: false) is { } offset)
+            {
+                if (!horizontal)
+                {
+                    centerX = offset;
+                    horizontal = true;
+                }
+                else if (!vertical)
+                {
+                    centerY = offset;
+                    vertical = true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+
+            at++;
+        }
+
+        return true;
+    }
+
+    /// <summary>Reads an angle as the degrees it turns (CSS Values 4 §8.7).</summary>
+    private static Double? Angle(String text)
+    {
+        var trimmed = text.Trim();
+
+        foreach (var (suffix, per) in Turns)
+        {
+            if (trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) &&
+                Double.TryParse(
+                    trimmed[..^suffix.Length].Trim(),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out var value))
+            {
+                return value * per;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>How far each angle unit turns, in degrees.</summary>
+    private static readonly (String Suffix, Double Degrees)[] Turns =
+    [
+        ("turn", 360.0),
+        ("grad", 0.9),
+        ("rad", 180.0 / Math.PI),
+        ("deg", 1.0),
+    ];
+
+    private static Boolean Is(String word, String name) => word.Equals(name, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Reads one stop: the colour it is, and the length or percentage beside it where the author stood
@@ -358,8 +560,13 @@ internal static class BackgroundLayerParser
     /// whatever stands before it - spaces and all, since a <c>rgb(0 0 255 / .5)</c> is written with the
     /// same separators a stop list uses. A token that is no length leaves the whole argument to the
     /// colour, which is how a stop written without a position is left for the line to place.
+    /// <para>
+    /// A sweep's stops are stood at angles rather than at distances, and the two are read apart because
+    /// the one has a unit the other has not: <c>red 90deg</c> and <c>red 90px</c> are both a position,
+    /// and only one of them is a quarter of the way round.
+    /// </para>
     /// </remarks>
-    private static ColorStop? ParseStop(String text, IRenderDimensions dimensions, Double fontSize)
+    private static ColorStop? ParseStop(String text, IRenderDimensions dimensions, Double fontSize, Boolean conic)
     {
         var parts = CssValueList.SplitWhitespace(text);
 
@@ -369,7 +576,7 @@ internal static class BackgroundLayerParser
         }
 
         var last = parts.Count - 1;
-        var position = last > 0 ? ParseStopPosition(parts[last], dimensions, fontSize) : null;
+        var position = last > 0 ? ParseStopPosition(parts[last], dimensions, fontSize, conic) : null;
         var color = ParseColor(position is null ? text.Trim() : String.Join(' ', parts.Take(last)));
 
         if (color is null)
@@ -380,15 +587,27 @@ internal static class BackgroundLayerParser
         return new ColorStop(color.Value, position ?? default, position is not null);
     }
 
-    /// <summary>Reads one stop's position: a length, a percentage, or a <c>calc()</c> of the two.</summary>
-    private static StopOffset? ParseStopPosition(String text, IRenderDimensions dimensions, Double fontSize)
-    {
-        var trimmed = text.Trim();
+    /// <summary>
+    /// Reads one stop's position: a length, a percentage, or a <c>calc()</c> of the two - and for a
+    /// sweep, an angle instead of a length, with the percentage a share of the turn.
+    /// </summary>
+    private static StopOffset? ParseStopPosition(
+        String text,
+        IRenderDimensions dimensions,
+        Double fontSize,
+        Boolean conic) =>
+        CalcText.Read(text, atom => Length(atom, dimensions, fontSize, conic)) is { } amount
+            ? new StopOffset(amount.Distance, amount.Share)
+            : Of(Offset(text.Trim(), dimensions, fontSize, conic));
 
-        return trimmed.StartsWith("calc(", StringComparison.OrdinalIgnoreCase) && trimmed.EndsWith(")")
-            ? Sum(trimmed[5..^1], dimensions, fontSize)
-            : Of(ParseOffset(trimmed, dimensions, fontSize));
-    }
+    private static BackgroundOffset? Offset(
+        String text,
+        IRenderDimensions dimensions,
+        Double fontSize,
+        Boolean conic) =>
+        conic && Angle(text) is { } degrees
+            ? new BackgroundOffset(degrees, false)
+            : ParseOffset(text, dimensions, fontSize);
 
     private static StopOffset? Of(BackgroundOffset? offset) => offset is not { } stated
         ? null
@@ -396,97 +615,17 @@ internal static class BackgroundLayerParser
             ? new StopOffset(0, stated.Value)
             : new StopOffset(stated.Value, 0);
 
-    /// <summary>
-    /// Adds a calc() up as the distance and the share of the line it comes to. The two are kept apart,
-    /// because <c>calc(30% + 30px)</c> has no answer until a box gives the share something to be a share
-    /// of.
-    /// </summary>
-    private static StopOffset? Sum(String body, IRenderDimensions dimensions, Double fontSize)
-    {
-        var terms = CssValueList.SplitOperators(body, '+', '-');
-        var pixels = 0.0;
-        var percent = 0.0;
-
-        foreach (var term in terms)
-        {
-            if (Product(term, dimensions, fontSize) is not { } value)
-            {
-                return null;
-            }
-
-            pixels += value.Pixels;
-            percent += value.Percent;
-        }
-
-        return terms.Count == 0 ? null : new StopOffset(pixels, percent);
-    }
-
-    /// <summary>
-    /// Reads one term of a sum: one length or percentage scaled by the numbers it is multiplied or
-    /// divided by, or the plain number that is what a serialiser leaves a length of nothing. Two
-    /// lengths of a product is not a length, so that leaves the stop to the line rather than to a guess.
-    /// </summary>
-    private static StopOffset? Product(String term, IRenderDimensions dimensions, Double fontSize)
-    {
-        var text = term.Trim();
-        var sign = 1.0;
-
-        if (text.StartsWith('+') || text.StartsWith('-'))
-        {
-            sign = text.StartsWith('-') ? -1 : 1;
-            text = text[1..].Trim();
-        }
-
-        var factors = CssValueList.SplitOperators(text, '*', '/');
-
-        if (factors.Count == 0)
-        {
-            return null;
-        }
-
-        var scale = 1.0;
-        StopOffset? offset = null;
-
-        foreach (var factor in CssValueList.SplitOperators(text, '*', '/'))
-        {
-            var body = factor.Trim();
-            var divides = body.StartsWith('/');
-            var operand = divides || body.StartsWith('*') ? body[1..].Trim() : body;
-
-            if (Number(operand) is { } scalar)
-            {
-                if (divides && scalar == 0)
-                {
-                    return null;
-                }
-
-                scale = divides ? scale / scalar : scale * scalar;
-                continue;
-            }
-
-            if (divides || offset is not null || Atom(operand, dimensions, fontSize) is not { } value)
-            {
-                return null;
-            }
-
-            offset = value;
-        }
-
-        // A term of nothing but numbers is a length whose unit the reader of the declaration dropped:
-        // the fork serialises `calc(0px)` as `calc(0)`, and a number standing alone where a length is
-        // asked for is the zero it came from.
-        return offset is { } position ? position.Scaled(sign * scale) : new StopOffset(sign * scale, 0);
-    }
-
-    /// <summary>Reads the one factor of a product that is no number: a bracketed sum, a length, or a percentage.</summary>
-    private static StopOffset? Atom(String operand, IRenderDimensions dimensions, Double fontSize)
-    {
-        var open = operand.IndexOf('(');
-
-        return open >= 0 && operand.EndsWith(")", StringComparison.Ordinal)
-            ? Sum(operand[(open + 1)..^1], dimensions, fontSize)
-            : Of(ParseOffset(operand, dimensions, fontSize));
-    }
+    /// <summary>Reads one operand of a <c>calc()</c> as the distance or the share of the line it comes to.</summary>
+    private static StyleLength? Length(
+        String atom,
+        IRenderDimensions dimensions,
+        Double fontSize,
+        Boolean conic) =>
+        Offset(atom, dimensions, fontSize, conic) is not { } stated
+            ? null
+            : stated.IsPercentage
+                ? StyleLength.FromPercent(stated.Value)
+                : StyleLength.FromPixels(stated.Value);
 
     private static Boolean TryParseDirection(String text, out Double angle)
     {

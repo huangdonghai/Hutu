@@ -58,7 +58,7 @@ public sealed class BackgroundLayerTests
 
         var commands = view.Paint!.Commands;
         var image = commands.FindIndex(command => command is BackgroundImageCommand);
-        var gradient = commands.FindIndex(command => command is LinearGradientCommand);
+        var gradient = commands.FindIndex(command => command is GradientCommand);
 
         Assert.That(image, Is.GreaterThanOrEqualTo(0), "the image layer should be painted");
         Assert.That(gradient, Is.GreaterThan(image), "the gradient is declared first, so it paints last (on top)");
@@ -75,7 +75,7 @@ public sealed class BackgroundLayerTests
             "<div style='height:50px;background:radial-gradient(circle,#ffffff,#000000)'></div>" +
             "</body></html>");
 
-        Assert.That(view.Paint!.Commands.OfType<LinearGradientCommand>(), Is.Empty);
+        Assert.That(view.Paint!.Commands.OfType<GradientCommand>(), Is.Empty);
     }
 
     [Test]
@@ -316,7 +316,7 @@ public sealed class BackgroundLayerTests
     }
 
     /// <summary>Writes the stops a gradient paints as the colour and the fraction each was resolved to.</summary>
-    private static String Write(LinearGradientCommand gradient) =>
+    private static String Write(GradientCommand gradient) =>
         String.Join(" ", gradient.Stops.Select(stop =>
             $"{stop.Color:x8}@{stop.Offset:0.###}"));
 
@@ -331,9 +331,9 @@ public sealed class BackgroundLayerTests
         });
     }
 
-    private static LinearGradientCommand SingleGradient(HutuViewInternal view)
+    private static GradientCommand SingleGradient(HutuViewInternal view)
     {
-        var layers = view.Paint!.Commands.OfType<LinearGradientCommand>().ToList();
+        var layers = view.Paint!.Commands.OfType<GradientCommand>().ToList();
 
         Assert.That(layers, Has.Count.EqualTo(1), "one gradient layer should be painted");
 

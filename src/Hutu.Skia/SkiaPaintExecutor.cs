@@ -204,7 +204,7 @@ public sealed class SkiaPaintExecutor
                     _images?.DrawBackground(canvas, background.Layer, ToRect(background.Placement), ToRect(background.Bounds), background.Radii);
                     break;
 
-                case LinearGradientCommand gradient:
+                case GradientCommand gradient:
                     DrawGradient(canvas, gradient);
                     break;
 
@@ -1775,7 +1775,7 @@ public sealed class SkiaPaintExecutor
                 Fill(canvas, fill);
                 break;
 
-            case LinearGradientCommand gradient:
+            case GradientCommand gradient:
                 DrawGradient(canvas, gradient);
                 break;
 
@@ -1790,7 +1790,7 @@ public sealed class SkiaPaintExecutor
     /// A gradient has no picture to place, so a tile of it is not a piece of a larger drawing but the
     /// whole gradient again - the line it runs along is the one that box asks for.
     /// </summary>
-    private static void DrawGradient(SKCanvas canvas, LinearGradientCommand command)
+    private static void DrawGradient(SKCanvas canvas, GradientCommand command)
     {
         if (command.Stops.Count == 0)
         {
@@ -1828,7 +1828,12 @@ public sealed class SkiaPaintExecutor
         {
             for (var x = firstX; x < lastX; x += tile.Width)
             {
-                DrawGradientTile(canvas, new SKRect(x, y, x + tile.Width, y + tile.Height), colors, positions, command.AngleDegrees);
+                DrawGradientTile(
+                    canvas,
+                    new SKRect(x, y, x + tile.Width, y + tile.Height),
+                    colors,
+                    positions,
+                    command);
             }
         }
 
@@ -1840,14 +1845,53 @@ public sealed class SkiaPaintExecutor
         SKRect box,
         SKColor[] colors,
         Single[] positions,
-        Double angleDegrees)
+        GradientCommand command)
     {
-        var (start, end) = GradientLine(box, angleDegrees);
+        using var shader = command.Shape == GradientShape.Conic
+            ? SweepShader(box, colors, positions, command)
+            : LinearShader(box, colors, positions, command.AngleDegrees);
 
-        using var shader = SKShader.CreateLinearGradient(start, end, colors, positions, SKShaderTileMode.Clamp);
         using var paint = new SKPaint { Shader = shader, IsAntialias = true };
 
         canvas.DrawRect(box, paint);
+    }
+
+    private static SKShader LinearShader(SKRect box, SKColor[] colors, Single[] positions, Double angleDegrees)
+    {
+        var (start, end) = GradientLine(box, angleDegrees);
+
+        return SKShader.CreateLinearGradient(start, end, colors, positions, SKShaderTileMode.Clamp);
+    }
+
+    /// <summary>
+    /// Turns one sweep of a conic gradient: the colours stand at the angles the page gave them, and the
+    /// whole turn is what the stops were resolved over. Skia counts its angles from three o'clock and CSS
+    /// from twelve, which is a quarter turn apart, and the centre the page placed - or left in the middle
+    /// of the box - is the point the sweep turns about (CSS Images 3 §3.4).
+    /// </summary>
+    private static SKShader SweepShader(SKRect box, SKColor[] colors, Single[] positions, GradientCommand command)
+    {
+        var center = new SKPoint(
+            box.Left + (Single)(command.CenterX - command.Tile.X),
+            box.Top + (Single)(command.CenterY - command.Tile.Y));
+        // Skia's sweep begins at three o'clock and CSS begins at twelve, so the shader is turned by the
+        // quarter turn between them plus whatever angle the page wrote; the sweep itself covers the whole
+        // turn, which is what the stops were resolved over.
+        // The sweep is turned rather than started at an angle: Skia maps the colours onto an arc that
+        // begins at three o'clock, and CSS counts its angles from twelve, so the quarter turn between
+        // them - and whatever angle the page wrote - goes on the shader's own matrix. Asked for as a
+        // start angle, a sweep that begins before three o'clock puts every colour outside the arc, and
+        // the box comes back the last colour of the list.
+        var turn = SKMatrix.CreateRotationDegrees((Single)(command.AngleDegrees - 90), center.X, center.Y);
+
+        return SKShader.CreateSweepGradient(
+            center,
+            colors,
+            positions,
+            SKShaderTileMode.Clamp,
+            0f,
+            360f,
+            turn);
     }
 
     /// <summary>
@@ -1860,7 +1904,7 @@ public sealed class SkiaPaintExecutor
         var radians = angleDegrees * Math.PI / 180.0;
         var dx = (Single)Math.Sin(radians);
         var dy = (Single)(-Math.Cos(radians));
-        var length = (Single)LinearGradientSpec.LineLength(box.Width, box.Height, angleDegrees);
+        var length = (Single)GradientSpec.LineLength(box.Width, box.Height, angleDegrees);
         var halfX = dx * length / 2;
         var halfY = dy * length / 2;
 

@@ -89,7 +89,7 @@ public sealed class CanvasBackgroundTests
         Assert.Multiple(() =>
         {
             Assert.That(canvas, Has.Count.EqualTo(1), "the root's layer is what the canvas wears (§2.11.1)");
-            Assert.That(canvas[0], Is.InstanceOf<LinearGradientCommand>());
+            Assert.That(canvas[0], Is.InstanceOf<GradientCommand>());
             Assert.That(Edges(own.Bounds), Is.Not.EqualTo(Canvas), "the body keeps its colour for its own box");
         });
     }
@@ -173,7 +173,7 @@ public sealed class CanvasBackgroundTests
             "body{margin:0}",
             "<p>x</p>");
 
-        var gradient = view.Paint!.Commands.OfType<LinearGradientCommand>().Single();
+        var gradient = view.Paint!.Commands.OfType<GradientCommand>().Single();
 
         Assert.Multiple(() =>
         {

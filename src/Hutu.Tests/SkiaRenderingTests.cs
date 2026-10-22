@@ -578,7 +578,7 @@ public sealed class SkiaRenderingTests
             "both images should have been fetched and decoded");
 
         // The panel combines a gradient with a background image, which is what used to crash.
-        Assert.That(paint.Commands.OfType<LinearGradientCommand>(), Is.Not.Empty);
+        Assert.That(paint.Commands.OfType<GradientCommand>(), Is.Not.Empty);
         Assert.That(paint.Commands.OfType<BackgroundImageCommand>(), Is.Not.Empty);
 
         Assert.That(view.Layout!.Height, Is.GreaterThan(600), "the images make the page taller than the viewport");
@@ -1057,7 +1057,7 @@ public sealed class SkiaRenderingTests
         }
 
         Assert.That(
-            paint.Commands.OfType<LinearGradientCommand>().Any(gradient =>
+            paint.Commands.OfType<GradientCommand>().Any(gradient =>
                 Math.Abs(gradient.Bounds.X - thick[0].PaddingBox.X) < 0.5 &&
                 Math.Abs(gradient.Bounds.Width - thick[0].PaddingBox.Width) < 0.5),
             Is.True,

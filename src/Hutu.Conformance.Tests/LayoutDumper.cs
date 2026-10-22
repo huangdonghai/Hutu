@@ -231,8 +231,11 @@ internal static class LayoutDumper
                 text.Append(" ").Append(outline.Style.ToString().ToLowerInvariant())
                     .Append(' ').Append(Number(outline.Width)).Append(" off ").Append(Number(outline.Offset));
                 break;
-            case LinearGradientCommand gradient:
+            case GradientCommand gradient:
                 text.Append(" ").Append(Number(gradient.AngleDegrees)).Append("deg ")
+                    .Append(gradient.Shape == Hutu.Rendering.Media.GradientShape.Conic
+                        ? " sweep " + Number(gradient.CenterX) + ',' + Number(gradient.CenterY) + ' '
+                        : String.Empty)
                     .Append(gradient.Stops.Count).Append(" stops tile ")
                     .Append(Number(gradient.Tile.X)).Append(',').Append(Number(gradient.Tile.Y))
                     .Append(' ').Append(Number(gradient.Tile.Width)).Append('x')
@@ -251,7 +254,7 @@ internal static class LayoutDumper
         "TextCommand" => "text",
         "ImageCommand" => "image",
         "BackgroundImageCommand" => "background-image",
-        "LinearGradientCommand" => "linear-gradient",
+        "GradientCommand" => "gradient",
         "PushClipCommand" => "push-clip",
         "PopClipCommand" => "pop-clip",
         var other => other,
