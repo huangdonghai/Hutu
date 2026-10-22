@@ -50,7 +50,12 @@ internal readonly record struct AspectRatio(Double Width, Double Height)
 
         if (slash < 0)
         {
-            return null;
+            // One number is the ratio it states standing over one, which is how a square is written
+            // (`aspect-ratio: 1`) - measured in Chrome on 2026-10-23, where a 300-pixel box with that
+            // ratio comes to 300x300. A percentage is not accepted there, so it is not read here either.
+            return value.Length == 0 || Number(value) is not { } alone
+                ? null
+                : new AspectRatio(alone, 1);
         }
 
         var width = value[..slash].Trim();

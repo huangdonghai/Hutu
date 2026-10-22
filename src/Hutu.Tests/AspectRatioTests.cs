@@ -19,6 +19,47 @@ namespace Hutu.Tests;
 public sealed class AspectRatioTests
 {
     [Test]
+    public async Task ARatioWrittenAsOneNumberIsThatNumberToOne()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:300px;aspect-ratio:1'></div>" +
+            "</body></html>");
+
+        var box = FindAll(view, "div").Single();
+
+        Assert.That(box.BorderBox.Height, Is.EqualTo(300).Within(0.5),
+            "one number is the ratio it states over one, which is how a square chart is written " +
+            "(measured in Chrome on 2026-10-23: 300x300)");
+    }
+
+    [Test]
+    public async Task ABoxTheRatioGivesHeightHoldsItsPlaceInTheOneAbove()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<section style='width:300px'>" +
+                "<article style='width:100%;aspect-ratio:1'>" +
+                    "<div style='position:absolute;inset:0'></div>" +
+                "</article>" +
+            "</section></body></html>");
+
+        var outer = FindAll(view, "section").Single();
+        var inner = FindAll(view, "article").Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(inner.BorderBox.Height, Is.EqualTo(300).Within(0.5), "the ratio gives the box its height");
+            Assert.That(outer.BorderBox.Height, Is.EqualTo(300).Within(0.5),
+                "and the box holds that room in the one above: a height the ratio states is an extent of " +
+                "its own, so the margins above and below it do not adjoin (measured in Chrome on " +
+                "2026-10-23: 300x300)");
+        });
+    }
+
+    [Test]
     public async Task ADefiniteWidthTakesItsHeightFromTheRatio()
     {
         using var view = CreateView(400);

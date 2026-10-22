@@ -1912,6 +1912,24 @@ internal sealed class BlockLayout
     }
 
     /// <summary>
+    /// Gets the block extent an <c>aspect-ratio</c> gives the box on its own, which is a height where the
+    /// text runs down and a width where it runs across (CSS Sizing 4 §4).
+    /// </summary>
+    private static Double? RatioBlockExtent(Box box, WritingModeInfo flow, Double basis)
+    {
+        var style = box.Style;
+        var border = BorderOf(box);
+        var padding = style.Padding.Resolve(basis);
+        var insets = flow.IsVertical
+            ? padding.Horizontal + border.Horizontal
+            : padding.Vertical + border.Vertical;
+
+        return flow.IsVertical
+            ? BoxModel.WidthFromRatio(style, basis, insets)
+            : BoxModel.HeightFromRatio(style, Math.Max(0, basis - insets), null, insets);
+    }
+
+    /// <summary>
     /// Gets whether the box self-collapses along <paramref name="flow"/>: nothing sits between its two
     /// block-axis edges - no border, no padding, no in-flow content of its own, no declared extent
     /// above zero - so its start and end margins adjoin and fold into one strip that occupies nothing
@@ -1935,6 +1953,16 @@ internal sealed class BlockLayout
         }
 
         if (DeclaredBlockExtent(box, flow, basis) is > 0)
+        {
+            return false;
+        }
+
+        // A block extent the ratio states is an extent of its own as much as a declared one is: the box
+        // has height whatever its content leaves it with, and the margins above and below do not adjoin
+        // across it. Read as nothing, a square chart's body - which holds its height by `aspect-ratio`
+        // and its cells by nothing at all, since they are all flown out - collapsed through and left the
+        // page above it without room for the picture.
+        if (RatioBlockExtent(box, flow, basis) is > 0)
         {
             return false;
         }
