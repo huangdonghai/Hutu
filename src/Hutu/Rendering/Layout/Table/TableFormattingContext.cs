@@ -125,11 +125,15 @@ internal sealed partial class TableFormattingContext
         // carries no border of its own (the border the drawing shows sits on the inner table box), so
         // its padding edge is the outer edge. Insetting by this box's border would push every abs
         // descendant off by that border, the way the gecko table-abs-pos references say it should not.
-        var childContext = box.Style.IsTransformed
-            ? context.WithTransformedContainingBlock(layout.BorderBox)
-            : PositionedLayout.IsPositioned(box)
-                ? context.WithAbsoluteContainingBlock(layout.BorderBox)
-                : context;
+        // A table that holds its descendants - positioned, transformed, filtered, contained - is what the
+        // absolutely positioned descendants the captions and cells hand up to it anchor against, the same
+        // way a block does: a static caption is not a containing block, so its abs child passes up to the
+        // nearest ancestor that holds one - this table. The rectangle handed down is the outer box rather
+        // than the padded one: position belongs to the table's wrapper box, and that box carries no border
+        // of its own (the border the drawing shows sits on the inner table box), so its padding edge is the
+        // outer edge. Insetting by this box's border would push every abs descendant off by that border,
+        // the way the gecko table-abs-pos references say it should not.
+        var childContext = PositionedLayout.ForDescendants(context, box, layout.BorderBox);
 
         foreach (var caption in build.Captions)
         {

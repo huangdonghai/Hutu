@@ -2677,6 +2677,12 @@ internal readonly struct ComputedStyle
         /// <summary>Gets the declared <c>transform</c>, or null when the box carries none.</summary>
         internal String? Transform;
 
+        /// <summary>Gets the declared <c>filter</c>, or null when the box carries none.</summary>
+        internal String? Filter;
+
+        /// <summary>Gets the declared <c>backdrop-filter</c>, or null when the box carries none.</summary>
+        internal String? BackdropFilter;
+
         /// <summary>Gets the declared <c>will-change</c> list, or null where the page wrote nothing.</summary>
         internal String? WillChange;
 
@@ -2728,6 +2734,67 @@ internal readonly struct ComputedStyle
         (OffsetValue("offset-path") is { Length: > 0 } path && !path.Equals("none", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
+    /// Gets the declared <c>filter</c> text, or null/empty when the box carries none. Read as text on both
+    /// style paths, the same way <c>transform</c> is: what the layout asks is whether the box says a filter
+    /// at all, and the picture the effect makes is a question for the drawing.
+    /// </summary>
+    public String? FilterText =>
+        _values.Fused is { } fused ? fused.Filter : _style.GetPropertyValue("filter");
+
+    /// <summary>Gets the declared <c>backdrop-filter</c> text, or null/empty when the box carries none.</summary>
+    public String? BackdropFilterText =>
+        _values.Fused is { } fused ? fused.BackdropFilter : _style.GetPropertyValue("backdrop-filter");
+
+    /// <summary>
+    /// Gets whether the box carries a <c>filter</c> or a <c>backdrop-filter</c> that is not
+    /// <c>none</c> - which is what gives it the frame its descendants resolve against
+    /// (CSS Filter Effects 1 §2.4).
+    /// </summary>
+    public Boolean IsFiltered =>
+        SaysAFilter(FilterText) || SaysAFilter(BackdropFilterText);
+
+    private static Boolean SaysAFilter(String? stated) =>
+        stated is { Length: > 0 } && !stated.Equals("none", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets whether the box is the frame its absolute and fixed descendants resolve against whatever its
+    /// own <c>position</c> says: a filter or a backdrop filter (CSS Filter Effects 1 §2.4), a transform or
+    /// an offset path (CSS Transforms 1 §transform-rendering), containment of layout or paint
+    /// (CSS Contain 2 §2.2), or a <c>will-change</c> that hints at one of them
+    /// (CSS Will Change 1 §2).
+    /// </summary>
+    /// <param name="inlineLevel">
+    /// Whether the box is a non-replaced inline-level one. A transform does not stand on such a box, so it
+    /// makes no frame there, while a filter does, because the filter chapter writes the containing block
+    /// as a consequence of the value rather than of the effect being drawn. Measured against Chrome on a
+    /// span at <c>build/probe-cb-props.html</c>: <c>filter</c>, <c>backdrop-filter</c> and
+    /// <c>will-change: filter</c> each hold an absolute descendant of the span, while a transform leaves
+    /// it at the page corner, and <c>build/probe-cb-rect.html</c> says containment behaves the same way.
+    /// </param>
+    public Boolean FormsContainingBlock(Boolean inlineLevel)
+    {
+        if (IsFiltered)
+        {
+            return true;
+        }
+
+        if (!inlineLevel)
+        {
+            // Containment is the one property here that the display has to be asked about as well as the
+            // box tree: an inline element that a block standing inside it forced into a shape of its own
+            // is still a non-atomic inline-level box to CSS Contain 2 §2.4.
+            var contain = Contain;
+
+            if (IsTransformed || (ContainmentApplies && (contain.Layout || contain.Paint)))
+            {
+                return true;
+            }
+        }
+
+        return WillChangeNamesAFrame(inlineLevel);
+    }
+
+    /// <summary>
     /// Gets the declared text of a CSS Motion Path longhand (or the <c>offset</c> shorthand), or null
     /// when the box says nothing. Read as text on both style paths; the motion path reader turns it into
     /// an offset transform once the box is sized.
@@ -2775,19 +2842,8 @@ internal readonly struct ComputedStyle
     /// </param>
     private Boolean WillChangeNamesALayer(Boolean positioned)
     {
-        var stated = _values.Fused is { } fused
-            ? fused.WillChange
-            : _style.GetPropertyValue("will-change");
-
-        if (String.IsNullOrEmpty(stated))
+        foreach (var hint in WillChangeHints())
         {
-            return false;
-        }
-
-        foreach (var token in stated!.Split([','], StringSplitOptions.RemoveEmptyEntries))
-        {
-            var hint = token.Trim();
-
             if (!LayeredProperties.Contains(hint, StringComparer.OrdinalIgnoreCase))
             {
                 continue;
@@ -2801,6 +2857,57 @@ internal readonly struct ComputedStyle
 
         return false;
     }
+
+    /// <summary>
+    /// Gets whether the box hints - with <c>will-change</c> - at one of the properties that would give it
+    /// the frame its descendants resolve against (CSS Will Change 1 §2). A hint stands for the property it
+    /// names, at the level that property reaches: a hint at a filter holds an inline box because a filter
+    /// holds one, and a hint at a transform holds only a box the transform is drawn on.
+    /// </summary>
+    private Boolean WillChangeNamesAFrame(Boolean inlineLevel)
+    {
+        foreach (var hint in WillChangeHints())
+        {
+            if (IsFilterName(hint) ||
+                (!inlineLevel && FramedProperties.Contains(hint, StringComparer.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Gets whether a <c>will-change</c> token names one of the two filter properties.</summary>
+    private static Boolean IsFilterName(String hint) =>
+        hint.Equals("filter", StringComparison.OrdinalIgnoreCase) ||
+        hint.Equals("backdrop-filter", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Gets the property names the box's <c>will-change</c> list writes, as the page spelled them.</summary>
+    private IEnumerable<String> WillChangeHints()
+    {
+        var stated = _values.Fused is { } fused
+            ? fused.WillChange
+            : _style.GetPropertyValue("will-change");
+
+        if (String.IsNullOrEmpty(stated))
+        {
+            return Array.Empty<String>();
+        }
+
+        return stated!.Split([','], StringSplitOptions.RemoveEmptyEntries).Select(token => token.Trim());
+    }
+
+    /// <summary>
+    /// The properties, besides the two filters, whose non-initial value gives the box the frame its
+    /// descendants resolve against: the transform chapter's own two and the four shorthands that stand in
+    /// for them, motion path, and containment (CSS Transforms 1 §transform-rendering, CSS Motion Path 1,
+    /// CSS Contain 2 §2.2).
+    /// </summary>
+    private static readonly String[] FramedProperties =
+    [
+        "transform", "translate", "rotate", "scale", "perspective", "offset-path", "contain",
+    ];
 
     /// <summary>
     /// Gets whether the box forms a stacking context: its own picture and everything inside it is
@@ -2827,25 +2934,27 @@ internal readonly struct ComputedStyle
                 return true;
             }
 
-            // Containment is a property of the principal box: a non-atomic inline level is not one, and
-            // neither is a box the display leaves out altogether, so a span or a `display: contents`
-            // element that contains its paint forms no context and clips nothing (CSS Contain 2 §2.4,
-            // §2.6 - which is what `contain-*-ignored-cases-ib-split` and `...-no-principal-box-001`
-            // measure). An inline box that gets split - by a block standing inside it, or by its own white
-            // space - comes back as anonymous blocks, and an anonymous box borrows the geometry and the
-            // font of the style it was split from rather than the element's declarations, so the split
-            // cannot smuggle the containment back in.
-            if (Display.Equals("inline", StringComparison.OrdinalIgnoreCase) ||
-                Display.Equals("contents", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            var contain = Contain;
-
-            return contain.Layout || contain.Paint;
+            // Containment is a property of the principal box, so an inline or a `display: contents`
+            // element that contains its paint forms no context and clips nothing - see
+            // <see cref="ContainmentApplies"/> for the whole of that, which is what the
+            // `contain-*-ignored-cases-*` family measures pair by pair.
+            return ContainmentApplies && (Contain.Layout || Contain.Paint);
         }
     }
+
+    /// <summary>
+    /// Gets whether containment reaches this box at all. A non-atomic inline-level box is not a principal
+    /// box, and neither is one the display leaves out altogether, so a span or a `display: contents`
+    /// element that asks to be contained is not (CSS Contain 2 §2.4, §2.6 - what
+    /// `contain-*-ignored-cases-ib-split` and `...-no-principal-box-*` measure). An inline box that gets
+    /// split - by a block standing inside it, or by its own white space - comes back as anonymous blocks,
+    /// and an anonymous box borrows the geometry and the font of the style it was split from rather than
+    /// the element's declarations, so the split cannot smuggle the containment back in: what decides is
+    /// the display the element was given, not the shape the box tree ended with.
+    /// </summary>
+    public Boolean ContainmentApplies =>
+        !Display.Equals("inline", StringComparison.OrdinalIgnoreCase) &&
+        !Display.Equals("contents", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The properties whose non-initial value would put a box on a layer of its own, and whose

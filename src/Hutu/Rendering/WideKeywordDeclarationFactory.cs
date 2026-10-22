@@ -134,7 +134,12 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
     /// </summary>
     private static readonly Dictionary<String, String[]> KeywordSubstringValues = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["display"] = ["grid-lanes", "masonry", "flow-root"],
+        // `contents` rides along for the same reason the two above do: the element keeps a box here until
+        // the box tree learns to leave one out (CSS Display 3 §2.5), but what the display *says* is what
+        // CSS Contain 2 §2.4 and CSS 2.1 §Appendix E ask about - a contents box is not a principal box, so
+        // containment does not reach it and it forms no context - and dropped at the parse the element
+        // read as the plain block its declaration was standing in for.
+        ["display"] = ["grid-lanes", "masonry", "flow-root", "contents"],
     };
 
     /// <param name="inner">

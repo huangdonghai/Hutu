@@ -101,19 +101,10 @@ internal sealed class GridFormattingContext
             box, contentWidth, contentHeight, context, definiteWidth: true, sizeRows: true, forOutOfFlow: true);
         var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
-        // A positioned grid container is what an absolutely positioned child anchors to.
-        var anchored = false;
+        // A container that holds its descendants is what an absolutely positioned child anchors to.
+        var anchored = PositionedLayout.LendsAFrame(box);
 
-        if (box.Style.IsTransformed)
-        {
-            itemContext = itemContext.WithTransformedContainingBlock(layout.BorderBox);
-            anchored = true;
-        }
-        else if (PositionedLayout.IsPositioned(box))
-        {
-            itemContext = itemContext.WithAbsoluteContainingBlock(layout.PaddingBox);
-            anchored = true;
-        }
+        itemContext = PositionedLayout.ForDescendants(itemContext, box, layout.PaddingBox);
 
         foreach (var item in plan.Items)
         {

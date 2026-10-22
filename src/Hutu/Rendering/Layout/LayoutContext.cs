@@ -19,10 +19,12 @@ namespace Hutu.Rendering.Layout;
 /// resolves against (its nearest positioned ancestor's padding box, or the viewport).
 /// </para>
 /// <para>
-/// <see cref="TransformContainingBlock"/> is a second, narrower channel: the border box of the
-/// nearest ancestor with a <c>transform</c> or <c>offset-path</c>. CSS Transforms makes such an
-/// ancestor the containing block for <c>fixed</c> descendants too (not just <c>absolute</c>), which
-/// is why fixed cannot simply reuse <see cref="AbsoluteContainingBlock"/>.
+/// <see cref="CapturedContainingBlock"/> is a second, narrower channel: the padding box of the nearest
+/// ancestor that captures <c>fixed</c> descendants as well as <c>absolute</c> ones - a transform or
+/// offset path, a filter or a backdrop filter, layout or paint containment, or a <c>will-change</c>
+/// hint at one of those. CSS makes such an ancestor the containing block for <c>fixed</c> descendants
+/// too (not just <c>absolute</c>), which is why fixed cannot simply reuse
+/// <see cref="AbsoluteContainingBlock"/>.
 /// </para>
 /// </remarks>
 internal readonly struct LayoutContext
@@ -61,7 +63,7 @@ internal readonly struct LayoutContext
         ITextMeasurer measurer,
         FloatBand? floats,
         Boolean hypothetical,
-        Rect? transformContainingBlock = null)
+        Rect? capturedContainingBlock = null)
     {
         ContainingBlock = containingBlock;
         ContainingBlockRect = containingBlockRect;
@@ -72,7 +74,7 @@ internal readonly struct LayoutContext
         Measurer = measurer;
         Floats = floats;
         BasisIsHypothetical = hypothetical;
-        TransformContainingBlock = transformContainingBlock;
+        CapturedContainingBlock = capturedContainingBlock;
     }
 
     /// <summary>Gets the box percentages, auto widths and relative positioning resolve against.</summary>
@@ -96,10 +98,11 @@ internal readonly struct LayoutContext
     public Rect AbsoluteContainingBlock { get; }
 
     /// <summary>
-    /// Gets the border box of the nearest ancestor with a transform or offset path, or null when there
-    /// is none. A fixed descendant resolves against this in preference to the viewport.
+    /// Gets the padding box of the nearest ancestor that captures <c>fixed</c> descendants as well as
+    /// <c>absolute</c> ones - a transform, an offset path, a filter or containment - or null when there is
+    /// none. A fixed descendant resolves against this in preference to the viewport.
     /// </summary>
-    public Rect? TransformContainingBlock { get; }
+    public Rect? CapturedContainingBlock { get; }
 
     public ITextMeasurer Measurer { get; }
 
@@ -136,7 +139,7 @@ internal readonly struct LayoutContext
         Measurer,
         Floats,
         true,
-        TransformContainingBlock);
+        CapturedContainingBlock);
 
     /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
@@ -153,7 +156,7 @@ internal readonly struct LayoutContext
         Measurer,
         floats,
         BasisIsHypothetical,
-        TransformContainingBlock);
+        CapturedContainingBlock);
 
     /// <summary>Gets the context a box's children see, with its content box as their containing block.</summary>
     /// <remarks>
@@ -172,7 +175,7 @@ internal readonly struct LayoutContext
         Measurer,
         Floats,
         BasisIsHypothetical,
-        TransformContainingBlock);
+        CapturedContainingBlock);
 
     /// <summary>
     /// Gets the context a box's children see when the content box's position is known, which is what
@@ -188,7 +191,7 @@ internal readonly struct LayoutContext
         Measurer,
         Floats,
         BasisIsHypothetical,
-        TransformContainingBlock);
+        CapturedContainingBlock);
 
     /// <summary>
     /// Gets the context a positioned box's children see: the absolute containing block becomes this
@@ -205,22 +208,24 @@ internal readonly struct LayoutContext
         Measurer,
         Floats,
         BasisIsHypothetical,
-        TransformContainingBlock);
+        CapturedContainingBlock);
 
     /// <summary>
-    /// Gets the context a transformed box's children see. A <c>transform</c> or <c>offset-path</c> makes
-    /// the box the containing block for <c>absolute</c> descendants (like a positioned ancestor) and, in
-    /// addition, for <c>fixed</c> ones - which is what <see cref="TransformContainingBlock"/> carries.
+    /// Gets the context a box that captures its descendants hands them: the padding box becomes the frame
+    /// for <c>absolute</c> descendants as with a positioned ancestor, and <c>fixed</c> ones are pulled in
+    /// behind it - which is what <see cref="CapturedContainingBlock"/> carries. A transform or offset path
+    /// (CSS Transforms 1 §transform-rendering), a filter or backdrop filter
+    /// (CSS Filter Effects 1 §2.4) and layout or paint containment (CSS Contain 2 §2.2) each do this.
     /// </summary>
-    public LayoutContext WithTransformedContainingBlock(Rect borderBox) => new(
+    public LayoutContext WithCapturedContainingBlock(Rect paddingBox) => new(
         ContainingBlock,
         ContainingBlockRect,
         Viewport,
         ViewportRect,
         Scroll,
-        borderBox,
+        paddingBox,
         Measurer,
         Floats,
         BasisIsHypothetical,
-        borderBox);
+        paddingBox);
 }

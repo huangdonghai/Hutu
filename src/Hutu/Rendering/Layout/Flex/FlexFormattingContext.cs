@@ -97,15 +97,8 @@ internal sealed partial class FlexFormattingContext
         var insetCross = flex.IsRow ? insetV : insetH;
         var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
-        // A positioned flex container is what an absolutely positioned child anchors to.
-        if (box.Style.IsTransformed)
-        {
-            itemContext = itemContext.WithTransformedContainingBlock(layout.BorderBox);
-        }
-        else if (PositionedLayout.IsPositioned(box))
-        {
-            itemContext = itemContext.WithAbsoluteContainingBlock(layout.PaddingBox);
-        }
+        // A container that holds its descendants is what an absolutely positioned child anchors to.
+        itemContext = PositionedLayout.ForDescendants(itemContext, box, layout.PaddingBox);
 
         var plan = Compute(
             box,

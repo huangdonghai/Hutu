@@ -438,6 +438,17 @@ internal static partial class BoxBuilder
             return BoxKind.InlineBlock;
         }
 
+        // A `contents` element generates no box and its children take part in the parent's formatting
+        // context (CSS Display 3 §2.5). The engine is not there yet - the element still comes to a box -
+        // and what that box must not do is stand in the block flow: as a run its words stay on the line the
+        // parent is laying out, and the width and height the element declared for itself are ignored the
+        // way a non-replaced inline's are, which is closer to the answer than a block that pushes the
+        // lines apart would be.
+        if (display.Equals("contents", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Inline;
+        }
+
         // Everything else that starts with "inline" takes part in the surrounding line box as a run.
         // The container forms - inline-flex among them - were already claimed above, and reach the line
         // as the atomic boxes their kinds name, so what is left here is plain inline content.

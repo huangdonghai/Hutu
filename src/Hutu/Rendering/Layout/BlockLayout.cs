@@ -513,18 +513,10 @@ internal sealed class BlockLayout
 
         var childContext = context.ForContainingBlock(childBox);
 
-        // A positioned box is what an absolutely positioned descendant anchors to, so its padding
-        // box - not its content box - becomes the containing block for the whole subtree.
-        if (box.Style.IsTransformed)
-        {
-            // A transform or offset path makes this box the containing block for absolute AND fixed
-            // descendants alike (CSS Transforms 1 §transform-rendering).
-            childContext = childContext.WithTransformedContainingBlock(layout.BorderBox);
-        }
-        else if (PositionedLayout.IsPositioned(box))
-        {
-            childContext = childContext.WithAbsoluteContainingBlock(layout.PaddingBox);
-        }
+        // A box that holds its descendants - positioned, transformed, filtered, contained - lends the
+        // whole subtree its padding box, so an absolute descendant anchors to it rather than to an
+        // ancestor further up.
+        childContext = PositionedLayout.ForDescendants(childContext, box, layout.PaddingBox);
 
         var content = new Rect(contentX, contentY, contentWidth, contentHeight);
         var used = 0.0;

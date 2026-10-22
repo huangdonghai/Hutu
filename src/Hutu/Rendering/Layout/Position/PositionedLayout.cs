@@ -32,6 +32,36 @@ internal sealed class PositionedLayout
     public static Boolean IsPositioned(Box box) => !box.IsAnonymous && box.Style.Position.IsPositioned;
 
     /// <summary>
+    /// Gets the context a box's children see: the frame the box lends its descendants, if it lends one.
+    /// </summary>
+    /// <remarks>
+    /// Two answers are handed down, because the properties that give a box a frame come in two strengths.
+    /// A <c>position</c> that is not static makes the box the frame for <c>absolute</c> descendants only;
+    /// a transform, a filter or containment makes it the frame for <c>fixed</c> ones as well, so those
+    /// descendants cannot fall past it to the viewport. An anonymous box lends nothing: it borrows the
+    /// style of the element it was made from, and the frame belongs to that element - and its padding box
+    /// is not the same rectangle anyway, since the anonymous box stands inside the element's padding.
+    /// </remarks>
+    public static LayoutContext ForDescendants(LayoutContext context, Box box, Rect paddingBox)
+    {
+        if (!LendsAFrame(box))
+        {
+            return context;
+        }
+
+        return box.Style.FormsContainingBlock(inlineLevel: false)
+            ? context.WithCapturedContainingBlock(paddingBox)
+            : context.WithAbsoluteContainingBlock(paddingBox);
+    }
+
+    /// <summary>
+    /// Gets whether the box lends the subtree below it a frame to resolve against, which is what makes an
+    /// absolutely positioned child stand inside it rather than fall past it to the ancestor above.
+    /// </summary>
+    public static Boolean LendsAFrame(Box box, Boolean inlineLevel = false) =>
+        !box.IsAnonymous && (box.Style.FormsContainingBlock(inlineLevel) || box.Style.Position.IsPositioned);
+
+    /// <summary>
     /// Applies the displacement a box's <c>position</c> asks for once it has been arranged in flow.
     /// </summary>
     public void Finish(LayoutBox layout, PositionStyle position, LayoutContext context)
@@ -63,11 +93,12 @@ internal sealed class PositionedLayout
     {
         var position = box.Style.Position;
 
-        // `fixed` always resolves against the viewport; `absolute` against the nearest positioned
-        // ancestor, which the context already carries as its padding box. A transform or offset path
-        // on an ancestor is the exception that pulls `fixed` in too (CSS Transforms 1 5.5).
+        // `fixed` always resolves against the viewport; `absolute` against the nearest ancestor that
+        // holds it, which the context already carries as its padding box. A transform, a filter or
+        // containment on an ancestor is the exception that pulls `fixed` in too (CSS Transforms 1
+        // 5.5, CSS Filter Effects 1 2.4, CSS Contain 2 2.2).
         var containingBlock = position.Position == PositionMode.Fixed
-            ? context.TransformContainingBlock ?? context.ViewportRect
+            ? context.CapturedContainingBlock ?? context.ViewportRect
             : context.AbsoluteContainingBlock;
 
         var childContext = context.ForContainingBlock(containingBlock);

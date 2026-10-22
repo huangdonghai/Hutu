@@ -773,6 +773,200 @@ public sealed class PositionedLayoutTests
     }
 
     /// <summary>
+    /// A filter gives the box it is written on the frame its descendants resolve against, exactly as a
+    /// position does (CSS Filter Effects 1 2.4) - and it reaches <c>fixed</c> descendants too, the way a
+    /// transform and containment do. Chrome measures the frame as the padding box of the box the filter
+    /// stands on (<c>build/probe-cb-rect.html</c>: a bordered, padded container takes an absolute and a
+    /// fixed descendant five of its border in, not at its outer edge).
+    /// </summary>
+    [Test]
+    public async Task AFilterHoldsTheBoxesFlownOutOfTheBoxItIsWrittenOn()
+    {
+        using var view = await Painted(
+            "<div id='c' style='margin:30px 0 0 20px;padding:4px;border:2px solid green;filter:brightness(100%)'>" +
+            "<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div>" +
+            "<div id='f' style='position:fixed;top:0;left:0;width:5px;height:5px'></div></div>");
+
+        var held = Find(view, "c").PaddingBox;
+        var flown = Find(view, "a").BorderBox;
+        var pinned = Find(view, "f").BorderBox;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(flown.X, Is.EqualTo(held.X), "the absolute box stands at the filtered box's padding edge");
+            Assert.That(flown.Y, Is.EqualTo(held.Y), "on both axes");
+            Assert.That(pinned.X, Is.EqualTo(held.X), "and the fixed one is pulled in behind it as well");
+            Assert.That(pinned.Y, Is.EqualTo(held.Y), "rather than left at the viewport corner");
+        });
+    }
+
+    /// <summary>
+    /// The filter reaches an inline box too, whatever its display: the chapter writes the containing block
+    /// as a consequence of the value rather than of the effect being drawn, and Chrome follows it
+    /// (<c>build/probe-cb-props.html</c>, where <c>filter</c>, <c>backdrop-filter</c> and
+    /// <c>will-change: filter</c> each hold an absolute descendant of a span while a transform does not).
+    /// </summary>
+    [Test]
+    public async Task AFilterOnASpanHoldsTheBoxFlownOutOfIt()
+    {
+        const string flown = "<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div>";
+
+        var (first, filter) = await HeldBy("filter:brightness(100%)", "456" + flown);
+        var (_, backdrop) = await HeldBy("backdrop-filter:blur(2px)", "456" + flown);
+        var (_, hint) = await HeldBy("will-change:filter", "456" + flown);
+        var (_, transform) = await HeldBy("transform:translateX(0)", "456" + flown);
+        var (_, contained) = await HeldBy("contain:paint", "456" + flown);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.X, Is.GreaterThan(0), "the span starts past the text it follows");
+            Assert.That(filter.X, Is.EqualTo(first.X), "a filter holds the box at the span's fragment");
+            Assert.That(filter.Y, Is.EqualTo(first.Y), "on both axes");
+            Assert.That(backdrop.X, Is.EqualTo(first.X), "and so does a backdrop filter");
+            Assert.That(hint.X, Is.EqualTo(first.X), "and a hint at either");
+            Assert.That(transform.X, Is.EqualTo(0), "a transform is not drawn on a span, so it holds nothing");
+            Assert.That(contained.X, Is.EqualTo(0), "and containment is a property of the principal box");
+        });
+    }
+
+    /// <summary>
+    /// Containment of layout or paint gives a box the same frame, fixed descendants included
+    /// (CSS Contain 2 2.2) - and a <c>will-change</c> hint at it stands for the property, at the level that
+    /// property reaches (CSS Will Change 1 2).
+    /// </summary>
+    [Test]
+    public async Task ContainmentAndItsHintHoldTheBoxesFlownOutOfABlock()
+    {
+        const string flown = "<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div>";
+
+        using var contained = await Painted(
+            "<div id='c' style='margin:30px 0 0 20px;contain:paint'>" + flown + "</div>");
+        using var hinted = await Painted(
+            "<div id='c' style='margin:30px 0 0 20px;will-change:contain'>" + flown + "</div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(contained, "a").BorderBox.X, Is.EqualTo(20), "the contained box holds the flown one");
+            Assert.That(Find(contained, "a").BorderBox.Y, Is.EqualTo(30), "on both axes");
+            Assert.That(Find(hinted, "a").BorderBox.X, Is.EqualTo(20), "and so does a hint at containment");
+            Assert.That(Find(hinted, "a").BorderBox.Y, Is.EqualTo(30), "the same pair");
+        });
+    }
+
+    /// <summary>
+    /// The frame a transformed box lends is its padding box, the same one a positioned, filtered or
+    /// contained box lends - not the border box the transform is drawn around
+    /// (<c>build/probe-cb-rect.html</c>: a bordered container puts an absolute descendant at its padding
+    /// edge, and a fixed one with it).
+    /// </summary>
+    [Test]
+    public async Task ATransformedBoxLendsItsPaddingBoxRatherThanItsBorderBox()
+    {
+        using var view = await Painted(
+            "<div id='c' style='margin:20px 0 0 10px;border:3px solid;transform:translateX(0)'>" +
+            "<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div></div>");
+
+        var held = Find(view, "c");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "a").BorderBox.X, Is.EqualTo(held.PaddingBox.X), "inset by the border it draws");
+            Assert.That(held.PaddingBox.X, Is.GreaterThan(held.BorderBox.X), "which is not the outer edge");
+            Assert.That(Find(view, "a").BorderBox.Y, Is.EqualTo(held.PaddingBox.Y), "on both axes");
+        });
+    }
+
+    /// <summary>
+    /// Draws a line holding a span with the given style and content, and hands back the padding box of the
+    /// span's first fragment with the box inside it that left the flow.
+    /// </summary>
+    private static async Task<(Rect First, Rect Flown)> HeldBy(String span, String content)
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div style='width:300px;font:16px/16px Arial'>123" +
+            $"<span id='c' style='{span}'>{content}</span></div></body></html>");
+
+        return (FragmentsOf(view, "c")[0].PaddingBox, Find(view, "a").BorderBox);
+    }
+
+    /// <summary>
+    /// Containment belongs to a principal box, so a span holds nothing even when a block standing inside it
+    /// gives the box tree a shape of its own (CSS Contain 2 §2.4): what decides is the display the element
+    /// was written with, not the box the split left behind - which is what
+    /// <c>wpt/css-contain/contain-paint-ignored-cases-ib-split-001</c> and
+    /// <c>...-no-principal-box-003</c> draw.
+    /// </summary>
+    [Test]
+    public async Task ContainmentDoesNotGiveASplitSpanAFrame()
+    {
+        using var view = await Painted(
+            "<div id='w' style='position:relative;margin:20px;width:200px'>123" +
+            "<span id='c' style='contain:paint'>456<div style='height:8px'></div>" +
+            "<div id='a' style='position:absolute;top:0;left:0;width:5px;height:5px'></div></span></div>");
+
+        var above = Find(view, "w").PaddingBox;
+        var split = Find(view, "c").PaddingBox;
+        var flown = Find(view, "a").BorderBox;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(split.Y, Is.GreaterThan(above.Y), "the span did come to a box of its own below the line");
+            Assert.That(flown.X, Is.EqualTo(above.X), "and yet the absolute box falls past it, as CSS says");
+            Assert.That(flown.Y, Is.EqualTo(above.Y), "to the positioned ancestor above");
+        });
+    }
+
+    /// <summary>
+    /// A <c>display: contents</c> element is not a principal box either, so the containment it asks for
+    /// reaches nothing (CSS Contain 2 §2.4) - which is what
+    /// <c>wpt/css-contain/contain-layout-ignored-cases-no-principal-box-003</c> measures, the fixed box
+    /// standing at the viewport corner whatever the contents element said. The engine still gives the
+    /// element a box, which is the other half of that pair's story and stands on its own.
+    /// </summary>
+    [Test]
+    public async Task ContainmentDoesNotGiveAContentsElementAFrame()
+    {
+        using var view = await Painted(
+            "<div id='a' style='display:contents;contain:layout;width:100px;height:100px;margin:50px'>" +
+            "<div><div id='b' style='position:fixed;top:0;left:0;width:100px;height:100px'></div></div></div>");
+
+        var flown = Find(view, "b").BorderBox;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(flown.X, Is.EqualTo(0), "the fixed box keeps the viewport");
+            Assert.That(flown.Y, Is.EqualTo(0), "on both axes, past the contents element that asked to be contained");
+        });
+    }
+
+    /// <summary>
+    /// A <c>display: contents</c> element whose box the engine still draws takes part in the line its
+    /// parent is laying out, not in the block flow: the chapter generates no box for it and hands its
+    /// children to the parent's formatting context (CSS Display 3 §2.5), so a run is the nearer answer than
+    /// a block that parts the lines - which is what
+    /// <c>wpt/css-display/display-contents-line-height</c> asks of two lines of forty-pixel text.
+    /// </summary>
+    [Test]
+    public async Task AContentsElementIsLaidOutAsARunNotAsABlock()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='p' style='font:16px/16px Arial'>a" +
+            "<span id='c' style='display:contents;font-size:40px'>b</span>c</div></body></html>");
+
+        var box = FragmentsOf(view, "c").Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(box.Kind, Is.EqualTo(LayoutKind.Inline), "the contents element is a run on the line");
+            Assert.That(Find(view, "p").BorderBox.Height, Is.EqualTo(16), "and the block is one line tall");
+        });
+    }
+
+    /// <summary>
     /// Draws a line holding a positioned span with the given style and content, and hands back every box
     /// the span was drawn through together with the one box inside it that left the flow. The container is
     /// a div rather than a p, because a div inside a p closes the p and takes the box out of the span.

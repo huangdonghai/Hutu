@@ -91,14 +91,7 @@ internal sealed class MasonryFormattingContext
         var plan = Compute(box, contentWidth, true, context);
         var itemContext = context.ForContainingBlock(new Size(contentWidth, borderBox.Height - insetV));
 
-        if (box.Style.IsTransformed)
-        {
-            itemContext = itemContext.WithTransformedContainingBlock(layout.BorderBox);
-        }
-        else if (PositionedLayout.IsPositioned(box))
-        {
-            itemContext = itemContext.WithAbsoluteContainingBlock(layout.PaddingBox);
-        }
+        itemContext = PositionedLayout.ForDescendants(itemContext, box, layout.PaddingBox);
 
         foreach (var item in plan.Items)
         {

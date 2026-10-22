@@ -1190,16 +1190,16 @@ internal sealed class InlineLayout
     }
 
     /// <summary>
-    /// Gets the innermost inline element a run sits inside that holds the boxes flown out of it, or null
-    /// when none of them does. A box taken out of the flow anchors to the nearest ancestor whose
-    /// <c>position</c> is anything but static (CSS 2.1 10.3.7), and an inline element is one of those
-    /// whatever its display.
+    /// Gets the innermost inline element a run sits inside that lends its descendants a frame, or null
+    /// when none of them does: the nearest ancestor whose <c>position</c> is anything but static
+    /// (CSS 2.1 10.3.7), or the nearest carrying a filter (CSS Filter Effects 1 2.4) - and an inline
+    /// element is one of those whatever its display.
     /// </summary>
     private static InlineAncestor? AnchoredBy(InlineAncestor? chain)
     {
         for (var ancestor = chain; ancestor is not null; ancestor = ancestor.Parent)
         {
-            if (PositionedLayout.IsPositioned(ancestor.Box))
+            if (PositionedLayout.LendsAFrame(ancestor.Box, inlineLevel: true))
             {
                 return ancestor;
             }
@@ -2025,7 +2025,7 @@ internal sealed class InlineLayout
     private sealed class Placement
     {
         private readonly LayoutEngine _engine;
-        private readonly Dictionary<InlineAncestor, Ends> _anchors = new();
+        private readonly Dictionary<InlineAncestor, Edges> _anchors = new();
         private readonly List<Held> _held = new();
         private readonly List<(LayoutBox Box, Offset Shift)> _shifts = new();
 
@@ -2037,7 +2037,7 @@ internal sealed class InlineLayout
         /// </summary>
         public void Fragment(InlineAncestor ancestor, LayoutBox fragment)
         {
-            if (!PositionedLayout.IsPositioned(ancestor.Box))
+            if (!PositionedLayout.LendsAFrame(ancestor.Box, inlineLevel: true))
             {
                 return;
             }
@@ -2045,8 +2045,8 @@ internal sealed class InlineLayout
             var box = fragment.PaddingBox;
 
             _anchors[ancestor] = _anchors.TryGetValue(ancestor, out var seen)
-                ? new Ends(seen.First, box)
-                : new Ends(box, box);
+                ? new Edges(seen.First, box)
+                : new Edges(box, box);
         }
 
         /// <summary>Holds back the place a relative element's offset gives its whole subtree.</summary>
@@ -2086,9 +2086,14 @@ internal sealed class InlineLayout
 
             foreach (var held in _held)
             {
-                var against = held.Against.WithAbsoluteContainingBlock(AnchorOf(held.Anchor, flow));
-                var node = held.Frame is { } frame
-                    ? _engine.Arrange(held.Box, frame, against)
+                // A filter holds the fixed ones behind it as well, the way it does on a block; a position
+                // that is merely not static leaves them to the viewport (CSS Filter Effects 1 2.4).
+                var frame = ContainingBlockOf(held.Anchor, flow);
+                var against = held.Anchor.Box.Style.FormsContainingBlock(inlineLevel: true)
+                    ? held.Against.WithCapturedContainingBlock(frame)
+                    : held.Against.WithAbsoluteContainingBlock(frame);
+                var node = held.Frame is { } area
+                    ? _engine.Arrange(held.Box, area, against)
                     : _engine.ArrangePositioned(held.Box, held.Stood, against);
 
                 // The siblings placed while the box waited are not the ones it stood among, so the place it
@@ -2111,7 +2116,7 @@ internal sealed class InlineLayout
         /// an element broken over two lines gives a box that starts where its first fragment starts, which
         /// is what the rule comes to and what Chrome draws.
         /// </summary>
-        private Rect AnchorOf(InlineAncestor anchor, WritingModeInfo flow)
+        private Rect ContainingBlockOf(InlineAncestor anchor, WritingModeInfo flow)
         {
             var (first, last) = _anchors[anchor];
 
@@ -2126,7 +2131,7 @@ internal sealed class InlineLayout
         }
 
         /// <summary>The padding boxes of the first and the last fragment an inline element left.</summary>
-        private readonly record struct Ends(Rect First, Rect Last);
+        private readonly record struct Edges(Rect First, Rect Last);
 
         /// <summary>
         /// A box the walk held back. <see cref="Stood"/> is what a box that left the flow is placed from,
