@@ -145,6 +145,15 @@ internal sealed record BoxModelArea
 
     internal StyleLength MaxHeight { get; init; } = StyleLength.None;
 
+    /// <summary>
+    /// Gets the ratio the width and height keep to, or null where the page named none.
+    /// </summary>
+    /// <remarks>
+    /// A box with a ratio and one definite axis takes the other from it (CSS Sizing 4 §4), which is
+    /// what gives a plot its height from its width and a picture its shape from its content.
+    /// </remarks>
+    internal AspectRatio? AspectRatio { get; init; }
+
     internal StyleThickness Margin { get; init; } = new(StyleLength.Zero, StyleLength.Zero, StyleLength.Zero, StyleLength.Zero);
 
     internal StyleThickness Padding { get; init; } = new(StyleLength.Zero, StyleLength.Zero, StyleLength.Zero, StyleLength.Zero);

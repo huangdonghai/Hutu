@@ -4272,6 +4272,14 @@ internal readonly struct ComputedStyle
     /// <summary>Gets whether the page spoke about the height. See <see cref="HasDeclaredWidth"/>.</summary>
     public Boolean HasDeclaredHeight => _values.BoxModel.HeightDeclared;
 
+    /// <summary>
+    /// Gets the ratio the width and height keep to, or null where the page named none.
+    /// </summary>
+    /// <remarks>
+    /// A box with a ratio and one definite axis takes the other from it (CSS Sizing 4 §4).
+    /// </remarks>
+    public AspectRatio? AspectRatio => _values.BoxModel.AspectRatio;
+
     public StyleLength MinWidth => _values.BoxModel.MinWidth;
 
     public StyleLength MaxWidth => _values.BoxModel.MaxWidth;

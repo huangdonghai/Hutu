@@ -605,6 +605,7 @@ internal static class FusedStyleFactory
                     RenderMode.Vertical, size, dimensions, StyleLength.None),
                 MaxHeight = ComputedStyle.ResolveBoxLengthFused(find("max-" + alongHeight) ?? find("max-height"),
                     RenderMode.Vertical, size, dimensions, StyleLength.None),
+                AspectRatio = AspectRatio.Parse(find("aspect-ratio")?.Value),
                 Margin = ComputedStyle.ResolveThicknessFused(find, element, face, dimensions, flow, "margin", StyleLength.Zero),
 
                 // The room a cell keeps is its table's, and the room it keeps where its table says nothing

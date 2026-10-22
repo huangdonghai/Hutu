@@ -52,6 +52,19 @@ public sealed class LayoutProbe
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         File.WriteAllText(target, dump);
 
+        // The picture as well, when asked for: a dump says what the engine thought the page was, and
+        // the picture says what it drew, and a page that is wrong in one is usually wrong in the other.
+        var picture = Environment.GetEnvironmentVariable("HUTU_PROBE_PNG");
+
+        if (!String.IsNullOrWhiteSpace(picture))
+        {
+            using var drawn = engine.Render(ReftestRunner.Width, ReftestRunner.Height);
+            using var image = SkiaSharp.SKImage.FromBitmap(drawn);
+            using var stream = File.Create(picture);
+
+            image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100).SaveTo(stream);
+        }
+
         TestContext.Out.WriteLine(dump);
     }
 }

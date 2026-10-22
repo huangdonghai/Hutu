@@ -16,6 +16,74 @@ namespace Hutu.Rendering.Layout;
 internal static class BoxModel
 {
     /// <summary>
+    /// Resolves the height a box takes from its aspect ratio, or null when the ratio settles nothing.
+    /// </summary>
+    /// <remarks>
+    /// A box with a ratio and a definite width takes its height from it, and one with a definite
+    /// height takes its width from it (CSS Sizing 4 §4). The ratio is of the box's own content - or
+    /// of its border box where <c>box-sizing</c> says so, since the ratio is of the box the sizing
+    /// applies to - and the side the ratio settles is the one the page left to <c>auto</c>.
+    /// </remarks>
+    /// <param name="style">The style that states the ratio and the two sizes.</param>
+    /// <param name="contentWidth">The content width the box has come to, or null where it has none.</param>
+    /// <param name="contentHeight">The content height the box has come to, or null where it has none.</param>
+    /// <param name="insets">The padding and border around the content.</param>
+    public static Double? HeightFromRatio(ComputedStyle style, Double? contentWidth, Double? contentHeight, Double insets)
+    {
+        if (style.AspectRatio is not { } ratio || ratio.Value <= 0)
+        {
+            return null;
+        }
+
+        // The side the page left to the content is the one the ratio settles, and the other has to be
+        // definite for it to be settled at all: a ratio against two automatic sides says nothing.
+        if (!style.HasDeclaredHeight && contentWidth is { } width)
+        {
+            var height = IsBorderBox(style)
+                ? Math.Max(0, (width + insets) / ratio.Value - insets)
+                : width / ratio.Value;
+
+            return height;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets whether the content of a box may raise the height its aspect ratio settled.
+    /// </summary>
+    /// <remarks>
+    /// The height a ratio gives is a preferred one rather than a definite one (CSS Sizing 4 §4.4), and
+    /// what the content does to it is the automatic minimum size (CSS Sizing 4 §4.3): a box whose
+    /// <c>min-height</c> is <c>auto</c> and whose overflow is visible is at least as tall as its
+    /// content. A box that clips its overflow has no such minimum, and its height is the ratio's.
+    /// </remarks>
+    public static Boolean ContentRaisesTheRatio(ComputedStyle style) => !style.ClipsOverflow;
+
+    /// <summary>
+    /// Resolves the width a box takes from its aspect ratio, or null when the ratio settles nothing.
+    /// </summary>
+    /// <param name="style">The style that states the ratio and the two sizes.</param>
+    /// <param name="contentHeight">The content height the box has come to, or null where it has none.</param>
+    /// <param name="insets">The padding and border around the content.</param>
+    public static Double? WidthFromRatio(ComputedStyle style, Double? contentHeight, Double insets)
+    {
+        if (style.AspectRatio is not { } ratio || ratio.Value <= 0)
+        {
+            return null;
+        }
+
+        if (!style.HasDeclaredWidth && contentHeight is { } height)
+        {
+            return IsBorderBox(style)
+                ? Math.Max(0, height * ratio.Value - insets)
+                : height * ratio.Value;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Resolves a width into the width of the border box and of the content box. An <c>auto</c>
     /// width fills the containing block minus the margins and the insets; a declared one is taken as
     /// the content box, or as the border box under <c>box-sizing: border-box</c>. The min and max
@@ -29,7 +97,12 @@ internal static class BoxModel
     /// margin shrink to its content instead of resolving that margin against the reduced room it was
     /// handed. For an ordinary block the two are the same number and nothing changes.
     /// </remarks>
-    public static (Double BorderBox, Double Content) ResolveWidth(ComputedStyle style, Double basis, Double containingWidth, Double insets)
+    public static (Double BorderBox, Double Content) ResolveWidth(
+        ComputedStyle style,
+        Double basis,
+        Double containingWidth,
+        Double insets,
+        Double containingHeight = 0)
     {
         var isBorderBox = IsBorderBox(style);
         Double content;
@@ -38,6 +111,12 @@ internal static class BoxModel
         {
             var specified = Math.Max(0, style.Width.Resolve(containingWidth));
             content = Math.Max(0, isBorderBox ? specified - insets : specified);
+        }
+        else if (WidthFromRatio(style, DeclaredHeight(style, containingHeight, 0), insets) is { } ratio)
+        {
+            // A box with a ratio and a definite height takes its width from it, rather than filling
+            // the room it was offered (CSS Sizing 4 §4).
+            content = ratio;
         }
         else
         {

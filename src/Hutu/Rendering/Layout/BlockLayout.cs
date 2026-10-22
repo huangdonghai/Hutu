@@ -64,9 +64,21 @@ internal sealed class BlockLayout
         // the containing block, so it is asked for here, where both are in hand.
         var (borderBoxWidth, contentWidth) = _engine.ContentSizedWidth(box, basisWidth, context) is { } contentSized
             ? (contentSized, Math.Max(0, contentSized - insets.Horizontal))
-            : BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insets.Horizontal);
+            : BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insets.Horizontal,
+                context.ContainingBlock.Height);
         var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insets.Vertical);
+
+        // A box with a ratio and a definite width takes its height from it, whatever the content asks
+        // for (CSS Sizing 4 §4). The height is settled here rather than at the end, because it is the
+        // height the children are measured against - the same height a declared one is.
+        var ratioHeight = BoxModel.HeightFromRatio(style, contentWidth, null, insets.Vertical);
+
+        // The height the ratio suggests is a preferred one, not a definite one: the content may be
+        // taller than it, and then the content is what the box comes to (CSS Sizing 4 §4.4). It is
+        // also the height the children are measured against, since a percentage inside resolves
+        // against the height the box comes out at.
+        var preferredHeight = declaredHeight ?? ratioHeight;
 
         // A box that contains its block size is not measured from its content either: it comes to the
         // height it states for itself, which is nothing where it states none (CSS Contain 2 §2.1).
@@ -86,8 +98,8 @@ internal sealed class BlockLayout
         // against it, because that height is the containing block a percentage inside resolves
         // against (§10.5). A height the content decides stays zero, which is what makes such a
         // percentage come to auto.
-        var childHeight = declaredHeight is { } declared
-            ? BoxModel.ClampHeight(style, declared, basisHeight, insets.Vertical)
+        var childHeight = preferredHeight is { } preferred
+            ? BoxModel.ClampHeight(style, preferred, basisHeight, insets.Vertical)
             : 0;
 
         Double contentHeight;
@@ -118,7 +130,15 @@ internal sealed class BlockLayout
                     context.ForContainingBlock(new Size(contentWidth, childHeight))));
         }
 
-        var height = BoxModel.ClampHeight(style, declaredHeight ?? contentHeight, basisHeight, insets.Vertical);
+        // A height the content decides is the content's; a height the ratio suggests is the ratio's,
+        // unless the content is taller and the box's automatic minimum size lets it be.
+        var height = BoxModel.ClampHeight(
+            style,
+            declaredHeight ?? (ratioHeight is { } ratio
+                ? BoxModel.ContentRaisesTheRatio(style) ? Math.Max(ratio, contentHeight) : ratio
+                : contentHeight),
+            basisHeight,
+            insets.Vertical);
 
         return new Size(borderBoxWidth, height + insets.Vertical);
     }
@@ -492,11 +512,19 @@ internal sealed class BlockLayout
         // was written down.
         var insetsV = padding.Vertical + border.Vertical;
         var declaredHeight = BoxModel.DeclaredHeight(style, context.ContainingBlock.Height, insetsV);
+
+        // The height a ratio settles is a preferred height, and the content may be taller than it - so
+        // the box comes to whichever is the taller of the two. The border box was handed to this pass
+        // at that height already, and the height here is the one the children are laid out against.
+        var ratioHeight = BoxModel.HeightFromRatio(style, contentWidth, null, insetsV);
+
         var usedHeight = declaredHeight is { } declared
             ? BoxModel.ClampHeight(style, declared, context.ContainingBlock.Height, insetsV)
-            : definiteHeight
+            : ratioHeight is not null
                 ? contentHeight
-                : (Double?)null;
+                : definiteHeight
+                    ? contentHeight
+                    : (Double?)null;
 
         var childBox = flow.IsVertical
             ? new Rect(
