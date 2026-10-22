@@ -566,8 +566,11 @@ internal sealed class GridFormattingContext
         var available = Math.Max(0, width);
 
         // The item's own percentages resolve against its grid area, so the measurement has to be told
-        // about that area rather than the grid's content box the shared context was built for.
-        context = context.ForContainingBlock(new Size(Math.Max(0, basis), context.ContainingBlock.Height));
+        // about that area rather than the grid's content box the shared context was built for. Its
+        // height is what this measurement is finding out, so it is told with none: a `height: 100%` on
+        // the item is then no height at all while the rows are being sized (CSS Grid 1 §12.4), where
+        // before it resolved against the whole grid and asked its row to be that tall.
+        context = context.ForContainingBlock(new Size(Math.Max(0, basis), 0));
 
         if (!box.IsAnonymous)
         {
@@ -1007,7 +1010,12 @@ internal sealed class GridFormattingContext
             var isBorderBox = BoxModel.IsBorderBox(style);
             Double? declared = null;
 
-            if (HasWidth(item.Box) && !(style.Width.Kind == StyleLengthKind.Percent && basis <= 0))
+            // An item whose width is a percentage contributes as `auto` to the sizing of a track it stands
+            // in (CSS Grid 1 §12.4): the percentage is a share of the area that track gives it, so it
+            // cannot be what decides that area (§6.6). Charging it to the container - which is all `basis`
+            // can be before the tracks are known - made a `width: 100%` item inside a `repeat(2, 1fr)`
+            // grid ask for the whole grid, and two 110px tracks were laid into a 110px container.
+            if (HasWidth(item.Box) && style.Width.Kind != StyleLengthKind.Percent)
             {
                 var width = Math.Max(0, style.Width.Resolve(basis));
                 declared = isBorderBox ? width : width + insetH;
@@ -1066,7 +1074,12 @@ internal sealed class GridFormattingContext
             var margin = style.Margin.Resolve(areaWidth).Vertical;
             var padding = style.Padding.Resolve(areaWidth);
             var insetV = padding.Vertical + BlockLayout.BorderOf(item.Box).Vertical;
-            var declared = HasHeight(item.Box) ? BoxModel.DeclaredHeight(style, basis, insetV) : null;
+            // The same rule down the block axis (CSS Grid 1 §12.4): a `height: 100%` item contributes as
+            // `auto` to its row, since the percentage is a share of that row's height (§6.6) and a share of
+            // a size cannot be what decides the size.
+            var declared = HasHeight(item.Box) && style.Height.Kind != StyleLengthKind.Percent
+                ? BoxModel.DeclaredHeight(style, basis, insetV)
+                : null;
             Double height;
 
             if (declared is { } fixedContent)

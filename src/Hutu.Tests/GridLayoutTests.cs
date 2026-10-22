@@ -479,6 +479,68 @@ public sealed class GridLayoutTests
             "the grid reaches its clamped ceiling of rows, not the literal hundred million");
     }
 
+    /// <summary>
+    /// A grid item's percentage width is resolved against the area the grid gives it, and never the other
+    /// way round (CSS Grid 1 §6.6, §12.4): for the purpose of sizing a track an item whose size is a
+    /// percentage contributes as `auto`, because a percentage of a track cannot be what decides the
+    /// track's own width. Measuring it against the container instead is what made the reference pages of
+    /// the gap-decoration corpus - which hand-draw their rules with `.item { width: 100% }` inside a
+    /// `repeat(2, 1fr)` grid - lay two 110px columns into a 110px container.
+    /// </summary>
+    [Test]
+    public async Task APercentWidthOnAnItemDoesNotSizeItsTrack()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:repeat(2,1fr);column-gap:10px;row-gap:10px;" +
+            "width:110px;height:110px'>" +
+            "<div id='a' style='width:100%;height:50px'></div>" +
+            "<div id='b' style='width:100%;height:50px'></div>" +
+            "<div id='c' style='width:100%;height:50px'></div>" +
+            "<div id='d' style='width:100%;height:50px'></div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(a.BorderBox.Width, Is.EqualTo(50).Within(0.5), "half of what the gap leaves");
+            Assert.That(b.BorderBox.X, Is.EqualTo(60).Within(0.5), "the second track starts past the gap");
+            Assert.That(b.BorderBox.Width, Is.EqualTo(50).Within(0.5));
+        });
+    }
+
+    /// <summary>
+    /// The same rule down the block axis: a row's height is not what a `height: 100%` item inside it asks
+    /// for, because the percentage is a share of that row (CSS Grid 1 §12.4).
+    /// </summary>
+    [Test]
+    public async Task APercentHeightOnAnItemDoesNotSizeItsRow()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-rows:repeat(2,1fr);column-gap:10px;row-gap:10px;" +
+            "width:110px;height:110px'>" +
+            "<div id='a' style='height:100%'></div>" +
+            "<div id='b' style='height:100%'></div>" +
+            "</div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(a.BorderBox.Height, Is.EqualTo(50).Within(0.5), "half of what the gap leaves");
+            Assert.That(b.BorderBox.Y, Is.EqualTo(60).Within(0.5), "the second row starts past the gap");
+            Assert.That(b.BorderBox.Height, Is.EqualTo(50).Within(0.5));
+        });
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
