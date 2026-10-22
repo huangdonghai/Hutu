@@ -88,10 +88,10 @@ block  html                    0,0 320x649.68
   flow   fill              70,180 180x30 #ffffeecc
   flow   fill              260,180 60x30 #ffffeecc
   flow   text              260,180 5x20 "c" base 13 font 16@Arial, Helvetica, sans-serif #ff000000
-  flow   text              24,212 15x20 "one" base 13 font 16@Arial, Helvetica, sans-serif #ff000000
   flow   text              14,217 10x10 "\u2022 " base 8 font 16@Arial, Helvetica, sans-serif #ff000000
-  flow   text              24,234 15x20 "two" base 13 font 16@Arial, Helvetica, sans-serif #ff000000
+  flow   text              24,212 15x20 "one" base 13 font 16@Arial, Helvetica, sans-serif #ff000000
   flow   text              14,239 10x10 "\u2022 " base 8 font 16@Arial, Helvetica, sans-serif #ff000000
+  flow   text              24,234 15x20 "two" base 13 font 16@Arial, Helvetica, sans-serif #ff000000
   flow   border            4,260 13x28 w:1/1/1/1 #ff777777
   flow   text              8,264 5x20 "x" base 13 font 16@Arial, Helvetica, sans-serif #ff000000
   flow   border            21,260 18x28 w:1/1/1/1 #ff777777

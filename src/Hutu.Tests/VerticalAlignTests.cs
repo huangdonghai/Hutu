@@ -80,9 +80,56 @@ public sealed class VerticalAlignTests
         Assert.That(Text(view, "ab").Baseline, Is.EqualTo(32), "four above the line's own baseline");
     }
 
+    /// <summary>
+    /// A block's own <c>vertical-align</c> says nothing about the words it holds: the property aligns an
+    /// inline-level box on the line it stands in, or a cell in its row, and a block container that says
+    /// <c>middle</c> leaves its text on the baseline the line was built from. Measured against Chrome on
+    /// <c>build/probe-va-block.html</c>, where a div and a span saying the same thing are told apart - the
+    /// span is lifted half an x-height, the div's own text is not.
+    /// </summary>
     [Test]
-    public async Task ABoxAlignedToTheTopClimbsToTheTopOfTheLine(
-        [Values("top", "bottom")] String alignment)
+    public async Task ABlocksOwnAlignmentLeavesItsTextOnTheBaseline()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0;font-size:10px;line-height:1;vertical-align:middle'>ab</p></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Lines(view).Single().BorderBox.Height, Is.EqualTo(10), "the line keeps the block's own leading");
+            Assert.That(Text(view, "ab").Baseline, Is.EqualTo(8), "and the text stands where the font puts it");
+        });
+    }
+
+    /// <summary>
+    /// The same, read where it matters: the user-agent sheet gives every table cell an alignment of
+    /// its own, so a cell that lifts its own text grows every row in the corpus by the lift. Chrome keeps
+    /// the line inside a cell at the block's own height (<c>build/probe-lh-td3.html</c>: four cells at
+    /// <c>line-height:20px</c> are 22 tall, padding included, whatever their alignment says), while a
+    /// span written inside the cell is still lifted.
+    /// </summary>
+    [Test]
+    public async Task ACellDoesNotLiftItsOwnTextToItsMiddle()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:collapse;font-size:10px;line-height:1'><tbody>" +
+            "<tr><td>ab</td><td><span style='vertical-align:middle'>cd</span></td></tr>" +
+            "</tbody></table></body></html>");
+
+        var lines = Lines(view).ToList();
+
+        Assert.That(lines, Has.Count.EqualTo(2), "one line for each cell");
+        Assert.That(lines[0].BorderBox.Height, Is.EqualTo(10), "the cell's own text stands on the baseline");
+        Assert.That(lines[1].BorderBox.Height, Is.EqualTo(10.5).Within(0.001), "the span inside a cell is still lifted");
+    }
+
+    [Test]
+    public async Task ABoxAlignedToTheTopClimbsToTheTopOfTheLine(        [Values("top", "bottom")] String alignment)
     {
         using var view = CreateView();
 

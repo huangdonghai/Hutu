@@ -4344,9 +4344,13 @@ internal sealed class InlineLayout
                     var parents = Chain(fragment.Inline);
                     var running = 0.0;
 
-                    if (parents.Count == 0)
+                    if (parents.Count == 0 && fragment.Box.Element is not null)
                     {
-                        // Text sitting straight in the block has no box of its own to align.
+                        // A box with an element of its own is aligned by what that element says. Text
+                        // sitting straight in the block has no such box: its style is the block's, and a
+                        // block's own <c>vertical-align</c> places the block - a cell in its row - and
+                        // never lifts the words the block holds (CSS 2.1 §10.8.1, measured against Chrome
+                        // on a div and a table cell that both say `middle`).
                         running = Alignment(
                             measurer, fragment.Style, _fallback, above[position], below[position], ascent, descent);
                     }

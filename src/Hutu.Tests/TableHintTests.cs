@@ -353,7 +353,7 @@ public sealed class TableHintTests
             "<tr><td width='60'></td></tr></table>");
 
         Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(60), "the column takes the widest width its cells ask for");
-        Assert.That(Find(view, "a").Children[0].BorderBox.Height, Is.EqualTo(11), "and the words are laid out at the column's width, so they fit on one line");
+        Assert.That(Find(view, "a").Children[0].BorderBox.Height, Is.EqualTo(10), "and the words are laid out at the column's width, so they fit on one line");
     }
 
     [Test]
@@ -373,7 +373,7 @@ public sealed class TableHintTests
             "<table cellpadding='0'><tr><td id='a' height='15'></td></tr><tr><td id='b'>x</td></tr></table>");
 
         Assert.That(Find(view, "a").BorderBox.Height, Is.EqualTo(15), "the row is as tall as the cell asked to be");
-        Assert.That(Find(view, "b").BorderBox.Height, Is.EqualTo(11), "and the row below keeps its own height");
+        Assert.That(Find(view, "b").BorderBox.Height, Is.EqualTo(10), "and the row below keeps its own height");
     }
 
     [Test]
