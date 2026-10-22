@@ -59,6 +59,10 @@ internal sealed partial class TableFormattingContext
         // left of it once they have taken their share is the height the rows have to fill.
         MeasureCaptions(build, contentWidth, context);
 
+        // The children that are not table parts are blocks of the table's own content, and they are
+        // measured against the width the table settled on.
+        MeasureOthers(build, contentWidth, context);
+
         var declared = BoxModel.DeclaredHeight(style, basisHeight, build.InsetsV);
         var gridHeight = declared is { } tableHeight
             ? tableHeight - build.CaptionTop - build.CaptionBottom
@@ -66,7 +70,11 @@ internal sealed partial class TableFormattingContext
 
         CompleteGrid(build, contentWidth, context, gridHeight);
 
-        var contentHeight = build.Grid.Height + build.CaptionTop + build.CaptionBottom;
+        var othersHeight = build.OtherHeights.Count > 0
+            ? build.OtherHeights.Sum()
+            : 0.0;
+
+        var contentHeight = build.Grid.Height + build.CaptionTop + build.CaptionBottom + othersHeight;
 
         // A declared height is a floor, as CSS 2.1 §17.5.3 has it: a table asked to be shorter than its
         // rows need is as tall as the rows make it. The width answers the same way, one step further up:
@@ -100,6 +108,7 @@ internal sealed partial class TableFormattingContext
         var contentWidth = Math.Max(0, borderBox.Width - build.InsetsH);
 
         MeasureCaptions(build, contentWidth, context);
+        MeasureOthers(build, contentWidth, context);
 
         // The box the table was given already accounts for the height it declared, so whatever the
         // captions do not claim is the height the rows have to fill.
@@ -150,6 +159,25 @@ internal sealed partial class TableFormattingContext
         ArrangeRows(build, layout, gridX, gridY, childContext);
 
         var bottomY = gridY + build.Grid.Height;
+
+        // The children that are not table parts are blocks of the table's own content, and they stand
+        // below the rows - the table holds them beside its grid rather than around it.
+        for (var index = 0; index < build.Others.Count; index++)
+        {
+            var other = build.Others[index];
+            var margin = build.OtherMargins[index];
+            var width = build.OtherWidths[index];
+            var height = build.OtherHeights[index] - margin.Vertical;
+
+            var otherContext = childContext.ForContainingBlock(new Size(width, 0));
+
+            layout.Children.Add(_engine.Arrange(
+                other,
+                new Rect(gridX + margin.Left, bottomY + margin.Top, width, height),
+                otherContext));
+
+            bottomY += build.OtherHeights[index];
+        }
 
         foreach (var caption in build.Captions)
         {

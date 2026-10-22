@@ -129,6 +129,19 @@ internal static class TableFixup
                         break;
                     }
 
+                    // A child that is not a table part is not row content either, when it is a
+                    // container of its own: a flex container written for a row group is a flex
+                    // container, and the table holds it rather than a row around it (CSS Display 3
+                    // §2.7 - what the page wrote is the outer role, and a flex container is not a
+                    // row). Anything else is content, and the anonymous boxes the tables need are
+                    // made around it as CSS 2.1 §17.2.1 asks.
+                    if (!isRow && child.Kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry)
+                    {
+                        FlushRow();
+                        normalized.Add(child);
+                        break;
+                    }
+
                     run.Add(child);
                     break;
             }

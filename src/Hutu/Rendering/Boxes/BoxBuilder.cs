@@ -320,7 +320,17 @@ internal static partial class BoxBuilder
             direction);
     }
 
-    private static BoxKind ResolveKind(IElement element, ComputedStyle style)
+    private static BoxKind ResolveKind(IElement element, ComputedStyle style) =>
+        ResolveKind(element, style, inTable: true);
+
+    /// <summary>
+    /// Gets the kind of box an element comes to.
+    /// </summary>
+    /// <param name="inTable">
+    /// Whether the element stands in a table, which is what decides whether a table part keeps the role
+    /// its element gives it (CSS Display 3 §2.7).
+    /// </param>
+    private static BoxKind ResolveKind(IElement element, ComputedStyle style, Boolean inTable)
     {
         if (IsTag(element, "br"))
         {
@@ -350,6 +360,43 @@ internal static partial class BoxBuilder
         }
 
         var display = style.Display;
+
+        // A table part has two roles, and the page may change only one of them (CSS Display 3 §2.7).
+        // The inner role is what the element is - a row group, a row, a cell - and it does not change:
+        // the user agent sheet's `tbody { display: table-row-group }` says what the children of a
+        // tbody are, whether the page went on to write `display: flex` for it. The outer role is what
+        // box the part is, and that is the one the page writes. So a part written `display: flex` is a
+        // flex container and not a row group at all, and the rows inside it are rows of nothing.
+        if (TableRole(element) is { } role)
+        {
+            // A table part has two roles, and the page may change only the outer one (CSS Display 3
+            // §2.7). The inner role is what the element is - a row group, a row, a cell - and it does
+            // not change; the outer role is what box the part is, and that is the one the page writes.
+            //
+            // A part that is no longer in a table is not the part its role says it is: the rows of a
+            // row group that is a flex container are rows of nothing, and a row that is not in a table
+            // is a block - the user agent's `tr { display: table-row }` is conditional on the table, and
+            // without it the row has nothing to be. A cell is the exception: it keeps the role the
+            // sheet gives it, and the cells that stand together make an anonymous table (CSS 2.1
+            // §17.2.1).
+            if (IsTableSpelling(display))
+            {
+                if (!inTable)
+                {
+                    return role == BoxKind.TableCell ? role : BoxKind.Block;
+                }
+
+                // In a table, a part takes the role the spelling names: a cell written `table-row` is
+                // a row, and the table lays it out as one.
+                return display.Equals(RoleDisplay(element), StringComparison.OrdinalIgnoreCase)
+                    ? role
+                    : OuterRole(display);
+            }
+
+            // The page wrote something else, and that is the outer role: a row group written
+            // `display: flex` is a flex container, and the rows inside it are rows of nothing.
+            return role == BoxKind.TableCell ? role : OuterRole(display);
+        }
 
         // The table spellings are matched before the inline test, because `inline-table` starts with
         // "inline" but is a table. The engine does not model the outer role of `inline-table`, so it
@@ -604,6 +651,180 @@ internal static partial class BoxBuilder
 
     private static Boolean IsTag(IElement element, String name) =>
         String.Equals(element.LocalName, name, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets the role a table part has inside a table, or null where the element is not one.
+    /// </summary>
+    /// <remarks>
+    /// The role is what the element is inside a table, and it is the user agent sheet that gives it:
+    /// a <c>tbody</c> is a row group, a <c>tr</c> a row, a <c>td</c> a cell. The page may write another
+    /// display for the element, which changes what box it is and not what it is.
+    /// </remarks>
+    private static BoxKind? TableRole(IElement element)
+    {
+        if (IsTag(element, "tbody"))
+        {
+            return BoxKind.TableRowGroup;
+        }
+
+        if (IsTag(element, "thead"))
+        {
+            return BoxKind.TableRowGroup;
+        }
+
+        if (IsTag(element, "tfoot"))
+        {
+            return BoxKind.TableRowGroup;
+        }
+
+        if (IsTag(element, "tr"))
+        {
+            return BoxKind.TableRow;
+        }
+
+        if (IsTag(element, "td") || IsTag(element, "th"))
+        {
+            return BoxKind.TableCell;
+        }
+
+        if (IsTag(element, "caption"))
+        {
+            return BoxKind.TableCaption;
+        }
+
+        if (IsTag(element, "col"))
+        {
+            return BoxKind.TableColumn;
+        }
+
+        if (IsTag(element, "colgroup"))
+        {
+            return BoxKind.TableColumnGroup;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets whether a display names a role of the table, which is what keeps a part in it.
+    /// </summary>
+    private static Boolean IsTableSpelling(String display) => display.ToLowerInvariant() switch
+    {
+        "table" or "inline-table" or "table-row-group" or "table-header-group" or "table-footer-group" or
+        "table-row" or "table-cell" or "table-caption" or "table-column" or "table-column-group" => true,
+        _ => false,
+    };
+
+    /// <summary>
+    /// Gets the display the user agent sheet gives a table part, which is the one that names its role.
+    /// </summary>
+    /// <remarks>
+    /// A row group is a <c>table-row-group</c>, a header group a <c>table-header-group</c> and a footer
+    /// group a <c>table-footer-group</c>: the engine has one kind for the three of them, and the
+    /// display is what tells them apart.
+    /// </remarks>
+    private static String RoleDisplay(IElement element)
+    {
+        if (IsTag(element, "thead"))
+        {
+            return "table-header-group";
+        }
+
+        if (IsTag(element, "tfoot"))
+        {
+            return "table-footer-group";
+        }
+
+        if (IsTag(element, "tbody"))
+        {
+            return "table-row-group";
+        }
+
+        if (IsTag(element, "tr"))
+        {
+            return "table-row";
+        }
+
+        if (IsTag(element, "td") || IsTag(element, "th"))
+        {
+            return "table-cell";
+        }
+
+        if (IsTag(element, "caption"))
+        {
+            return "table-caption";
+        }
+
+        if (IsTag(element, "col"))
+        {
+            return "table-column";
+        }
+
+        if (IsTag(element, "colgroup"))
+        {
+            return "table-column-group";
+        }
+
+        return String.Empty;
+    }
+
+    /// <summary>
+    /// Gets the kind of box a display names, for an element that is not a table part.
+    /// </summary>
+    private static BoxKind OuterRole(String display)
+    {
+        // A table spelling names a table part whatever the element is: a cell written `table-row` is
+        // a row (CSS Display 3 §2.7 - the outer role is what the page wrote, and a table spelling is
+        // a role of the table). It is still in the table, so the table's algorithms lay it out.
+        switch (display.ToLowerInvariant())
+        {
+            case "table":
+            case "inline-table":
+                return BoxKind.Table;
+
+            case "table-row-group":
+            case "table-header-group":
+            case "table-footer-group":
+                return BoxKind.TableRowGroup;
+
+            case "table-row":
+                return BoxKind.TableRow;
+
+            case "table-cell":
+                return BoxKind.TableCell;
+
+            case "table-caption":
+                return BoxKind.TableCaption;
+
+            case "table-column":
+                return BoxKind.TableColumn;
+
+            case "table-column-group":
+                return BoxKind.TableColumnGroup;
+        }
+
+        if (display.Contains("grid-lanes", StringComparison.OrdinalIgnoreCase) ||
+            display.Contains("masonry", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Masonry;
+        }
+
+        if (display.StartsWith("flex", StringComparison.OrdinalIgnoreCase) ||
+            display.StartsWith("inline-flex", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Flex;
+        }
+
+        if (display.StartsWith("grid", StringComparison.OrdinalIgnoreCase) ||
+            display.StartsWith("inline-grid", StringComparison.OrdinalIgnoreCase))
+        {
+            return BoxKind.Grid;
+        }
+
+        return display.StartsWith("inline", StringComparison.OrdinalIgnoreCase)
+            ? BoxKind.Inline
+            : BoxKind.Block;
+    }
 
     /// <summary>
     /// Collapses every run of the white space the line rules may collapse into a single space, leaving

@@ -83,7 +83,7 @@ internal static partial class BoxBuilder
         }
 
         var box = BuildFusedElement(
-            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, false, profile, ref supported);
+            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, false, true, profile, ref supported);
 
         if (profile is not null)
         {
@@ -124,6 +124,7 @@ internal static partial class BoxBuilder
         ICssParser? parser,
         WritingModeInfo inheritedFlow,
         Boolean inItemContainer,
+        Boolean inTable,
         FusedProfile? profile,
         ref Boolean supported)
     {
@@ -223,7 +224,12 @@ internal static partial class BoxBuilder
             return null;
         }
 
-        var kind = ResolveKind(element, style);
+        var kind = ResolveKind(element, style, inTable);
+
+        // The role a table part has inside a table is the element's own, and it survives whatever the
+        // page wrote for the display: a row group written `display: flex` is a flex container, and the
+        // rows inside it are still the rows its role says they are.
+        var tableRole = BoxBuilder.TableRole(element);
 
         // A flex or grid container blockifies its children: an inline-level child is an item of its
         // own, laid out as a block and carrying the style the page gave it. Left inline, a run of
@@ -264,6 +270,13 @@ internal static partial class BoxBuilder
 
         var children = new List<Box>();
 
+        // A child is in a table only where its parent is one: the rows of a row group that is a flex
+        // container are rows of nothing (CSS Display 3 §2.7), and so are the cells of a row that is.
+        // A table opens the context itself, wherever it stands, and so does a part whose display names
+        // a role of the table - a cell written `table-row` is a row, and the table lays it out.
+        var childInTable = kind is BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or
+            BoxKind.TableColumnGroup;
+
         foreach (var child in element.ChildNodes)
         {
             switch (child)
@@ -273,7 +286,7 @@ internal static partial class BoxBuilder
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
                         elementChild, index, parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands), device, images, faces, state, parser, flow,
-                        kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry, profile, ref supported);
+                        kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry, childInTable, profile, ref supported);
 
                     if (childBox is not null)
                     {
@@ -297,6 +310,16 @@ internal static partial class BoxBuilder
             kind = BoxKind.Block;
         }
 
+        // Cells that are not in a table form an anonymous table among themselves, which is what puts
+        // them side by side instead of one under the other (CSS Display 3 §2.7, and the anonymous
+        // table objects of CSS 2.1 §17.2.1). A run of them is one table; a cell that stands between
+        // two others breaks the run. A container of its own is the exception: the children of a flex
+        // or grid container are its items, and an item is not wrapped in anything.
+        if (!inTable && kind is not (BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry))
+        {
+            children = AnonymousTable(children, style, flow);
+        }
+
         // A cell's or a row's size attribute is not a CSS size: the table reads it to settle the column
         // or the row, while the box itself is laid out at whatever the table gives it.
         var hintedWidth = kind == BoxKind.TableCell ? PresentationalHints.CellSize(element, "width") : null;
@@ -309,6 +332,7 @@ internal static partial class BoxBuilder
             Element = element,
             Flow = flow,
             IsInlineOuter = inlineOuter,
+            TableRole = tableRole,
             HintedWidth = hintedWidth,
             HintedHeight = hintedHeight,
         };
@@ -401,6 +425,72 @@ internal static partial class BoxBuilder
         ListMarkers.Mark(box);
 
         return box;
+    }
+
+    /// <summary>
+    /// Wraps the runs of cells among a box's children in anonymous tables.
+    /// </summary>
+    /// <remarks>
+    /// A cell that is not in a table is a cell of an anonymous table: the cells that stand together
+    /// make one table, and a table's cells sit side by side (CSS Display 3 §2.7). The table carries
+    /// the style of the box the cells are in, since it has no element of its own to match.
+    /// </remarks>
+    private static List<Box> AnonymousTable(List<Box> children, ComputedStyle style, WritingModeInfo flow)
+    {
+        var hasCell = false;
+
+        foreach (var child in children)
+        {
+            if (child.TableRole == BoxKind.TableCell)
+            {
+                hasCell = true;
+                break;
+            }
+        }
+
+        if (!hasCell)
+        {
+            return children;
+        }
+
+        var result = new List<Box>(children.Count);
+        var run = new List<Box>();
+
+        void Flush()
+        {
+            if (run.Count == 0)
+            {
+                return;
+            }
+
+            var table = new Box(BoxKind.Table, style) { IsAnonymous = true, Flow = flow };
+
+            foreach (var cell in run)
+            {
+                table.Children.Add(cell);
+            }
+
+            // The table's own rows are made by the fixup, which wraps the cells in an anonymous row.
+            TableFixup.NormalizeTable(table);
+            result.Add(table);
+            run.Clear();
+        }
+
+        foreach (var child in children)
+        {
+            if (child.TableRole == BoxKind.TableCell)
+            {
+                run.Add(child);
+                continue;
+            }
+
+            Flush();
+            result.Add(child);
+        }
+
+        Flush();
+
+        return result;
     }
 
     /// <summary>

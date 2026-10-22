@@ -313,6 +313,18 @@ internal sealed class Box
     public List<Box> Children { get; } = new();
 
     /// <summary>
+    /// Gets the role a table part has inside a table, or null where the element is not one.
+    /// </summary>
+    /// <remarks>
+    /// The role is what the element is, and it does not change with the display the page writes for it:
+    /// a <c>tbody</c> is a row group and a <c>tr</c> a row whatever the page says (CSS Display 3
+    /// §2.7). What the page may change is the outer role - whether the box is a block, a flex container
+    /// and the like - and a part that is no longer in a table keeps its role for what its children are
+    /// while it is laid out as what the page asked for.
+    /// </remarks>
+    public BoxKind? TableRole { get; init; }
+
+    /// <summary>
     /// Gets whether the box has an inline outer role: <c>inline-flex</c>, <c>inline-grid</c>,
     /// <c>inline-table</c> and <c>inline</c> masonry keep the container they are named after inside,
     /// but take part in the surrounding line box as one atomic piece rather than stacking as a block.

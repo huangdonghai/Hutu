@@ -70,6 +70,22 @@ internal sealed partial class TableFormattingContext
 
         public List<CaptionEntry> Captions { get; } = new();
 
+        /// <summary>
+        /// Gets the children of the table that are not table parts: a container of its own that the page
+        /// wrote for a row group, say. The table holds them beside its rows rather than around them, and
+        /// their height is the table's own.
+        /// </summary>
+        public List<Box> Others { get; } = new();
+
+        /// <summary>Gets the height each of the table's other children claims, margin included.</summary>
+        public List<Double> OtherHeights { get; } = new();
+
+        /// <summary>Gets the margins each of the table's other children carries.</summary>
+        public List<Thickness> OtherMargins { get; } = new();
+
+        /// <summary>Gets the width each of the table's other children was measured at.</summary>
+        public List<Double> OtherWidths { get; } = new();
+
         public List<Double?> ColumnHints { get; } = new();
 
         /// <summary>Gets the <c>col</c> box standing for each grid column, or null where none does.</summary>
@@ -193,6 +209,16 @@ internal sealed partial class TableFormattingContext
 
                 case BoxKind.TableRow:
                     source.Add((child, null));
+                    break;
+
+                default:
+                    // A child that is not a table part at all - a flex container the page wrote for a
+                    // row group, say - is held by the table beside its rows, not around them.
+                    if (child.Kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry)
+                    {
+                        build.Others.Add(child);
+                    }
+
                     break;
             }
         }
@@ -641,6 +667,32 @@ internal sealed partial class TableFormattingContext
             {
                 build.CaptionBottom += caption.OuterHeight;
             }
+        }
+    }
+
+    /// <summary>
+    /// Measures the children of the table that are not table parts - a container of its own that the
+    /// page wrote for a row group, say. They are blocks of the table's own content box, and the table
+    /// is as tall as they are.
+    /// </summary>
+    private void MeasureOthers(TableBuild build, Double contentWidth, LayoutContext context)
+    {
+        if (build.Others.Count == 0)
+        {
+            return;
+        }
+
+        var childContext = context.ForContainingBlock(new Size(contentWidth, 0));
+
+        foreach (var other in build.Others)
+        {
+            var margin = other.Style.Margin.Resolve(contentWidth);
+            var avail = Math.Max(0, contentWidth - margin.Horizontal);
+            var size = _engine.Measure(other, MeasureConstraints.FitWidth(avail), childContext);
+
+            build.OtherHeights.Add(size.Height + margin.Vertical);
+            build.OtherMargins.Add(margin);
+            build.OtherWidths.Add(size.Width);
         }
     }
 
