@@ -1230,6 +1230,78 @@ public sealed class PositionedLayoutTests
         return view;
     }
 
+    /// <summary>
+    /// The place a box left out of the flow falls back to when it sets no edge, and the margins that
+    /// move it off that place.
+    /// </summary>
+    /// <remarks>
+    /// CSS 2.1 §10.3.7 gives an unset edge the static position - the place the box's own margins would
+    /// have left it in if it had stayed in flow - and §8.3.1 folds no margin into a box that has left the
+    /// flow, so neither the run its neighbour opened nor the run it would have opened is any part of
+    /// either answer. Measured in Chrome on 2026-10-22: a paragraph with a 16px margin, then
+    /// `position:absolute; margin-top:50px; margin-left:50px`, puts the box at 58,100.5 while the
+    /// paragraph after it stands at 50.5 - the box is 50 along and 50 down from the edge the first
+    /// paragraph's margin reached, and the next paragraph saw none of its margins.
+    /// </remarks>
+    [Test]
+    public async Task AFlownBoxStandsWhereItsOwnMarginsLeftItAndMovesNoOtherBox()
+    {
+        using var plain = CreateView(400);
+        await plain.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='height:20px;margin:10px 0'></div>" +
+            "<div id='a' style='position:absolute;width:100px;height:40px'></div>" +
+            "<div id='b' style='height:20px'></div>" +
+            "</body></html>");
+
+        using var margined = CreateView(400);
+        await margined.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='height:20px;margin:10px 0'></div>" +
+            "<div id='a' style='position:absolute;margin:50px 50px 0 50px;width:100px;height:40px'></div>" +
+            "<div id='b' style='height:20px'></div>" +
+            "</body></html>");
+
+        var stood = Find(plain, "a").BorderBox;
+        var moved = Find(margined, "a").BorderBox;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(moved.X - stood.X, Is.EqualTo(50), "the left margin moves the box along by itself, once");
+            Assert.That(moved.Y - stood.Y, Is.EqualTo(50), "and the top margin moves it down by itself, once");
+            Assert.That(Find(plain, "b").BorderBox.Y, Is.EqualTo(Find(margined, "b").BorderBox.Y),
+                "the box that left the flow lends its margins to no other box");
+            // The box 20 tall with 10 of margin above and below leaves the run at 40, and the 50 the
+            // absolved box was given stands it there - the same arithmetic Chrome showed on a paragraph
+            // that ended at 34.5 with 16 of margin below it, giving 100.5 for a 50px margin-top.
+            Assert.That(moved.Y, Is.EqualTo(90), "the edge it stands at is the run it would have joined");
+        });
+    }
+
+    /// <summary>
+    /// The same fallback where the box stands inside one that holds it, which is the case the
+    /// containing block makes rather than the flow.
+    /// </summary>
+    [Test]
+    public async Task AFlownBoxInsideAPositionedBoxCountsItsMarginsOnceToo()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:relative;top:10px;left:20px;margin:50px;width:200px;height:20px'>" +
+            "<div id='a' style='position:absolute;margin:50px 0 0 50px;width:100px;height:40px'></div>" +
+            "</div></body></html>");
+
+        var stood = Find(view, "a").BorderBox;
+
+        Assert.That(
+            (stood.X, stood.Y),
+            Is.EqualTo((120d, 110d)),
+            "the box stands at its holding box's own edge, moved by its margins once: the wrapper is at "
+            + "70,60 after its offset, and the child it holds is 50 along and 50 down from there "
+            + "(CSS 2.1 §10.3.7, and Chrome's 128,351 for a holder at 78,301)");
+    }
+
     private static HutuViewInternal CreateView(Int32 width, Int32 height = 600)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

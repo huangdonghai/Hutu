@@ -1257,8 +1257,12 @@ internal sealed class BlockLayout
                     topEscapes = false;
                 }
             }
-            else
+            else if (!PositionedLayout.IsOutOfFlow(child))
             {
+                // A box that left the flow is in neither part of the run. CSS 2.1 §8.3.1 folds no margin
+                // into it and folds none of the run into it, so the strip the walk gathered is where that
+                // box would have stood, and the margins it would have carried are the positioning pass's
+                // own to add (ibid. §10.3.7).
                 pending = Combine(pending, childTop);
             }
 
@@ -1273,9 +1277,13 @@ internal sealed class BlockLayout
                 // box appended past its later siblings is drawn over them whatever the stacking rules
                 // say - which is how a box that should be covered ends up on top. Placing it in order
                 // costs nothing: it takes no part in the stacking above either way.
+                // The anchor is the outer edge the run reached, with nothing of the box's own margins in
+                // it. An unset edge takes that place plus those margins, and the pass that lays the box
+                // out adds them, so an anchor carrying them too stood the box twice its own distance from
+                // the flow - which is where the reference page of a dozen reftests stands its box.
                 parent.Children.Add(_engine.ArrangePositioned(
                     child,
-                    new Offset(contentX + margin.Left, cursor + pending),
+                    new Offset(contentX, cursor + pending),
                     context));
 
                 continue;
@@ -1525,17 +1533,19 @@ internal sealed class BlockLayout
                     startEscapes = false;
                 }
             }
-            else
+            else if (!PositionedLayout.IsOutOfFlow(child))
             {
+                // Same as in a row: the box that left the flow keeps its margins out of the run.
                 pending = Combine(pending, childStart);
             }
 
             if (PositionedLayout.IsOutOfFlow(child))
             {
-                // Same as in a row: the box takes no space, but the place it would have had is kept
-                // as the static position an unset offset falls back to.
-                var anchor = flow.Map(content, beforeIt, 0, cursor + pending, 0);
-                outOfFlow.Add((child, new Offset(anchor.X, anchor.Y)));
+                // Same as in a row: the box takes no space, but the place it would have had is kept as
+                // the static position an unset edge falls back to - the outer edge the run reached, with
+                // none of the box's own margins in it, for the two reasons the arranging walk gives.
+                var stood = flow.Map(content, 0, 0, cursor + pending, 0);
+                outOfFlow.Add((child, new Offset(stood.X, stood.Y)));
                 continue;
             }
 
