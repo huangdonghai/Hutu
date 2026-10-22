@@ -487,6 +487,43 @@ public sealed class PositionedLayoutTests
     }
 
     /// <summary>
+    /// A box that only captures - a filter, a backdrop filter, containment, a transform, with no position of
+    /// its own - stands in its descendants' containing block chain just as a positioned box does, so the
+    /// overflow it hides cuts what flew out of it as well (CSS Overflow 1 §3.2 with CSS Filter Effects 1
+    /// §2.4, CSS Contain 2 §2.2 and CSS Transforms 1 §transform-rendering). Chrome clips at each of them,
+    /// which <c>build/probe-clip-chain.html</c> reads back by hitting the place a box pokes out to, and not
+    /// at a static box that captures nothing.
+    /// </summary>
+    /// <remarks>
+    /// Nothing had to be written for this to hold: a box that captures is a stacking context as well - a
+    /// transform and containment already were, and the filter and the opacity became one in the two
+    /// commits before this - so the walk that gathers a context's levels stops at the box, and what flew
+    /// out of a capturing ancestor is painted where its clips stand rather than in a list above them.
+    /// The cases are kept as the guard on that reasoning: take the context back off the filter and the
+    /// first two go red.
+    /// </remarks>
+    [Test]
+    public async Task TheOverflowOfACapturingBoxCutsWhatFliesOutOfIt(
+        [Values("filter:brightness(100%);", "backdrop-filter:blur(2px);", "contain:paint;",
+                "transform:translateX(0);", "opacity:.5;")] String capture)
+    {
+        var flown = "<div style='position:absolute;top:0;left:0;width:200px;height:200px;background:#ff0000'></div>";
+
+        using var view = await Painted(
+            $"<div id='c' style='overflow:hidden;{capture}width:50px;height:50px'>" + flown + "</div>");
+
+        var cut = Find(view, "c").PaddingBox;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(CutAround(view, 0xFFFF_0000u), Is.True,
+                $"a box that only says `{capture.TrimEnd(';')}` is the containing block, and cuts what left the flow");
+            Assert.That(view.Paint!.Commands.OfType<PushClipCommand>().Any(clip => clip.Bounds.Equals(cut)),
+                Is.True, "and the clip it is cut by is that box's own padding box");
+        });
+    }
+
+    /// <summary>
     /// A box taken out of the flow is clipped along its containing block chain and not along the boxes it
     /// merely stands in, so the layer it is painted from has to carry the clips of that chain: the positioned
     /// box that hides its overflow cuts it, and a static one above its containing block does not
