@@ -117,6 +117,41 @@ public sealed class TablePartDisplayTests
             "a header group is a row group, as the user agent sheet says");
     }
 
+    /// <summary>
+    /// The row and the cell a table makes for itself carry nothing of the style of the box they were made
+    /// from. Bare text between two rows is wrapped in an anonymous cell, and that cell in an anonymous
+    /// row; both borrow the declaration of the group they stand in, which is a statement about that group
+    /// - the room it keeps, the colour it paints - and a wrapper that takes them is drawn and spaced
+    /// where the page said nothing.
+    /// </summary>
+    [Test]
+    public async Task ThePartsATableMakesForItselfBorrowNothing()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:table;width:400px'>" +
+            "<div id='row' style='display:table-row;padding:10px;border:4px solid black;background:red'>" +
+            "text in the row</div>" +
+            "<div id='group' style='display:table-row-group;padding:10px;background:red'>" +
+            "<div style='display:table-cell'>A</div></div>" +
+            "</div></body></html>");
+
+        var row = Find(view, "div").Single(node => node.Source.Element!.Id == "row");
+        var group = Find(view, "div").Single(node => node.Source.Element!.Id == "group");
+        var cell = row.Children.Single(node => node.Source.IsAnonymous);
+        var made = group.Children.Single(node => node.Source.IsAnonymous);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(cell.Kind, Is.EqualTo(LayoutKind.TableCell), "the run became a cell of its own");
+            Assert.That(cell.Padding.Horizontal, Is.Zero, "and keeps none of the row's room or line");
+            Assert.That(cell.Border.Horizontal, Is.Zero);
+            Assert.That(made.Kind, Is.EqualTo(LayoutKind.TableRow), "the cell was wrapped in a row");
+            Assert.That(made.Padding.Vertical, Is.Zero, "which keeps none of the group's room either");
+        });
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
