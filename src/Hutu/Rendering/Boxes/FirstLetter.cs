@@ -1,6 +1,7 @@
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Parser;
 using AngleSharp.Dom;
+using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
 using System.Globalization;
@@ -80,39 +81,226 @@ internal static class FirstLetter
             state.Cache,
             variables);
 
+        // `initial-letter` makes the letter a drop cap: it is drawn at the size the lines it spans ask
+        // for and floats, so the lines beside it are shortened until its box ends (CSS Inline 3 §3.2).
+        // A run the builder wrapped in an anonymous block is still this block's own content - an empty
+        // block or a float standing before the text is enough to make one - so the letter it opens is
+        // still this block's letter.
+        var lettering = Lettering(pseudo.Find("initial-letter")?.Value);
+        var initial = lettering is { } asked && (ReferenceEquals(host, block) || host.IsAnonymous)
+            ? MeasureInitial(block, style, asked, device)
+            : null;
+
         // Nothing the engine draws would change, so the text is left as the one shaped run it was. A letter
         // cut out of it is a boundary the shaper has to stop at, and CSS Text 3 §4.4 asks for shaping to
         // carry across a boundary that nothing at it says otherwise about - which is what the borrowed
         // text-transform-shaping pairs show: an arm that only asks for a capitalisation this engine never
         // reads must leave the word whole.
-        if (DrawnTheSame(run.Style, style))
+        if (initial is null && DrawnTheSame(run.Style, style))
         {
             return;
         }
 
         var at = host.Children.IndexOf(run);
-        var letter = Letter(run, text[..taken], style);
+        var letter = Letter(run, text[..taken], style, initial is not null);
+
+        if (initial is { } box)
+        {
+            // The letter stands at the start of the first line, so a right-to-left row floats it to the
+            // right edge rather than the left one (CSS Inline 3 §3.1: it is placed against the line's
+            // inline-start edge).
+            var side = !block.Flow.IsVertical && block.Flow.IsRightToLeft ? FloatSide.Right : FloatSide.Left;
+
+            style.MakeInitialLetter(
+                box.FontSize,
+                box.LineHeight,
+                box.Height,
+                box.Top,
+                side,
+                block.Style.TextIndent);
+        }
 
         if (taken == text.Length)
         {
-            host.Children[at] = letter;
+            host.Children.RemoveAt(at);
+        }
+        else
+        {
+            host.Children[at] = Remainder(run, text[taken..]);
+        }
+
+        // A letter wrapped in an anonymous block joins the block itself, so that it floats beside every
+        // float the block holds rather than beside only those inside its anonymous box.
+        if (host.IsAnonymous && initial is not null)
+        {
+            var own = block.Children.IndexOf(host);
+            block.Children.Insert(own, letter);
+
+            if (host.Children.Count == 0)
+            {
+                block.Children.Remove(host);
+            }
+        }
+        else
+        {
+            host.Children.Insert(at, letter);
+        }
+
+        Regroup(host, initial is not null);
+
+        if (initial is { Push: > 0 } pushed)
+        {
+            Push(block, letter, pushed.Push);
+        }
+    }
+
+    /// <summary>
+    /// Stands the block's text that much lower, at the anonymous box the letter floats beside.
+    /// </summary>
+    private static void Push(Box block, Box letter, Double push)
+    {
+        foreach (var child in block.Children)
+        {
+            if (child.IsAnonymous && !ReferenceEquals(child, letter))
+            {
+                child.Style.AddTopMargin(StyleLength.FromPixels(push));
+                return;
+            }
+        }
+    }
+
+    /// <summary>One initial letter's used shape, worked out before the letter's style is changed.</summary>
+    /// <param name="Push">
+    /// How far the content beside the letter moves down: the lines the letter is high that it does not
+    /// sink through, which the block-start edge rule turns into the originating line and everything
+    /// after it standing that much lower (CSS Inline 3 §7.6.1).
+    /// </param>
+    private readonly record struct InitialBox(
+        Double FontSize,
+        Double LineHeight,
+        Double Height,
+        Double Top,
+        Double Push);
+
+    /// <summary>
+    /// Reads an <c>initial-letter</c> value: the number of lines the letter's cap height spans, and how
+    /// many lines it sinks through - the second integer, the legacy <c>drop</c> word standing for the
+    /// number itself and <c>raise</c> for one line.
+    /// </summary>
+    private static (Int32 Size, Int32 Sink)? Lettering(String? value)
+    {
+        if (String.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var size = 0;
+        var sink = 0;
+        var raised = false;
+
+        foreach (var word in value.Split((Char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (Int32.TryParse(word, NumberStyles.Integer, CultureInfo.InvariantCulture, out var count) && count >= 1)
+            {
+                if (size == 0)
+                {
+                    size = count;
+                }
+                else if (sink == 0)
+                {
+                    sink = count;
+                }
+
+                continue;
+            }
+
+            if (String.Equals(word, "raise", StringComparison.OrdinalIgnoreCase))
+            {
+                raised = true;
+            }
+            else if (!String.Equals(word, "drop", StringComparison.OrdinalIgnoreCase) &&
+                !String.Equals(word, "normal", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+        }
+
+        if (size == 0)
+        {
+            return null;
+        }
+
+        return (size, Math.Max(1, raised ? 1 : sink == 0 ? size : sink));
+    }
+
+    /// <summary>
+    /// Works out the initial letter's font size and box from the block's own lines and font: the cap
+    /// height has to reach from the first line's cap top down to the baseline of the line the letter
+    /// sinks to, and the box is the letter's em square at that size, floating from the cap top.
+    /// </summary>
+    private static InitialBox? MeasureInitial(Box block, ComputedStyle style, (Int32 Size, Int32 Sink) asked, HutuRenderDevice device)
+    {
+        if (device.Text is not { } measurer || block.Flow.IsVertical)
+        {
+            return null;
+        }
+
+        var font = block.Style.GetFont();
+        var lineHeight = block.Style.ResolvedFont.LineHeight;
+
+        if (lineHeight is not { } height || height <= 0 || font.Size <= 0)
+        {
+            return null;
+        }
+
+        var metrics = measurer.GetMetrics(font);
+
+        if (metrics.CapHeight <= 0)
+        {
+            return null;
+        }
+
+        var capRatio = metrics.CapHeight / font.Size;
+        var emRatio = (metrics.Ascent + metrics.Descent) / font.Size;
+        var capTop = (height - (metrics.Ascent + metrics.Descent)) / 2 + (metrics.Ascent - metrics.CapHeight);
+        var target = (asked.Size - 1) * height + metrics.CapHeight;
+        var fontSize = target / capRatio;
+        var box = emRatio * fontSize;
+
+        // The letter's cap top stays at the first line's cap top whatever it sinks through: lining it
+        // up with the baseline of the line it sinks to would lift it out of the block, which §7.6.1
+        // forbids, so the lines it does not sink through are the ones that move instead.
+        return new InitialBox(fontSize, box, box, capTop, Math.Max(0, asked.Size - asked.Sink) * height);
+    }
+
+    /// <summary>
+    /// Puts the block's children back together now that the letter is a floated block of its own: the
+    /// text that follows it is inline content beside a block, and has to become the anonymous block the
+    /// float's lines are laid out in.
+    /// </summary>
+    private static void Regroup(Box host, Boolean initial)
+    {
+        if (!initial)
+        {
             return;
         }
 
-        host.Children[at] = Remainder(run, text[taken..]);
-        host.Children.Insert(at, letter);
+        var children = new System.Collections.Generic.List<Box>(host.Children);
+        host.Children.Clear();
+        BoxBuilder.GroupChildren(host, children);
     }
 
     /// <summary>
     /// Gets the box the letter is wrapped in, standing where the run it was cut from stood.
     /// </summary>
-    private static Box Letter(Box run, String text, ComputedStyle style)
+    private static Box Letter(Box run, String text, ComputedStyle style, Boolean block = false)
     {
-        var letter = new Box(BoxKind.Inline, style)
+        var letter = new Box(block ? BoxKind.Block : BoxKind.Inline, style)
         {
             Element = run.Element,
             Flow = run.Flow,
             IsGenerated = run.IsGenerated,
+            IsInitialLetter = block,
         };
 
         letter.Children.Add(new Box(BoxKind.Text, style)

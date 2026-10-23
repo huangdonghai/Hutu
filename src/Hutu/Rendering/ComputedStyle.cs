@@ -3996,6 +3996,57 @@ internal readonly struct ComputedStyle
             Array.Empty<Shadow>();
     }
 
+    /// <summary>
+    /// Turns a first letter into its initial-letter box: the letter is drawn at the font size the lines
+    /// it spans ask for, stands on its own line's baseline, and floats so that the lines beside it are
+    /// shortened until its box ends (CSS Inline 3 §3.2). Only a style the first-letter arm built is
+    /// changed this way - it belongs to that one box and to the text inside it.
+    /// </summary>
+    internal void MakeInitialLetter(
+        Double fontSize,
+        Double lineHeight,
+        Double height,
+        Double topOffset,
+        FloatSide side,
+        StyleLength indent)
+    {
+        // The letter sits where the line's own indent has already put it, and §7.8.2 shifts the start of
+        // the line's contents again by that indent - so the two add up, which Chrome measures as twice
+        // the text-indent and the WPT pairs draw as such. A declared margin is kept and added to.
+        var margin = _values.BoxModel.Margin;
+        var top = StyleLength.Sum(new[] { margin.Top, StyleLength.FromPixels(topOffset) });
+        var right = side == FloatSide.Right ? StyleLength.Sum(new[] { margin.Right, indent }) : margin.Right;
+        var left = side == FloatSide.Left ? StyleLength.Sum(new[] { margin.Left, indent }) : margin.Left;
+
+        _values.Font = _values.Font with { Size = fontSize, LineHeight = lineHeight };
+        _values.BoxModel = _values.BoxModel with
+        {
+            Width = StyleLength.Auto,
+            Height = StyleLength.FromPixels(height),
+            HeightDeclared = true,
+            Margin = new StyleThickness(top, right, margin.Bottom, left),
+        };
+        _values.DisplayPositioning = _values.DisplayPositioning with { Float = side, Display = "block" };
+    }
+
+    /// <summary>
+    /// Moves a box's top margin out by one more length, which is how the lines an initial letter
+    /// stands over are pushed down by the lines it does not sink through (CSS Inline 3 §7.6.1).
+    /// </summary>
+    internal void AddTopMargin(StyleLength extra)
+    {
+        var margin = _values.BoxModel.Margin;
+
+        _values.BoxModel = _values.BoxModel with
+        {
+            Margin = new StyleThickness(
+                StyleLength.Sum(new[] { margin.Top, extra }),
+                margin.Right,
+                margin.Bottom,
+                margin.Left),
+        };
+    }
+
     /// <summary>Gets whether a broken box is wrapped independently on every piece.</summary>
     public Boolean ClonesDecoration =>
         _values.Fused is { } fused

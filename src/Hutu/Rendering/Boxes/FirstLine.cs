@@ -116,10 +116,19 @@ internal static class FirstLine
         // A line box is not the block that owns the style: it is made from the same box as the lines beside
         // it, so taking the style from it again would hand every line of the block what belongs to one.
         if (box.Kind != LayoutKind.Line && !box.IsOutOfFlow &&
-            box.Source.FirstLinePaint is { } paint && !OpensWithBreak(box.Source) &&
-            Reach(box) is { } line)
+            box.Source.FirstLinePaint is { } paint && !OpensWithBreak(box.Source))
         {
-            Cover(line, paint);
+            var line = Reach(box);
+
+            if (line is not null || ContainsInitialLetter(box))
+            {
+                CoverLetters(box, paint);
+
+                if (line is not null)
+                {
+                    Cover(line, paint);
+                }
+            }
         }
 
         foreach (var child in box.Children)
@@ -209,8 +218,10 @@ internal static class FirstLine
         foreach (var child in box.Children)
         {
             // A box that took the flow is on no line of this formatting context, and one that lays its own
-            // content out keeps the lines it makes to itself.
-            if (child.IsOutOfFlow || KeepsItsOwnLines(child))
+            // content out keeps the lines it makes to itself. A float is the same: its content stands in
+            // no line box, so the block's first line runs past it - except for the initial letter, which
+            // Coverage gives the style by hand because the line it was cut from is the first one.
+            if (child.IsOutOfFlow || KeepsItsOwnLines(child) || child.Source.Style.Float != FloatSide.None)
             {
                 continue;
             }
@@ -222,6 +233,45 @@ internal static class FirstLine
         }
 
         return null;
+    }
+
+    /// <summary>Gets whether any of the box's boxes is an initial letter.</summary>
+    private static Boolean ContainsInitialLetter(LayoutBox box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.Source.IsInitialLetter)
+            {
+                return true;
+            }
+
+            if (!child.IsOutOfFlow && ContainsInitialLetter(child))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Gives the style to the initial letters the box opens with, which stand on its first line even
+    /// though they have left it for the start edge.
+    /// </summary>
+    private static void CoverLetters(LayoutBox box, Paint style)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.Source.IsInitialLetter)
+            {
+                child.FirstLinePaint = style;
+                Cover(child, style);
+            }
+            else if (!child.IsOutOfFlow)
+            {
+                CoverLetters(child, style);
+            }
+        }
     }
 
     /// <summary>

@@ -55,13 +55,17 @@ internal sealed class FloatBand
     /// shape's furthest reach across the line's height rather than its width at the line's top edge (CSS
     /// Shapes 1 §1.3).
     /// </remarks>
-    public Double Room(Double top, Double height, Double maxInline, out Double inset)
+    public Double Room(Double top, Double height, Double maxInline, Boolean reversed, out Double inset)
     {
         var (left, right) = Tracks.LineSpanAt(OriginY + top, height);
 
-        inset = Math.Max(0, left - Left);
+        // The inset is measured from the edge the line begins at, which is the right edge of a
+        // right-to-left row: the line box and every run on it are placed from there, so handing back
+        // the distance from the physical left puts a right float's lines on its wrong side.
+        var begin = reversed ? Left + maxInline - right : left - Left;
+        inset = Math.Max(0, begin);
 
-        var room = Math.Min(maxInline, right - Left) - inset;
+        var room = Math.Min(maxInline, reversed ? Left + maxInline - left : right - Left) - inset;
 
         return room > 0 ? room : 0;
     }

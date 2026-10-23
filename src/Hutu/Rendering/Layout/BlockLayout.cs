@@ -1895,8 +1895,12 @@ internal sealed class BlockLayout
 
         var (left, right) = tracks.FreeSpanAt(top, 0.001);
 
-        var shift = Math.Max(0, left - band.Left);
-        var room = Math.Max(0, Math.Min(contentWidth, right - band.Left) - shift);
+        // A right-to-left row's content begins at its right edge, so the room a formatting root is
+        // given and the distance it is shifted from that edge are read the other way round.
+        var reversed = child.Flow.InlineSign < 0;
+        var contentRight = band.Left + contentWidth;
+        var shift = Math.Max(0, reversed ? contentRight - right : left - band.Left);
+        var room = Math.Max(0, Math.Min(contentWidth, reversed ? contentRight - left : right - band.Left) - shift);
         var drop = Math.Max(0, top - band.OriginY);
 
         return (shift, room, drop, null);

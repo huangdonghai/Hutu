@@ -230,6 +230,12 @@ internal sealed class Box
     public Boolean IsAnonymous { get; init; }
 
     /// <summary>
+    /// Gets whether this box is the letter an <c>initial-letter</c> made into a float. It stands on the
+    /// block's first line even though it has left it, so <c>::first-line</c> still reaches it.
+    /// </summary>
+    public Boolean IsInitialLetter { get; init; }
+
+    /// <summary>
     /// Gets whether this text box is a list item's marker rather than something the author wrote.
     /// </summary>
     /// <remarks>

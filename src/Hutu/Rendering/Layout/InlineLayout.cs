@@ -1574,11 +1574,16 @@ internal sealed class InlineLayout
         // it has been for floats themselves: the band a line would be shortened by runs sideways there.
         var room = new LineRoom(
             flow.IsVertical ? null : context.Containing.Floats,
-            maxInline);
+            maxInline,
+            flow.InlineSign < 0);
 
         // Only the first line of the content is set in; the line after a forced break begins where any
-        // other line does, which is what leaving the indent behind on the first builder says.
-        var builder = new LineBuilder(strut, indent);
+        // other line does, which is what leaving the indent behind on the first builder says. An indent
+        // is measured from the content edge and a float shortens the line from that same edge, so a
+        // float standing where the indent reaches leaves the line to start where the float ends, not
+        // that far past it. A negative indent hangs out of the box and is never pulled back in.
+        var leading = indent > 0 ? Math.Max(0, indent - room.Inset) : indent;
+        var builder = new LineBuilder(strut, leading);
 
         void Close(LineBuilder filled, Boolean forced = false)
         {
@@ -3701,14 +3706,16 @@ internal sealed class InlineLayout
     {
         private readonly FloatBand? _band;
         private readonly Double _max;
+        private readonly Boolean _reversed;
 
         /// <summary>How far down the band the open line stands, which is what a shape is read across.</summary>
         private Double _height;
 
-        public LineRoom(FloatBand? band, Double max)
+        public LineRoom(FloatBand? band, Double max, Boolean reversed)
         {
             _band = band;
             _max = max;
+            _reversed = reversed;
             Open();
         }
 
@@ -3749,7 +3756,7 @@ internal sealed class InlineLayout
 
             if (_band is { } band)
             {
-                Room = band.Room(Top, _height, _max, out var inset);
+                Room = band.Room(Top, _height, _max, _reversed, out var inset);
                 Inset = inset;
             }
         }
@@ -3766,7 +3773,7 @@ internal sealed class InlineLayout
                 return;
             }
 
-            Room = band.Room(Top, _height, _max, out var inset);
+            Room = band.Room(Top, _height, _max, _reversed, out var inset);
             Inset = inset;
 
             if (Room > 0)
@@ -3781,7 +3788,7 @@ internal sealed class InlineLayout
                 Gap = below - Top;
                 Top = below;
 
-                Room = band.Room(Top, _height, _max, out inset);
+                Room = band.Room(Top, _height, _max, _reversed, out inset);
                 Inset = inset;
             }
 
@@ -3821,7 +3828,7 @@ internal sealed class InlineLayout
             Gap = below - Top;
             Top = below;
 
-            Room = band.Room(Top, _height, _max, out var inset);
+            Room = band.Room(Top, _height, _max, _reversed, out var inset);
             Inset = inset;
 
             if (Room <= 0)
