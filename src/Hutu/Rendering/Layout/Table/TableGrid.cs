@@ -95,6 +95,14 @@ internal sealed class TableRowInfo
     /// </summary>
     public Boolean HeightDeclared;
 
+    /// <summary>
+    /// Gets or sets whether the row's used height came from the table's own stated height rather than
+    /// from anything inside it. That room is a definite height for the cells the row holds, so a
+    /// percentage inside one resolves against it; a height the row or a neighbouring cell asked for is
+    /// not (measured in Chrome: a stated table height fills the cell, a sibling's height does not).
+    /// </summary>
+    public Boolean FilledByTable;
+
     /// <summary>Gets or sets the border-box offset from the grid origin.</summary>
     public Double Y;
 }
@@ -480,6 +488,7 @@ internal sealed class TableGrid
             if (open == 0 || !row.HeightDeclared)
             {
                 row.Height += share;
+                row.FilledByTable = true;
             }
         }
     }

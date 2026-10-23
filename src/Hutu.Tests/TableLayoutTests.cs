@@ -45,6 +45,43 @@ public sealed class TableLayoutTests
     }
 
     [Test]
+    public async Task AStatedTableHeightMakesACellsPercentageResolve()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:separate;border-spacing:0;height:100px'>" +
+            "<tr><td id='cell'><div id='inner' style='height:100%'>x</div></td></tr>" +
+            "</table>" +
+            "</body></html>");
+
+        var cell = Find(view, "cell");
+        var inner = Find(view, "inner");
+
+        Assert.That(
+            inner.BorderBox.Height,
+            Is.EqualTo(cell.BorderBox.Height - 2).Within(0.5),
+            "the cell's height came from the table's, so it is definite and the percentage fills it");
+    }
+
+    [Test]
+    public async Task ASiblingCellsHeightDoesNotMakeAPercentageResolve()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:separate;border-spacing:0'>" +
+            "<tr><td><div id='inner' style='height:100%'>x</div></td><td height='80'>tall</td></tr>" +
+            "</table>" +
+            "</body></html>");
+
+        Assert.That(
+            Find(view, "inner").BorderBox.Height,
+            Is.EqualTo(10).Within(0.5),
+            "the row is tall because of a neighbour, which Chrome does not treat as definite for the percentage");
+    }
+
+    [Test]
     public async Task TheTableShrinksToFitItsContent()
     {
         using var view = CreateView(400);

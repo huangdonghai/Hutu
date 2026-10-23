@@ -342,7 +342,17 @@ internal sealed partial class TableFormattingContext
                 Math.Max(0, height - cell.UsedBorder.Vertical)));
         }
 
-        var layout = _engine.Arrange(cell.Box, rect, cellContext);
+        // A cell whose room the table's stated height filled has a definite height, so a percentage
+        // inside it resolves; one a row or a neighbour made tall does not (CSS Sizing 3 §5.2, measured
+        // in Chrome). A height the cell itself wrote is already definite through its own style.
+        var definite = cell.Box.HintedHeight is { HasValue: true } hint && hint.Kind != StyleLengthKind.Percent;
+
+        for (var row = cell.Row; row < cell.Row + cell.RowSpan && row < grid.Rows.Count; row++)
+        {
+            definite |= grid.Rows[row].FilledByTable;
+        }
+
+        var layout = _engine.Arrange(cell.Box, rect, cellContext, definite);
 
         // The used border replaces whatever the cell's own style asked for: under the collapsing model
         // it is half of a shared line, so the box's border and the one it paints are not the same.
