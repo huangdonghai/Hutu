@@ -1799,15 +1799,18 @@ public sealed class SkiaPaintExecutor
     /// whole gradient again - the line it runs along is the one that box asks for.
     /// </summary>
 
+
     /// <summary>
-    /// Draws a border image: the picture cut into nine regions at the slices, the four corners drawn as
-    /// they are into the corners of the area, the four edges tiled into the room between them the way the
-    /// page asked, and the middle only where <c>fill</c> asks for it (CSS Backgrounds 3 §6.3, §6.4).
+    /// Draws a border image: the picture cut into nine regions and each region scaled, tiled and drawn
+    /// into the room its width gives it (CSS Backgrounds 3 §5.6).
     /// </summary>
     /// <remarks>
-    /// The picture is a file or a gradient. A file has a size of its own, so its slices are measures of it;
-    /// a gradient has none, so it is drawn over the whole border image area first and that drawing is the
-    /// picture, which is what makes a gradient frame line up with the box it frames.
+    /// The algorithm is the chapter's four steps, and the order of them is what makes the picture look
+    /// right: every piece is first scaled so that the slice it came from is as thick as the border-image
+    /// width, which is what keeps a 2-pixel ring in a 12-pixel source a 12-pixel-thick frame; then the
+    /// repeat keyword stretches or rescales each piece along its own axis; then the tiles are placed and
+    /// drawn. A picture with no size of its own - a gradient - is drawn over the whole area first, so its
+    /// slices are measures of that drawing.
     /// </remarks>
     private void DrawBorderImage(SKCanvas canvas, BorderImageCommand command)
     {
@@ -1834,7 +1837,7 @@ public sealed class SkiaPaintExecutor
         var left = (Single)Math.Max(0, widths.Left);
 
         // The nine cuts of the picture. A pair that comes to more than the picture is scaled down together,
-        // so that the middle of it keeps its share (CSS Backgrounds 3 §6.2).
+        // so that the middle of it keeps its share (CSS Backgrounds 3 §5.2).
         var slices = command.Image.Slices;
         var cutX = new[] { (Single)slices[3].Resolve(source.Width), (Single)slices[1].Resolve(source.Width) };
         var cutY = new[] { (Single)slices[0].Resolve(source.Height), (Single)slices[2].Resolve(source.Height) };
@@ -1855,18 +1858,42 @@ public sealed class SkiaPaintExecutor
 
         var inner = new SKRect(area.Left + left, area.Top + top, area.Right - right, area.Bottom - bottom);
 
+        // Step one: each edge is made as thick as its room, and as long as its own slice was - so a slice
+        // that is thinner than the room it fills is stretched towards the corners along with the edge. The
+        // middle follows the top and the left, which is what keeps the picture's proportions across it.
+        var scaleTop = cutY[0] > 0 ? top / cutY[0] : 0;
+        var scaleBottom = cutY[1] > 0 ? bottom / cutY[1] : 0;
+        var scaleLeft = cutX[0] > 0 ? left / cutX[0] : 0;
+        var scaleRight = cutX[1] > 0 ? right / cutX[1] : 0;
+
+        var scaleAcross = scaleTop is > 0 and < Single.PositiveInfinity
+            ? scaleTop
+            : scaleBottom is > 0 and < Single.PositiveInfinity ? scaleBottom : 1;
+        var scaleDown = scaleLeft is > 0 and < Single.PositiveInfinity
+            ? scaleLeft
+            : scaleRight is > 0 and < Single.PositiveInfinity ? scaleRight : 1;
+
+        var edgeX = source.Width - cutX[0] - cutX[1];
+        var edgeY = source.Height - cutY[0] - cutY[1];
+
         canvas.Save();
         SkiaRounded.Clip(canvas, area, command.Radii);
 
-        using var paint = new SKPaint { IsAntialias = true, FilterQuality = SKFilterQuality.High };
+        using var paint = new SKPaint { IsAntialias = true };
 
-        var middle = new SKRect(cutX[0], cutY[0], source.Width - cutX[1], source.Height - cutY[1]);
-
-        // The middle first, then the edges, then the corners, which is the order the chapter draws them in
-        // so that a corner is never painted over (CSS Backgrounds 3 §6.3).
+        // The middle first, then the edges, then the corners, so that a corner is never painted over.
         if (command.Image.Fill)
         {
-            DrawRegion(canvas, image, middle, inner, command.Image.RepeatX, command.Image.RepeatY, paint);
+            DrawRegion(
+                canvas,
+                image,
+                new SKRect(cutX[0], cutY[0], source.Width - cutX[1], source.Height - cutY[1]),
+                inner,
+                edgeX * scaleAcross,
+                edgeY * scaleDown,
+                command.Image.RepeatX,
+                command.Image.RepeatY,
+                paint);
         }
 
         DrawRegion(
@@ -1874,6 +1901,8 @@ public sealed class SkiaPaintExecutor
             image,
             new SKRect(cutX[0], 0, source.Width - cutX[1], cutY[0]),
             new SKRect(inner.Left, area.Top, inner.Right, area.Top + top),
+            edgeX * scaleTop,
+            top,
             command.Image.RepeatX,
             BorderImageRepeat.Stretch,
             paint);
@@ -1883,6 +1912,8 @@ public sealed class SkiaPaintExecutor
             image,
             new SKRect(cutX[0], source.Height - cutY[1], source.Width - cutX[1], source.Height),
             new SKRect(inner.Left, area.Bottom - bottom, inner.Right, area.Bottom),
+            edgeX * scaleBottom,
+            bottom,
             command.Image.RepeatX,
             BorderImageRepeat.Stretch,
             paint);
@@ -1892,6 +1923,8 @@ public sealed class SkiaPaintExecutor
             image,
             new SKRect(0, cutY[0], cutX[0], source.Height - cutY[1]),
             new SKRect(area.Left, inner.Top, area.Left + left, inner.Bottom),
+            left,
+            edgeY * scaleLeft,
             BorderImageRepeat.Stretch,
             command.Image.RepeatY,
             paint);
@@ -1901,25 +1934,28 @@ public sealed class SkiaPaintExecutor
             image,
             new SKRect(source.Width - cutX[1], cutY[0], source.Width, source.Height - cutY[1]),
             new SKRect(area.Right - right, inner.Top, area.Right, inner.Bottom),
+            right,
+            edgeY * scaleRight,
             BorderImageRepeat.Stretch,
             command.Image.RepeatY,
             paint);
 
+        // The corners are made as wide and as tall as their regions, whatever the slices say.
         DrawRegion(canvas, image, new SKRect(0, 0, cutX[0], cutY[0]),
             new SKRect(area.Left, area.Top, area.Left + left, area.Top + top),
-            BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
+            left, top, BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
 
         DrawRegion(canvas, image, new SKRect(source.Width - cutX[1], 0, source.Width, cutY[0]),
             new SKRect(area.Right - right, area.Top, area.Right, area.Top + top),
-            BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
+            right, top, BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
 
         DrawRegion(canvas, image, new SKRect(0, source.Height - cutY[1], cutX[0], source.Height),
             new SKRect(area.Left, area.Bottom - bottom, area.Left + left, area.Bottom),
-            BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
+            left, bottom, BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
 
         DrawRegion(canvas, image, new SKRect(source.Width - cutX[1], source.Height - cutY[1], source.Width, source.Height),
             new SKRect(area.Right - right, area.Bottom - bottom, area.Right, area.Bottom),
-            BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
+            right, bottom, BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
 
         canvas.Restore();
     }
@@ -1965,15 +2001,17 @@ public sealed class SkiaPaintExecutor
     }
 
     /// <summary>
-    /// Draws one region of the border image: the cut of the picture, tiled into the room the way the page
-    /// asked along each axis (CSS Backgrounds 3 §6.4). The room clips what does not fit, which is how a
-    /// <c>repeat</c> that ends mid-copy is cut off.
+    /// Draws one region of the border image: the cut of the picture, already scaled by the width it is
+    /// drawn into, tiled across the room the way the page asked along each axis (CSS Backgrounds 3 §5.6).
+    /// The room clips what does not fit, which is how a <c>repeat</c> ending mid-copy is cut off.
     /// </summary>
     private static void DrawRegion(
         SKCanvas canvas,
         SKImage image,
         SKRect source,
         SKRect region,
+        Single naturalWidth,
+        Single naturalHeight,
         BorderImageRepeat across,
         BorderImageRepeat down,
         SKPaint paint)
@@ -1983,8 +2021,34 @@ public sealed class SkiaPaintExecutor
             return;
         }
 
-        var columns = Tiles(region.Left, region.Width, source.Width, across);
-        var rows = Tiles(region.Top, region.Height, source.Height, down);
+        var columns = Tiles(region.Left, region.Width, naturalWidth, across);
+        var rows = Tiles(region.Top, region.Height, naturalHeight, down);
+
+        if (columns.Count == 0 || rows.Count == 0)
+        {
+            return;
+        }
+
+        // The cut is taken out of the picture as a picture of its own, so that the filtering of a scaled
+        // piece stops at its edges: a bilinear tap that reached into the neighbouring region would pull
+        // that region's colour across the cut, and a frame cut two pixels into a picture shows a fringe
+        // of the picture's middle that no browser draws.
+        var cut = SKRectI.Round(source);
+
+        if (cut.Width <= 0 || cut.Height <= 0)
+        {
+            return;
+        }
+
+        using var piece = image.Subset(cut);
+
+        if (piece is null)
+        {
+            return;
+        }
+
+        var local = new SKRect(0, 0, piece.Width, piece.Height);
+        var sampling = new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None);
 
         canvas.Save();
         canvas.ClipRect(region);
@@ -1993,7 +2057,7 @@ public sealed class SkiaPaintExecutor
         {
             foreach (var (y, height) in rows)
             {
-                canvas.DrawImage(image, source, new SKRect(x, y, x + width, y + height), paint);
+                canvas.DrawImage(piece, local, new SKRect(x, y, x + width, y + height), sampling, paint);
             }
         }
 
@@ -2001,9 +2065,10 @@ public sealed class SkiaPaintExecutor
     }
 
     /// <summary>
-    /// Lays copies of a cut into a room of the given length along one axis: one copy stretched over it,
-    /// copies at their own size, copies resized so a whole number fits, or copies with equal space between
-    /// them (CSS Backgrounds 3 §6.4).
+    /// Lays the copies of a cut out along one axis of its room (CSS Backgrounds 3 §5.6): one copy stretched
+    /// over the room, copies at their own size with the first centred, copies rescaled so a whole number
+    /// fits, or copies at their own size with the room left over shared equally before, after and between
+    /// them - which may leave the room empty.
     /// </summary>
     private static List<(Single At, Single Size)> Tiles(Single from, Single length, Single natural, BorderImageRepeat repeat)
     {
@@ -2017,9 +2082,17 @@ public sealed class SkiaPaintExecutor
         switch (repeat)
         {
             case BorderImageRepeat.Repeat:
-                for (var at = 0f; at < length; at += natural)
+                // The first copy is centred, and the copies either side of it are cut off by the room.
+                var first = from + (length - natural) / 2;
+
+                while (first > from)
                 {
-                    tiles.Add((from + at, natural));
+                    first -= natural;
+                }
+
+                for (var at = first; at < from + length; at += natural)
+                {
+                    tiles.Add((at, natural));
                 }
 
                 break;
@@ -2036,20 +2109,19 @@ public sealed class SkiaPaintExecutor
                 break;
 
             case BorderImageRepeat.Space:
+                // Whole copies only, with the room left over shared equally before, after and between them.
                 var count = (Int32)Math.Floor(length / natural);
 
-                if (count < 2)
+                if (count < 1)
                 {
-                    // Not enough room for two copies: the one is scaled to the room it has.
-                    tiles.Add((from, length));
                     break;
                 }
 
-                var gap = (length - count * natural) / (count - 1);
+                var gap = (length - count * natural) / (count + 1);
 
                 for (var index = 0; index < count; index++)
                 {
-                    tiles.Add((from + index * (natural + gap), natural));
+                    tiles.Add((from + gap + index * (natural + gap), natural));
                 }
 
                 break;
