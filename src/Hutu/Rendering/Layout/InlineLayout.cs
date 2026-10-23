@@ -1625,14 +1625,17 @@ internal sealed class InlineLayout
                 var inlineSize = flow.InlineExtent(width, height);
                 var blockSize = flow.BlockExtent(width, height);
 
+                var band = room.Height;
                 room.Grow(blockSize);
 
                 if (room.Room > 0 && builder.ExtentFor(item.Inline) + inlineSize > room.Room)
                 {
                     if (builder.HasContent)
                     {
+                        room.Restore(band);
                         Close(builder);
                         builder = new LineBuilder(item.Style, carried);
+                        room.Grow(blockSize);
                     }
                     else if (room.Shortened)
                     {
@@ -1664,6 +1667,7 @@ internal sealed class InlineLayout
 
                 // The height the box gives the line is asked of the shape before the box is put on the
                 // line, because the room the line has is the room across the whole band it stands in.
+                var band = room.Height;
                 room.Grow(atomic.BlockSize + atomic.BlockStartMargin + atomic.BlockEndMargin);
 
                 if (room.Room > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > room.Room &&
@@ -1671,8 +1675,10 @@ internal sealed class InlineLayout
                 {
                     if (builder.HasContent)
                     {
+                        room.Restore(band);
                         Close(builder);
                         builder = new LineBuilder(item.Style, carried);
+                        room.Grow(atomic.BlockSize + atomic.BlockStartMargin + atomic.BlockEndMargin);
                     }
                     else if (room.Shortened)
                     {
@@ -1705,6 +1711,7 @@ internal sealed class InlineLayout
                 var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
                 var extent = Math.Max(baseWidth, annotation.Width);
 
+                var band = room.Height;
                 room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()) + annotation.Block);
 
                 if (room.Room > 0 && builder.ExtentFor(item.Inline) + extent > room.Room &&
@@ -1712,8 +1719,10 @@ internal sealed class InlineLayout
                 {
                     if (builder.HasContent)
                     {
+                        room.Restore(band);
                         Close(builder);
                         builder = new LineBuilder(item.Style, carried);
+                        room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()) + annotation.Block);
                     }
                     else if (room.Shortened)
                     {
@@ -3725,6 +3734,9 @@ internal sealed class InlineLayout
         /// <summary>Gets how far the line that is open now reaches along the inline axis.</summary>
         public Double Room { get; private set; }
 
+        /// <summary>Gets the height the open line has been grown to so far.</summary>
+        public Double Height => _height;
+
         /// <summary>Gets where that line begins inside the block's content box.</summary>
         public Double Inset { get; private set; }
 
@@ -3748,6 +3760,27 @@ internal sealed class InlineLayout
         public void Grow(Double height)
         {
             if (height <= _height)
+            {
+                return;
+            }
+
+            _height = height;
+
+            if (_band is { } band)
+            {
+                Room = band.Room(Top, _height, _max, _reversed, out var inset);
+                Inset = inset;
+            }
+        }
+
+        /// <summary>
+        /// Takes back a growth the line did not keep: an item measured against the band it would have
+        /// made, but which did not fit on the line, is turned away before the line is built, and the
+        /// answer the shape gave for the taller band is no longer the line's (CSS Shapes 1 §1.3).
+        /// </summary>
+        public void Restore(Double height)
+        {
+            if (height >= _height)
             {
                 return;
             }

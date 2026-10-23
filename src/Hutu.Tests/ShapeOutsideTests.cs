@@ -140,6 +140,24 @@ public sealed class ShapeOutsideTests
     }
 
     [Test]
+    public async Task ABoxTurnedAwayFromTheLineDoesNotCountTowardsItsBand()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='area' style='width:200px;line-height:0'>" +
+            "<div id='f' style='float:left;width:120px;height:120px;border-radius:60px;shape-outside:border-box'></div>" +
+            "<span id='b1' style='display:inline-block;width:40px;height:20px'></span>" +
+            "<span id='b2' style='display:inline-block;width:60px;height:24px'></span>" +
+            "</div>"));
+
+        // The second box does not fit beside the curve and stands on the next line, so the first line is
+        // only the 20 pixels tall one: a shape's answer is asked of the band the built line takes, not of
+        // the taller box that was turned away from it (CSS Shapes 1 §1.3).
+        Assert.That(Bounds(view, "b1").X, Is.EqualTo(60 + Math.Sqrt(3600 - 1600)).Within(0.5), "the band of the line itself");
+    }
+
+    [Test]
     public async Task TheMarginBoxValueGrowsItsCornersOutOfTheMargin()
     {
         using var view = CreateView();
