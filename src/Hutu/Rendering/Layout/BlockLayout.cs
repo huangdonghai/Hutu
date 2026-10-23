@@ -764,8 +764,10 @@ internal sealed class BlockLayout
 
     /// <summary>
     /// Gets whether the box lays its block-level children out in more than one column, and over how
-    /// many: a horizontal multi-column container with room for columns. A container holding a float or
-    /// a box that left the flow keeps the ordinary stack for now - neither can be put in a column yet.
+    /// many: a horizontal multi-column container with room for columns. A container of nothing but
+    /// floats takes the column path, since each column can hold the floats that fit beside each other;
+    /// floats mixed with flow content keep the ordinary stack, because the column's own float band is
+    /// what would shorten the lines around them and the columns do not carry one yet.
     /// </summary>
     private static Boolean ColumnsOf(Box box, Double contentWidth, out Int32 columns, out Double share)
     {
@@ -777,6 +779,9 @@ internal sealed class BlockLayout
             return false;
         }
 
+        var floats = 0;
+        var flowing = 0;
+
         foreach (var child in box.Children)
         {
             if (!child.IsBlockLevel)
@@ -784,10 +789,18 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            if (child.Style.Float != FloatSide.None || PositionedLayout.IsOutOfFlow(child))
+            if (PositionedLayout.IsOutOfFlow(child))
             {
                 return false;
             }
+
+            if (child.Style.Float != FloatSide.None)
+            {
+                floats++;
+                continue;
+            }
+
+            flowing++;
 
             // A spanner spans every column of its row (CSS Multicol 3 §3.2), which the section layout
             // below lays out; a wrapping container would have to put the spanner in a row of column
@@ -803,6 +816,13 @@ internal sealed class BlockLayout
             {
                 return false;
             }
+        }
+
+        // Floats share a column only when nothing else stands among them: a flow box would have to read
+        // the room they leave, which is the band this path does not lay down yet.
+        if (floats > 0 && flowing > 0)
+        {
+            return false;
         }
 
         var used = box.Style.Multi.Used(contentWidth);
@@ -831,11 +851,18 @@ internal sealed class BlockLayout
         Int32 columns,
         LayoutContext context)
     {
-        var sections = MulticolSections(box);
-
         // Nothing here takes part in the floats of the boxes around it yet; the container holds none of
         // its own, which is what let it take this path at all.
         _engine.PublishFloats(box, null);
+
+        // A container of nothing but floats hands each column the floats that fit beside each other,
+        // and one that does not fit begins the column after it (CSS Multicol 3 §7).
+        if (AllFloats(box))
+        {
+            return MeasureFloatColumns(box, share, declaredHeight, heightStated, context);
+        }
+
+        var sections = MulticolSections(box);
 
         // A spanner spans every column and ends the run above it: each stretch of content is shared
         // over its own row of columns, and the spanner stands between them at full width
@@ -1077,6 +1104,153 @@ internal sealed class BlockLayout
         }
 
         return children;
+    }
+
+    /// <summary>Gets whether every in-flow block child of the box floats, and there is at least one.</summary>
+    private static Boolean AllFloats(Box box)
+    {
+        var floats = 0;
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (child.Style.Float == FloatSide.None)
+            {
+                return false;
+            }
+
+            floats++;
+        }
+
+        return floats > 0;
+    }
+
+    /// <summary>The in-flow floating children of a box, in the order the page wrote them.</summary>
+    private static IEnumerable<Box> FloatChildren(Box box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child) && child.Style.Float != FloatSide.None)
+            {
+                yield return child;
+            }
+        }
+    }
+
+    /// <summary>A float's border box and the margins that stand around it, which is the room it claims.</summary>
+    private readonly record struct MeasuredFloat(Size Size, Thickness Margin);
+
+    /// <summary>
+    /// Measures one float against a column's width: a declared width is what it is, and one that is
+    /// <c>auto</c> shrinks to fit the room the column leaves, exactly as a float in a block does.
+    /// </summary>
+    private MeasuredFloat MeasureFloatBox(Box child, Double share, LayoutContext context)
+    {
+        var margin = child.Style.Margin.Resolve(share);
+        var size = child.Style.Width.HasValue
+            ? _engine.Measure(child, MeasureConstraints.FitWidth(share), context)
+            : ShrinkToFit(child, margin, share, context);
+
+        return new MeasuredFloat(size, margin);
+    }
+
+    /// <summary>
+    /// Measures a multi-column container whose content is nothing but floats: each column takes the
+    /// floats that fit side by side in it, and one that does not fit begins the column after the gap.
+    /// The box's content width is shared out by the same packing the arrangement runs, so the height it
+    /// comes to is the tallest column's (CSS Multicol 3 §7).
+    /// </summary>
+    private Double MeasureFloatColumns(Box box, Double share, Double declaredHeight, Boolean heightStated, LayoutContext context)
+    {
+        var childContext = context.ForContainingBlock(new Size(share, declaredHeight));
+        var used = 0.0;
+        var columnHeight = 0.0;
+        var tallest = 0.0;
+
+        foreach (var child in FloatChildren(box))
+        {
+            var measured = MeasureFloatBox(child, share, childContext);
+            var outer = measured.Margin.Horizontal + measured.Size.Width;
+
+            if (used > 0 && used + outer > share + 0.001)
+            {
+                tallest = Math.Max(tallest, columnHeight);
+                used = 0;
+                columnHeight = 0;
+            }
+
+            used += outer;
+            columnHeight = Math.Max(columnHeight, measured.Margin.Vertical + measured.Size.Height);
+        }
+
+        tallest = Math.Max(tallest, columnHeight);
+
+        return heightStated ? declaredHeight : tallest;
+    }
+
+    /// <summary>
+    /// Arranges a multi-column container whose content is nothing but floats: the same packing the
+    /// measuring pass ran, with each column's floats standing side by side from its top.
+    /// </summary>
+    private Double ArrangeFloatColumns(
+        Box box,
+        LayoutBox parent,
+        Rect content,
+        Int32 columns,
+        Double share,
+        Boolean heightStated,
+        Double declaredHeight,
+        LayoutContext context)
+    {
+        var multi = box.Style.Multi;
+        var childContext = context.ForContainingBlock(new Size(share, heightStated ? declaredHeight : 0));
+        var used = 0.0;
+        var columnHeight = 0.0;
+        var tallest = 0.0;
+        var column = 0;
+
+        foreach (var child in FloatChildren(box))
+        {
+            var measured = MeasureFloatBox(child, share, childContext);
+            var outer = measured.Margin.Horizontal + measured.Size.Width;
+
+            if (used > 0 && used + outer > share + 0.001)
+            {
+                tallest = Math.Max(tallest, columnHeight);
+                column++;
+                used = 0;
+                columnHeight = 0;
+            }
+
+            var x = content.X + column * (share + multi.Gap) + used;
+            var y = content.Y + measured.Margin.Top;
+
+            parent.Children.Add(_engine.Arrange(
+                child,
+                new Rect(x + measured.Margin.Left, y, measured.Size.Width, measured.Size.Height),
+                childContext));
+
+            used += outer;
+            columnHeight = Math.Max(columnHeight, measured.Margin.Vertical + measured.Size.Height);
+        }
+
+        tallest = Math.Max(tallest, columnHeight);
+
+        var height = heightStated ? declaredHeight : tallest;
+
+        MulticolRules.Add(
+            parent,
+            box.Style,
+            content,
+            new List<(Double, Double)> { (content.Y, content.Y + height) });
+
+        _engine.PublishFloats(box, null);
+
+        return height;
     }
 
     /// <summary>
@@ -1747,6 +1921,12 @@ internal sealed class BlockLayout
         Double declaredHeight,
         LayoutContext context)
     {
+        // A container of nothing but floats packs them into its columns rather than stacking them.
+        if (AllFloats(box))
+        {
+            return ArrangeFloatColumns(box, parent, content, columns, share, heightStated, declaredHeight, context);
+        }
+
         var sections = MulticolSections(box);
 
         // A spanner spans every column of its row, so the content above and below it are two runs laid

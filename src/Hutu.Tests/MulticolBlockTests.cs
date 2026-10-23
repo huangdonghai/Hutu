@@ -63,6 +63,28 @@ public sealed class MulticolBlockTests
     }
 
     [Test]
+    public async Task AFloatThatDoesNotFitInAColumnStartsTheNextOne()
+    {
+        using var view = await Render(
+            "<style>#c { width: 300px; columns: 2; column-gap: 20px }" +
+            " .f { float: left; height: 40px }</style>" +
+            "<div id='c'><div class='f' id='f1' style='width:80px'></div>" +
+            "<div class='f' id='f2' style='width:50px'></div>" +
+            "<div class='f' id='f3' style='width:100px'></div></div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "f1").BorderBox.X, Is.EqualTo(0), "the first float opens the first column");
+            Assert.That(Find(view, "f2").BorderBox.X, Is.EqualTo(80), "the second stands beside it");
+            Assert.That(
+                Find(view, "f3").BorderBox.X,
+                Is.EqualTo(160),
+                "the third does not fit beside them, so it opens the column after the gap");
+            Assert.That(Find(view, "c").BorderBox.Height, Is.EqualTo(40), "the box is as tall as its tallest column");
+        });
+    }
+
+    [Test]
     public async Task ASpannerSpansEveryColumnBetweenTwoRuns()
     {
         using var view = await Render(
