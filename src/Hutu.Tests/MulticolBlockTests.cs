@@ -63,6 +63,39 @@ public sealed class MulticolBlockTests
     }
 
     [Test]
+    public async Task AFloatParagraphBreaksIntoEveryColumnItsTextNeeds()
+    {
+        var words = String.Join(" ", Enumerable.Repeat("aaaa", 40));
+
+        using var view = await Render(
+            "<style>#c { width: 300px; columns: 3; column-gap: 10px }" +
+            " #p { margin: 10px 0 20px } #f { float: right; width: 40px; height: 40px }</style>" +
+            "<div id='c'><p id='p'><span id='f'></span>" + words + "</p></div>");
+
+        var fragments = Walk(Find(view, "c"))
+            .Where(box => box.Source.Element?.GetAttribute("id") == "p")
+            .ToList();
+
+        Assert.That(fragments, Has.Count.EqualTo(3), "the text is shared over all three columns");
+        Assert.Multiple(() =>
+        {
+            Assert.That(fragments[0].BorderBox.X, Is.EqualTo(0));
+            Assert.That(fragments[1].BorderBox.X, Is.EqualTo(103.33).Within(0.5), "each after the gap");
+            Assert.That(fragments[2].BorderBox.X, Is.EqualTo(206.67).Within(0.5));
+            Assert.That(fragments[0].BorderBox.Y, Is.EqualTo(10), "the paragraph's top margin stands above the first fragment");
+            Assert.That(fragments[1].BorderBox.Y, Is.EqualTo(0), "and not above the ones after it");
+
+            var firstLine = Walk(fragments[0]).First(box => box.Kind == LayoutKind.Line);
+            var rest = fragments.Skip(1).SelectMany(Walk).Where(box => box.Kind == LayoutKind.Line).ToList();
+
+            Assert.That(firstLine.BorderBox.Width, Is.EqualTo(53.33).Within(0.5), "the float shortens the first column's lines");
+            Assert.That(rest, Is.Not.Empty);
+            Assert.That(rest.All(line => Math.Abs(line.BorderBox.Width - 93.33) < 0.5), Is.True, "the others run at the column's width");
+            Assert.That(Walk(fragments[0]).Count(box => box.Source.Element?.GetAttribute("id") == "f"), Is.EqualTo(1), "the float stands only in the first fragment");
+        });
+    }
+
+    [Test]
     public async Task AFloatInAParagraphShortensOnlyTheColumnItStartsIn()
     {
         using var view = await Render(

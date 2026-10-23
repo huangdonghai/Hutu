@@ -1275,18 +1275,6 @@ internal sealed class BlockLayout
     private readonly record struct FloatHost(Box Paragraph, Box Host);
 
     /// <summary>
-    /// The plan of a broken float paragraph: the lines its first column takes with the float beside
-    /// them, and the plan the next column resumes with once that float is no longer there. The cut is
-    /// how many of the first plan's lines the first column keeps.
-    /// </summary>
-    private sealed record FloatParagraphPlan(
-        IReadOnlyList<Double> FirstHeights,
-        IReadOnlyList<Double> RestHeights,
-        InlineStart? Rest,
-        Int32 Cut,
-        Double Extent);
-
-    /// <summary>
     /// Finds the shape this path handles: a multi-column box whose only in-flow child is an undecorated
     /// block that holds a single in-flow block and at least one float. The lines belong to that inner
     /// block, and the float shortens the lines of the column that begins the paragraph only.
@@ -1394,18 +1382,24 @@ internal sealed class BlockLayout
             share);
     }
 
+    /// <summary>One column's share of a broken float paragraph: the plan it is placed from and how
+    /// many of that plan's lines it takes. A null <see cref="Start"/> is the paragraph's own first
+    /// plan, the one the float's band shortens.</summary>
+    private sealed record FloatColumn(InlineStart? Start, IReadOnlyList<Double> Heights, Int32 Count);
+
+    /// <summary>The columns a float paragraph breaks into, and the height they share.</summary>
+    private sealed record FloatParagraphPlan(IReadOnlyList<FloatColumn> Columns, Double Extent);
+
     /// <summary>
-    /// Plans a float paragraph across two columns: the first plans at the column's width with the
-    /// float's band, the second resumes the text where that plan broke and plans it at the full
-    /// column width (CSS Multicol 3 §7). The cut chosen is the one that leaves the two columns closest
-    /// in height, which is what a balance asks for.
+    /// Plans a float paragraph across the columns: the first plans at the column's width with the
+    /// float's band, and each column after it resumes the text where the plan before it broke and
+    /// plans it at the full column width (CSS Multicol 3 §7). A balance picks the least extent all the
+    /// text fits in; a fill cuts each column at the height the page stated.
     /// </summary>
     private FloatParagraphPlan? PlanFloatParagraph(
         FloatHost host, Double share, Double? declaredHeight, Int32 columns, LayoutContext context)
     {
-        // The second column is the one that resumes the text; a third would need a third plan, which
-        // this does not model yet.
-        if (columns != 2)
+        if (columns < 2)
         {
             return null;
         }
@@ -1414,7 +1408,7 @@ internal sealed class BlockLayout
         var band = FloatHostBand(host, share, childContext, 0, 0);
         var bandedContext = childContext.WithFloats(band);
         var banded = new InlineContext(_engine, bandedContext, bandedContext, bandedContext);
-        var first = _inline.LineHeights(host.Host, share, host.Paragraph.Flow, banded);
+        var first = _inline.LineHeights(host.Host, share, host.Host.Flow, banded);
 
         if (first.Count == 0)
         {
@@ -1423,71 +1417,122 @@ internal sealed class BlockLayout
 
         var plainContext = childContext.WithFloats(null);
         var plain = new InlineContext(_engine, plainContext, plainContext, plainContext);
+        var top = host.Paragraph.Style.Margin.Resolve(share).Top;
+        var orphans = Math.Max(1, host.Paragraph.Style.Breaks.Orphans);
+        var widows = Math.Max(1, host.Paragraph.Style.Breaks.Widows);
+        var whole = new FloatParagraphPlan(
+            new[] { new FloatColumn(null, first, first.Count) },
+            top + Height(first, first.Count));
 
         if (declaredHeight is { } stated)
         {
-            var height = first[0];
-            var fitting = 1;
+            // A fill lets its last column overflow rather than move content past the columns it has.
+            var filled = Fill(host, share, first, banded, plain, stated, columns, top, orphans, widows, mayOverflow: true);
 
-            while (fitting < first.Count && height + first[fitting] <= stated + 0.001)
-            {
-                height += first[fitting];
-                fitting++;
-            }
-
-            var at = _inline.EndOfLine(host.Host, share, host.Paragraph.Flow, banded, fitting - 1);
-
-            if (at is not { } start)
-            {
-                return new FloatParagraphPlan(first, Array.Empty<Double>(), null, first.Count, Height(first, first.Count));
-            }
-
-            var rest = _inline.LineHeights(host.Host, share, host.Paragraph.Flow, plain, start);
-
-            return new FloatParagraphPlan(first, rest, start, fitting, stated);
+            return filled is null ? whole : filled with { Extent = stated };
         }
 
-        var orphans = Math.Max(1, host.Paragraph.Style.Breaks.Orphans);
-        var widows = Math.Max(1, host.Paragraph.Style.Breaks.Widows);
+        // The least extent the whole text fits in, found by halving the way a line balance does.
+        var low = 0.0;
+        var high = top + Height(first, first.Count);
         FloatParagraphPlan? best = null;
-        var bestScore = Double.MaxValue;
 
-        for (var cut = 1; cut < first.Count; cut++)
+        for (var step = 0; step < 40; step++)
         {
-            // A break the paragraph's own orphans and widows forbid is taken only when no other break
-            // is left: the columns would otherwise be left with fewer lines than it asks for.
-            if (cut < orphans || first.Count - cut < widows)
+            var middle = (low + high) / 2;
+            var plan = Fill(host, share, first, banded, plain, middle, columns, top, orphans, widows, mayOverflow: false);
+
+            if (plan is null)
             {
-                continue;
+                low = middle;
             }
-
-            var at = _inline.EndOfLine(host.Host, share, host.Paragraph.Flow, banded, cut - 1);
-
-            if (at is not { } start)
+            else
             {
-                continue;
-            }
-
-            var rest = _inline.LineHeights(host.Host, share, host.Paragraph.Flow, plain, start);
-            var score = Math.Max(Height(first, cut), Height(rest, rest.Count));
-
-            // Equal columns are the balance's aim, and the later cut is the one Chrome keeps when two
-            // leave the same height: the first column takes the line rather than the second.
-            if (score <= bestScore)
-            {
-                best = new FloatParagraphPlan(first, rest, start, cut, score);
-                bestScore = score;
+                best = plan;
+                high = middle;
             }
         }
 
-        // No allowed break: the paragraph's own rules keep it whole, so the first column takes it all.
-        return best ?? new FloatParagraphPlan(first, Array.Empty<Double>(), null, first.Count, Height(first, first.Count));
+        return best ?? whole;
     }
 
     /// <summary>
-    /// Arranges a float paragraph the way it was measured: the first column takes the plan's first
-    /// lines with the float beside them, and the column after it takes the rest of the text at the
-    /// column's own width (CSS Multicol 3 §7).
+    /// Cuts a float paragraph's text into columns of at most <paramref name="extent"/>: each column
+    /// plans what is left of the text at its own width, takes the lines that fit with the orphans and
+    /// widows the paragraph states, and the next plan resumes from where this one broke. Null says the
+    /// text does not fit in the columns it was given.
+    /// </summary>
+    private FloatParagraphPlan? Fill(
+        FloatHost host,
+        Double share,
+        IReadOnlyList<Double> first,
+        InlineContext banded,
+        InlineContext plain,
+        Double extent,
+        Int32 columns,
+        Double top,
+        Int32 orphans,
+        Int32 widows,
+        Boolean mayOverflow)
+    {
+        var result = new List<FloatColumn>();
+        var heights = first;
+        var inline = banded;
+        InlineStart? start = null;
+        var highest = 0.0;
+
+        for (var column = 0; column < columns; column++)
+        {
+            var room = extent - (column == 0 ? top : 0);
+            var count = FragmentSlicer.Fitting(heights, room, orphans, widows);
+
+            if (count == 0)
+            {
+                if (!mayOverflow)
+                {
+                    return null;
+                }
+
+                // The last column has nowhere to hand the text on: it takes it and overflows.
+                count = heights.Count;
+            }
+            else if (mayOverflow && column == columns - 1)
+            {
+                count = heights.Count;
+            }
+
+            result.Add(new FloatColumn(start, heights, count));
+            highest = Math.Max(highest, Height(heights, count) + (column == 0 ? top : 0));
+
+            if (count >= heights.Count)
+            {
+                return new FloatParagraphPlan(result, highest);
+            }
+
+            var at = _inline.EndOfLine(host.Host, share, host.Host.Flow, inline, count - 1);
+
+            if (at is not { } resume)
+            {
+                return null;
+            }
+
+            start = resume;
+            heights = _inline.LineHeights(host.Host, share, host.Host.Flow, plain, resume);
+            inline = plain;
+
+            if (heights.Count == 0)
+            {
+                return new FloatParagraphPlan(result, highest);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Arranges a float paragraph the way it was measured: each column takes its share of the text
+    /// from the plan it resumes, and the paragraph's own first fragment stands below its top margin
+    /// with the float beside it (CSS Multicol 3 §7).
     /// </summary>
     private Double ArrangeFloatParagraph(
         Box box,
@@ -1502,43 +1547,36 @@ internal sealed class BlockLayout
     {
         var multi = box.Style.Multi;
         var childContext = context.ForContainingBlock(new Size(share, heightStated ? declaredHeight : 0));
-        var firstHeight = Height(plan.FirstHeights, plan.Cut);
-        var extent = firstHeight;
+        var top = host.Paragraph.Style.Margin.Resolve(share).Top;
 
-        parent.Children.Add(_engine.Arrange(
-            host.Paragraph,
-            new Rect(content.X, content.Y, share, firstHeight),
-            childContext,
-            false,
-            new LineRange(0, plan.Cut),
-            null,
-            null));
-
-        if (plan.Rest is { } start && plan.RestHeights.Count > 0)
+        for (var index = 0; index < plan.Columns.Count; index++)
         {
-            var restHeight = Height(plan.RestHeights, plan.RestHeights.Count);
+            var column = plan.Columns[index];
+            var height = Height(column.Heights, column.Count);
 
             parent.Children.Add(_engine.Arrange(
                 host.Paragraph,
-                new Rect(content.X + share + multi.Gap, content.Y, share, restHeight),
+                new Rect(
+                    content.X + index * (share + multi.Gap),
+                    content.Y + (index == 0 ? top : 0),
+                    share,
+                    height),
                 childContext,
                 false,
-                new LineRange(0, plan.RestHeights.Count),
+                new LineRange(0, column.Count),
                 null,
-                start));
-
-            extent = Math.Max(extent, restHeight);
+                column.Start));
         }
 
         MulticolRules.Add(
             parent,
             box.Style,
             content,
-            new List<(Double, Double)> { (content.Y, content.Y + extent) });
+            new List<(Double, Double)> { (content.Y, content.Y + plan.Extent) });
 
         _engine.PublishFloats(box, null);
 
-        return extent;
+        return plan.Extent;
     }
 
     /// <summary>Gets the height of the first <paramref name="count"/> lines, or of them all.</summary>
@@ -2818,6 +2856,10 @@ internal sealed class BlockLayout
     private static Boolean EstablishesContext(Box box) =>
         box.Element?.LocalName == "html" ||
         box.IsItem ||
+
+        // A multi-column container holds its own formatting context (CSS Multicol 3 §3.1): its
+        // columns' floats stay in it, and a child's margins do not collapse through it.
+        box.Style.Multi.IsMultiColumn ||
         box.Style.ClipsOverflow ||
         box.Style.Display.Contains("flow-root", StringComparison.OrdinalIgnoreCase) ||
         box.Kind is BoxKind.InlineBlock or BoxKind.HorizontalRule or BoxKind.Flex or BoxKind.Grid or
