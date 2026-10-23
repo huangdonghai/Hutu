@@ -291,8 +291,10 @@ internal sealed partial class ClipPathShape
         var sides = false;
         var ends = false;
 
-        foreach (var word in place)
+        for (var index = 0; index < place.Count; index++)
         {
+            var word = place[index];
+
             if (Is(word, "left") || Is(word, "right"))
             {
                 if (sides)
@@ -300,7 +302,15 @@ internal sealed partial class ClipPathShape
                     return false;
                 }
 
-                x = StyleLength.FromPercent(Is(word, "left") ? 0 : 1);
+                var edge = Is(word, "left") ? 0.0 : 1.0;
+                x = StyleLength.FromPercent(edge);
+
+                if (Placement(place, index, edge, terms, out var offset))
+                {
+                    x = offset ?? x;
+                    index++;
+                }
+
                 sides = true;
             }
             else if (Is(word, "top") || Is(word, "bottom"))
@@ -310,7 +320,15 @@ internal sealed partial class ClipPathShape
                     return false;
                 }
 
-                y = StyleLength.FromPercent(Is(word, "top") ? 0 : 1);
+                var edge = Is(word, "top") ? 0.0 : 1.0;
+                y = StyleLength.FromPercent(edge);
+
+                if (Placement(place, index, edge, terms, out var offset))
+                {
+                    y = offset ?? y;
+                    index++;
+                }
+
                 ends = true;
             }
             else if (Is(word, "center") || Is(word, "centre"))
@@ -354,6 +372,57 @@ internal sealed partial class ClipPathShape
 
         shape.CenterX = x;
         shape.CenterY = y;
+
+        return true;
+    }
+
+    /// <summary>Gets whether a word names an edge or the middle rather than a distance.</summary>
+    private static Boolean SideWord(String word) =>
+        Is(word, "left") || Is(word, "right") || Is(word, "top") || Is(word, "bottom") ||
+        Is(word, "center") || Is(word, "centre");
+
+    /// <summary>
+    /// Gets the centre an edge names when a distance stands after it: <c>left 40px</c> is forty pixels in
+    /// from the left edge and <c>right 40px</c> forty in from the right (CSS Shapes 1 §3.3, and the
+    /// position syntax CSS Backgrounds 3 §3.6 gives it).
+    /// </summary>
+    /// <remarks>
+    /// False means the next word is not a distance at all, which is the two-value form - <c>left top</c>.
+    /// A distance the arithmetic cannot move - a <c>calc()</c> measured from the right edge - is taken
+    /// as read and leaves the centre on the edge.
+    /// </remarks>
+    private static Boolean Placement(
+        List<String> place,
+        Int32 index,
+        Double edge,
+        Reader terms,
+        out StyleLength? centre)
+    {
+        centre = null;
+
+        if (index + 1 >= place.Count || SideWord(place[index + 1]) ||
+            terms.Read(place[index + 1]) is not { } distance)
+        {
+            return false;
+        }
+
+        if (edge <= 0)
+        {
+            centre = StyleLength.Sum(new[] { StyleLength.FromPercent(0), distance });
+            return true;
+        }
+
+        var away = distance.Kind switch
+        {
+            StyleLengthKind.Pixels => StyleLength.FromPixels(-distance.Value),
+            StyleLengthKind.Percent => StyleLength.FromPercent(-distance.Value),
+            _ => (StyleLength?)null,
+        };
+
+        if (away is { } inward)
+        {
+            centre = StyleLength.Sum(new[] { StyleLength.FromPercent(1), inward });
+        }
 
         return true;
     }

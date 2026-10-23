@@ -140,6 +140,24 @@ public sealed class ShapeOutsideTests
     }
 
     [Test]
+    public async Task ARadialShapeIsCentredTheDistanceFromTheEdgeItNames()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='area' style='width:200px;line-height:0'>" +
+            "<div id='f' style='float:left;width:100px;height:100px;" +
+            "shape-outside:ellipse(closest-side farthest-side at left 20px top 50px)'></div>" +
+            Boxes(2) +
+            "</div>"));
+
+        // The two-value form of a side and its distance is a position: the centre stands 20 across and 50
+        // down, so the closest side is 20 and the farthest 50 - and the top band reaches x=36
+        // (CSS Shapes 1 §3.3, CSS Backgrounds 3 §3.6).
+        Assert.That(Bounds(view, "b1").X, Is.EqualTo(36).Within(0.5), "the ellipse the position names");
+    }
+
+    [Test]
     public async Task AStepIsLeftBehindWhenTheLineBeginsAtItsCorner()
     {
         using var view = CreateView();
