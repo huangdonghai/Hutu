@@ -843,7 +843,9 @@ internal sealed class BlockLayout
             return rows * (columnHeight + multi.RowGap) - multi.RowGap;
         }
 
-        return MulticolExtent(multi, columns, heightStated ? declaredHeight : null, children);
+        var extent = MulticolExtent(multi, columns, heightStated ? declaredHeight : null, children);
+
+        return extent;
     }
 
     /// <summary>
@@ -1007,14 +1009,39 @@ internal sealed class BlockLayout
                 return declared;
             }
 
+            // No height to fill to: the stack runs down one column as far as it will go, and only a
+            // forced column break starts another. The box then comes to the tallest of those columns -
+            // what the runs between the breaks came to - rather than to the length of the whole stack,
+            // which is what left a container broken in two twice as tall as its content.
+            var stacked = new List<FragmentChild>(children.Count);
             var total = 0.0;
 
             foreach (var child in children)
             {
+                stacked.Add(child.Fragment);
                 total += child.Fragment.Height;
             }
 
-            return total;
+            var unbounded = new Double[Math.Max(1, children.Count)];
+            Array.Fill(unbounded, total);
+
+            var counts = Fragmentainer.Fill(stacked, unbounded);
+            var tallest = 0.0;
+            var from = 0;
+
+            foreach (var count in counts)
+            {
+                var column = 0.0;
+
+                for (var index = 0; index < count; index++)
+                {
+                    column += stacked[from++].Height;
+                }
+
+                tallest = Math.Max(tallest, column);
+            }
+
+            return tallest > 0 ? tallest : total;
         }
 
         var fragments = new List<FragmentChild>(children.Count);
@@ -1581,13 +1608,19 @@ internal sealed class BlockLayout
                 // they stand in the box drawn once for them, and only the fragment's own first and last
                 // line carry the child's edges.
                 var to = child.Broken ? child.Line + 1 : -1;
+                var last = child;
 
                 while (child.Broken && index + 1 < counts[cell] && children[from].Broken &&
                     ReferenceEquals(children[from].Box, child.Box))
                 {
                     var next = children[from++];
                     index++;
-                    height += next.Size.Height;
+
+                    // Every piece of the run but the first stands where the one before it ended, and only
+                    // the last of them brings the margin the child ends with: a column that forgot both
+                    // came up one line's margin short for every child it broke.
+                    height += next.Size.Height + next.Margin.Top;
+                    last = next;
                     to = next.Line + 1;
                 }
 
@@ -1599,7 +1632,7 @@ internal sealed class BlockLayout
                     childContext,
                     definiteHeight: false,
                     lines: child.Broken ? new LineRange(child.Line, to) : null));
-                y += height + child.Margin.Bottom;
+                y += height + last.Margin.Bottom;
             }
         }
 
