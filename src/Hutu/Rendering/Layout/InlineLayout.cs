@@ -1643,7 +1643,7 @@ internal sealed class InlineLayout
                         // standing on it, is shifted downward until some content fits or no floats
                         // are left - the wide picture beside the floated one goes below it rather
                         // than overflowing the room the float left.
-                        room.Drop();
+                        room.Drop(builder.ExtentFor(item.Inline) + inlineSize);
                     }
                 }
 
@@ -1686,7 +1686,7 @@ internal sealed class InlineLayout
                         // standing on it, is shifted downward until some content fits or no floats
                         // are left. The box then stands on a wider line, so it is measured again
                         // against the room that line has rather than against the one it left.
-                        room.Drop();
+                        room.Drop(builder.ExtentFor(item.Inline) + atomic.InlineSize);
 
                         line = room.Room <= 0 ? Double.PositiveInfinity : room.Room;
                         atomic = MeasureInlineBlock(item.Box, maxInline, line, flow, context);
@@ -1729,7 +1729,7 @@ internal sealed class InlineLayout
                         // CSS 2.1 §9.5: a line box a float has shortened, too small for the content
                         // standing on it, is shifted downward until some content fits or no floats
                         // are left.
-                        room.Drop();
+                        room.Drop(builder.ExtentFor(item.Inline) + extent);
                     }
                 }
 
@@ -1879,7 +1879,7 @@ internal sealed class InlineLayout
                                 // or no floats are left - the long word beside the floated picture goes
                                 // below it rather than overflowing the room the float left, which is
                                 // the specification's own example of the rule.
-                                room.Drop();
+                                room.Drop(builder.ExtentFor(item.Inline) + asks);
                             }
                         }
 
@@ -3713,6 +3713,12 @@ internal sealed class InlineLayout
     /// </remarks>
     private sealed class LineRoom
     {
+        /// <summary>How fine the descent of a shortened line is scanned, in steps over the float.</summary>
+        private const Double UnitScan = 1000;
+
+        /// <summary>The layout unit a browser places boxes in, which is the tolerance a fit is judged by.</summary>
+        private const Double Unit = 1.0 / 64;
+
         private readonly FloatBand? _band;
         private readonly Double _max;
         private readonly Boolean _reversed;
@@ -3839,12 +3845,18 @@ internal sealed class InlineLayout
         public Boolean Shortened => Inset > 0 || Room < _max;
 
         /// <summary>
-        /// Shifts the open line below every float in its band, which is what CSS 2.1 §9.5 asks of a
-        /// shortened line box too small to hold the content standing on it: it moves downward, and
-        /// its width is recomputed, until some content fits or no floats are left. The descent is
-        /// added to the gap, the room the block's stack owes the line for getting there.
+        /// Shifts the open line down until the content standing on it fits, which is what CSS 2.1 §9.5
+        /// asks of a shortened line box too small for what is on it: it moves downward, and its width is
+        /// recomputed, until some content fits or no floats are left. The descent is added to the gap,
+        /// the room the block's stack owes the line for getting there.
         /// </summary>
-        public void Drop()
+        /// <remarks>
+        /// A shaped float leaves more room the further down a line stands, so the line comes to rest at
+        /// the first height the content fits at rather than below the whole float - which is the
+        /// difference between a long word moving down a curved shape's edge and dropping past it
+        /// (CSS Shapes 1 §1.3). The scan is a pixel at a time, the grain a line is placed on.
+        /// </remarks>
+        public void Drop(Double needed)
         {
             if (_band is not { } band)
             {
@@ -3858,11 +3870,27 @@ internal sealed class InlineLayout
                 return;
             }
 
+            var step = Math.Max(1.0, (below - Top) / UnitScan);
+
+            for (var y = Top + step; y < below; y += step)
+            {
+                var room = band.Room(y, _height, _max, _reversed, out var inset);
+
+                if (room + Unit >= needed)
+                {
+                    Gap = y - Top;
+                    Top = y;
+                    Room = room;
+                    Inset = inset;
+                    return;
+                }
+            }
+
             Gap = below - Top;
             Top = below;
 
-            Room = band.Room(Top, _height, _max, _reversed, out var inset);
-            Inset = inset;
+            Room = band.Room(Top, _height, _max, _reversed, out var rest);
+            Inset = rest;
 
             if (Room <= 0)
             {

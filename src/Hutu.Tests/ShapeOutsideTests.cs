@@ -140,6 +140,24 @@ public sealed class ShapeOutsideTests
     }
 
     [Test]
+    public async Task ALineTooWideForAShapeStopsWhereItFirstFits()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='area' style='width:300px;line-height:0'>" +
+            "<div id='f' style='float:left;width:100px;height:100px;shape-outside:circle(70.710678px at 0px 0px)'></div>" +
+            "<span id='w' style='display:inline-block;width:250px;height:20px'></span>" +
+            "</div>"));
+
+        // The circle stands on the float's top-left corner, so its edge is 70.7 across at the top and has
+        // reached 50 by the time the line is 50 down: the 250-wide line does not fit above that, and comes
+        // to rest in the first place it does - not under the whole float (CSS 2.1 §9.5, Shapes 1 §1.3).
+        Assert.That(Bounds(view, "w").X, Is.EqualTo(50).Within(0.5), "the shape's edge where the line fits");
+        Assert.That(Bounds(view, "w").Y, Is.EqualTo(50).Within(0.5), "and the height it came to rest at");
+    }
+
+    [Test]
     public async Task ABoxTurnedAwayFromTheLineDoesNotCountTowardsItsBand()
     {
         using var view = CreateView();
