@@ -49,7 +49,7 @@ internal readonly struct LayoutContext
         Offset scroll,
         Rect absoluteContainingBlock,
         ITextMeasurer measurer)
-        : this(containingBlock, containingBlockRect, viewport, viewportRect, scroll, absoluteContainingBlock, measurer, null, false)
+        : this(containingBlock, containingBlockRect, viewport, viewportRect, scroll, absoluteContainingBlock, measurer, null, false, null)
     {
     }
 
@@ -63,6 +63,7 @@ internal readonly struct LayoutContext
         ITextMeasurer measurer,
         FloatBand? floats,
         Boolean hypothetical,
+        SubgridTracks? subgrid = null,
         Rect? capturedContainingBlock = null)
     {
         ContainingBlock = containingBlock;
@@ -74,6 +75,7 @@ internal readonly struct LayoutContext
         Measurer = measurer;
         Floats = floats;
         BasisIsHypothetical = hypothetical;
+        Subgrid = subgrid;
         CapturedContainingBlock = capturedContainingBlock;
     }
 
@@ -113,6 +115,13 @@ internal readonly struct LayoutContext
     internal FloatBand? Floats { get; }
 
     /// <summary>
+    /// Gets the tracks the grid around this box gave the area it spans, where this box is a subgrid:
+    /// its own track list is the parent's rather than anything it wrote (CSS Grid 2 §8). Null for a
+    /// box that stands anywhere else, which is every box whose grid is its own.
+    /// </summary>
+    internal SubgridTracks? Subgrid { get; }
+
+    /// <summary>
     /// Gets whether the containing block handed down is a hypothesis rather than a fact.
     /// </summary>
     /// <remarks>
@@ -139,6 +148,29 @@ internal readonly struct LayoutContext
         Measurer,
         Floats,
         true,
+        Subgrid,
+        CapturedContainingBlock);
+
+    /// <summary>
+    /// Gets the context a child is handed when the floats around it and its own place among them are
+    /// known, which is a per-child answer rather than one shared by the whole container: two siblings
+    /// stand at different heights, and a float reaching down between them narrows only the lower one.
+    /// </summary>
+    /// <summary>
+    /// Gets the context a subgrid is laid out in: the tracks and gutters the parent grid gave the area
+    /// it spans, so its own children stand on the parent's lines (CSS Grid 2 §8).
+    /// </summary>
+    internal LayoutContext WithSubgrid(SubgridTracks subgrid) => new(
+        ContainingBlock,
+        ContainingBlockRect,
+        Viewport,
+        ViewportRect,
+        Scroll,
+        AbsoluteContainingBlock,
+        Measurer,
+        Floats,
+        BasisIsHypothetical,
+        subgrid,
         CapturedContainingBlock);
 
     /// <summary>
@@ -156,6 +188,7 @@ internal readonly struct LayoutContext
         Measurer,
         floats,
         BasisIsHypothetical,
+        Subgrid,
         CapturedContainingBlock);
 
     /// <summary>Gets the context a box's children see, with its content box as their containing block.</summary>
@@ -175,6 +208,7 @@ internal readonly struct LayoutContext
         Measurer,
         Floats,
         BasisIsHypothetical,
+        Subgrid,
         CapturedContainingBlock);
 
     /// <summary>
@@ -191,6 +225,7 @@ internal readonly struct LayoutContext
         Measurer,
         Floats,
         BasisIsHypothetical,
+        Subgrid,
         CapturedContainingBlock);
 
     /// <summary>
@@ -208,6 +243,7 @@ internal readonly struct LayoutContext
         Measurer,
         Floats,
         BasisIsHypothetical,
+        Subgrid,
         CapturedContainingBlock);
 
     /// <summary>
@@ -227,5 +263,6 @@ internal readonly struct LayoutContext
         Measurer,
         Floats,
         BasisIsHypothetical,
+        Subgrid,
         paddingBox);
 }

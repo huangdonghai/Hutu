@@ -114,7 +114,21 @@ internal sealed class GridFormattingContext
                 item.BorderBoxWidth,
                 item.BorderBoxHeight);
 
-            layout.Children.Add(_engine.Arrange(item.Box, rect, itemContext, item.HeightIsDefinite));
+            // A subgrid item stands on the tracks of the area it spans, which only this pass knows:
+            // it is handed the sizes and gutters before it lays its own children out (CSS Grid 2 §8).
+            var itemContextHere = itemContext;
+            var itemGrid = item.Box.Style.Grid;
+
+            if ((itemGrid.ColumnsSubgrid || itemGrid.RowsSubgrid) && plan.ColumnBases.Count > 0)
+            {
+                itemContextHere = itemContext.WithSubgrid(new SubgridTracks(
+                    Slice(plan.ColumnBases, item.Column, item.ColumnSpan),
+                    Slice(plan.RowBases, item.Row, item.RowSpan),
+                    plan.ColumnStep,
+                    plan.RowStep));
+            }
+
+            layout.Children.Add(_engine.Arrange(item.Box, rect, itemContextHere, item.HeightIsDefinite));
         }
 
         layout.GapDecorations = GapDecorations(box, plan, contentX, contentY);
@@ -399,13 +413,24 @@ internal sealed class GridFormattingContext
 
         var columnBasis = definiteWidth ? contentWidth : 0;
         var rowBasis = contentHeight ?? 0;
-        var gapX = grid.ColumnGap;
-        var gapY = grid.RowGap;
+
+        // A subgrid borrows the tracks of the area its parent put it in: no sizing, no contributions,
+        // and the parent's gutters unless it states gaps of its own (CSS Grid 2 §8).
+        var borrowed = context.Subgrid;
+        var subgridColumns = grid.ColumnsSubgrid ? Borrowed(borrowed?.Columns) : null;
+        var subgridRows = grid.RowsSubgrid ? Borrowed(borrowed?.Rows) : null;
+
+        var gapX = subgridColumns is not null && borrowed is not null && !grid.ColumnGapStated
+            ? borrowed.ColumnGap
+            : grid.ColumnGap;
+        var gapY = subgridRows is not null && borrowed is not null && !grid.RowGapStated
+            ? borrowed.RowGap
+            : grid.RowGap;
 
         // The explicit grid is what the automatic placement wraps inside, so both counts are taken
         // before any item is placed.
-        var explicitColumns = grid.Columns.ExplicitCount(columnBasis, gapX);
-        var explicitRows = grid.Rows.ExplicitCount(rowBasis, gapY);
+        var explicitColumns = subgridColumns?.Count ?? grid.Columns.ExplicitCount(columnBasis, gapX);
+        var explicitRows = subgridRows?.Count ?? grid.Rows.ExplicitCount(rowBasis, gapY);
 
         foreach (var item in items)
         {
@@ -420,8 +445,20 @@ internal sealed class GridFormattingContext
         var usedColumns = Used(items, true);
 
         // Columns first. A row can only be sized once its items' final widths are known, because the
-        // row's own size is whatever height the content needs at that width.
-        var columnTracks = SizeColumns(grid, items, usedColumns, columnBasis, gapX, definiteWidth, itemContext, out var minContentWidth);
+        // row's own size is whatever height the content needs at that width. A subgrid skips the
+        // sizing altogether: its columns are the parent's, already resolved.
+        List<Track> columnTracks;
+        Double minContentWidth;
+
+        if (subgridColumns is not null)
+        {
+            columnTracks = subgridColumns;
+            minContentWidth = Total(columnTracks, gapX);
+        }
+        else
+        {
+            columnTracks = SizeColumns(grid, items, usedColumns, columnBasis, gapX, definiteWidth, itemContext, out minContentWidth);
+        }
 
         var totalWidth = Total(columnTracks, gapX);
         var resolvedWidth = definiteWidth ? contentWidth : totalWidth;
@@ -439,7 +476,8 @@ internal sealed class GridFormattingContext
             item.AreaWidth = Span(columnTracks, item.Column, item.ColumnSpan, gapX);
         }
 
-        var rowTracks = SizeRows(grid, items, Used(items, false), rowBasis, gapY, contentHeight is not null, itemContext);
+        var rowTracks = subgridRows ??
+            SizeRows(grid, items, Used(items, false), rowBasis, gapY, contentHeight is not null, itemContext);
 
         var totalHeight = Total(rowTracks, gapY);
         var resolvedHeight = definiteWidth ? contentHeight ?? totalHeight : totalHeight;
@@ -467,7 +505,21 @@ internal sealed class GridFormattingContext
             ContentWidth = resolvedWidth,
             ContentHeight = resolvedHeight,
             MinWidth = minContentWidth,
+            ColumnStep = stepX,
+            RowStep = stepY,
         };
+
+        // A subgrid item is laid out against the tracks its area covers, so the sizes have to be
+        // remembered where the item is arranged: the subgrid itself has no other way to learn them.
+        foreach (var track in columnTracks)
+        {
+            plan.ColumnBases.Add(track.Base);
+        }
+
+        foreach (var track in rowTracks)
+        {
+            plan.RowBases.Add(track.Base);
+        }
 
         // The room between two tracks is the step they stand apart by: the declared gutter plus whatever
         // the content alignment put between them, which is the gap a decoration centres itself in. Only a
@@ -1657,6 +1709,40 @@ internal sealed class GridFormattingContext
         return (margin.Left + Space(justify, areaWidth - outer), width);
     }
 
+    /// <summary>
+    /// Gets the tracks a subgrid is handed, or null where the area gave it none: the sizes are the
+    /// parent's resolved ones, and the sizing passes are skipped for a list already this size.
+    /// </summary>
+    private static List<Track>? Borrowed(IReadOnlyList<Double>? sizes)
+    {
+        if (sizes is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var tracks = new List<Track>(sizes.Count);
+
+        foreach (var size in sizes)
+        {
+            tracks.Add(new Track { Size = GridTrackSize.Auto, Base = size, Growth = size });
+        }
+
+        return tracks;
+    }
+
+    /// <summary>Gets the sizes of the tracks an item's span covers, which is what its subgrid borrows.</summary>
+    private static List<Double> Slice(IReadOnlyList<Double> sizes, Int32 from, Int32 span)
+    {
+        var slice = new List<Double>(Math.Min(span, sizes.Count));
+
+        for (var index = from; index < from + span && index < sizes.Count; index++)
+        {
+            slice.Add(sizes[index]);
+        }
+
+        return slice;
+    }
+
     private static Double Total(List<Track> tracks, Double gap)
     {
         var total = 0.0;
@@ -1803,6 +1889,19 @@ internal sealed class GridFormattingContext
 
         /// <summary>Gets how far the row tracks reach, from the content box's start.</summary>
         public Double TracksHeight;
+
+        /// <summary>Gets the step a subgrid takes between the columns it borrows: the gutter plus any
+        /// room content alignment added.</summary>
+        public Double ColumnStep;
+
+        /// <inheritdoc cref="ColumnStep"/>
+        public Double RowStep;
+
+        /// <summary>Gets the resolved size of every column track, in order, for the subgrids among the items.</summary>
+        public List<Double> ColumnBases { get; } = new();
+
+        /// <inheritdoc cref="ColumnBases"/>
+        public List<Double> RowBases { get; } = new();
 
         /// <summary>Gets the room between adjacent column tracks, in the content box's coordinates.</summary>
         public List<TrackGap> ColumnGaps { get; } = new();

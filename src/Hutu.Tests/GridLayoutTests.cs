@@ -849,6 +849,34 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task ASubgridLaysItsItemsOnTheTracksOfTheAreaItSpans()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:repeat(3,100px);" +
+            "grid-template-rows:repeat(2,50px);gap:10px;width:320px'>" +
+            "<div id='s' style='display:grid;grid-column:1 / -1;grid-row:1 / -1;" +
+            "grid-template-columns:subgrid;grid-template-rows:subgrid'>" +
+            "<div id='a'></div><div id='b'></div><div id='c'></div>" +
+            "</div></div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+        var c = Find(view, "c");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(a.BorderBox.X, Is.EqualTo(0).Within(0.5), "the first child stands on the parent's first column");
+            Assert.That(a.BorderBox.Width, Is.EqualTo(100).Within(0.5));
+            Assert.That(b.BorderBox.X, Is.EqualTo(110).Within(0.5), "and the next past the parent's gutter");
+            Assert.That(c.BorderBox.X, Is.EqualTo(220).Within(0.5));
+            Assert.That(a.BorderBox.Height, Is.EqualTo(50).Within(0.5), "the rows are the parent's as well");
+        });
+    }
+
+    [Test]
     public async Task AnAbsolutePathChildOfAnUnpositionedGridStandsInItsContentBox()
     {
         using var view = CreateView(400);

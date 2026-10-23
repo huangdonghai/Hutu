@@ -120,6 +120,12 @@ internal sealed class GridTrackList
     private RepeatCount _repeat = RepeatCount.Unknown;
     private Int32 _repeatIndex = -1;
 
+    /// <summary>
+    /// Gets or sets whether the list is the <c>subgrid</c> keyword: the tracks are the ones the parent
+    /// grid gave the area this box spans, rather than any written here (CSS Grid 2 §8).
+    /// </summary>
+    public Boolean Subgrid { get; set; }
+
     /// <summary>Gets how many tracks the list holds before the automatic repetition is spliced in.</summary>
     public Int32 StaticCount => _tracks.Count;
 
@@ -218,6 +224,18 @@ internal sealed class GridTrackList
         return Math.Max(1, (Int32)Math.Floor((basis + gap) / (perRepeat + gap)));
     }
 }
+
+/// <summary>
+/// The tracks a subgrid takes from the grid area it spans (CSS Grid 2 §8): the parent's resolved sizes
+/// for the tracks the area covers, and the gutters it left between them. The sizes stand in the same
+/// order the area's columns or rows do, and the gutter is the parent's step, which includes any room
+/// content alignment added.
+/// </summary>
+internal sealed record SubgridTracks(
+    IReadOnlyList<Double> Columns,
+    IReadOnlyList<Double> Rows,
+    Double ColumnGap,
+    Double RowGap);
 
 /// <summary>How a grid line was written, which is what decides an item's placement.</summary>
 internal enum GridLineKind : byte
@@ -318,10 +336,14 @@ internal readonly struct GridStyle
         FlexAlignment alignItems,
         Double rowGap,
         Double columnGap,
+        Boolean rowGapStated,
+        Boolean columnGapStated,
         GridAreas? areas,
         GridLineNames? columnLines,
         GridLineNames? rowLines)
     {
+        RowGapStated = rowGapStated;
+        ColumnGapStated = columnGapStated;
         Columns = columns;
         Rows = rows;
         AutoColumn = autoColumn;
@@ -344,6 +366,12 @@ internal readonly struct GridStyle
 
     /// <summary>Gets the explicit row tracks, with a fixed <c>repeat()</c> already expanded.</summary>
     public GridTrackList Rows { get; }
+
+    /// <summary>Gets whether the columns are the parent's, as <c>grid-template-columns: subgrid</c> says.</summary>
+    public Boolean ColumnsSubgrid => Columns.Subgrid;
+
+    /// <summary>Gets whether the rows are the parent's, as <c>grid-template-rows: subgrid</c> says.</summary>
+    public Boolean RowsSubgrid => Rows.Subgrid;
 
     /// <summary>Gets the size of a column created past the explicit grid.</summary>
     public GridTrackSize AutoColumn { get; }
@@ -368,6 +396,12 @@ internal readonly struct GridStyle
     public Double RowGap { get; }
 
     public Double ColumnGap { get; }
+
+    /// <summary>Gets whether the page wrote a row gap, rather than leaving it at the initial <c>normal</c>.</summary>
+    public Boolean RowGapStated { get; }
+
+    /// <summary>Gets whether the page wrote a column gap.</summary>
+    public Boolean ColumnGapStated { get; }
 
     /// <summary>Gets the named cells of the template, or null when it names none.</summary>
     public GridAreas? Areas { get; }
@@ -398,6 +432,8 @@ internal readonly struct GridStyle
         FlexAlignment.Stretch,
         0,
         0,
+        false,
+        false,
         null,
         null,
         null);
@@ -432,6 +468,11 @@ internal readonly struct GridStyle
         var rows = ReadTracks(source, "grid-template-rows");
         var areas = GridAreas.Parse(source.Text("grid-template-areas"));
 
+        // A subgrid that states no gap of its own takes the parent's gutters (CSS Grid 2 §8.1), so the
+        // reader has to say which of the two it is looking at: no `normal` and a written `0` differ.
+        var rowGapStated = source.Text("row-gap").Length > 0 || source.Text("gap").Length > 0;
+        var columnGapStated = source.Text("column-gap").Length > 0 || source.Text("gap").Length > 0;
+
         // A template area creates the tracks its cells cover: the names say how many rows and columns
         // there are even where no sizes were written for them, and a track that is explicit but has no
         // size is sized as <c>auto</c>, which is the same answer an item placed past the edge gets.
@@ -465,6 +506,8 @@ internal readonly struct GridStyle
                 : alignItems,
             Math.Max(0, rowGap),
             Math.Max(0, columnGap),
+            rowGapStated,
+            columnGapStated,
             areas,
             GridLineNames.Parse(source.Text("grid-template-columns")),
             GridLineNames.Parse(source.Text("grid-template-rows")));
@@ -634,6 +677,15 @@ internal readonly struct GridStyle
     private static GridTrackList Tracks(Source source, ICssValue? value)
     {
         var tracks = new GridTrackList();
+
+        // `subgrid` is not a track list: the tracks are the parent's, and only the parent can say
+        // which ones this box spans. The empty list stands in until the grid around it is laid out.
+        if (value is CssIdentifierValue identifier &&
+            String.Equals(identifier.Value, "subgrid", StringComparison.OrdinalIgnoreCase))
+        {
+            tracks.Subgrid = true;
+            return tracks;
+        }
 
         Expand(source, value, tracks);
         return tracks;
