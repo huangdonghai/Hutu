@@ -301,15 +301,19 @@ internal static class GridGapBands
                     continue;
                 }
 
+                // The items have to stand against the gap, one on either side of the crossing. A grid
+                // item further along the same axis can span the crossing as well, but it is not the
+                // area the decoration runs into: counting it let a rule cross a gap that the cells
+                // beside it leave open (grid-gap-decorations-007).
                 if (gap.CentreIsX)
                 {
-                    before |= item.Right <= gap.Centre - gap.Across / 2 + Epsilon;
-                    after |= item.X >= gap.Centre + gap.Across / 2 - Epsilon;
+                    before |= Math.Abs(item.Right - (gap.Centre - gap.Across / 2)) < Epsilon;
+                    after |= Math.Abs(item.X - (gap.Centre + gap.Across / 2)) < Epsilon;
                 }
                 else
                 {
-                    before |= item.Bottom <= gap.Centre - gap.Across / 2 + Epsilon;
-                    after |= item.Y >= gap.Centre + gap.Across / 2 - Epsilon;
+                    before |= Math.Abs(item.Bottom - (gap.Centre - gap.Across / 2)) < Epsilon;
+                    after |= Math.Abs(item.Y - (gap.Centre + gap.Across / 2)) < Epsilon;
                 }
             }
 

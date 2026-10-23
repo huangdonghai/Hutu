@@ -418,6 +418,31 @@ public sealed class GapRuleTests
     }
 
     /// <summary>
+    /// A crossing only lets an <c>intersection</c> decoration through where items on both sides span it:
+    /// a row the items leave open splits the rule at that crossing even when the row opposite spans it
+    /// (grid-gap-decorations-007).
+    /// </summary>
+    [Test]
+    public async Task AnIntersectionRowRuleStopsAtACrossingOnlyOneRowSpans()
+    {
+        using var view = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; grid-template-rows:40px 40px 40px; gap:10px;" +
+            " width:110px; height:140px; row-rule:4px solid red; row-rule-break:intersection }" +
+            " .wide { grid-column:1 / 3 }</style>" +
+            "<div id='d'><div class='wide'></div><div></div><div></div><div class='wide'></div></div>");
+
+        var rules = Rules(view);
+
+        Assert.That(rules, Has.Count.EqualTo(4), "each crossing splits its row rule in two, whatever spans further down");
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.X, Is.EqualTo(0).Within(0.01));
+            Assert.That(rules[0].Bounds.Width, Is.EqualTo(50).Within(0.01), "up to the column gap the row below leaves open");
+            Assert.That(rules[1].Bounds.X, Is.EqualTo(60).Within(0.01), "and it resumes past the crossing");
+        });
+    }
+
+    /// <summary>
     /// A row gap in a flex container is crossed by the column gaps of the two lines it sits between, and
     /// an <c>intersection</c> decoration is drawn in the stretches those crossings leave - the shape of
     /// flex-gap-decorations-050.
