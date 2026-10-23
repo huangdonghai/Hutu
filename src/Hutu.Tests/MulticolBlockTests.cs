@@ -63,19 +63,28 @@ public sealed class MulticolBlockTests
     }
 
     [Test]
-    public async Task ASpannerLeavesTheBoxInItsOrdinaryStream()
+    public async Task ASpannerSpansEveryColumnBetweenTwoRuns()
     {
         using var view = await Render(
             "<style>#c { width: 300px; columns: 2; column-gap: 20px }" +
-            " .b { height: 40px } .all { column-span: all }</style>" +
-            "<div id='c'><div class='b'></div><div class='b all'></div></div>");
+            " .b { height: 40px } .all { column-span: all; height: 10px }</style>" +
+            "<div id='c'><div class='b' id='a1'></div><div class='b' id='a2'></div>" +
+            "<div class='all' id='span'></div>" +
+            "<div class='b' id='b1'></div><div class='b' id='b2'></div></div>");
 
-        var children = Blocks(view);
+        var first = Find(view, "a1");
+        var second = Find(view, "a2");
+        var span = Find(view, "span");
+        var third = Find(view, "b1");
+        var fourth = Find(view, "b2");
 
-        Assert.That(
-            children.Select(child => child.BorderBox.X),
-            Is.All.EqualTo(0),
-            "a container holding a spanner keeps the ordinary stack until it can lay the spanner across");
+        Assert.That((first.BorderBox.X, first.BorderBox.Y), Is.EqualTo((0.0, 0.0)), "the first run fills the first column");
+        Assert.That((second.BorderBox.X, second.BorderBox.Y), Is.EqualTo((160.0, 0.0)), "and its second child the second");
+        Assert.That((span.BorderBox.X, span.BorderBox.Y), Is.EqualTo((0.0, 40.0)), "the spanner begins below the run");
+        Assert.That(span.BorderBox.Width, Is.EqualTo(300), "and spans both columns and the gap");
+        Assert.That((third.BorderBox.X, third.BorderBox.Y), Is.EqualTo((0.0, 50.0)), "the next run begins below the spanner");
+        Assert.That((fourth.BorderBox.X, fourth.BorderBox.Y), Is.EqualTo((160.0, 50.0)), "in columns of its own");
+        Assert.That(Find(view, "c").BorderBox.Height, Is.EqualTo(90), "the container is as tall as every row it holds");
     }
 
     private static async Task<HutuViewInternal> Render(String content)

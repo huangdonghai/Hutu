@@ -111,7 +111,7 @@ internal sealed class BlockLayout
         else if (HasBlockChildren(box))
         {
             contentHeight = ColumnsOf(box, contentWidth, out var columns, out var share)
-                ? MeasureMulticolChildren(box, share, childHeight, declaredHeight is not null, columns, context)
+                ? MeasureMulticolChildren(box, share, contentWidth, childHeight, declaredHeight is not null, columns, context)
                 : MeasureBlockChildren(box, contentWidth, childHeight, context);
         }
         else
@@ -789,10 +789,17 @@ internal sealed class BlockLayout
                 return false;
             }
 
-            // A spanner spans the whole row of columns, and a multi-column child balances its own
-            // columns inside one column of this one. Neither can be put in a column yet, so the box
-            // keeps the ordinary stack - one column's worth - until they can.
-            if (child.Style.SpansColumns || (!child.Flow.IsVertical && child.Style.Multi.IsMultiColumn))
+            // A spanner spans every column of its row (CSS Multicol 3 §3.2), which the section layout
+            // below lays out; a wrapping container would have to put the spanner in a row of column
+            // boxes this does not do, so that pair keeps the ordinary stack until it can.
+            if (child.Style.SpansColumns && box.Style.Multi.Wraps)
+            {
+                return false;
+            }
+
+            // A multi-column child balances its own columns inside one column of this one, which the
+            // columns do not do yet, so the box keeps the ordinary stack until they can.
+            if (!child.Flow.IsVertical && child.Style.Multi.IsMultiColumn)
             {
                 return false;
             }
@@ -818,16 +825,27 @@ internal sealed class BlockLayout
     private Double MeasureMulticolChildren(
         Box box,
         Double share,
+        Double fullWidth,
         Double declaredHeight,
         Boolean heightStated,
         Int32 columns,
         LayoutContext context)
     {
-        var children = MulticolChildren(box, share, declaredHeight, context);
+        var sections = MulticolSections(box);
 
         // Nothing here takes part in the floats of the boxes around it yet; the container holds none of
         // its own, which is what let it take this path at all.
         _engine.PublishFloats(box, null);
+
+        // A spanner spans every column and ends the run above it: each stretch of content is shared
+        // over its own row of columns, and the spanner stands between them at full width
+        // (CSS Multicol 3 §3.2).
+        if (sections.Exists(section => section.Spanner is not null))
+        {
+            return MeasureMulticolSections(box, sections, share, fullWidth, declaredHeight, heightStated, columns, context);
+        }
+
+        var children = MulticolChildren(box, share, declaredHeight, context);
 
         var multi = box.Style.Multi;
 
@@ -951,17 +969,23 @@ internal sealed class BlockLayout
             !child.Flow.IsVertical;
     }
 
-    private List<MulticolChild> MulticolChildren(Box box, Double share, Double declaredHeight, LayoutContext context)
+    private List<MulticolChild> MulticolChildren(
+        Box box,
+        Double share,
+        Double declaredHeight,
+        LayoutContext context,
+        IReadOnlyList<Box>? members = null)
     {
         var childContext = context.ForContainingBlock(new Size(share, declaredHeight));
         var constraints = MeasureConstraints.FitWidth(share);
-        var children = new List<MulticolChild>(box.Children.Count);
+        var source = members ?? box.Children;
+        var children = new List<MulticolChild>(source.Count);
 
         // Which child a run of lines belongs to, so that the slicer can tell one block's lines from its
         // neighbour's and keep the orphans and widows each of them asks for.
         var runs = 0;
 
-        foreach (var child in box.Children)
+        foreach (var child in source)
         {
             if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
             {
@@ -1053,6 +1077,112 @@ internal sealed class BlockLayout
         }
 
         return children;
+    }
+
+    /// <summary>
+    /// One stretch of a multi-column box: a run of children the columns carry, or the single box that
+    /// spans their row (CSS Multicol 3 §3.2).
+    /// </summary>
+    private readonly record struct MulticolSection(Box? Spanner, List<Box> Members);
+
+    /// <summary>A spanner measured at full width: its border box and the margins it presents.</summary>
+    private readonly record struct SpannedBox(Size Size, Thickness Margin);
+
+    /// <summary>
+    /// Splits a multi-column box into the runs of content its columns carry and the spanners that stand
+    /// between them. A spanner ends the run above it and begins the one below, and it is a column's
+    /// child no more than the row of columns is (CSS Multicol 3 §3.2).
+    /// </summary>
+    private static List<MulticolSection> MulticolSections(Box box)
+    {
+        var sections = new List<MulticolSection>();
+        var run = new List<Box>();
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (!child.Style.SpansColumns)
+            {
+                run.Add(child);
+                continue;
+            }
+
+            if (run.Count > 0)
+            {
+                sections.Add(new MulticolSection(null, run));
+                run = new List<Box>();
+            }
+
+            sections.Add(new MulticolSection(child, new List<Box>()));
+        }
+
+        if (run.Count > 0)
+        {
+            sections.Add(new MulticolSection(null, run));
+        }
+
+        return sections;
+    }
+
+    /// <summary>
+    /// Measures a multi-column box that holds a spanner: every run of content balances over its own row
+    /// of columns, and each spanner is measured across the whole content width. The box's content comes
+    /// to the height of the rows stacked (CSS Multicol 3 §3.2).
+    /// </summary>
+    private Double MeasureMulticolSections(
+        Box box,
+        List<MulticolSection> sections,
+        Double share,
+        Double fullWidth,
+        Double declaredHeight,
+        Boolean heightStated,
+        Int32 columns,
+        LayoutContext context)
+    {
+        var total = 0.0;
+
+        foreach (var section in sections)
+        {
+            if (section.Spanner is { } spanner)
+            {
+                var spanned = MeasureSpanner(spanner, box, fullWidth, declaredHeight, context);
+                total += spanned.Size.Height + spanned.Margin.Top + spanned.Margin.Bottom;
+                continue;
+            }
+
+            var children = MulticolChildren(box, share, declaredHeight, context, section.Members);
+            total += MulticolExtent(box.Style.Multi, columns, heightStated ? declaredHeight : null, children);
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// Measures one spanner across the container's own content width. Its margins are the ones it
+    /// presents to the stack, which is what keeps it the same distance from the row above and the row
+    /// below however those rows' children ended.
+    /// </summary>
+    private SpannedBox MeasureSpanner(
+        Box spanner,
+        Box container,
+        Double fullWidth,
+        Double declaredHeight,
+        LayoutContext context)
+    {
+        var spanContext = context.ForContainingBlock(new Size(fullWidth, declaredHeight));
+        var size = _engine.Measure(spanner, MeasureConstraints.FitWidth(fullWidth), spanContext);
+        var used = BoxModel.UsedMargin(spanner.Style, fullWidth, size.Width);
+        var margin = new Thickness(
+            CollapsedStart(spanner, container.Flow, fullWidth),
+            used.Right,
+            CollapsedEnd(spanner, container.Flow, fullWidth),
+            used.Left);
+
+        return new SpannedBox(size, margin);
     }
 
     /// <summary>
@@ -1617,6 +1747,15 @@ internal sealed class BlockLayout
         Double declaredHeight,
         LayoutContext context)
     {
+        var sections = MulticolSections(box);
+
+        // A spanner spans every column of its row, so the content above and below it are two runs laid
+        // out over columns of their own (CSS Multicol 3 §3.2).
+        if (sections.Exists(section => section.Spanner is not null))
+        {
+            return ArrangeMulticolSections(box, sections, parent, content, columns, share, heightStated, declaredHeight, context);
+        }
+
         var children = MulticolChildren(box, share, heightStated ? declaredHeight : 0, context);
         var multi = box.Style.Multi;
         var extent = MulticolExtent(multi, columns, heightStated ? declaredHeight : null, children);
@@ -1645,15 +1784,74 @@ internal sealed class BlockLayout
 
         var counts = Fragmentainer.Fill(fragments, extents);
         var childContext = context.ForContainingBlock(new Size(share, wraps ? boxHeight : heightStated ? declaredHeight : 0));
+        ArrangeMulticolRun(
+            children,
+            counts,
+            parent,
+            content.X,
+            content.Y,
+            columns,
+            share,
+            multi.Gap,
+            boxHeight,
+            multi.RowGap,
+            childContext,
+            new Dictionary<Box, Double>());
+
+        _engine.PublishFloats(box, null);
+
+        // The rules of the gaps the columns left, worked out here where the columns are known. A
+        // wrapping run is as tall as the rows of boxes it filled, whatever a balance made of the same
+        // content in a single row of them.
+        var wrapHeight = multi.Wraps && multi.Height is { } wrapStated ? wrapStated : 0.0;
+        var runHeight = wrapHeight > 0 && declaredHeight > 0
+            ? Math.Max(1, (Int32)Math.Floor((declaredHeight + multi.RowGap) / (wrapHeight + multi.RowGap))) *
+                (wrapHeight + multi.RowGap) - multi.RowGap
+            : extent;
+
+        MulticolRules.Add(
+            parent,
+            box.Style,
+            content,
+            new List<(Double, Double)> { (content.Y, content.Y + runHeight) });
+
+        return extent;
+    }
+
+    /// <summary>
+    /// Places the children one row of columns takes: each column stacks them from the row's top, and the
+    /// pieces of one broken child that fall in the same column are drawn as one fragment of it.
+    /// </summary>
+    /// <param name="originX">Where the row's first column begins.</param>
+    /// <param name="originY">Where the row's top edge stands.</param>
+    /// <param name="boxHeight">The extent the row's columns share.</param>
+    /// <param name="rowGap">The room between two rows of column boxes, where the container wraps.</param>
+    /// <param name="startsAt">
+    /// Where each broken child began, so a later piece can paint the background of the whole box it was
+    /// cut from. It is handed in so pieces that fall in different rows and runs still agree.
+    /// </param>
+    private void ArrangeMulticolRun(
+        List<MulticolChild> children,
+        IReadOnlyList<Int32> counts,
+        LayoutBox parent,
+        Double originX,
+        Double originY,
+        Int32 columns,
+        Double share,
+        Double gap,
+        Double boxHeight,
+        Double rowGap,
+        LayoutContext childContext,
+        Dictionary<Box, Double> startsAt)
+    {
         var from = 0;
-        var startsAt = new Dictionary<Box, Double>();
 
         for (var cell = 0; cell < counts.Count; cell++)
         {
             var column = cell % columns;
             var row = cell / columns;
-            var x = content.X + column * (share + multi.Gap);
-            var y = content.Y + row * (boxHeight + multi.RowGap);
+            var x = originX + column * (share + gap);
+            var y = originY + row * (boxHeight + rowGap);
 
             for (var index = 0; index < counts[cell]; index++)
             {
@@ -1739,25 +1937,83 @@ internal sealed class BlockLayout
                 y += height + last.Margin.Bottom;
             }
         }
+    }
+
+    /// <summary>
+    /// Arranges a multi-column box whose children a spanner splits into runs: each run fills its own row
+    /// of columns, and the spanner stands between them at full width (CSS Multicol 3 §3.2). The rows are
+    /// stacked in the container's block axis, and the column rules stop at each run's edges.
+    /// </summary>
+    private Double ArrangeMulticolSections(
+        Box box,
+        List<MulticolSection> sections,
+        LayoutBox parent,
+        Rect content,
+        Int32 columns,
+        Double share,
+        Boolean heightStated,
+        Double declaredHeight,
+        LayoutContext context)
+    {
+        var multi = box.Style.Multi;
+        var childContext = context.ForContainingBlock(new Size(share, heightStated ? declaredHeight : 0));
+        var startsAt = new Dictionary<Box, Double>();
+        var runs = new List<(Double From, Double To)>();
+        var y = content.Y;
+
+        foreach (var section in sections)
+        {
+            if (section.Spanner is { } spanner)
+            {
+                var spanned = MeasureSpanner(spanner, box, content.Width, heightStated ? declaredHeight : 0, context);
+                var spanContext = context.ForContainingBlock(new Size(content.Width, heightStated ? declaredHeight : 0));
+
+                y += spanned.Margin.Top;
+                parent.Children.Add(_engine.Arrange(
+                    spanner,
+                    new Rect(content.X + spanned.Margin.Left, y, spanned.Size.Width, spanned.Size.Height),
+                    spanContext,
+                    definiteHeight: false));
+                y += spanned.Size.Height + spanned.Margin.Bottom;
+                continue;
+            }
+
+            var children = MulticolChildren(box, share, heightStated ? declaredHeight : 0, context, section.Members);
+            var extent = MulticolExtent(multi, columns, heightStated ? declaredHeight : null, children);
+            var fragments = new List<FragmentChild>(children.Count);
+
+            foreach (var child in children)
+            {
+                fragments.Add(child.Fragment);
+            }
+
+            // A fill is not held to the column count, as above; a balance has already been solved into
+            // the columns it was given.
+            var extents = new Double[Math.Max(1, multi.Fills ? children.Count : columns)];
+            Array.Fill(extents, extent);
+
+            ArrangeMulticolRun(
+                children,
+                Fragmentainer.Fill(fragments, extents),
+                parent,
+                content.X,
+                y,
+                columns,
+                share,
+                multi.Gap,
+                extent,
+                multi.RowGap,
+                childContext,
+                startsAt);
+
+            runs.Add((y, y + extent));
+            y += extent;
+        }
 
         _engine.PublishFloats(box, null);
+        MulticolRules.Add(parent, box.Style, content, runs);
 
-        // The rules of the gaps the columns left, worked out here where the columns are known. A
-        // wrapping run is as tall as the rows of boxes it filled, whatever a balance made of the same
-        // content in a single row of them.
-        var wrapHeight = multi.Wraps && multi.Height is { } wrapStated ? wrapStated : 0.0;
-        var runHeight = wrapHeight > 0 && declaredHeight > 0
-            ? Math.Max(1, (Int32)Math.Floor((declaredHeight + multi.RowGap) / (wrapHeight + multi.RowGap))) *
-                (wrapHeight + multi.RowGap) - multi.RowGap
-            : extent;
-
-        MulticolRules.Add(
-            parent,
-            box.Style,
-            content,
-            new List<(Double, Double)> { (content.Y, content.Y + runHeight) });
-
-        return extent;
+        return y - content.Y;
     }
 
     /// <summary>
