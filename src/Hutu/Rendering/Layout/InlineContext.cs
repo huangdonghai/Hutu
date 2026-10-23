@@ -1,3 +1,4 @@
+using Hutu.Rendering.Boxes;
 using System;
 
 namespace Hutu.Rendering.Layout;
@@ -61,3 +62,11 @@ internal readonly struct InlineContext
     /// </remarks>
     public LayoutContext Atomic { get; }
 }
+
+/// <summary>
+/// The place in a box's inline content a fragment's own line plan begins: the text box the break fell
+/// in and the offset in it. A column that resumes a paragraph lays the rest of it out from here, at
+/// its own width, rather than from a line index of the whole paragraph's plan - which is what lets a
+/// float shorten only the column it starts in (CSS Multicol 3 §7, CSS Break 3 §4.1).
+/// </summary>
+internal readonly record struct InlineStart(Box Box, Int32 Offset);

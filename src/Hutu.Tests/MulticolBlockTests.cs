@@ -63,6 +63,37 @@ public sealed class MulticolBlockTests
     }
 
     [Test]
+    public async Task AFloatInAParagraphShortensOnlyTheColumnItStartsIn()
+    {
+        using var view = await Render(
+            "<style>#c { width: 300px; columns: 2; column-gap: 20px }" +
+            " #p { margin: 0 } #f { float: right; width: 60px; height: 40px }</style>" +
+            "<div id='c'><p id='p'><span id='f'></span>" +
+            "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo</p></div>");
+
+        var fragments = Walk(Find(view, "c"))
+            .Where(box => box.Source.Element?.GetAttribute("id") == "p")
+            .ToList();
+
+        Assert.That(fragments, Has.Count.EqualTo(2), "the paragraph is broken across the two columns");
+        Assert.Multiple(() =>
+        {
+            Assert.That(fragments[0].BorderBox.X, Is.EqualTo(0), "the first fragment opens the first column");
+            Assert.That(fragments[1].BorderBox.X, Is.EqualTo(160), "the second stands after the gap");
+
+            var firstLines = Walk(fragments[0]).Where(box => box.Kind == LayoutKind.Line).ToList();
+            var secondLines = Walk(fragments[1]).Where(box => box.Kind == LayoutKind.Line).ToList();
+
+            Assert.That(firstLines, Is.Not.Empty);
+            Assert.That(secondLines, Is.Not.Empty);
+            Assert.That(firstLines.All(line => line.BorderBox.Width == 80), Is.True, "the float shortens the first column's lines");
+            Assert.That(secondLines.All(line => line.BorderBox.Width == 140), Is.True, "and leaves the second column's at their full width");
+            Assert.That(Walk(fragments[0]).Count(box => box.Source.Element?.GetAttribute("id") == "f"), Is.EqualTo(1), "the float stands in the first fragment");
+            Assert.That(Walk(fragments[1]).Count(box => box.Source.Element?.GetAttribute("id") == "f"), Is.EqualTo(0), "and only there");
+        });
+    }
+
+    [Test]
     public async Task AFloatThatDoesNotFitInAColumnStartsTheNextOne()
     {
         using var view = await Render(

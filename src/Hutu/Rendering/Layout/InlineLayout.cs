@@ -97,8 +97,16 @@ internal sealed class InlineLayout
         Double maxInline,
         WritingModeInfo flow,
         InlineContext context,
-        Double indent)
+        Double indent,
+        InlineStart? start = null)
     {
+        // A plan that begins partway through the content belongs to one fragment, not to the box: it is
+        // made fresh each time rather than cached under the key the whole-content plan answers to.
+        if (start is { } from)
+        {
+            return PlanFrom(container, maxInline, flow, context, indent, from);
+        }
+
         var key = new LinePlanKey(container, maxInline, indent, FlowSignature(flow), context.Containing.Floats);
 
         if (_plans.TryGetValue(key, out var known))
@@ -117,6 +125,107 @@ internal sealed class InlineLayout
 
         _plans[key] = lines;
         return lines;
+    }
+
+    /// <summary>
+    /// Builds the plan one fragment resumes with: everything from the place the last fragment broke at,
+    /// laid out as a fresh first line. A column past a float needs this because its lines are longer
+    /// than the first column's and break in other places.
+    /// </summary>
+    private List<Line> PlanFrom(
+        Box container,
+        Double maxInline,
+        WritingModeInfo flow,
+        InlineContext context,
+        Double indent,
+        InlineStart start)
+    {
+        var items = new List<InlineItem>();
+        Collect(container, items, flow, null, maxInline);
+
+        var kept = Resume(items, start);
+
+        return kept.Count == 0
+            ? new List<Line>()
+            : BuildLines(kept, maxInline, flow, context, container.Style, indent);
+    }
+
+    /// <summary>
+    /// Gets the items a plan resuming at <paramref name="start"/> still has to lay out: the text run the
+    /// break fell in is cut from the offset and everything before it is dropped. A place no item answers
+    /// is not taken to mean the content is over - the whole list comes back instead.
+    /// </summary>
+    private static List<InlineItem> Resume(List<InlineItem> items, InlineStart start)
+    {
+        var after = -1;
+
+        for (var index = 0; index < items.Count; index++)
+        {
+            var item = items[index];
+
+            if (!ReferenceEquals(item.Box, start.Box))
+            {
+                continue;
+            }
+
+            if (item.Text is { } text)
+            {
+                if (start.Offset < text.Length)
+                {
+                    var kept = new List<InlineItem>(items.Count - index)
+                    {
+                        InlineItem.CreateText(text.Substring(start.Offset), item.Style, item.Box, item.Inline),
+                    };
+
+                    for (var rest = index + 1; rest < items.Count; rest++)
+                    {
+                        kept.Add(items[rest]);
+                    }
+
+                    return kept;
+                }
+
+                // The break stands at the end of this run: what follows it begins the rest.
+                after = index + 1;
+                continue;
+            }
+
+            // A break or an atomic box at the place itself begins the rest.
+            after = index;
+            break;
+        }
+
+        return after < 0 ? items : items.GetRange(after, items.Count - after);
+    }
+
+    /// <summary>Gets where the line at <paramref name="index"/> of the box's plan ends, for resuming.</summary>
+    internal InlineStart? EndOfLine(
+        Box container,
+        Double maxInline,
+        WritingModeInfo flow,
+        InlineContext context,
+        Int32 index)
+    {
+        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context));
+
+        if (index < 0 || index >= lines.Count)
+        {
+            return null;
+        }
+
+        var fragments = lines[index].Fragments;
+
+        for (var at = fragments.Count - 1; at >= 0; at--)
+        {
+            var fragment = fragments[at];
+
+            if (fragment.Length > 0 && !String.IsNullOrEmpty(fragment.Source))
+            {
+                return new InlineStart(fragment.Box, fragment.Start + fragment.Length);
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -544,6 +653,15 @@ internal sealed class InlineLayout
         Heights(Plan(container, maxInline, flow, context, Indentation(container, flow, context)));
 
     /// <summary>
+    /// Gets how tall each line of the content from <paramref name="start"/> on stands: what a column
+    /// that resumes a broken paragraph needs, where the lines are longer than the first column's
+    /// because the float that shortened them is not beside them.
+    /// </summary>
+    internal IReadOnlyList<Double> LineHeights(
+        Box container, Double maxInline, WritingModeInfo flow, InlineContext context, InlineStart start) =>
+        Heights(Plan(container, maxInline, flow, context, Indentation(container, flow, context), start));
+
+    /// <summary>
     /// Lays the lines numbered <paramref name="from"/> up to <paramref name="to"/> into the given content
     /// box, which is one fragment of a block broken across columns. The plan is the whole content's, so
     /// the line a fragment ends on is not the line the block ends on and is not aligned as one; the
@@ -557,10 +675,11 @@ internal sealed class InlineLayout
         WritingModeInfo flow,
         InlineContext context,
         Int32 from,
-        Int32 to)
+        Int32 to,
+        InlineStart? start = null)
     {
         var maxInline = flow.InlineExtent(contentBox.Width, contentBox.Height);
-        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context));
+        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context), start);
 
         AlignLastLines(lines, maxInline);
         DistributeSpace(lines);
@@ -569,9 +688,11 @@ internal sealed class InlineLayout
 
         // A block broken across columns is placed one fragment at a time, so the inline elements it
         // holds are whole only within the fragment being placed. What that costs is written up under
-        // Placement.
+        // Placement. A fragment that resumes partway through starts where its plan does: the trimmed
+        // leading belongs to the fragment that began the block.
         var placement = new Placement(context.Engine);
-        var used = PlaceLines(container, parent, lines, from, to, contentBox, flow, context, from == 0 ? -trimStart : 0, placement);
+        var used = PlaceLines(
+            container, parent, lines, from, to, contentBox, flow, context, start is null && from == 0 ? -trimStart : 0, placement);
         placement.Finish(flow);
 
         return used;

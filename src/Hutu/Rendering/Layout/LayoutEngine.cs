@@ -1136,17 +1136,18 @@ internal sealed record LayoutProfile(
         LayoutContext context,
         Boolean definiteHeight,
         LineRange? lines = null,
-        FragmentSlice? slice = null)
+        FragmentSlice? slice = null,
+        InlineStart? start = null)
     {
         // An anonymous box borrows its parent's style; honouring the positioning it inherits would
         // displace the wrapper a second time, because the parent's own displacement already took it
         // along.
         if (box.IsAnonymous)
         {
-            return ArrangeCore(box, borderBox, context, definiteHeight, lines, slice);
+            return ArrangeCore(box, borderBox, context, definiteHeight, lines, slice, start);
         }
 
-        var layout = ArrangeCore(box, borderBox, context, definiteHeight, lines, slice);
+        var layout = ArrangeCore(box, borderBox, context, definiteHeight, lines, slice, start);
 
         var position = box.Style.Position;
 
@@ -1231,7 +1232,8 @@ internal sealed record LayoutProfile(
         LayoutContext context,
         Boolean definiteHeight,
         LineRange? lines,
-        FragmentSlice? slice)
+        FragmentSlice? slice,
+        InlineStart? start)
     {
         return box.Kind switch
         {
@@ -1241,7 +1243,7 @@ internal sealed record LayoutProfile(
             BoxKind.Table => _table.Arrange(box, borderBox, context),
             _ => box.IsReplaced
                 ? ArrangeReplaced(box, borderBox, context)
-                : _block.Arrange(box, borderBox, context, definiteHeight, lines, slice),
+                : _block.Arrange(box, borderBox, context, definiteHeight, lines, slice, start),
         };
     }
 

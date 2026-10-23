@@ -479,7 +479,8 @@ internal sealed class BlockLayout
         LayoutContext context,
         Boolean definiteHeight = false,
         LineRange? lines = null,
-        FragmentSlice? slice = null)
+        FragmentSlice? slice = null,
+        InlineStart? start = null)
     {
         var style = box.Style;
         var flow = box.Flow;
@@ -562,19 +563,21 @@ internal sealed class BlockLayout
 
         if (HasBlockChildren(box))
         {
-            used = !flow.IsVertical && ColumnsOf(box, contentWidth, out var columns, out var share)
-                ? ArrangeMulticolChildren(
-                    box,
-                    layout,
-                    content,
-                    columns,
-                    share,
-                    usedHeight is not null,
-                    usedHeight ?? 0,
-                    context)
-                : flow.IsVertical
-                    ? ArrangeColumnChildren(box, layout, content, childContext, context.ContainingBlock.Width)
-                    : ArrangeBlockChildren(box, layout, contentX, contentY, contentWidth, childContext);
+            used = lines is { } range
+                ? ArrangeBlockLines(box, layout, contentX, contentY, contentWidth, contentHeight, range, start, childContext)
+                : !flow.IsVertical && ColumnsOf(box, contentWidth, out var columns, out var share)
+                    ? ArrangeMulticolChildren(
+                        box,
+                        layout,
+                        content,
+                        columns,
+                        share,
+                        usedHeight is not null,
+                        usedHeight ?? 0,
+                        context)
+                    : flow.IsVertical
+                        ? ArrangeColumnChildren(box, layout, content, childContext, context.ContainingBlock.Width)
+                        : ArrangeBlockChildren(box, layout, contentX, contentY, contentWidth, childContext);
         }
         else
         {
@@ -595,7 +598,7 @@ internal sealed class BlockLayout
             var inline = new InlineContext(_engine, context, childContext, atomic);
 
             used = lines is { } range
-                ? _inline.Layout(box, layout, content, flow, inline, range.From, range.To)
+                ? _inline.Layout(box, layout, content, flow, inline, range.From, range.To, start)
                 : _inline.Layout(box, layout, content, flow, inline);
         }
 
@@ -862,6 +865,14 @@ internal sealed class BlockLayout
             return MeasureFloatColumns(box, share, declaredHeight, heightStated, context);
         }
 
+        // A paragraph broken across the columns keeps the float in its first column: the first plan
+        // carries the float's band, and the column after it plans the remaining text at full width.
+        if (FloatHostOf(box, share) is { } floatHost &&
+            PlanFloatParagraph(floatHost, share, heightStated ? declaredHeight : null, columns, context) is { } plan)
+        {
+            return plan.Extent;
+        }
+
         var sections = MulticolSections(box);
 
         // A spanner spans every column and ends the run above it: each stretch of content is shared
@@ -971,12 +982,19 @@ internal sealed class BlockLayout
     /// <c>box-decoration-break: slice</c> says (CSS Break 3 §4.7), each drawing the edges it owns and the
     /// background painted across the whole box and cut with it.
     /// </remarks>
-    private static Boolean FragmentsInColumns(Box child)
+    private static Boolean FragmentsInColumns(Box child) =>
+        !HasBlockChildren(child) && BreaksAtLines(child);
+
+    /// <summary>
+    /// Gets whether a block's lines may be broken by a column at all: nothing about it makes it a single
+    /// piece - a stated height, a break it refuses inside, clipping, size containment, or another axis.
+    /// Whether the lines are its own or the one child's they live in is the caller's business.
+    /// </summary>
+    private static Boolean BreaksAtLines(Box child)
     {
         var style = child.Style;
 
-        return !HasBlockChildren(child) &&
-            !child.IsReplaced &&
+        return !child.IsReplaced &&
             style.Height.IsAuto &&
             !style.MinHeight.HasValue &&
             !style.MaxHeight.HasValue &&
@@ -1253,14 +1271,297 @@ internal sealed class BlockLayout
         return height;
     }
 
+    /// <summary>A block whose lines live in the one in-flow block it holds, with floats beside them.</summary>
+    private readonly record struct FloatHost(Box Paragraph, Box Host);
+
+    /// <summary>
+    /// The plan of a broken float paragraph: the lines its first column takes with the float beside
+    /// them, and the plan the next column resumes with once that float is no longer there. The cut is
+    /// how many of the first plan's lines the first column keeps.
+    /// </summary>
+    private sealed record FloatParagraphPlan(
+        IReadOnlyList<Double> FirstHeights,
+        IReadOnlyList<Double> RestHeights,
+        InlineStart? Rest,
+        Int32 Cut,
+        Double Extent);
+
+    /// <summary>
+    /// Finds the shape this path handles: a multi-column box whose only in-flow child is an undecorated
+    /// block that holds a single in-flow block and at least one float. The lines belong to that inner
+    /// block, and the float shortens the lines of the column that begins the paragraph only.
+    /// </summary>
+    private static FloatHost? FloatHostOf(Box box, Double share)
+    {
+        Box? paragraph = null;
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (child.Style.Float != FloatSide.None || paragraph is not null)
+            {
+                return null;
+            }
+
+            paragraph = child;
+        }
+
+        if (paragraph is not { } block || !BreaksAtLines(block))
+        {
+            return null;
+        }
+
+        // A decorated paragraph shares its edges over the fragments, which this path does not do:
+        // it keeps the whole-block path rather than paint them wrong.
+        var border = BorderOf(block);
+
+        if (border.Horizontal + border.Vertical > 0)
+        {
+            return null;
+        }
+
+        var padding = block.Style.Padding.Resolve(share);
+
+        if (padding.Horizontal + padding.Vertical > 0 ||
+            block.Style.Backgrounds.Count > 0 ||
+            block.Style.BackgroundColor is { A: > 0 })
+        {
+            return null;
+        }
+
+        Box? host = null;
+        var floats = 0;
+
+        foreach (var child in block.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (IsFloat(child))
+            {
+                floats++;
+                continue;
+            }
+
+            if (host is not null || HasBlockChildren(child))
+            {
+                return null;
+            }
+
+            host = child;
+        }
+
+        return host is not null && floats > 0 ? new FloatHost(block, host) : null;
+    }
+
+    /// <summary>
+    /// Gets the band the paragraph's own floats leave for the lines of its inner block: the floats are
+    /// placed at the paragraph's content top, which is where the column begins them.
+    /// </summary>
+    private FloatBand? FloatHostBand(FloatHost host, Double share, LayoutContext context, Double contentX, Double contentY)
+    {
+        var tracks = TracksFor(host.Paragraph, share, contentX);
+
+        if (tracks is null)
+        {
+            return null;
+        }
+
+        foreach (var child in host.Paragraph.Children)
+        {
+            if (child.IsBlockLevel && IsFloat(child) && !PositionedLayout.IsOutOfFlow(child))
+            {
+                PlaceFloat(child, tracks, contentY, share, context);
+            }
+        }
+
+        var margin = host.Host.Style.Margin.Resolve(share);
+
+        return BandFor(
+            host.Host,
+            tracks,
+            context.Floats,
+            contentY,
+            contentX + margin.Left,
+            contentX,
+            contentY,
+            share);
+    }
+
+    /// <summary>
+    /// Plans a float paragraph across two columns: the first plans at the column's width with the
+    /// float's band, the second resumes the text where that plan broke and plans it at the full
+    /// column width (CSS Multicol 3 §7). The cut chosen is the one that leaves the two columns closest
+    /// in height, which is what a balance asks for.
+    /// </summary>
+    private FloatParagraphPlan? PlanFloatParagraph(
+        FloatHost host, Double share, Double? declaredHeight, Int32 columns, LayoutContext context)
+    {
+        // The second column is the one that resumes the text; a third would need a third plan, which
+        // this does not model yet.
+        if (columns != 2)
+        {
+            return null;
+        }
+
+        var childContext = context.ForContainingBlock(new Size(share, declaredHeight ?? 0));
+        var band = FloatHostBand(host, share, childContext, 0, 0);
+        var bandedContext = childContext.WithFloats(band);
+        var banded = new InlineContext(_engine, bandedContext, bandedContext, bandedContext);
+        var first = _inline.LineHeights(host.Host, share, host.Paragraph.Flow, banded);
+
+        if (first.Count == 0)
+        {
+            return null;
+        }
+
+        var plainContext = childContext.WithFloats(null);
+        var plain = new InlineContext(_engine, plainContext, plainContext, plainContext);
+
+        if (declaredHeight is { } stated)
+        {
+            var height = first[0];
+            var fitting = 1;
+
+            while (fitting < first.Count && height + first[fitting] <= stated + 0.001)
+            {
+                height += first[fitting];
+                fitting++;
+            }
+
+            var at = _inline.EndOfLine(host.Host, share, host.Paragraph.Flow, banded, fitting - 1);
+
+            if (at is not { } start)
+            {
+                return new FloatParagraphPlan(first, Array.Empty<Double>(), null, first.Count, Height(first, first.Count));
+            }
+
+            var rest = _inline.LineHeights(host.Host, share, host.Paragraph.Flow, plain, start);
+
+            return new FloatParagraphPlan(first, rest, start, fitting, stated);
+        }
+
+        var orphans = Math.Max(1, host.Paragraph.Style.Breaks.Orphans);
+        var widows = Math.Max(1, host.Paragraph.Style.Breaks.Widows);
+        FloatParagraphPlan? best = null;
+        var bestScore = Double.MaxValue;
+
+        for (var cut = 1; cut < first.Count; cut++)
+        {
+            // A break the paragraph's own orphans and widows forbid is taken only when no other break
+            // is left: the columns would otherwise be left with fewer lines than it asks for.
+            if (cut < orphans || first.Count - cut < widows)
+            {
+                continue;
+            }
+
+            var at = _inline.EndOfLine(host.Host, share, host.Paragraph.Flow, banded, cut - 1);
+
+            if (at is not { } start)
+            {
+                continue;
+            }
+
+            var rest = _inline.LineHeights(host.Host, share, host.Paragraph.Flow, plain, start);
+            var score = Math.Max(Height(first, cut), Height(rest, rest.Count));
+
+            // Equal columns are the balance's aim, and the later cut is the one Chrome keeps when two
+            // leave the same height: the first column takes the line rather than the second.
+            if (score <= bestScore)
+            {
+                best = new FloatParagraphPlan(first, rest, start, cut, score);
+                bestScore = score;
+            }
+        }
+
+        // No allowed break: the paragraph's own rules keep it whole, so the first column takes it all.
+        return best ?? new FloatParagraphPlan(first, Array.Empty<Double>(), null, first.Count, Height(first, first.Count));
+    }
+
+    /// <summary>
+    /// Arranges a float paragraph the way it was measured: the first column takes the plan's first
+    /// lines with the float beside them, and the column after it takes the rest of the text at the
+    /// column's own width (CSS Multicol 3 §7).
+    /// </summary>
+    private Double ArrangeFloatParagraph(
+        Box box,
+        FloatHost host,
+        FloatParagraphPlan plan,
+        LayoutBox parent,
+        Rect content,
+        Double share,
+        Boolean heightStated,
+        Double declaredHeight,
+        LayoutContext context)
+    {
+        var multi = box.Style.Multi;
+        var childContext = context.ForContainingBlock(new Size(share, heightStated ? declaredHeight : 0));
+        var firstHeight = Height(plan.FirstHeights, plan.Cut);
+        var extent = firstHeight;
+
+        parent.Children.Add(_engine.Arrange(
+            host.Paragraph,
+            new Rect(content.X, content.Y, share, firstHeight),
+            childContext,
+            false,
+            new LineRange(0, plan.Cut),
+            null,
+            null));
+
+        if (plan.Rest is { } start && plan.RestHeights.Count > 0)
+        {
+            var restHeight = Height(plan.RestHeights, plan.RestHeights.Count);
+
+            parent.Children.Add(_engine.Arrange(
+                host.Paragraph,
+                new Rect(content.X + share + multi.Gap, content.Y, share, restHeight),
+                childContext,
+                false,
+                new LineRange(0, plan.RestHeights.Count),
+                null,
+                start));
+
+            extent = Math.Max(extent, restHeight);
+        }
+
+        MulticolRules.Add(
+            parent,
+            box.Style,
+            content,
+            new List<(Double, Double)> { (content.Y, content.Y + extent) });
+
+        _engine.PublishFloats(box, null);
+
+        return extent;
+    }
+
+    /// <summary>Gets the height of the first <paramref name="count"/> lines, or of them all.</summary>
+    private static Double Height(IReadOnlyList<Double> heights, Int32 count)
+    {
+        var total = 0.0;
+
+        for (var index = 0; index < count && index < heights.Count; index++)
+        {
+            total += heights[index];
+        }
+
+        return total;
+    }
+
+    /// <summary>A spanner measured at full width: its border box and the margins it presents.</summary>
+    private readonly record struct SpannedBox(Size Size, Thickness Margin);
+
     /// <summary>
     /// One stretch of a multi-column box: a run of children the columns carry, or the single box that
     /// spans their row (CSS Multicol 3 §3.2).
     /// </summary>
     private readonly record struct MulticolSection(Box? Spanner, List<Box> Members);
-
-    /// <summary>A spanner measured at full width: its border box and the margins it presents.</summary>
-    private readonly record struct SpannedBox(Size Size, Thickness Margin);
 
     /// <summary>
     /// Splits a multi-column box into the runs of content its columns carry and the spanners that stand
@@ -1906,6 +2207,70 @@ internal sealed class BlockLayout
     }
 
     /// <summary>
+    /// Arranges one fragment of a block broken at its own lines, where those lines live in the block's
+    /// single in-flow child: the floats that stand beside them belong to the fragment that begins the
+    /// block, and the child takes the lines this fragment is given - planned from
+    /// <paramref name="start"/> where the fragment resumes a paragraph the column beside it broke
+    /// (CSS Multicol 3 §7, CSS Break 3 §4.1).
+    /// </summary>
+    private Double ArrangeBlockLines(
+        Box box,
+        LayoutBox parent,
+        Double contentX,
+        Double contentY,
+        Double contentWidth,
+        Double contentHeight,
+        LineRange range,
+        InlineStart? start,
+        LayoutContext context)
+    {
+        var tracks = TracksFor(box, contentWidth, contentX);
+        Box? host = null;
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (tracks is { } floats && IsFloat(child))
+            {
+                var placed = PlaceFloat(child, floats, contentY, contentWidth, context);
+
+                // A float stands in the fragment that begins the block; the ones after it read the room
+                // it left without drawing it a second time.
+                if (start is null)
+                {
+                    parent.Children.Add(_engine.Arrange(child, placed.BorderBox, context));
+                }
+
+                continue;
+            }
+
+            host = child;
+        }
+
+        if (host is null)
+        {
+            return 0;
+        }
+
+        var margin = host.Style.Margin.Resolve(contentWidth);
+        var band = BandFor(host, tracks, context.Floats, contentY, contentX, contentX, contentY, contentWidth);
+        var hostContext = context.WithFloats(start is null ? band : null);
+        var hostRect = new Rect(
+            contentX + margin.Left,
+            contentY + margin.Top,
+            Math.Max(0, contentWidth - margin.Horizontal),
+            contentHeight);
+
+        parent.Children.Add(_engine.Arrange(host, hostRect, hostContext, false, range, null, start));
+
+        return contentHeight;
+    }
+
+    /// <summary>
     /// Arranges the block children of a multi-column box: each column takes the children the slicer
     /// gives it, stacked from the column's top, and a forced column break ends a column even where more
     /// would fit (CSS Break 3 §4.3). The extent the columns were shared at is what the box's content
@@ -1925,6 +2290,14 @@ internal sealed class BlockLayout
         if (AllFloats(box))
         {
             return ArrangeFloatColumns(box, parent, content, columns, share, heightStated, declaredHeight, context);
+        }
+
+        // A paragraph broken across the columns keeps its float in the first one and resumes the text
+        // in the next at the column's full width.
+        if (FloatHostOf(box, share) is { } floatHost &&
+            PlanFloatParagraph(floatHost, share, heightStated ? declaredHeight : null, columns, context) is { } plan)
+        {
+            return ArrangeFloatParagraph(box, floatHost, plan, parent, content, share, heightStated, declaredHeight, context);
         }
 
         var sections = MulticolSections(box);
