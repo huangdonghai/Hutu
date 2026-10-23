@@ -1876,8 +1876,10 @@ public sealed class SkiaPaintExecutor
         var edgeX = source.Width - cutX[0] - cutX[1];
         var edgeY = source.Height - cutY[0] - cutY[1];
 
+        // A border image is not affected by border-radius (CSS Backgrounds 3, Corner Clipping): the
+        // picture is cut into rectangles and drawn over the area as it stands, square corners and all.
         canvas.Save();
-        SkiaRounded.Clip(canvas, area, command.Radii);
+        canvas.ClipRect(area);
 
         using var paint = new SKPaint { IsAntialias = true };
 
@@ -1985,7 +1987,17 @@ public sealed class SkiaPaintExecutor
             var surface = SKSurface.Create(new SKImageInfo(width, height));
             surface.Canvas.Clear(SKColors.Transparent);
             surface.Canvas.Translate(-area.Left, -area.Top);
-            DrawGradientTile(surface.Canvas, area, colors, positions, gradient);
+
+            // The picture is drawn over the whole bitmap rather than over the area it came from: an area
+            // 146.67 wide is rasterized 147 pixels wide, and a picture stopping at 146.67 would leave its
+            // last column - the very column a slice of the right edge is cut from - half transparent.
+            DrawGradientTile(
+                surface.Canvas,
+                new SKRect(area.Left, area.Top, area.Left + width, area.Top + height),
+                colors,
+                positions,
+                gradient);
+
             surface.Canvas.Flush();
 
             return new BorderImagePicture(surface.Snapshot(), new SKSize(width, height), surface);

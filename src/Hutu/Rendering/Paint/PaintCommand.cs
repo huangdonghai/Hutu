@@ -269,14 +269,12 @@ public sealed class BorderImageCommand : PaintCommand
         Rect area,
         BorderImageSpec image,
         Thickness widths,
-        CornerRadii radii,
         GradientCommand? gradient)
         : base(area)
     {
         Area = area;
         Image = image;
         Widths = widths;
-        Radii = radii;
         Gradient = gradient;
     }
 
@@ -291,9 +289,6 @@ public sealed class BorderImageCommand : PaintCommand
 
     /// <summary>Gets how wide each edge is drawn inside the area, settled against its size.</summary>
     public Thickness Widths { get; }
-
-    /// <summary>Gets the corner radii the area is clipped to, from the box's own.</summary>
-    public CornerRadii Radii { get; }
 
     /// <summary>
     /// Gets the gradient the picture is, drawn over the whole area before it is cut - or null where the

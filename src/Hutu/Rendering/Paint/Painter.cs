@@ -1429,7 +1429,6 @@ internal sealed class Painter
             area,
             image,
             new Thickness(sides[0], sides[1], sides[2], sides[3]),
-            box.Radii,
             gradient));
     }
 
