@@ -1723,6 +1723,12 @@ public sealed class SkiaPaintExecutor
 
         canvas.Save();
         canvas.RotateDegrees(upward ? -90 : 90, baselineX, start);
+
+        // The blob is set out from its baseline, and a column begins where the first glyph's advance
+        // does: the baseline stands a half-leading and a descent into the box, so the run is moved that
+        // far along the column to put its first character at the start of the box rather than that much
+        // above it.
+        canvas.Translate((Single)command.Baseline, 0);
         DrawRunBlob(canvas, command, start, paint, command.LetterSpacing, command.WordSpacing);
         canvas.Restore();
     }

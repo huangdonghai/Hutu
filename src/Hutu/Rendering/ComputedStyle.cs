@@ -1108,15 +1108,16 @@ internal readonly struct ComputedStyle
         ToClear(KeywordText(declared, CssInitialValues.Clear));
 
     /// <summary>
-    /// Maps the <c>float</c> keyword. The logical spellings are left in flow deliberately: they mean
-    /// the inline edges of the box's own writing mode, and answering them from a physical keyword
-    /// would put a float on the wrong edge of a right-to-left or vertical page silently.
+    /// Maps the <c>float</c> keyword. The logical spellings are kept as logical sides: which edge the
+    /// line begins at is the writing mode's answer, and only the layout knows it.
     /// </summary>
     private static Layout.FloatSide ToFloat(String text) =>
         text.Trim().ToLowerInvariant() switch
         {
             "left" => Layout.FloatSide.Left,
             "right" => Layout.FloatSide.Right,
+            "inline-start" => Layout.FloatSide.InlineStart,
+            "inline-end" => Layout.FloatSide.InlineEnd,
             _ => Layout.FloatSide.None,
         };
 
@@ -4002,29 +4003,47 @@ internal readonly struct ComputedStyle
     /// shortened until its box ends (CSS Inline 3 §3.2). Only a style the first-letter arm built is
     /// changed this way - it belongs to that one box and to the text inside it.
     /// </summary>
+    /// <param name="width">
+    /// The block extent the letter's box takes, or zero where it takes the width of the glyph - which is
+    /// what a row does. A column states it, because a floated letter's block extent is its width.
+    /// </param>
+    /// <param name="extra">
+    /// The margins the letter stands off by on top of the declared ones: the cap alignment along the
+    /// block axis, and the line's indentation where the letter stands at the start of a row.
+    /// </param>
     internal void MakeInitialLetter(
         Double fontSize,
         Double lineHeight,
+        Double width,
         Double height,
-        Double topOffset,
+        Thickness extra,
         FloatSide side,
-        StyleLength indent)
+        StyleThickness indent)
     {
         // The letter sits where the line's own indent has already put it, and §7.8.2 shifts the start of
         // the line's contents again by that indent - so the two add up, which Chrome measures as twice
         // the text-indent and the WPT pairs draw as such. A declared margin is kept and added to.
         var margin = _values.BoxModel.Margin;
-        var top = StyleLength.Sum(new[] { margin.Top, StyleLength.FromPixels(topOffset) });
-        var right = side == FloatSide.Right ? StyleLength.Sum(new[] { margin.Right, indent }) : margin.Right;
-        var left = side == FloatSide.Left ? StyleLength.Sum(new[] { margin.Left, indent }) : margin.Left;
+
+        StyleLength With(StyleLength declared, Double offset, StyleLength indented) =>
+            offset == 0 && indented.IsAuto
+                ? declared
+                : indented.IsAuto
+                    ? StyleLength.Sum(new[] { declared, StyleLength.FromPixels(offset) })
+                    : StyleLength.Sum(new[] { declared, StyleLength.FromPixels(offset), indented });
 
         _values.Font = _values.Font with { Size = fontSize, LineHeight = lineHeight };
         _values.BoxModel = _values.BoxModel with
         {
-            Width = StyleLength.Auto,
+            Width = width > 0 ? StyleLength.FromPixels(width) : StyleLength.Auto,
+            WidthDeclared = width > 0,
             Height = StyleLength.FromPixels(height),
             HeightDeclared = true,
-            Margin = new StyleThickness(top, right, margin.Bottom, left),
+            Margin = new StyleThickness(
+                With(margin.Top, extra.Top, indent.Top),
+                With(margin.Right, extra.Right, indent.Right),
+                With(margin.Bottom, extra.Bottom, indent.Bottom),
+                With(margin.Left, extra.Left, indent.Left)),
         };
         _values.DisplayPositioning = _values.DisplayPositioning with { Float = side, Display = "block" };
     }

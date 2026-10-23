@@ -247,32 +247,30 @@ public sealed class FloatLayoutTests
     }
 
     [Test]
-    public async Task AColumnLeavesItsFloatsInTheColumnStack()
+    public async Task AColumnPutsItsFloatsAgainstTheBlockStartAndTheLinesSide()
     {
         using var view = CreateView();
 
-        var body = "<body style='margin:0;writing-mode:vertical-rl'>";
-
-        using var floated = CreateView();
-        using var plain = CreateView();
-
-        await floated.SetHtml(
-            $"<html>{body}<div id='area' style='width:300px'>" +
+        await view.SetHtml(
+            "<html><body style='margin:0;writing-mode:vertical-rl'>" +
+            "<div id='area' style='width:300px;height:200px'>" +
             "<div id='a' style='float:left;width:100px;height:70px'></div>" +
             "<div id='b' style='float:right;width:80px;height:40px'></div>" +
             "</div></body></html>");
 
-        await plain.SetHtml(
-            $"<html>{body}<div id='area' style='width:300px'>" +
-            "<div id='a' style='width:100px;height:70px'></div>" +
-            "<div id='b' style='width:80px;height:40px'></div>" +
-            "</div></body></html>");
+        // The axes are exchanged, so a float of a column is pinned to the right edge - the block start
+        // of a right-to-left column - and to the side of the line it names: the top for `left`, the
+        // bottom for `right`. Chrome measures exactly this (CSS 2.1 §9.5, Writing Modes 3 §7).
+        var a = Bounds(view, "a");
+        var b = Bounds(view, "b");
 
-        // A page that reads down a column has its block axis running sideways, and the tracks here
-        // only know how to stack down. The gap is stated rather than guessed at: a floated box in a
-        // column lands exactly where the same box with no float would.
-        Assert.That(Bounds(floated, "a"), Is.EqualTo(Bounds(plain, "a")));
-        Assert.That(Bounds(floated, "b"), Is.EqualTo(Bounds(plain, "b")));
+
+        Assert.That(a.X, Is.EqualTo(500).Within(0.01), "the block start, the area's own right edge");
+        Assert.That(a.Y, Is.EqualTo(0).Within(0.01), "the line's left");
+        Assert.That(a.Width, Is.EqualTo(100).Within(0.01));
+
+        Assert.That(b.X, Is.EqualTo(520).Within(0.01), "the same band, its own width taken off");
+        Assert.That(b.Y, Is.EqualTo(160).Within(0.01), "the line's right");
     }
 
     /// <summary>

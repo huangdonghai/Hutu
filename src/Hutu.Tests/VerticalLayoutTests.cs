@@ -366,7 +366,7 @@ public sealed class VerticalLayoutTests
         var spaced = InkColumn(Han + Han + " " + Han + Han + " " + Han);
         var written = InkColumn(string.Concat(Han, Zi, Han, Zi, Han, Zi, Han));
 
-        Assert.That(turned, Is.EqualTo(new[] { (0, 35), (66, 105) }), "the turned run stands at 66");
+        Assert.That(turned, Is.EqualTo(new[] { (0, 39), (70, 109) }), "the turned run stands at 70");
         Assert.That(spaced.Max(r => r.End), Is.EqualTo(108), "the spaced line reaches the edge");
 
         // Chromium, measured on the same page, sets the five characters at 0, 23, 45, 68, 90: four
@@ -405,8 +405,8 @@ public sealed class VerticalLayoutTests
         var ragged = InkLastColumn("ab cd ef g", "auto");
         var spread = InkLastColumn("ab cd ef g", "justify");
 
-        Assert.That(ragged, Is.EqualTo(new[] { (0, 35), (56, 75) }), "the line that ends the column is left ragged");
-        Assert.That(spread, Is.EqualTo(new[] { (0, 35), (86, 105) }), "and reaches its edge once it is spread");
+        Assert.That(ragged, Is.EqualTo(new[] { (0, 39), (60, 79) }), "the line that ends the column is left ragged");
+        Assert.That(spread, Is.EqualTo(new[] { (0, 39), (90, 109) }), "and reaches its edge once it is spread");
     }
 
     [Test]
@@ -418,8 +418,8 @@ public sealed class VerticalLayoutTests
         var centered = InkLastColumn("ab cd ef g", "center");
         var ended = InkLastColumn("ab cd ef g", "right");
 
-        Assert.That(centered, Is.EqualTo(new[] { (11, 50), (71, 90) }), "fifteen of the room behind the line");
-        Assert.That(ended, Is.EqualTo(new[] { (26, 65), (86, 105) }), "and all thirty, with the ink on the edge");
+        Assert.That(centered, Is.EqualTo(new[] { (15, 54), (75, 94) }), "fifteen of the room behind the line");
+        Assert.That(ended, Is.EqualTo(new[] { (30, 69), (90, 109) }), "and all thirty, with the ink on the edge");
     }
 
     [Test]
@@ -449,8 +449,8 @@ public sealed class VerticalLayoutTests
         var spaced = InkColumn("ab c", align: "left", spacing: "word-spacing:6px;");
         var plain = InkColumn("ab c", align: "left");
 
-        Assert.That(plain, Is.EqualTo(new[] { (0, 35), (56, 75) }), "the run stepped by its own advances");
-        Assert.That(spaced, Is.EqualTo(new[] { (0, 35), (62, 81) }), "and the word carried down the column");
+        Assert.That(plain, Is.EqualTo(new[] { (0, 39), (60, 79) }), "the run stepped by its own advances");
+        Assert.That(spaced, Is.EqualTo(new[] { (0, 39), (66, 85) }), "and the word carried down the column");
     }
 
     /// <summary>The ideographs the tests below are written with, named by their code points.</summary>
@@ -679,6 +679,74 @@ public sealed class VerticalLayoutTests
             "the page box is the viewport, so it is as tall as the viewport is and the columns are cut to it");
         Assert.That(lines.Count, Is.EqualTo(2), "seventy characters do not fit down one 600px column at ten pixels each");
         Assert.That(lines[0].BorderBox.Height, Is.EqualTo(600), "a line runs the whole height of the page");
+    }
+
+    [Test]
+    public async Task AFloatInAColumnStandsAtTheBlockStartAndLeavesTheLinesAlone()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='" + Column + "'>" +
+            "<div id='f' style='float:left;width:40px;height:30px'></div>" +
+            "<div id='b' style='width:60px;height:40px'></div>" +
+            "</div></body></html>");
+
+        var floated = Bounds(view, "f");
+        var block = Bounds(view, "b");
+
+        // A float in a column is put against the block-start edge - the right one in vertical-rl - and
+        // opened at the line's start edge: Chrome measures 205-50 for a 50-wide float in a column whose
+        // content ends at 205 (CSS 2.1 §9.5, remapped onto the column's axes).
+        Assert.That(floated.X, Is.EqualTo(260), "pinned to the right edge, its width taken off");
+        Assert.That(floated.Y, Is.EqualTo(0), "and standing at the start of the line");
+        Assert.That(floated.Width, Is.EqualTo(40));
+        Assert.That(floated.Height, Is.EqualTo(30));
+
+        // The in-flow box does not step aside for it: a column's lines are not shortened by a float,
+        // which is what Chrome draws and what the borrowed pairs expect.
+        Assert.That(block.X, Is.EqualTo(240), "the first column, the float or no float");
+        Assert.That(block.Y, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task AFloatPinnedToTheEndOfTheLineStandsAtTheBottom()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='" + Column + "'>" +
+            "<div id='f' style='float:right;width:40px;height:30px'></div>" +
+            "</div></body></html>");
+
+        var floated = Bounds(view, "f");
+
+        Assert.That(floated.X, Is.EqualTo(260), "against the block-start edge");
+        Assert.That(floated.Y, Is.EqualTo(170), "and pinned to the line's end");
+    }
+
+    [Test]
+    public async Task TwoFloatsOnOneSideStackAlongTheColumn()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='" + Column + "'>" +
+            "<div id='a' style='float:left;width:40px;height:30px'></div>" +
+            "<div id='b' style='float:left;width:40px;height:30px'></div>" +
+            "</div></body></html>");
+
+        Assert.That(Bounds(view, "a").X, Is.EqualTo(260), "the first takes the first band");
+        Assert.That(Bounds(view, "b").X, Is.EqualTo(220), "the second stacks below it along the column");
+    }
+
+    private static Rect Bounds(HutuViewInternal view, String id)
+    {
+        var element = view.Document!.GetElementById(id);
+        Assert.That(element, Is.Not.Null, $"no element with id '{id}'");
+        var bounds = view.GetElementBounds(element!);
+        Assert.That(bounds, Is.Not.Null, $"'{id}' generated no box");
+        return bounds!.Value;
     }
 
     private static HutuViewInternal CreateView(int viewportWidth)

@@ -107,17 +107,35 @@ internal static class FirstLetter
         if (initial is { } box)
         {
             // The letter stands at the start of the first line, so a right-to-left row floats it to the
-            // right edge rather than the left one (CSS Inline 3 §3.1: it is placed against the line's
-            // inline-start edge).
-            var side = !block.Flow.IsVertical && block.Flow.IsRightToLeft ? FloatSide.Right : FloatSide.Left;
+            // right edge rather than the left one, and a column floats it to the top - line-left, which
+            // is the same edge in every writing mode (CSS Inline 3 §3.1).
+            var vertical = block.Flow.IsVertical;
+            var side = !vertical && block.Flow.IsRightToLeft ? FloatSide.Right : FloatSide.Left;
+            var indent = block.Style.TextIndent;
+            var empty = StyleLength.Auto;
+
+            // A row's letter is stood off the block-start edge - the top - by the cap alignment, and takes
+            // the line's indentation on the edge it floats to (§7.6.1, §7.8.2). A column's letter is stood
+            // off the block-start edge, which is the right one in vertical-rl, and its box takes the whole
+            // em square across the column.
+            var extra = vertical
+                ? block.Flow.BlockSign < 0 ? new Thickness(0, box.Top, 0, 0) : new Thickness(0, 0, 0, box.Top)
+                : new Thickness(box.Top, 0, 0, 0);
+
+            var indented = vertical
+                ? new StyleThickness(empty, empty, empty, empty)
+                : side == FloatSide.Right
+                    ? new StyleThickness(empty, indent, empty, empty)
+                    : new StyleThickness(empty, empty, empty, indent);
 
             style.MakeInitialLetter(
                 box.FontSize,
                 box.LineHeight,
+                vertical ? box.Height : 0,
                 box.Height,
-                box.Top,
+                extra,
                 side,
-                block.Style.TextIndent);
+                indented);
         }
 
         if (taken == text.Length)
@@ -170,6 +188,11 @@ internal static class FirstLetter
     }
 
     /// <summary>One initial letter's used shape, worked out before the letter's style is changed.</summary>
+    /// <param name="Top">
+    /// The distance the letter is stood off the block-start edge of the lines it opens: the cap
+    /// alignment for a row, which is positive inward, and the share of its own box that hangs past
+    /// the columns it spans for a column, which is negative when the box is wider than they are.
+    /// </param>
     /// <param name="Push">
     /// How far the content beside the letter moves down: the lines the letter is high that it does not
     /// sink through, which the block-start edge rule turns into the originating line and everything
@@ -240,7 +263,7 @@ internal static class FirstLetter
     /// </summary>
     private static InitialBox? MeasureInitial(Box block, ComputedStyle style, (Int32 Size, Int32 Sink) asked, HutuRenderDevice device)
     {
-        if (device.Text is not { } measurer || block.Flow.IsVertical)
+        if (device.Text is not { } measurer)
         {
             return null;
         }
@@ -266,6 +289,24 @@ internal static class FirstLetter
         var target = (asked.Size - 1) * height + metrics.CapHeight;
         var fontSize = target / capRatio;
         var box = emRatio * fontSize;
+
+        // A column's letter stands centred on the lines it spans along the block axis: measured in
+        // Chrome, a 20px Ahem face over 24px lines draws the box for `initial-letter: 3` four pixels
+        // past the column edge (80 against three columns of 72), three at 30px lines and none at 40px,
+        // which is the letter's own block extent shared out on either side of theirs. Its line extent
+        // starts at the line's own start edge, with no half-leading to line a cap up to.
+        if (block.Flow.IsVertical)
+        {
+            // A sideways mode turns the glyphs, so the cap height runs along the block axis and the
+            // letter lines up by it exactly as a row's does. A column that keeps them upright aligns
+            // the whole block extent of the letter on the lines it spans instead.
+            return new InitialBox(
+                fontSize,
+                box,
+                box,
+                block.Flow.IsSidewaysMode ? capTop : (asked.Size * height - box) / 2,
+                0);
+        }
 
         // The letter's cap top stays at the first line's cap top whatever it sinks through: lining it
         // up with the baseline of the line it sinks to would lift it out of the block, which §7.6.1

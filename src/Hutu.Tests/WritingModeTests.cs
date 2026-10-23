@@ -88,7 +88,11 @@ public sealed class WritingModeTests
 
         Assert.That(first.X, Is.EqualTo(10));
         Assert.That(second.X, Is.EqualTo(40));
-        Assert.That(flow.BlockOffsetFromLeft(30, 8), Is.EqualTo(8));
+
+        // A column's glyphs are turned about the baseline, so the distance the layout holds from the
+        // block-start edge is mirrored to be expressed from the left whichever way the columns run -
+        // measured in Chrome: a 20px glyph in a 20px column of vertical-lr inks at x=0, not x=12.
+        Assert.That(flow.BlockOffsetFromLeft(30, 8), Is.EqualTo(22));
     }
 
     [Test]

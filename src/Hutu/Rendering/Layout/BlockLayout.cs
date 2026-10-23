@@ -191,7 +191,9 @@ internal sealed class BlockLayout
         }
         else if (HasBlockChildren(box))
         {
-            contentBlock = MeasureColumnChildren(box, childInline, childBlock, context, flow);
+            var column = MeasureColumnChildren(box, childInline, childBlock, context, flow);
+            contentBlock = column.Block;
+            childInline = Math.Max(childInline, column.Inline);
         }
         else
         {
@@ -215,7 +217,7 @@ internal sealed class BlockLayout
     /// row - a neighbour's adjoining margins fold into one strip, a child's outer edge escapes through
     /// the box when nothing borders or pads there, and a box with nothing across it self-collapses.
     /// </remarks>
-    private Double MeasureColumnChildren(
+    private (Double Block, Double Inline) MeasureColumnChildren(
         Box box,
         Double contentInline,
         Double basisBlock,
@@ -229,11 +231,18 @@ internal sealed class BlockLayout
         var childContext = context.ForContainingBlock(new Size(basisBlock, contentInline));
         var constraints = MeasureConstraints.FitWidth(basisBlock);
         var startEscapes = throughStart;
+        var floats = new ColumnFloats(flow, contentInline);
 
         foreach (var child in box.Children)
         {
             if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
             {
+                continue;
+            }
+
+            if (IsFloat(child))
+            {
+                floats.Place(child, _engine.Measure(child, constraints, childContext), cursor + pending);
                 continue;
             }
 
@@ -270,7 +279,12 @@ internal sealed class BlockLayout
             pending = childEnd;
         }
 
-        return throughEnd ? cursor : cursor + pending;
+        // A container grows for the floats it holds, and the axis it grows along is the physical one a
+        // row grows along: measured in Chrome, a column holding nothing but a 50x50 float is fifty tall
+        // and as wide as its declared width, so the float's height counts and its width does not.
+        var stacked = throughEnd ? cursor : cursor + pending;
+
+        return (stacked, floats.DeepestInline);
     }
 
     /// <summary>
@@ -1933,6 +1947,65 @@ internal sealed class BlockLayout
     }
 
     /// <summary>
+    /// Places the floats of a column: each is pinned to the block-start edge and opened at the side of
+    /// the line it names, and the ones naming a side stack along the block axis from one another.
+    /// </summary>
+    /// <remarks>
+    /// The axes are the ones the writing mode exchanges: a float's width runs along the block axis and
+    /// its height along the line, the block margins are the physical left and right ones and the inline
+    /// margins the top and bottom ones, and the block start is the right edge of a column that runs
+    /// right to left. The placement is measured in offsets from the content box's start edges, which is
+    /// where the column's own cursor is written; the caller maps them onto the page.
+    /// <para>
+    /// Nothing here reserves room in the column's lines. A browser does not shorten a column's lines
+    /// beside a float - measured in Chrome: text and the float of a vertical-rl block overlap, and the
+    /// borrowed pairs draw exactly that - so the float only takes its place out of the stack.
+    /// </para>
+    /// </remarks>
+    private sealed class ColumnFloats
+    {
+        private readonly WritingModeInfo _flow;
+        private readonly Double _inlineExtent;
+        private readonly Dictionary<FloatSide, Double> _ended = new();
+
+        /// <summary>Gets how far along the block axis the floats reach, margin boxes included.</summary>
+        public Double DeepestBlock { get; private set; }
+
+        /// <summary>Gets how far down the line the floats reach, which the box's inline extent covers.</summary>
+        public Double DeepestInline { get; private set; }
+
+        public ColumnFloats(WritingModeInfo flow, Double inlineExtent)
+        {
+            _flow = flow;
+            _inlineExtent = inlineExtent;
+        }
+
+        /// <summary>Places one float and hands back where it stands and how much of each axis it takes.</summary>
+        public (Rect Placed, Size Size) Place(Box child, Size size, Double blockCursor)
+        {
+            var flow = _flow;
+            var inlineSize = flow.InlineExtent(size.Width, size.Height);
+            var blockSize = flow.BlockExtent(size.Width, size.Height);
+            var margin = child.Style.Margin.Resolve(_inlineExtent);
+            var (inlineStart, inlineEnd) = flow.InlineMargins(margin);
+            var (blockStart, blockEnd) = flow.BlockMargins(margin);
+            var side = flow.FloatSideOf(child.Style.Float);
+
+            // The floats naming one side stand one after another along the block axis; the two sides
+            // share a band, since they are pinned to opposite edges of the line.
+            var start = _ended.TryGetValue(side, out var ended) ? ended : 0.0;
+            var block = Math.Max(start, blockCursor) + blockStart;
+            var inline = side == FloatSide.Left ? inlineStart : _inlineExtent - inlineSize - inlineEnd;
+
+            _ended[side] = block + blockSize + blockEnd;
+            DeepestBlock = Math.Max(DeepestBlock, _ended[side]);
+            DeepestInline = Math.Max(DeepestInline, inline + inlineSize + inlineEnd);
+
+            return (new Rect(inline, block, inlineSize, blockSize), size);
+        }
+    }
+
+    /// <summary>
     /// Gets the tracks the container's floats are placed against, or null when nothing in it can
     /// float and the walk need not carry them.
     /// </summary>
@@ -1989,7 +2062,13 @@ internal sealed class BlockLayout
         // An auto margin on a float is zero rather than a share of what the width left over: the
         // constraint equation that makes <c>margin: 0 auto</c> centre a block has no part for a box
         // that is not in flow to solve.
-        var box = tracks.Place(style.Float, size.Width, size.Height, margin, y, StandsClear(child.Style, contentWidth));
+        var box = tracks.Place(
+            child.Flow.FloatSideOf(style.Float),
+            size.Width,
+            size.Height,
+            margin,
+            y,
+            StandsClear(child.Style, contentWidth));
 
         return (box, size);
     }
@@ -2677,11 +2756,26 @@ internal sealed class BlockLayout
         var constraints = MeasureConstraints.FitWidth(basisBlock);
         var outOfFlow = new List<(Box Box, Offset Static)>();
         var startEscapes = throughStart;
+        var floats = new ColumnFloats(flow, contentInline);
 
         foreach (var child in box.Children)
         {
             if (!child.IsBlockLevel)
             {
+                continue;
+            }
+
+            if (IsFloat(child) && !PositionedLayout.IsOutOfFlow(child))
+            {
+                // The same placement the measuring pass worked out, run again at the place the column
+                // stands: a float of a column is pinned to the block-start edge and to the side of the
+                // line it names, and takes no step along the stack (CSS 2.1 §9.5).
+                var floating = _engine.Measure(child, constraints, context);
+                var (placed, _) = floats.Place(child, floating, cursor + pending);
+                parent.Children.Add(_engine.Arrange(
+                    child,
+                    flow.Map(content, placed.X, placed.Width, placed.Y, placed.Height),
+                    context));
                 continue;
             }
 

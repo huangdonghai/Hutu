@@ -204,12 +204,17 @@ public readonly struct WritingModeInfo
     /// which is the edge the painter draws a column's baseline from.
     /// </summary>
     /// <remarks>
-    /// A right-to-left mode starts at the right edge, so everything measured from there has to be
-    /// mirrored to be expressed from the left. Horizontal text is unaffected: its block-start edge
-    /// already is the top one, and the painter measures the baseline down from it.
+    /// A row's baseline stands below the top edge by the ascent, and its glyphs are not turned. A
+    /// column's glyphs are turned about the baseline: one that reads down the page turns clockwise, so
+    /// its ascent reaches towards the right and the baseline stands the descent in from the left; one
+    /// that reads up the page turns the other way and the ascent reaches left. The side the ascent
+    /// reaches towards is the side the glyphs turn away from, which is why a column measured from the
+    /// *block* start is mirrored for `vertical-lr` too.
     /// </remarks>
     internal Double BlockOffsetFromLeft(Double blockSize, Double fromBlockStart) =>
-        BlockSign < 0 ? blockSize - fromBlockStart : fromBlockStart;
+        IsVertical
+            ? InlineSign > 0 ? blockSize - fromBlockStart : fromBlockStart
+            : fromBlockStart;
 
     /// <summary>
     /// Splits a box's margins into the pair that opens and closes it along the line it sits on.
@@ -234,6 +239,18 @@ public readonly struct WritingModeInfo
         IsVertical
             ? BlockSign > 0 ? (margin.Left, margin.Right) : (margin.Right, margin.Left)
             : (margin.Top, margin.Bottom);
+
+    /// <summary>
+    /// Gets the physical edge a stated float side names: the logical spellings follow the line, so the
+    /// side the line begins at is the left one in a row that reads rightwards and the top one in a
+    /// column that reads downwards.
+    /// </summary>
+    internal FloatSide FloatSideOf(FloatSide side) => side switch
+    {
+        FloatSide.InlineStart => InlineSign > 0 ? FloatSide.Left : FloatSide.Right,
+        FloatSide.InlineEnd => InlineSign > 0 ? FloatSide.Right : FloatSide.Left,
+        _ => side,
+    };
 
     /// <summary>
     /// Gets whether a character stays upright. <c>mixed</c> keeps the wide characters - CJK, kana and
