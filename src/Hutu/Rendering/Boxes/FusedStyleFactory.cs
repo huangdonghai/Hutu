@@ -782,6 +782,11 @@ internal static class FusedStyleFactory
             Ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position"), parent.Ruby),
             OutlineColor = ComputedStyle.ResolveOutlineColorFused(find("outline-color"), color),
             BackgroundClip = ComputedStyle.ResolveBackgroundClipFused(find("background-clip"), find("-webkit-background-clip")),
+
+            // A broken box either draws once and is cut, which is the initial, or is wrapped on every piece
+            // (CSS Break 3 §4.7). The value is read where the other keywords are, for the fragmentainer.
+            ClonesDecoration = String.Equals(
+                find("box-decoration-break")?.Value?.Trim(), "clone", StringComparison.OrdinalIgnoreCase),
             TextStrokeWidth = strokeWidth,
             TextStrokeColor = strokeColor,
             TextFillColor = fillColor,

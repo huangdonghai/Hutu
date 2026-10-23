@@ -474,13 +474,21 @@ internal sealed class BlockLayout
     /// is a block broken across the columns of its parent (CSS Multicol 3 §3.1). Null takes all of them.
     /// </param>
     public LayoutBox Arrange(
-        Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight = false, LineRange? lines = null)
+        Box box,
+        Rect borderBox,
+        LayoutContext context,
+        Boolean definiteHeight = false,
+        LineRange? lines = null,
+        FragmentSlice? slice = null)
     {
         var style = box.Style;
         var flow = box.Flow;
         var basis = context.ContainingBlock.Width;
-        var border = BorderOf(box);
-        var padding = style.Padding.Resolve(basis);
+
+        // A fragment of a broken box draws only the edges it owns: the border and padding on an edge it
+        // was cut at belong to the fragment that really has that edge (CSS Break 3 §4.7).
+        var border = slice?.Border ?? BorderOf(box);
+        var padding = slice?.Padding ?? style.Padding.Resolve(basis);
 
         var layout = new LayoutBox(box, KindOf(box))
         {
@@ -489,6 +497,9 @@ internal sealed class BlockLayout
             Padding = padding,
             BorderBox = borderBox,
             Flow = flow,
+            SlicesBlockStart = slice is { Starts: false },
+            SlicesBlockEnd = slice is { Ends: false },
+            BackgroundOrigin = slice is null || slice.Value.Starts && slice.Value.Ends ? null : slice.Value.Whole,
         };
 
         if (box.Children.Count == 0)
@@ -855,7 +866,13 @@ internal sealed class BlockLayout
     private readonly struct MulticolChild
     {
         public MulticolChild(
-            Box box, Size size, Thickness margin, FragmentChild fragment, Int32 line, Boolean last)
+            Box box,
+            Size size,
+            Thickness margin,
+            FragmentChild fragment,
+            Int32 line,
+            Boolean last,
+            Double whole = 0)
         {
             Box = box;
             Size = size;
@@ -863,6 +880,7 @@ internal sealed class BlockLayout
             Fragment = fragment;
             Line = line;
             Last = last;
+            Whole = whole;
         }
 
         public Box Box { get; }
@@ -888,18 +906,27 @@ internal sealed class BlockLayout
 
         /// <summary>Gets whether the child is broken across the columns.</summary>
         public Boolean Broken => Line >= 0;
+
+        /// <summary>
+        /// Gets the border box height the child would have had unbroken, for a piece of a broken child.
+        /// The background is painted across that box and cut with it, which is what keeps one gradient
+        /// running down every piece (CSS Break 3 §4.7).
+        /// </summary>
+        public Double Whole { get; }
     }
 
     /// <summary>
     /// Gets whether a child of a multi-column box can be broken at its own lines. Only a block whose
     /// content is a single inline formatting context has lines to break at here - a block with block
     /// children breaks inside those first, which is the next step of the fragmentainer - and only one
-    /// that brings nothing to be drawn or honoured at the edges of a fragment: a height the box states
-    /// for itself, padding, a border or a background would each have to be shared over the fragments by
-    /// <c>box-decoration-break</c> (CSS Break 3 §4.7), which the columns do not do yet, so such a child
-    /// stays whole rather than be painted wrong.
+    /// whose own height comes from its content, with nothing inside it that refuses a break.
     /// </summary>
-    private static Boolean FragmentsInColumns(Box child, Double basis)
+    /// <remarks>
+    /// Its border, padding and background are no bar to being broken: the fragments share them the way
+    /// <c>box-decoration-break: slice</c> says (CSS Break 3 §4.7), each drawing the edges it owns and the
+    /// background painted across the whole box and cut with it.
+    /// </remarks>
+    private static Boolean FragmentsInColumns(Box child)
     {
         var style = child.Style;
 
@@ -909,10 +936,19 @@ internal sealed class BlockLayout
             !style.MinHeight.HasValue &&
             !style.MaxHeight.HasValue &&
             style.Breaks.Inside == BreakValue.Auto &&
-            style.Backgrounds.Count == 0 &&
-            style.BackgroundColor is not { A: > 0 } &&
-            style.Padding.Resolve(basis).Vertical == 0 &&
-            BorderOf(child).Vertical == 0;
+
+            // A box that clips what it holds is kept whole: each fragment of a scroll container would
+            // have to clip its own share of the content, which the columns do not do yet, and a
+            // container sized by its content would then cut that content off at the box's own edge.
+            !style.ClipsOverflow &&
+
+            // Size containment makes a box monolithic (CSS Contain 1 §3.1.1): its size comes from its
+            // own declaration, not from what it holds, so cutting it would move the content it hides.
+            !ContainsBlockSize(child) &&
+
+            // Only a block set in the same axis as the columns has lines the column can end between;
+            // one lying on its side is measured along the other axis and is left whole.
+            !child.Flow.IsVertical;
     }
 
     private List<MulticolChild> MulticolChildren(Box box, Double share, Double declaredHeight, LayoutContext context)
@@ -949,26 +985,50 @@ internal sealed class BlockLayout
             // between two of them (CSS Multicol 3 §3.1). The lines are those the plan makes at the width
             // of a column, which is the plan the arrangement lays out again - the same container at the
             // same extent, so the two passes agree without being told to.
-            if (FragmentsInColumns(child, share))
+            if (FragmentsInColumns(child))
             {
                 var run = runs++;
                 var lines = _inline.LineHeights(
                     child, share, child.Flow, new InlineContext(_engine, childContext, childContext, childContext));
 
+                // A box with no lines has nothing to break between: it is one piece, however tall its
+                // padding or border make it, and dropping it here would lose it from the flow entirely.
+                if (lines.Count == 0)
+                {
+                    children.Add(new MulticolChild(
+                        child,
+                        size,
+                        margin,
+                        new FragmentChild(size.Height + margin.Top + margin.Bottom, breaks.Before, breaks.After, breaks.Inside),
+                        -1,
+                        last: true));
+
+                    continue;
+                }
+
+                // The child's own edges belong to the pieces that really have them: a sliced box keeps its
+                // top border and padding on its first piece and its bottom ones on its last, and the room
+                // they take is part of what the column has to hold.
+                var border = BorderOf(child);
+                var padding = child.Style.Padding.Resolve(share);
+
+                // The slicer counts the lines alone: the border and padding a piece draws belong to the
+                // fragment the lines fall in, and only the arrangement knows which fragment that is.
                 for (var line = 0; line < lines.Count; line++)
                 {
                     var last = line == lines.Count - 1;
+                    var height = lines[line];
 
                     children.Add(new MulticolChild(
                         child,
-                        new Size(size.Width, lines[line]),
+                        new Size(size.Width, height),
                         new Thickness(
                             line == 0 ? margin.Top : 0,
                             margin.Right,
                             last ? margin.Bottom : 0,
                             margin.Left),
                         new FragmentChild(
-                            lines[line] + (line == 0 ? margin.Top : 0) + (last ? margin.Bottom : 0),
+                            height + (line == 0 ? margin.Top : 0) + (last ? margin.Bottom : 0),
                             line == 0 ? breaks.Before : BreakValue.Auto,
                             last ? breaks.After : BreakValue.Auto,
                             BreakValue.Auto,
@@ -976,7 +1036,8 @@ internal sealed class BlockLayout
                             breaks.Orphans,
                             breaks.Widows),
                         line,
-                        last));
+                        last,
+                        size.Height));
                 }
 
                 continue;
@@ -1585,6 +1646,7 @@ internal sealed class BlockLayout
         var counts = Fragmentainer.Fill(fragments, extents);
         var childContext = context.ForContainingBlock(new Size(share, wraps ? boxHeight : heightStated ? declaredHeight : 0));
         var from = 0;
+        var startsAt = new Dictionary<Box, Double>();
 
         for (var cell = 0; cell < counts.Count; cell++)
         {
@@ -1625,13 +1687,55 @@ internal sealed class BlockLayout
                 }
 
                 var rect = new Rect(x + child.Margin.Left, y, width, height);
+                FragmentSlice? slice = null;
+
+                if (child.Broken)
+                {
+                    // The piece owns the box's edges only where they really are: its first column keeps the
+                    // top border and padding, its last the bottom ones, and everything its background draws
+                    // is measured against the box it would have been had it never been broken.
+                    var border = BorderOf(child.Box);
+                    var padding = child.Box.Style.Padding.Resolve(share);
+                    var clones = child.Box.Style.ClonesDecoration;
+                    var starts = clones || child.Line == 0;
+                    var ends = clones || last.Last;
+
+                    if (starts)
+                    {
+                        startsAt[child.Box] = y;
+                    }
+
+                    var wholeTop = startsAt.TryGetValue(child.Box, out var started) ? started : y;
+
+                    var drawn = new Thickness(
+                        starts ? border.Top : 0,
+                        border.Right,
+                        ends ? border.Bottom : 0,
+                        border.Left);
+                    var room = new Thickness(
+                        starts ? padding.Top : 0,
+                        padding.Right,
+                        ends ? padding.Bottom : 0,
+                        padding.Left);
+
+                    height += drawn.Top + drawn.Bottom + room.Top + room.Bottom;
+                    rect = new Rect(x + child.Margin.Left, y, width, height);
+
+                    slice = new FragmentSlice(
+                        drawn,
+                        room,
+                        starts,
+                        ends,
+                        new Rect(rect.X, wholeTop, rect.Width, child.Whole));
+                }
 
                 parent.Children.Add(_engine.Arrange(
                     child.Box,
                     rect,
                     childContext,
                     definiteHeight: false,
-                    lines: child.Broken ? new LineRange(child.Line, to) : null));
+                    lines: child.Broken ? new LineRange(child.Line, to) : null,
+                    slice: slice));
                 y += height + last.Margin.Bottom;
             }
         }

@@ -286,6 +286,28 @@ internal sealed class LayoutBox
     public Boolean SlicesInlineEnd { get; set; }
 
     /// <summary>
+    /// Gets or sets whether this fragment of a block was cut from the rest of it at its own start edge,
+    /// i.e. the block began in an earlier column or page. A cut edge carries no border, no padding and no
+    /// corner curve, because everything on it was drawn where the block started.
+    /// </summary>
+    /// <remarks>Only meaningful for a block broken across columns or pages, and only under
+    /// <c>box-decoration-break: slice</c> (CSS Break 3 §4.7).</remarks>
+    public Boolean SlicesBlockStart { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether this fragment was cut at its own end edge, i.e. the block carries on into a
+    /// later column or page. The mirror of <see cref="SlicesBlockStart"/>.
+    /// </summary>
+    public Boolean SlicesBlockEnd { get; set; }
+
+    /// <summary>
+    /// Gets or sets the border box the block would have had before it was broken, where this fragment is
+    /// one piece of it: a background is painted over that whole box and then cut with the box, which is
+    /// what keeps one gradient running down both pieces of a sliced block.
+    /// </summary>
+    public Rect? BackgroundOrigin { get; set; }
+
+    /// <summary>
     /// Gets or sets whether the descendants are clipped to the padding box, which is what an
     /// <c>overflow</c> other than <c>visible</c> asks for.
     /// </summary>

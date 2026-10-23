@@ -71,8 +71,16 @@ internal static class FragmentSlicer
             fit = Math.Min(fit, Math.Max(count - widows, orphans));
         }
 
-        // A fragment must make progress: a line taller than the fragment overflows it, and a fragment
-        // that could take none of the block still takes its first line.
+        // A fragment that would keep fewer lines than the orphans ask for takes none of them: the whole
+        // block moves to the next fragment rather than leave two lines that belong together split by the
+        // column's edge (CSS Break 3 §4.3). The filler below makes the block overflow the last fragment
+        // instead, so a block too tall to keep its orphans anywhere still lands somewhere.
+        if (fit < orphans && fit > 0)
+        {
+            return 0;
+        }
+
+        // A fragment must make progress: a line taller than the fragment overflows it.
         return Math.Max(fit, 1);
     }
 }

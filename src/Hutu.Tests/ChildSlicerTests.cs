@@ -91,6 +91,37 @@ public sealed class ChildSlicerTests
         Assert.That(ChildSlicer.Fitting(children, 25).Fits, Is.EqualTo(1), "an unbreakable child taller than what is left moves whole");
     }
 
+    [Test]
+    public void ARunThatCannotKeepItsOrphansBeginsInTheNextFragment()
+    {
+        var children = new List<FragmentChild>
+        {
+            new(10, BreakValue.Auto, BreakValue.Auto, BreakValue.Auto, run: 0, orphans: 2, widows: 2),
+            new(10, BreakValue.Auto, BreakValue.Auto, BreakValue.Auto, run: 0, orphans: 2, widows: 2),
+        };
+
+        Assert.That(
+            ChildSlicer.Fitting(children, 15).Fits,
+            Is.EqualTo(0),
+            "one line of a two-line block would break the orphans, so the block starts in the next fragment");
+    }
+
+    [Test]
+    public void AnOrphansRuleYieldsToAnAvoidedBoundary()
+    {
+        var children = new List<FragmentChild>
+        {
+            new(10, BreakValue.Auto, BreakValue.Avoid, BreakValue.Auto),
+            new(10, BreakValue.Avoid, BreakValue.Auto, BreakValue.Auto, run: 0, orphans: 2, widows: 2),
+            new(10, BreakValue.Auto, BreakValue.Auto, BreakValue.Auto, run: 0, orphans: 2, widows: 2),
+        };
+
+        Assert.That(
+            ChildSlicer.Fitting(children, 25).Fits,
+            Is.EqualTo(2),
+            "the run may not move past a break-before/after: avoid, so the line that fits stays and the orphans go short");
+    }
+
     private static List<FragmentChild> Children(Int32 count)
     {
         var children = new List<FragmentChild>(count);

@@ -24,16 +24,21 @@ internal static class Fragmentainer
         var counts = new List<Int32>(extents.Count);
         var placed = 0;
 
-        foreach (var extent in extents)
+        for (var index = 0; index < extents.Count && placed < children.Count; index++)
         {
-            if (placed >= children.Count)
+            var cut = ChildSlicer.Fitting(children, extents[index], placed);
+            var fits = cut.Fits;
+
+            // A fragment left with no child at all because the one it would take cannot keep its orphans
+            // there hands the block on. The last fragment has nowhere to hand it to, so it takes it and
+            // overflows rather than the run go unfinished.
+            if (fits == 0 && index == extents.Count - 1)
             {
-                break;
+                fits = 1;
             }
 
-            var cut = ChildSlicer.Fitting(children, extent, placed);
-            counts.Add(cut.Fits);
-            placed += cut.Fits;
+            counts.Add(fits);
+            placed += fits;
         }
 
         return counts;

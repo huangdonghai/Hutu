@@ -417,6 +417,17 @@ internal sealed record LayoutProfile(
         {
             box.Radii = Sliced(box.Radii, box);
         }
+        else if (box.SlicesBlockStart || box.SlicesBlockEnd)
+        {
+            // A block broken across columns keeps its corner curves only where it really ends: the piece
+            // it begins on keeps its top corners, the one it ends on its bottom ones, and the edges the
+            // break falls on are square.
+            box.Radii = new CornerRadii(
+                box.SlicesBlockStart ? CornerRadius.Zero : box.Radii.TopLeft,
+                box.SlicesBlockStart ? CornerRadius.Zero : box.Radii.TopRight,
+                box.SlicesBlockEnd ? CornerRadius.Zero : box.Radii.BottomRight,
+                box.SlicesBlockEnd ? CornerRadius.Zero : box.Radii.BottomLeft);
+        }
 
         // A decoration is asked for by an element and drawn across the text inside it, so the line a
         // block asked for runs on through every inline that follows, and a child that asks for none
@@ -1120,17 +1131,22 @@ internal sealed record LayoutProfile(
     /// across its parent's columns (CSS Multicol 3 §3.1). Null takes the whole of its content.
     /// </param>
     internal LayoutBox Arrange(
-        Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight, LineRange? lines = null)
+        Box box,
+        Rect borderBox,
+        LayoutContext context,
+        Boolean definiteHeight,
+        LineRange? lines = null,
+        FragmentSlice? slice = null)
     {
         // An anonymous box borrows its parent's style; honouring the positioning it inherits would
         // displace the wrapper a second time, because the parent's own displacement already took it
         // along.
         if (box.IsAnonymous)
         {
-            return ArrangeCore(box, borderBox, context, definiteHeight, lines);
+            return ArrangeCore(box, borderBox, context, definiteHeight, lines, slice);
         }
 
-        var layout = ArrangeCore(box, borderBox, context, definiteHeight, lines);
+        var layout = ArrangeCore(box, borderBox, context, definiteHeight, lines, slice);
 
         var position = box.Style.Position;
 
@@ -1210,7 +1226,12 @@ internal sealed record LayoutProfile(
 
     /// <summary>Produces the geometry of a measured box inside the given border box.</summary>
     private LayoutBox ArrangeCore(
-        Box box, Rect borderBox, LayoutContext context, Boolean definiteHeight, LineRange? lines)
+        Box box,
+        Rect borderBox,
+        LayoutContext context,
+        Boolean definiteHeight,
+        LineRange? lines,
+        FragmentSlice? slice)
     {
         return box.Kind switch
         {
@@ -1220,7 +1241,7 @@ internal sealed record LayoutProfile(
             BoxKind.Table => _table.Arrange(box, borderBox, context),
             _ => box.IsReplaced
                 ? ArrangeReplaced(box, borderBox, context)
-                : _block.Arrange(box, borderBox, context, definiteHeight, lines),
+                : _block.Arrange(box, borderBox, context, definiteHeight, lines, slice),
         };
     }
 

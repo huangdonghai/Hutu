@@ -102,16 +102,18 @@ public sealed class MulticolFragmentTests
     }
 
     [Test]
-    public async Task AChildWithSomethingToDrawAtItsEdgeStaysWhole()
+    public async Task AChildWithSomethingToDrawAtItsEdgeIsStillBroken()
     {
-        // A background, a border or padding would each have to be shared over the fragments by
-        // `box-decoration-break`, which the columns do not do: such a child is not broken at all.
+        // A background, a border or padding is shared over the fragments the way
+        // `box-decoration-break: slice` says (CSS Break 3 §4.7), so a decorated child is broken at its
+        // lines like any other - it used to stand whole, which left the doorway's worth of its content
+        // piled into the first column.
         using var view = await Render(
             "<style>#c { width: 300px; columns: 2; column-gap: 20px }" +
             " #p { background: rgb(1,2,3) }</style>" +
             "<div id='c'><div id='p'>AAAA<br>BBBB<br>CCCC<br>DDDD</div></div>");
 
-        Assert.That(Text(view, "CCCC").BorderBox.X, Is.EqualTo(0), "the child is moved whole instead");
+        Assert.That(Text(view, "CCCC").BorderBox.X, Is.GreaterThan(0), "the lines carry on into the second column");
     }
 
     [Test]

@@ -1106,6 +1106,13 @@ internal sealed class Painter
                 break;
         }
 
+        // A piece of a box broken across columns paints the background the whole box would have had, cut
+        // with the piece: the layers are placed against the box it came from, not against the fragment,
+        // which is what keeps one gradient running down both pieces (CSS Break 3 §4.7).
+        var placement = box.BackgroundClip == BackgroundClip.BorderBox && box.BackgroundOrigin is { } whole
+            ? whole
+            : area;
+
         // The colour first and the layers last-first, so the first declared layer ends on top, as CSS
         // paints them. They are gathered rather than sent straight out because a text clip wraps the
         // whole set in one masked command.
@@ -1124,7 +1131,7 @@ internal sealed class Painter
 
             if (layer.Gradient is { } gradient)
             {
-                var (tile, repeatX, repeatY) = GradientTile(layer, area);
+                var (tile, repeatX, repeatY) = GradientTile(layer, placement);
                 var length = gradient.LineLength(tile.Width, tile.Height);
                 var (radiusX, radiusY) = gradient.EndingRadii(tile.Width, tile.Height);
 
@@ -1144,7 +1151,7 @@ internal sealed class Painter
             }
             else if (layer.Url is { Length: > 0 })
             {
-                layers.Add(new BackgroundImageCommand(area, area, layer, radii));
+                layers.Add(new BackgroundImageCommand(area, placement, layer, radii));
             }
         }
 

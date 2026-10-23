@@ -64,6 +64,25 @@ internal readonly record struct ChildCut(Int32 Fits, Boolean Forced);
 internal readonly record struct LineRange(Int32 From, Int32 To);
 
 /// <summary>
+/// What a fragment of a broken box draws of the box's own edges: the border and padding it owns, whether
+/// the box begins or ends with it, and the border box the whole box would have had (CSS Break 3 §4.7).
+/// A sliced box keeps its border, its padding and its corner curves only at the ends it really has, and
+/// its background is painted across the whole box and cut with it; a cloned box is drawn complete on
+/// every fragment, which is the same record with every edge owned and no whole box to line up against.
+/// </summary>
+/// <param name="Border">The border this fragment draws, nothing on an edge it was cut at.</param>
+/// <param name="Padding">The padding it keeps room for, nothing on an edge it was cut at.</param>
+/// <param name="Starts">Whether the box begins with this fragment, which owns its start edge.</param>
+/// <param name="Ends">Whether the box ends with this fragment, which owns its end edge.</param>
+/// <param name="Whole">The border box of the unbroken box, which its background is painted across.</param>
+internal readonly record struct FragmentSlice(
+    Thickness Border,
+    Thickness Padding,
+    Boolean Starts,
+    Boolean Ends,
+    Rect Whole);
+
+/// <summary>
 /// Works out how many of a block's children a fragment takes (CSS Break 3 §4.1-4.4): a child that does
 /// not fit begins the next fragment, unless the break between it and its neighbour is forbidden by
 /// <c>break-before: avoid</c> or <c>break-after: avoid</c>, in which case the cut moves back until an
@@ -91,6 +110,15 @@ internal static class ChildSlicer
             }
 
             var cut = KeepsRun(children, i, start);
+
+            // The run the break fell in may not begin in this fragment at all: it moves whole to the
+            // next one, and this fragment ends with what stood before it (CSS Break 3 §4.3). Saying so
+            // with no child at all leaves the caller free to hand the run on - and lets a balance search
+            // see that an extent this short was no fit, rather than mistake the forced first line for one.
+            if (cut < 0)
+            {
+                return new ChildCut(0, false);
+            }
 
             // A cut at the end of the list is no boundary between two children at all: the fragment takes
             // what is left and the flow moves on.
@@ -122,7 +150,8 @@ internal static class ChildSlicer
     /// Gets where the boundary moves to when it fell inside a run of one block's lines: the tail the
     /// widows ask for is kept, but not at the cost of the orphans this fragment owes, which is the order
     /// Chrome keeps the two in (CSS Break 3 §3.3). A break between two children, or between the lines of
-    /// two different blocks, is nobody's widows business and is returned as it was.
+    /// two different blocks, is nobody's widows business and is returned as it was. Minus one says the
+    /// run cannot begin in this fragment at all.
     /// </summary>
     private static Int32 KeepsRun(IReadOnlyList<FragmentChild> children, Int32 cut, Int32 start)
     {
@@ -161,6 +190,43 @@ internal static class ChildSlicer
         // (CSS Break 3 §3.3, and Chrome's matrix of nine lines at three and three, which comes out
         // 4/3/2 - the last column short - rather than 4/5).
         var kept = Math.Min(taken, Math.Max(total - widows, orphans));
+
+        // The orphans are the fewest lines the fragment before a break may keep. Where the room leaves
+        // fewer than that, the block does not begin in this fragment at all: the cut moves back to the
+        // line the run starts on, so the whole run goes to the next fragment and whatever stood before
+        // it in this one stays where it is (CSS Break 3 §4.3).
+        // The orphans only say anything about a run the break falls inside: one that fits whole keeps
+        // every line it has whatever the orphans ask for.
+        if (kept < orphans && taken < total)
+        {
+            var first = start;
+
+            while (first < cut && children[first].Run != run)
+            {
+                first++;
+            }
+
+            // The run begins where this fragment begins: nowhere earlier may take the break, so the
+            // fragment takes none of it (-1 tells the caller so).
+            if (first == start)
+            {
+                return -1;
+            }
+
+            // Moving the run whole puts the break at the boundary before it. Where the page forbade that
+            // boundary and no earlier one may take the break either, the lines that fit stay here and the
+            // orphans go short: Chrome lets an orphans rule yield to break-before/break-after: avoid
+            // (CSS Break 3 §4.4, WPT break-between-avoid-004).
+            for (var before = first; before > start; before--)
+            {
+                if (Allowed(children, before))
+                {
+                    return first;
+                }
+            }
+
+            return cut;
+        }
 
         if (kept == taken)
         {

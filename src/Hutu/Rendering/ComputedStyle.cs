@@ -108,6 +108,11 @@ internal readonly struct ComputedStyle
             Decoration = _values.Decoration,
             List = _values.List,
             Position = PositionStyle.Static,
+
+            // Orphans and widows are inherited, so a wrapper the page never wrote keeps them: losing them
+            // here let an anonymous block's lines be split at a column edge that the block it wraps
+            // forbade (CSS Break 3 §4.3).
+            Breaks = _values.Breaks,
             Fused = _values.Fused,
         };
 
@@ -2785,6 +2790,13 @@ internal readonly struct ComputedStyle
         internal RubyPosition Ruby;
         internal CssColorValue OutlineColor = CssColorValue.Black;
         internal BackgroundClip BackgroundClip;
+
+        /// <summary>
+        /// Gets whether a box broken across lines, columns or pages is wrapped independently on every
+        /// piece - <c>box-decoration-break: clone</c> - rather than drawn once and cut
+        /// (CSS Break 3 §4.7).
+        /// </summary>
+        internal Boolean ClonesDecoration;
         internal CssColorValue? BorderTopColor;
         internal CssColorValue? BorderRightColor;
         internal CssColorValue? BorderBottomColor;
@@ -3983,6 +3995,15 @@ internal readonly struct ComputedStyle
             ReadShadowList(_style.GetProperty(name)?.RawValue, _dimensions, font, Color) ??
             Array.Empty<Shadow>();
     }
+
+    /// <summary>Gets whether a broken box is wrapped independently on every piece.</summary>
+    public Boolean ClonesDecoration =>
+        _values.Fused is { } fused
+            ? fused.ClonesDecoration
+            : String.Equals(
+                (_specified?.GetPropertyValue("box-decoration-break") ?? _style?.GetPropertyValue("box-decoration-break"))?.Trim(),
+                "clone",
+                StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Gets the rectangle the box cuts itself to, or null where it states none. The property reaches an
