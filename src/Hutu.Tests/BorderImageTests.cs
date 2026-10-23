@@ -46,6 +46,27 @@ public sealed class BorderImageTests
     }
 
     [Test]
+    public async Task TheComputedSliceKeepsTheSidesThePageWrote()
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='a' style='border-image-slice:2'></div>" +
+            "<div id='b' style='border-image-slice:2 fill'></div>" +
+            "<div id='c' style='border-image-slice:10% 4'></div>" +
+            "</body></html>");
+
+        String Slice(String id) =>
+            view.GetComputedStyle(view.Document!.GetElementById(id)!).GetPropertyValue("border-image-slice");
+
+        Assert.That(Slice("a"), Is.EqualTo("2"), "the sides the page did not write are not lengths to resolve");
+        Assert.That(Slice("b"), Is.EqualTo("2 fill"));
+        Assert.That(Slice("c"), Is.EqualTo("10% 4"), "a percentage slices the picture, it does not measure the box");
+    }
+
+    [Test]
     public async Task AnOutsetGrowsTheAreaAndLeavesTheBoxWhereItWas()
     {
         using var view = new HutuViewInternal(new FakeTextMeasurer());
