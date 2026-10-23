@@ -355,6 +355,14 @@ internal static class BackgroundLayerParser
         return null;
     }
 
+    /// <summary>
+    /// Reads an image written as a gradient, for the properties that take an image and are not a
+    /// background: a border image's source is cut into nine regions before it is drawn, but the picture
+    /// itself is read the one way (CSS Backgrounds 3 §6.2).
+    /// </summary>
+    internal static GradientSpec? ParseGradientImage(String text, IRenderDimensions dimensions, Double fontSize) =>
+        ParseGradient(text, dimensions, fontSize);
+
     private static GradientSpec? ParseGradient(
         String value,
         IRenderDimensions dimensions,

@@ -1855,6 +1855,28 @@ internal readonly struct ComputedStyle
     /// Resolves the background layers from the element's own cascaded declarations, for the
     /// fused path. A page with no background properties paints none.
     /// </summary>
+    /// <summary>
+    /// Reads the border image a box paints its border area with, off the cascade the fused path already
+    /// holds (CSS Backgrounds 3 §6.2 to §6.4). The border's own widths are needed for the widths and
+    /// outsets that are written as multiples of them.
+    /// </summary>
+    public static BorderImageSpec? ResolveBorderImageFused(
+        Func<String, ICssProperty?> find,
+        IElement? element,
+        IRenderDimensions dimensions,
+        Double fontSize,
+        BorderArea border) =>
+        BorderImageParser.Parse(
+            find("border-image-source")?.Value,
+            find("border-image-slice")?.Value,
+            find("border-image-width")?.Value,
+            find("border-image-outset")?.Value,
+            find("border-image-repeat")?.Value,
+            new Thickness(border.TopWidth, border.RightWidth, border.BottomWidth, border.LeftWidth),
+            dimensions,
+            fontSize,
+            element is null ? null : url => ImageUrlResolver.Resolve(element, url));
+
     public static IReadOnlyList<BackgroundLayer> ResolveBackgroundsFused(
         Func<String, ICssProperty?> find,
         IElement? element,
@@ -2722,6 +2744,12 @@ internal readonly struct ComputedStyle
         internal CssColorValue Color = CssColorValue.Black;
         internal CssColorValue? BackgroundColor;
         internal IReadOnlyList<BackgroundLayer> Backgrounds = Array.Empty<BackgroundLayer>();
+
+        /// <summary>
+        /// Gets the picture the box paints its border area with, or null where it has none. Not inherited,
+        /// so this is the element's own answer whatever its parent came to.
+        /// </summary>
+        internal BorderImageSpec? BorderImage;
 
         /// <summary>
         /// Gets the shadows the box is drawn with. The property is not inherited, so this is the element's
@@ -3793,6 +3821,48 @@ internal readonly struct ComputedStyle
             return specified.Count > 0 ? specified : ParseBackgrounds(_style);
         }
     }
+
+    /// <summary>
+    /// Gets the border image the box paints its border area with, or null where it has none
+    /// (CSS Backgrounds 3 §6). The picture is a file or a gradient, cut into nine regions and drawn into
+    /// the border image area, which is the border box grown by the outsets and takes no room in the layout.
+    /// </summary>
+    public BorderImageSpec? BorderImage
+    {
+        get
+        {
+            if (_values.Fused is { } fused)
+            {
+                return fused.BorderImage;
+            }
+
+            var element = _element;
+            var resolve = element is null ? null : new Func<String, String?>(url => ImageUrlResolver.Resolve(element, url));
+
+            // The specified declaration is asked first, since a computed one has already folded the
+            // lengths it states; where it holds a wide keyword instead - `inherit`, which is how a border
+            // image carries down a tree - the computed declaration is the one that has the answer.
+            return BorderImageParser.Parse(
+                Value("border-image-source"),
+                Value("border-image-slice"),
+                Value("border-image-width"),
+                Value("border-image-outset"),
+                Value("border-image-repeat"),
+                new Thickness(ResolvedBorder.TopWidth, ResolvedBorder.RightWidth, ResolvedBorder.BottomWidth, ResolvedBorder.LeftWidth),
+                _dimensions,
+                FontSize,
+                resolve);
+        }
+    }
+
+    /// <summary>
+    /// Reads one border image longhand off the declaration the style was written in, falling back to the
+    /// computed one where the author wrote none.
+    /// </summary>
+    private String? Value(String name) =>
+        _specified?.GetPropertyValue(name) is { Length: > 0 } stated
+            ? stated
+            : _style?.GetPropertyValue(name);
 
     private IReadOnlyList<BackgroundLayer> ParseBackgrounds(ICssStyleDeclaration? declaration)
     {

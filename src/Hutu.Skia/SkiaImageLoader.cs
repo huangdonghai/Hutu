@@ -204,6 +204,27 @@ public sealed class SkiaImageLoader : IImageLoader, IDisposable
         canvas.Restore();
     }
 
+    /// <summary>
+    /// Gets the raster picture loaded at a url, with the size it says it has, for a reader that draws it
+    /// piece by piece: a border image cuts its picture into nine regions and draws each itself
+    /// (CSS Backgrounds 3 §6.3). A url that is not loaded, or one that was loaded as a vector, has no
+    /// raster to cut.
+    /// </summary>
+    internal Boolean TryRaster(String url, out SKImage? image, out ImageSize size)
+    {
+        image = null;
+        size = default;
+
+        if (_entries.TryGetValue(url, out var entry) && entry.Image is not null && entry.Size is { IsValid: true } intrinsic)
+        {
+            image = entry.Image;
+            size = intrinsic;
+            return true;
+        }
+
+        return false;
+    }
+
     /// <summary>Gets the first tile at or before the start of the area, so the whole area is covered.</summary>
     internal static Single FirstTile(Single position, Single areaStart, Single size) =>
         areaStart + ((position - areaStart) % size + size) % size - size;

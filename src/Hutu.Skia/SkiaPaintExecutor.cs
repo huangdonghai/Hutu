@@ -208,6 +208,10 @@ public sealed class SkiaPaintExecutor
                     DrawGradient(canvas, gradient);
                     break;
 
+                case BorderImageCommand border:
+                    DrawBorderImage(canvas, border);
+                    break;
+
                 case TextClippedBackgroundCommand clipped:
                     DrawTextClippedBackground(canvas, clipped);
                     break;
@@ -1782,6 +1786,10 @@ public sealed class SkiaPaintExecutor
             case BackgroundImageCommand background:
                 _images?.DrawBackground(canvas, background.Layer, ToRect(background.Placement), ToRect(background.Bounds), background.Radii);
                 break;
+
+            case BorderImageCommand border:
+                DrawBorderImage(canvas, border);
+                break;
         }
     }
 
@@ -1790,6 +1798,276 @@ public sealed class SkiaPaintExecutor
     /// A gradient has no picture to place, so a tile of it is not a piece of a larger drawing but the
     /// whole gradient again - the line it runs along is the one that box asks for.
     /// </summary>
+
+    /// <summary>
+    /// Draws a border image: the picture cut into nine regions at the slices, the four corners drawn as
+    /// they are into the corners of the area, the four edges tiled into the room between them the way the
+    /// page asked, and the middle only where <c>fill</c> asks for it (CSS Backgrounds 3 §6.3, §6.4).
+    /// </summary>
+    /// <remarks>
+    /// The picture is a file or a gradient. A file has a size of its own, so its slices are measures of it;
+    /// a gradient has none, so it is drawn over the whole border image area first and that drawing is the
+    /// picture, which is what makes a gradient frame line up with the box it frames.
+    /// </remarks>
+    private void DrawBorderImage(SKCanvas canvas, BorderImageCommand command)
+    {
+        var area = ToRect(command.Area);
+
+        if (area.Width <= 0 || area.Height <= 0)
+        {
+            return;
+        }
+
+        using var picture = Picture(command, area);
+
+        if (picture is null)
+        {
+            return;
+        }
+
+        var image = picture.Image;
+        var source = new SKRect(0, 0, picture.Size.Width, picture.Size.Height);
+        var widths = command.Widths;
+        var top = (Single)Math.Max(0, widths.Top);
+        var right = (Single)Math.Max(0, widths.Right);
+        var bottom = (Single)Math.Max(0, widths.Bottom);
+        var left = (Single)Math.Max(0, widths.Left);
+
+        // The nine cuts of the picture. A pair that comes to more than the picture is scaled down together,
+        // so that the middle of it keeps its share (CSS Backgrounds 3 §6.2).
+        var slices = command.Image.Slices;
+        var cutX = new[] { (Single)slices[3].Resolve(source.Width), (Single)slices[1].Resolve(source.Width) };
+        var cutY = new[] { (Single)slices[0].Resolve(source.Height), (Single)slices[2].Resolve(source.Height) };
+
+        if (cutX[0] + cutX[1] > source.Width && cutX[0] + cutX[1] > 0)
+        {
+            var scale = source.Width / (cutX[0] + cutX[1]);
+            cutX[0] *= scale;
+            cutX[1] *= scale;
+        }
+
+        if (cutY[0] + cutY[1] > source.Height && cutY[0] + cutY[1] > 0)
+        {
+            var scale = source.Height / (cutY[0] + cutY[1]);
+            cutY[0] *= scale;
+            cutY[1] *= scale;
+        }
+
+        var inner = new SKRect(area.Left + left, area.Top + top, area.Right - right, area.Bottom - bottom);
+
+        canvas.Save();
+        SkiaRounded.Clip(canvas, area, command.Radii);
+
+        using var paint = new SKPaint { IsAntialias = true, FilterQuality = SKFilterQuality.High };
+
+        var middle = new SKRect(cutX[0], cutY[0], source.Width - cutX[1], source.Height - cutY[1]);
+
+        // The middle first, then the edges, then the corners, which is the order the chapter draws them in
+        // so that a corner is never painted over (CSS Backgrounds 3 §6.3).
+        if (command.Image.Fill)
+        {
+            DrawRegion(canvas, image, middle, inner, command.Image.RepeatX, command.Image.RepeatY, paint);
+        }
+
+        DrawRegion(
+            canvas,
+            image,
+            new SKRect(cutX[0], 0, source.Width - cutX[1], cutY[0]),
+            new SKRect(inner.Left, area.Top, inner.Right, area.Top + top),
+            command.Image.RepeatX,
+            BorderImageRepeat.Stretch,
+            paint);
+
+        DrawRegion(
+            canvas,
+            image,
+            new SKRect(cutX[0], source.Height - cutY[1], source.Width - cutX[1], source.Height),
+            new SKRect(inner.Left, area.Bottom - bottom, inner.Right, area.Bottom),
+            command.Image.RepeatX,
+            BorderImageRepeat.Stretch,
+            paint);
+
+        DrawRegion(
+            canvas,
+            image,
+            new SKRect(0, cutY[0], cutX[0], source.Height - cutY[1]),
+            new SKRect(area.Left, inner.Top, area.Left + left, inner.Bottom),
+            BorderImageRepeat.Stretch,
+            command.Image.RepeatY,
+            paint);
+
+        DrawRegion(
+            canvas,
+            image,
+            new SKRect(source.Width - cutX[1], cutY[0], source.Width, source.Height - cutY[1]),
+            new SKRect(area.Right - right, inner.Top, area.Right, inner.Bottom),
+            BorderImageRepeat.Stretch,
+            command.Image.RepeatY,
+            paint);
+
+        DrawRegion(canvas, image, new SKRect(0, 0, cutX[0], cutY[0]),
+            new SKRect(area.Left, area.Top, area.Left + left, area.Top + top),
+            BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
+
+        DrawRegion(canvas, image, new SKRect(source.Width - cutX[1], 0, source.Width, cutY[0]),
+            new SKRect(area.Right - right, area.Top, area.Right, area.Top + top),
+            BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
+
+        DrawRegion(canvas, image, new SKRect(0, source.Height - cutY[1], cutX[0], source.Height),
+            new SKRect(area.Left, area.Bottom - bottom, area.Left + left, area.Bottom),
+            BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
+
+        DrawRegion(canvas, image, new SKRect(source.Width - cutX[1], source.Height - cutY[1], source.Width, source.Height),
+            new SKRect(area.Right - right, area.Bottom - bottom, area.Right, area.Bottom),
+            BorderImageRepeat.Stretch, BorderImageRepeat.Stretch, paint);
+
+        canvas.Restore();
+    }
+
+    /// <summary>Gets the picture a border image is cut from, and the size its slices are measures of.</summary>
+    private BorderImagePicture? Picture(BorderImageCommand command, SKRect area)
+    {
+        if (command.Gradient is { } gradient && gradient.Stops.Count > 0)
+        {
+            var width = (Int32)Math.Ceiling(area.Width);
+            var height = (Int32)Math.Ceiling(area.Height);
+
+            if (width <= 0 || height <= 0)
+            {
+                return null;
+            }
+
+            var colors = new SKColor[gradient.Stops.Count];
+            var positions = new Single[gradient.Stops.Count];
+
+            for (var index = 0; index < gradient.Stops.Count; index++)
+            {
+                colors[index] = new SKColor(gradient.Stops[index].Color);
+                positions[index] = (Single)Math.Clamp(gradient.Stops[index].Offset, 0, 1);
+            }
+
+            var surface = SKSurface.Create(new SKImageInfo(width, height));
+            surface.Canvas.Clear(SKColors.Transparent);
+            surface.Canvas.Translate(-area.Left, -area.Top);
+            DrawGradientTile(surface.Canvas, area, colors, positions, gradient);
+            surface.Canvas.Flush();
+
+            return new BorderImagePicture(surface.Snapshot(), new SKSize(width, height), surface);
+        }
+
+        if (command.Image.Url is { Length: > 0 } url && _images is not null &&
+            _images.TryRaster(url, out var image, out var size) && image is not null)
+        {
+            return new BorderImagePicture(image, new SKSize((Single)size.Width, (Single)size.Height), null);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Draws one region of the border image: the cut of the picture, tiled into the room the way the page
+    /// asked along each axis (CSS Backgrounds 3 §6.4). The room clips what does not fit, which is how a
+    /// <c>repeat</c> that ends mid-copy is cut off.
+    /// </summary>
+    private static void DrawRegion(
+        SKCanvas canvas,
+        SKImage image,
+        SKRect source,
+        SKRect region,
+        BorderImageRepeat across,
+        BorderImageRepeat down,
+        SKPaint paint)
+    {
+        if (region.Width <= 0 || region.Height <= 0 || source.Width <= 0 || source.Height <= 0)
+        {
+            return;
+        }
+
+        var columns = Tiles(region.Left, region.Width, source.Width, across);
+        var rows = Tiles(region.Top, region.Height, source.Height, down);
+
+        canvas.Save();
+        canvas.ClipRect(region);
+
+        foreach (var (x, width) in columns)
+        {
+            foreach (var (y, height) in rows)
+            {
+                canvas.DrawImage(image, source, new SKRect(x, y, x + width, y + height), paint);
+            }
+        }
+
+        canvas.Restore();
+    }
+
+    /// <summary>
+    /// Lays copies of a cut into a room of the given length along one axis: one copy stretched over it,
+    /// copies at their own size, copies resized so a whole number fits, or copies with equal space between
+    /// them (CSS Backgrounds 3 §6.4).
+    /// </summary>
+    private static List<(Single At, Single Size)> Tiles(Single from, Single length, Single natural, BorderImageRepeat repeat)
+    {
+        var tiles = new List<(Single, Single)>();
+
+        if (natural <= 0 || length <= 0)
+        {
+            return tiles;
+        }
+
+        switch (repeat)
+        {
+            case BorderImageRepeat.Repeat:
+                for (var at = 0f; at < length; at += natural)
+                {
+                    tiles.Add((from + at, natural));
+                }
+
+                break;
+
+            case BorderImageRepeat.Round:
+                var whole = Math.Max(1, (Int32)Math.Round(length / natural));
+                var size = length / whole;
+
+                for (var index = 0; index < whole; index++)
+                {
+                    tiles.Add((from + index * size, size));
+                }
+
+                break;
+
+            case BorderImageRepeat.Space:
+                var count = (Int32)Math.Floor(length / natural);
+
+                if (count < 2)
+                {
+                    // Not enough room for two copies: the one is scaled to the room it has.
+                    tiles.Add((from, length));
+                    break;
+                }
+
+                var gap = (length - count * natural) / (count - 1);
+
+                for (var index = 0; index < count; index++)
+                {
+                    tiles.Add((from + index * (natural + gap), natural));
+                }
+
+                break;
+
+            default:
+                tiles.Add((from, length));
+                break;
+        }
+
+        return tiles;
+    }
+
+    /// <summary>A picture a border image is cut from, with the surface it was drawn into when it is a gradient.</summary>
+    private sealed record BorderImagePicture(SKImage Image, SKSize Size, SKSurface? Surface) : IDisposable
+    {
+        public void Dispose() => Surface?.Dispose();
+    }
+
     private static void DrawGradient(SKCanvas canvas, GradientCommand command)
     {
         if (command.Stops.Count == 0)

@@ -760,6 +760,11 @@ internal static class FusedStyleFactory
                 element, find("background-color"), parent.Background),
             Backgrounds = ComputedStyle.ResolveBackgroundsFused(find, element, dimensions, size),
 
+            // The border image paints the border area and takes no room of its own, so it is read here
+            // with the border the box came to - the widths it is measured against are those of the border
+            // the box was given, not the ones the declaration states.
+            BorderImage = ComputedStyle.ResolveBorderImageFused(find, element, dimensions, size, border),
+
             // The two shadow lists are read the same way and differ only in inheritance: a text shadow
             // reaches a box from the ancestor that wrote it, a box shadow is the box's own.
             BoxShadows = ComputedStyle.ResolveShadowsFused(

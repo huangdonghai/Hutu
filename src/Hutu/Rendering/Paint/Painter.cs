@@ -533,6 +533,7 @@ internal sealed class Painter
                 AddShadows(box, box.Source.Style, target, inset: false);
                 AddShadows(box, box.Source.Style, target, inset: true);
                 AddBorder(box, box.Source.Style, target);
+                AddBorderImage(box, box.Source.Style, target);
                 break;
 
             case LayoutKind.Image:
@@ -542,6 +543,7 @@ internal sealed class Painter
                 PaintBackground(box, box.Source.Style, target);
                 AddShadows(box, box.Source.Style, target, inset: true);
                 AddBorder(box, box.Source.Style, target);
+                AddBorderImage(box, box.Source.Style, target);
                 PaintImage(box, target);
                 break;
 
@@ -552,6 +554,7 @@ internal sealed class Painter
                 PaintBackground(box, box.Source.Style, target);
                 AddShadows(box, box.Source.Style, target, inset: true);
                 AddBorder(box, box.Source.Style, target);
+                AddBorderImage(box, box.Source.Style, target);
                 PaintSvg(box, target);
                 break;
 
@@ -747,6 +750,7 @@ internal sealed class Painter
         if (!box.SuppressBorder)
         {
             AddBorder(box, style, target);
+            AddBorderImage(box, style, target);
         }
 
         // A rule belongs to the gap rather than to the columns: it stands in the middle of it, reaches
@@ -1404,9 +1408,58 @@ internal sealed class Painter
             rule.Color));
     }
 
-    private static void AddBorder(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
+    /// <summary>
+    /// Draws the picture a box paints its border area with. A border image stands where the border stands
+    /// and replaces it (CSS Backgrounds 3 §6.1): the area is the border box grown by the outsets, so the
+    /// picture may reach past what the box took in the layout, and the corners of the box's own radii cut
+    /// it as they cut everything else the box paints.
+    /// </summary>
+    private static void AddBorderImage(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
     {
-        var border = box.Border;
+        if (style.BorderImage is not { } image)
+        {
+            return;
+        }
+
+        var area = image.Area(box.BorderBox, box.Border);
+        var sides = image.DrawnWidths(area, box.Border);
+        var gradient = image.Gradient is { } picture ? GradientOf(picture, area) : null;
+
+        target.Add(new BorderImageCommand(
+            area,
+            image,
+            new Thickness(sides[0], sides[1], sides[2], sides[3]),
+            box.Radii,
+            gradient));
+    }
+
+    /// <summary>
+    /// Settles a gradient picture over the border image area it is drawn into, on the same terms a
+    /// background gradient is settled over its tile: the area is the image's whole size, so its line and
+    /// its shape are asked of the area (CSS Images 3 §3.4).
+    /// </summary>
+    private static GradientCommand GradientOf(GradientSpec gradient, Rect area)
+    {
+        var length = gradient.LineLength(area.Width, area.Height);
+        var (radiusX, radiusY) = gradient.EndingRadii(area.Width, area.Height);
+
+        return new GradientCommand(
+            area,
+            area,
+            false,
+            false,
+            gradient.Shape,
+            gradient.AngleDegrees,
+            area.X + gradient.CenterX.Resolve(area.Width),
+            area.Y + gradient.CenterY.Resolve(area.Height),
+            gradient.StopsAt(length, RampPixels(gradient, area, length)),
+            CornerRadii.None,
+            radiusX,
+            radiusY);
+    }
+
+    private static void AddBorder(LayoutBox box, ComputedStyle style, List<PaintCommand> target)
+    {        var border = box.Border;
 
         if (border.Horizontal <= 0 && border.Vertical <= 0)
         {

@@ -260,6 +260,50 @@ public sealed class BackgroundImageCommand : PaintCommand
 }
 
 /// <summary>
+/// Draws a box's border image: the picture in <see cref="BorderImageSpec"/> cut into nine regions and
+/// tiled into the border image area after the corners, which are never scaled (CSS Backgrounds 3 §6.3).
+/// </summary>
+public sealed class BorderImageCommand : PaintCommand
+{
+    internal BorderImageCommand(
+        Rect area,
+        BorderImageSpec image,
+        Thickness widths,
+        CornerRadii radii,
+        GradientCommand? gradient)
+        : base(area)
+    {
+        Area = area;
+        Image = image;
+        Widths = widths;
+        Radii = radii;
+        Gradient = gradient;
+    }
+
+    /// <summary>
+    /// Gets the border image area the picture is drawn over: the border box grown by the outsets, which
+    /// is larger than what the box took in the layout.
+    /// </summary>
+    public Rect Area { get; }
+
+    /// <summary>Gets the picture, the cut and the way its edges fill their room.</summary>
+    public BorderImageSpec Image { get; }
+
+    /// <summary>Gets how wide each edge is drawn inside the area, settled against its size.</summary>
+    public Thickness Widths { get; }
+
+    /// <summary>Gets the corner radii the area is clipped to, from the box's own.</summary>
+    public CornerRadii Radii { get; }
+
+    /// <summary>
+    /// Gets the gradient the picture is, drawn over the whole area before it is cut - or null where the
+    /// source is a file. A gradient has no size of its own, so it is the area that gives it one
+    /// (CSS Backgrounds 3 §6.2).
+    /// </summary>
+    public GradientCommand? Gradient { get; }
+}
+
+/// <summary>
 /// Draws one linear gradient layer. <see cref="PaintCommand.Bounds"/> is the background positioning
 /// area the layer is clipped to, and <see cref="Tile"/> is the piece of it the gradient fills and
 /// repeats from.

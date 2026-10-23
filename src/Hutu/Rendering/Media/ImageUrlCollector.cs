@@ -54,10 +54,18 @@ internal static class ImageUrlCollector
             Add(ImageUrlResolver.Resolve(element, source), urls, seen);
         }
 
-        var background = ComputedStyle.BackgroundImageWithHint(
-            Boxes.MatchedCascade.ForElement(index, element, Boxes.StyleRecord.MarksOf(element)).Find("background-image"), element);
+        var cascade = Boxes.MatchedCascade.ForElement(index, element, Boxes.StyleRecord.MarksOf(element));
+
+        var background = ComputedStyle.BackgroundImageWithHint(cascade.Find("background-image"), element);
 
         foreach (var candidate in CssUrlReferences.Extract(background))
+        {
+            Add(ImageUrlResolver.Resolve(element, candidate), urls, seen);
+        }
+
+        // A border image is a picture too, and it is painted from the same cache: a source left out here
+        // is one the loader was never asked for, and the border then paints nothing at all.
+        foreach (var candidate in CssUrlReferences.Extract(cascade.Find("border-image-source")?.Value))
         {
             Add(ImageUrlResolver.Resolve(element, candidate), urls, seen);
         }
