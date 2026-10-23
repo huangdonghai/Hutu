@@ -514,19 +514,103 @@ public sealed class SkiaPaintExecutor
         using var ring = BorderRing(command);
         using var middle = BorderMiddle(command);
 
-        if (command.HasUniformColor() && command.Styles.IsUniform && command.Widths.IsUniform())
+        // Every side that lays ink lays the same flat stroke, so the ring is drawn in one go. The widths
+        // need not agree - the ring already follows each side's own - and a side left at nothing, which is
+        // what a broken inline box has at the edge it was cut at, lays no ink to disagree with. Splitting
+        // such a box at the corners would cut the arcs there with the mitre the split is made of, and a
+        // rounded box would show a notch at every corner it was cut at.
+        if (IsOneFlatStroke(command))
         {
-            DrawBorderStroke(canvas, command.Widths.Top, command.TopColor, command.Styles.Top, ring, middle);
+            DrawBorderStroke(canvas, command.Widths.Top, command.TopColor, BorderLineStyle.Solid, ring, middle);
             return;
         }
 
         foreach (var side in BorderSides.All)
         {
             canvas.Save();
-            canvas.ClipPath(SideQuad(command.Bounds, command.Widths, side), SKClipOperation.Intersect, antialias: true);
+            ClipToSide(canvas, command, side);
             DrawBorderStroke(canvas, command.Widths.Side(side), command.ColorOf(side), command.Styles.Side(side), ring, middle);
             canvas.Restore();
         }
+    }
+
+    /// <summary>
+    /// Keeps one side of a border and cuts the others away, which is how two sides that disagree on
+    /// colour are told apart where they meet.
+    /// </summary>
+    /// <remarks>
+    /// A square box is cut along the mitre that runs corner to corner. A rounded one is cut along the
+    /// forty-five degree line through the centre of the corner's arc: the arc itself belongs half to each
+    /// of the two sides, and a mitre drawn between the corners' tangent points would leave the arc outside
+    /// both sides' quarters - the background showing through the corner of every rounded border whose
+    /// sides are not all one colour.
+    /// </remarks>
+    private static void ClipToSide(SKCanvas canvas, BorderCommand command, BorderSide side)
+    {
+        if (command.Radii.IsZero)
+        {
+            using var quad = SideQuad(command.Bounds, command.Widths, side);
+            canvas.ClipPath(quad, SKClipOperation.Intersect, antialias: true);
+            return;
+        }
+
+        var box = command.Bounds;
+        var radii = command.Radii;
+
+        (Double X, Double Y) topLeft = (box.X + radii.TopLeft.Horizontal, box.Y + radii.TopLeft.Vertical);
+        (Double X, Double Y) topRight = (box.Right - radii.TopRight.Horizontal, box.Y + radii.TopRight.Vertical);
+        (Double X, Double Y) bottomRight = (box.Right - radii.BottomRight.Horizontal, box.Bottom - radii.BottomRight.Vertical);
+        (Double X, Double Y) bottomLeft = (box.X + radii.BottomLeft.Horizontal, box.Bottom - radii.BottomLeft.Vertical);
+
+        var (first, firstDir, firstNormal, second, secondDir, secondNormal) = side switch
+        {
+            BorderSide.Top => (topLeft, (1.0, 1.0), (1.0, -1.0), topRight, (-1.0, 1.0), (-1.0, -1.0)),
+            BorderSide.Bottom => (bottomLeft, (1.0, -1.0), (1.0, 1.0), bottomRight, (-1.0, -1.0), (-1.0, 1.0)),
+            BorderSide.Left => (topLeft, (1.0, 1.0), (-1.0, 1.0), bottomLeft, (1.0, -1.0), (-1.0, -1.0)),
+            _ => (topRight, (-1.0, 1.0), (1.0, 1.0), bottomRight, (-1.0, -1.0), (1.0, -1.0)),
+        };
+
+        // The two half-planes meet in a wedge that reaches across the whole box, so the side is also kept
+        // to the band it lays: without that a bottom border's wedge would reach up into the top border and
+        // paint over it.
+        var band = side switch
+        {
+            BorderSide.Top => new SKRect((Single)box.X, (Single)box.Y, (Single)box.Right, (Single)(box.Y + command.Widths.Top + radii.TopLeft.Vertical + radii.TopRight.Vertical)),
+            BorderSide.Bottom => new SKRect((Single)box.X, (Single)(box.Bottom - command.Widths.Bottom - radii.BottomLeft.Vertical - radii.BottomRight.Vertical), (Single)box.Right, (Single)box.Bottom),
+            BorderSide.Left => new SKRect((Single)box.X, (Single)box.Y, (Single)(box.X + command.Widths.Left + radii.TopLeft.Horizontal + radii.BottomLeft.Horizontal), (Single)box.Bottom),
+            _ => new SKRect((Single)(box.Right - command.Widths.Right - radii.TopRight.Horizontal - radii.BottomRight.Horizontal), (Single)box.Y, (Single)box.Right, (Single)box.Bottom),
+        };
+
+        using var one = HalfPlane(first.X, first.Y, firstDir, firstNormal, box);
+        using var two = HalfPlane(second.X, second.Y, secondDir, secondNormal, box);
+
+        canvas.ClipRect(band, SKClipOperation.Intersect, antialias: false);
+        canvas.ClipPath(one, SKClipOperation.Intersect, antialias: true);
+        canvas.ClipPath(two, SKClipOperation.Intersect, antialias: true);
+    }
+
+    /// <summary>
+    /// Gets the half of the plane on one side of the line through a point along a direction, as a rectangle
+    /// large enough to hold the whole box it is used to cut.
+    /// </summary>
+    private static SKPath HalfPlane(
+        Double x,
+        Double y,
+        (Double X, Double Y) direction,
+        (Double X, Double Y) normal,
+        Rect box)
+    {
+        var reach = (Single)(Math.Abs(box.Width) + Math.Abs(box.Height) + 4 * (Math.Abs(box.X) + Math.Abs(box.Y)) + 64);
+        var (dx, dy) = direction;
+        var (nx, ny) = normal;
+
+        var path = new SKPath();
+        path.MoveTo((Single)x - reach * (Single)dx, (Single)y - reach * (Single)dy);
+        path.LineTo((Single)x + reach * (Single)dx, (Single)y + reach * (Single)dy);
+        path.LineTo((Single)(x + reach * dx + reach * nx), (Single)(y + reach * dy + reach * ny));
+        path.LineTo((Single)(x - reach * dx + reach * nx), (Single)(y - reach * dy + reach * ny));
+        path.Close();
+        return path;
     }
 
     /// <summary>
