@@ -40,6 +40,30 @@ public sealed class FloatLayoutTests
     }
 
     [Test]
+    public async Task AFloatStepsBelowAnotherFloatsMarginBox()
+    {
+        using var view = CreateView();
+
+        // A hundred-pixel container: the second float's seventy-five-pixel margin box cannot stand
+        // beside the first, so it begins below that box rather than at its border edge, and its own top
+        // margin stands in between. Chrome puts the second border box at (25, 100).
+        await view.SetHtml(Page(
+            "<div style='width:100px'>" +
+            "<div id='a' style='float:left;width:25px;height:25px;margin:25px'></div>" +
+            "<div id='b' style='float:left;width:25px;height:25px;margin:25px'></div>" +
+            "</div>"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Bounds(view, "a"), Is.EqualTo(new Rect(25, 25, 25, 25)), "the first float stands inside its own margin box");
+            Assert.That(
+                Bounds(view, "b"),
+                Is.EqualTo(new Rect(25, 100, 25, 25)),
+                "the second begins below the first float's margin box and then adds its own top margin");
+        });
+    }
+
+    [Test]
     public async Task AFixedWidthFormattingContextDropsBesideANarrowerFloat()
     {
         using var view = CreateView();

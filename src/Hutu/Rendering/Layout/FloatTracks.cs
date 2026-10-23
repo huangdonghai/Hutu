@@ -237,13 +237,16 @@ internal sealed class FloatTracks
     {
         var y = top + margin.Top;
 
-        // The float goes to the first height at which its own extent fits between the floats already
-        // standing there. The specification steps down one line at a time; this steps to the bottom
-        // of the float that blocked it, which reaches the same place whenever the band the float
-        // spans crosses one row of neighbours - and the rows of a portal's columns never interleave.
+        // The float's place is its margin box, so the room it asks for is the whole of that box and
+        // the height it is compared against is where its margin box begins. The specification steps
+        // down one line at a time; this steps to the bottom of the float that blocked it, which reaches
+        // the same place whenever the band the float spans crosses one row of neighbours - and the rows
+        // of a portal's columns never interleave.
+        var outer = height + margin.Vertical;
+
         for (var attempt = 0; attempt < _left.Count + _right.Count + 1; attempt++)
         {
-            var (left, right) = FreeSpanAt(y, height);
+            var (left, right) = FreeSpanAt(y - margin.Top, outer);
             var x = side == FloatSide.Left ? left + margin.Left : right - width - margin.Right;
             var fits = side == FloatSide.Left
                 ? x + width <= right
@@ -254,14 +257,14 @@ internal sealed class FloatTracks
                 return Reserved(side, x, y, width, height, margin, area);
             }
 
-            var next = NextBottom(y, height);
+            var next = NextBottom(y - margin.Top, outer);
 
-            if (next <= y)
+            if (next <= y - margin.Top)
             {
                 break;
             }
 
-            y = next;
+            y = next + margin.Top;
         }
 
         // Nothing below the blocked heights had room either, which only happens when the float is
