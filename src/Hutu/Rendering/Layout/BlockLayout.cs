@@ -867,7 +867,7 @@ internal sealed class BlockLayout
 
         // A paragraph broken across the columns keeps the float in its first column: the first plan
         // carries the float's band, and the column after it plans the remaining text at full width.
-        if (FloatHostOf(box, share) is { } floatHost &&
+        if (FloatHostOf(box) is { } floatHost &&
             PlanFloatParagraph(floatHost, share, heightStated ? declaredHeight : null, columns, context) is { } plan)
         {
             return plan.Extent;
@@ -1279,7 +1279,7 @@ internal sealed class BlockLayout
     /// block that holds a single in-flow block and at least one float. The lines belong to that inner
     /// block, and the float shortens the lines of the column that begins the paragraph only.
     /// </summary>
-    private static FloatHost? FloatHostOf(Box box, Double share)
+    private static FloatHost? FloatHostOf(Box box)
     {
         Box? paragraph = null;
 
@@ -1299,24 +1299,6 @@ internal sealed class BlockLayout
         }
 
         if (paragraph is not { } block || !BreaksAtLines(block))
-        {
-            return null;
-        }
-
-        // A decorated paragraph shares its edges over the fragments, which this path does not do:
-        // it keeps the whole-block path rather than paint them wrong.
-        var border = BorderOf(block);
-
-        if (border.Horizontal + border.Vertical > 0)
-        {
-            return null;
-        }
-
-        var padding = block.Style.Padding.Resolve(share);
-
-        if (padding.Horizontal + padding.Vertical > 0 ||
-            block.Style.Backgrounds.Count > 0 ||
-            block.Style.BackgroundColor is { A: > 0 })
         {
             return null;
         }
@@ -1404,11 +1386,20 @@ internal sealed class BlockLayout
             return null;
         }
 
-        var childContext = context.ForContainingBlock(new Size(share, declaredHeight ?? 0));
-        var band = FloatHostBand(host, share, childContext, 0, 0);
+        // The paragraph's own edges stand around its lines: the plan is made at what the border and
+        // padding leave, and the fragment that owns an edge carries its room (CSS Break 3 §4.7).
+        var border = BorderOf(host.Paragraph);
+        var padding = host.Paragraph.Style.Padding.Resolve(share);
+        var content = Math.Max(0, share - border.Horizontal - padding.Horizontal);
+        var margin = host.Paragraph.Style.Margin.Resolve(share);
+        var top = margin.Top + border.Top + padding.Top;
+        var bottom = border.Bottom + padding.Bottom;
+
+        var childContext = context.ForContainingBlock(new Size(content, declaredHeight ?? 0));
+        var band = FloatHostBand(host, content, childContext, 0, 0);
         var bandedContext = childContext.WithFloats(band);
         var banded = new InlineContext(_engine, bandedContext, bandedContext, bandedContext);
-        var first = _inline.LineHeights(host.Host, share, host.Host.Flow, banded);
+        var first = _inline.LineHeights(host.Host, content, host.Host.Flow, banded);
 
         if (first.Count == 0)
         {
@@ -1417,30 +1408,30 @@ internal sealed class BlockLayout
 
         var plainContext = childContext.WithFloats(null);
         var plain = new InlineContext(_engine, plainContext, plainContext, plainContext);
-        var top = host.Paragraph.Style.Margin.Resolve(share).Top;
         var orphans = Math.Max(1, host.Paragraph.Style.Breaks.Orphans);
         var widows = Math.Max(1, host.Paragraph.Style.Breaks.Widows);
+        var clones = host.Paragraph.Style.ClonesDecoration;
         var whole = new FloatParagraphPlan(
             new[] { new FloatColumn(null, first, first.Count) },
-            top + Height(first, first.Count));
+            top + Height(first, first.Count) + bottom);
 
         if (declaredHeight is { } stated)
         {
             // A fill lets its last column overflow rather than move content past the columns it has.
-            var filled = Fill(host, share, first, banded, plain, stated, columns, top, orphans, widows, mayOverflow: true);
+            var filled = Fill(host, content, first, banded, plain, stated, columns, top, bottom, clones, orphans, widows, mayOverflow: true);
 
             return filled is null ? whole : filled with { Extent = stated };
         }
 
         // The least extent the whole text fits in, found by halving the way a line balance does.
         var low = 0.0;
-        var high = top + Height(first, first.Count);
+        var high = top + Height(first, first.Count) + bottom;
         FloatParagraphPlan? best = null;
 
         for (var step = 0; step < 40; step++)
         {
             var middle = (low + high) / 2;
-            var plan = Fill(host, share, first, banded, plain, middle, columns, top, orphans, widows, mayOverflow: false);
+            var plan = Fill(host, content, first, banded, plain, middle, columns, top, bottom, clones, orphans, widows, mayOverflow: false);
 
             if (plan is null)
             {
@@ -1464,13 +1455,15 @@ internal sealed class BlockLayout
     /// </summary>
     private FloatParagraphPlan? Fill(
         FloatHost host,
-        Double share,
+        Double width,
         IReadOnlyList<Double> first,
         InlineContext banded,
         InlineContext plain,
         Double extent,
         Int32 columns,
         Double top,
+        Double bottom,
+        Boolean clones,
         Int32 orphans,
         Int32 widows,
         Boolean mayOverflow)
@@ -1483,7 +1476,11 @@ internal sealed class BlockLayout
 
         for (var column = 0; column < columns; column++)
         {
-            var room = extent - (column == 0 ? top : 0);
+            // A cloned box owns both edges on every fragment; a sliced one owns the top on its first
+            // and the bottom on its last (CSS Break 3 §4.7).
+            var starts = clones || column == 0;
+            var endsEdge = clones || column == columns - 1;
+            var room = extent - (starts ? top : 0) - (endsEdge ? bottom : 0);
             var count = FragmentSlicer.Fitting(heights, room, orphans, widows);
 
             if (count == 0)
@@ -1501,15 +1498,36 @@ internal sealed class BlockLayout
                 count = heights.Count;
             }
 
+            // The fragment that ends the paragraph also owns its bottom edge: where the lines alone
+            // leave no room for it, the break moves back so that edge still fits.
+            if (count >= heights.Count && !endsEdge && bottom > 0.001)
+            {
+                var ends = FragmentSlicer.Fitting(heights, room - bottom, orphans, widows);
+
+                if (ends <= 0)
+                {
+                    if (!mayOverflow)
+                    {
+                        return null;
+                    }
+                }
+                else if (ends < count)
+                {
+                    count = ends;
+                }
+            }
+
             result.Add(new FloatColumn(start, heights, count));
-            highest = Math.Max(highest, Height(heights, count) + (column == 0 ? top : 0));
+            highest = Math.Max(
+                highest,
+                Height(heights, count) + (starts ? top : 0) + ((clones || count >= heights.Count) ? bottom : 0));
 
             if (count >= heights.Count)
             {
                 return new FloatParagraphPlan(result, highest);
             }
 
-            var at = _inline.EndOfLine(host.Host, share, host.Host.Flow, inline, count - 1);
+            var at = _inline.EndOfLine(host.Host, width, host.Host.Flow, inline, count - 1);
 
             if (at is not { } resume)
             {
@@ -1517,7 +1535,7 @@ internal sealed class BlockLayout
             }
 
             start = resume;
-            heights = _inline.LineHeights(host.Host, share, host.Host.Flow, plain, resume);
+            heights = _inline.LineHeights(host.Host, width, host.Host.Flow, plain, resume);
             inline = plain;
 
             if (heights.Count == 0)
@@ -1546,25 +1564,48 @@ internal sealed class BlockLayout
         LayoutContext context)
     {
         var multi = box.Style.Multi;
-        var childContext = context.ForContainingBlock(new Size(share, heightStated ? declaredHeight : 0));
-        var top = host.Paragraph.Style.Margin.Resolve(share).Top;
+        var border = BorderOf(host.Paragraph);
+        var padding = host.Paragraph.Style.Padding.Resolve(share);
+        var margin = host.Paragraph.Style.Margin.Resolve(share);
+        var last = plan.Columns.Count - 1;
+        var wholeHeight = Height(plan.Columns[0].Heights, plan.Columns[0].Heights.Count) + border.Vertical + padding.Vertical;
+        var whole = new Rect(content.X, content.Y + margin.Top, share, wholeHeight);
+
+        // The plan's width is what the paragraph's own edges leave; the arrangement reads it back
+        // from the fragment's insets, so the two passes break the lines at the same width.
+        var childContext = context.ForContainingBlock(
+            new Size(Math.Max(0, share - border.Horizontal - padding.Horizontal), heightStated ? declaredHeight : 0));
 
         for (var index = 0; index < plan.Columns.Count; index++)
         {
             var column = plan.Columns[index];
-            var height = Height(column.Heights, column.Count);
+            var clones = host.Paragraph.Style.ClonesDecoration;
+            var starts = clones || index == 0;
+            var ends = clones || index == last;
+            var height = Height(column.Heights, column.Count)
+                + (starts ? border.Top + padding.Top : 0)
+                + (ends ? border.Bottom + padding.Bottom : 0);
+
+            // Each fragment draws the edges it owns, and the background is painted across the box the
+            // paragraph would have been had it never been broken (CSS Break 3 §4.7).
+            var slice = new FragmentSlice(
+                new Thickness(starts ? border.Top : 0, border.Right, ends ? border.Bottom : 0, border.Left),
+                new Thickness(starts ? padding.Top : 0, padding.Right, ends ? padding.Bottom : 0, padding.Left),
+                starts,
+                ends,
+                whole);
 
             parent.Children.Add(_engine.Arrange(
                 host.Paragraph,
                 new Rect(
                     content.X + index * (share + multi.Gap),
-                    content.Y + (index == 0 ? top : 0),
+                    content.Y + (starts ? margin.Top : 0),
                     share,
                     height),
                 childContext,
                 false,
                 new LineRange(0, column.Count),
-                null,
+                slice,
                 column.Start));
         }
 
@@ -2332,7 +2373,7 @@ internal sealed class BlockLayout
 
         // A paragraph broken across the columns keeps its float in the first one and resumes the text
         // in the next at the column's full width.
-        if (FloatHostOf(box, share) is { } floatHost &&
+        if (FloatHostOf(box) is { } floatHost &&
             PlanFloatParagraph(floatHost, share, heightStated ? declaredHeight : null, columns, context) is { } plan)
         {
             return ArrangeFloatParagraph(box, floatHost, plan, parent, content, share, heightStated, declaredHeight, context);

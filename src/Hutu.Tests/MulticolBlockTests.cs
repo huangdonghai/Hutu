@@ -63,6 +63,71 @@ public sealed class MulticolBlockTests
     }
 
     [Test]
+    public async Task ADecoratedFloatParagraphKeepsItsEdgesOnTheFragmentsThatOwnThem()
+    {
+        var words = String.Join(" ", Enumerable.Repeat("aaaa", 30));
+
+        using var view = await Render(
+            "<style>#c { width: 300px; columns: 2; column-gap: 20px }" +
+            " #p { margin: 0; border: 2px solid; padding: 4px }" +
+            " #f { float: right; width: 60px; height: 30px }</style>" +
+            "<div id='c'><p id='p'><span id='f'></span>" + words + "</p></div>");
+
+        var fragments = Walk(Find(view, "c"))
+            .Where(box => box.Source.Element?.GetAttribute("id") == "p")
+            .ToList();
+
+        Assert.That(fragments, Has.Count.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(fragments[0].Border.Top, Is.EqualTo(2), "the first fragment owns the top border");
+            Assert.That(fragments[0].Padding.Top, Is.EqualTo(4));
+            Assert.That(fragments[0].Border.Bottom, Is.EqualTo(0), "and not the bottom one");
+            Assert.That(fragments[0].Padding.Bottom, Is.EqualTo(0));
+            Assert.That(fragments[1].Border.Top, Is.EqualTo(0), "which belongs to the last fragment");
+            Assert.That(fragments[1].Border.Bottom, Is.EqualTo(2));
+
+            var firstLine = Walk(fragments[0]).First(box => box.Kind == LayoutKind.Line);
+            var rest = Walk(fragments[1]).Where(box => box.Kind == LayoutKind.Line).ToList();
+
+            Assert.That(firstLine.BorderBox.Width, Is.EqualTo(68).Within(0.5), "140 less the edges and the float");
+            Assert.That(rest.All(line => Math.Abs(line.BorderBox.Width - 128) < 0.5), Is.True, "the next column plans inside the edges");
+            Assert.That(Walk(fragments[0]).Count(box => box.Source.Element?.GetAttribute("id") == "f"), Is.EqualTo(1), "the float is drawn once");
+            Assert.That(Walk(fragments[1]).Count(box => box.Source.Element?.GetAttribute("id") == "f"), Is.EqualTo(0));
+        });
+    }
+
+    [Test]
+    public async Task AClonedFloatParagraphWrapsEveryColumnInItsOwnEdges()
+    {
+        var words = String.Join(" ", Enumerable.Repeat("aaaa", 30));
+
+        using var view = await Render(
+            "<style>#c { width: 300px; columns: 2; column-gap: 20px }" +
+            " #p { margin: 0; border: 2px solid; padding: 4px; box-decoration-break: clone }" +
+            " #f { float: right; width: 60px; height: 30px }</style>" +
+            "<div id='c'><p id='p'><span id='f'></span>" + words + "</p></div>");
+
+        var fragments = Walk(Find(view, "c"))
+            .Where(box => box.Source.Element?.GetAttribute("id") == "p")
+            .ToList();
+
+        Assert.That(fragments, Has.Count.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            foreach (var fragment in fragments)
+            {
+                Assert.That(fragment.Border.Top, Is.EqualTo(2), "a cloned fragment draws the top border");
+                Assert.That(fragment.Border.Bottom, Is.EqualTo(2), "and the bottom one");
+                Assert.That(fragment.Padding.Top, Is.EqualTo(4));
+                Assert.That(fragment.Padding.Bottom, Is.EqualTo(4));
+            }
+
+            Assert.That(Walk(fragments[0]).Count(box => box.Source.Element?.GetAttribute("id") == "f"), Is.EqualTo(1), "the float is still drawn once");
+        });
+    }
+
+    [Test]
     public async Task AFloatParagraphBreaksIntoEveryColumnItsTextNeeds()
     {
         var words = String.Join(" ", Enumerable.Repeat("aaaa", 40));
