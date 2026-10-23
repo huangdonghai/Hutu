@@ -140,6 +140,28 @@ public sealed class ShapeOutsideTests
     }
 
     [Test]
+    public async Task AStepIsLeftBehindWhenTheLineBeginsAtItsCorner()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='area' style='width:200px;line-height:0'>" +
+            "<div id='f' style='float:left;width:200px;height:200px;shape-outside:polygon(" +
+            "0px 40px, 120px 40px, 120px 80px, 80px 80px, 80px 120px, 160px 120px, 160px 160px, 0px 160px)'></div>" +
+            string.Concat(Enumerable.Range(1, 8).Select(index =>
+                $"<div style='height:20px'><span id='b{index}' " +
+                "style='display:inline-block;width:40px;height:20px'></span></div>")) +
+            "</div>"));
+
+        // The shape steps back at 40 and again at 80. A line that begins exactly on the corner of the
+        // outer step belongs to the step it opens, so the line at 80 stands beside the 80-wide part and
+        // not beside the corner of the 120-wide one the line above ends on (CSS Shapes 1 §3.1).
+        Assert.That(Bounds(view, "b3").X, Is.EqualTo(120).Within(0.5), "the line over the first step");
+        Assert.That(Bounds(view, "b5").X, Is.EqualTo(80).Within(0.5), "the line that begins on the corner");
+        Assert.That(Bounds(view, "b7").X, Is.EqualTo(160).Within(0.5), "the line over the next step");
+    }
+
+    [Test]
     public async Task ALineTooWideForAShapeStopsWhereItFirstFits()
     {
         using var view = CreateView();

@@ -33,6 +33,9 @@ internal sealed class FloatArea
     /// <summary>How far a chord may lie inside the curve it stands for, in pixels.</summary>
     private const Double Tolerance = 0.01;
 
+    /// <summary>How near a point has to be to a height to stand on it.</summary>
+    private const Double Touch = 1e-6;
+
     private readonly Double[] _edge;
 
     private FloatArea(Double[] edge, Rect bounds, Double outset, Rect marginBox)
@@ -369,11 +372,22 @@ internal sealed class FloatArea
             var x = _edge[step * 2];
             var y = _edge[step * 2 + 1];
 
+            var next = (step + 1) % count;
+            var toX = _edge[next * 2];
+            var toY = _edge[next * 2 + 1];
+            var previous = (step + count - 1) % count;
+            var fromY = _edge[previous * 2 + 1];
+
+            // A point standing exactly where the band begins counts only where an edge runs on down from
+            // it: the outer corner of a step at the band's top row belongs to the step above, and the
+            // line that opens on that row stands beside the step below it (CSS Shapes 1 §3.1).
+            var corner = Math.Abs(y - top) <= Touch && toY <= top + Touch && fromY <= top + Touch;
+
             // A point of the outline a distance away from the band still reaches it, but only as far along
             // the inline axis as the circle of the shape's own margin drawn about it allows.
             var away = y < top ? top - y : y > bottom ? y - bottom : 0;
 
-            if (away <= Outset)
+            if (!corner && away <= Outset)
             {
                 var reach = Math.Sqrt(Outset * Outset - away * away);
 
@@ -382,14 +396,13 @@ internal sealed class FloatArea
             }
 
             // And where an edge crosses one of the two heights the band is bounded by, the outline is at
-            // that height itself, so the whole of the margin lies along the inline axis there.
-            var next = (step + 1) % count;
-            var toX = _edge[next * 2];
-            var toY = _edge[next * 2 + 1];
-
+            // that height itself, so the whole of the margin lies along the inline axis there. A crossing
+            // at the top counts only where the edge passes on through it: one that merely ends there is
+            // the corner answered above.
             var crossing = Crossing(x, y, toX, toY, top);
 
-            if (!Double.IsNegativeInfinity(crossing))
+            if (!Double.IsNegativeInfinity(crossing) &&
+                Math.Abs(y - top) > Touch && Math.Abs(toY - top) > Touch)
             {
                 furthest = Math.Max(furthest, crossing + Outset);
                 nearest = Math.Min(nearest, crossing - Outset);
