@@ -99,6 +99,13 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     /// The primary font's metrics are the floor - they are what a run of characters it carries is set
     /// with, and what an empty or font-less stretch answers with - and every run the shaper handed to
     /// another face can only raise the line the text stands on.
+    /// <para>
+    /// A run drawn with nothing is the exception, and the face it was borrowed from is left out of the
+    /// fold: an invisible character has no shape for a face to stand on the line, and the family asked to
+    /// carry it is taller than the one drawing the words around it. Chrome measures this way - a word
+    /// joiner between two Ahem squares leaves the line its fifty and the baseline where Ahem puts it,
+    /// while an ideograph borrowed from another family raises the same line.
+    /// </para>
     /// </remarks>
     public FontMetrics GetRunMetrics(String text, FontStyle style)
     {
@@ -111,6 +118,11 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         // as a single run in the fallback face, and that face's metrics are the ones the line follows.
         foreach (var run in Decompose(text, style))
         {
+            if (CarriesNothing(run.Text))
+            {
+                continue;
+            }
+
             run.Font.GetFontMetrics(out var metrics);
             ascent = Math.Max(ascent, -metrics.Ascent);
             descent = Math.Max(descent, metrics.Descent);
@@ -456,6 +468,66 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     /// <summary>Whether the code point paints nothing: a space or a control code has no glyph to want.</summary>
     private static Boolean DrawsNothing(Int32 codepoint) =>
         codepoint <= Char.MaxValue && (Char.IsWhiteSpace((Char)codepoint) || Char.IsControl((Char)codepoint));
+
+    /// <summary>
+    /// Gets whether a whole stretch of text is drawn as nothing, which is what leaves the face it was
+    /// borrowed from out of the line's metrics.
+    /// </summary>
+    private static Boolean CarriesNothing(String text)
+    {
+        if (text.Length == 0)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < text.Length;)
+        {
+            if (!IsInvisible(CodepointAt(text, index)))
+            {
+                return false;
+            }
+
+            index += WidthAt(text, index);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Gets whether a character is drawn invisibly. Besides the spaces and the control codes, Unicode
+    /// names a set of characters that are to be treated as nothing at all - the soft hyphen, the zero-width
+    /// family, the bidi and BOM marks, the joiners and the variation selectors - in its
+    /// Default_Ignorable_Code_Point property, and says of them that they have no visual representation and
+    /// take no room (Unicode 5.1).
+    /// </summary>
+    private static Boolean IsInvisible(Int32 codepoint) =>
+        DrawsNothing(codepoint) || InvisibleRanges.Any(range => codepoint >= range.Start && codepoint <= range.End);
+
+    /// <summary>The invisible ranges, in the order Unicode writes them.</summary>
+    private static readonly (Int32 Start, Int32 End)[] InvisibleRanges =
+    [
+        (0x00AD, 0x00AD),
+        (0x034F, 0x034F),
+        (0x0600, 0x0605),
+        (0x061C, 0x061C),
+        (0x06DD, 0x06DD),
+        (0x070F, 0x070F),
+        (0x08E2, 0x08E2),
+        (0x110BD, 0x110BD),
+        (0x110CD, 0x110CD),
+        (0x180B, 0x180D),
+        (0x180F, 0x180F),
+        (0x200B, 0x200F),
+        (0x202A, 0x202E),
+        (0x2060, 0x206F),
+        (0xFE00, 0xFE0F),
+        (0xFEFF, 0xFEFF),
+        (0xFFF9, 0xFFFB),
+        (0x13430, 0x1343F),
+        (0x1BCA0, 0x1BCA3),
+        (0x1D173, 0x1D17A),
+        (0xE0000, 0xE0FFF),
+    ];
 
     private readonly struct DecompositionKey : IEquatable<DecompositionKey>
     {

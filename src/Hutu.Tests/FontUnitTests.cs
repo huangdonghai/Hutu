@@ -150,6 +150,53 @@ public sealed class FontUnitTests
         Assert.That(Box(view).Y, Is.EqualTo(16), "one x-height of offset");
     }
 
+    /// <summary>
+    /// A character that draws nothing lends no face to the line it sits in: the line stands on the
+    /// metrics of the font that draws the text around it. Chrome is measured this way - a word joiner
+    /// between two Ahem squares leaves the line fifty of its own height and its baseline at the square's
+    /// own ascent - because an invisible character has no shape of its own to ask a font for, and the
+    /// face borrowed to carry it has a taller one.
+    /// </summary>
+    [Test]
+    [TestCase(0x2060)]
+    [TestCase(0x200B)]
+    [TestCase(0x200D)]
+    [TestCase(0xFEFF)]
+    public async Task AnInvisibleCharacterDoesNotMoveTheLineItSitsIn(Int32 codepoint)
+    {
+        using var view = CreateView(new SkiaTextMeasurer());
+
+        // Fifty of its own height is what the face says the line is: Ahem stands at eight tenths above
+        // the baseline and two tenths below, so a line of it at fifty is fifty tall.
+        await view.SetHtml(
+            "<html><body style='margin:0'><div id='x' style='font:50px Ahem;width:200px'>X" +
+            Char.ConvertFromUtf32(codepoint) + "X</div></body></html>");
+
+        Assert.That(Box(view).Height, Is.EqualTo(50), "the invisible character brings no face to the line");
+    }
+
+    /// <summary>
+    /// A character the font has to borrow a face for does raise the line, which is the other half of the
+    /// rule: it is only the character that draws nothing that leaves the metrics alone.
+    /// </summary>
+    [Test]
+    public async Task ABorrowedCharacterRaisesTheLineItStandsOn()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        var style = new FontStyle("Ahem", 50);
+        var ideograph = Char.ConvertFromUtf32(0x4E2D);
+
+        var borrowed = measurer.GetRunMetrics("X" + ideograph + "X", style);
+        var own = measurer.GetMetrics(style);
+
+        Assert.That(
+            measurer.MeasureWidth(ideograph, style),
+            Is.GreaterThan(0),
+            "a machine that draws nothing here cannot show which face was borrowed");
+
+        Assert.That(borrowed.Ascent, Is.GreaterThan(own.Ascent), "the face that draws it decides the line");
+    }
+
     private static String Page(String style) =>
         "<html><body style='margin:0'><div id='x' style='" + style + "'>x</div></body></html>";
 
