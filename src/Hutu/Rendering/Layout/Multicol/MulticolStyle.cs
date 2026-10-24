@@ -63,6 +63,24 @@ internal readonly struct MulticolStyle
     public Boolean IsMultiColumn => Count is not null || Width is not null;
 
     /// <summary>
+    /// Gets the columns of the box grown by the zoom it carries: the width a column asks for, the gap
+    /// between two of them and the height one takes are all lengths, and a scale reaches every length of
+    /// the box it is put on. A count is not a length and stays a count. What the style holds is the
+    /// declaration's own numbers, so one column style serves the box at two and the box at one.
+    /// </summary>
+    internal MulticolStyle Scaled(Double factor) =>
+        factor == 1
+            ? this
+            : new MulticolStyle(
+                Count,
+                Width * factor,
+                Gap * factor,
+                Fills,
+                Height * factor,
+                Wraps,
+                RowGap * factor);
+
+    /// <summary>
     /// Gets the column boxes a content box of this width and height makes: how many columns, how wide,
     /// how tall a box is, and how many rows of them the container's height allows when the columns wrap
     /// (CSS Multicol 2 §3).

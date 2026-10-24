@@ -153,6 +153,31 @@ public sealed class ZoomTests
         });
     }
 
+    [Test]
+    public async Task AZoomReachesTheGapsAndTheSpacingABoxStates()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='a' style='column-count:2;column-gap:10px;row-gap:4px;zoom:2;width:100px'>word word</div>" +
+            "<div id='b' style='display:table;border-collapse:separate;border-spacing:10px 6px;zoom:2'>" +
+            "<div style='display:table-row'>" +
+            "<div id='c' style='display:table-cell;width:50px'>x</div>" +
+            "<div style='display:table-cell;width:50px'>y</div></div></div>" +
+            "</body></html>");
+
+        var columns = Find(view, "a").Source.Style;
+        var table = Find(view, "b").Source.Style;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(columns.Multi.Gap, Is.EqualTo(20).Within(0.5), "the gutter between columns doubles");
+            Assert.That(columns.Multi.RowGap, Is.EqualTo(8).Within(0.5));
+            Assert.That(table.Table.HorizontalSpacing, Is.EqualTo(20).Within(0.5), "and so does a table's spacing");
+            Assert.That(table.Table.VerticalSpacing, Is.EqualTo(12).Within(0.5));
+        });
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

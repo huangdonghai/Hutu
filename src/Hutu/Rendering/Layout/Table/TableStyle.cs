@@ -59,6 +59,23 @@ internal readonly struct TableStyle
     /// <summary>Gets the distance between adjacent column borders, and between them and the table edge.</summary>
     public Double HorizontalSpacing { get; }
 
+    /// <summary>
+    /// Gets the spacing of the table grown by the zoom the box carries. The two distances are lengths the
+    /// page wrote, and a scale reaches every length of the box it is put on; what the style holds stays the
+    /// declaration's own, so one table style serves the table at two and the table at one.
+    /// </summary>
+    internal TableStyle Scaled(Double factor) =>
+        factor == 1
+            ? this
+            : new TableStyle(
+                Collapse,
+                HorizontalSpacing * factor,
+                VerticalSpacing * factor,
+                Fixed,
+                HideEmptyCells,
+                CaptionSide,
+                VerticalAlign);
+
     /// <summary>Gets the distance between adjacent row borders, and between them and the table edge.</summary>
     public Double VerticalSpacing { get; }
 

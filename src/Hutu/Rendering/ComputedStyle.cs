@@ -4495,7 +4495,7 @@ internal readonly struct ComputedStyle
     /// table box, and the initial values are what every longhand of a box that is not one comes to.
     /// </remarks>
     public MulticolStyle Multi =>
-        _values.Fused is null ? default : _values.Multi ?? default;
+        (_values.Fused is null ? default : _values.Multi ?? default).Scaled(_zoom);
 
     /// <summary>
     /// Gets the decorations the box's gaps ask for. Only a box that puts a gap between anything - a flex
@@ -4540,9 +4540,9 @@ internal readonly struct ComputedStyle
     public Boolean SpansColumns => _values.Breaks.SpansColumns;
 
     public TableStyle Table =>
-        _values.Fused is null
+        (_values.Fused is null
             ? _values.Table ??= TableStyle.Read(this, PresentationalHints.Spacing(_element) ?? 0, PresentationalHints.Collapses(_element))
-            : _values.Table ?? default;
+            : _values.Table ?? default).Scaled(_zoom);
 
     /// <summary>
     /// Gets the cascaded declaration. It is the one that still carries a percentage, because
