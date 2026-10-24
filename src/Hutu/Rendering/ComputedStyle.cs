@@ -2745,6 +2745,12 @@ internal readonly struct ComputedStyle
     {
         internal Layout.WritingMode WritingMode = Layout.WritingMode.HorizontalTb;
         internal TextDirection Direction = TextDirection.LeftToRight;
+
+        /// <summary>
+        /// Gets the declared <c>unicode-bidi</c>, or null where the page wrote none. Only its
+        /// <c>plaintext</c> value is read, for the direction a paragraph takes from its own text.
+        /// </summary>
+        internal String? UnicodeBidi;
         internal TextOrientation? Orientation;
         internal Boolean? CombinesUpright;
         internal CssColorValue Color = CssColorValue.Black;
@@ -3703,6 +3709,22 @@ internal readonly struct ComputedStyle
             "none" => false,
             _ => null,
         };
+
+    /// <summary>
+    /// Gets the declared <c>unicode-bidi</c> keyword, or null where the page wrote none.
+    /// </summary>
+    internal String? UnicodeBidiKeyword => _values.Fused is { } fused
+        ? fused.UnicodeBidi
+        : ReadKeyword("unicode-bidi");
+
+    /// <summary>
+    /// Gets whether the element asks that its paragraphs take their direction from the text written in
+    /// them rather than from the <c>dir</c> attribute or the <c>direction</c> property - the
+    /// <c>plaintext</c> value of <c>unicode-bidi</c>, which is inherited like the property itself
+    /// (CSS Display 3 §5.3.7, UAX#9 §3.4).
+    /// </summary>
+    public Boolean PlaintextParagraph =>
+        String.Equals(UnicodeBidiKeyword?.Trim(), "plaintext", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Gets the writing mode, text orientation and upright combining the element itself declares, with
@@ -5330,7 +5352,7 @@ internal readonly struct ComputedStyle
 
         if (String.IsNullOrWhiteSpace(text))
         {
-            text = _style.GetPropertyValue(name);
+            text = _style?.GetPropertyValue(name);
         }
 
         return String.IsNullOrWhiteSpace(text) ? null : text.Trim();

@@ -165,6 +165,12 @@ internal sealed class FusedParent
     public WritingMode WritingMode { get; init; } = WritingMode.HorizontalTb;
 
     /// <summary>
+    /// Gets the parent's <c>unicode-bidi</c>. Inherited like the direction it governs, so a page that
+    /// asks for plaintext paragraphs once does not have to ask again on every block below it.
+    /// </summary>
+    public String? UnicodeBidi { get; init; }
+
+    /// <summary>
     /// Gets the parent's font area, which stands for every value above that came out of it. The areas are
     /// interned, so the reference says all six at once - and says them cheaply enough that resolving a
     /// font can be skipped outright when nothing about it has changed.
@@ -295,6 +301,7 @@ internal sealed class FusedParent
         Indent = style.TextIndent,
         Direction = style.Direction,
         WritingMode = style.WritingMode,
+        UnicodeBidi = style.UnicodeBidiKeyword,
 
         // The areas, not the values above, are what a child's cached font and text are keyed on: one
         // interned instance already carries every value a child could inherit from them.
@@ -753,6 +760,10 @@ internal static class FusedStyleFactory
         {
             WritingMode = writingMode,
             Direction = direction,
+
+            // Inherited like the direction it decides the reading of, except where the element writes a
+            // keyword of its own - which the UA sheet does for every element that carries a `dir`.
+            UnicodeBidi = find("unicode-bidi")?.Value ?? parent.UnicodeBidi,
             Orientation = orientation,
             CombinesUpright = combine,
             Color = color,

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 
 namespace Hutu.Rendering.Layout;
 
@@ -277,6 +278,74 @@ internal readonly struct ChunkRange
 
     /// <summary>Gets whether the character keeps its own orientation when it is set in a column.</summary>
     public static Boolean IsUpright(Char character) => IsUpright((Int32)character);
+
+    /// <summary>
+    /// Gets the direction a piece of text reads in, which is that of its first character of strong
+    /// direction: a letter, or one of the two marks that stand for a direction on their own. White
+    /// space, punctuation and digits are neutral or weak and say nothing, so text that holds no strong
+    /// character at all leaves the question open and answers null (UAX#9 §3.4).
+    /// </summary>
+    public static TextDirection? StrongDirection(String text)
+    {
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (rune.Value is 0x200E)
+            {
+                return TextDirection.LeftToRight;
+            }
+
+            if (rune.Value is 0x200F)
+            {
+                return TextDirection.RightToLeft;
+            }
+
+            if (Rune.IsLetter(rune))
+            {
+                return IsRightToLeftScript(rune.Value)
+                    ? TextDirection.RightToLeft
+                    : TextDirection.LeftToRight;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets whether a letter belongs to a script that reads right to left.
+    /// </summary>
+    /// <remarks>
+    /// The blocks are the ones Unicode gives an RTL direction: Hebrew, Arabic with its supplements and
+    /// its two runs of presentation forms, Syriac, Thaana, NKo, Samaritan, Mandaic and Adlam. The
+    /// historic right-to-left scripts of the first plane are not among them, which is a gap rather than
+    /// a claim - a page written in Imperial Aramaic reads left to right here until the range is added.
+    /// </remarks>
+    private static Boolean IsRightToLeftScript(Int32 codePoint)
+    {
+        foreach (var (from, to) in RightToLeftScripts)
+        {
+            if (codePoint >= from && codePoint <= to)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static readonly (Int32 From, Int32 To)[] RightToLeftScripts =
+    [
+        (0x0590, 0x05FF),
+        (0x0600, 0x06FF),
+        (0x0700, 0x074F),
+        (0x0750, 0x077F),
+        (0x0780, 0x07BF),
+        (0x07C0, 0x07FF),
+        (0x0800, 0x085F),
+        (0x08A0, 0x08FF),
+        (0xFB1D, 0xFB4F),
+        (0xFE70, 0xFEFF),
+        (0x1E900, 0x1E95F),
+    ];
 
     /// <summary>
     /// Gets whether a character may take part in a <c>text-combine-upright</c> run: the narrow

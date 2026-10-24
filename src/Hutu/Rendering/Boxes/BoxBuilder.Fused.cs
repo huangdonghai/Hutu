@@ -251,7 +251,7 @@ internal static partial class BoxBuilder
         // - each taking the cascaded declarations instead of a computed one, and ruby needs none of
         // that: a pair is built here, and only its annotation's side has to be carried down.
 
-        var flow = ResolveFlow(style, inheritedFlow);
+        var flow = ResolveFlow(style, inheritedFlow, element);
 
         if (kind == BoxKind.HorizontalRule)
         {

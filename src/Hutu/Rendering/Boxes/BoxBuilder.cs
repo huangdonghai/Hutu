@@ -301,10 +301,20 @@ internal static partial class BoxBuilder
     /// down, and the orientation and combining its element declares or, failing that, the ones its
     /// ancestors run in.
     /// </summary>
-    private static WritingModeInfo ResolveFlow(ComputedStyle style, WritingModeInfo inherited)
+    private static WritingModeInfo ResolveFlow(ComputedStyle style, WritingModeInfo inherited, IElement? element)
     {
         var mode = style.WritingMode;
         var direction = style.Direction;
+
+        // A plaintext paragraph's direction is a fact about the text on it rather than about what the
+        // page declared, so the first character of strong direction settles which way its line reads
+        // and the `direction` the cascade carried is dropped (UAX#9 §3.4).
+        if (element is not null &&
+            style.PlaintextParagraph &&
+            TextChunker.StrongDirection(RenderedText(element)) is { } read)
+        {
+            direction = read;
+        }
 
         if (mode == Layout.WritingMode.HorizontalTb)
         {
@@ -318,6 +328,35 @@ internal static partial class BoxBuilder
             style.DeclaredTextOrientation ?? inherited.Orientation,
             style.DeclaredTextCombineUpright ?? inherited.CombinesUpright,
             direction);
+    }
+
+    /// <summary>
+    /// Gets the text an element holds on its lines, which is what a plaintext paragraph is read out of.
+    /// The parts of a document that reach no line - a script's source, a style sheet, a title, the
+    /// unused markup of a template - are left out, as they are of the rendering.
+    /// </summary>
+    private static String RenderedText(IElement element)
+    {
+        var text = new StringBuilder();
+
+        AppendRenderedText(element, text);
+
+        return text.ToString();
+    }
+
+    private static void AppendRenderedText(INode node, StringBuilder text)
+    {
+        foreach (var child in node.ChildNodes)
+        {
+            if (child is IText)
+            {
+                text.Append(child.TextContent);
+            }
+            else if (child is IElement { LocalName: not ("script" or "style" or "template" or "title") } element)
+            {
+                AppendRenderedText(element, text);
+            }
+        }
     }
 
     private static BoxKind ResolveKind(IElement element, ComputedStyle style) =>
