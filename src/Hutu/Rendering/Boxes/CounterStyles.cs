@@ -271,11 +271,13 @@ internal static class CounterStyles
             return " ";
         }
 
+        // The chapter's table gives the complex CJK styles a suffix of the one character they are read
+        // with - no room after it, unlike the period a count of digits earns.
         return SpokenStyle(type) switch
         {
             null => ". ",
             var spoken when spoken.StartsWith("korean", StringComparison.Ordinal) => ", ",
-            _ => "、 ",
+            _ => "、",
         };
     }
 
