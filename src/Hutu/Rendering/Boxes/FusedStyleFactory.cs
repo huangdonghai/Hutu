@@ -205,6 +205,20 @@ internal sealed class FusedParent
     internal BorderArea? Border { get; init; }
 
     /// <summary>
+    /// Gets the parent's box model: the two sizes, the four limits and the two thicknesses. None of them
+    /// is inherited, so this travels for the one keyword that asks for it - <c>width: inherit</c> takes
+    /// the width the parent came to, whatever the parent's own size was measured against (CSS Cascading 4
+    /// §6.3: a keyword asks for the parent's <em>computed</em> value, which is what an area holds).
+    /// </summary>
+    internal BoxModelArea? Box { get; init; }
+
+    /// <summary>
+    /// Gets the parent's outline and the rest of what it draws with. The outline is not inherited, so this
+    /// travels for the one keyword that asks for it: <c>outline-width: inherit</c>.
+    /// </summary>
+    internal VisualEffectsArea? Visual { get; init; }
+
+    /// <summary>
     /// Gets the scope this element's own <c>var()</c> references were read through, which is what its
     /// children inherit unless they redeclare a custom property of their own. Null for a page that
     /// declares none anywhere, which is every sample page and most of the tests.
@@ -323,6 +337,8 @@ internal sealed class FusedParent
         Text = style.ResolvedText,
         List = style.ResolvedList,
         Border = style.ResolvedBorder,
+        Box = style.ResolvedBoxModel,
+        Visual = style.ResolvedVisualEffects,
         Variables = variables,
         Tag = tag,
         Ruby = style.RubyPosition,
@@ -580,7 +596,7 @@ internal static class FusedStyleFactory
                 BottomWidth = borderWidths.Bottom,
                 LeftWidth = borderWidths.Left,
                 Lines = ComputedStyle.ResolveBorderLinesFused(borderStyles),
-                Radius = ComputedStyle.ResolveBorderRadiusFused(find, face, dimensions),
+                Radius = ComputedStyle.ResolveBorderRadiusFused(find, face, dimensions, parent.Border?.Radius),
             };
 
             border = pool is null ? built : pool.Border(built);
@@ -609,11 +625,12 @@ internal static class FusedStyleFactory
         // A box model is decided by four things: the declarations, the size a percentage or an em is
         // measured at, the flow its sides are mapped through, and which element it is - its own tag name,
         // since the sample stylesheet gives headings and paragraphs margins of their own, and its
-        // parent's, since a list inside a list is left to the outer one's margins. Nothing else about the
-        // element enters, so the four cache like the rest.
+        // parent's, since a list inside a list is left to the outer one's margins. A fifth decides it only
+        // where the page asks: a wide keyword takes the parent's own box model, so a parent of another
+        // size is another answer. Nothing else about the element enters, so the five cache like the rest.
         var boxKey = cache is null
             ? default
-            : new AreaKey(cascade, size, parent.Tag, cache.Kind(element), FlowStamp(parent), variables);
+            : new AreaKey(cascade, size, parent.Tag, cache.Kind(element), FlowStamp(parent), variables, parent.Box);
 
         if (cache is not null && cache.TryBoxModel(boxKey, out var boxModel))
         {
@@ -638,31 +655,35 @@ internal static class FusedStyleFactory
             var widthHint = widthDeclaration is null ? PresentationalHints.Size(element, "width") : null;
             var heightHint = heightDeclaration is null ? PresentationalHints.Size(element, "height") : null;
 
+            // A width named under the axis it lies on is the same statement as one named physically, and
+            // so is the keyword that takes the parent's: what the parent came to on that axis is the
+            // number a child asking for `inherit` takes.
             var built = new BoxModelArea
             {
                 BoxSizing = ComputedStyle.ResolveBoxSizingFused(find("box-sizing")),
                 Width = ComputedStyle.ResolveBoxLengthFused(widthDeclaration, RenderMode.Horizontal, face, dimensions,
-                    widthHint ?? StyleLength.Auto),
+                    widthHint ?? StyleLength.Auto, parent.Box?.Width),
                 Height = ComputedStyle.ResolveBoxLengthFused(heightDeclaration, RenderMode.Vertical, face, dimensions,
-                    heightHint ?? StyleLength.Auto),
+                    heightHint ?? StyleLength.Auto, parent.Box?.Height),
                 WidthDeclared = widthDeclaration is not null || widthHint is not null,
                 HeightDeclared = heightDeclaration is not null || heightHint is not null,
                 MinWidth = ComputedStyle.ResolveBoxLengthFused(find("min-" + alongWidth) ?? find("min-width"),
-                    RenderMode.Horizontal, size, dimensions, StyleLength.None),
+                    RenderMode.Horizontal, size, dimensions, StyleLength.None, parent.Box?.MinWidth),
                 MaxWidth = ComputedStyle.ResolveBoxLengthFused(find("max-" + alongWidth) ?? find("max-width"),
-                    RenderMode.Horizontal, size, dimensions, StyleLength.None),
+                    RenderMode.Horizontal, size, dimensions, StyleLength.None, parent.Box?.MaxWidth),
                 MinHeight = ComputedStyle.ResolveBoxLengthFused(find("min-" + alongHeight) ?? find("min-height"),
-                    RenderMode.Vertical, size, dimensions, StyleLength.None),
+                    RenderMode.Vertical, size, dimensions, StyleLength.None, parent.Box?.MinHeight),
                 MaxHeight = ComputedStyle.ResolveBoxLengthFused(find("max-" + alongHeight) ?? find("max-height"),
-                    RenderMode.Vertical, size, dimensions, StyleLength.None),
+                    RenderMode.Vertical, size, dimensions, StyleLength.None, parent.Box?.MaxHeight),
                 AspectRatio = AspectRatio.Parse(find("aspect-ratio")?.Value),
-                Margin = ComputedStyle.ResolveThicknessFused(find, element, face, dimensions, flow, "margin", StyleLength.Zero),
+                Margin = ComputedStyle.ResolveThicknessFused(
+                    find, element, face, dimensions, flow, "margin", StyleLength.Zero, parent.Box?.Margin),
 
                 // The room a cell keeps is its table's, and the room it keeps where its table says nothing
                 // is the pixel every browser's sheet gives a cell.
                 Padding = ComputedStyle.ResolveThicknessFused(
                     find, element, face, dimensions, flow, "padding",
-                    PresentationalHints.CellPadding(element) ?? StyleLength.Zero),
+                    PresentationalHints.CellPadding(element) ?? StyleLength.Zero, parent.Box?.Padding),
             };
 
             boxModel = pool is null ? built : pool.BoxModel(built);
@@ -731,8 +752,8 @@ internal static class FusedStyleFactory
             var built = new VisualEffectsArea
             {
                 OutlineStyle = outlineStyle,
-                OutlineWidth = ComputedStyle.ResolveOutlineWidthFused(outlineStyle, find("outline-width"), face, dimensions),
-                OutlineOffset = ComputedStyle.ResolveOutlineOffsetFused(find("outline-offset"), face, dimensions),
+                OutlineWidth = ComputedStyle.ResolveOutlineWidthFused(outlineStyle, find("outline-width"), face, dimensions, parent.Visual?.OutlineWidth),
+                OutlineOffset = ComputedStyle.ResolveOutlineOffsetFused(find("outline-offset"), face, dimensions, parent.Visual?.OutlineOffset),
             };
 
             visual = pool is null ? built : pool.VisualEffects(built);

@@ -1093,11 +1093,29 @@ internal readonly struct ComputedStyle
     /// path. Percentages stay unresolved for the layout pass.
     /// </summary>
     public static StyleCornerRadii ResolveBorderRadiusFused(
-        Func<String, ICssProperty?> find, LengthReader.FontSource font, IRenderDimensions dimensions) => new(
-        LengthReader.TryReadCornerValue(find("border-top-left-radius")?.RawValue, dimensions, font) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCornerValue(find("border-top-right-radius")?.RawValue, dimensions, font) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCornerValue(find("border-bottom-right-radius")?.RawValue, dimensions, font) ?? StyleCornerRadius.Zero,
-        LengthReader.TryReadCornerValue(find("border-bottom-left-radius")?.RawValue, dimensions, font) ?? StyleCornerRadius.Zero);
+        Func<String, ICssProperty?> find,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions,
+        StyleCornerRadii? inherited = null)
+    {
+        StyleCornerRadius Corner(String name, StyleCornerRadius parent) =>
+            inherited is not null && DeclaresInherit(find(name))
+                ? parent
+                : LengthReader.TryReadCornerValue(find(name)?.RawValue, dimensions, font) ?? StyleCornerRadius.Zero;
+
+        // `border-radius: inherit` speaks about all four corners at once, and the cascade keeps it under
+        // the shorthand's own name - the corners it stands for were never written one by one.
+        if (inherited is { } radii && DeclaresInherit(find("border-radius")))
+        {
+            return radii;
+        }
+
+        return new StyleCornerRadii(
+            Corner("border-top-left-radius", inherited?.TopLeft ?? StyleCornerRadius.Zero),
+            Corner("border-top-right-radius", inherited?.TopRight ?? StyleCornerRadius.Zero),
+            Corner("border-bottom-right-radius", inherited?.BottomRight ?? StyleCornerRadius.Zero),
+            Corner("border-bottom-left-radius", inherited?.BottomLeft ?? StyleCornerRadius.Zero));
+    }
 
     /// <summary>
     /// Maps the four border style keywords to the strokes the painter draws, for the fused path.
@@ -1297,11 +1315,19 @@ internal readonly struct ComputedStyle
     /// path. No stroke means no width; no width declared means medium.
     /// </summary>
     public static Double ResolveOutlineWidthFused(
-        BorderLineStyle style, ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions)
+        BorderLineStyle style, ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions,
+        Double? inherited = null)
     {
         if (style == BorderLineStyle.None)
         {
             return 0;
+        }
+
+        // The outline is not inherited, so `inherit` is the one way a child takes the thickness its
+        // parent was drawn with - as the parent's computed pixels, not as the declaration it came from.
+        if (inherited is { } parentThickness && DeclaresInherit(declared))
+        {
+            return parentThickness;
         }
 
         if (declared is not null &&
@@ -1317,8 +1343,13 @@ internal readonly struct ComputedStyle
     /// Resolves the outline offset from the element's own cascaded declaration, for the fused path.
     /// </summary>
     public static Double ResolveOutlineOffsetFused(
-        ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions)
+        ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions, Double? inherited = null)
     {
+        if (inherited is { } parentOffset && DeclaresInherit(declared))
+        {
+            return parentOffset;
+        }
+
         if (declared is not null &&
             TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels))
         {
@@ -3226,6 +3257,9 @@ internal readonly struct ComputedStyle
     /// <summary>Gets the border area this style answers from, shared with every style whose border agrees.</summary>
     internal BorderArea ResolvedBorder => _values.Border;
 
+    /// <summary>Gets what the box draws with - the outline and the rest - as the sheets left it.</summary>
+    internal VisualEffectsArea ResolvedVisualEffects => _values.VisualEffects;
+
     /// <summary>Gets the text area this style answers from, shared with every style whose text agrees.</summary>
     internal TextArea ResolvedText => _values.Text;
 
@@ -3304,7 +3338,14 @@ internal readonly struct ComputedStyle
             ReferenceEquals(mine.Text, theirs.Text) &&
             ReferenceEquals(mine.List, theirs.List) &&
             ReferenceEquals(mine.Border, theirs.Border) &&
+            ReferenceEquals(mine.BoxModel, theirs.BoxModel) &&
+            ReferenceEquals(mine.VisualEffects, theirs.VisualEffects) &&
             ReferenceEquals(mine.DisplayPositioning, theirs.DisplayPositioning) &&
+
+            // The scale is what a child inherits as much as any value: its own lengths are grown by the
+            // parent's zoom folded into its own, so a style built under a box drawn at two is another
+            // answer than the same declarations built under a box drawn at one.
+            BitConverter.DoubleToInt64Bits(_zoom) == BitConverter.DoubleToInt64Bits(other._zoom) &&
             SameInheritedKeywords(mine.Fused, theirs.Fused);
     }
 
@@ -5075,11 +5116,12 @@ internal readonly struct ComputedStyle
         StyleLength? namedByAxis,
         CssWideKeyword? axisKeyword,
         StyleLength? supplied,
-        StyleLength fallback)
+        StyleLength fallback,
+        StyleLength? inherited = null)
     {
         if (axisKeyword is { } byAxis)
         {
-            return Stands(byAxis, supplied);
+            return Stands(byAxis, supplied, inherited);
         }
 
         if (namedByAxis is { } byAxisValue)
@@ -5089,17 +5131,23 @@ internal readonly struct ComputedStyle
 
         if (keyword is { } byName)
         {
-            return Stands(byName, supplied);
+            return Stands(byName, supplied, inherited);
         }
 
         return named ?? supplied ?? fallback;
     }
 
     /// <summary>Gets what a keyword that stands for a value comes to on the side it named.</summary>
-    private static StyleLength Stands(CssWideKeyword keyword, StyleLength? supplied) =>
-        keyword.CssText.ToLowerInvariant() is "initial" or "unset"
-            ? StyleLength.Zero
-            : supplied ?? StyleLength.Zero;
+    private static StyleLength Stands(CssWideKeyword keyword, StyleLength? supplied, StyleLength? inherited = null) =>
+        keyword.CssText.ToLowerInvariant() switch
+        {
+            // `inherit` takes the side the parent came to. The root has no parent to ask, and a property
+            // that inherits nothing keeps its initial value there - which is also every keyword this
+            // reader has no other reading for.
+            "inherit" => inherited ?? supplied ?? StyleLength.Zero,
+            "initial" or "unset" => StyleLength.Zero,
+            _ => supplied ?? StyleLength.Zero,
+        };
 
     /// <summary>Gets the keyword the page named a property with, or null when it named a value.</summary>
     private CssWideKeyword? KeywordOf(String name) =>
@@ -5134,11 +5182,25 @@ internal readonly struct ComputedStyle
     /// path. Percentages stay unresolved for the layout pass.
     /// </summary>
     public static StyleLength ResolveBoxLengthFused(
-        ICssProperty? declared, RenderMode mode, LengthReader.FontSource font, IRenderDimensions dimensions, StyleLength fallback)
+        ICssProperty? declared,
+        RenderMode mode,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions,
+        StyleLength fallback,
+        StyleLength? inherited = null)
     {
         if (declared is null)
         {
             return fallback;
+        }
+
+        // `inherit` takes the parent's computed size, which was resolved against the parent's own
+        // containing block and font size - reading the parent's declaration again here would resolve a
+        // parent's `50%` against this box's block or a parent's `2em` at this box's size, and neither is
+        // what the keyword says (CSS Cascading 4 §6.3).
+        if (inherited is { } parent && DeclaresInherit(declared))
+        {
+            return parent;
         }
 
         // A length, or one of the content keywords: MaxContent is a size the box's content settles
@@ -5162,8 +5224,16 @@ internal readonly struct ComputedStyle
         IRenderDimensions dimensions,
         WritingModeInfo flow,
         String prefix,
-        StyleLength fallback)
+        StyleLength fallback,
+        StyleThickness? inherited = null)
     {
+        // A shorthand written as the bare keyword speaks about all four sides at once, and the cascade
+        // holds it under the shorthand's own name - the longhands it stands for were never written.
+        if (inherited is { } box && DeclaresInherit(find(prefix)))
+        {
+            return box;
+        }
+
         StyleLength? ReadSide(String name) =>
             find(prefix + name) is { } declared &&
             LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var length)
@@ -5248,10 +5318,10 @@ internal readonly struct ComputedStyle
                 : (defaultBlockEnd, defaultBlockStart);
 
             return new StyleThickness(
-                Side(top, topKeyword, byInlineStart, keywordTop, defaultTop, fallback),
-                Side(right, rightKeyword, byBlockStart, keywordRight, defaultRight, fallback),
-                Side(bottom, bottomKeyword, byInlineEnd, keywordBottom, defaultBottom, fallback),
-                Side(left, leftKeyword, byBlockEnd, keywordLeft, defaultLeft, fallback));
+                Side(top, topKeyword, byInlineStart, keywordTop, defaultTop, fallback, inherited?.Top),
+                Side(right, rightKeyword, byBlockStart, keywordRight, defaultRight, fallback, inherited?.Right),
+                Side(bottom, bottomKeyword, byInlineEnd, keywordBottom, defaultBottom, fallback, inherited?.Bottom),
+                Side(left, leftKeyword, byBlockEnd, keywordLeft, defaultLeft, fallback, inherited?.Left));
         }
 
         var (byStart, byEnd) = flow.InlineSign > 0
@@ -5263,10 +5333,10 @@ internal readonly struct ComputedStyle
             : (inlineEndKeyword, inlineStartKeyword);
 
         return new StyleThickness(
-            Side(top, topKeyword, blockStart, blockStartKeyword, defaultBlockStart, fallback),
-            Side(right, rightKeyword, byEnd, keywordEnd, defaultInlineEnd, fallback),
-            Side(bottom, bottomKeyword, blockEnd, blockEndKeyword, defaultBlockEnd, fallback),
-            Side(left, leftKeyword, byStart, keywordStart, defaultInlineStart, fallback));
+            Side(top, topKeyword, blockStart, blockStartKeyword, defaultBlockStart, fallback, inherited?.Top),
+            Side(right, rightKeyword, byEnd, keywordEnd, defaultInlineEnd, fallback, inherited?.Right),
+            Side(bottom, bottomKeyword, blockEnd, blockEndKeyword, defaultBlockEnd, fallback, inherited?.Bottom),
+            Side(left, leftKeyword, byStart, keywordStart, defaultInlineStart, fallback, inherited?.Left));
     }
 
     private (StyleLength? BlockStart, StyleLength? BlockEnd, StyleLength? InlineStart, StyleLength? InlineEnd) Defaults(String prefix) =>

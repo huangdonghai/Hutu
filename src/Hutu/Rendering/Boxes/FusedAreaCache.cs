@@ -181,7 +181,8 @@ internal readonly struct AreaKey : IEquatable<AreaKey>
         Object? inherited = null,
         Object? identity = null,
         Int32 stamp = 0,
-        Object? variables = null)
+        Object? variables = null,
+        Object? parentBox = null)
     {
         Cascade = cascade;
         Scalar = scalar;
@@ -189,6 +190,7 @@ internal readonly struct AreaKey : IEquatable<AreaKey>
         Identity = identity;
         Stamp = stamp;
         Variables = variables;
+        ParentBox = parentBox;
     }
 
     public MatchedCascade Cascade { get; }
@@ -197,6 +199,13 @@ internal readonly struct AreaKey : IEquatable<AreaKey>
 
     /// <summary>Gets what the resolution inherits: a parent's area, or a parent's tag name.</summary>
     public Object? Inherited { get; }
+
+    /// <summary>
+    /// Gets the parent's box model, where the resolution is one a wide keyword can reach it through:
+    /// <c>width: inherit</c> takes the length the parent came to, so two boxes with the same declarations
+    /// under parents of different sizes are two answers. Null for every other kind of resolution.
+    /// </summary>
+    public Object? ParentBox { get; }
 
     /// <summary>
     /// Gets the element's own contribution beyond the declarations: the property a relative
@@ -220,6 +229,7 @@ internal readonly struct AreaKey : IEquatable<AreaKey>
         ReferenceEquals(Inherited, other.Inherited) &&
         ReferenceEquals(Identity, other.Identity) &&
         ReferenceEquals(Variables, other.Variables) &&
+        ReferenceEquals(ParentBox, other.ParentBox) &&
         Stamp == other.Stamp &&
         BitConverter.DoubleToInt64Bits(Scalar) == BitConverter.DoubleToInt64Bits(other.Scalar);
 
@@ -239,5 +249,6 @@ internal readonly struct AreaKey : IEquatable<AreaKey>
             RuntimeHelpers.GetHashCode(Inherited),
             RuntimeHelpers.GetHashCode(Identity),
             Stamp,
-            RuntimeHelpers.GetHashCode(Variables));
+            RuntimeHelpers.GetHashCode(Variables),
+            RuntimeHelpers.GetHashCode(ParentBox));
 }
