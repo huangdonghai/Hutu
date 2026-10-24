@@ -920,6 +920,47 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task ASubgridItemNamesALineTheOuterGridWrote()
+    {
+        // The lines a subgrid borrows carry the names the parent wrote on them, so an item of the
+        // subgrid asks for the same word and stands where the outer grid put it (CSS Grid 2 §8.1).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:100px [a] 100px 100px;width:300px'>" +
+            "<div style='display:grid;grid-column:span 3;grid-template-columns:subgrid'>" +
+            "<div id='x' style='grid-column:a;width:50px;height:20px'>X</div>" +
+            "</div></div></body></html>");
+
+        var x = Find(view, "x");
+
+        Assert.That(x.BorderBox.X, Is.EqualTo(100).Within(0.5), "where the outer grid named the second line");
+    }
+
+    [Test]
+    public async Task ANameWrittenWithItsNumberCountsThatManyLinesOver()
+    {
+        // `a 3` is the third line named `a`, and a number past the last one of that name is held to it
+        // rather than left unplaced (CSS Grid 1 §8.5).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:10px [a] repeat(3,10px [a]);width:40px'>" +
+            "<div id='x' style='grid-column:a 3 / span 1;height:20px'>X</div>" +
+            "<div id='y' style='grid-column:a 99 / span 1;height:20px;grid-row:2'>Y</div>" +
+            "</div></body></html>");
+
+        var x = Find(view, "x");
+        var y = Find(view, "y");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(x.BorderBox.X, Is.EqualTo(30).Within(0.5), "the third line named a");
+            Assert.That(y.BorderBox.X, Is.EqualTo(40).Within(0.5), "and the last of them for a count past it");
+        });
+    }
+
+    [Test]
     public void ASubgridWrittenInATemplateShorthandIsATemplate()
     {
         // The template shorthand covers the two track axes and the gaps between them, so writing

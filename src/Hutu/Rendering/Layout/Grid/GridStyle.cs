@@ -227,15 +227,17 @@ internal sealed class GridTrackList
 
 /// <summary>
 /// The tracks a subgrid takes from the grid area it spans (CSS Grid 2 §8): the parent's resolved sizes
-/// for the tracks the area covers, and the gutters it left between them. The sizes stand in the same
-/// order the area's columns or rows do, and the gutter is the parent's step, which includes any room
-/// content alignment added.
+/// for the tracks the area covers, the gutters it left between them, and the names it wrote on the
+/// lines they stand between. The sizes stand in the same order the area's columns or rows do, and the
+/// gutter is the parent's step, which includes any room content alignment added.
 /// </summary>
 internal sealed record SubgridTracks(
     IReadOnlyList<Double> Columns,
     IReadOnlyList<Double> Rows,
     Double ColumnGap,
-    Double RowGap);
+    Double RowGap,
+    GridLineNames? ColumnLines = null,
+    GridLineNames? RowLines = null);
 
 /// <summary>How a grid line was written, which is what decides an item's placement.</summary>
 internal enum GridLineKind : byte
@@ -273,13 +275,16 @@ internal readonly struct GridLine
 
     public String? Name { get; }
 
+    /// <summary>Gets which line of the ones carrying the name the page asked for, as <c>a 8</c> does.</summary>
+    public Int32 Repeat => Kind == GridLineKind.Name ? Index : 1;
+
     public static GridLine Auto => new(GridLineKind.Auto, 0, 1, null);
 
     public static GridLine At(Int32 index) => new(GridLineKind.Index, index, 1, null);
 
     public static GridLine Spans(Int32 span) => new(GridLineKind.Span, 0, Math.Max(1, span), null);
 
-    public static GridLine Named(String name) => new(GridLineKind.Name, 0, 1, name);
+    public static GridLine Named(String name, Int32 repeat = 1) => new(GridLineKind.Name, repeat, 1, name);
 
     /// <summary>
     /// Resolves the line to a one-based number, wrapping a negative number from the end so that
@@ -511,14 +516,16 @@ internal readonly struct GridStyle
     /// side of what an area covers whichever side is asking, which is what lets
     /// <c>grid-column: toolbar</c> and <c>grid-column-end: toolbar-end</c> say the same rectangle.
     /// </remarks>
-    internal GridLine Resolve(GridLine line, Boolean horizontal, Boolean end)
+    internal GridLine Resolve(GridLine line, Boolean horizontal, Boolean end, GridLineNames? borrowed = null)
     {
         if (line.Kind != GridLineKind.Name || line.Name is not { } name)
         {
             return line;
         }
 
-        if ((horizontal ? ColumnLines : RowLines)?.IndexOf(name) is { } written)
+        // A subgrid's lines are named by the grid it borrows from, where the page wrote the names; its
+        // own template names none, so the borrowed list is the answer for that axis (CSS Grid 2 §8.1).
+        if ((borrowed ?? (horizontal ? ColumnLines : RowLines))?.IndexOf(name, line.Repeat) is { } written)
         {
             return GridLine.At(written);
         }
@@ -837,7 +844,7 @@ internal readonly struct GridStyle
 
         if (name is { } named)
         {
-            return GridLine.Named(named);
+            return GridLine.Named(named, index == 0 ? 1 : index);
         }
 
         return index == 0 ? GridLine.Auto : GridLine.At(index);

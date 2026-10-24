@@ -208,32 +208,52 @@ internal sealed class GridLineNames
             return null;
         }
 
+        // There is one entry per line, which is always one more than the tracks: a track opens the
+        // line after itself as it is read, and the names written next join the line they stand on.
         var lines = new List<List<String>> { new() };
-        var tracks = 0;
 
-        // A group of names belongs to the line the next track starts at, which is the one after any
-        // track already read - so the first group after a track opens the line it names rather than
-        // adding to the line before it.
-        var passed = false;
-        var at = 0;
+        return Read(text, 0, text.Length, lines, out var tracks) && tracks > 0
+            ? new GridLineNames(lines)
+            : null;
+    }
 
-        while (at < text.Length)
+    /// <summary>
+    /// Reads the names and tracks of a track list between two places, adding the lines it finds to
+    /// <paramref name="lines"/> and saying how many tracks the list covers.
+    /// </summary>
+    /// <remarks>
+    /// A <c>repeat()</c> is expanded the way the track list it stands in is: the names the group starts
+    /// with join the line its repetition begins at - the one the last repetition's trailing names
+    /// already opened - and the names it ends with open the line the next repetition begins on.
+    /// </remarks>
+    private static Boolean Read(
+        String text,
+        Int32 from,
+        Int32 to,
+        List<List<String>> lines,
+        out Int32 tracks)
+    {
+        tracks = 0;
+        var at = from;
+
+        while (at < to)
         {
             var c = text[at];
 
+            if (Char.IsWhiteSpace(c))
+            {
+                at++;
+                continue;
+            }
+
             if (c == '[')
             {
-                var close = text.IndexOf(']', at + 1);
+                var close = text.IndexOf(']', at + 1, to - at - 1);
 
                 if (close < 0)
                 {
-                    return null;
-                }
-
-                if (passed)
-                {
-                    lines.Add(new List<String>());
-                    passed = false;
+                    tracks = 0;
+                    return false;
                 }
 
                 foreach (var name in text[(at + 1)..close].Split(' ', StringSplitOptions.RemoveEmptyEntries))
@@ -245,17 +265,12 @@ internal sealed class GridLineNames
                 continue;
             }
 
-            if (Char.IsWhiteSpace(c))
-            {
-                at++;
-                continue;
-            }
-
             // A track begins here: it reaches to the next space outside its own parentheses, which is
-            // what keeps `minmax(0, 600px)` one token.
+            // what keeps `minmax(0, 600px)` one token and a whole `repeat()` group one too.
+            var start = at;
             var depth = 0;
 
-            while (at < text.Length)
+            while (at < to)
             {
                 var c2 = text[at];
 
@@ -275,24 +290,139 @@ internal sealed class GridLineNames
                 at++;
             }
 
+            if (IsRepeat(text[start..at], out var times, out var body))
+            {
+                // `auto-fill` and `auto-fit` repeat as many times as the tracks fill the line, which is
+                // not known while the names are being read: once stands for the order they come in.
+                if (!Read(body, 0, body.Length, lines, out var each))
+                {
+                    tracks = 0;
+                    return false;
+                }
+
+                tracks += each;
+
+                for (var time = 1; time < times; time++)
+                {
+                    if (!Read(body, 0, body.Length, lines, out each))
+                    {
+                        tracks = 0;
+                        return false;
+                    }
+
+                    tracks += each;
+                }
+
+                continue;
+            }
+
             tracks++;
-            passed = true;
+            lines.Add(new List<String>());
         }
 
-        return tracks == 0 ? null : new GridLineNames(lines);
+        return true;
     }
 
-    /// <summary>Gets the first line named <paramref name="name"/>, one-based, or null for no such line.</summary>
-    public Int32? IndexOf(String name)
+    /// <summary>Gets whether a token is a <c>repeat()</c>, with how many times it says and what it holds.</summary>
+    private static Boolean IsRepeat(String token, out Int32 times, out String body)
     {
+        times = 1;
+        body = String.Empty;
+
+        if (!token.StartsWith("repeat(", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var depth = 0;
+        var comma = -1;
+
+        for (var at = 6; at < token.Length; at++)
+        {
+            var c = token[at];
+
+            if (c == '(')
+            {
+                depth++;
+            }
+            else if (c == ')')
+            {
+                if (--depth == 0)
+                {
+                    if (comma < 0 || at <= comma + 1)
+                    {
+                        return false;
+                    }
+
+                    // A count that is not a number is `auto-fill` or `auto-fit`, and the group's own
+                    // list is everything after the comma that separates the two.
+                    body = token[(comma + 1)..at];
+
+                    if (!Int32.TryParse(token[7..comma].Trim().ToString(), out times) || times < 0)
+                    {
+                        times = 1;
+                    }
+
+                    return true;
+                }
+            }
+            else if (c == ',' && depth == 1 && comma < 0)
+            {
+                comma = at;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Gets the line the name asks for, one-based: the <paramref name="repeat"/>th line carrying it,
+    /// counted back from the last such line where the number is negative, and held to the last one
+    /// where the list has fewer than the number asks for (CSS Grid 1 §8.5).
+    /// </summary>
+    public Int32? IndexOf(String name, Int32 repeat = 1)
+    {
+        var matched = new List<Int32>(_lines.Length);
+
         for (var at = 0; at < _lines.Length; at++)
         {
             if (Array.IndexOf(_lines[at], name) >= 0)
             {
-                return at + 1;
+                matched.Add(at + 1);
             }
         }
 
-        return null;
+        if (matched.Count == 0)
+        {
+            return null;
+        }
+
+        var asked = repeat == 0 ? 1 : repeat;
+
+        return asked > 0
+            ? matched[Math.Min(asked, matched.Count) - 1]
+            : matched[Math.Max(0, matched.Count + asked)];
+    }
+
+    /// <summary>
+    /// Gets the names of the lines a subgrid borrows: the parent's lines from the first track of the
+    /// area it spans, ending with the line after its last track - which is what lets an item of the
+    /// subgrid name a line the page wrote on the outer grid (CSS Grid 2 §8.1).
+    /// </summary>
+    public GridLineNames Slice(Int32 from, Int32 span)
+    {
+        var lines = new List<List<String>>(span + 1);
+
+        for (var at = Math.Max(0, from); at <= from + span && at < _lines.Length; at++)
+        {
+            lines.Add(new List<String>(_lines[at]));
+        }
+
+        if (lines.Count == 0)
+        {
+            lines.Add(new List<String>());
+        }
+
+        return new GridLineNames(lines);
     }
 }

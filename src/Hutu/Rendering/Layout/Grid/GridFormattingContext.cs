@@ -125,7 +125,9 @@ internal sealed class GridFormattingContext
                     Slice(plan.ColumnBases, item.Column, item.ColumnSpan),
                     Slice(plan.RowBases, item.Row, item.RowSpan),
                     plan.ColumnStep,
-                    plan.RowStep));
+                    plan.RowStep,
+                    style.Grid.ColumnLines?.Slice(item.Column, item.ColumnSpan),
+                    style.Grid.RowLines?.Slice(item.Row, item.RowSpan)));
             }
 
             layout.Children.Add(_engine.Arrange(item.Box, rect, itemContextHere, item.HeightIsDefinite));
@@ -433,10 +435,16 @@ internal sealed class GridFormattingContext
         var explicitColumns = subgridColumns?.Count ?? grid.Columns.ExplicitCount(columnBasis, gapX);
         var explicitRows = subgridRows?.Count ?? grid.Rows.ExplicitCount(rowBasis, gapY);
 
+        // A line named in a subgrid is one the parent wrote, so the borrowed names stand in for the
+        // axis that borrows tracks; where the list is null the grid's own names answer.
+        var handed = context.Subgrid;
+        var namedColumns = grid.ColumnsSubgrid ? handed?.ColumnLines : null;
+        var namedRows = grid.RowsSubgrid ? handed?.RowLines : null;
+
         foreach (var item in items)
         {
-            ResolveAxis(item, true, explicitColumns, grid);
-            ResolveAxis(item, false, explicitRows, grid);
+            ResolveAxis(item, true, explicitColumns, grid, namedColumns);
+            ResolveAxis(item, false, explicitRows, grid, namedRows);
         }
 
         Place(items, grid, explicitColumns, explicitRows);
@@ -667,10 +675,15 @@ internal sealed class GridFormattingContext
     /// settled by the grid first, because nothing else knows which line that name is: the same word
     /// means one line in one template and another in the next.
     /// </remarks>
-    private static void ResolveAxis(GridCell item, Boolean horizontal, Int32 explicitTracks, GridStyle grid)
+    private static void ResolveAxis(
+        GridCell item,
+        Boolean horizontal,
+        Int32 explicitTracks,
+        GridStyle grid,
+        GridLineNames? borrowed = null)
     {
-        var start = grid.Resolve(horizontal ? item.ColumnStart : item.RowStart, horizontal, end: false);
-        var end = grid.Resolve(horizontal ? item.ColumnEnd : item.RowEnd, horizontal, end: true);
+        var start = grid.Resolve(horizontal ? item.ColumnStart : item.RowStart, horizontal, end: false, borrowed);
+        var end = grid.Resolve(horizontal ? item.ColumnEnd : item.RowEnd, horizontal, end: true, borrowed);
         var lines = explicitTracks + 1;
         var startIndex = start.Resolve(lines);
         var endIndex = end.Resolve(lines);
@@ -980,10 +993,16 @@ internal sealed class GridFormattingContext
         var explicitColumns = grid.Columns.ExplicitCount(columnBasis, gapX);
         var explicitRows = grid.Rows.ExplicitCount(0, gapY);
 
+        // A line named in a subgrid is one the parent wrote, so the borrowed names stand in for the
+        // axis that borrows tracks; where the list is null the grid's own names answer.
+        var handed = context.Subgrid;
+        var namedColumns = grid.ColumnsSubgrid ? handed?.ColumnLines : null;
+        var namedRows = grid.RowsSubgrid ? handed?.RowLines : null;
+
         foreach (var item in items)
         {
-            ResolveAxis(item, true, explicitColumns, grid);
-            ResolveAxis(item, false, explicitRows, grid);
+            ResolveAxis(item, true, explicitColumns, grid, namedColumns);
+            ResolveAxis(item, false, explicitRows, grid, namedRows);
         }
 
         Place(items, grid, explicitColumns, explicitRows);
