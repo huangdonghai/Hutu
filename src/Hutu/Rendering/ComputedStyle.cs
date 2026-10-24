@@ -48,6 +48,12 @@ internal readonly struct ComputedStyle
     private readonly StyleValues _values;
 
     /// <summary>
+    /// The scale the box's own lengths are used at: its <c>zoom</c> multiplied by every ancestor's, which
+    /// is what CSS calls the effective zoom. One is what a page that never mentions zoom comes to.
+    /// </summary>
+    private readonly Double _zoom;
+
+    /// <summary>
     /// Builds a style from areas the fused box-builder path already resolved, with no
     /// declaration behind it: the accessors that would read one answer from the fused
     /// keywords instead.
@@ -57,7 +63,8 @@ internal readonly struct ComputedStyle
         IElement? element,
         FusedKeywords fused,
         StyleValues values,
-        FontFaceTable? faces)
+        FontFaceTable? faces,
+        Double zoom = 1)
     {
         _style = null!;
         _specified = null;
@@ -67,9 +74,13 @@ internal readonly struct ComputedStyle
         _parentColor = null;
         _declaresFontSize = false;
         _faces = faces;
+        _zoom = zoom > 0 ? zoom : 1;
         values.Fused = fused;
         _values = values;
     }
+
+    /// <summary>Gets the scale this box's lengths are used at, one where nothing was zoomed.</summary>
+    internal Double Zoom => _zoom;
 
     /// <summary>
     /// The style an anonymous box is given: this one, with every property that is not inherited taken
@@ -116,7 +127,7 @@ internal readonly struct ComputedStyle
             Fused = _values.Fused,
         };
 
-        return new ComputedStyle(_dimensions, _element, _values.Fused!, values, _faces);
+        return new ComputedStyle(_dimensions, _element, _values.Fused!, values, _faces, _zoom);
     }
 
     /// <summary>The names a font property can begin with, the <c>font</c> shorthand included.</summary>
@@ -2867,10 +2878,19 @@ internal readonly struct ComputedStyle
     /// these together and repeatedly - once per child to decide whether a box is in flow, then again to
     /// place it - and reading them as one keeps that from costing twenty declaration reads a time.
     /// </summary>
-    public PositionStyle Position =>
-        _values.Fused is not null
-            ? _values.Position!.Value
-            : _values.Position ??= PositionStyle.Read(this);
+    public PositionStyle Position
+    {
+        get
+        {
+            var read = _values.Fused is not null
+                ? _values.Position!.Value
+                : _values.Position ??= PositionStyle.Read(this);
+
+            // The offsets are read once and kept, because the layout asks for them per child; the zoom
+            // is applied on the way out so the cached value stays the page's own.
+            return read.Scaled(_zoom);
+        }
+    }
 
     /// <summary>
     /// Gets the declared <c>transform</c> text, or null/empty when the box carries none. Read as text on
@@ -3360,7 +3380,10 @@ internal readonly struct ComputedStyle
     public String WhiteSpace => _values.Text.WhiteSpace;
 
     /// <summary>Gets the length form of <c>tab-size</c> in pixels, or null where the box counts characters.</summary>
-    public Double? TabLength => _values.Text.TabLength;
+    public Double? TabLength => _values.Text.TabLength * _zoom;
+
+    /// <summary>Gets the tab as the sheet sized it, for the child that inherits it and scales its own.</summary>
+    internal Double? CascadedTabLength => _values.Text.TabLength;
 
     /// <summary>Gets how many character widths a tab runs the line on, the count form of <c>tab-size</c>.</summary>
     public Double TabUnits => _values.Text.TabUnits;
@@ -3538,7 +3561,15 @@ internal readonly struct ComputedStyle
     /// render device - the viewport - so a declared percentage is read back here and scaled by the size
     /// the box builder passed down.
     /// </summary>
-    public Double FontSize => _values.Font.Size;
+    public Double FontSize => _values.Font.Size * _zoom;
+
+    /// <summary>
+    /// Gets the font size a length written in <c>em</c> is folded against: the size as the sheet
+    /// states it, before the box's zoom is applied. A relative length is computed once, against the
+    /// element's own computed size (CSS Values 4 §5.4), and what is computed is then zoomed - so the
+    /// fold and the use ask for different numbers of the same property.
+    /// </summary>
+    internal Double FoldingFontSize => _values.Font.Size;
 
     /// <summary>Gets whether a length is relative to the font size, which the cascade cannot resolve.</summary>
     internal static Boolean IsFontRelative(CssLengthValue.Unit unit) =>
@@ -3584,7 +3615,10 @@ internal readonly struct ComputedStyle
     /// Gets the line height in pixels, or null for <c>normal</c> (which defers to the font metrics).
     /// A unitless value is a factor of the font size.
     /// </summary>
-    public Double? LineHeight => _values.Font.LineHeight;
+    public Double? LineHeight => _values.Font.LineHeight * _zoom;
+
+    /// <summary>Gets the leading as it was computed, before this box was zoomed, for what inherits it.</summary>
+    internal Double? CascadedLineHeight => _values.Font.LineHeight;
 
     public String TextAlign => _values.Text.Align;
 
@@ -3606,7 +3640,10 @@ internal readonly struct ComputedStyle
     /// Gets the distance the first line of the box is set in from the edge it begins at. A negative
     /// one hangs the first line out of the box, which is how a note's marker is set beside its text.
     /// </summary>
-    public StyleLength TextIndent => _values.Text.Indent;
+    public StyleLength TextIndent => _values.Text.Indent.Scaled(_zoom);
+
+    /// <summary>Gets the indent as the sheet wrote it, for the child that inherits it and scales its own.</summary>
+    internal StyleLength CascadedTextIndent => _values.Text.Indent;
 
     /// <summary>
     /// Gets the extra space added to every character's advance, in pixels. <c>normal</c>, the initial
@@ -3614,7 +3651,10 @@ internal readonly struct ComputedStyle
     /// that share of the size the text is set at. The space follows the last character too, as CSS
     /// asks, which is why a run is that much wider than its glyphs.
     /// </summary>
-    public Double LetterSpacing => _values.Font.LetterSpacing;
+    public Double LetterSpacing => _values.Font.LetterSpacing * _zoom;
+
+    /// <summary>Gets the spacing as the sheets wrote it, for the child that inherits it.</summary>
+    internal Double CascadedLetterSpacing => _values.Font.LetterSpacing;
 
     /// <summary>
     /// Gets the room added between words, in pixels. The space is added to each word separator drawn -
@@ -3622,7 +3662,10 @@ internal readonly struct ComputedStyle
     /// many spaces were written there - and to none of the other space separators the eye reads as a gap,
     /// which is what the property says it leaves to the font.
     /// </summary>
-    public Double WordSpacing => _values.Font.WordSpacing;
+    public Double WordSpacing => _values.Font.WordSpacing * _zoom;
+
+    /// <summary>Gets the spacing as the sheets wrote it, for the child that inherits it.</summary>
+    internal Double CascadedWordSpacing => _values.Font.WordSpacing;
 
     public String VerticalAlign => _values.Text.VerticalAlign;
 
@@ -3946,7 +3989,7 @@ internal readonly struct ComputedStyle
         {
             var written = WrittenBoxShadows;
 
-            return AnyFollowsInk(written) ? _values.BoxPaint ??= Inked(written) : written;
+            return Grown(AnyFollowsInk(written) ? _values.BoxPaint ??= Inked(written) : written);
         }
     }
 
@@ -3960,8 +4003,30 @@ internal readonly struct ComputedStyle
         {
             var written = WrittenTextShadows;
 
-            return AnyFollowsInk(written) ? _values.TextPaint ??= Inked(written) : written;
+            return Grown(AnyFollowsInk(written) ? _values.TextPaint ??= Inked(written) : written);
         }
+    }
+
+    /// <summary>
+    /// Gets the shadows of a list grown by this box's zoom. A box that was never zoomed, and a list that
+    /// has nothing in it, keep the list they were handed - the copy is only made for the boxes that ask
+    /// for one, which is why the list itself stays the page's own numbers and is shared.
+    /// </summary>
+    private IReadOnlyList<Shadow> Grown(IReadOnlyList<Shadow> shadows)
+    {
+        if (_zoom == 1 || shadows.Count == 0)
+        {
+            return shadows;
+        }
+
+        var scaled = new Shadow[shadows.Count];
+
+        for (var index = 0; index < scaled.Length; index++)
+        {
+            scaled[index] = shadows[index].Scaled(_zoom);
+        }
+
+        return scaled;
     }
 
     /// <summary>
@@ -4227,13 +4292,16 @@ internal readonly struct ComputedStyle
     public UInt32? DecorationColor => _values.Decoration.Color;
 
     /// <summary>Gets how thick this element's decoration lines are, or null where the face decides.</summary>
-    public Double? DecorationThickness => _values.Decoration.Thickness;
+    public Double? DecorationThickness => _values.Decoration.Thickness * _zoom;
 
     /// <summary>
     /// Gets how far this element's underlines stand from where the font puts them, or null where the face
     /// decides. Inherited, and read only for the underlines this element asks for.
     /// </summary>
-    public Double? UnderlineOffset => _values.Decoration.UnderlineOffset;
+    public Double? UnderlineOffset => _values.Decoration.UnderlineOffset * _zoom;
+
+    /// <summary>Gets the offset as the sheet set it, for the child that inherits it and scales its own.</summary>
+    internal Double? CascadedUnderlineOffset => _values.Decoration.UnderlineOffset;
 
     /// <summary>
     /// Gets how far back the ends of this element's own lines stand, or null where it said nothing: the
@@ -4510,9 +4578,9 @@ internal readonly struct ComputedStyle
 
     internal IRenderDimensions Dimensions => _dimensions;
 
-    public StyleLength Width => _values.BoxModel.Width;
+    public StyleLength Width => _values.BoxModel.Width.Scaled(_zoom);
 
-    public StyleLength Height => _values.BoxModel.Height;
+    public StyleLength Height => _values.BoxModel.Height.Scaled(_zoom);
 
     /// <summary>
     /// Gets whether the page spoke about the width, as opposed to the initial <c>auto</c> standing in for
@@ -4533,13 +4601,13 @@ internal readonly struct ComputedStyle
     /// </remarks>
     public AspectRatio? AspectRatio => _values.BoxModel.AspectRatio;
 
-    public StyleLength MinWidth => _values.BoxModel.MinWidth;
+    public StyleLength MinWidth => _values.BoxModel.MinWidth.Scaled(_zoom);
 
-    public StyleLength MaxWidth => _values.BoxModel.MaxWidth;
+    public StyleLength MaxWidth => _values.BoxModel.MaxWidth.Scaled(_zoom);
 
-    public StyleLength MinHeight => _values.BoxModel.MinHeight;
+    public StyleLength MinHeight => _values.BoxModel.MinHeight.Scaled(_zoom);
 
-    public StyleLength MaxHeight => _values.BoxModel.MaxHeight;
+    public StyleLength MaxHeight => _values.BoxModel.MaxHeight.Scaled(_zoom);
 
     /// <summary>
     /// Gets how replaced content (an image) is fitted into its box. Geometry is decided elsewhere;
@@ -4552,7 +4620,7 @@ internal readonly struct ComputedStyle
     /// percentage against the size of the box itself - which is what a percentage radius is relative
     /// to - and shrink radii that would overlap.
     /// </summary>
-    public StyleCornerRadii BorderRadius => _values.Border.Radius;
+    public StyleCornerRadii BorderRadius => _values.Border.Radius.Scaled(_zoom);
 
     /// <summary>
     /// Gets the box the background is painted into: <c>border-box</c> (the initial value) reaches
@@ -4589,7 +4657,11 @@ internal readonly struct ComputedStyle
     /// carried down the tree, for the stroke is inherited and a text run only knows its own through the
     /// element it belongs to.
     /// </summary>
-    internal Double TextStrokeWidth => _values.Fused is { } fused ? fused.TextStrokeWidth : 0;
+    internal Double TextStrokeWidth =>
+        (_values.Fused is { } fused ? fused.TextStrokeWidth : 0) * _zoom;
+
+    /// <summary>Gets the stroke as the sheet sized it, for the child that inherits it and scales its own.</summary>
+    internal Double CascadedTextStrokeWidth => _values.Fused is { } fused ? fused.TextStrokeWidth : 0;
 
     /// <summary>Gets the packed ARGB of the text stroke's colour; transparent when none was said.</summary>
     internal UInt32 TextStrokeColor => _values.Fused is { } fused ? fused.TextStrokeColor : 0;
@@ -4637,18 +4709,18 @@ internal readonly struct ComputedStyle
     /// <c>margin: 0 auto</c> able to centre a box. A percentage margin resolves against the
     /// containing block's width on all four sides.
     /// </summary>
-    public StyleThickness Margin => _values.BoxModel.Margin;
+    public StyleThickness Margin => _values.BoxModel.Margin.Scaled(_zoom);
 
     /// <summary>Gets the four paddings. As with margins, every side resolves against the width.</summary>
-    public StyleThickness Padding => _values.BoxModel.Padding;
+    public StyleThickness Padding => _values.BoxModel.Padding.Scaled(_zoom);
 
-    public Double BorderTopWidth => _values.Border.TopWidth;
+    public Double BorderTopWidth => _values.Border.TopWidth * _zoom;
 
-    public Double BorderRightWidth => _values.Border.RightWidth;
+    public Double BorderRightWidth => _values.Border.RightWidth * _zoom;
 
-    public Double BorderBottomWidth => _values.Border.BottomWidth;
+    public Double BorderBottomWidth => _values.Border.BottomWidth * _zoom;
 
-    public Double BorderLeftWidth => _values.Border.LeftWidth;
+    public Double BorderLeftWidth => _values.Border.LeftWidth * _zoom;
 
     public CssColorValue? BorderTopColor => _values.Fused is { } fused
         ? fused.BorderTopColor
@@ -4712,13 +4784,13 @@ internal readonly struct ComputedStyle
     /// number is taken from the keyword AngleSharp holds rather than written out here, so that a
     /// declared <c>thin</c> or <c>thick</c> is read the same way.
     /// </remarks>
-    public Double OutlineWidth => _values.VisualEffects.OutlineWidth;
+    public Double OutlineWidth => _values.VisualEffects.OutlineWidth * _zoom;
 
     /// <summary>
     /// Gets how far outside the border edge the outline begins. It shifts the outline without taking
     /// any room in the layout, which is what distinguishes it from a margin.
     /// </summary>
-    public Double OutlineOffset => _values.VisualEffects.OutlineOffset;
+    public Double OutlineOffset => _values.VisualEffects.OutlineOffset * _zoom;
 
     /// <summary>
     /// Gets the colour the outline is drawn in.

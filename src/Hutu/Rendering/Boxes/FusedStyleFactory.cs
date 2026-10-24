@@ -6,6 +6,7 @@ using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Hutu.Rendering.Boxes;
 
@@ -27,6 +28,14 @@ internal sealed class FusedParent
     public static readonly FusedParent Root = new() { Stands = true };
 
     public Double FontSize { get; init; }
+
+    /// <summary>
+    /// Gets the scale the subtree under this box is drawn at: the box's own <c>zoom</c> with every
+    /// ancestor's folded in. A child multiplies its own onto it, which is what lets a length be scaled
+    /// once for the box it belongs to rather than once per ancestor.
+    /// </summary>
+    public Double Zoom { get; init; } = 1;
+
     public CssColorValue? Color { get; init; }
 
     /// <summary>
@@ -245,16 +254,21 @@ internal sealed class FusedParent
         Boolean stands = false) => new()
     {
         Stands = stands,
-        FontSize = style.FontSize,
+
+        // What travels down is the value as the sheets wrote it: a child's own zoom is applied to its
+        // own lengths, and the effective zoom it inherits is carried beside them in `Zoom`, so scaling
+        // here would count an ancestor twice.
+        FontSize = style.FoldingFontSize,
+        Zoom = style.Zoom,
         Color = style.Color,
         Background = style.CascadedBackgroundColor,
         FontFamily = style.FontFamily,
-        LetterSpacing = style.LetterSpacing,
-        WordSpacing = style.WordSpacing,
+        LetterSpacing = style.CascadedLetterSpacing,
+        WordSpacing = style.CascadedWordSpacing,
         Weight = style.FontWeight,
         Italic = style.IsItalic,
-        LineHeight = style.LineHeight,
-        TextStrokeWidth = style.TextStrokeWidth,
+        LineHeight = style.CascadedLineHeight,
+        TextStrokeWidth = style.CascadedTextStrokeWidth,
         TextStrokeColor = style.TextStrokeColor,
         TextFillColor = style.TextFillColor,
         TextShadows = style.WrittenTextShadows,
@@ -284,7 +298,7 @@ internal sealed class FusedParent
         Overflow = (style.OverflowX, style.OverflowY),
         WordBreak = style.WordBreak,
         LineBreak = style.LineBreak,
-        TabLength = style.TabLength,
+        TabLength = style.CascadedTabLength,
         TabUnits = style.TabUnits,
         Widows = style.Breaks.Widows,
         Orphans = style.Breaks.Orphans,
@@ -293,12 +307,12 @@ internal sealed class FusedParent
         TextJustify = style.TextJustify,
         Visibility = style.Visibility,
         VerticalAlign = style.VerticalAlign,
-        UnderlineOffset = style.UnderlineOffset,
+        UnderlineOffset = style.CascadedUnderlineOffset,
         Skip = style.SkipInk,
         InFlex = style.Display.Contains("flex", StringComparison.OrdinalIgnoreCase),
         InGrid = style.Display.Contains("grid", StringComparison.OrdinalIgnoreCase),
         Collapses = style.Table.Collapse,
-        Indent = style.TextIndent,
+        Indent = style.CascadedTextIndent,
         Direction = style.Direction,
         WritingMode = style.WritingMode,
         UnicodeBidi = style.UnicodeBidiKeyword,
@@ -903,7 +917,33 @@ internal static class FusedStyleFactory
 
         values.Fused = keywords;
 
-        return new ComputedStyle(dimensions, element, keywords, values, faces);
+        return new ComputedStyle(dimensions, element, keywords, values, faces, ZoomOf(parent, find("zoom")));
+    }
+
+    /// <summary>
+    /// The scale a box's lengths are used at: its own <c>zoom</c>, multiplied by the one it was handed.
+    /// The property takes a number or a share of a hundred; `auto`, `normal` and every other word state
+    /// no scale of their own, and a keyword the cascade left standing for one of those is read as none
+    /// rather than as a size (CSS Viewport, the zoom property).
+    /// </summary>
+    private static Double ZoomOf(FusedParent parent, ICssProperty? declared)
+    {
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrEmpty(text))
+        {
+            return parent.Zoom;
+        }
+
+        if (text.EndsWith("%", StringComparison.Ordinal) &&
+            Double.TryParse(text[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var percent))
+        {
+            return parent.Zoom * percent / 100.0;
+        }
+
+        return Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var stated) && stated > 0
+            ? parent.Zoom * stated
+            : parent.Zoom;
     }
 
     /// <summary>

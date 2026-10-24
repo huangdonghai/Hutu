@@ -93,6 +93,11 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // alternative of the same grammar - would be dropped at the parse and the float would keep its
         // margin box. The shape reader takes the text from here.
         "shape-outside",
+        // CSS Viewport's zoom, which AngleSharp names but gives no grammar to: the value is a plain
+        // number or a percentage, either of which its length-or-keyword converter rejects, so without
+        // this the declaration is dropped and the box is drawn at the size the page wrote rather than
+        // the size it asked to scale that by. The style reads the factor from the text.
+        "zoom",
     };
 
     /// <summary>

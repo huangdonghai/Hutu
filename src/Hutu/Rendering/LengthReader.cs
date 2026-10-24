@@ -87,7 +87,12 @@ internal static class LengthReader
         public static implicit operator FontSource(Double size) => new(size);
 
         /// <summary>Gets the size, asking the style for it only now. Zero means unknown.</summary>
-        public Double Value => _fromStyle ? _style.FontSize : _size;
+        /// <summary>
+        /// Gets the size, asking the style for it only now. Zero means unknown. The style's <em>computed</em>
+        /// size is meant, not the size it is drawn at: a length written in <c>em</c> is folded against the
+        /// former and the result is then scaled by whatever zoom reaches the box.
+        /// </summary>
+        public Double Value => _fromStyle ? _style.FoldingFontSize : _size;
 
         /// <summary>Gets the whole font the length is written in, null where only a number was passed.</summary>
         public LayoutFont? Font => _fromStyle ? ComputedStyleExtensions.GetFont(_style) : _hasFace ? _face : null;

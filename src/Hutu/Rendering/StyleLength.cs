@@ -181,7 +181,6 @@ internal readonly struct StyleLength : IEquatable<StyleLength>
     public Double Value => _value;
 
     public static StyleLength FromPixels(Double pixels) => new(pixels, StyleLengthKind.Pixels);
-
     /// <param name="fraction">The fraction of the containing block, so 50% is <c>0.5</c>.</param>
     public static StyleLength FromPercent(Double fraction) => new(fraction, StyleLengthKind.Percent);
 
@@ -227,6 +226,46 @@ internal readonly struct StyleLength : IEquatable<StyleLength>
 
     /// <summary>Resolves to pixels, or returns the fallback for the keyword forms.</summary>
     public Double Resolve(Double basis, Double fallback) => HasValue ? Resolve(basis) : fallback;
+
+    /// <summary>
+    /// Returns the length grown by a page scale: a distance written in pixels becomes that many more,
+    /// while a share of a box stays a share of whatever box it is finally laid in and a keyword keeps its
+    /// meaning. <c>zoom</c> folds through this, which keeps the numbers a page wrote in its own sheet.
+    /// </summary>
+    public StyleLength Scaled(Double factor) =>
+        factor == 1 || _kind is not (StyleLengthKind.Pixels or StyleLengthKind.Math)
+            ? this
+            : _kind == StyleLengthKind.Pixels
+                ? FromPixels(_value * factor)
+                : ScaledMath(factor);
+
+    private StyleLength ScaledMath(Double factor)
+    {
+        var operands = _operands;
+
+        if (operands is null || operands.Length == 0)
+        {
+            return this;
+        }
+
+        var grown = new StyleLength[operands.Length];
+
+        for (var index = 0; index < operands.Length; index++)
+        {
+            grown[index] = operands[index].Scaled(factor);
+        }
+
+        // A scale multiplies both sides of a min(), max() or clamp() alike, so growing the arguments
+        // gives the same answer as growing the result - and it keeps a percentage inside them a
+        // percentage of the box.
+        return _function switch
+        {
+            StyleMathFunction.Min => Min(grown),
+            StyleMathFunction.Max => Max(grown),
+            StyleMathFunction.Clamp => Clamp(grown),
+            _ => Sum(grown),
+        };
+    }
 
     private Double ResolveMath(Double basis)
     {

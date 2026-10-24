@@ -69,4 +69,21 @@ public sealed record Shadow
     /// it and stood behind - rather than the box cast onto the canvas (CSS Backgrounds 3 §6.1).
     /// </summary>
     public Boolean Inset { get; internal init; }
+
+    /// <summary>
+    /// Gets the shadow grown by the box's zoom: the two offsets, the blur and the spread are lengths the
+    /// page wrote, and a scale reaches every length of a box it is put on. The list is held as the
+    /// declaration came to and grown on the way out, so the same shadow travels to a box at two and to a
+    /// box at one.
+    /// </summary>
+    internal Shadow Scaled(Double factor) =>
+        factor == 1
+            ? this
+            : this with
+            {
+                OffsetX = OffsetX * factor,
+                OffsetY = OffsetY * factor,
+                Blur = Blur * factor,
+                Spread = Spread * factor,
+            };
 }

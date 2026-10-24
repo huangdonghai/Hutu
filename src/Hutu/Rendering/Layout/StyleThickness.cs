@@ -41,6 +41,16 @@ internal readonly struct StyleThickness : IEquatable<StyleThickness>
         Left.Resolve(basis));
 
     /// <summary>
+    /// Grows every side that was written as a distance, leaving a share of the box to be taken off
+    /// whatever box it is laid in. <c>zoom</c> folds the insets of a box through this.
+    /// </summary>
+    public StyleThickness Scaled(Double factor) => new(
+        Top.Scaled(factor),
+        Right.Scaled(factor),
+        Bottom.Scaled(factor),
+        Left.Scaled(factor));
+
+    /// <summary>
     /// Gets whether the four sides of two insets are the same four lengths. Written rather than
     /// inherited so that the sides are compared as the lengths they are, not as the bytes of a struct
     /// holding one: <see cref="StyleLength"/> answers this itself, and an area made of these is shared

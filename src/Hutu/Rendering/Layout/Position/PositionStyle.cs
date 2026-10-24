@@ -66,6 +66,19 @@ internal readonly struct PositionStyle
     public Boolean IsAbsolute => Position == PositionMode.Absolute;
 
     /// <summary>
+    /// Grows the four offsets that were written as distances, which is what a page's <c>zoom</c> does to
+    /// the place an out-of-flow box takes; the mode and the stacking level are no distances to grow.
+    /// </summary>
+    public PositionStyle Scaled(Double factor) => new(
+        Position,
+        Top.Scaled(factor),
+        Right.Scaled(factor),
+        Bottom.Scaled(factor),
+        Left.Scaled(factor),
+        ZIndex,
+        HasZIndex);
+
+    /// <summary>
     /// What a box that says nothing about positioning is: in flow, at the place the flow gives it, with
     /// no edge set and no stacking level of its own.
     /// </summary>

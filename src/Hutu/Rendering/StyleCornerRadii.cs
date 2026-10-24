@@ -24,6 +24,10 @@ internal readonly struct StyleCornerRadius : IEquatable<StyleCornerRadius>
 
     public StyleLength Vertical { get; }
 
+    /// <summary>Gets the corner grown by the box's zoom, with a share of the box left as a share.</summary>
+    internal StyleCornerRadius Scaled(Double factor) =>
+        factor == 1 ? this : new StyleCornerRadius(Horizontal.Scaled(factor), Vertical.Scaled(factor));
+
     /// <summary>
     /// Gets whether two corners are the same ellipse: the same radius on each of its two axes.
     /// </summary>
@@ -60,6 +64,19 @@ internal readonly struct StyleCornerRadii : IEquatable<StyleCornerRadii>
     public StyleCornerRadius BottomRight { get; }
 
     public StyleCornerRadius BottomLeft { get; }
+
+    /// <summary>
+    /// Gets the four corners grown by the box's zoom. The set is held as the page wrote it and scaled on
+    /// the way out, so one cached set serves the box at two and the box at one.
+    /// </summary>
+    internal StyleCornerRadii Scaled(Double factor) =>
+        factor == 1
+            ? this
+            : new StyleCornerRadii(
+                TopLeft.Scaled(factor),
+                TopRight.Scaled(factor),
+                BottomRight.Scaled(factor),
+                BottomLeft.Scaled(factor));
 
     /// <summary>
     /// Gets whether two sets of corners are the same four corners, in the same visual order.
