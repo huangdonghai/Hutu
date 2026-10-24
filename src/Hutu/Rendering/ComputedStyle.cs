@@ -4206,19 +4206,23 @@ internal readonly struct ComputedStyle
     /// </summary>
     private IReadOnlyList<Shadow> Grown(IReadOnlyList<Shadow> shadows)
     {
-        if (_zoom == 1 || shadows.Count == 0)
+        if ((_zoom == 1 && !Effect.Applies) || shadows.Count == 0)
         {
             return shadows;
         }
 
-        var scaled = new Shadow[shadows.Count];
+        var grown = new Shadow[shadows.Count];
 
-        for (var index = 0; index < scaled.Length; index++)
+        for (var index = 0; index < grown.Length; index++)
         {
-            scaled[index] = shadows[index].Scaled(_zoom);
+            var shadow = shadows[index].Scaled(_zoom);
+
+            grown[index] = Effect.Applies
+                ? shadow with { Color = FilterInk(shadow.Color) }
+                : shadow;
         }
 
-        return scaled;
+        return grown;
     }
 
     /// <summary>
@@ -4481,7 +4485,28 @@ internal readonly struct ComputedStyle
     /// Gets the colour the element asked its decoration to be drawn in, or null where it asked for none
     /// and its own text colour is what the line takes (CSS Text Decoration 4 §2.3).
     /// </summary>
-    public UInt32? DecorationColor => _values.Decoration.Color;
+    public UInt32? DecorationColor =>
+        _values.Decoration.Color is { } packed && Effect.Applies ? FilterInk(packed) : _values.Decoration.Color;
+
+    /// <summary>
+    /// Gets a packed ARGB colour put through the filter the box carries. The colour a box paints and the
+    /// value it computes are two things: a filter belongs to the paint, so it is applied where the packed
+    /// colour is handed to the painter and never to the value another box may inherit.
+    /// </summary>
+    private UInt32 FilterInk(UInt32 argb)
+    {
+        var ink = CssColorValue.FromRgba(
+            (Byte)(argb >> 16),
+            (Byte)(argb >> 8),
+            (Byte)argb,
+            (Byte)(argb >> 24) / 255.0);
+        var filtered = Effect.Apply(ink);
+
+        return ((UInt32)(Byte)Math.Round(filtered.A * 255.0) << 24) |
+            ((UInt32)filtered.R << 16) |
+            ((UInt32)filtered.G << 8) |
+            filtered.B;
+    }
 
     /// <summary>Gets how thick this element's decoration lines are, or null where the face decides.</summary>
     public Double? DecorationThickness => _values.Decoration.Thickness * _zoom;
