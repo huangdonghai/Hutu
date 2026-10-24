@@ -565,6 +565,29 @@ public sealed class GridLayoutTests
         });
     }
 
+    [Test]
+    public async Task AnItemWithARatioAndADefiniteRowSizesItsColumn()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='g' style='display:inline-grid;grid-template-rows:100px;background:green'>" +
+            "<div id='a' style='aspect-ratio:1/1;height:100%'></div></div>" +
+            "<div id='h' style='display:inline-grid;grid-template-rows:100px'>" +
+            "<div id='b' style='aspect-ratio:2/1;height:50%'></div></div>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            // The row is settled at a hundred, the item is as tall as all of it, and the ratio gives the
+            // column the same hundred (CSS Grid 1 §6.6, CSS Sizing 4 §4).
+            Assert.That(Find(view, "g").BorderBox.Width, Is.EqualTo(100).Within(0.5));
+
+            // Half the row, doubled: the height the item states is what the ratio is asked of.
+            Assert.That(Find(view, "h").BorderBox.Width, Is.EqualTo(100).Within(0.5));
+        });
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

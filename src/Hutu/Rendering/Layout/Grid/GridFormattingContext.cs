@@ -998,7 +998,7 @@ internal sealed class GridFormattingContext
         var tracks = Build(grid.Columns, grid.AutoColumn, used, basis, gap);
 
         Initialize(tracks, basis);
-        ContributeWidths(tracks, items, context);
+        ContributeWidths(tracks, items, context, grid);
 
         // The base sizes before any growth are the tracks' minima - a fixed length, or the largest
         // min-content contribution for an intrinsic minimum - so their sum is the grid's min-content.
@@ -1147,7 +1147,7 @@ internal sealed class GridFormattingContext
     /// Gathers what each column has to hold. An item with a declared width contributes that width
     /// instead of its content, and the margins come too, because a track holds an outer box.
     /// </summary>
-    private void ContributeWidths(List<Track> tracks, List<GridCell> items, LayoutContext context)
+    private void ContributeWidths(List<Track> tracks, List<GridCell> items, LayoutContext context, GridStyle grid)
     {
         var basis = context.ContainingBlock.Width;
 
@@ -1178,6 +1178,27 @@ internal sealed class GridFormattingContext
                 continue;
             }
 
+            // An item with an aspect ratio and a block size its rows have already settled has a definite
+            // inline size: the ratio carries one axis to the other (CSS Grid 1 §6.6, CSS Sizing 4 §4), and
+            // the columns are sized from it. Only a fixed track has a size before the rows are sized, so
+            // only a span of fixed tracks answers here - every other row waits for its content.
+            if (!HasWidth(item.Box) && style.AspectRatio is { } ratio && FixedRows(grid, item) is { } blockSize)
+            {
+                // The ratio is asked of the block size the item *has*, which is the height it states where
+                // that height is a length or a share of the settled row, and the whole row otherwise.
+                var height = style.Height;
+                var block = height.Kind switch
+                {
+                    StyleLengthKind.Percent => Math.Max(0, height.Value * blockSize),
+                    StyleLengthKind.Pixels => Math.Max(0, height.Value),
+                    _ => blockSize,
+                };
+                var inline = Math.Max(0, block * ratio.Value);
+                item.MinWidth = inline + margin;
+                item.MaxWidth = item.MinWidth;
+                continue;
+            }
+
             // The content intrinsic size is what the item needs once its own declared width is set
             // aside, which is the right question here for every item - and the only right one for an
             // anonymous wrapper, whose declared width belongs to the container.
@@ -1203,6 +1224,46 @@ internal sealed class GridFormattingContext
         }
 
         Contribute(tracks, items, true);
+    }
+
+    /// <summary>
+    /// Gets the block size an item's rows already give it, or null where they give none: every row it
+    /// spans has to be an absolute track, which is the one kind whose size is known before the rows are
+    /// sized. The gutters it spans come too, because the ratio is asked of the item's whole border box.
+    /// </summary>
+    private static Double? FixedRows(GridStyle grid, GridCell item)
+    {
+        var rows = grid.Rows;
+
+        // A list with an automatic repetition has no size at all until it is told what to repeat into,
+        // which is a question about the container rather than about the item.
+        if (rows is null || rows.HasAutoRepeat)
+        {
+            return null;
+        }
+
+        var tracks = rows.Resolve(0, 0, rows.StaticCount);
+
+        if (item.RowSpan < 1 || item.Row < 0 || item.Row + item.RowSpan > tracks.Count)
+        {
+            return null;
+        }
+
+        var size = 0.0;
+
+        for (var index = item.Row; index < item.Row + item.RowSpan; index++)
+        {
+            var breadth = tracks[index].Min;
+
+            if (breadth.Kind != GridBreadthKind.Length)
+            {
+                return null;
+            }
+
+            size += breadth.Fixed(0);
+        }
+
+        return item.RowSpan > 1 ? size + grid.RowGap * (item.RowSpan - 1) : size;
     }
 
     /// <summary>
