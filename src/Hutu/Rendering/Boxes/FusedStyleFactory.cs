@@ -294,7 +294,7 @@ internal sealed class FusedParent
         // here would count an ancestor twice.
         FontSize = style.FoldingFontSize,
         Zoom = style.Zoom,
-        Color = style.Color,
+        Color = style.Ink,
         Background = style.CascadedBackgroundColor,
         FontFamily = style.FontFamily,
         LetterSpacing = style.CascadedLetterSpacing,

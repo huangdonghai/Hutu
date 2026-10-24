@@ -4023,7 +4023,14 @@ internal readonly struct ComputedStyle
     /// the page wrote on the element is still told apart from the one the element merely took over from
     /// its parent: a link that inherits the page's text colour is still drawn as a link.
     /// </remarks>
-    public CssColorValue Color
+    public CssColorValue Color => Effect.Applies ? Effect.Apply(Ink) : Ink;
+
+    /// <summary>
+    /// Gets the colour the box's text is set in before any filter reaches it - the computed value, which
+    /// is what a child inherits and what a <c>currentcolor</c> elsewhere in the box resolves to. The
+    /// filter belongs to the paint, not to the value.
+    /// </summary>
+    internal CssColorValue Ink
     {
         get
         {
@@ -4075,7 +4082,7 @@ internal readonly struct ComputedStyle
     /// and the absence of one - as it was.
     /// </summary>
     private CssColorValue? ResolveCurrentColor(CssColorValue? colour) =>
-        colour == CssColorValue.CurrentColor ? Color : colour;
+        colour == CssColorValue.CurrentColor ? Ink : colour;
 
     /// <summary>
     /// Gets the background layers in declaration order. The first layer paints on top of the ones
