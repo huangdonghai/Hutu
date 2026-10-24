@@ -725,6 +725,11 @@ public sealed class VerticalLayoutTests
         Assert.That(floated.Y, Is.EqualTo(170), "and pinned to the line's end");
     }
 
+    /// <summary>
+    /// Two floats that name the same side of a column stand one after another along the line, every one
+    /// of them against the block-start edge. Measured in Chrome: three <c>float: right</c> boxes of
+    /// 40x30 in a 300x200 column come to y=170, 140 and 110, all at x=260.
+    /// </summary>
     [Test]
     public async Task TwoFloatsOnOneSideStackAlongTheColumn()
     {
@@ -734,10 +739,45 @@ public sealed class VerticalLayoutTests
             "<html><body style='margin:0'><div style='" + Column + "'>" +
             "<div id='a' style='float:left;width:40px;height:30px'></div>" +
             "<div id='b' style='float:left;width:40px;height:30px'></div>" +
+            "<div id='c' style='float:right;width:40px;height:30px'></div>" +
+            "<div id='d' style='float:right;width:40px;height:30px'></div>" +
             "</div></body></html>");
 
-        Assert.That(Bounds(view, "a").X, Is.EqualTo(260), "the first takes the first band");
-        Assert.That(Bounds(view, "b").X, Is.EqualTo(220), "the second stacks below it along the column");
+        Assert.That(Bounds(view, "a").X, Is.EqualTo(260), "the first takes the block-start band");
+        Assert.That(Bounds(view, "b").X, Is.EqualTo(260), "and so does the second: they do not step aside");
+        Assert.That(Bounds(view, "a").Y, Is.EqualTo(0), "the two of the head side march down the line");
+        Assert.That(Bounds(view, "b").Y, Is.EqualTo(30));
+        Assert.That(Bounds(view, "c").Y, Is.EqualTo(170), "and the two of the foot side march up from its end");
+        Assert.That(Bounds(view, "d").Y, Is.EqualTo(140));
+    }
+
+    /// <summary>
+    /// A paragraph written <c>unicode-bidi: plaintext</c> takes the way its line runs from the text on it
+    /// rather than from the <c>dir</c> attribute or the <c>direction</c> property: the first character of
+    /// strong direction settles it, and a paragraph whose text holds none keeps the direction it was
+    /// given (UAX#9 §3.4, CSS Display 3 §5.3.7).
+    /// </summary>
+    [Test]
+    public async Task APlaintextParagraphRunsItsColumnTheWayItsTextReads()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='writing-mode:vertical-rl;width:100px;height:200px;font-size:10px;" +
+            "line-height:1;unicode-bidi:plaintext;direction:rtl'>ab</div>" +
+            "<div style='writing-mode:vertical-rl;width:100px;height:200px;font-size:10px;" +
+            "line-height:1;unicode-bidi:plaintext;direction:ltr'>\u0645\u0631</div>" +
+            "<div style='writing-mode:vertical-rl;width:100px;height:200px;font-size:10px;" +
+            "line-height:1;direction:rtl'>12</div>" +
+            "</body></html>");
+
+        // The three columns stand one under the other in the page's own flow, each two hundred tall. The
+        // fake measurer gives a character five pixels, so a run of two inks ten of them - at the head of
+        // its column where the line reads down, at the foot where it runs up.
+        Assert.That(Text(view, "ab").BorderBox.Y, Is.EqualTo(0), "Latin decides left-to-right");
+        Assert.That(Text(view, "\u0645\u0631").BorderBox.Bottom, Is.EqualTo(400), "Arabic decides right-to-left");
+        Assert.That(Text(view, "12").BorderBox.Bottom, Is.EqualTo(600), "digits decide nothing");
     }
 
     private static Rect Bounds(HutuViewInternal view, String id)

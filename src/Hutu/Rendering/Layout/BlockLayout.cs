@@ -1948,7 +1948,7 @@ internal sealed class BlockLayout
 
     /// <summary>
     /// Places the floats of a column: each is pinned to the block-start edge and opened at the side of
-    /// the line it names, and the ones naming a side stack along the block axis from one another.
+    /// the line it names, and the ones naming a side march along the line from one another.
     /// </summary>
     /// <remarks>
     /// The axes are the ones the writing mode exchanges: a float's width runs along the block axis and
@@ -1968,9 +1968,6 @@ internal sealed class BlockLayout
         private readonly Double _inlineExtent;
         private readonly Dictionary<Boolean, Double> _ended = new();
 
-        /// <summary>Gets how far along the block axis the floats reach, margin boxes included.</summary>
-        public Double DeepestBlock { get; private set; }
-
         /// <summary>Gets how far down the line the floats reach, which the box's inline extent covers.</summary>
         public Double DeepestInline { get; private set; }
 
@@ -1989,16 +1986,20 @@ internal sealed class BlockLayout
             var margin = child.Style.Margin.Resolve(_inlineExtent);
             var (inlineStart, inlineEnd) = flow.InlineMargins(margin);
             var (blockStart, blockEnd) = flow.BlockMargins(margin);
-            var side = flow.FloatsAtTheInlineStart(child.Style.Float);
+            var atStart = flow.FloatsAtTheInlineStart(child.Style.Float);
 
-            // The floats naming one side stand one after another along the block axis; the two sides
-            // share a band, since they are pinned to opposite edges of the line.
-            var start = _ended.TryGetValue(side, out var ended) ? ended : 0.0;
-            var block = Math.Max(start, blockCursor) + blockStart;
-            var inline = side ? inlineStart : _inlineExtent - inlineSize - inlineEnd;
+            // The floats of one side march along the line from the edge they are pinned to, and each of
+            // them stands at the block-start edge rather than one band deeper: measured in Chrome, three
+            // `float: right` boxes of 40x30 in a 300x200 column come to y=170, 140 and 110, all of them
+            // at x=260. A row's floats step aside instead because the edge they are pinned to runs the
+            // other way - it is the edge, not the axis, that the march follows.
+            var along = _ended.TryGetValue(atStart, out var ended) ? ended : 0.0;
+            var block = blockCursor + blockStart;
+            var inline = atStart
+                ? along + inlineStart
+                : _inlineExtent - along - inlineSize - inlineEnd;
 
-            _ended[side] = block + blockSize + blockEnd;
-            DeepestBlock = Math.Max(DeepestBlock, _ended[side]);
+            _ended[atStart] = along + inlineSize + inlineEnd;
             DeepestInline = Math.Max(DeepestInline, inline + inlineSize + inlineEnd);
 
             return (new Rect(inline, block, inlineSize, blockSize), size);
