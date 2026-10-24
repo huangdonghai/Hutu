@@ -176,7 +176,7 @@ internal sealed class VariableScope
             return declared;
         }
 
-        return Remember(cascade, name, Substitute(text, this, 0));
+        return Remember(cascade, name, Substitute(text, this, 0, new Chain()));
     }
 
     private ICssProperty? Remember(MatchedCascade cascade, String name, String? substituted)
@@ -188,7 +188,9 @@ internal sealed class VariableScope
             return remembered;
         }
 
-        var resolved = substituted is null ? null : Parse(name, substituted);
+        var resolved = substituted is null || ReferenceEquals(substituted, Circular)
+            ? null
+            : Parse(name, substituted);
 
         (_read ??= new Dictionary<Request, ICssProperty?>())[key] = resolved;
         return resolved;
@@ -221,10 +223,10 @@ internal sealed class VariableScope
             return remembered;
         }
 
-        var substituted = Substitute(shorthandText, this, 0);
+        var substituted = Substitute(shorthandText, this, 0, new Chain());
         ICssProperty? resolved = null;
 
-        if (substituted is not null)
+        if (substituted is not null && !ReferenceEquals(substituted, Circular))
         {
             try
             {
@@ -245,7 +247,7 @@ internal sealed class VariableScope
     /// reference's own fallback. Null for a reference the scope cannot answer, which is what makes the
     /// whole declaration invalid rather than one of its parts.
     /// </summary>
-    private static String? Substitute(String text, VariableScope at, Int32 depth)
+    private static String? Substitute(String text, VariableScope at, Int32 depth, Chain chain)
     {
         if (!Mentions(text))
         {
@@ -266,7 +268,7 @@ internal sealed class VariableScope
 
             if (open < 0)
             {
-                Append(ref result, text, start, text.Length - start);
+                Add(ref result, text, start, text.Length - start);
                 break;
             }
 
@@ -279,16 +281,16 @@ internal sealed class VariableScope
                 return null;
             }
 
-            Append(ref result, text, start, open - start);
+            Add(ref result, text, start, open - start);
 
-            var resolved = Resolve(at, text, open + Function.Length, close, depth);
+            var resolved = Resolve(at, text, open + Function.Length, close, depth, chain);
 
-            if (resolved is null)
+            if (resolved is null || ReferenceEquals(resolved, Circular))
             {
-                return null;
+                return resolved;
             }
 
-            Append(ref result, resolved, 0, resolved.Length);
+            Add(ref result, resolved, 0, resolved.Length);
             start = close + 1;
         }
 
@@ -296,12 +298,18 @@ internal sealed class VariableScope
     }
 
     /// <summary>Resolves one reference: its name, and the fallback after the first comma when it has one.</summary>
-    private static String? Resolve(VariableScope at, String text, Int32 from, Int32 to, Int32 depth)
+    private static String? Resolve(
+        VariableScope at,
+        String text,
+        Int32 from,
+        Int32 to,
+        Int32 depth,
+        Chain chain)
     {
         var body = text.AsSpan(from, to - from);
         var comma = TopLevelComma(body);
         var name = Unescaped((comma < 0 ? body : body[..comma]).Trim().ToString());
-        var fallback = comma < 0 ? null : body[(comma + 1)..].Trim();
+        var fallback = comma < 0 ? null : body[(comma + 1)..].Trim().ToString();
 
         if (!name.StartsWith("--", StringComparison.Ordinal))
         {
@@ -311,26 +319,29 @@ internal sealed class VariableScope
         // The name wins over the fallback even when it does not resolve: a declaration of it that is
         // itself invalid shadows whatever an ancestor said, which is what the specification's
         // guaranteed-invalid value means for a custom property.
-        var value = at.Lookup(name.ToString(), depth + 1);
+        var value = at.Lookup(name, depth + 1, chain);
 
         if (value is not null)
         {
-            return value;
+            // A name that came back around on itself is not a name with no value: whoever is standing
+            // in the ring has no fallback to reach, because the ring is why it has nothing.
+            return ReferenceEquals(value, Circular) ? Circular : value;
         }
 
-        return fallback.IsEmpty ? null : Substitute(fallback.ToString(), at, depth + 1);
+        // A fallback written as nothing at all is still a fallback, and substitutes as nothing (CSS Variables 1 §3).
+        return fallback is null ? null : Substitute(fallback, at, depth + 1, chain);
     }
 
     /// <summary>
     /// Gets a name's value as the scope that declares it resolves it, or null when no scope here does.
     /// </summary>
-    private String? Lookup(String name, Int32 depth)
+    private String? Lookup(String name, Int32 depth, Chain chain)
     {
         var names = _names ??= DeclaredNames();
 
         if (Array.IndexOf(names, name) < 0)
         {
-            return _parent?.Lookup(name, depth);
+            return _parent?.Lookup(name, depth, chain);
         }
 
         if (_values is not null && _values.TryGetValue(name, out var remembered))
@@ -338,13 +349,69 @@ internal sealed class VariableScope
             return remembered;
         }
 
+        if (!chain.Enter(name))
+        {
+            return Circular;
+        }
+
         // The declaration's own text is substituted in this scope, not the one that asked: a variable
         // written as another variable keeps its own neighbourhood.
         var declared = _owner!.Find(name)?.Value;
-        var resolved = declared is null ? null : Substitute(declared, this, depth);
+        var resolved = declared is null ? null : Substitute(declared, this, depth, chain);
+
+        chain.Open.Remove(name);
+
+        if (ReferenceEquals(resolved, Circular))
+        {
+            (_values ??= new Dictionary<String, String?>(StringComparer.Ordinal))[name] = null;
+
+            if (String.Equals(chain.Closed, name, StringComparison.Ordinal))
+            {
+                // The ring closes at this name. Above it the name is simply one that holds nothing,
+                // and a fallback written where the name is used may answer for it; inside the ring no
+                // such fallback is reached, because the ring - not a missing name - is why there is
+                // nothing to substitute (CSS Variables 1 §3.1).
+                chain.Closed = null;
+                return null;
+            }
+
+            return Circular;
+        }
+
+        resolved = Widened(name, resolved, depth);
 
         (_values ??= new Dictionary<String, String?>(StringComparer.Ordinal))[name] = resolved;
         return resolved;
+    }
+
+    /// <summary>
+    /// Reads a value that has turned out to be one of the words every property takes for itself rather
+    /// than a value of its own. The first leaves the name holding nothing; the rest take what the
+    /// element's parent had, which a custom property always inherits - so the four are two meanings.
+    /// </summary>
+    private String? Widened(String name, String? value, Int32 depth)
+    {
+        var text = value?.Trim();
+
+        if (text is null || text.Length == 0)
+        {
+            return value;
+        }
+
+        if (text.Equals("initial", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (text.Equals("inherit", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert-layer", StringComparison.OrdinalIgnoreCase))
+        {
+            return _parent?.Lookup(name, depth, new Chain());
+        }
+
+        return value;
     }
 
     private String[] DeclaredNames()
@@ -387,6 +454,13 @@ internal sealed class VariableScope
 
     /// <summary>The <c>var(</c> spelling, which is matched case-insensitively as every CSS keyword is.</summary>
     private const String Function = "var(";
+
+    /// <summary>
+    /// Stands for a value that has no value because the chain of references came back around to itself
+    /// while resolving it. Held as one object and told apart by identity, because no substituted text
+    /// can be this one.
+    /// </summary>
+    private static readonly String Circular = new('*', 1);
 
     private static Boolean Mentions(String text) => IndexOfReference(text, 0) >= 0;
 
@@ -550,14 +624,50 @@ internal sealed class VariableScope
         return -1;
     }
 
-    private static void Append(ref String? target, String text, Int32 from, Int32 length)
+    private static void Add(ref String? target, String text, Int32 from, Int32 length)
     {
         if (length <= 0)
         {
             return;
         }
 
+        if (target is { Length: > 0 } && Joins(target[target.Length - 1]) && Joins(text[from]))
+        {
+            // What substitution puts back is tokens, not characters: two of them written with nothing
+            // between are still two, and a reader handed the joined text would otherwise make one word
+            // of what the page wrote as two (CSS Variables 1 §4.1).
+            target += " ";
+        }
+
         target = target is null ? text.Substring(from, length) : target + text.Substring(from, length);
+    }
+
+    /// <summary>Gets whether a character can be part of a token that another such character welds onto.</summary>
+    private static Boolean Joins(Char c) =>
+        Char.IsLetterOrDigit(c) || c > '\u00A0' || c is '-' or '_' or '.' or '%' or '#' or '\\';
+
+    /// <summary>
+    /// The names one run of nested references is holding open while it resolves them, and the one of
+    /// them it was asked for again before it had finished.
+    /// </summary>
+    private sealed class Chain
+    {
+        internal readonly HashSet<String> Open = new(StringComparer.Ordinal);
+
+        /// <summary>Gets or sets the name whose own re-entry closed the ring, null while none has.</summary>
+        internal String? Closed { get; set; }
+
+        /// <summary>Opens a name, and says whether it was not already standing open.</summary>
+        internal Boolean Enter(String name)
+        {
+            if (Open.Add(name))
+            {
+                return true;
+            }
+
+            Closed ??= name;
+            return false;
+        }
     }
 
     /// <summary>One question asked of one cascade through this scope.</summary>
