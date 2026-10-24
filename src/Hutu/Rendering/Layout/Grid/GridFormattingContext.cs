@@ -808,6 +808,19 @@ internal sealed class GridFormattingContext
         Int32 explicitColumns,
         Int32 explicitRows)
     {
+        // The walk is in order-modified document order: `order` numbers the items the automatic
+        // placement is about, and an item that states no position is packed where its number puts it
+        // (CSS Grid 1 §8.5). The sort is stable, so two items of one number keep the order they were
+        // written in.
+        var ordered = items
+            .Select((item, index) => (Item: item, Index: index, item.Box.Style.Order))
+            .OrderBy(entry => entry.Order)
+            .ThenBy(entry => entry.Index)
+            .Select(entry => entry.Item)
+            .ToList();
+
+        items = ordered;
+
         var columns = Math.Max(1, explicitColumns);
         var rows = Math.Max(1, explicitRows);
 

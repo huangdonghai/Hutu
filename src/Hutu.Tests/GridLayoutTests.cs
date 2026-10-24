@@ -543,6 +543,28 @@ public sealed class GridLayoutTests
         });
     }
 
+    [Test]
+    public async Task AnAutoPlacedItemIsPackedInTheOrderItAsksFor()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:50px 50px;grid-auto-rows:40px'>" +
+            "<div id='a' style='order:2'></div>" +
+            "<div id='b' style='order:1'></div>" +
+            "</div></body></html>");
+
+        // The second item asks to come first, so it takes the first cell and the other follows it - the
+        // walk is in order-modified document order (CSS Grid 1 §8.5).
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(0).Within(0.5), "the item that asked for order one");
+            Assert.That(Find(view, "b").BorderBox.Y, Is.EqualTo(0).Within(0.5));
+            Assert.That(Find(view, "a").BorderBox.X, Is.EqualTo(50).Within(0.5), "and the item after it");
+            Assert.That(Find(view, "a").BorderBox.Y, Is.EqualTo(0).Within(0.5));
+        });
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

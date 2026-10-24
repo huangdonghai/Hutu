@@ -853,6 +853,7 @@ internal static class FusedStyleFactory
             TextStrokeColor = strokeColor,
             TextFillColor = fillColor,
             Transform = ComputedStyle.ResolveTransformFused(find("transform"), parent.Transform),
+            Order = ComputedStyle.ResolveOrderFused(find("order")),
             Filter = find("filter")?.Value,
             BackdropFilter = find("backdrop-filter")?.Value,
             Opacity = find("opacity")?.Value,

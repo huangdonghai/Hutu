@@ -83,6 +83,24 @@ internal readonly struct ComputedStyle
     internal Double Zoom => _zoom;
 
     /// <summary>
+    /// Gets the order the box asks for among its siblings: what a flex line packs by and what a grid's
+    /// automatic placement walks in (CSS Flexbox 1 §5.4, CSS Grid 1 §8.5). A box that says nothing is
+    /// zero, which is the initial value.
+    /// </summary>
+    public Int32 Order => _values.Fused?.Order ?? 0;
+
+    /// <summary>
+    /// Reads the order from the element's own cascaded declaration, for the fused path. A value that is
+    /// not a number is not an order, and a box left with none is the initial zero.
+    /// </summary>
+    public static Int32 ResolveOrderFused(ICssProperty? declared) =>
+        declared?.Value is { } text &&
+        Int32.TryParse(text.Trim(), System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var order)
+            ? order
+            : 0;
+
+    /// <summary>
     /// The style an anonymous box is given: this one, with every property that is not inherited taken
     /// off it.
     /// </summary>
@@ -2871,6 +2889,13 @@ internal readonly struct ComputedStyle
 
         /// <summary>Gets the declared <c>transform</c>, or null when the box carries none.</summary>
         internal String? Transform;
+
+        /// <summary>
+        /// Gets the order the box asks for among its siblings. Both a flex item and a grid item take one,
+        /// and it is not inherited: the property decides which item is laid out first, so it travels as a
+        /// number the placement can sort by rather than as the declaration it was written with.
+        /// </summary>
+        internal Int32 Order;
 
         /// <summary>Gets the declared <c>filter</c>, or null when the box carries none.</summary>
         internal String? Filter;
