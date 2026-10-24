@@ -176,6 +176,11 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // CSS Lists 3 §3.3's `symbols()` function, which AngleSharp's grammar for list-style-type stops
         // short of: dropped, a list marked with its own symbols keeps the disc the sheet did not ask for.
         ["list-style-type"] = ["symbols("],
+        // A `counter()` written with a symbols() list - `content: counter(a, symbols('*'))`, CSS Lists 3
+        // §5.2 - is rejected by AngleSharp's grammar for the counter function, which stops at an
+        // identifier. Dropped, the generated content vanishes; kept whole, the content reader takes the
+        // marks from the same place the marker does.
+        ["content"] = ["symbols("],
     };
 
     /// <summary>
