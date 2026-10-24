@@ -1413,7 +1413,8 @@ internal readonly struct ComputedStyle
     private static Boolean IsCurrentColorKeyword(ICssValue value) =>
         (value is CssColorValue ink && ink == CssColorValue.CurrentColor) ||
         (value is not CssLengthValue &&
-         value.CssText.Trim().Equals("currentcolor", StringComparison.OrdinalIgnoreCase));
+         (value.CssText.Trim().Equals("currentcolor", StringComparison.OrdinalIgnoreCase) ||
+          IsIdentityRelativeInk(value.CssText)));
 
     private static Boolean IsFollowableLink(IElement? element) =>
         element is IHtmlAnchorElement anchor && anchor.HasAttribute("href");
@@ -1453,8 +1454,78 @@ internal readonly struct ComputedStyle
             return color;
         }
 
+        // A relative colour that comes to the colour it started from is that colour, and one that
+        // started from `currentcolor` is still the asking: the box under it answers with its own ink.
+        if (declared.RawValue is not null && IsIdentityRelativeInk(declared.RawValue.CssText))
+        {
+            return CssColorValue.CurrentColor;
+        }
+
         return IsInheritWord(declared.RawValue) ? parentBackground : null;
     }
+
+    /// <summary>
+    /// Gets whether a value is a relative colour that comes to the colour it started from: its origin is
+    /// <c>currentcolor</c> and every channel it names is the origin's own, in the function's own order.
+    /// A relative colour leaves the origin alone in that case, so the whole of it stands for the keyword
+    /// (CSS Color 5 §4.1) - the asking rather than an answer.
+    /// </summary>
+    internal static Boolean IsIdentityRelativeInk(String? text)
+    {
+        var trimmed = text?.Trim();
+
+        if (String.IsNullOrEmpty(trimmed) || trimmed[trimmed.Length - 1] != ')')
+        {
+            return false;
+        }
+
+        var open = trimmed.IndexOf('(');
+
+        if (open <= 0)
+        {
+            return false;
+        }
+
+        var function = trimmed.Substring(0, open).Trim().ToLowerInvariant();
+        var body = trimmed.Substring(open + 1, trimmed.Length - open - 2);
+        var words = body.Split((Char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+        if (words.Length < 2 ||
+            !words[0].Equals("from", StringComparison.OrdinalIgnoreCase) ||
+            !words[1].Equals("currentcolor", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // `color()` names the space its origin is read in before the channels, and its channels are
+        // always that space's own red, green and blue (CSS Color 5 §4.2).
+        if (function == "color")
+        {
+            return words.Length == 6 &&
+                IsColorSpace(words[2]) &&
+                words[3].Equals("r", StringComparison.OrdinalIgnoreCase) &&
+                words[4].Equals("g", StringComparison.OrdinalIgnoreCase) &&
+                words[5].Equals("b", StringComparison.OrdinalIgnoreCase);
+        }
+
+        var channels = function switch
+        {
+            "rgb" or "rgba" => "r g b",
+            "hsl" or "hsla" => "h s l",
+            "hwb" => "h w b",
+            "lab" or "oklab" => "l a b",
+            "lch" or "oklch" => "l c h",
+            _ => null,
+        };
+
+        return channels is not null && words.Length == 5 &&
+            String.Join(' ', words[2], words[3], words[4]).Equals(channels, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Gets whether the word names one of the spaces <c>color()</c> may read a colour in.</summary>
+    private static Boolean IsColorSpace(String word) =>
+        word.ToLowerInvariant() is "srgb" or "srgb-linear" or "display-p3" or "a98-rgb" or "prophoto-rgb"
+            or "rec2020" or "lab" or "oklab" or "xyz" or "xyz-d50" or "xyz-d65";
 
     private static Boolean IsInheritWord(ICssValue? value) =>
         value is not null && value.CssText.Trim().Equals("inherit", StringComparison.OrdinalIgnoreCase);

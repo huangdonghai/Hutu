@@ -145,6 +145,29 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
     /// whole-value match would miss, and AngleSharp rejects the whole declaration for the unknown inner
     /// keyword. Reading it keeps the page's own text for the box builder to route.
     /// </summary>
+    /// <summary>
+    /// The tokens that make a known property's value unreadable to its own grammar but meaningful to the
+    /// reader: a value holding one of them is kept whole as the text the page wrote.
+    /// </summary>
+    /// <remarks>
+    /// A relative colour names its origin and then the channels it comes to - <c>rgb(from currentcolor r
+    /// g b)</c>, CSS Color 5 §4 - and AngleSharp's colour grammar stops short of the form, so the whole
+    /// declaration was dropped and the colour the page said before it stood in its place. The reader
+    /// takes the text from here.
+    /// </remarks>
+    private static readonly Dictionary<String, String[]> KeywordExtraSubstrings = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["color"] = ["(from "],
+        ["background-color"] = ["(from "],
+    };
+
+    /// <summary>
+    /// The properties whose value is kept whole when it merely names one of these keywords somewhere in
+    /// it, rather than being exactly that keyword. <c>display</c> is the case: the grid-lanes spelling
+    /// arrives as a two-value form (<c>inline grid-lanes</c>, <c>block masonry</c>) that an exact
+    /// whole-value match would miss, and AngleSharp rejects the whole declaration for the unknown inner
+    /// keyword. Reading it keeps the page's own text for the box builder to route.
+    /// </summary>
     private static readonly Dictionary<String, String[]> KeywordSubstringValues = new(StringComparer.OrdinalIgnoreCase)
     {
         // `contents` rides along for the same reason the two above do: the element keeps a box here until
@@ -204,7 +227,8 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // own grammar and a shorthand's decomposition through it untouched. The rest keep their wide-keyword
         // reading.
         IValueConverter converter =
-            KeywordExtraValues.TryGetValue(propertyName, out var extra) ? new ExtraKeywords(info.Converter, extra) :
+            KeywordExtraValues.TryGetValue(propertyName, out var extra)
+                ? new ExtraKeywords(info.Converter, extra, KeywordExtraSubstrings.TryGetValue(propertyName, out var extraContains) ? extraContains : null) :
             KeywordSubstringValues.TryGetValue(propertyName, out var contains) ? new AnyTokenPassThrough(info.Converter, contains) :
             new KeywordsFirst(info.Converter, info.Aggregator);
 
@@ -314,11 +338,13 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
     {
         private readonly IValueConverter _inner;
         private readonly String[] _extra;
+        private readonly String[]? _contains;
 
-        public ExtraKeywords(IValueConverter inner, String[] extra)
+        public ExtraKeywords(IValueConverter inner, String[] extra, String[]? contains = null)
         {
             _inner = inner;
             _extra = extra;
+            _contains = contains;
         }
 
         public ICssValue? Convert(StringSource source)
@@ -331,7 +357,9 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
                 return new CssWideKeyword(whole);
             }
 
-            if (Array.Exists(_extra, keyword => keyword.Equals(whole, StringComparison.OrdinalIgnoreCase)))
+            if (Array.Exists(_extra, keyword => keyword.Equals(whole, StringComparison.OrdinalIgnoreCase)) ||
+                (_contains is not null &&
+                 Array.Exists(_contains, token => whole.Contains(token, StringComparison.OrdinalIgnoreCase))))
             {
                 Consume(source);
                 return new CssRawValue(whole);
