@@ -83,6 +83,30 @@ internal readonly struct ComputedStyle
     internal Double Zoom => _zoom;
 
     /// <summary>
+    /// Gets the colour filter the box's own paint passes through: the eight functions of Filter Effects
+    /// 1 §6 that change a colour without looking at its neighbours. The list is text, so it is read once
+    /// and kept - every colour this box paints asks the same question of it.
+    /// </summary>
+    internal ColorFilter Effect
+    {
+        get
+        {
+            if (!_values.FilterRead)
+            {
+                _values.Filter = ColorFilter.Parse(
+                    _values.Fused is { } fused ? fused.Filter : _style.GetPropertyValue("filter"));
+                _values.FilterRead = true;
+            }
+
+            return _values.Filter;
+        }
+    }
+
+    /// <summary>Gets a colour this box paints put through the filter it carries, where it carries one.</summary>
+    private CssColorValue? Filtered(CssColorValue? colour) =>
+        colour is { } ink && Effect.Applies ? Effect.Apply(ink) : colour;
+
+    /// <summary>
     /// Gets the order the box asks for among its siblings: what a flex line packs by and what a grid's
     /// automatic placement walks in (CSS Flexbox 1 §5.4, CSS Grid 1 §8.5). A box that says nothing is
     /// zero, which is the initial value.
@@ -2839,6 +2863,10 @@ internal readonly struct ComputedStyle
 
         internal VisualEffectsArea VisualEffects = VisualEffectsArea.Default;
 
+        /// <summary>The colour filter read off the box's <c>filter</c>, and whether it has been read.</summary>
+        internal ColorFilter Filter;
+        internal Boolean FilterRead;
+
         internal FontArea Font = new();
 
         internal TextArea Text = new();
@@ -4040,7 +4068,7 @@ internal readonly struct ComputedStyle
     /// same reason: a page that inherits the keyword down a tree wants each box to paint in the colour of
     /// its own text (CSS Color 4 5).
     /// </summary>
-    public CssColorValue? BackgroundColor => ResolveCurrentColor(CascadedBackgroundColor);
+    public CssColorValue? BackgroundColor => Filtered(ResolveCurrentColor(CascadedBackgroundColor));
 
     /// <summary>
     /// Gets the background colour as the cascade left it, where <c>currentcolor</c> is still the keyword.
@@ -4889,21 +4917,21 @@ internal readonly struct ComputedStyle
 
     public Double BorderLeftWidth => _values.Border.LeftWidth * _zoom;
 
-    public CssColorValue? BorderTopColor => _values.Fused is { } fused
+    public CssColorValue? BorderTopColor => Filtered(_values.Fused is { } fused
         ? fused.BorderTopColor
-        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Top, "top", "color")));
+        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Top, "top", "color"))));
 
-    public CssColorValue? BorderRightColor => _values.Fused is { } fused
+    public CssColorValue? BorderRightColor => Filtered(_values.Fused is { } fused
         ? fused.BorderRightColor
-        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Right, "right", "color")));
+        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Right, "right", "color"))));
 
-    public CssColorValue? BorderBottomColor => _values.Fused is { } fused
+    public CssColorValue? BorderBottomColor => Filtered(_values.Fused is { } fused
         ? fused.BorderBottomColor
-        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Bottom, "bottom", "color")));
+        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Bottom, "bottom", "color"))));
 
-    public CssColorValue? BorderLeftColor => _values.Fused is { } fused
+    public CssColorValue? BorderLeftColor => Filtered(_values.Fused is { } fused
         ? fused.BorderLeftColor
-        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Left, "left", "color")));
+        : ResolveBorderColor(ColorValue(BorderSide(AxisSides(Flow).Left, "left", "color"))));
 
     public Boolean BorderTopVisible => BorderArea.Draws(_values.Border.TopStyle);
 
