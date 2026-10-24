@@ -59,6 +59,18 @@ internal readonly struct ColorFilter
     }
 
     /// <summary>
+    /// Gets the filter that applies this one and then the one it is handed - what an ancestor's filter
+    /// makes of a subtree that carries a filter of its own (the inner one paints first).
+    /// </summary>
+    internal ColorFilter Then(ColorFilter inner) =>
+        _rows is null ? inner
+        : inner._rows is null ? this
+        : new ColorFilter(Multiply(_rows, inner._rows));
+
+    /// <summary>Gets whether two filters are the same answer, by the matrix each was read into.</summary>
+    internal Boolean SameAs(ColorFilter other) => ReferenceEquals(_rows, other._rows);
+
+    /// <summary>
     /// Gets the colour the filter makes of this one. Alpha is filtered too - <c>opacity()</c> is a row
     /// of the same matrix - so a transparent colour stays as transparent as the chapter says.
     /// </summary>

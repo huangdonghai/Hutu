@@ -226,6 +226,12 @@ internal sealed class FusedParent
     internal StyleLength? FlexBasis { get; init; }
 
     /// <summary>
+    /// Gets the colour filter everything under this box passes through: the box's own with every
+    /// ancestor's folded in, which is what a child starts from.
+    /// </summary>
+    internal ColorFilter Effect { get; init; }
+
+    /// <summary>
     /// Gets the transform the parent is drawn with, as the text that states it. The property is not
     /// inherited, so this travels for the one keyword that asks for it: a child written
     /// <c>transform: inherit</c> is moved exactly as its parent was.
@@ -302,6 +308,7 @@ internal sealed class FusedParent
         TextShadows = style.WrittenTextShadows,
         BoxShadows = style.WrittenBoxShadows,
         FlexBasis = style.CascadedFlexBasis,
+        Effect = style.Effect,
         Transform = style.TransformText,
         Clip = style.Clip,
         ClipPath = style.ClipPath,
@@ -955,7 +962,14 @@ internal static class FusedStyleFactory
 
         values.Fused = keywords;
 
-        return new ComputedStyle(dimensions, element, keywords, values, faces, ZoomOf(parent, find("zoom")));
+        return new ComputedStyle(
+            dimensions,
+            element,
+            keywords,
+            values,
+            faces,
+            ZoomOf(parent, find("zoom")),
+            parent.Effect.Then(ColorFilter.Parse(find("filter")?.Value)));
     }
 
     /// <summary>

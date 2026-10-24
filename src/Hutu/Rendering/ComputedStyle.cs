@@ -54,6 +54,12 @@ internal readonly struct ComputedStyle
     private readonly Double _zoom;
 
     /// <summary>
+    /// The colour filter everything this box paints passes through: its own <c>filter</c> with every
+    /// ancestor's folded in, since a filter applies to the whole of what the box draws.
+    /// </summary>
+    private readonly ColorFilter _filter;
+
+    /// <summary>
     /// Builds a style from areas the fused box-builder path already resolved, with no
     /// declaration behind it: the accessors that would read one answer from the fused
     /// keywords instead.
@@ -64,7 +70,8 @@ internal readonly struct ComputedStyle
         FusedKeywords fused,
         StyleValues values,
         FontFaceTable? faces,
-        Double zoom = 1)
+        Double zoom = 1,
+        ColorFilter filter = default)
     {
         _style = null!;
         _specified = null;
@@ -75,6 +82,7 @@ internal readonly struct ComputedStyle
         _declaresFontSize = false;
         _faces = faces;
         _zoom = zoom > 0 ? zoom : 1;
+        _filter = filter;
         values.Fused = fused;
         _values = values;
     }
@@ -87,20 +95,7 @@ internal readonly struct ComputedStyle
     /// 1 §6 that change a colour without looking at its neighbours. The list is text, so it is read once
     /// and kept - every colour this box paints asks the same question of it.
     /// </summary>
-    internal ColorFilter Effect
-    {
-        get
-        {
-            if (!_values.FilterRead)
-            {
-                _values.Filter = ColorFilter.Parse(
-                    _values.Fused is { } fused ? fused.Filter : _style.GetPropertyValue("filter"));
-                _values.FilterRead = true;
-            }
-
-            return _values.Filter;
-        }
-    }
+    internal ColorFilter Effect => _filter;
 
     /// <summary>Gets a colour this box paints put through the filter it carries, where it carries one.</summary>
     private CssColorValue? Filtered(CssColorValue? colour) =>
@@ -169,7 +164,7 @@ internal readonly struct ComputedStyle
             Fused = _values.Fused,
         };
 
-        return new ComputedStyle(_dimensions, _element, _values.Fused!, values, _faces, _zoom);
+        return new ComputedStyle(_dimensions, _element, _values.Fused!, values, _faces, _zoom, _filter);
     }
 
     /// <summary>The names a font property can begin with, the <c>font</c> shorthand included.</summary>
@@ -2862,10 +2857,6 @@ internal readonly struct ComputedStyle
         internal DisplayPositioningArea DisplayPositioning = DisplayPositioningArea.Default;
 
         internal VisualEffectsArea VisualEffects = VisualEffectsArea.Default;
-
-        /// <summary>The colour filter read off the box's <c>filter</c>, and whether it has been read.</summary>
-        internal ColorFilter Filter;
-        internal Boolean FilterRead;
 
         internal FontArea Font = new();
 
