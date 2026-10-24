@@ -126,8 +126,8 @@ internal sealed class GridFormattingContext
                     Slice(plan.RowBases, item.Row, item.RowSpan),
                     plan.ColumnStep,
                     plan.RowStep,
-                    style.Grid.ColumnLines?.Slice(item.Column, item.ColumnSpan),
-                    style.Grid.RowLines?.Slice(item.Row, item.RowSpan)));
+                    plan.ColumnNames?.Slice(item.Column, item.ColumnSpan),
+                    plan.RowNames?.Slice(item.Row, item.RowSpan)));
             }
 
             layout.Children.Add(_engine.Arrange(item.Box, rect, itemContextHere, item.HeightIsDefinite));
@@ -516,6 +516,8 @@ internal sealed class GridFormattingContext
             MinWidth = minContentWidth,
             ColumnStep = stepX,
             RowStep = stepY,
+            ColumnNames = namedColumns ?? grid.ColumnLines,
+            RowNames = namedRows ?? grid.RowLines,
         };
 
         // A subgrid item is laid out against the tracks its area covers, so the sizes have to be
@@ -1922,6 +1924,15 @@ internal sealed class GridFormattingContext
 
         /// <inheritdoc cref="ColumnBases"/>
         public List<Double> RowBases { get; } = new();
+
+        /// <summary>
+        /// Gets the names that answer a line the page asked for by name along this axis - the ones the
+        /// grid wrote, or the ones it borrowed from its parent - for the subgrids among the items.
+        /// </summary>
+        public GridLineNames? ColumnNames { get; set; }
+
+        /// <inheritdoc cref="ColumnNames"/>
+        public GridLineNames? RowNames { get; set; }
 
         /// <summary>Gets the room between adjacent column tracks, in the content box's coordinates.</summary>
         public List<TrackGap> ColumnGaps { get; } = new();

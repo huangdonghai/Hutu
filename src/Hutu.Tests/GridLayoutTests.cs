@@ -938,6 +938,25 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task ANestedSubgridItemNamesALineTheOutermostGridWrote()
+    {
+        // A subgrid hands on the lines it borrowed, so a subgrid two levels down is still named from
+        // the grid that wrote the names rather than from the one it stands in (CSS Grid 2 §8.1).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:100px [a] 100px 100px;width:300px'>" +
+            "<div style='display:grid;grid-column:span 3;grid-template-columns:subgrid'>" +
+            "<div style='display:grid;grid-column:span 3;grid-template-columns:subgrid'>" +
+            "<div id='x' style='grid-column:a;width:50px;height:20px'>X</div>" +
+            "</div></div></div></body></html>");
+
+        var x = Find(view, "x");
+
+        Assert.That(x.BorderBox.X, Is.EqualTo(100).Within(0.5), "the line the outermost grid named");
+    }
+
+    [Test]
     public async Task ANameWrittenWithItsNumberCountsThatManyLinesOver()
     {
         // `a 3` is the third line named `a`, and a number past the last one of that name is held to it
