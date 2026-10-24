@@ -152,4 +152,65 @@ public sealed class WritingModeTests
         Assert.That(new WritingModeInfo(WritingMode.VerticalLr).InlineStart(Frame), Is.EqualTo(20));
         Assert.That(new WritingModeInfo(WritingMode.SidewaysLr).InlineStart(Frame), Is.EqualTo(220));
     }
+
+    /// <summary>
+    /// A <c>direction: rtl</c> turns a column's line around - the text begins at its foot and runs up
+    /// the page - while the columns themselves keep marching the way the writing mode put them. The
+    /// two signs are therefore decided by different properties, which is what a row does not show:
+    /// there the same property decides both. Measured in Chrome for every mode.
+    /// </summary>
+    [Test]
+    public void RightToLeftDirectionRunsAColumnBackwardAndKeepsItsColumns()
+    {
+        var rl = Flow(WritingMode.VerticalRl, TextDirection.RightToLeft);
+        var lr = Flow(WritingMode.VerticalLr, TextDirection.RightToLeft);
+        var sidewaysLr = Flow(WritingMode.SidewaysLr, TextDirection.RightToLeft);
+        var sidewaysRl = Flow(WritingMode.SidewaysRl, TextDirection.RightToLeft);
+
+        Assert.That(rl.InlineSign, Is.EqualTo(-1), "the line reads up the page");
+        Assert.That(rl.InlineStart(Frame), Is.EqualTo(220), "and begins at its foot");
+        Assert.That(rl.BlockSign, Is.EqualTo(-1), "the columns still start at the right edge");
+        Assert.That(rl.BlockStart(Frame), Is.EqualTo(110));
+
+        Assert.That(lr.InlineSign, Is.EqualTo(-1));
+        Assert.That(lr.BlockSign, Is.EqualTo(1), "and vertical-lr still stacks to the right");
+
+        // The sideways modes already read one way up the page, and the direction turns each back.
+        Assert.That(sidewaysLr.InlineSign, Is.EqualTo(1));
+        Assert.That(sidewaysRl.InlineSign, Is.EqualTo(-1));
+    }
+
+    /// <summary>
+    /// Which end of a column a float side names. The logical spellings name the ends of the line, so a
+    /// direction that turns the line turns them with it; the physical ones name line-left and
+    /// line-right, which are the head and the foot of a column whichever way the text runs. Measured in
+    /// Chrome, where a right-to-left column keeps its <c>left</c> float at the head and moves its
+    /// <c>inline-start</c> one to the foot.
+    /// </summary>
+    [Test]
+    public void AFloatSideNamesTheEndOfTheLineItsKeywordsPointAt()
+    {
+        var down = Flow(WritingMode.VerticalRl, TextDirection.LeftToRight);
+        var up = Flow(WritingMode.VerticalRl, TextDirection.RightToLeft);
+
+        Assert.That(down.FloatsAtTheInlineStart(FloatSide.Left), Is.True);
+        Assert.That(down.FloatsAtTheInlineStart(FloatSide.Right), Is.False);
+        Assert.That(down.FloatsAtTheInlineStart(FloatSide.InlineStart), Is.True);
+        Assert.That(down.FloatsAtTheInlineStart(FloatSide.InlineEnd), Is.False);
+
+        // The head of a line that reads upward is its bottom edge, so the physical pair changes sides
+        // with respect to the line while the page keeps still.
+        Assert.That(up.FloatsAtTheInlineStart(FloatSide.Left), Is.False);
+        Assert.That(up.FloatsAtTheInlineStart(FloatSide.Right), Is.True);
+        Assert.That(up.FloatsAtTheInlineStart(FloatSide.InlineStart), Is.True);
+        Assert.That(up.FloatsAtTheInlineStart(FloatSide.InlineEnd), Is.False);
+
+        // A row is the same rule along the other axis: the physical left is where the line begins only
+        // while the line reads rightwards.
+        Assert.That(Flow(WritingMode.HorizontalTb, TextDirection.RightToLeft).FloatsAtTheInlineStart(FloatSide.Left), Is.False);
+        Assert.That(WritingModeInfo.Horizontal.FloatsAtTheInlineStart(FloatSide.Left), Is.True);
+    }
+
+    private static WritingModeInfo Flow(WritingMode mode, TextDirection direction) =>
+        new(mode, TextOrientation.Mixed, false, direction);
 }

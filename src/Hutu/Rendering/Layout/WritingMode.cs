@@ -121,12 +121,21 @@ public readonly struct WritingModeInfo
     /// </summary>
     internal Boolean IsSidewaysMode => Mode is WritingMode.SidewaysRl or WritingMode.SidewaysLr;
 
-    /// <summary>Gets the sign an inline offset grows by: text always reads downward in a column, but a
-    /// row reads leftward under <c>direction: rtl</c>, and a column reads upward under
-    /// <c>sideways-lr</c>.</summary>
-    public Int32 InlineSign => IsVertical
-        ? Mode == WritingMode.SidewaysLr ? -1 : 1
-        : IsRightToLeft ? -1 : 1;
+    /// <summary>Gets the sign an inline offset grows by. A row reads leftward under
+    /// <c>direction: rtl</c> and a column upward, and the direction turns each of them back: a column
+    /// of a right-to-left row of direction runs from the foot of the page to its head, which is the
+    /// same reversal a row gets (CSS Writing Modes 3 §4.3).</summary>
+    public Int32 InlineSign
+    {
+        get
+        {
+            // The mode decides which way up the line lies - only `sideways-lr` writes it from the foot
+            // to the head - and the direction the text reads in turns it back on either axis.
+            var forward = IsVertical && Mode == WritingMode.SidewaysLr ? -1 : 1;
+
+            return IsRightToLeft ? -forward : forward;
+        }
+    }
 
     /// <summary>Gets the sign a block offset grows by: only the two right-to-left modes grow leftward.</summary>
     internal Int32 BlockSign => Mode is WritingMode.VerticalRl or WritingMode.SidewaysRl ? -1 : 1;
@@ -250,6 +259,27 @@ public readonly struct WritingModeInfo
         FloatSide.InlineStart => InlineSign > 0 ? FloatSide.Left : FloatSide.Right,
         FloatSide.InlineEnd => InlineSign > 0 ? FloatSide.Right : FloatSide.Left,
         _ => side,
+    };
+
+    /// <summary>
+    /// Gets whether a stated float side names the end of the line the text begins at, which is where a
+    /// column pins the floats of that side.
+    /// </summary>
+    /// <remarks>
+    /// The two pairs name the ends of different things. A logical side is an end of the line, so a
+    /// direction that turns the line turns it with it; a physical one is line-left or line-right, which
+    /// in a column is the head or the foot of the page whichever way the text runs - measured in
+    /// Chrome, where a <c>vertical-rl</c> and a <c>vertical-lr</c> column both keep their
+    /// <c>float: left</c> box at the top and move neither with the direction. The two therefore agree
+    /// only while the line reads in the direction the physical name points.
+    /// </remarks>
+    internal Boolean FloatsAtTheInlineStart(FloatSide side) => side switch
+    {
+        FloatSide.InlineStart => true,
+        FloatSide.InlineEnd => false,
+        FloatSide.Left => InlineSign > 0,
+        FloatSide.Right => InlineSign < 0,
+        _ => false,
     };
 
     /// <summary>

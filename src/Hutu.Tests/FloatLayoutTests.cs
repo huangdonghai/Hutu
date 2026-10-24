@@ -274,6 +274,34 @@ public sealed class FloatLayoutTests
     }
 
     /// <summary>
+    /// A column whose line reads upward keeps a physical float where a downward one puts it - the
+    /// keywords name line-left and line-right, which are the head and the foot of the page - and moves
+    /// only a logical one, which names the ends of the line and so follows the direction. Measured in
+    /// Chrome in a 200px column.
+    /// </summary>
+    [Test]
+    public async Task ARightToLeftColumnKeepsAPhysicalFloatAndTurnsALogicalOne()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0;writing-mode:vertical-rl;direction:rtl'>" +
+            "<div id='area' style='width:300px;height:200px'>" +
+            "<div id='head' style='float:left;width:100px;height:70px'></div>" +
+            "<div id='start' style='float:inline-start;width:80px;height:40px'></div>" +
+            "</div></body></html>");
+
+        var area = Bounds(view, "area");
+        var head = Bounds(view, "head");
+        var start = Bounds(view, "start");
+
+        Assert.That(head.X, Is.EqualTo(area.Right - 100).Within(0.01), "both stand at the block start");
+        Assert.That(head.Y, Is.EqualTo(area.Y).Within(0.01), "line-left is still the head of the page");
+        Assert.That(start.X, Is.EqualTo(area.Right - 80).Within(0.01));
+        Assert.That(start.Y, Is.EqualTo(area.Bottom - 40).Within(0.01), "the edge the line begins at is its foot");
+    }
+
+    /// <summary>
     /// A line box standing beside a float begins at the float's far edge and ends before it, and the
     /// lines below the float take the block's full width again. This is the rule that makes text read
     /// around a picture rather than under it, and the block's own box overlapping the float - which it

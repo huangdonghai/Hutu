@@ -1957,16 +1957,16 @@ internal sealed class BlockLayout
     /// right to left. The placement is measured in offsets from the content box's start edges, which is
     /// where the column's own cursor is written; the caller maps them onto the page.
     /// <para>
-    /// Nothing here reserves room in the column's lines. A browser does not shorten a column's lines
-    /// beside a float - measured in Chrome: text and the float of a vertical-rl block overlap, and the
-    /// borrowed pairs draw exactly that - so the float only takes its place out of the stack.
+    /// Nothing here reserves room in the column's lines, which is a gap rather than a rule: measured in
+    /// Chrome, a float does shorten the lines it stands beside down a column, and this engine lets the
+    /// text run under it instead.
     /// </para>
     /// </remarks>
     private sealed class ColumnFloats
     {
         private readonly WritingModeInfo _flow;
         private readonly Double _inlineExtent;
-        private readonly Dictionary<FloatSide, Double> _ended = new();
+        private readonly Dictionary<Boolean, Double> _ended = new();
 
         /// <summary>Gets how far along the block axis the floats reach, margin boxes included.</summary>
         public Double DeepestBlock { get; private set; }
@@ -1989,13 +1989,13 @@ internal sealed class BlockLayout
             var margin = child.Style.Margin.Resolve(_inlineExtent);
             var (inlineStart, inlineEnd) = flow.InlineMargins(margin);
             var (blockStart, blockEnd) = flow.BlockMargins(margin);
-            var side = flow.FloatSideOf(child.Style.Float);
+            var side = flow.FloatsAtTheInlineStart(child.Style.Float);
 
             // The floats naming one side stand one after another along the block axis; the two sides
             // share a band, since they are pinned to opposite edges of the line.
             var start = _ended.TryGetValue(side, out var ended) ? ended : 0.0;
             var block = Math.Max(start, blockCursor) + blockStart;
-            var inline = side == FloatSide.Left ? inlineStart : _inlineExtent - inlineSize - inlineEnd;
+            var inline = side ? inlineStart : _inlineExtent - inlineSize - inlineEnd;
 
             _ended[side] = block + blockSize + blockEnd;
             DeepestBlock = Math.Max(DeepestBlock, _ended[side]);
