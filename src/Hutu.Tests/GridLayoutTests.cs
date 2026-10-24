@@ -1086,6 +1086,31 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task AGapWrittenAsACalcKeepsItsShareAndItsDistance()
+    {
+        // A calc() that adds a share to a distance keeps both until the box is known (CSS Values 4 §10.9):
+        // the row gutter of `calc(15% + 7px)` is 15% of the height *and* 7px, not the window's 15% folded
+        // on the way in - wpt's grid-gutters-011.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;width:200px;height:220px;" +
+            "gap:calc(15% + 7px) calc(10px + 5%);" +
+            "grid-template-columns:90px 90px;grid-template-rows:90px 90px'>" +
+            "<div id='a'></div><div id='b'></div><div id='c'></div><div id='d'></div>" +
+            "</div></body></html>");
+
+        var b = Find(view, "b");
+        var c = Find(view, "c");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(b.BorderBox.X, Is.EqualTo(110).Within(0.5), "10px plus a twentieth of the width");
+            Assert.That(c.BorderBox.Y, Is.EqualTo(130).Within(0.5), "7px plus 15% of the height");
+        });
+    }
+
+    [Test]
     public async Task AGapWrittenAsAPercentFillsTheRoomTheTracksStandIn()
     {
         // A gap written as a share is a share of the box the tracks are laid in, not of the length it was

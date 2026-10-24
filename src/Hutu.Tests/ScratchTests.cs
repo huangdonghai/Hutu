@@ -37,4 +37,33 @@ public sealed class ScratchTests
             }
         }
     }
+
+    [Test]
+    public void WhatTheParserMakesOfACalcSum()
+    {
+        var parser = new CssParser();
+
+        foreach (var text in new[]
+        {
+            "calc(15% + 7px)", "calc(10px + 5%)", "calc(100% - 20px)", "calc(100% / 5)", "calc(20%)",
+        })
+        {
+            var sheet = (ICssStyleSheet)parser.ParseStyleSheet(".x { width: " + text + " }");
+            var rule = sheet.Rules.OfType<ICssStyleRule>().Single();
+            var value = rule.Style
+                .OfType<AngleSharp.Css.Dom.ICssProperty>()
+                .FirstOrDefault(property => property.Name == "width")?.RawValue;
+
+            TestContext.Progress.WriteLine($"== <{text}> is <{value?.GetType().Name}> css <{value?.CssText}>");
+
+            if (value is AngleSharp.Css.Values.CssCalcValue calc)
+            {
+                foreach (var basis in new[] { 100.0, 200.0, 400.0 })
+                {
+                    var ok = Hutu.Rendering.LengthReader.TryFoldCalcRaw(calc, basis, out var unit, out var number);
+                    TestContext.Progress.WriteLine($"   basis {basis}: ok={ok} unit={unit} value={number}");
+                }
+            }
+        }
+    }
 }

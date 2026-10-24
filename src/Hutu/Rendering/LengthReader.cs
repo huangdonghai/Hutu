@@ -168,6 +168,14 @@ internal static class LengthReader
                     return true;
                 }
 
+                // A calc() that adds a share to a distance keeps both until the box is known: it is a
+                // straight line through the basis, so two folds solve it, and the share is left to be
+                // taken off whatever box the caller lays out.
+                if (TryFoldShareAndDistance(calc, out length))
+                {
+                    return true;
+                }
+
                 // Any other calc() is evaluated by AngleSharp's own Compute pipeline, which folds
                 // every operand to pixels against the device and then combines them. The result is
                 // a plain pixel length - the percentages inside it are resolved against the
@@ -520,6 +528,106 @@ internal static class LengthReader
 
         length = StyleLength.FromPercent(fraction);
         return true;
+    }
+
+    /// <summary>
+    /// Folds a <c>calc()</c> that adds a share of the box to a distance into the two of them, so the share
+    /// is taken off the box the caller lays out rather than off the window the style was read in. The
+    /// expression is a straight line through the basis - CSS Values 4 §10.9 makes the computed value of a
+    /// math function the function itself - so folding it against two bases gives the line.
+    /// </summary>
+    private static Boolean TryFoldShareAndDistance(CssCalcValue calc, out StyleLength length)
+    {
+        length = default;
+
+        if (!IsShareAndDistance(calc.CssText) ||
+            !TryFoldCalcRaw(calc, 100, out _, out var near) ||
+            !TryFoldCalcRaw(calc, 300, out _, out var far))
+        {
+            return false;
+        }
+
+        var fraction = (far - near) / 200.0;
+        var distance = near - 100 * fraction;
+
+        if (Double.IsNaN(fraction) || Double.IsInfinity(fraction) ||
+            Double.IsNaN(distance) || Double.IsInfinity(distance))
+        {
+            return false;
+        }
+
+        if (fraction == 0)
+        {
+            length = StyleLength.FromPixels(distance);
+            return true;
+        }
+
+        if (distance == 0)
+        {
+            length = StyleLength.FromPercent(fraction);
+            return true;
+        }
+
+        length = StyleLength.Sum(new[] { StyleLength.FromPercent(fraction), StyleLength.FromPixels(distance) });
+        return true;
+    }
+
+    /// <summary>
+    /// Gets whether a math function's body is plain arithmetic over percentages, pixel lengths and plain
+    /// numbers. A font-relative or viewport term would be read off the basis the fold is solving the line
+    /// against, and a nested function is not a straight line through it at all, so both take the path that
+    /// resolves against the device.
+    /// </summary>
+    private static Boolean IsShareAndDistance(String? text)
+    {
+        var body = BodyOf(text);
+
+        if (body is null)
+        {
+            return false;
+        }
+
+        var percent = false;
+
+        foreach (var c in body)
+        {
+            if (c == '%')
+            {
+                percent = true;
+            }
+            else if (!(c is >= '0' and <= '9' || c == '.' || c == '+' || c == '-' || c == '*' || c == '/' ||
+                c == '(' || c == ')' || c == 'p' || c == 'x' || Char.IsWhiteSpace(c)))
+            {
+                return false;
+            }
+        }
+
+        return percent;
+    }
+
+    /// <summary>Takes the body of a math function, whether the spelling carries the name or not.</summary>
+    private static String? BodyOf(String? text)
+    {
+        var trimmed = text?.Trim();
+
+        if (String.IsNullOrEmpty(trimmed))
+        {
+            return null;
+        }
+
+        var open = trimmed.IndexOf('(');
+
+        if (open >= 0)
+        {
+            if (trimmed[^1] != ')')
+            {
+                return null;
+            }
+
+            trimmed = trimmed[(open + 1)..^1];
+        }
+
+        return trimmed;
     }
 
     /// <summary>

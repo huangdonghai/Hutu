@@ -48,7 +48,7 @@ public sealed class StyleResolutionReuseTests
     }
 
     [Test]
-    public async Task ACalcThatReadsTheViewportBuildsTheTreeAgain()
+    public async Task ACalcOfAShareAndADistanceKeepsTheBoxTree()
     {
         using var loader = new HutuViewInternal(new FakeTextMeasurer());
         var device = new HutuRenderDevice(800, 600);
@@ -62,10 +62,10 @@ public sealed class StyleResolutionReuseTests
         Assert.That(device.UpdateViewport(400, 600), Is.True);
         pipeline.Build(document);
 
-        // A calc folds its operands to pixels against the device while the style is read, a
-        // percentage among them, so this one read the viewport and the tree cannot stand.
-        Assert.That(pipeline.BoxTree, Is.Not.SameAs(first), "the calc read the viewport");
-        Assert.That(WidthOf(pipeline), Is.EqualTo(390).Within(0.001));
+        // The share is left for the layout to take off the box, exactly as a plain percentage is, so the
+        // style read no viewport and the tree it built stands.
+        Assert.That(pipeline.BoxTree, Is.SameAs(first), "the calc keeps its share unresolved");
+        Assert.That(WidthOf(pipeline), Is.EqualTo(390).Within(0.001), "and the new box answers the new share");
     }
 
     [Test]

@@ -118,14 +118,14 @@ public sealed class IntrinsicBasisTests
     }
 
     /// <summary>
-    /// <c>calc()</c> does survive, but folded: AngleSharp resolves its percentage against the render
-    /// device on the way through, so <c>calc(10px + 5%)</c> reaches the box model as a plain pixel
-    /// length. A length that is already pixels does not read the containing block, so the flag is
-    /// right to call the box free - the value is fixed, even though it is the viewport's 5% rather
-    /// than the container's.
+    /// A <c>calc()</c> that adds a share of the box to a distance keeps the two apart: CSS Values 4 §10.9
+    /// makes the computed value of a math function the function itself, so <c>calc(10px + 5%)</c> reaches
+    /// the box model as a sum and takes its 5% off the box being laid out rather than off the window the
+    /// style happened to be read in. A length that reads the containing block cannot be measured once for
+    /// every basis, so the box is not a basis-free one.
     /// </summary>
     [Test]
-    public async Task ACalcIsFoldedToPixelsBeforeTheBoxModelSeesIt()
+    public async Task ACalcKeepsItsShareApartFromItsDistance()
     {
         using var view = CreateView(800);
         await view.SetHtml(
@@ -135,9 +135,13 @@ public sealed class IntrinsicBasisTests
 
         var box = Boxes(view, "div")[0];
 
-        Assert.That(box.Style.Width.Kind, Is.EqualTo(StyleLengthKind.Pixels));
-        Assert.That(box.Style.Width.Value, Is.EqualTo(50).Within(0.5), "10px + 5% of the 800px device");
-        Assert.That(box.IntrinsicIgnoresBasis, Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(box.Style.Width.Kind, Is.EqualTo(StyleLengthKind.Math));
+            Assert.That(box.Style.Width.Resolve(800), Is.EqualTo(50).Within(0.5), "10px and 5% of this box");
+            Assert.That(box.Style.Width.Resolve(400), Is.EqualTo(30).Within(0.5), "and the share follows");
+            Assert.That(box.IntrinsicIgnoresBasis, Is.False, "the length reads the basis");
+        });
     }
 
     /// <summary>
