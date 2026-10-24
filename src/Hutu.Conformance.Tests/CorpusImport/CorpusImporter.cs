@@ -249,18 +249,23 @@ public sealed class CorpusImporter
     }
 
     /// <summary>
-    /// Copies, beside the laid-out pair, every picture the page reaches for by a relative path.
+    /// Copies, beside the laid-out pair, every sheet and picture the page reaches for by a relative path.
     /// </summary>
     /// <remarks>
     /// A url() or src that names a data URL, a fragment, or something over the network is left alone - the
     /// first two carry no file to copy and the last is deliberately not fetched, since a drawing has to
-    /// reach the same picture on every machine. Only raster pictures are brought along: a font or a
-    /// stylesheet pulled in the same way would move the width of a word, and a word's width is a question
-    /// about the machine's fonts rather than about the layout the pair is meant to check.
+    /// reach the same picture on every machine.
+    /// <para>
+    /// A style sheet is carried because what it says is the pair's own business: the suite's support sheets
+    /// set the line height and the marker position a reference is drawn to, and a pair whose test reads one
+    /// and whose reference does not is only answered by copying it in. A font is not: a face pulled in the
+    /// same way would move the width of a word, and a word's width is a question about the machine's fonts
+    /// rather than about the layout the pair is meant to check.
+    /// </para>
     /// </remarks>
     private static void CopyReferencedResources(String sourceDirectory, String destinationDirectory, String html)
     {
-        foreach (var target in ReferencedFiles(html))
+        foreach (var target in ReferencedFiles(html).Concat(ReferencedSheets(html)))
         {
             var name = Strip(target);
 
@@ -268,14 +273,15 @@ public sealed class CorpusImporter
                 name.StartsWith("#", StringComparison.Ordinal) ||
                 name.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
                 name.Contains(":", StringComparison.Ordinal) ||
-                name.StartsWith("//", StringComparison.Ordinal))
+                name.StartsWith("//", StringComparison.Ordinal) ||
+                name.StartsWith("/", StringComparison.Ordinal))
             {
                 continue;
             }
 
             var source = Path.GetFullPath(Path.Combine(sourceDirectory, name));
 
-            if (!IsPicture(source))
+            if (!IsCarried(source))
             {
                 continue;
             }
@@ -293,13 +299,39 @@ public sealed class CorpusImporter
         }
     }
 
-    /// <summary>Whether a path names a picture file that is actually there.</summary>
-    private static Boolean IsPicture(String path) =>
+    /// <summary>Whether a path names a picture or a sheet that is actually there.</summary>
+    private static Boolean IsCarried(String path) =>
         Path.GetExtension(path).ToLowerInvariant() switch
         {
-            ".png" or ".gif" or ".jpg" or ".jpeg" or ".bmp" or ".webp" or ".ico" => File.Exists(path),
+            ".png" or ".gif" or ".jpg" or ".jpeg" or ".bmp" or ".webp" or ".ico" or ".css" => File.Exists(path),
             _ => false,
         };
+
+    /// <summary>
+    /// The sheets a page links with <c>rel=stylesheet</c>, which are the resources a CSS file is not found
+    /// by: a sheet is named in an <c>href</c> rather than a <c>url()</c>.
+    /// </summary>
+    private static IEnumerable<String> ReferencedSheets(String html)
+    {
+        var seen = new HashSet<String>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (Match match in Link.Matches(html))
+        {
+            var attrs = match.Groups["attrs"].Value;
+
+            if (!String.Equals(Value(Rel.Match(attrs))?.Trim(), "stylesheet", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var href = Value(Href.Match(attrs));
+
+            if (!String.IsNullOrWhiteSpace(href) && seen.Add(href!))
+            {
+                yield return href!;
+            }
+        }
+    }
 
     /// <summary>The distinct paths a page reaches for, from its url() and src values.</summary>
     private static IEnumerable<String> ReferencedFiles(String html)
