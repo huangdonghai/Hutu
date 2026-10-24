@@ -326,6 +326,29 @@ public sealed class InlineBoxTests
             "the no-break space the run ends with is part of what it is sized by");
     }
 
+    /// <summary>
+    /// The place a box the line carries whole takes on it is settled by the alignment of the block the
+    /// line belongs to: a <c>text-align</c> written on the inline-block speaks for the text inside that
+    /// box, not for where the box itself stands (CSS Text 3 §6.2, CSS Display 3 §4).
+    /// </summary>
+    [Test]
+    public async Task AnInlineBlockTakesItsPlaceFromTheBlocksOwnAlignment()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:2'>" +
+            "<span id='aligned' style='display:inline-block;width:20px;height:10px;text-align:end'>b</span>" +
+            "<span id='plain' style='display:inline-block;width:20px;height:10px'>a</span>" +
+            "</p></body></html>");
+
+        var first = view.GetElementBounds(view.Document!.GetElementById("aligned")!)!.Value;
+        var second = view.GetElementBounds(view.Document!.GetElementById("plain")!)!.Value;
+
+        Assert.That(first.X, Is.EqualTo(0), "the block aligns its line to its start, so the box begins there");
+        Assert.That(second.X, Is.EqualTo(first.Right), "and the box beside it stands beside it");
+    }
+
     [Test]
     public async Task ANoBreakSpaceIsNotAPlaceALineMayBreak()
     {

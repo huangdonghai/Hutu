@@ -2840,7 +2840,7 @@ internal sealed class InlineLayout
                 continue;
             }
 
-            var style = line.Fragments[0].Style;
+            var style = line.Governing ?? line.Fragments[0].Style;
             var alignLast = style.TextAlignLast;
             var aligned = alignLast.Equals("auto", StringComparison.OrdinalIgnoreCase)
                 ? (style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase)
@@ -3955,6 +3955,14 @@ internal sealed class InlineLayout
         public String Alignment { get; set; } = CssInitialValues.TextAlign;
 
         /// <summary>
+        /// Gets or sets the style whose <c>text-align</c> and <c>text-align-last</c> the line is set with.
+        /// It is the style of the first thing on the line, which is the block's own as it stands in
+        /// text, except where the line begins with a box it carries whole - and there it is the block's
+        /// style, because what that box declares reaches inside it and not out.
+        /// </summary>
+        public ComputedStyle? Governing { get; set; }
+
+        /// <summary>
         /// Gets the inline elements this line carries on from an earlier one, or null when nothing was
         /// cut. Their start edges belong to the line the element began on, so this line shows neither
         /// the padding nor the border nor the curve of that side.
@@ -4645,13 +4653,26 @@ internal sealed class InlineLayout
             line.Hanging = hanging;
             line.Used = used - hanging;
             line.Indent = _indent;
-            line.Alignment = line.Fragments.Count == 0
-                ? CssInitialValues.TextAlign
-                : line.Fragments[0].Style.TextAlign;
+            line.Governing = Governing(line.Fragments.Count > 0 ? line.Fragments[0] : null);
+            line.Alignment = line.Governing?.TextAlign ?? CssInitialValues.TextAlign;
             line.Offset = Aligned(line, maxInline);
 
             return line;
         }
+
+        /// <summary>
+        /// Gets the style the line is aligned by. A box the line carries whole brings its own
+        /// <c>text-align</c>, but that states how the text inside the box is set and not where the box
+        /// stands, so the style the line was built with governs there; every other line takes the
+        /// alignment from what is on it, which is how a <c>::first-line</c> rule reaches the line it
+        /// styles (CSS Text 3 §6.2).
+        /// </summary>
+        private ComputedStyle? Governing(TextFragment? first) =>
+            first is null
+                ? _fallback
+                : first.Atomic is not null || first.IsReplaced
+                    ? _fallback ?? first.Style
+                    : first.Style;
 
         /// <summary>
         /// Gets the width of the white space the line trails into where its mode hangs it, marking each
