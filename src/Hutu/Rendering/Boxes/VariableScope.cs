@@ -1,6 +1,7 @@
 using AngleSharp.Css.Dom;
 using AngleSharp.Css.Parser;
 using System;
+using System.Text;
 using System.Collections.Generic;
 
 namespace Hutu.Rendering.Boxes;
@@ -299,7 +300,7 @@ internal sealed class VariableScope
     {
         var body = text.AsSpan(from, to - from);
         var comma = TopLevelComma(body);
-        var name = (comma < 0 ? body : body[..comma]).Trim();
+        var name = Unescaped((comma < 0 ? body : body[..comma]).Trim().ToString());
         var fallback = comma < 0 ? null : body[(comma + 1)..].Trim();
 
         if (!name.StartsWith("--", StringComparison.Ordinal))
@@ -404,6 +405,74 @@ internal sealed class VariableScope
 
         return -1;
     }
+
+    /// <summary>
+    /// Gets the name a reference asks for as the sheet's parser would have filed it: the escapes it is
+    /// spelled with read to the characters they stand for, because a declaration is stored under those
+    /// characters. An escape that names no character - zero, a lone surrogate, a number past the last
+    /// code point - names the replacement character, which is what makes two spellings one name
+    /// (CSS Syntax 3 §4.3.7).
+    /// </summary>
+    private static String Unescaped(String name)
+    {
+        if (!name.Contains('\\', StringComparison.Ordinal))
+        {
+            return name;
+        }
+
+        var text = new StringBuilder(name.Length);
+
+        for (var at = 0; at < name.Length; at++)
+        {
+            if (name[at] != '\\')
+            {
+                text.Append(name[at]);
+                continue;
+            }
+
+            at = ReadEscape(name, at + 1, text);
+        }
+
+        return text.ToString();
+    }
+
+    /// <summary>Reads the escape whose backslash was just consumed, and says where the name goes on.</summary>
+    private static Int32 ReadEscape(String name, Int32 at, StringBuilder text)
+    {
+        var start = at;
+        var value = 0;
+
+        while (at < name.Length && at - start < 6 && IsHex(name[at]))
+        {
+            value = (value * 16) + (name[at] is >= '0' and <= '9'
+                ? name[at] - '0'
+                : Char.ToLowerInvariant(name[at]) - 'a' + 10);
+            at++;
+        }
+
+        if (at == start)
+        {
+            // Nothing to read as a number: the character after the backslash stands for itself, and a
+            // backslash with nothing after it is the replacement character.
+            text.Append(at < name.Length ? name[at++] : '\uFFFD');
+            return at - 1;
+        }
+
+        if (at < name.Length && Char.IsWhiteSpace(name[at]))
+        {
+            // One space ends the number and is part of the escape rather than a character of the name.
+            at++;
+        }
+
+        text.Append(value is <= 0 or > 0x10FFFF or (>= 0xD800 and <= 0xDFFF)
+            ? "\uFFFD"
+            : Char.ConvertFromUtf32(value));
+
+        return at - 1;
+    }
+
+    private static Boolean IsHex(Char c) =>
+        c is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F';
 
     /// <summary>Gets the paren that closes a reference, past any nested function or quoted string.</summary>
     private static Int32 Matching(String text, Int32 from)
