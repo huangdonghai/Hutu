@@ -2931,6 +2931,28 @@ internal readonly struct ComputedStyle
     public String? TransformText =>
         _values.Fused is { } fused ? fused.Transform : _style.GetPropertyValue("transform");
 
+    /// <summary>
+    /// Gets the transform text the box is drawn with, for the fused path. The property is not inherited,
+    /// so a box that says nothing draws none; <c>inherit</c> takes the transform the parent was drawn
+    /// with, which is the one keyword through which a child is moved as its parent was.
+    /// </summary>
+    public static String? ResolveTransformFused(ICssProperty? declared, String? inherited)
+    {
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrEmpty(text))
+        {
+            return null;
+        }
+
+        if (CssWideKeyword.Is(text))
+        {
+            return text.ToLowerInvariant() == "inherit" ? inherited : null;
+        }
+
+        return text;
+    }
+
     /// <summary>Gets the declared <c>transform-origin</c> text, or null for the default centre.</summary>
     public String? TransformOriginText =>
         _values.Fused is { } fused ? fused.TransformOrigin : _style.GetPropertyValue("transform-origin");
@@ -3366,6 +3388,7 @@ internal readonly struct ComputedStyle
             mine.CombinesUpright == theirs.CombinesUpright &&
             mine.Ruby == theirs.Ruby &&
             mine.Cursor == theirs.Cursor &&
+            mine.Transform == theirs.Transform &&
             mine.TextStrokeWidth == theirs.TextStrokeWidth &&
             mine.TextStrokeColor == theirs.TextStrokeColor &&
             SameShadows(mine.TextShadows, theirs.TextShadows) &&

@@ -219,6 +219,13 @@ internal sealed class FusedParent
     internal VisualEffectsArea? Visual { get; init; }
 
     /// <summary>
+    /// Gets the transform the parent is drawn with, as the text that states it. The property is not
+    /// inherited, so this travels for the one keyword that asks for it: a child written
+    /// <c>transform: inherit</c> is moved exactly as its parent was.
+    /// </summary>
+    internal String? Transform { get; init; }
+
+    /// <summary>
     /// Gets the scope this element's own <c>var()</c> references were read through, which is what its
     /// children inherit unless they redeclare a custom property of their own. Null for a page that
     /// declares none anywhere, which is every sample page and most of the tests.
@@ -287,6 +294,7 @@ internal sealed class FusedParent
         TextFillColor = style.TextFillColor,
         TextShadows = style.WrittenTextShadows,
         BoxShadows = style.WrittenBoxShadows,
+        Transform = style.TransformText,
         Clip = style.Clip,
         ClipPath = style.ClipPath,
         ShapeOutside = style.ShapeOutside,
@@ -836,7 +844,7 @@ internal static class FusedStyleFactory
             TextStrokeWidth = strokeWidth,
             TextStrokeColor = strokeColor,
             TextFillColor = fillColor,
-            Transform = find("transform")?.Value,
+            Transform = ComputedStyle.ResolveTransformFused(find("transform"), parent.Transform),
             Filter = find("filter")?.Value,
             BackdropFilter = find("backdrop-filter")?.Value,
             Opacity = find("opacity")?.Value,
