@@ -223,14 +223,15 @@ internal readonly struct FlexStyle
     /// a box is would cost as much as the reads, and the ones that do not apply are never asked for.
     /// </summary>
     internal static FlexStyle ReadFused(
-        Func<String, ICssProperty?> find, LengthReader.FontSource font, IRenderDimensions dimensions)
+        Func<String, ICssProperty?> find, LengthReader.FontSource font, IRenderDimensions dimensions,
+        StyleLength? inheritedBasis = null)
     {
         var (rowGap, columnGap) = ReadGapsFused(find, font, dimensions);
         var justify = ReadAlignmentFused(find("justify-content"), CssInitialValues.JustifyContent);
 
         var grow = ReadNumberFused(find("flex-grow"), 0);
         var shrink = ReadNumberFused(find("flex-shrink"), 1);
-        var basis = ReadBasisFused(find("flex-basis"), font, dimensions);
+        var basis = ReadBasisFused(find("flex-basis"), font, dimensions, inheritedBasis);
         var basisIsContent = Text(find("flex-basis")) == "content";
 
         // The keyword forms of the shorthand are stored as a whole rather than split into their
@@ -361,7 +362,11 @@ internal readonly struct FlexStyle
         return text.Length == 0 ? fallback : Parse(text, fallback);
     }
 
-    private static StyleLength ReadBasisFused(ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions) =>
+    private static StyleLength ReadBasisFused(
+        ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions, StyleLength? inherited = null) =>
+        inherited is { } parent && ComputedStyle.DeclaresInherit(declared)
+            ? parent
+            :
         declared is not null &&
         LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var basis) &&
         basis.HasValue

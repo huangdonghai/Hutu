@@ -238,6 +238,22 @@ public sealed class ZoomTests
         });
     }
 
+    [Test]
+    public async Task AFlexItemTakesTheBasisItsParentCameTo()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;flex-basis:30px'>" +
+            "<div id='a' style='flex-basis:inherit;zoom:2;height:10px'></div></div>" +
+            "</body></html>");
+
+        // Thirty is the basis the parent came to, and the child draws its own box at twice that.
+        Assert.That(
+            Find(view, "a").Source.Style.Flex.Basis.Resolve(100),
+            Is.EqualTo(60).Within(0.5));
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

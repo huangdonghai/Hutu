@@ -1083,7 +1083,7 @@ internal readonly struct ComputedStyle
     /// Gets whether a box-model declaration is the bare <c>inherit</c> keyword, which hands the side the
     /// parent's computed value rather than a length or the property's own initial.
     /// </summary>
-    private static Boolean DeclaresInherit(ICssProperty? declared) => declared is not null &&
+    internal static Boolean DeclaresInherit(ICssProperty? declared) => declared is not null &&
         (declared.RawValue is CssWideKeyword wide
             ? wide.CssText.Equals("inherit", StringComparison.OrdinalIgnoreCase)
             : declared.Value?.Trim().Equals("inherit", StringComparison.OrdinalIgnoreCase) == true);
@@ -3676,6 +3676,12 @@ internal readonly struct ComputedStyle
     /// A unitless value is a factor of the font size.
     /// </summary>
     public Double? LineHeight => _values.Font.LineHeight * _zoom;
+
+    /// <summary>
+    /// Gets the flex basis as the sheet states it, before this box's zoom is applied - what a child
+    /// written <c>flex-basis: inherit</c> takes, growing it at its own scale.
+    /// </summary>
+    internal StyleLength? CascadedFlexBasis => _values.Flex?.Basis;
 
     /// <summary>Gets the leading as it was computed, before this box was zoomed, for what inherits it.</summary>
     internal Double? CascadedLineHeight => _values.Font.LineHeight;

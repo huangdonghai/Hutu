@@ -219,6 +219,13 @@ internal sealed class FusedParent
     internal VisualEffectsArea? Visual { get; init; }
 
     /// <summary>
+    /// Gets the basis the parent flexed with. The property is not inherited, so this travels for the one
+    /// keyword that asks for it: a child written <c>flex-basis: inherit</c> takes the size its parent came
+    /// to, which is a computed length and not the declaration it was written with.
+    /// </summary>
+    internal StyleLength? FlexBasis { get; init; }
+
+    /// <summary>
     /// Gets the transform the parent is drawn with, as the text that states it. The property is not
     /// inherited, so this travels for the one keyword that asks for it: a child written
     /// <c>transform: inherit</c> is moved exactly as its parent was.
@@ -294,6 +301,7 @@ internal sealed class FusedParent
         TextFillColor = style.TextFillColor,
         TextShadows = style.WrittenTextShadows,
         BoxShadows = style.WrittenBoxShadows,
+        FlexBasis = style.CascadedFlexBasis,
         Transform = style.TransformText,
         Clip = style.Clip,
         ClipPath = style.ClipPath,
@@ -919,7 +927,7 @@ internal static class FusedStyleFactory
         var flex = display.Display.Contains("flex", StringComparison.OrdinalIgnoreCase);
 
         values.Flex = flex || parent.InFlex
-            ? FlexStyle.ReadFused(find, face, dimensions)
+            ? FlexStyle.ReadFused(find, face, dimensions, parent.FlexBasis)
             : null;
 
         // The grid longhands are read for a container - every spelling carries the word - while an
