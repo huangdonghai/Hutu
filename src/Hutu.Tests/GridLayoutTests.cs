@@ -1086,6 +1086,42 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task ASubgridOpensTheRowsItBorrowsToWhatItsOwnItemsNeed()
+    {
+        // What a subgrid asks of the parent's auto tracks is its own items' sizes plus the room its own
+        // gutter and padding stand in the way of: an item of 56 with a 20px gutter and 20px of padding
+        // opens the borrowed row to 86, and the row it lays its item in is back to 56 (CSS Grid 2,
+        // sizing subgrids - and what Chrome measures for the same page).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='p' style='display:grid;grid-template-columns:100px 100px;" +
+            "grid-template-rows:auto auto;width:200px'>" +
+            "<div id='s' style='display:grid;grid-column:span 2;grid-row:span 2;" +
+            "grid-template-columns:subgrid;grid-template-rows:subgrid;gap:20px;padding:20px'>" +
+            "<div id='a' style='height:56px'></div><div id='b' style='height:56px'></div>" +
+            "<div id='c' style='height:56px'></div><div id='d' style='height:56px'></div>" +
+            "</div></div></body></html>");
+
+        var s = Find(view, "s");
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+        var c = Find(view, "c");
+        var d = Find(view, "d");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(s.BorderBox.Height, Is.EqualTo(172).Within(0.5), "two rows of 86 with the parent's room");
+            Assert.That(a.BorderBox.Width, Is.EqualTo(70).Within(0.5), "the column cut to what the gutter leaves");
+            Assert.That(a.BorderBox.Height, Is.EqualTo(56).Within(0.5));
+            Assert.That(b.BorderBox.X, Is.EqualTo(110).Within(0.5));
+            Assert.That(c.BorderBox.Y, Is.EqualTo(96).Within(0.5), "the second row past the subgrid's gutter");
+            Assert.That(d.BorderBox.X, Is.EqualTo(110).Within(0.5));
+            Assert.That(d.BorderBox.Y, Is.EqualTo(96).Within(0.5));
+        });
+    }
+
+    [Test]
     public void ASubgridWrittenInATemplateShorthandIsATemplate()
     {
         // The template shorthand covers the three explicit-track properties - and the `grid` shorthand

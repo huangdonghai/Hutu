@@ -509,7 +509,18 @@ internal sealed class GridFormattingContext
         }
 
         var rowTracks = subgridRows ??
-            SizeRows(grid, items, Used(items, false), rowBasis, gapY, contentHeight is not null, itemContext);
+            SizeRows(
+                grid,
+                items,
+                Used(items, false),
+                rowBasis,
+                gapY,
+                contentHeight is not null,
+                itemContext,
+                columnTracks,
+                gapX,
+                namedColumns ?? grid.ColumnLines,
+                namedRows ?? grid.RowLines);
 
         var totalHeight = Total(rowTracks, gapY);
         var resolvedHeight = definiteWidth ? contentHeight ?? totalHeight : totalHeight;
@@ -1056,6 +1067,14 @@ internal sealed class GridFormattingContext
         return layout;
     }
 
+    /// <summary>
+    /// Sizes the rows from what the items ask of them.
+    /// </summary>
+    /// <param name="columns">
+    /// The columns as they ended up, with the gutter the grid laid them by and the names it wrote on their
+    /// lines. A subgrid item reads them to know how wide its own items stand, because a row's height is
+    /// whatever the content needs at the width the columns gave it.
+    /// </param>
     private List<Track> SizeRows(
         GridStyle grid,
         List<GridCell> items,
@@ -1063,12 +1082,29 @@ internal sealed class GridFormattingContext
         Double basis,
         Double gap,
         Boolean definite,
-        LayoutContext context)
+        LayoutContext context,
+        List<Track> columns,
+        Double columnGap,
+        GridLineNames? columnNames,
+        GridLineNames? rowNames)
     {
         var tracks = Build(grid.Rows, grid.AutoRow, used, basis, gap);
 
         Initialize(tracks, basis);
-        ContributeHeights(tracks, items, basis, context);
+        ContributeHeights(
+            tracks,
+            items,
+            basis,
+            context,
+            gap,
+            columns,
+            columnGap,
+            columnNames,
+            rowNames,
+            // What a subgrid asks of the rows it borrows is only a question when there are tracks to
+            // borrow: a grid whose own rows are borrowed from a container that lays none - a grid-lanes
+            // lane, which is packed rather than tracked - has nothing to hand its items' demands to.
+            !grid.RowsSubgrid || context.Subgrid?.Rows is { Count: > 0 });
         Resolve(tracks, basis, gap, definite, grid.AlignContent);
 
         return tracks;
@@ -1160,11 +1196,44 @@ internal sealed class GridFormattingContext
     /// Gathers what each row has to hold. The heights are measured here rather than alongside the
     /// widths, because an item's height depends on the width the columns ended up with.
     /// </summary>
-    private void ContributeHeights(List<Track> tracks, List<GridCell> items, Double basis, LayoutContext context)
+    /// <param name="rowGap">The gutter this grid lays its rows by, which a subgrid item answers to.</param>
+    /// <param name="columns">The columns as they were sized, with the gutter they were laid by.</param>
+    /// <param name="columnNames">The names written on this grid's column lines, for a subgrid to borrow.</param>
+    /// <param name="rowNames">The names written on this grid's row lines, for a subgrid to borrow.</param>
+    /// <param name="borrowed">
+    /// Whether the rows being sized are tracks this grid took from a container that laid them, which is
+    /// what makes it worth asking what each of a subgrid's own items wants.
+    /// </param>
+    private void ContributeHeights(
+        List<Track> tracks,
+        List<GridCell> items,
+        Double basis,
+        LayoutContext context,
+        Double rowGap,
+        List<Track> columns,
+        Double columnGap,
+        GridLineNames? columnNames,
+        GridLineNames? rowNames,
+        Boolean borrowed)
     {
+        // What the tracks are contributed by: every ordinary item stands in this list itself, while a
+        // subgrid is replaced by the items it sets in the tracks it borrows.
+        var cells = new List<GridCell>(items.Count);
+
         foreach (var item in items)
         {
             var style = item.Box.Style;
+
+            if (borrowed && style.Grid.RowsSubgrid)
+            {
+                // The rows a subgrid borrows are the parent's to size, and what it asks of them is what
+                // its own items ask of the tracks they stand in, each grown by the room the subgrid's
+                // gutter and its own padding take at the edges they press on (CSS Grid 2, sizing
+                // subgrids). Its own height belongs to the area the parent gave it, not to the rows.
+                cells.AddRange(BorrowedRows(
+                    item, context, rowGap, columns, columnGap, columnNames, rowNames));
+                continue;
+            }
 
             // A grid item's containing block is its own grid area (CSS Grid 1 §6.6), so a percentage on
             // its margin or padding counts against that area's inline size and not the whole grid's.
@@ -1211,9 +1280,168 @@ internal sealed class GridFormattingContext
 
             item.MinHeight = floor + margin;
             item.MaxHeight = height + margin;
+            cells.Add(item);
         }
 
-        Contribute(tracks, items, false);
+        Contribute(tracks, cells, false);
+    }
+
+    /// <summary>
+    /// Gets what the items of a subgrid ask of the rows it borrows, each one landed on the borrowed row
+    /// it stands in and grown by the room the subgrid's gutter and its own padding take at the edges that
+    /// press on the tracks.
+    /// </summary>
+    /// <remarks>
+    /// An item of the subgrid that is itself a subgrid along this axis is asked as a whole, the way any
+    /// other item is: what a subgrid two levels down wants is its own parent's business before it is this
+    /// grid's, and the two answers would have to be composed to tell them apart.
+    /// </remarks>
+    private List<GridCell> BorrowedRows(
+        GridCell item,
+        LayoutContext context,
+        Double rowGap,
+        List<Track> columns,
+        Double columnGap,
+        GridLineNames? columnNames,
+        GridLineNames? rowNames)
+    {
+        var box = item.Box;
+        var grid = box.Style.Grid;
+        var area = item.AreaWidth;
+        var gap = grid.RowGapStated ? grid.RowGap : rowGap;
+        var padding = box.Style.Padding.Resolve(area);
+        var margin = box.Style.Margin.Resolve(area);
+        var border = BlockLayout.BorderOf(box);
+        var before = margin.Top + border.Top + padding.Top;
+        var after = margin.Bottom + border.Bottom + padding.Bottom;
+        var room = Math.Max(0, area - margin.Horizontal - border.Horizontal - padding.Horizontal);
+        var rows = item.RowSpan;
+        var inner = new List<GridCell>();
+
+        foreach (var child in box.Children)
+        {
+            if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child))
+            {
+                inner.Add(Create(child));
+            }
+        }
+
+        // The columns the subgrid lays its own items in are the parent's cut to its own gutter, because a
+        // row is sized by what the content needs at the width the columns left it. Where the subgrid lays
+        // columns of its own it is asked for them the same way any grid is.
+        var borrows = grid.ColumnsSubgrid && columns.Count > 0;
+        var step = borrows
+            ? grid.ColumnGapStated ? grid.ColumnGap : columnGap
+            : grid.ColumnGap;
+        var laid = borrows
+            ? Math.Min(item.ColumnSpan, columns.Count)
+            : grid.Columns.ExplicitCount(room, step);
+        // The lines an item of the subgrid is placed against are the ones it borrows, named first by the
+        // parent and then by the subgrid's own groups - the same reading its layout gives them, which the
+        // row an item lands in has to agree with.
+        var named = GridLineNames.Merged(columnNames?.Slice(item.Column, item.ColumnSpan), grid.ColumnLines);
+        var namedRows = GridLineNames.Merged(rowNames?.Slice(item.Row, item.RowSpan), grid.RowLines);
+
+        foreach (var cell in inner)
+        {
+            ResolveAxis(cell, true, laid, grid, borrows ? named : grid.ColumnLines);
+            ResolveAxis(cell, false, rows, grid, borrows ? namedRows : grid.RowLines);
+        }
+
+        Place(inner, grid, laid, rows);
+
+        var tracks = borrows
+            ? Cut(
+                Borrowed(Bases(columns)) ?? new List<Track>(),
+                columnGap,
+                step,
+                room,
+                margin.Left + border.Left + padding.Left)
+            : SizeColumns(grid, inner, Used(inner, true), room, step, definite: true, context, out _);
+
+        var cells = new List<GridCell>(inner.Count);
+
+        foreach (var cell in inner)
+        {
+            var first = cell.Row;
+            var span = Math.Min(cell.RowSpan, rows - first);
+
+            if (span <= 0 || first < 0)
+            {
+                continue;
+            }
+
+            var areaWidth = Span(tracks, cell.Column, cell.ColumnSpan, step);
+
+            cell.AreaWidth = areaWidth;
+            cell.MaxHeight = RowDemand(cell, areaWidth, context) + cell.Box.Style.Margin.Resolve(areaWidth).Vertical;
+            cell.MinHeight = cell.Box.Style.ScrollsBlock ? 0 : cell.MaxHeight;
+
+            // The room between the row the item is measured in and the one the parent sized: the box's own
+            // edge and half of each gutter at the ends of the subgrid, the whole difference between the two
+            // gutters for a row inside it, and a boundary the item reaches across hands back the gutter the
+            // parent left there but the subgrid did not ask for. A subgrid of one row has no line of its
+            // own at all, so both of its edges press on that one track.
+            var extra = (span - 1) * (rowGap - gap);
+
+            for (var index = first; index < first + span; index++)
+            {
+                if (rows == 1)
+                {
+                    extra += before + after;
+                    continue;
+                }
+
+                extra += index switch
+                {
+                    0 => before + gap / 2 - rowGap / 2,
+                    var last when last == rows - 1 => after + gap / 2 - rowGap / 2,
+                    _ => gap - rowGap,
+                };
+            }
+
+            cell.Row = item.Row + first;
+            cell.RowSpan = span;
+            cell.MinHeight = Math.Max(0, cell.MinHeight + extra);
+            cell.MaxHeight = Math.Max(0, cell.MaxHeight + extra);
+            cells.Add(cell);
+        }
+
+        return cells;
+    }
+
+    /// <summary>Gets the size each track of one axis came to, in the order the axis lays them.</summary>
+    private static List<Double> Bases(List<Track> tracks)
+    {
+        var sizes = new List<Double>(tracks.Count);
+
+        foreach (var track in tracks)
+        {
+            sizes.Add(track.Base);
+        }
+
+        return sizes;
+    }
+
+    /// <summary>
+    /// The height an item of a subgrid asks of its row: its declared height where it has one that is not
+    /// a share of the row, and its content otherwise, in the same order the ordinary items are asked.
+    /// </summary>
+    private Double RowDemand(GridCell cell, Double areaWidth, LayoutContext context)
+    {
+        var style = cell.Box.Style;
+        var insetV = style.Padding.Resolve(areaWidth).Vertical + BlockLayout.BorderOf(cell.Box).Vertical;
+
+        if (HasHeight(cell.Box) && style.Height.Kind != StyleLengthKind.Percent)
+        {
+            return BoxModel.DeclaredHeight(style, 0, insetV) is { } fixedContent
+                ? BoxModel.ClampHeight(style, fixedContent, 0, insetV) + insetV
+                : insetV;
+        }
+
+        var height = ContentHeight(cell.Box, cell.AreaWidth, areaWidth, context);
+
+        return cell.Box.IsAnonymous ? height + insetV : height;
     }
 
     /// <summary>
