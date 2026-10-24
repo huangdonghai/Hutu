@@ -1171,10 +1171,16 @@ internal sealed record LayoutProfile(
             var frame = layout.BorderBox;
             var dimensions = box.Style.Dimensions;
             var fontSize = box.Style.FontSize;
-            var (originX, originY) = TransformValue.ResolveOrigin(box.Style.TransformOriginText, frame.Width, frame.Height, dimensions, fontSize);
+
+            // A transform's lengths are computed first and grown after, so the fold asks for the size the
+            // sheet states and the scale for the size the box is drawn at - the two numbers a zoom puts
+            // apart, and the one the painter's own font size is not.
+            var fold = box.Style.FoldingFontSize;
+            var zoom = box.Style.Zoom;
+            var (originX, originY) = TransformValue.ResolveOrigin(box.Style.TransformOriginText, frame.Width, frame.Height, dimensions, fold, zoom);
 
             Affine? matrix = hasTransform && TransformValue.Parse(transformText) is { } transformValue
-                ? transformValue.Resolve(frame.Width, frame.Height, dimensions, fontSize)
+                ? transformValue.Resolve(frame.Width, frame.Height, dimensions, fold, zoom)
                 : null;
 
             if (MotionTransform.Compute(box.Style, frame, context.ContainingBlockRect, dimensions, fontSize, originX, originY) is { } motion)

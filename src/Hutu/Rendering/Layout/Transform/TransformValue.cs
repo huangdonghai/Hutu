@@ -116,28 +116,35 @@ internal sealed class TransformValue
         return value._ops.Count == 0 ? null : value;
     }
 
-    /// <summary>Resolves the whole list to one affine matrix against a box of the given size.</summary>
-    public Affine Resolve(Double width, Double height, IRenderDimensions dimensions, Double fontSize)
+    /// <summary>
+    /// Resolves the whole list to one affine matrix against a box of the given size. The zoom is the
+    /// scale the box is drawn at: the two distances of a move - and the two of a <c>matrix()</c>, which
+    /// are the same thing written as numbers - are lengths and grow with it, while a ratio, an angle and
+    /// a share of the box are not and do not.
+    /// </summary>
+    public Affine Resolve(Double width, Double height, IRenderDimensions dimensions, Double fontSize, Double zoom = 1)
     {
         var total = Affine.Identity;
 
         foreach (var (name, args) in _ops)
         {
-            total = total.Then(Function(name, args, width, height, dimensions, fontSize));
+            total = total.Then(Function(name, args, width, height, dimensions, fontSize, zoom));
         }
 
         return total;
     }
 
-    private Affine Function(String name, String[] args, Double width, Double height, IRenderDimensions dimensions, Double fontSize)
+    private Affine Function(String name, String[] args, Double width, Double height, IRenderDimensions dimensions, Double fontSize, Double zoom)
     {
         Double Length(Int32 index, Double basis, Double fallback) =>
-            index < args.Length ? ToPixels(args[index], basis, dimensions, fontSize) : fallback;
+            index < args.Length ? ToPixels(args[index], basis, dimensions, fontSize, zoom) : fallback;
 
         Double Number(Int32 index, Double fallback) =>
             index < args.Length && Double.TryParse(args[index], NumberStyles.Float, CultureInfo.InvariantCulture, out var n)
                 ? n
                 : fallback;
+
+        Double Distance(Int32 index) => Number(index, 0) * zoom;
 
         Double Angle(Int32 index) => index < args.Length ? ToRadians(args[index]) : 0;
 
@@ -179,7 +186,7 @@ internal sealed class TransformValue
 
             case "matrix":
                 return new Affine(
-                    Number(0, 1), Number(1, 0), Number(2, 0), Number(3, 1), Number(4, 0), Number(5, 0));
+                    Number(0, 1), Number(1, 0), Number(2, 0), Number(3, 1), Distance(4), Distance(5));
 
             default:
                 return Affine.Identity;
@@ -196,7 +203,8 @@ internal sealed class TransformValue
         Double width,
         Double height,
         IRenderDimensions dimensions,
-        Double fontSize)
+        Double fontSize,
+        Double zoom = 1)
     {
         var parts = SplitTop(text);
 
@@ -205,15 +213,15 @@ internal sealed class TransformValue
             return (width / 2, height / 2);
         }
 
-        var x = Axis(parts[0], width, dimensions, fontSize, horizontal: true, centre: width / 2);
+        var x = Axis(parts[0], width, dimensions, fontSize, horizontal: true, centre: width / 2, zoom);
         var y = parts.Count > 1
-            ? Axis(parts[1], height, dimensions, fontSize, horizontal: false, centre: height / 2)
+            ? Axis(parts[1], height, dimensions, fontSize, horizontal: false, centre: height / 2, zoom)
             : height / 2;
 
         return (x, y);
     }
 
-    private static Double Axis(String token, Double basis, IRenderDimensions dimensions, Double fontSize, Boolean horizontal, Double centre)
+    private static Double Axis(String token, Double basis, IRenderDimensions dimensions, Double fontSize, Boolean horizontal, Double centre, Double zoom = 1)
     {
         switch (token.ToLowerInvariant())
         {
@@ -230,11 +238,16 @@ internal sealed class TransformValue
                 return centre;
         }
 
-        return ToPixels(token, basis, dimensions, fontSize);
+        return ToPixels(token, basis, dimensions, fontSize, zoom);
     }
 
-    /// <summary>Turns one length token into pixels, resolving a percentage against the given basis.</summary>
-    private static Double ToPixels(String token, Double basis, IRenderDimensions dimensions, Double fontSize)
+    /// <summary>
+    /// Turns one length token into pixels, resolving a percentage against the given basis. The basis is
+    /// the box's own size and is already drawn at its zoom, so a share of it is grown by that zoom once,
+    /// where a length the page stated is grown here. The font size folded against is the computed one,
+    /// before the scale: a relative length is computed once and only then zoomed.
+    /// </summary>
+    private static Double ToPixels(String token, Double basis, IRenderDimensions dimensions, Double fontSize, Double zoom = 1)
     {
         if (!CssLengthValue.TryParse(token, out var length))
         {
@@ -248,7 +261,7 @@ internal sealed class TransformValue
 
         try
         {
-            return LengthReader.ToPixel(length, RenderMode.Horizontal, dimensions, fontSize);
+            return LengthReader.ToPixel(length, RenderMode.Horizontal, dimensions, fontSize) * zoom;
         }
         catch (Exception)
         {

@@ -178,6 +178,29 @@ public sealed class ZoomTests
         });
     }
 
+    [Test]
+    public async Task AZoomReachesTheDistanceATransformMovesBy()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='a' style='width:50px;height:20px;transform:translate(30px,10px);zoom:2'></div>" +
+            "<div id='b' style='width:50px;height:20px;transform:matrix(1,0,0,-1,30,10);zoom:2'></div>" +
+            "</body></html>");
+
+        var moved = Find(view, "a").Transform!.Value;
+        var numbered = Find(view, "b").Transform!.Value;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(moved.E, Is.EqualTo(60).Within(0.5), "the move doubles with the box");
+            Assert.That(moved.F, Is.EqualTo(20).Within(0.5));
+            Assert.That(numbered.E, Is.EqualTo(60).Within(0.5), "and so does the same move as numbers");
+            Assert.That(numbered.F, Is.EqualTo(20).Within(0.5));
+            Assert.That(numbered.D, Is.EqualTo(-1).Within(0.001), "a ratio is no length and stays itself");
+        });
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
