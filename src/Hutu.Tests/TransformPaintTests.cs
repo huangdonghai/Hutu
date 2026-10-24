@@ -58,6 +58,37 @@ public sealed class TransformPaintTests
         Assert.That(Pixel(drawn, 110, 104), Is.EqualTo(new SKColor(0, 255, 0)), "the head has barely moved");
     }
 
+    /// <summary>
+    /// A keyword says which axis it stands on, whatever else the value writes: top and bottom are the
+    /// block's own height, left and right its width, and the axis nobody names is read as half of it. A
+    /// single <c>top</c> therefore moves the y and leaves the x at the middle - Chrome computes it as
+    /// 50px 0px on a box a hundred wide and fifty tall, measured here in the page's own coordinates.
+    /// </summary>
+    [Test]
+    [TestCase("top", 50, 200)]
+    [TestCase("bottom", 50, 250)]
+    [TestCase("left", 0, 225)]
+    [TestCase("right", 100, 225)]
+    [TestCase("top right", 100, 200)]
+    [TestCase("center top", 50, 200)]
+    [TestCase("left 20px", 0, 220)]
+    [TestCase("20px", 20, 225)]
+    public async Task ALoneKeywordStandsOnTheAxisItNames(String origin, Double x, Double y)
+    {
+        using var view = new HutuViewInternal(new SkiaTextMeasurer());
+        view.SetViewportSize(300, 300);
+        await view.SetHtmlDocumentAsync(
+            "<html><body style='margin:0'><div id='x' style='position:absolute;left:0;top:200px;" +
+            "width:100px;height:50px;transform:rotate(90deg);transform-origin:" + origin + "'></div>" +
+            "</body></html>",
+            "file:///probe/origin.html");
+
+        var box = view.Layout!.FindBox(view.Document!.GetElementById("x")!)!;
+
+        Assert.That(box.TransformOrigin.X, Is.EqualTo(x), $"{origin} x");
+        Assert.That(box.TransformOrigin.Y, Is.EqualTo(y), $"{origin} y");
+    }
+
     private static async Task<SKBitmap> Paint(String body)
     {
         using var view = new HutuViewInternal(new SkiaTextMeasurer());

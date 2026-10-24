@@ -194,10 +194,17 @@ internal sealed class TransformValue
     }
 
     /// <summary>
-    /// Resolves <c>transform-origin</c> to a point in pixels from the box's top-left. One value sets
-    /// the horizontal axis and leaves the vertical centred; two set both; a third (the z offset) is
-    /// ignored by a 2D transform. Keywords stand for 0%, 50% or 100% on their axis.
+    /// Resolves <c>transform-origin</c> to a point in pixels from the box's top-left.
     /// </summary>
+    /// <remarks>
+    /// The value is a <c>&lt;position&gt;</c>, and a position is read by the axis each part names rather
+    /// than by the place it stands in: left and right speak for the horizontal, top and bottom for the
+    /// vertical, and the two may come in either order, so <c>top right</c> and <c>right top</c> are the
+    /// same point. A length or percentage has no axis of its own and fills the horizontal first and the
+    /// vertical after it, which is why <c>left 20px</c> puts the 20 on the vertical. An axis nobody names
+    /// stands at half the box, and a third value - the offset along z - is nobody's business in a 2D
+    /// transform.
+    /// </remarks>
     public static (Double X, Double Y) ResolveOrigin(
         String? text,
         Double width,
@@ -206,39 +213,57 @@ internal sealed class TransformValue
         Double fontSize,
         Double zoom = 1)
     {
-        var parts = SplitTop(text);
+        Double? x = null;
+        Double? y = null;
 
-        if (parts.Count == 0)
+        foreach (var part in SplitTop(text))
         {
-            return (width / 2, height / 2);
+            switch (part.ToLowerInvariant())
+            {
+                case "left":
+                    x ??= 0;
+                    break;
+
+                case "right":
+                    x ??= width;
+                    break;
+
+                case "top":
+                    y ??= 0;
+                    break;
+
+                case "bottom":
+                    y ??= height;
+                    break;
+
+                case "center":
+                case "centre":
+                    if (x is null)
+                    {
+                        x = width / 2;
+                    }
+                    else
+                    {
+                        y ??= height / 2;
+                    }
+
+                    break;
+
+                default:
+                    if (x is null)
+                    {
+                        x = ToPixels(part, width, dimensions, fontSize, zoom);
+                    }
+                    else if (y is null)
+                    {
+                        y = ToPixels(part, height, dimensions, fontSize, zoom);
+                    }
+
+                    break;
+            }
         }
 
-        var x = Axis(parts[0], width, dimensions, fontSize, horizontal: true, centre: width / 2, zoom);
-        var y = parts.Count > 1
-            ? Axis(parts[1], height, dimensions, fontSize, horizontal: false, centre: height / 2, zoom)
-            : height / 2;
-
-        return (x, y);
-    }
-
-    private static Double Axis(String token, Double basis, IRenderDimensions dimensions, Double fontSize, Boolean horizontal, Double centre, Double zoom = 1)
-    {
-        switch (token.ToLowerInvariant())
-        {
-            case "left" when horizontal:
-            case "top" when !horizontal:
-                return 0;
-
-            case "right" when horizontal:
-            case "bottom" when !horizontal:
-                return basis;
-
-            case "center":
-            case "centre":
-                return centre;
-        }
-
-        return ToPixels(token, basis, dimensions, fontSize, zoom);
+        return (x ?? width / 2, y ?? height / 2);
     }
 
     /// <summary>
