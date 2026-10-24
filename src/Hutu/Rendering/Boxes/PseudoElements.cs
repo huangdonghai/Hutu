@@ -6,6 +6,7 @@ using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 
 namespace Hutu.Rendering.Boxes;
@@ -69,6 +70,17 @@ internal sealed class PseudoRuleIndex
     /// <summary>Gets whether any arm anywhere in the sheets is written for a block's first line.</summary>
     internal Boolean HasFirstLines => _firstLine.Count > 0;
 
+    /// <summary>
+    /// Gets whether any arm written for a generated-content pseudo-element asks for a counter.
+    /// </summary>
+    /// <remarks>
+    /// The chain of counters a <c>counter()</c> reads has to be carried down the walk that builds the
+    /// boxes, and carrying it costs three looks at every element. A page that never asks for a number is
+    /// every page but the ones that count, so the walk is asked whether it needs the chain once, here,
+    /// off the sheets it was built from.
+    /// </summary>
+    internal Boolean HasCounterContent { get; private set; }
+
     /// <summary>Reads the pseudo-element arms out of the flattened rules, in the order they cascade in.</summary>
     internal static PseudoRuleIndex Build(List<ICssStyleRule> rules)
     {
@@ -91,6 +103,15 @@ internal sealed class PseudoRuleIndex
             return;
         }
 
+        // Whether the rule's declarations ask for a counter is read off its text, which is the whole of
+        // what the sheet wrote for it - and the question is only worth answering for an arm written for
+        // one of the two pseudo-elements that generate content, which Take knows and this does not. Both
+        // spellings are looked for: `counters()` is a different word, not the same one with an s.
+        var declarations = rule.Style?.CssText;
+        var counts = declarations is not null &&
+            (declarations.IndexOf("counter(", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             declarations.IndexOf("counters(", StringComparison.OrdinalIgnoreCase) >= 0);
+
         // The arms of a selector list are read one at a time. `p::before, div` is two arms and only
         // the first of them is written for a pseudo-element; the declarations belong to both.
         var arm = 0;
@@ -99,7 +120,7 @@ internal sealed class PseudoRuleIndex
         {
             if (i == text.Length)
             {
-                Take(text, arm, i, order);
+                Take(text, arm, i, order, counts);
                 break;
             }
 
@@ -115,17 +136,22 @@ internal sealed class PseudoRuleIndex
             }
             else if (c == ',')
             {
-                Take(text, arm, i, order);
+                Take(text, arm, i, order, counts);
                 arm = i + 1;
             }
         }
     }
 
-    private void Take(String text, Int32 start, Int32 end, Int32 order)
+    private void Take(String text, Int32 start, Int32 end, Int32 order, Boolean counts)
     {
         if (!EndsWithPseudoElement(text, start, end, out var arm, out var colon))
         {
             return;
+        }
+
+        if (counts && arm is PseudoArm.Before or PseudoArm.After)
+        {
+            HasCounterContent = true;
         }
 
         // A marker hangs on a generated box as readily as on an element, and the two are different boxes:
@@ -570,7 +596,8 @@ internal static class GeneratedContent
         StyleResolution state,
         IImageProvider? images,
         ICssParser? parser,
-        WritingModeInfo flow)
+        WritingModeInfo flow,
+        CounterEnv? counters)
     {
         if (index.Pseudo.IsEmpty)
         {
@@ -585,11 +612,16 @@ internal static class GeneratedContent
             return;
         }
 
-        Put(box, element, index, PseudoArm.Before, style, cascade, variables, parent, device, faces, state, images, parser, flow);
-        Put(box, element, index, PseudoArm.After, style, cascade, variables, parent, device, faces, state, images, parser, flow);
+        // The box ::before generates stands before the one ::after generates, and §4.4.1 has a box take
+        // the values of its counters from the box it follows - so a counter the first arm instantiates is
+        // in scope for the second. An arm that makes no box at all creates no counter either (§4.5), which
+        // is why Put hands back the chain it stood on rather than the one it read.
+        counters = Put(box, element, index, PseudoArm.Before, style, cascade, variables, parent, device, faces, state, images, parser, flow, counters);
+
+        Put(box, element, index, PseudoArm.After, style, cascade, variables, parent, device, faces, state, images, parser, flow, counters);
     }
 
-    private static void Put(
+    private static CounterEnv? Put(
         Box box,
         IElement element,
         RuleBucketIndex index,
@@ -603,13 +635,14 @@ internal static class GeneratedContent
         StyleResolution state,
         IImageProvider? images,
         ICssParser? parser,
-        WritingModeInfo flow)
+        WritingModeInfo flow,
+        CounterEnv? counters)
     {
         var pseudo = index.Pseudo.Cascade(arm, element, index.Rules, index.Origins);
 
         if (pseudo is null)
         {
-            return;
+            return counters;
         }
 
         // §4: a tree-abiding pseudo-element inherits what its originating element inherited, and
@@ -622,11 +655,16 @@ internal static class GeneratedContent
         // arm declares and names nothing, which is every arm but the page that leans on variables.
         var scope = VariableScope.Open(pseudo, variables, parser);
 
-        var items = Items(pseudo, element, scope);
+        // A counter the arm itself declares belongs to the generated box, which stands as a child of the
+        // element: its own numbers are read inside it and reach nobody else, but the ones the element
+        // above it created are added to rather than replaced (CSS Lists 3 §4.4.1, §4.5).
+        var chain = CounterEnv.Extend(counters ?? CounterEnv.Empty, pseudo, pseudo, element);
+
+        var items = Items(pseudo, element, scope, chain);
 
         if (items is null)
         {
-            return;
+            return counters;
         }
 
         var pseudoStyle = FusedStyleFactory.Build(
@@ -646,7 +684,7 @@ internal static class GeneratedContent
         // thing in so many words.
         if (pseudoStyle.IsDisplayNone)
         {
-            return;
+            return counters;
         }
 
         // `display` is not inherited, so what the pseudo-element gets is the initial value unless a rule
@@ -672,7 +710,7 @@ internal static class GeneratedContent
         if (items.Count == 1 && items[0].Url is { } only)
         {
             Insert(arm, box, new List<Box> { Replaced(only, element, kind, pseudoStyle, flow, images) });
-            return;
+            return chain;
         }
 
         if (kind != BoxKind.Inline)
@@ -704,7 +742,7 @@ internal static class GeneratedContent
             }
 
             Insert(arm, box, new List<Box> { container });
-            return;
+            return chain;
         }
 
         var runs = new List<Box>(items.Count);
@@ -732,6 +770,7 @@ internal static class GeneratedContent
         }
 
         Insert(arm, box, runs);
+        return chain;
     }
 
     private static Box Run(String text, IElement element, ComputedStyle style, WritingModeInfo flow) =>
@@ -951,26 +990,27 @@ internal static class GeneratedContent
     /// </summary>
     /// <remarks>
     /// Content 3 §1 lets <c>content</c> hold strings, images, attribute values, counters and quotation
-    /// marks. Strings, images and attributes are drawn - an attribute as the text the element carries, with
-    /// the fallback the page gave for the ones that carry nothing. Counters and quotation marks are left out
-    /// rather than guessed at, since a <c>counter()</c> read as zero or a quote read as some default would
-    /// put words on the page the sheet never wrote. A value that holds something this engine cannot draw is
-    /// left out whole, because a half-read <c>content</c> would put up part of what the page asked for.
+    /// marks. Strings, images, attributes and counters are drawn - an attribute as the text the element
+    /// carries, with the fallback the page gave for the ones that carry nothing, and a counter as the
+    /// number the chain reaching this element came to. Quotation marks are left out rather than guessed
+    /// at, since a quote read as some default would put words on the page the sheet never wrote. A value
+    /// that holds something this engine cannot draw is left out whole, because a half-read
+    /// <c>content</c> would put up part of what the page asked for.
     /// </remarks>
-    private static List<Item>? Items(MatchedCascade pseudo, IElement element, VariableScope? variables)
+    private static List<Item>? Items(MatchedCascade pseudo, IElement element, VariableScope? variables, CounterEnv? counters)
     {
         var property = variables is null
             ? pseudo.Find("content")
             : variables.ReadProperty(pseudo, "content");
 
-        return property is null ? null : Read(property.Value, element);
+        return property is null ? null : Read(property.Value, element, counters);
     }
 
     /// <summary>
     /// Reads a <c>content</c> value item by item, in CSS's own escaping. Null when it holds anything
     /// this engine does not draw.
     /// </summary>
-    private static List<Item>? Read(String? value, IElement element)
+    private static List<Item>? Read(String? value, IElement element, CounterEnv? counters)
     {
         if (String.IsNullOrWhiteSpace(value))
         {
@@ -1062,11 +1102,156 @@ internal static class GeneratedContent
                 continue;
             }
 
+            // A counter is the number the chain reaching this element came to, spelled in the style the
+            // content names; `counters()` is every counter of that name in scope, joined outermost first
+            // (CSS Lists 3 §5.2, §5.3).
+            var multiple = Starts(text, i, "counters(");
+
+            if (multiple || Starts(text, i, "counter("))
+            {
+                var open = i + (multiple ? 9 : 8) - 1;
+                var close = Closes(text, open);
+
+                if (close < 0)
+                {
+                    return null;
+                }
+
+                var args = Arguments(text, open + 1, close);
+
+                if (args.Count < (multiple ? 2 : 1) || args.Count > 3)
+                {
+                    return null;
+                }
+
+                var chain = counters ?? CounterEnv.Empty;
+                var counter = args[0].Trim();
+                var spelling = (multiple ? (args.Count > 2 ? args[2] : null) : (args.Count > 1 ? args[1] : null))?.Trim();
+
+                if (counter.Length == 0)
+                {
+                    return null;
+                }
+
+                if (!multiple)
+                {
+                    items.Add(new Item(Spelled(chain.ValueOf(counter), spelling), null));
+
+                    i = close + 1;
+                    continue;
+                }
+
+                // The separator of `counters()` is a string, and a page that wrote anything else there
+                // asked for something this does not read.
+                if (args[1].Trim() is not { Length: > 0 } mark || mark[0] is not ('"' or '\''))
+                {
+                    return null;
+                }
+
+                var between = new StringBuilder();
+                var at = 0;
+                ReadRun(mark, ref at, between);
+
+                var joined = new StringBuilder();
+
+                foreach (var number in chain.ValuesOf(counter))
+                {
+                    if (joined.Length > 0)
+                    {
+                        joined.Append(between);
+                    }
+
+                    joined.Append(Spelled(number, spelling));
+                }
+
+                items.Add(new Item(joined.ToString(), null));
+                i = close + 1;
+                continue;
+            }
+
             return null;
         }
 
         return items;
     }
+
+    /// <summary>Gets whether the value reads as this function at this point, whatever case it was spelt in.</summary>
+    private static Boolean Starts(String text, Int32 at, String word) =>
+        at + word.Length <= text.Length &&
+        text.AsSpan(at, word.Length).Equals(word, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets where the parenthesis opened at <paramref name="open"/> closes, stepping over the strings and
+    /// the nested calls inside it. Null when the value is cut off before it does.
+    /// </summary>
+    private static Int32 Closes(String text, Int32 open)
+    {
+        var depth = 0;
+
+        for (var i = open; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (c is '"' or '\'')
+            {
+                var run = new StringBuilder();
+                ReadRun(text, ref i, run);
+                i--;
+            }
+            else if (c == '(')
+            {
+                depth++;
+            }
+            else if (c == ')' && --depth == 0)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>Splits the arguments of a call into the pieces between its top-level commas.</summary>
+    private static List<String> Arguments(String text, Int32 start, Int32 end)
+    {
+        var args = new List<String>();
+        var from = start;
+
+        for (var i = start; i < end; i++)
+        {
+            var c = text[i];
+
+            if (c is '"' or '\'')
+            {
+                var run = new StringBuilder();
+                ReadRun(text, ref i, run);
+                i--;
+            }
+            else if (c == '(')
+            {
+                var close = Closes(text, i);
+                i = close < 0 ? end : close - 1;
+            }
+            else if (c == ',')
+            {
+                args.Add(text[from..i]);
+                from = i + 1;
+            }
+        }
+
+        args.Add(text[from..end]);
+        return args;
+    }
+
+    /// <summary>Writes one counter's number in the style its content named.</summary>
+    /// <remarks>
+    /// A style this engine has no table for, or one that cannot hold the number, is answered in decimal:
+    /// CSS Lists 3 §5.2 gives a counter style that does not reach the value the fallback rather than
+    /// nothing, and a number the page asked to be shown is not the kind of thing to withhold.
+    /// </remarks>
+    private static String Spelled(Int32 number, String? style) =>
+        CounterStyles.Spell(String.IsNullOrWhiteSpace(style) ? "decimal" : style!, number) ??
+        number.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
     /// Reads one quoted string into <paramref name="run"/>, leaving <paramref name="at"/> just past its

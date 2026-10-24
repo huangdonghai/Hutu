@@ -239,6 +239,124 @@ public sealed class GeneratedContentTests
         Assert.That(String.Concat(Painted(view)), Is.EqualTo("hello there"));
     }
 
+    [Test]
+    public async Task ACounterIsDrawnWhereTheContentAsksForIt()
+    {
+        // CSS 2.1 §12.4.1: the counter an element resets is seen by that element's own generated
+        // content, so the number written on the div is the number its ::after says.
+        using var view = await Build(
+            "div::after { content: counter(n) }",
+            "<div style='counter-reset: n 7'></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("7"));
+    }
+
+    [Test]
+    public async Task ACounterIsSpelledInTheStyleTheContentNames()
+    {
+        using var view = await Build(
+            "div::after { content: counter(n, lower-roman) ')' }",
+            "<div style='counter-reset: n 4'></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("iv)"));
+    }
+
+    [Test]
+    public async Task AnIncrementFollowsTheResetWrittenOnTheSameElement()
+    {
+        // CSS Lists 3 §5.2: the increment is applied after the reset, so the two written together come
+        // to the reset value plus the step rather than to the step alone.
+        using var view = await Build(
+            "div::after { content: counter(n) }",
+            "<div style='counter-reset: n 5; counter-increment: n 2'></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("7"));
+    }
+
+    [Test]
+    public async Task ACounterSetOnASiblingIsSeenByTheSiblingsAfterIt()
+    {
+        // §5.2: the scope of a counter is the element that set it, its descendants, and its following
+        // siblings and theirs - so the second div reads the first one's number.
+        using var view = await Build(
+            "div { counter-increment: n } div::after { content: counter(n) }",
+            "<div></div><div></div><div></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("123"));
+    }
+
+    [Test]
+    public async Task TheCountersOfEveryLevelStandInOrderInCounters()
+    {
+        // §5.3: counters() gives the values of all the counters of that name in scope, outermost first.
+        using var view = await Build(
+            "div { counter-reset: section } span::after { content: counters(section, '.') }",
+            "<div><div><span></span></div></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("0.0"));
+    }
+
+    [Test]
+    public async Task AnElementShownNothingCountsForNothing()
+    {
+        // CSS 2.1 §12.4.1: a counter is not incremented on an element whose display is none, so the
+        // numbers the visible pair says are 1 and 2 rather than 1 and 3.
+        using var view = await Build(
+            "div { counter-increment: n } div::after { content: counter(n) } .gone { display: none }",
+            "<div></div><div class=gone></div><div></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("12"));
+    }
+
+    [Test]
+    public async Task ASiblingStartingTheCountAgainLeavesTheOneBeforeItOut()
+    {
+        // §4.4.2: "newly instantiated counters replace identically-named counters originating from
+        // previous siblings, but are added in addition to identically-named counters originating from
+        // ancestor elements" - so a run of siblings is one counter read again, not a list of them.
+        using var view = await Build(
+            "div { counter-increment: n } div::after { content: counters(n, '-') '!' }",
+            "<div></div><div></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("1!2!"));
+    }
+
+    [Test]
+    public async Task AGeneratedBoxCountsItself()
+    {
+        // §4.4.1, §4.5: the arm is a box of its own standing inside the element, so a counter it
+        // increments is instantiated there and read back by its own content.
+        using var view = await Build(
+            "p::before { counter-increment: t; content: counter(t) }",
+            "<p></p><p></p>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("11"));
+    }
+
+    [Test]
+    public async Task ACountersetKeptByTheParentIsSteppedByEachChild()
+    {
+        // CSS 2.1 §12.4.1: the children each step the one counter their parent opened, so the numbers
+        // run on from it rather than restarting at each of them.
+        using var view = await Build(
+            "#t { counter-reset: c } #t span { counter-increment: c } #t span::before { content: counter(c) }",
+            "<div id=t><span></span><span></span><span></span></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("123"));
+    }
+
+    [Test]
+    public async Task ABoxThatLeavesNoBoxLeavesTheCountingToWhatItHolds()
+    {
+        // CSS Display 3 §2.5 with Lists 3 §4.5: a `contents` element generates no box, so the elements
+        // it holds stand in the run of siblings it stands in and count on from them.
+        using var view = await Build(
+            ".c { counter-increment: n } .c::after { content: counter(n) }",
+            "<div style='display:contents'><div class=c></div></div><div class=c></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("12"));
+    }
+
     private static async Task<HutuViewInternal> Build(String style, String body)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

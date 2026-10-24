@@ -82,8 +82,11 @@ internal static partial class BoxBuilder
             VariableScope.ResetCounters();
         }
 
+        CounterEnv? rootCounters = null;
+
         var box = BuildFusedElement(
-            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, false, true, profile, ref supported);
+            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, false, true, profile,
+            ref rootCounters, ref supported);
 
         if (profile is not null)
         {
@@ -126,6 +129,7 @@ internal static partial class BoxBuilder
         Boolean inItemContainer,
         Boolean inTable,
         FusedProfile? profile,
+        ref CounterEnv? counters,
         ref Boolean supported)
     {
         // The marks come first because the index is asked for the cascade with them: they are the one
@@ -224,6 +228,24 @@ internal static partial class BoxBuilder
             return null;
         }
 
+        // The counters this element creates are seen by its own generated content, by its children and by
+        // the siblings after it, so the chain is hung here - once the element is known to make a box at
+        // all, since CSS 2.1 §12.4.1 counts an element that was never shown as having written nothing.
+        var noOwnBox = false;
+
+        if (index.Pseudo.HasCounterContent)
+        {
+            // A `contents` element generates no box of its own, and so neither writes a counter of its
+            // own (CSS Lists 3 §4.5) nor stands between the children it leaves out and the siblings that
+            // follow them (CSS Display 3 §2.5).
+            noOwnBox = String.Equals(cascade.Find("display")?.Value?.Trim(), "contents", StringComparison.OrdinalIgnoreCase);
+
+            if (!noOwnBox)
+            {
+                counters = CounterEnv.Extend(counters, cascade, element, element.ParentElement);
+            }
+        }
+
         var kind = ResolveKind(element, style, inTable);
 
         // The role a table part has inside a table is the element's own, and it survives whatever the
@@ -270,6 +292,10 @@ internal static partial class BoxBuilder
 
         var children = new List<Box>();
 
+        // The children are counted in turn: what one of them creates is in scope for the next, and what
+        // they create between them is not in scope for anybody standing after this element.
+        var among = counters;
+
         // A child is in a table only where its parent is one: the rows of a row group that is a flex
         // container are rows of nothing (CSS Display 3 §2.7), and so are the cells of a row that is.
         // A table opens the context itself, wherever it stands, and so does a part whose display names
@@ -286,7 +312,7 @@ internal static partial class BoxBuilder
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
                         elementChild, index, parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands), device, images, faces, state, parser, flow,
-                        kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry, childInTable, profile, ref supported);
+                        kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry, childInTable, profile, ref among, ref supported);
 
                     if (childBox is not null)
                     {
@@ -303,6 +329,13 @@ internal static partial class BoxBuilder
 
                     break;
             }
+        }
+
+        // What the last child left behind is what stands after this element, where this element leaves no
+        // box of its own to hold a number.
+        if (noOwnBox)
+        {
+            counters = among;
         }
 
         if (kind == BoxKind.Inline && HasInFlowBlockLevel(children))
@@ -416,7 +449,7 @@ internal static partial class BoxBuilder
         // child is in place - and before the markers are, because CSS 2.1 §12.5.1 puts a marker
         // stated `inside` its item "before the element's content and before any :before
         // pseudo-elements", which is the order the reader sees them in.
-        GeneratedContent.Place(box, element, index, style, cascade, variables, parent, device, faces, state, images, parser, flow);
+        GeneratedContent.Place(box, element, index, style, cascade, variables, parent, device, faces, state, images, parser, flow, counters);
 
         // The first letter is a piece of the text the block opens with, and the generated box that comes
         // before that text is part of what the block says, so the letter is looked for once
