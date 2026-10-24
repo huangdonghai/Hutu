@@ -1501,11 +1501,15 @@ internal readonly struct ComputedStyle
         // always that space's own red, green and blue (CSS Color 5 §4.2).
         if (function == "color")
         {
-            return words.Length == 6 &&
-                IsColorSpace(words[2]) &&
-                words[3].Equals("r", StringComparison.OrdinalIgnoreCase) &&
-                words[4].Equals("g", StringComparison.OrdinalIgnoreCase) &&
-                words[5].Equals("b", StringComparison.OrdinalIgnoreCase);
+            // The channels a `color()` names are the axes of the space it reads the origin in: red, green
+            // and blue for every space but the XYZ ones, whose axes are x, y and z.
+            var axes = words.Length == 6 && IsColorSpace(words[2]) &&
+                words[2].ToLowerInvariant().StartsWith("xyz", StringComparison.Ordinal)
+                    ? "x y z"
+                    : "r g b";
+
+            return words.Length == 6 && IsColorSpace(words[2]) &&
+                String.Join(' ', words[3], words[4], words[5]).Equals(axes, StringComparison.OrdinalIgnoreCase);
         }
 
         var channels = function switch
