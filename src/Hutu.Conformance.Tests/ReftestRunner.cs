@@ -37,10 +37,16 @@ internal sealed record ReftestComparison(
 /// </remarks>
 internal static class ReftestRunner
 {
-    /// <summary>The window both halves of a pair are drawn in, as WPT fixes it.</summary>
-    public const Int32 Width = 400;
+    /// <summary>
+    /// The window both halves of a pair are drawn in, which is the one the suite's own runner gives a
+    /// test: 800 by 600. A narrower window is not a neutral choice - a page that puts a mark at
+    /// <c>left: 599px</c> to prove two references differ is invisible at 400 wide, so the pair the suite
+    /// says must look different comes out the same, and any page that scrolls because its content is
+    /// wider than the window grows a scrollbar the suite never showed.
+    /// </summary>
+    public const Int32 Width = 800;
 
-    public const Int32 Height = 300;
+    public const Int32 Height = 600;
 
     /// <summary>Where a picture of a difference is written, which is not beside the tests.</summary>
     private static String DiffFolder => Path.Combine(Corpus.Root, "build", "reftest-diff");

@@ -13,6 +13,10 @@
   #clip { position: absolute; left: 0; top: 0; width: 80px; height: 80px; overflow: hidden; background: #eeeeee }
   #clip div { width: 120px; height: 120px; margin: 20px; background: #ff0000 }
 
+  /* The far box is the one thing here that answers to the window, so the window is drawn for it: a
+     frame of the size the pair was written against, standing at the origin and painting nothing. */
+  #frame { position: absolute; left: 0; top: 0; width: 400px; height: 300px }
+
   #far { position: absolute; right: 20px; bottom: 30px; width: 50px; height: 40px; background: #00ff00 }
 
   #row { position: absolute; left: 100px; top: 250px; width: 200px; height: 30px; display: flex }
@@ -24,7 +28,7 @@
   #under { position: absolute; left: 320px; top: 30px; width: 60px; height: 60px; background: #ffffff; z-index: 2 }
 </style>
 <div id="clip"><div></div></div>
-<div id="far"></div>
+<div id="frame"><div id="far"></div></div>
 <div id="row"><div id="a"></div><div id="b"></div></div>
 <div id="over"></div>
 <div id="under"></div>
