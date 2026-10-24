@@ -2403,9 +2403,17 @@ public sealed class SkiaPaintExecutor
     private static SKRect ToRect(Rect rect) =>
         new((Single)rect.X, (Single)rect.Y, (Single)rect.Right, (Single)rect.Bottom);
 
-    /// <summary>Folds the platform-neutral affine into a Skia matrix (CSS matrix(a, b, c, d, e, f)).</summary>
+    /// <summary>
+    /// Folds the platform-neutral affine into a Skia matrix (CSS matrix(a, b, c, d, e, f)).
+    /// </summary>
+    /// <remarks>
+    /// Skia reads its nine numbers a row at a time, while CSS names the two shear terms in the order the
+    /// axes are written: b says how far y is carried into x and c how far x into y, and Skia puts c in the
+    /// first row's middle and b in the second's. Read the other way the two are exchanged, which turns a
+    /// clockwise quarter turn into an anti-clockwise one and a skew of one axis into a skew of the other.
+    /// </remarks>
     private static SKMatrix ToSkMatrix(Affine m) => new(
-        (Single)m.A, (Single)m.B, (Single)m.E,
-        (Single)m.C, (Single)m.D, (Single)m.F,
+        (Single)m.A, (Single)m.C, (Single)m.E,
+        (Single)m.B, (Single)m.D, (Single)m.F,
         0, 0, 1);
 }
