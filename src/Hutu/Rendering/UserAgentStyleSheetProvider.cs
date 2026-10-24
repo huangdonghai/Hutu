@@ -155,7 +155,14 @@ center          { text-align: center }
 
 /* The elements HTML5 added, which the CSS 2.2 sheet this one is built from never knew. */
 main, article, aside, figure, figcaption, footer, header, hgroup, nav, section, details, dialog, search { display: block }
-summary         { display: list-item }
+summary         { display: block }
+
+/* HTML's rendering sheet gives the disclosure marker to the first summary of a details and to no other:
+ * a second summary, and one that stands outside a details, is a plain block. The marker is the list
+ * item's own, so the list-style the sheet states - a closed triangle inside the line - is what turns
+ * when the details opens. */
+details > summary:first-of-type { display: list-item; list-style: disclosure-closed inside }
+details[open] > summary:first-of-type { list-style-type: disclosure-open }
 mark            { background-color: yellow; color: black }
 ruby, rb, rt, rtc { display: inline }
 rt              { font-size: 50%; line-height: 1 }

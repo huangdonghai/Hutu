@@ -874,9 +874,20 @@ internal readonly struct ComputedStyle
 
         var text = declared.Value?.Trim();
 
-        return String.IsNullOrWhiteSpace(text) || text.Equals("none", StringComparison.OrdinalIgnoreCase)
-            ? null
-            : text;
+        // The property's initial value is no image at all, which is what the wide keywords that fall back
+        // to it answer with too - including the mark a `list-style` shorthand leaves on the image longhand
+        // it never filled. Only `inherit` reaches past the box for another element's picture.
+        if (String.IsNullOrWhiteSpace(text) ||
+            text.Equals("none", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("initial", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert-layer", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return text.Equals("inherit", StringComparison.OrdinalIgnoreCase) ? parent : text;
     }
 
     private static String ResolveKeywordFused(ICssProperty? declared, String parentValue, String initial, Boolean inherited)

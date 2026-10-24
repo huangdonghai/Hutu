@@ -137,6 +137,57 @@ public sealed class UserAgentStyleSheetTests
         Assert.That(p.Margin.Bottom, Is.EqualTo(16 * 1.12).Within(0.01), "and the other side is the reader's as before");
     }
 
+    /// <summary>
+    /// The disclosure marker belongs to the first summary of a details and to no other summary: HTML's
+    /// rendering sheet makes only that one a list item, with its marker standing inside the line, while a
+    /// second summary - or one outside a details altogether - is a plain block. That is what gecko's
+    /// details-summary pairs draw their references with.
+    /// </summary>
+    [Test]
+    public async Task OnlyTheFirstSummaryOfADetailsCarriesAMarker()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<details open><summary id='a'>One</summary><summary id='b'>Two</summary></details>" +
+            "<summary id='c'>Three</summary>" +
+            "</body></html>");
+
+        var a = ById(view, "a");
+
+        Assert.Multiple(() =>
+        {
+            // The details is open, so the marker the sheet states for it is the one that spells an open box.
+            Assert.That(
+                MarkerText(a),
+                Is.EqualTo(Hutu.Rendering.Boxes.ListMarkers.For("disclosure-open", null, 1)),
+                "the first summary is a list item with its disclosure inside the line");
+            Assert.That(MarkerText(ById(view, "b")), Is.Null, "the second is a plain block");
+            Assert.That(MarkerText(ById(view, "c")), Is.Null, "and so is one outside a details");
+            Assert.That(ById(view, "b").Source.Marker, Is.Null);
+            Assert.That(ById(view, "c").Source.Marker, Is.Null);
+        });
+    }
+
+    /// <summary>The text of the marker standing in a box's lines, or null where it carries none.</summary>
+    private static String? MarkerText(LayoutBox box)
+    {
+        foreach (var node in Walk(box))
+        {
+            if (node.Kind == LayoutKind.Text && node.Source.IsMarker)
+            {
+                return node.Text;
+            }
+        }
+
+        return null;
+    }
+
+    private static LayoutBox ById(HutuViewInternal view, String id) =>
+        Walk(view.Layout!.Root).First(node =>
+            node.Kind == LayoutKind.Block && node.Source.Element?.GetAttribute("id") == id);
+
     private static HutuViewInternal CreateView()
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
