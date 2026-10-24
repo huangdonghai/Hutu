@@ -271,6 +271,31 @@ public sealed class CustomPropertySyntaxTests
         Assert.That(ink, Is.EqualTo("ff008000"));
     }
 
+    [Test]
+    public async Task ABlockWrittenInsideAValueIsPartOfThatValue()
+    {
+        // A brace in a value opens a simple block that belongs to the value rather than starting a
+        // rule of its own, so the reference written inside it is the declaration's to answer - and
+        // the name nobody declared makes it invalid, leaving the property with what its parent had.
+        var ink = await Inked(
+            "body { color: green } .x { color: red; color: { [ var(--a) ] } }",
+            "x");
+
+        Assert.That(ink, Is.EqualTo("ff008000"));
+    }
+
+    [Test]
+    public async Task ABlockWrittenInsideAValueCarriesWhatItHolds()
+    {
+        // Read in a scope that answers the name, the block's contents are substituted and the value
+        // is still not a colour - which is the same answer the empty scope gives.
+        var ink = await Inked(
+            "body { color: green } .x { --a: crimson; color: red; color: { [ var(--a) ] } }",
+            "x");
+
+        Assert.That(ink, Is.EqualTo("ff008000"));
+    }
+
     /// <summary>Gets the colour a page's one run of text is drawn with, as the eight hex digits.</summary>
     private static Task<String> Inked(String css, String text) =>
         Inked(css, text, "<p class='x'>" + text + "</p>");
