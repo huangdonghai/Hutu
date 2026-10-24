@@ -1086,6 +1086,55 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task AGapWrittenAsAPercentFillsTheRoomTheTracksStandIn()
+    {
+        // A gap written as a share is a share of the box the tracks are laid in, not of the length it was
+        // read with (CSS Box Alignment 3 §8) - 10% of a 300px content box is a 30px gutter, and Chrome
+        // lays the second column at 80px for it.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;width:300px;height:100px;gap:10%;" +
+            "grid-template-columns:50px 50px;grid-template-rows:20px 20px'>" +
+            "<div id='a'></div><div id='b'></div><div id='c'></div><div id='d'></div>" +
+            "</div></body></html>");
+
+        var b = Find(view, "b");
+        var c = Find(view, "c");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(b.BorderBox.X, Is.EqualTo(80).Within(0.5), "past a tenth of the width");
+            Assert.That(c.BorderBox.Y, Is.EqualTo(30).Within(0.5), "and a tenth of the height between the rows");
+        });
+    }
+
+    [Test]
+    public async Task ASubgridTakesItsPercentageGutterFromTheAreaItBorrows()
+    {
+        // The share is the subgrid's own, taken from the room the borrowed tracks give it: two 50px
+        // columns make a 100px area, so a 10% gap is 10px and each track keeps 45.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;width:300px;" +
+            "grid-template-columns:50px 50px;grid-template-rows:20px 20px'>" +
+            "<div style='display:grid;grid-column:1 / -1;grid-row:1 / -1;" +
+            "grid-template-columns:subgrid;column-gap:10%'>" +
+            "<div id='a'></div><div id='b'></div>" +
+            "</div></div></body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(a.BorderBox.Width, Is.EqualTo(45).Within(0.5), "the borrowed track cut by the gutter");
+            Assert.That(b.BorderBox.X, Is.EqualTo(55).Within(0.5), "centred on the line it borrows");
+        });
+    }
+
+    [Test]
     public async Task ASubgridOpensTheRowsItBorrowsToWhatItsOwnItemsNeed()
     {
         // What a subgrid asks of the parent's auto tracks is its own items' sizes plus the room its own

@@ -424,14 +424,14 @@ internal sealed class GridFormattingContext
 
         var gapX = grid.ColumnsSubgrid && borrowed is not null
             ? grid.ColumnGapStated
-                ? grid.ColumnGap
+                ? grid.ColumnGapAgainst(columnBasis)
                 : borrowed.ColumnGap
-            : grid.ColumnGap;
+            : grid.ColumnGapAgainst(columnBasis);
         var gapY = grid.RowsSubgrid && borrowed is not null
             ? grid.RowGapStated
-                ? grid.RowGap
+                ? grid.RowGapAgainst(rowBasis)
                 : borrowed.RowGap
-            : grid.RowGap;
+            : grid.RowGapAgainst(rowBasis);
 
         var subgridColumns = grid.ColumnsSubgrid ? Borrowed(borrowed?.Columns) : null;
         var subgridRows = grid.RowsSubgrid ? Borrowed(borrowed?.Rows) : null;
@@ -1022,7 +1022,7 @@ internal sealed class GridFormattingContext
         }
 
         var columnBasis = definiteWidth ? contentWidth : 0;
-        var gapX = grid.ColumnGap;
+        var gapX = grid.ColumnGapAgainst(columnBasis);
         var gapY = grid.RowGap;
 
         // The explicit grid bounds the automatic placement wrap, so both counts are taken before placing.
@@ -1231,7 +1231,7 @@ internal sealed class GridFormattingContext
                 // gutter and its own padding take at the edges they press on (CSS Grid 2, sizing
                 // subgrids). Its own height belongs to the area the parent gave it, not to the rows.
                 cells.AddRange(BorrowedRows(
-                    item, context, rowGap, columns, columnGap, columnNames, rowNames));
+                    item, context, rowGap, basis, columns, columnGap, columnNames, rowNames));
                 continue;
             }
 
@@ -1300,6 +1300,7 @@ internal sealed class GridFormattingContext
         GridCell item,
         LayoutContext context,
         Double rowGap,
+        Double rowBasis,
         List<Track> columns,
         Double columnGap,
         GridLineNames? columnNames,
@@ -1308,7 +1309,7 @@ internal sealed class GridFormattingContext
         var box = item.Box;
         var grid = box.Style.Grid;
         var area = item.AreaWidth;
-        var gap = grid.RowGapStated ? grid.RowGap : rowGap;
+        var gap = grid.RowGapStated ? grid.RowGapAgainst(rowBasis) : rowGap;
         var padding = box.Style.Padding.Resolve(area);
         var margin = box.Style.Margin.Resolve(area);
         var border = BlockLayout.BorderOf(box);
@@ -1331,8 +1332,8 @@ internal sealed class GridFormattingContext
         // columns of its own it is asked for them the same way any grid is.
         var borrows = grid.ColumnsSubgrid && columns.Count > 0;
         var step = borrows
-            ? grid.ColumnGapStated ? grid.ColumnGap : columnGap
-            : grid.ColumnGap;
+            ? grid.ColumnGapStated ? grid.ColumnGapAgainst(room) : columnGap
+            : grid.ColumnGapAgainst(room);
         var laid = borrows
             ? Math.Min(item.ColumnSpan, columns.Count)
             : grid.Columns.ExplicitCount(room, step);

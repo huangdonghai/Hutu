@@ -341,6 +341,8 @@ internal readonly struct GridStyle
         FlexAlignment alignItems,
         Double rowGap,
         Double columnGap,
+        StyleLength rowGapLength,
+        StyleLength columnGapLength,
         Boolean rowGapStated,
         Boolean columnGapStated,
         GridAreas? areas,
@@ -359,6 +361,8 @@ internal readonly struct GridStyle
         AlignItems = alignItems;
         RowGap = rowGap;
         ColumnGap = columnGap;
+        RowGapLength = rowGapLength;
+        ColumnGapLength = columnGapLength;
         RowGapStated = rowGapStated;
         ColumnGapStated = columnGapStated;
         Areas = areas;
@@ -403,6 +407,29 @@ internal readonly struct GridStyle
     public Double ColumnGap { get; }
 
     /// <summary>
+    /// Gets the column gutter taken off the width the tracks are laid in. A gap written as a percentage
+    /// or a <c>min()</c> of one is a share of the box the tracks fill (CSS Box Alignment 3 §8), which is
+    /// only known once the box is being laid out, so the length is kept apart from the pixels it answers
+    /// with when the style is read.
+    /// </summary>
+    public Double ColumnGapAgainst(Double basis) =>
+        ColumnGapLength.Kind is StyleLengthKind.Percent or StyleLengthKind.Math
+            ? Math.Max(0, ColumnGapLength.Resolve(basis))
+            : ColumnGap;
+
+    /// <summary>Gets the row gutter taken off the height the rows are laid in.</summary>
+    public Double RowGapAgainst(Double basis) =>
+        RowGapLength.Kind is StyleLengthKind.Percent or StyleLengthKind.Math
+            ? Math.Max(0, RowGapLength.Resolve(basis))
+            : RowGap;
+
+    /// <summary>The column gap as it was written, kept so a percentage can be resolved later.</summary>
+    public StyleLength ColumnGapLength { get; }
+
+    /// <summary>The row gap as it was written.</summary>
+    public StyleLength RowGapLength { get; }
+
+    /// <summary>
     /// Gets whether the row gap names a gutter of its own rather than leaving <c>normal</c> behind.
     /// Only a subgrid asks: <c>normal</c> there means the parent's gutter, so the difference the
     /// subgrid's own tracks are cut by is nothing (CSS Grid 2, subgrid gutters).
@@ -441,6 +468,8 @@ internal readonly struct GridStyle
         FlexAlignment.Stretch,
         0,
         0,
+        default,
+        default,
         false,
         false,
         null,
@@ -510,6 +539,8 @@ internal readonly struct GridStyle
                 : alignItems,
             Math.Max(0, rowGap),
             Math.Max(0, columnGap),
+            GapLength(source, "row"),
+            GapLength(source, "column"),
             GapStated(source, "row"),
             GapStated(source, "column"),
             areas,
@@ -539,6 +570,25 @@ internal readonly struct GridStyle
 
     private static Boolean IsGutter(String text) =>
         text.Length > 0 && !text.Equals("normal", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Reads one axis's gap as the length it was written as, keeping a percentage whole for the box the
+    /// tracks are later laid in. The legacy alias answers where the standard name says nothing.
+    /// </summary>
+    private static StyleLength GapLength(Source source, String axis)
+    {
+        if (source.Fetch($"{axis}-gap") is { } stated && source.TryLength(stated, out var length))
+        {
+            return length;
+        }
+
+        if (source.Fetch($"grid-{axis}-gap") is { } legacy && source.TryLength(legacy, out length))
+        {
+            return length;
+        }
+
+        return default;
+    }
 
     /// <summary>
     /// Turns one side of an item's placement from a name into the line the template says that name is,
