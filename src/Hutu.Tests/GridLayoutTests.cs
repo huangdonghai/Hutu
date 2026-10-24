@@ -902,6 +902,24 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task ASubgridStandsItsItemsInTheGuttersOfTheTracksItBorrows()
+    {
+        // The tracks a subgrid borrows come with the gutters its parent put between them, and the gap
+        // the subgrid writes for that axis is nothing to them (CSS Grid 2 §8).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:100px 100px;gap:20px;width:220px'>" +
+            "<div style='display:grid;grid-column:span 2;grid-template-columns:subgrid;gap:60px'>" +
+            "<div id='a' style='grid-column:2;width:50px;height:20px'>A</div>" +
+            "</div></div></body></html>");
+
+        var a = Find(view, "a");
+
+        Assert.That(a.BorderBox.X, Is.EqualTo(120).Within(0.5), "where the parent's gutter leaves the second track");
+    }
+
+    [Test]
     public void ASubgridWrittenInATemplateShorthandIsATemplate()
     {
         // The template shorthand covers the two track axes and the gaps between them, so writing

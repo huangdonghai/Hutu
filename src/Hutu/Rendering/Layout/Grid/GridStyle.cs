@@ -336,14 +336,10 @@ internal readonly struct GridStyle
         FlexAlignment alignItems,
         Double rowGap,
         Double columnGap,
-        Boolean rowGapStated,
-        Boolean columnGapStated,
         GridAreas? areas,
         GridLineNames? columnLines,
         GridLineNames? rowLines)
     {
-        RowGapStated = rowGapStated;
-        ColumnGapStated = columnGapStated;
         Columns = columns;
         Rows = rows;
         AutoColumn = autoColumn;
@@ -397,12 +393,6 @@ internal readonly struct GridStyle
 
     public Double ColumnGap { get; }
 
-    /// <summary>Gets whether the page wrote a row gap, rather than leaving it at the initial <c>normal</c>.</summary>
-    public Boolean RowGapStated { get; }
-
-    /// <summary>Gets whether the page wrote a column gap.</summary>
-    public Boolean ColumnGapStated { get; }
-
     /// <summary>Gets the named cells of the template, or null when it names none.</summary>
     public GridAreas? Areas { get; }
 
@@ -432,8 +422,6 @@ internal readonly struct GridStyle
         FlexAlignment.Stretch,
         0,
         0,
-        false,
-        false,
         null,
         null,
         null);
@@ -468,11 +456,6 @@ internal readonly struct GridStyle
         var rows = ReadTracks(source, "grid-template-rows");
         var areas = GridAreas.Parse(source.Text("grid-template-areas"));
 
-        // A subgrid that states no gap of its own takes the parent's gutters (CSS Grid 2 §8.1), so the
-        // reader has to say which of the two it is looking at: no `normal` and a written `0` differ.
-        var rowGapStated = source.Text("row-gap").Length > 0 || source.Text("gap").Length > 0;
-        var columnGapStated = source.Text("column-gap").Length > 0 || source.Text("gap").Length > 0;
-
         // A template area creates the tracks its cells cover: the names say how many rows and columns
         // there are even where no sizes were written for them, and a track that is explicit but has no
         // size is sized as <c>auto</c>, which is the same answer an item placed past the edge gets.
@@ -506,8 +489,6 @@ internal readonly struct GridStyle
                 : alignItems,
             Math.Max(0, rowGap),
             Math.Max(0, columnGap),
-            rowGapStated,
-            columnGapStated,
             areas,
             GridLineNames.Parse(source.Text("grid-template-columns")),
             GridLineNames.Parse(source.Text("grid-template-rows")));

@@ -415,15 +415,16 @@ internal sealed class GridFormattingContext
         var rowBasis = contentHeight ?? 0;
 
         // A subgrid borrows the tracks of the area its parent put it in: no sizing, no contributions,
-        // and the parent's gutters unless it states gaps of its own (CSS Grid 2 §8).
+        // and the gutters the parent put between those tracks - which the subgrid's own gap properties
+        // have nothing to say about (CSS Grid 2 §8).
         var borrowed = context.Subgrid;
         var subgridColumns = grid.ColumnsSubgrid ? Borrowed(borrowed?.Columns) : null;
         var subgridRows = grid.RowsSubgrid ? Borrowed(borrowed?.Rows) : null;
 
-        var gapX = subgridColumns is not null && borrowed is not null && !grid.ColumnGapStated
+        var gapX = subgridColumns is not null && borrowed is not null
             ? borrowed.ColumnGap
             : grid.ColumnGap;
-        var gapY = subgridRows is not null && borrowed is not null && !grid.RowGapStated
+        var gapY = subgridRows is not null && borrowed is not null
             ? borrowed.RowGap
             : grid.RowGap;
 
