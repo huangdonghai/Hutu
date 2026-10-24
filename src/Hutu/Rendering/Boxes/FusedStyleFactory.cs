@@ -760,7 +760,7 @@ internal static class FusedStyleFactory
             var built = new VisualEffectsArea
             {
                 OutlineStyle = outlineStyle,
-                OutlineWidth = ComputedStyle.ResolveOutlineWidthFused(outlineStyle, find("outline-width"), face, dimensions, parent.Visual?.OutlineWidth),
+                OutlineWidth = ComputedStyle.ResolveOutlineWidthFused(find("outline-width"), face, dimensions, parent.Visual?.OutlineWidth),
                 OutlineOffset = ComputedStyle.ResolveOutlineOffsetFused(find("outline-offset"), face, dimensions, parent.Visual?.OutlineOffset),
             };
 

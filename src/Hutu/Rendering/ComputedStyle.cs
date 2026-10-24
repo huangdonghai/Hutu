@@ -1315,14 +1315,12 @@ internal readonly struct ComputedStyle
     /// path. No stroke means no width; no width declared means medium.
     /// </summary>
     public static Double ResolveOutlineWidthFused(
-        BorderLineStyle style, ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions,
-        Double? inherited = null)
+        ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions, Double? inherited = null)
     {
-        if (style == BorderLineStyle.None)
-        {
-            return 0;
-        }
-
+        // The thickness is the property's computed value whatever the outline's style: it is the *used*
+        // value that falls to nothing where nothing is drawn (CSS UI 4 §2.1), and a child asking for
+        // `inherit` takes the computed one. Storing zero here would hand the child a thickness its parent
+        // never said, which is how a box asking for its parent's outline came to draw none.
         // The outline is not inherited, so `inherit` is the one way a child takes the thickness its
         // parent was drawn with - as the parent's computed pixels, not as the declaration it came from.
         if (inherited is { } parentThickness && DeclaresInherit(declared))
@@ -2571,9 +2569,7 @@ internal readonly struct ComputedStyle
         var area = new VisualEffectsArea
         {
             OutlineStyle = style,
-            OutlineWidth = style == BorderLineStyle.None
-                ? 0
-                : Length("outline-width", RenderMode.Horizontal, CssLengthValue.Medium.Value),
+            OutlineWidth = Length("outline-width", RenderMode.Horizontal, CssLengthValue.Medium.Value),
             OutlineOffset = Length("outline-offset", RenderMode.Horizontal, CssInitialValues.OutlineOffset),
         };
 
@@ -4849,7 +4845,10 @@ internal readonly struct ComputedStyle
     /// number is taken from the keyword AngleSharp holds rather than written out here, so that a
     /// declared <c>thin</c> or <c>thick</c> is read the same way.
     /// </remarks>
-    public Double OutlineWidth => _values.VisualEffects.OutlineWidth * _zoom;
+    public Double OutlineWidth =>
+        _values.VisualEffects.OutlineStyle == BorderLineStyle.None
+            ? 0
+            : _values.VisualEffects.OutlineWidth * _zoom;
 
     /// <summary>
     /// Gets how far outside the border edge the outline begins. It shifts the outline without taking

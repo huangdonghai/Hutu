@@ -1,3 +1,4 @@
+using Hutu.Rendering;
 using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
@@ -204,6 +205,36 @@ public sealed class ZoomTests
             Assert.That(numbered.E, Is.EqualTo(60).Within(0.5), "and so does the same move as numbers");
             Assert.That(numbered.F, Is.EqualTo(20).Within(0.5));
             Assert.That(numbered.D, Is.EqualTo(-1).Within(0.001), "a ratio is no length and stays itself");
+        });
+    }
+
+    [Test]
+    public async Task ABoxInheritsTheThicknessOfAnOutlineItsParentNeverDrew()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='outline-width:9px'>" +
+            "<div id='a' style='outline-width:inherit;outline-style:solid;zoom:2;height:10px'></div>" +
+            "<div id='c' style='outline-width:11px;height:10px'>" +
+            "<div id='d' style='outline-width:inherit;outline-style:solid;height:10px'></div></div>" +
+            "</div></body></html>");
+
+        var zoomed = Find(view, "a").Source.Style;
+        var undrawn = Find(view, "c").Source.Style;
+        var plain = Find(view, "d").Source.Style;
+
+        Assert.Multiple(() =>
+        {
+            // Nine is what the parent's thickness came to, and the child draws it at its own scale: the
+            // keyword asks for a computed value, which does not depend on whether the parent drew it.
+            Assert.That(zoomed.OutlineWidth, Is.EqualTo(18).Within(0.5));
+            Assert.That(zoomed.OutlineStyle, Is.EqualTo(BorderLineStyle.Solid));
+
+            // A box that names a thickness and no style draws nothing, so the used value is nothing -
+            // while the computed one is still there for the child below to take.
+            Assert.That(undrawn.OutlineWidth, Is.EqualTo(0).Within(0.5));
+            Assert.That(plain.OutlineWidth, Is.EqualTo(11).Within(0.5));
         });
     }
 
