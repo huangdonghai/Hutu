@@ -112,6 +112,14 @@ public readonly struct WritingModeInfo
     /// <summary>Gets whether the line reads from the end of the inline axis back to its start.</summary>
     internal Boolean IsRightToLeft => Direction == TextDirection.RightToLeft;
 
+    /// <summary>
+    /// Gets whether the text on this line stands against the way the line reads. A row does it by its
+    /// nature: its glyphs go left to right while the line runs back from the right edge, and the drawing
+    /// follows the glyphs. A column turns its glyphs with the line, so the direction has to be told to
+    /// the drawing as well - which is what a right-to-left row of direction asks of it.
+    /// </summary>
+    public Boolean SetsTextBackwards => IsVertical && IsRightToLeft;
+
     /// <summary>Gets whether the inline axis runs down the page rather than along it.</summary>
     public Boolean IsVertical => Mode != WritingMode.HorizontalTb;
 

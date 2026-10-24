@@ -283,6 +283,29 @@ public sealed class TextSelectionTests
         Assert.That(document.Selector.HitTest(x, top + 1000)!.Value.Index, Is.EqualTo(3));
     }
 
+    /// <summary>
+    /// A column whose line reads upward still stands its characters the way the page does - the first of
+    /// them at the far end of the room the run was given - so a point finds the character standing under
+    /// it rather than the one the reading order counts to that distance.
+    /// </summary>
+    [Test]
+    public async Task APointUpARightToLeftColumnFindsTheCharacterStandingThere()
+    {
+        using var document = await LoadAsync(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;direction:rtl;" +
+            "width:100px;height:200px;font-size:10px;line-height:1'>東京都</div></body></html>");
+
+        var run = document.Selector.Runs[0];
+        var x = run.BorderBox.X + (run.BorderBox.Width / 2);
+
+        Assert.That(run.BorderBox.Y, Is.EqualTo(170), "the run stands at the foot of the column");
+        Assert.That(
+            document.Selector.HitTest(x, run.BorderBox.Y + 4)!.Value.Index,
+            Is.EqualTo(0),
+            "the first character is the topmost of the three");
+        Assert.That(document.Selector.HitTest(x, run.BorderBox.Bottom - 4)!.Value.Index, Is.EqualTo(3));
+    }
+
     [Test]
     public async Task ARangeDownAColumnSpansTheWidthOfTheColumn()
     {

@@ -41,6 +41,35 @@ public sealed class FontUnitTests
         Assert.That(Box(view).Width, Is.EqualTo(40), "two of the face's own zeros");
     }
 
+    /// <summary>
+    /// A run of a line that reads up the page is set with its first character at the far end of the room
+    /// the line gave it, while every glyph keeps the face the font drew it in. This is how Chrome lays
+    /// Latin text in a <c>vertical-rl</c> column of <c>direction: rtl</c>: the run stands at the foot of
+    /// the page and the F of "Fab" is the topmost glyph of it.
+    /// </summary>
+    [Test]
+    public void ABackToFrontRunStandsItsCharactersAtTheFarEndOfTheirRoom()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        var style = new FontStyle("Ahem", 20);
+        var width = measurer.MeasureWidth("abc", style);
+
+        var forward = measurer.Blobs.GetRunInk(style, "abc", 0);
+        var back = measurer.Blobs.GetRunInk(style, "abc", 0, reverse: true);
+
+        Assert.That(forward, Has.Length.EqualTo(3), "one box for each character");
+        Assert.That(back[0].Left, Is.GreaterThan(back[2].Left), "the first character stands past the last");
+
+        for (var index = 0; index < forward.Length; index++)
+        {
+            Assert.That(
+                back[index].Left,
+                Is.EqualTo(width - forward[index].Right).Within(0.5),
+                "the room is mirrored about the run's own extent");
+            Assert.That(back[index].Right, Is.EqualTo(width - forward[index].Left).Within(0.5));
+        }
+    }
+
     [Test]
     public async Task TheSameUnitsHoldAcrossTheBoxModel()
     {

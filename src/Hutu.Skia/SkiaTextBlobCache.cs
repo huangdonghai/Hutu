@@ -63,8 +63,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double justification = 0,
         Int32 justifies = 0,
         String expand = "auto",
-        Double wordSpacing = 0) =>
-        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand, wordSpacing).Ink;
+        Double wordSpacing = 0,
+        Boolean reverse = false) =>
+        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse).Ink;
 
     /// <summary>Gets the ink of a column's glyphs, in the space the column's blob is positioned in.</summary>
     public SKRect[] GetColumnInk(
@@ -74,8 +75,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double justification = 0,
         Int32 justifies = 0,
         String expand = "auto",
-        Double wordSpacing = 0) =>
-        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand, wordSpacing).Ink;
+        Double wordSpacing = 0,
+        Boolean reverse = false) =>
+        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse).Ink;
 
     public SKTextBlob? GetRunBlob(
         FontStyle style,
@@ -84,8 +86,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double justification = 0,
         Int32 justifies = 0,
         String expand = "auto",
-        Double wordSpacing = 0) =>
-        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand, wordSpacing).Blob;
+        Double wordSpacing = 0,
+        Boolean reverse = false) =>
+        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse).Blob;
 
     /// <summary>
     /// Gets the blob a column of upright characters is drawn as, with its glyphs positioned relative
@@ -109,9 +112,18 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double justification = 0,
         Int32 justifies = 0,
         String expand = "auto",
-        Double wordSpacing = 0) =>
-        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand, wordSpacing).Blob;
+        Double wordSpacing = 0,
+        Boolean reverse = false) =>
+        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse).Blob;
 
+    /// <summary>
+    /// Gets the blob a run or column is drawn as.
+    /// </summary>
+    /// <param name="reverse">
+    /// Whether the text stands back to front along its own extent, which is how a line of
+    /// <c>direction: rtl</c> lays the left-to-right text sitting on it: the run's box is where the line
+    /// put it, and the characters fill it from the other end. Each glyph keeps its own face.
+    /// </param>
     private TextBlob GetBlob(
         BlobKind kind,
         FontStyle style,
@@ -120,10 +132,11 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double justification,
         Int32 justifies,
         String expand,
-        Double wordSpacing)
+        Double wordSpacing,
+        Boolean reverse)
     {
         var key = new TextBlobKey(
-            kind, style, text, letterSpacing, justification, justifies, expand, wordSpacing);
+            kind, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse);
 
         lock (_gate)
         {
@@ -134,8 +147,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
             var ink = new List<SKRect>();
             var blob = kind == BlobKind.Run
-                ? BuildRunBlob(style, text, letterSpacing, justification, justifies, expand, wordSpacing, ink)
-                : BuildColumnBlob(style, text, letterSpacing, justification, justifies, expand, wordSpacing, ink);
+                ? BuildRunBlob(style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, ink)
+                : BuildColumnBlob(style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, ink);
             var built = new TextBlob(blob, [.. ink]);
             _blobs[key] = built;
             return built;
@@ -188,9 +201,11 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Int32 justifies,
         String expand,
         Double wordSpacing,
+        Boolean reverse,
         List<SKRect> ink)
     {
         using var builder = new SKTextBlobBuilder();
+        var placements = new List<Placement>();
         var pen = 0f;
 
         // The places the line still owes a share to, paid out in the order the text runs: a stretch
@@ -228,11 +243,11 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
             if (run.Shaped.Succeeded)
             {
-                AddShaped(builder, run, pen, letterSpacing, justification, places, ends, wordSpacing, words, clusters, ink);
+                AddShaped(placements, run, pen, letterSpacing, justification, places, ends, wordSpacing, words, clusters);
             }
             else
             {
-                AddMapped(builder, run, pen, letterSpacing, wordSpacing, words, ink);
+                AddMapped(placements, run, pen, letterSpacing, wordSpacing, words);
             }
 
             offset += run.Text.Length;
@@ -240,6 +255,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
             pen += (Single)(run.Advance + (letterSpacing * characters) + (justification * places) +
                 (wordSpacing * words.Length));
         }
+
+        Emit(builder, placements, pen, along: true, reverse, ink);
 
         return builder.Build();
     }
@@ -289,7 +306,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
     }
 
     private void AddShaped(
-        SKTextBlobBuilder builder,
+        List<Placement> placements,
         SkiaTextRun run,
         Single pen,
         Double letterSpacing,
@@ -298,8 +315,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Int32[] ends,
         Double wordSpacing,
         Int32[] words,
-        Int32[]? clusters,
-        List<SKRect> ink)
+        Int32[]? clusters)
     {
         var glyphs = run.Shaped.Glyphs;
         var points = run.Shaped.Points;
@@ -360,10 +376,16 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 points[index].Y);
         }
 
-        var placed = builder.AllocatePositionedRun(run.Font, count);
-        placed.SetGlyphs(glyphs);
-        placed.SetPositions(positions);
-        Record(run.Font, glyphs, positions, ink);
+        // The room the glyph owns begins where the pen stood when it was set, which is its position
+        // less whatever the face offset it by; that is the cell a back-to-front run moves.
+        var cells = new Single[count];
+
+        for (var index = 0; index < count; index++)
+        {
+            cells[index] = positions[index].X;
+        }
+
+        placements.Add(new Placement(run.Font, glyphs, positions, cells));
     }
 
     /// <summary>
@@ -371,13 +393,12 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// which is the way it was drawn before shaping answered for it.
     /// </summary>
     private void AddMapped(
-        SKTextBlobBuilder builder,
+        List<Placement> placements,
         SkiaTextRun run,
         Single pen,
         Double letterSpacing,
         Double wordSpacing,
-        Int32[] words,
-        List<SKRect> ink)
+        Int32[] words)
     {
         if (run.Text.Length == 0)
         {
@@ -386,6 +407,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
         var glyphs = run.Font.GetGlyphs(run.Text);
         var positions = run.Font.GetGlyphPositions(run.Text, new SKPoint(pen, 0));
+        var cells = new Single[positions.Length];
         var crossed = 0;
 
         for (var index = 0; index < positions.Length; index++)
@@ -397,13 +419,11 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
             // One glyph per character is the whole of what this path knows, so the separators it has
             // left behind are counted by the same index the spacing is.
+            cells[index] = positions[index].X;
             positions[index].X += (Single)((letterSpacing * index) + (wordSpacing * crossed));
         }
 
-        var placed = builder.AllocatePositionedRun(run.Font, glyphs.Length);
-        placed.SetGlyphs(glyphs);
-        placed.SetPositions(positions);
-        Record(run.Font, glyphs, positions, ink);
+        placements.Add(new Placement(run.Font, glyphs, positions, cells));
     }
 
     /// <summary>
@@ -424,11 +444,13 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Int32 justifies,
         String expand,
         Double wordSpacing,
+        Boolean reverse,
         List<SKRect> ink)
     {
         var metrics = _measurer.GetMetrics(style);
         var emBox = metrics.Ascent + metrics.Descent;
         var cells = _measurer.DecomposeUpright(text, style);
+        var placements = new List<Placement>();
 
         // The room goes after each place in the text the cells were cut from, which is read by the
         // character each cell stands for rather than by the glyph it draws: the form a font substitutes
@@ -442,6 +464,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
         var inline = 0.0;
         var crossed = 0;
         var paid = 0;
+        var reached = 0.0;
+        var end = 0f;
 
         foreach (var cell in cells)
         {
@@ -456,7 +480,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
             }
 
             var step = Math.Max(cell.Advance, style.Size) + letterSpacing;
-            var reached = inline + (justification * crossed) + (wordSpacing * paid);
+            reached = inline + (justification * crossed) + (wordSpacing * paid);
+            end = (Single)(reached + step);
+
             var baseline = cell.BaselineOffset is { } offset
                 ? (Single)(reached + offset)
                 : (Single)(reached + ((step - emBox) / 2) + metrics.Ascent);
@@ -464,36 +490,27 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
             if (cell.DrawByGlyph)
             {
-                AddGlyph(builder, cell.Font, cell.Glyph, centre, baseline, ink);
+                AddGlyph(placements, cell.Font, cell.Glyph, centre, baseline, (Single)reached);
             }
             else
             {
-                AddMappedText(builder, cell.Font, cell.Text, centre, baseline, ink);
+                AddMappedText(placements, cell.Font, cell.Text, centre, baseline, (Single)reached);
             }
 
             inline += step;
         }
 
+        Emit(builder, placements, end, along: false, reverse, ink);
+
         return builder.Build();
     }
 
     private void AddGlyph(
-        SKTextBlobBuilder builder, SKFont font, UInt16 glyph, Single x, Single y, List<SKRect> ink)
-    {
-        Span<UInt16> glyphs = stackalloc UInt16[1];
-        glyphs[0] = glyph;
-
-        Span<SKPoint> positions = stackalloc SKPoint[1];
-        positions[0] = new SKPoint(x, y);
-
-        var placed = builder.AllocatePositionedRun(font, 1);
-        placed.SetGlyphs(glyphs);
-        placed.SetPositions(positions);
-        Record(font, glyphs, positions, ink);
-    }
+        List<Placement> placements, SKFont font, UInt16 glyph, Single x, Single y, Single cell) =>
+        placements.Add(new Placement(font, [glyph], [new SKPoint(x, y)], [cell]));
 
     private void AddMappedText(
-        SKTextBlobBuilder builder, SKFont font, String text, Single x, Single y, List<SKRect> ink)
+        List<Placement> placements, SKFont font, String text, Single x, Single y, Single cell)
     {
         if (text.Length == 0)
         {
@@ -502,11 +519,75 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
         var glyphs = font.GetGlyphs(text);
         var positions = font.GetGlyphPositions(text, new SKPoint(x, y));
+        var cells = new Single[positions.Length];
 
-        var placed = builder.AllocatePositionedRun(font, glyphs.Length);
-        placed.SetGlyphs(glyphs);
-        placed.SetPositions(positions);
-        Record(font, glyphs, positions, ink);
+        // Each of the glyphs the mapping made owns the room from where it stands to the next one down,
+        // which is what a back-to-front column moves.
+        for (var index = 0; index < cells.Length; index++)
+        {
+            cells[index] = positions[index].Y;
+        }
+
+        placements.Add(new Placement(font, glyphs, positions, cells));
+    }
+
+    /// <summary>
+    /// Sets the collected glyphs on the builder and records the ink they put down.
+    /// </summary>
+    /// <param name="reverse">
+    /// Whether to move each glyph to the mirror of the room it was given across the run's whole extent,
+    /// which is how a line of <c>direction: rtl</c> lays the left-to-right text sitting on it. The face
+    /// a glyph is drawn with does not change: it is the order of the characters that turns round.
+    /// </param>
+    private void Emit(
+        SKTextBlobBuilder builder,
+        List<Placement> placements,
+        Single extent,
+        Boolean along,
+        Boolean reverse,
+        List<SKRect> ink)
+    {
+        // The room one glyph owns reaches to where the next of the run begins and the last of them to the
+        // end of the run, so the cells are counted across the stretches rather than within one.
+        var begins = new List<Single>();
+
+        foreach (var placement in placements)
+        {
+            begins.AddRange(placement.Cells);
+        }
+
+        var taken = 0;
+
+        foreach (var placement in placements)
+        {
+            var positions = placement.Positions;
+
+            if (reverse)
+            {
+                var moved = new SKPoint[positions.Length];
+
+                for (var index = 0; index < positions.Length; index++)
+                {
+                    var stop = taken + index + 1 < begins.Count ? begins[taken + index + 1] : extent;
+                    var offset = along
+                        ? positions[index].X - placement.Cells[index]
+                        : positions[index].Y - placement.Cells[index];
+
+                    moved[index] = along
+                        ? new SKPoint(extent - stop + offset, positions[index].Y)
+                        : new SKPoint(positions[index].X, extent - stop + offset);
+                }
+
+                positions = moved;
+            }
+
+            taken += positions.Length;
+
+            var placed = builder.AllocatePositionedRun(placement.Font, placement.Glyphs.Length);
+            placed.SetGlyphs(placement.Glyphs);
+            placed.SetPositions(positions);
+            Record(placement.Font, placement.Glyphs, positions, ink);
+        }
     }
 
     /// <summary>
@@ -564,6 +645,13 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// </summary>
     private sealed record TextBlob(SKTextBlob? Blob, SKRect[] Ink);
 
+    /// <summary>
+    /// One stretch of the text as the font that carries it, the glyphs it was set in, where each stands
+    /// and where the room each owns begins along the axis the text is set on. Collected before any of it
+    /// goes on the builder, so a run asked back to front can move the whole of it at once.
+    /// </summary>
+    private sealed record Placement(SKFont Font, UInt16[] Glyphs, SKPoint[] Positions, Single[] Cells);
+
     /// <summary>Whether a blob sets its text along a line or down a column.</summary>
     private enum BlobKind
     {
@@ -584,7 +672,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
             Double justification,
             Int32 justifies,
             String expand,
-            Double wordSpacing)
+            Double wordSpacing,
+            Boolean reversed)
         {
             Kind = kind;
             Style = style;
@@ -594,9 +683,13 @@ internal sealed class SkiaTextBlobCache : IDisposable
             Justifies = justifies;
             Expand = expand;
             WordSpacing = wordSpacing;
+            Reversed = reversed;
         }
 
         public BlobKind Kind { get; }
+
+        /// <summary>Gets whether the text stands back to front along its own extent.</summary>
+        public Boolean Reversed { get; }
 
         public FontStyle Style { get; }
 
@@ -615,6 +708,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
         public Boolean Equals(TextBlobKey other) =>
             Kind == other.Kind &&
+            Reversed == other.Reversed &&
             Style.Equals(other.Style) &&
             Spacing.Equals(other.Spacing) &&
             Justification.Equals(other.Justification) &&
@@ -630,6 +724,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
             unchecked
             {
                 var hash = Kind.GetHashCode();
+                hash = (hash * 397) ^ Reversed.GetHashCode();
                 hash = (hash * 397) ^ Style.GetHashCode();
                 hash = (hash * 397) ^ Spacing.GetHashCode();
                 hash = (hash * 397) ^ Justification.GetHashCode();

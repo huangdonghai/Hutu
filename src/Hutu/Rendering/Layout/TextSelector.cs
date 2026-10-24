@@ -429,12 +429,24 @@ internal sealed class TextSelector
         return best;
     }
 
-    /// <summary>Gets which character boundary a point along the run's inline axis falls nearest to.</summary>
+    /// <summary>
+    /// Gets which character boundary a point along the run's inline axis falls nearest to.
+    /// </summary>
+    /// <remarks>
+    /// The distance is counted along the way the line reads, while the characters of a run that is set
+    /// back to front fill it from the other end - so the distance is turned round before it is looked
+    /// up, and the point lands on the character that is actually standing there.
+    /// </remarks>
     private Int32 IndexAt(LayoutBox run, Double inline)
     {
         var distance = (inline - InlineBegin(run)) * run.Flow.InlineSign;
         var prefix = Prefixes(run);
         var length = prefix[^1];
+
+        if (run.Flow.SetsTextBackwards)
+        {
+            distance = length - distance;
+        }
 
         if (distance <= 0)
         {
@@ -475,12 +487,19 @@ internal sealed class TextSelector
         return distance - prefix[low] < prefix[low + 1] - distance ? low : low + 1;
     }
 
-    /// <summary>Gets the coordinate of a character boundary along the run's inline axis.</summary>
+    /// <summary>
+    /// Gets the coordinate of a character boundary along the run's inline axis, which is the mirror of
+    /// <see cref="IndexAt"/>: a run set back to front stands its characters in from the other end, so
+    /// the boundary the index names is the one as far from the run's end as the distance is from its
+    /// start.
+    /// </summary>
     private Double OffsetAt(LayoutBox run, Int32 index)
     {
         var prefix = Prefixes(run);
+        var at = Math.Clamp(index, 0, prefix.Length - 1);
+        var distance = run.Flow.SetsTextBackwards ? prefix[^1] - prefix[at] : prefix[at];
 
-        return InlineBegin(run) + prefix[Math.Clamp(index, 0, prefix.Length - 1)] * run.Flow.InlineSign;
+        return InlineBegin(run) + distance * run.Flow.InlineSign;
     }
 
     /// <summary>Gets how far along its inline axis a point sits: an x for horizontal text, a y for a column.</summary>
