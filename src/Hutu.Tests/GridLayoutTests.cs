@@ -904,8 +904,9 @@ public sealed class GridLayoutTests
     [Test]
     public async Task ASubgridStandsItsItemsInTheGuttersOfTheTracksItBorrows()
     {
-        // The tracks a subgrid borrows come with the gutters its parent put between them, and the gap
-        // the subgrid writes for that axis is nothing to them (CSS Grid 2 §8).
+        // Every line a subgrid borrows is the middle of the room the parent left at that line, and the
+        // gutter the subgrid writes for the axis stands centred on it, so the tracks it borrows are cut
+        // to what is left between the two gutters about them (CSS Grid 2 §8.2, as Chrome lays it).
         using var view = CreateView(400);
         await view.SetHtml(
             "<html><body style='margin:0'>" +
@@ -916,7 +917,85 @@ public sealed class GridLayoutTests
 
         var a = Find(view, "a");
 
-        Assert.That(a.BorderBox.X, Is.EqualTo(120).Within(0.5), "where the parent's gutter leaves the second track");
+        Assert.That(a.BorderBox.X, Is.EqualTo(140).Within(0.5), "past the half of each gutter the line carries");
+    }
+
+    [Test]
+    public async Task ASubgridKeepsTheGapItStatedBeforeItsOwnTemplateShorthand()
+    {
+        // `grid: subgrid` borrows the tracks but not the gutters: the gap the page wrote before it is
+        // still the subgrid's own, because the shorthand resets only what controls the implicit grid
+        // (CSS Grid 2 §7.1) - which is how wpt's grid-gap-larger-001 states its 20px.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:100px 100px;gap:20px;width:220px'>" +
+            "<div style='display:grid;grid-column:span 2;gap:60px;grid: subgrid / subgrid'>" +
+            "<div id='a' style='grid-column:2;width:50px;height:20px'>A</div>" +
+            "</div></div></body></html>");
+
+        var a = Find(view, "a");
+
+        Assert.That(a.BorderBox.X, Is.EqualTo(140).Within(0.5), "the stated gutter still cuts the tracks");
+    }
+
+    [Test]
+    public async Task ASubgridWiderThanTheGutterItBorrowsCutsItsOuterTracks()
+    {
+        // The gap a subgrid states is charged to the tracks it borrows rather than added to them: the
+        // outer line of the area stands at the subgrid's own edge, so its padding and the wider gutter
+        // both come off the first and last track (CSS Grid 2 §8.2, and wpt's grid-gap-larger-001).
+        using var view = CreateView(600);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:150px 100px 150px 100px;width:500px'>" +
+            "<div style='display:grid;grid-column:2/5;grid-template-columns:subgrid;" +
+            "gap:20px;padding:20px'>" +
+            "<div id='a'></div><div id='b'></div><div id='c'></div>" +
+            "</div></div></body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+        var c = Find(view, "c");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(a.BorderBox.X, Is.EqualTo(170).Within(0.5), "at the subgrid's own content edge");
+            Assert.That(a.BorderBox.Width, Is.EqualTo(70).Within(0.5), "the first track cut to what is left");
+            Assert.That(b.BorderBox.X, Is.EqualTo(260).Within(0.5));
+            Assert.That(b.BorderBox.Width, Is.EqualTo(130).Within(0.5), "the middle loses the whole gutter");
+            Assert.That(c.BorderBox.X, Is.EqualTo(410).Within(0.5));
+            Assert.That(c.BorderBox.Width, Is.EqualTo(70).Within(0.5));
+        });
+    }
+
+    [Test]
+    public async Task ASubgridWithoutAGutterOfItsOwnTakesTheRoomTheParentLeft()
+    {
+        // The other half of the same rule: a gutter of nothing stands at the middle of the parent's, so
+        // the tracks it borrows grow over the gutters it did not ask for (wpt's grid-gap-smaller-001).
+        using var view = CreateView(600);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:150px 100px 150px 100px;" +
+            "gap:20px;width:560px'>" +
+            "<div style='display:grid;grid-column:2/5;grid-template-columns:subgrid;" +
+            "gap:0;padding:20px'>" +
+            "<div id='a'></div><div id='b'></div><div id='c'></div>" +
+            "</div></div></body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+        var c = Find(view, "c");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(a.BorderBox.Width, Is.EqualTo(90).Within(0.5), "half the parent's gutter added to it");
+            Assert.That(b.BorderBox.X, Is.EqualTo(280).Within(0.5));
+            Assert.That(b.BorderBox.Width, Is.EqualTo(170).Within(0.5), "both of them, for the middle track");
+            Assert.That(c.BorderBox.X, Is.EqualTo(450).Within(0.5));
+            Assert.That(c.BorderBox.Width, Is.EqualTo(90).Within(0.5));
+        });
     }
 
     [Test]
@@ -1009,17 +1088,17 @@ public sealed class GridLayoutTests
     [Test]
     public void ASubgridWrittenInATemplateShorthandIsATemplate()
     {
-        // The template shorthand covers the two track axes and the gaps between them, so writing
-        // `subgrid` in it both names the borrowed tracks and takes the stated gaps back to nothing
-        // (CSS Grid 1 §8.2, CSS Grid 2 §8).
+        // The template shorthand covers the three explicit-track properties - and the `grid` shorthand
+        // adds only the ones that control the implicit grid, not the gutters between the tracks, which
+        // keep whatever the page said for them (CSS Grid 2 §7.1, as Chrome computes it).
         var stated = Declared(".x { row-gap: 100px; column-gap: 10px; grid: subgrid / subgrid }");
 
         Assert.Multiple(() =>
         {
             Assert.That(stated["grid-template-rows"], Is.EqualTo("subgrid"));
             Assert.That(stated["grid-template-columns"], Is.EqualTo("subgrid"));
-            Assert.That(stated["row-gap"], Is.Empty, "the gap the page stated before is reset");
-            Assert.That(stated["column-gap"], Is.Empty);
+            Assert.That(stated["row-gap"], Is.EqualTo("100px"), "the gap the page stated before stands");
+            Assert.That(stated["column-gap"], Is.EqualTo("10px"));
         });
     }
 

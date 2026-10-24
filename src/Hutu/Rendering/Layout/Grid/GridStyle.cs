@@ -341,6 +341,8 @@ internal readonly struct GridStyle
         FlexAlignment alignItems,
         Double rowGap,
         Double columnGap,
+        Boolean rowGapStated,
+        Boolean columnGapStated,
         GridAreas? areas,
         GridLineNames? columnLines,
         GridLineNames? rowLines)
@@ -357,6 +359,8 @@ internal readonly struct GridStyle
         AlignItems = alignItems;
         RowGap = rowGap;
         ColumnGap = columnGap;
+        RowGapStated = rowGapStated;
+        ColumnGapStated = columnGapStated;
         Areas = areas;
         ColumnLines = columnLines;
         RowLines = rowLines;
@@ -398,6 +402,16 @@ internal readonly struct GridStyle
 
     public Double ColumnGap { get; }
 
+    /// <summary>
+    /// Gets whether the row gap names a gutter of its own rather than leaving <c>normal</c> behind.
+    /// Only a subgrid asks: <c>normal</c> there means the parent's gutter, so the difference the
+    /// subgrid's own tracks are cut by is nothing (CSS Grid 2, subgrid gutters).
+    /// </summary>
+    public Boolean RowGapStated { get; }
+
+    /// <summary>Gets whether the column gap names a gutter of its own rather than leaving it <c>normal</c>.</summary>
+    public Boolean ColumnGapStated { get; }
+
     /// <summary>Gets the named cells of the template, or null when it names none.</summary>
     public GridAreas? Areas { get; }
 
@@ -427,6 +441,8 @@ internal readonly struct GridStyle
         FlexAlignment.Stretch,
         0,
         0,
+        false,
+        false,
         null,
         null,
         null);
@@ -494,6 +510,8 @@ internal readonly struct GridStyle
                 : alignItems,
             Math.Max(0, rowGap),
             Math.Max(0, columnGap),
+            GapStated(source, "row"),
+            GapStated(source, "column"),
             areas,
             // The names written after `subgrid` stand one per borrowed line rather than beside a
             // track of their own, so the axis says which reading its text wants.
@@ -504,6 +522,23 @@ internal readonly struct GridStyle
                 ? GridLineNames.Groups(source.Text("grid-template-rows"))
                 : GridLineNames.Parse(source.Text("grid-template-rows")));
     }
+
+    /// <summary>
+    /// Gets whether one axis's gap was written as a gutter of its own. <c>normal</c> - and a declaration
+    /// list that says nothing - is not one: it is the value a subgrid answers with its parent's gutter,
+    /// which is why the two have to be told apart before the borrowed tracks are cut.
+    /// </summary>
+    private static Boolean GapStated(Source source, String axis)
+    {
+        // The shorthand fills both axes and the legacy alias stands where the standard name says
+        // nothing, so an axis is stated by any of the three that carries a length.
+        return IsGutter(source.Text($"grid-{axis}-gap")) ||
+            IsGutter(source.Text($"{axis}-gap")) ||
+            IsGutter(source.Text("gap"));
+    }
+
+    private static Boolean IsGutter(String text) =>
+        text.Length > 0 && !text.Equals("normal", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Turns one side of an item's placement from a name into the line the template says that name is,

@@ -416,19 +416,38 @@ internal sealed class GridFormattingContext
         var columnBasis = definiteWidth ? contentWidth : 0;
         var rowBasis = contentHeight ?? 0;
 
-        // A subgrid borrows the tracks of the area its parent put it in: no sizing, no contributions,
-        // and the gutters the parent put between those tracks - which the subgrid's own gap properties
-        // have nothing to say about (CSS Grid 2 §8).
+        // A subgrid borrows the tracks of the area its parent put it in: no sizing, no contributions.
+        // Its own gutter then stands on the line it borrows, centred on the room the parent left there,
+        // so the tracks it borrows are cut by the difference between the two gutters - and an axis that
+        // states no gutter of its own cuts nothing (CSS Grid 2, subgrid gutters).
         var borrowed = context.Subgrid;
+
+        var gapX = grid.ColumnsSubgrid && borrowed is not null
+            ? grid.ColumnGapStated
+                ? grid.ColumnGap
+                : borrowed.ColumnGap
+            : grid.ColumnGap;
+        var gapY = grid.RowsSubgrid && borrowed is not null
+            ? grid.RowGapStated
+                ? grid.RowGap
+                : borrowed.RowGap
+            : grid.RowGap;
+
         var subgridColumns = grid.ColumnsSubgrid ? Borrowed(borrowed?.Columns) : null;
         var subgridRows = grid.RowsSubgrid ? Borrowed(borrowed?.Rows) : null;
 
-        var gapX = subgridColumns is not null && borrowed is not null
-            ? borrowed.ColumnGap
-            : grid.ColumnGap;
-        var gapY = subgridRows is not null && borrowed is not null
-            ? borrowed.RowGap
-            : grid.RowGap;
+        // The cut is a question about the box the tracks fill, so it waits for the pass that knows the
+        // size it fills. The intrinsic one, which is asking what the box would need, hands the parent's
+        // sizes on untouched - and a subgrid's own gutter is nothing to the room it asks for.
+        if (subgridColumns is not null && borrowed is not null && definiteWidth)
+        {
+            subgridColumns = Cut(subgridColumns, borrowed.ColumnGap, gapX, contentWidth, Inset(box, context).Left);
+        }
+
+        if (subgridRows is not null && borrowed is not null && contentHeight is { } room)
+        {
+            subgridRows = Cut(subgridRows, borrowed.RowGap, gapY, room, Inset(box, context).Top);
+        }
 
         // The explicit grid is what the automatic placement wraps inside, so both counts are taken
         // before any item is placed.
@@ -1755,6 +1774,76 @@ internal sealed class GridFormattingContext
         foreach (var size in sizes)
         {
             tracks.Add(new Track { Size = GridTrackSize.Auto, Base = size, Growth = size });
+        }
+
+        return tracks;
+    }
+
+    /// <summary>
+    /// Gets what stands between a subgrid's borrowed area and its content box: its own margins, border
+    /// and padding, which is the edge the first track it borrows is cut to.
+    /// </summary>
+    private static Thickness Inset(Box box, LayoutContext context)
+    {
+        var style = box.Style;
+        var basis = context.ContainingBlock.Width;
+        var border = BlockLayout.BorderOf(box);
+        var padding = style.Padding.Resolve(basis);
+        var margin = style.Margin.Resolve(basis);
+
+        return new Thickness(
+            margin.Top + border.Top + padding.Top,
+            margin.Right + border.Right + padding.Right,
+            margin.Bottom + border.Bottom + padding.Bottom,
+            margin.Left + border.Left + padding.Left);
+    }
+
+    /// <summary>
+    /// Cuts the tracks a subgrid borrows to the gutters it stands on their lines. Every line it borrows
+    /// is the middle of the room the parent left at that line, and its own gutter is centred on that
+    /// middle, so a track keeps what lies between the two gutters about it and the box's own edges take
+    /// the first and the last (CSS Grid 2, subgrid gutters).
+    /// </summary>
+    /// <param name="parentGap">The room the parent left at each of the lines, as the step it laid them by.</param>
+    /// <param name="gap">The gutter the subgrid stands on those lines.</param>
+    /// <param name="room">The box the cut tracks fill, which is what the last of them ends at.</param>
+    /// <param name="before">How far that box starts behind the area the tracks were taken from.</param>
+    private static List<Track> Cut(List<Track> tracks, Double parentGap, Double gap, Double room, Double before)
+    {
+        if (tracks.Count < 2)
+        {
+            // A single borrowed track has no line of its own to stand a gutter on, so the box it is
+            // given is the whole of it.
+            if (tracks.Count == 1)
+            {
+                tracks[0].Base = Math.Max(0, room);
+                tracks[0].Growth = tracks[0].Base;
+            }
+
+            return tracks;
+        }
+
+        // Where the middle of each of the parent's gutters stands, counted from the content box's edge.
+        var lines = new List<Double>(tracks.Count - 1);
+        var at = -before;
+
+        for (var index = 0; index < tracks.Count - 1; index++)
+        {
+            at += tracks[index].Base + parentGap / 2;
+            lines.Add(at);
+            at += parentGap / 2;
+        }
+
+        var edge = 0.0;
+
+        for (var index = 0; index < tracks.Count; index++)
+        {
+            var end = index < lines.Count ? lines[index] - gap / 2 : room;
+            var size = Math.Max(0, end - edge);
+
+            tracks[index].Base = size;
+            tracks[index].Growth = size;
+            edge = end + gap;
         }
 
         return tracks;
