@@ -938,6 +938,33 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task ASubgridNamesTheLinesItBorrowsWithItsOwn()
+    {
+        // The groups written after `subgrid` name the borrowed lines in order, standing beside the
+        // names the outer grid wrote on those lines rather than replacing them (CSS Grid 2 §8.1).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:100px [a] 100px 100px;width:300px'>" +
+            "<div style='display:grid;grid-column:span 3;grid-template-columns:subgrid [b] [c]'>" +
+            "<div id='p' style='grid-column:b;grid-row:1;width:20px;height:20px'>P</div>" +
+            "<div id='q' style='grid-column:c;grid-row:2;width:20px;height:20px'>Q</div>" +
+            "<div id='r' style='grid-column:a;grid-row:3;width:20px;height:20px'>R</div>" +
+            "</div></div></body></html>");
+
+        var p = Find(view, "p");
+        var q = Find(view, "q");
+        var r = Find(view, "r");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(p.BorderBox.X, Is.EqualTo(0).Within(0.5), "the first borrowed line");
+            Assert.That(q.BorderBox.X, Is.EqualTo(100).Within(0.5), "the second, which the outer grid also named");
+            Assert.That(r.BorderBox.X, Is.EqualTo(100).Within(0.5), "and the outer name still stands there");
+        });
+    }
+
+    [Test]
     public async Task ANestedSubgridItemNamesALineTheOutermostGridWrote()
     {
         // A subgrid hands on the lines it borrowed, so a subgrid two levels down is still named from

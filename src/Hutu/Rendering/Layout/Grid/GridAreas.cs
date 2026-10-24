@@ -374,6 +374,92 @@ internal sealed class GridLineNames
 
         return false;
     }
+    /// <summary>
+    /// Gets the names written for a subgrid's lines: each group of them, in order, names the next
+    /// line it borrows, and a group written empty names nothing but still stands for its line
+    /// (CSS Grid 2 §8.1). Nothing but the groups is read, since the keyword holds no track.
+    /// </summary>
+    public static GridLineNames? Groups(String? text)
+    {
+        if (String.IsNullOrWhiteSpace(text) || !text.StartsWith("subgrid", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var lines = new List<List<String>>();
+        var at = 0;
+
+        while (at < text.Length)
+        {
+            var open = text.IndexOf('[', at);
+
+            if (open < 0)
+            {
+                break;
+            }
+
+            var close = text.IndexOf(']', open + 1);
+
+            if (close < 0)
+            {
+                return null;
+            }
+
+            var names = new List<String>();
+
+            foreach (var name in text[(open + 1)..close].Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                names.Add(name.ToLowerInvariant());
+            }
+
+            lines.Add(names);
+            at = close + 1;
+        }
+
+        return lines.Count == 0 ? null : new GridLineNames(lines);
+    }
+
+    /// <summary>
+    /// Gets the names of the lines a subgrid stands on: the parent's for each line it borrowed, with
+    /// the ones the subgrid wrote itself added to the same line, and either list carried on past the
+    /// other where one names more lines than the rest.
+    /// </summary>
+    public static GridLineNames? Merged(GridLineNames? borrowed, GridLineNames? written)
+    {
+        if (borrowed is null)
+        {
+            return written;
+        }
+
+        if (written is null)
+        {
+            return borrowed;
+        }
+
+        var lines = new List<List<String>>();
+        var deepest = Math.Max(borrowed._lines.Length, written._lines.Length);
+
+        for (var at = 0; at < deepest; at++)
+        {
+            var names = new List<String>();
+
+            if (at < borrowed._lines.Length)
+            {
+                names.AddRange(borrowed._lines[at]);
+            }
+
+            if (at < written._lines.Length)
+            {
+                names.AddRange(written._lines[at]);
+            }
+
+            lines.Add(names);
+        }
+
+        return new GridLineNames(lines);
+    }
+
+
 
     /// <summary>
     /// Gets the line the name asks for, one-based: the <paramref name="repeat"/>th line carrying it,

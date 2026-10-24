@@ -495,8 +495,14 @@ internal readonly struct GridStyle
             Math.Max(0, rowGap),
             Math.Max(0, columnGap),
             areas,
-            GridLineNames.Parse(source.Text("grid-template-columns")),
-            GridLineNames.Parse(source.Text("grid-template-rows")));
+            // The names written after `subgrid` stand one per borrowed line rather than beside a
+            // track of their own, so the axis says which reading its text wants.
+            columns.Subgrid
+                ? GridLineNames.Groups(source.Text("grid-template-columns"))
+                : GridLineNames.Parse(source.Text("grid-template-columns")),
+            rows.Subgrid
+                ? GridLineNames.Groups(source.Text("grid-template-rows"))
+                : GridLineNames.Parse(source.Text("grid-template-rows")));
     }
 
     /// <summary>
@@ -668,8 +674,9 @@ internal readonly struct GridStyle
 
         // `subgrid` is not a track list: the tracks are the parent's, and only the parent can say
         // which ones this box spans. The empty list stands in until the grid around it is laid out.
-        if (value is CssIdentifierValue identifier &&
-            String.Equals(identifier.Value, "subgrid", StringComparison.OrdinalIgnoreCase))
+        if (value is CssSubgridValue ||
+            (value is CssIdentifierValue identifier &&
+             String.Equals(identifier.Value, "subgrid", StringComparison.OrdinalIgnoreCase)))
         {
             tracks.Subgrid = true;
             return tracks;

@@ -438,8 +438,12 @@ internal sealed class GridFormattingContext
         // A line named in a subgrid is one the parent wrote, so the borrowed names stand in for the
         // axis that borrows tracks; where the list is null the grid's own names answer.
         var handed = context.Subgrid;
-        var namedColumns = grid.ColumnsSubgrid ? handed?.ColumnLines : null;
-        var namedRows = grid.RowsSubgrid ? handed?.RowLines : null;
+        var namedColumns = grid.ColumnsSubgrid
+            ? GridLineNames.Merged(handed?.ColumnLines, grid.ColumnLines)
+            : null;
+        var namedRows = grid.RowsSubgrid
+            ? GridLineNames.Merged(handed?.RowLines, grid.RowLines)
+            : null;
 
         foreach (var item in items)
         {
@@ -998,8 +1002,12 @@ internal sealed class GridFormattingContext
         // A line named in a subgrid is one the parent wrote, so the borrowed names stand in for the
         // axis that borrows tracks; where the list is null the grid's own names answer.
         var handed = context.Subgrid;
-        var namedColumns = grid.ColumnsSubgrid ? handed?.ColumnLines : null;
-        var namedRows = grid.RowsSubgrid ? handed?.RowLines : null;
+        var namedColumns = grid.ColumnsSubgrid
+            ? GridLineNames.Merged(handed?.ColumnLines, grid.ColumnLines)
+            : null;
+        var namedRows = grid.RowsSubgrid
+            ? GridLineNames.Merged(handed?.RowLines, grid.RowLines)
+            : null;
 
         foreach (var item in items)
         {
