@@ -219,6 +219,58 @@ public sealed class CustomPropertySyntaxTests
         Assert.That(ink, Is.EqualTo("ff008000"));
     }
 
+    [Test]
+    public async Task AReferenceTheSheetNeverClosedIsClosedWhereTheInputEnds()
+    {
+        // The end of the sheet closes a reference the page left open, and the declaration it was
+        // written in stands as one that was closed (CSS Syntax 3 §5.4.3, §5.4.4).
+        var ink = await Inked("p { color: red } .x { --a: green; color: var(--a", "x");
+
+        Assert.That(ink, Is.EqualTo("ff008000"));
+    }
+
+    [Test]
+    public async Task AUnclosedReferenceClosesOverAFallbackOfNothingToo()
+    {
+        var ink = await Inked("p { color: red } .x { --a: green; color: var(--a , ", "x");
+
+        Assert.That(ink, Is.EqualTo("ff008000"));
+    }
+
+    [Test]
+    public async Task AUnclosedReferenceClosesOverEveryDepthOfTheNesting()
+    {
+        var ink = await Inked("p { color: red } .x { --a: green; color: var(--a, var(--b", "x");
+
+        Assert.That(ink, Is.EqualTo("ff008000"));
+    }
+
+    [Test]
+    public async Task AUnclosedCommentIsNoPartOfANameItFollows()
+    {
+        var ink = await Inked("p { color: red } .x { --a: green; color: var(--a /* unclosed", "x");
+
+        Assert.That(ink, Is.EqualTo("ff008000"));
+    }
+
+    [Test]
+    public async Task AStringTheSheetNeverClosedIsClosedWhereTheInputEnds()
+    {
+        var ink = await Inked("p { color: red } .x { --a: green; color: var(--a, \"", "x");
+
+        Assert.That(ink, Is.EqualTo("ff008000"));
+    }
+
+    [Test]
+    public async Task AStringThatMetAWholeLineBeforeItEndedHoldsNothing()
+    {
+        // A string that ran into the line is a bad-string, which no declaration value may hold - so
+        // the declaration it was written in never was one, and the earlier colour stands.
+        var ink = await Inked("p { color: red } .x { --a: red; color: green; color: var(--a, \"\n", "x");
+
+        Assert.That(ink, Is.EqualTo("ff008000"));
+    }
+
     /// <summary>Gets the colour a page's one run of text is drawn with, as the eight hex digits.</summary>
     private static Task<String> Inked(String css, String text) =>
         Inked(css, text, "<p class='x'>" + text + "</p>");

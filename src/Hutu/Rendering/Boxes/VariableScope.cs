@@ -274,13 +274,6 @@ internal sealed class VariableScope
 
             var close = Matching(text, open + Function.Length);
 
-            if (close < 0)
-            {
-                // An unbalanced reference is a parse error rather than a name that happens to be
-                // missing, and a parse error is what the shared rule is: no value, no declaration.
-                return null;
-            }
-
             Add(ref result, text, start, open - start);
 
             var resolved = Resolve(at, text, open + Function.Length, close, depth, chain);
@@ -308,7 +301,7 @@ internal sealed class VariableScope
     {
         var body = text.AsSpan(from, to - from);
         var comma = TopLevelComma(body);
-        var name = Unescaped((comma < 0 ? body : body[..comma]).Trim().ToString());
+        var name = Named(comma < 0 ? body : body[..comma]);
         var fallback = comma < 0 ? null : body[(comma + 1)..].Trim().ToString();
 
         if (!name.StartsWith("--", StringComparison.Ordinal))
@@ -548,7 +541,11 @@ internal sealed class VariableScope
     private static Boolean IsHex(Char c) =>
         c is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F';
 
-    /// <summary>Gets the paren that closes a reference, past any nested function or quoted string.</summary>
+    /// <summary>
+    /// Gets the paren that closes a reference, past any nested function, quoted string or comment. The
+    /// end of the value is itself the close of a reference the sheet never closed, since a value is
+    /// only cut mid-group where the input it was read from ran out.
+    /// </summary>
     private static Int32 Matching(String text, Int32 from)
     {
         var depth = 1;
@@ -573,6 +570,12 @@ internal sealed class VariableScope
             {
                 quote = c;
             }
+            else if (c == '/' && at + 1 < text.Length && text[at + 1] == '*')
+            {
+                // A paren inside a comment closes nothing, and a comment the sheet never closed runs
+                // to the end of the value it was written in.
+                at = CommentEnd(text, at + 2);
+            }
             else if (c == '(')
             {
                 depth++;
@@ -583,7 +586,21 @@ internal sealed class VariableScope
             }
         }
 
-        return -1;
+        return text.Length;
+    }
+
+    /// <summary>Gets where a comment whose opening was consumed ends, at the last character of it.</summary>
+    private static Int32 CommentEnd(ReadOnlySpan<Char> text, Int32 from)
+    {
+        for (var at = from; at < text.Length; at++)
+        {
+            if (text[at] == '*' && at + 1 < text.Length && text[at + 1] == '/')
+            {
+                return at + 1;
+            }
+        }
+
+        return text.Length - 1;
     }
 
     /// <summary>Gets the first comma that is inside the reference itself rather than inside a function in it.</summary>
@@ -607,6 +624,10 @@ internal sealed class VariableScope
             {
                 quote = c;
             }
+            else if (c == '/' && at + 1 < body.Length && body[at + 1] == '*')
+            {
+                at = CommentEnd(body, at + 2);
+            }
             else if (c == '(')
             {
                 depth++;
@@ -622,6 +643,35 @@ internal sealed class VariableScope
         }
 
         return -1;
+    }
+
+    /// <summary>
+    /// Gets the name a reference asks for. The comments it is written among are nothing to it, and the
+    /// escapes it is spelled with read to the characters they stand for.
+    /// </summary>
+    private static String Named(ReadOnlySpan<Char> asked)
+    {
+        var name = asked.Trim().ToString();
+
+        if (name.IndexOf('/') < 0)
+        {
+            return Unescaped(name);
+        }
+
+        var text = new StringBuilder(name.Length);
+
+        for (var at = 0; at < name.Length; at++)
+        {
+            if (name[at] == '/' && at + 1 < name.Length && name[at + 1] == '*')
+            {
+                at = CommentEnd(name, at + 2);
+                continue;
+            }
+
+            text.Append(name[at]);
+        }
+
+        return Unescaped(text.ToString().Trim());
     }
 
     private static void Add(ref String? target, String text, Int32 from, Int32 length)
