@@ -107,7 +107,7 @@ internal static partial class BoxBuilder
 
         // Every list has now counted, so this is the first moment an item can be told what its mark says -
         // which for a nested list needs the counts of the lists around it. See ListMarkers.Finish.
-        ListMarkers.Finish(box);
+        ListMarkers.Finish(box, index.Counters);
 
         // Remembered only now that the walk has agreed to describe the document: a build that
         // abstained has proved nothing about the sheets, so the next one starts again.
@@ -463,7 +463,7 @@ internal static partial class BoxBuilder
         // Every child is here now, so this is the first point at which an item can be told which item it
         // is. The same call runs in the render-tree builder, which is what keeps the two trees marking
         // the same items the same way.
-        ListMarkers.Mark(box);
+        ListMarkers.Mark(box, index.Counters);
 
         return box;
     }
