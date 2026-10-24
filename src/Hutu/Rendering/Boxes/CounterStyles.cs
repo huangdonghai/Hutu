@@ -245,6 +245,16 @@ internal static class CounterStyles
         (4, "\u10D3"), (3, "\u10D2"), (2, "\u10D1"), (1, "\u10D0"),
     };
 
+    /// <summary>
+    /// Gets the symbols a built-in symbolic or cyclic style counts with, or null where the style is a
+    /// way of writing a number rather than a run of marks. A page that extends one of these takes its
+    /// marks from here when it states none of its own (CSS Lists 3 §2.4).
+    /// </summary>
+    internal static String[]? SymbolsOf(String type) =>
+        Symbols.TryGetValue(Aliases.TryGetValue(type, out var alias) ? alias : type, out var symbol)
+            ? [symbol]
+            : null;
+
     /// <summary>Gets whether the name asks for no marker at all.</summary>
     public static Boolean IsNone(String type) => type.Equals("none", StringComparison.OrdinalIgnoreCase);
 

@@ -660,7 +660,7 @@ internal static class GeneratedContent
         // above it created are added to rather than replaced (CSS Lists 3 §4.4.1, §4.5).
         var chain = CounterEnv.Extend(counters ?? CounterEnv.Empty, pseudo, pseudo, element);
 
-        var items = Items(pseudo, element, scope, chain);
+        var items = Items(pseudo, element, scope, chain, index.Counters);
 
         if (items is null)
         {
@@ -997,20 +997,20 @@ internal static class GeneratedContent
     /// that holds something this engine cannot draw is left out whole, because a half-read
     /// <c>content</c> would put up part of what the page asked for.
     /// </remarks>
-    private static List<Item>? Items(MatchedCascade pseudo, IElement element, VariableScope? variables, CounterEnv? counters)
+    private static List<Item>? Items(MatchedCascade pseudo, IElement element, VariableScope? variables, CounterEnv? counters, CounterStyleTable styles)
     {
         var property = variables is null
             ? pseudo.Find("content")
             : variables.ReadProperty(pseudo, "content");
 
-        return property is null ? null : Read(property.Value, element, counters);
+        return property is null ? null : Read(property.Value, element, counters, styles);
     }
 
     /// <summary>
     /// Reads a <c>content</c> value item by item, in CSS's own escaping. Null when it holds anything
     /// this engine does not draw.
     /// </summary>
-    private static List<Item>? Read(String? value, IElement element, CounterEnv? counters)
+    private static List<Item>? Read(String? value, IElement element, CounterEnv? counters, CounterStyleTable styles)
     {
         if (String.IsNullOrWhiteSpace(value))
         {
@@ -1135,7 +1135,7 @@ internal static class GeneratedContent
 
                 if (!multiple)
                 {
-                    items.Add(new Item(Spelled(chain.ValueOf(counter), spelling), null));
+                    items.Add(new Item(Spelled(chain.ValueOf(counter), spelling, styles), null));
 
                     i = close + 1;
                     continue;
@@ -1161,7 +1161,7 @@ internal static class GeneratedContent
                         joined.Append(between);
                     }
 
-                    joined.Append(Spelled(number, spelling));
+                    joined.Append(Spelled(number, spelling, styles));
                 }
 
                 items.Add(new Item(joined.ToString(), null));
@@ -1249,8 +1249,8 @@ internal static class GeneratedContent
     /// CSS Lists 3 §5.2 gives a counter style that does not reach the value the fallback rather than
     /// nothing, and a number the page asked to be shown is not the kind of thing to withhold.
     /// </remarks>
-    private static String Spelled(Int32 number, String? style) =>
-        CounterStyles.Spell(String.IsNullOrWhiteSpace(style) ? "decimal" : style!, number) ??
+    private static String Spelled(Int32 number, String? style, CounterStyleTable styles) =>
+        styles.Spell(String.IsNullOrWhiteSpace(style) ? "decimal" : style!, number) ??
         number.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>

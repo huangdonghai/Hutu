@@ -98,6 +98,20 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // this the declaration is dropped and the box is drawn at the size the page wrote rather than
         // the size it asked to scale that by. The style reads the factor from the text.
         "zoom",
+        // CSS Lists 3 §2.3's ten descriptors of `@counter-style`. AngleSharp has no grammar for any of
+        // them - they name no property of an element - so every one of them was dropped at the parse and
+        // the style the page wrote arrived with nothing in it. The table reads each value as the text it
+        // was written in, which is what a list of symbols and a system name are anyway.
+        "system",
+        "symbols",
+        "additive-symbols",
+        "negative",
+        "prefix",
+        "suffix",
+        "pad",
+        "range",
+        "fallback",
+        "speak-as",
     };
 
     /// <summary>
@@ -159,6 +173,9 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
     {
         ["color"] = ["(from ", "light-dark("],
         ["background-color"] = ["(from ", "light-dark("],
+        // CSS Lists 3 §3.3's `symbols()` function, which AngleSharp's grammar for list-style-type stops
+        // short of: dropped, a list marked with its own symbols keeps the disc the sheet did not ask for.
+        ["list-style-type"] = ["symbols("],
     };
 
     /// <summary>
@@ -226,9 +243,15 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // only that keyword is taken aside - every other value goes to AngleSharp as before, leaving its
         // own grammar and a shorthand's decomposition through it untouched. The rest keep their wide-keyword
         // reading.
+        // A property can be given keywords to take aside, tokens that make a value worth keeping whole,
+        // or both; `list-style-type` is the one that needs the second without the first, since its own
+        // grammar knows every symbol name but not the `symbols()` function.
+        var hasExtras = KeywordExtraValues.TryGetValue(propertyName, out var extra);
+        var hasSubstrings = KeywordExtraSubstrings.TryGetValue(propertyName, out var extraContains);
+
         IValueConverter converter =
-            KeywordExtraValues.TryGetValue(propertyName, out var extra)
-                ? new ExtraKeywords(info.Converter, extra, KeywordExtraSubstrings.TryGetValue(propertyName, out var extraContains) ? extraContains : null) :
+            hasExtras || hasSubstrings
+                ? new ExtraKeywords(info.Converter, extra ?? Array.Empty<String>(), hasSubstrings ? extraContains : null) :
             KeywordSubstringValues.TryGetValue(propertyName, out var contains) ? new AnyTokenPassThrough(info.Converter, contains) :
             new KeywordsFirst(info.Converter, info.Aggregator);
 

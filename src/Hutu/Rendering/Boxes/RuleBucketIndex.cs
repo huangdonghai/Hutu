@@ -324,6 +324,7 @@ internal sealed class RuleBucketIndex
     /// </summary>
     private Int32 _heldMatches;
     private Int32 _freshMatches;
+    private readonly CounterStyleTable _counters;
 
     private RuleBucketIndex(
         List<ICssStyleRule> rules,
@@ -333,7 +334,8 @@ internal sealed class RuleBucketIndex
         List<Int32> unkeyed,
         Boolean[] reaches,
         RuleOrigin[] origins,
-        PseudoRuleIndex pseudo)
+        PseudoRuleIndex pseudo,
+        CounterStyleTable counters)
     {
         _rules = rules;
         _idBuckets = idBuckets;
@@ -343,6 +345,7 @@ internal sealed class RuleBucketIndex
         _reaches = reaches;
         _origins = origins;
         _pseudo = pseudo;
+        _counters = counters;
     }
 
     /// <summary>Gets the flattened rules in the order they are matched in.</summary>
@@ -353,6 +356,12 @@ internal sealed class RuleBucketIndex
 
     /// <summary>Gets the arms written for the generated-content pseudo-elements.</summary>
     internal PseudoRuleIndex Pseudo => _pseudo;
+
+    /// <summary>
+    /// Gets the counter styles the sheets define with <c>@counter-style</c>, which is what a marker or a
+    /// <c>counter()</c> is spelled with when the name it carries is one the page wrote.
+    /// </summary>
+    internal CounterStyleTable Counters => _counters;
 
     /// <summary>Gets how many elements stood on the match of the last build since the counters were reset.</summary>
     internal Int32 HeldMatches => _heldMatches;
@@ -376,6 +385,7 @@ internal sealed class RuleBucketIndex
     {
         var collected = new List<ICssStyleRule>();
         var origins = new List<RuleOrigin>();
+        var styles = new List<ICssCounterStyleRule>();
 
         foreach (var sheet in sheets)
         {
@@ -386,6 +396,15 @@ internal sealed class RuleBucketIndex
                 // significant sort key: an author declaration beats a user-agent one whatever
                 // the latter's specificity (see MatchedCascade.Tier).
                 var origin = sheet.OwnerNode is null ? RuleOrigin.UserAgent : RuleOrigin.Author;
+
+                for (var i = 0; i < sheet.Rules.Length; i++)
+                {
+                    // The counter styles are collected from the sheet's own list rather than from the
+                    // matching styles the cascade is built from: `@counter-style` names no element, so
+                    // the walk that hands out rules to match drops it - and a style defined in a media
+                    // block that does not apply is dropped here the same way, by the group's own check.
+                    CollectCounterStyles(sheet.Rules[i], styles, device);
+                }
 
                 foreach (var rule in sheet.Rules.GetMatchingStyles(device))
                 {
@@ -440,7 +459,8 @@ internal sealed class RuleBucketIndex
         }
 
         return new RuleBucketIndex(
-            flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches, origins.ToArray(), PseudoRuleIndex.Build(flattened));
+            flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches, origins.ToArray(), PseudoRuleIndex.Build(flattened),
+            CounterStyleTable.Build(styles));
     }
 
     /// <summary>
@@ -973,6 +993,47 @@ internal sealed class RuleBucketIndex
         _ = device;
         return String.IsNullOrWhiteSpace(sheet.Media.MediaText);
     }
+
+    /// <summary>
+    /// Gathers the <c>@counter-style</c> rules of a sheet, including the ones a conditional group holds:
+    /// a style defined inside a <c>@media</c> that applies is as much a style of the document as one
+    /// written at the top (CSS Lists 3 §2.1), and the chapter lets a later rule replace an earlier one of
+    /// the same name, so the order the sheets came in is kept.
+    /// </summary>
+    private static void CollectCounterStyles(ICssRule rule, List<ICssCounterStyleRule> styles, IRenderDevice device)
+    {
+        if (rule is ICssCounterStyleRule defined)
+        {
+            styles.Add(defined);
+            return;
+        }
+
+        if (rule is not ICssGroupingRule group || !GroupApplies(rule, device))
+        {
+            return;
+        }
+
+        var subRules = group.Rules;
+
+        for (var i = 0; i < subRules.Length; i++)
+        {
+            CollectCounterStyles(subRules[i], styles, device);
+        }
+    }
+
+    /// <summary>
+    /// Gets whether a group's contents stand for this device. A media group is read when its media text
+    /// is empty - the same over-approximation <see cref="SheetApplies"/> makes for a whole sheet, since
+    /// a medium this window answers to is not asked of the rule here.
+    /// </summary>
+    private static Boolean GroupApplies(ICssRule rule, IRenderDevice device) => rule switch
+    {
+        ICssMediaRule media => media.IsValid(device),
+        ICssSupportsRule supports => supports.IsValid(device),
+        // A group of another kind - a layer, a container - is walked into rather than skipped: the
+        // chapter lets a style be defined in any of them, and nothing here decides a container query.
+        _ => true,
+    };
 
     private static void Flatten(ICssStyleRule rule, List<ICssStyleRule> flattened, List<RuleOrigin> origins, RuleOrigin origin)
     {

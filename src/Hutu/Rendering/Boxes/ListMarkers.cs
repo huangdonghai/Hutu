@@ -50,7 +50,7 @@ internal static class ListMarkers
     /// <summary>
     /// Marks the items of one container, counting them in the order they stand in it.
     /// </summary>
-    public static void Mark(Box container)
+    public static void Mark(Box container, CounterStyleTable styles)
     {
         // Every child that either is a list item or moves the list-item counter becomes a step, in tree
         // order. A step that is not an item wears no marker but still advances the count - which is how a
@@ -113,13 +113,13 @@ internal static class ListMarkers
     /// and the line has to be laid out around it.
     /// </para>
     /// </remarks>
-    public static void Finish(Box box, Int32[]? reaching = null)
+    public static void Finish(Box box, CounterStyleTable styles, Int32[]? reaching = null)
     {
         foreach (var child in box.Children)
         {
             if (!IsItem(child))
             {
-                Finish(child, reaching);
+                Finish(child, styles, reaching);
                 continue;
             }
 
@@ -129,15 +129,15 @@ internal static class ListMarkers
                 ? new[] { child.ListItemNumber ?? 1 }
                 : [.. reaching, child.ListItemNumber ?? 1];
 
-            SetMarker(child, chain);
-            Finish(child, chain);
+            SetMarker(child, chain, styles);
+            Finish(child, styles, chain);
         }
     }
 
     /// <summary>Puts one item's marker where its position asks, spelled out as its list and its content do.</summary>
-    private static void SetMarker(Box item, Int32[] chain)
+    private static void SetMarker(Box item, Int32[] chain, CounterStyleTable styles)
     {
-        var text = MarkerText(item, chain);
+        var text = MarkerText(item, chain, styles);
 
         if (text is not null && item.MarkerPosition == MarkerPosition.Inside)
         {
@@ -153,13 +153,13 @@ internal static class ListMarkers
     /// <summary>
     /// Gets what one item's marker is drawn with, or null when it has nothing to draw.
     /// </summary>
-    private static String? MarkerText(Box item, Int32[] chain)
+    private static String? MarkerText(Box item, Int32[] chain, CounterStyleTable styles)
     {
         // Lists 3 §3.2 puts the marker's own `content` first: unless it says `normal`, it decides what the
         // marker holds and the item's list style is left aside.
         if (item.MarkerContent is not { } pieces)
         {
-            return For(item.Style.ListStyleType, item.Style.ListStyleImage, chain[^1]);
+            return For(item.Style.ListStyleType, item.Style.ListStyleImage, chain[^1], styles);
         }
 
         // `content: none` asks for no marker at all, and so does a content this engine has no way of
@@ -197,7 +197,7 @@ internal static class ListMarkers
                         text.Append(join);
                     }
 
-                    text.Append(CounterStyles.Spell(style, chain[i]));
+                    text.Append(styles.Spell(style, chain[i]));
                 }
 
                 continue;
@@ -205,7 +205,7 @@ internal static class ListMarkers
 
             // The innermost count is what a lone counter() spells, and the item's own number is the inner
             // one of its list.
-            text.Append(CounterStyles.Spell(style, chain[^1]));
+            text.Append(styles.Spell(style, chain[^1]));
         }
 
         return text.ToString();
@@ -799,7 +799,7 @@ internal static class ListMarkers
     /// <summary>
     /// Gets the marker one item is drawn with, or null when the style has no marker to draw.
     /// </summary>
-    public static String? For(String type, String? image, Int32 number)
+    public static String? For(String type, String? image, Int32 number, CounterStyleTable? styles = null)
     {
         // An image marker needs the image loader, which the style has no part of; nothing is drawn for
         // one until the painting can ask for it.
@@ -808,7 +808,7 @@ internal static class ListMarkers
             return null;
         }
 
-        var spelled = CounterStyles.Spell(type, number);
+        var spelled = (styles ?? CounterStyleTable.Empty).Spell(type, number);
 
         if (spelled is null)
         {
@@ -822,7 +822,7 @@ internal static class ListMarkers
             return spelled;
         }
 
-        return spelled + CounterStyles.Suffix(type);
+        return spelled + (styles ?? CounterStyleTable.Empty).SuffixFor(type);
     }
 
     /// <summary>
