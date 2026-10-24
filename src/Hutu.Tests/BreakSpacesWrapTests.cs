@@ -137,6 +137,24 @@ public sealed class BreakSpacesWrapTests
         });
     }
 
+    [Test]
+    public async Task AWordGoesDownWithTheSpaceBehindItWhenThatSpaceWouldOverflow()
+    {
+        using var view = await Render(
+            "<style>div { white-space: break-spaces; overflow-wrap: break-word; width: 20px }</style>" +
+            "<div>XX X X</div>");
+
+        Assert.Multiple(() =>
+        {
+            // The space after "XX" ends the first line. The word after it would drag a space that no
+            // longer fits, and `break-word` gives no break between a word and the spaces behind it while
+            // the line has an opportunity of its own to end at - the one after that space.
+            Assert.That(Text(view, "XX ").BorderBox.Width, Is.EqualTo(15), "the first line ends at the space it was given");
+            Assert.That(Text(view, "X X").BorderBox.Y, Is.EqualTo(10), "and the word goes down with the space behind it");
+            Assert.That(Text(view, "X X").BorderBox.Width, Is.EqualTo(15), "which takes room on the line below");
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

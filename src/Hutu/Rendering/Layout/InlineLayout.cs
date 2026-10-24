@@ -1818,6 +1818,17 @@ internal sealed class InlineLayout
                     var movesWhole = !letters || !CutsInside(run.Source, run.Start, run.Length, item.Style);
                     var moved = false;
 
+                    // `break-spaces` is the one mode whose spaces at the end of a line take room, so a word
+                    // asked for the whole of itself is asked for the space that follows it too: where that
+                    // space would not fit, the line ends at the opportunity before the word rather than
+                    // between the word and its space - the break CSS Text 3 §5.3 does not give the mode,
+                    // and the one `overflow-wrap: break-word` allows only where the line has no earlier
+                    // opportunity to end at, which is not the case when a word is standing on it.
+                    var trailed = item.Style.WrapsInsideSpaces && !spaces && end < run.Source.Length &&
+                        TextChunker.IsBreakSpace(run.Source[end])
+                            ? WhiteSpaceWidth(item.Style, run.Source, end, 1, builder.Width, itemFlow)
+                            : 0;
+
                     if (steps && stepsWord && movesWhole && builder.HasContent)
                     {
                         Close(builder);
@@ -1860,7 +1871,7 @@ internal sealed class InlineLayout
                         // gives the break as an opportunity of its own, the line is filled to its end edge.
                         var asks = at == run.Start && !spaces && !letters &&
                             !TextChunker.IsBreakSpace(run.Source[run.Start])
-                            ? width
+                            ? width + trailed
                             : advance;
 
                         if (breaks && room.Room > 0 &&
