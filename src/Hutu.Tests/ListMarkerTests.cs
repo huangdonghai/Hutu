@@ -337,7 +337,7 @@ public sealed class ListMarkerTests
                 "a count below one is still a number, signed");
             Assert.That(ListMarkers.For("disc", "url(bullet.png)", 1), Is.Null,
                 "an image marker waits for the painting that can draw one");
-            Assert.That(ListMarkers.For("armenian", null, 1), Is.Null,
+            Assert.That(ListMarkers.For("ethiopic-numeric", null, 1), Is.Null,
                 "a style whose table we do not have claims no marker rather than a wrong one");
         });
     }
@@ -414,38 +414,94 @@ public sealed class ListMarkerTests
     {
         Assert.Multiple(() =>
         {
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 3), Is.EqualTo("三. "));
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 10), Is.EqualTo("十. "),
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 3), Is.EqualTo("三、 "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 10), Is.EqualTo("十、 "),
                 "a leading ten is read without its one");
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 11), Is.EqualTo("十一. "));
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 20), Is.EqualTo("二十. "));
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 105), Is.EqualTo("一百零五. "),
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 11), Is.EqualTo("十一、 "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 20), Is.EqualTo("二十、 "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 105), Is.EqualTo("一百零五、 "),
                 "a skipped place is read out as a zero");
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 110), Is.EqualTo("一百一十. "),
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 110), Is.EqualTo("一百一十、 "),
                 "but a place that only ends empty is not");
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 1001), Is.EqualTo("一千零一. "));
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 10000), Is.EqualTo("一万. "));
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 100000), Is.EqualTo("十万. "),
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 1001), Is.EqualTo("一千零一、 "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 10000), Is.EqualTo("一万、 "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 100000), Is.EqualTo("十万、 "),
                 "a group of ten myriad is said as ten myriad, not as one-times-ten myriad");
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 10000005), Is.EqualTo("一千万零五. "));
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 100000005), Is.EqualTo("一亿零五. "));
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 1000), Is.EqualTo("一千. "));
-            Assert.That(ListMarkers.For("traditional-chinese-informal", null, 10000), Is.EqualTo("一萬. "));
-            Assert.That(ListMarkers.For("cjk-ideographic", null, 5), Is.EqualTo("五. "),
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 10000005), Is.EqualTo("一千万零五、 "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 100000005), Is.EqualTo("一亿零五、 "));
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 1000), Is.EqualTo("一千、 "));
+            Assert.That(ListMarkers.For("traditional-chinese-informal", null, 10000), Is.EqualTo("一萬、 "));
+            Assert.That(ListMarkers.For("cjk-ideographic", null, 5), Is.EqualTo("五、 "),
                 "the legacy name counts the traditional way");
 
             // The formal reading is the anti-fraud hand: it keeps the one of its ten, because a bare
             // 十 stands ready to be made into 二十 by one added stroke.
-            Assert.That(ListMarkers.For("simplified-chinese-formal", null, 12), Is.EqualTo("壹拾贰. "));
-            Assert.That(ListMarkers.For("traditional-chinese-formal", null, 12), Is.EqualTo("壹拾貳. "));
+            Assert.That(ListMarkers.For("simplified-chinese-formal", null, 12), Is.EqualTo("壹拾贰、 "));
+            Assert.That(ListMarkers.For("traditional-chinese-formal", null, 12), Is.EqualTo("壹拾貳、 "));
 
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, -1), Is.Null,
-                "there is no reading below zero, and none is claimed");
-            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 1_000_000_000), Is.EqualTo("十亿. "),
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, -1), Is.EqualTo("负一、 "),
+                "the word for minus stands in front of the reading of the number under it");
+            Assert.That(ListMarkers.For("simplified-chinese-informal", null, 1_000_000_000), Is.EqualTo("十亿、 "),
                 "the hundred million group reads its ten the same way a plain ten does");
             Assert.That(ListMarkers.For("simplified-chinese-informal", null, int.MaxValue),
                 Does.Contain("亿").And.Contain("万"),
                 "and the largest number an item can hold still comes out of the groups it is read by");
+        });
+    }
+
+    [Test]
+    public void TheSpokenAndScriptedStylesSayTheNumbersTheCorpusWrites()
+    {
+        // Every expectation here is the marker the wpt corpus states for that number - the reference file
+        // of each pair spells the item out as literal text - so the tables are read back against the
+        // ground the tests are scored on. They are escaped rather than typed: a character copied from a
+        // table of code points is the one thing a test cannot get wrong from memory.
+        Assert.Multiple(() =>
+        {
+            Assert.That(ListMarkers.For("japanese-informal", null, 0), Is.EqualTo("\u3007\u3001 "),
+                "Japanese reads nought as the ideographic circle");
+            Assert.That(ListMarkers.For("japanese-informal", null, 100), Is.EqualTo("\u767E\u3001 "),
+                "and a hundred without its one");
+            Assert.That(ListMarkers.For("japanese-informal", null, 1005), Is.EqualTo("\u5343\u4E94\u3001 "),
+                "leaving the empty place to be felt");
+            Assert.That(ListMarkers.For("japanese-informal", null, -11), Is.EqualTo("\u30DE\u30A4\u30CA\u30B9\u5341\u4E00\u3001 "));
+            Assert.That(ListMarkers.For("japanese-formal", null, 1000), Is.EqualTo("\u58F1\u9621\u3001 "),
+                "the formal hand keeps the one, and its thousand is another character");
+            Assert.That(ListMarkers.For("korean-hangul-formal", null, 0), Is.EqualTo("\uC601, "),
+                "Korean counts in its own alphabet, and its mark is a plain comma");
+            Assert.That(ListMarkers.For("korean-hangul-formal", null, 10), Is.EqualTo("\uC77C\uC2ED, "),
+                "keeping the one of its ten");
+            Assert.That(ListMarkers.For("korean-hangul-formal", null, 1005), Is.EqualTo("\uC77C\uCC9C\uC624, "));
+            Assert.That(ListMarkers.For("korean-hangul-formal", null, -11),
+                Is.EqualTo("\uB9C8\uC774\uB108\uC2A4 \uC77C\uC2ED\uC77C, "),
+                "and says minus with a room after the word");
+            Assert.That(ListMarkers.For("korean-hanja-formal", null, 2), Is.EqualTo("\u8CB3, "));
+            Assert.That(ListMarkers.For("korean-hanja-formal", null, 1000), Is.EqualTo("\u58F9\u4EDF, "));
+            Assert.That(ListMarkers.For("korean-hanja-informal", null, 100), Is.EqualTo("\u767E, "));
+            Assert.That(ListMarkers.For("simp-chinese-informal", null, 12), Is.EqualTo("\u5341\u4E8C\u3001 "),
+                "the short name beside the long one means the same reading");
+            Assert.That(ListMarkers.For("hiragana", null, 1), Is.EqualTo("\u3042\u3001 "));
+            Assert.That(ListMarkers.For("hiragana", null, 49), Is.EqualTo("\u3042\u3042\u3001 "),
+                "past the last syllable the run turns over like an alphabet");
+            Assert.That(ListMarkers.For("hiragana", null, 1000), Is.EqualTo("\u3068\u308A\u3001 "));
+            Assert.That(ListMarkers.For("hiragana-iroha", null, 1), Is.EqualTo("\u3044\u3001 "),
+                "the poem's order starts elsewhere, and holds one syllable fewer");
+            Assert.That(ListMarkers.For("hiragana-iroha", null, 48), Is.EqualTo("\u3044\u3044\u3001 "));
+            Assert.That(ListMarkers.For("katakana", null, 45), Is.EqualTo("\u30F0\u3001 "));
+            Assert.That(ListMarkers.For("armenian", null, 1), Is.EqualTo("\u0531. "));
+            Assert.That(ListMarkers.For("armenian", null, 43), Is.EqualTo("\u053D\u0533. "),
+                "added up from the largest worth");
+            Assert.That(ListMarkers.For("lower-armenian", null, 1), Is.EqualTo("\u0561. "),
+                "the two spellings are a case apart");
+            Assert.That(ListMarkers.For("georgian", null, 8), Is.EqualTo("\u10F1. "),
+                "its eight is the letter the alphabet keeps for it");
+            Assert.That(ListMarkers.For("georgian", null, 19999), Is.EqualTo("\u10F5\u10F0\u10E8\u10DF\u10D7. "));
+            Assert.That(ListMarkers.For("georgian", null, 20000), Is.EqualTo("20000. "),
+                "and past its last symbol the count is decimal");
+            Assert.That(ListMarkers.For("khmer", null, 7), Is.EqualTo("\u17E7. "),
+                "the one name the other is an alias of");
+            Assert.That(ListMarkers.For("mongolian", null, 12), Is.EqualTo("\u1811\u1812. "),
+                "its own digits, not the Tibetan ones it was given before");
         });
     }
 
@@ -457,7 +513,7 @@ public sealed class ListMarkerTests
             "<ol class='hebrew' start='14'><li>one</li><li>two</li></ol>" +
             "<ol class='cn'><li>one</li><li>two</li></ol>");
 
-        Assert.That(markers, Is.EqualTo(new[] { "יד. ", "טו. ", "一. ", "二. " }),
+        Assert.That(markers, Is.EqualTo(new[] { "יד. ", "טו. ", "一\u3001 ", "二\u3001 " }),
             "the transition the showcase page was built to show: fourteen, then fifteen written the way it must be");
     }
 
@@ -471,13 +527,13 @@ public sealed class ListMarkerTests
             Assert.That(ListMarkers.For("arabic-indic", null, 25), Is.EqualTo("٢٥. "));
             Assert.That(ListMarkers.For("thai", null, 7), Is.EqualTo("๗. "));
 
-            Assert.That(ListMarkers.For("cjk-earthly-branch", null, 1), Is.EqualTo("子. "));
-            Assert.That(ListMarkers.For("cjk-earthly-branch", null, 12), Is.EqualTo("亥. "),
+            Assert.That(ListMarkers.For("cjk-earthly-branch", null, 1), Is.EqualTo("子\u3001 "));
+            Assert.That(ListMarkers.For("cjk-earthly-branch", null, 12), Is.EqualTo("亥\u3001 "),
                 "twelve branches, and the twelfth item is the last of them");
-            Assert.That(ListMarkers.For("cjk-earthly-branch", null, 13), Is.EqualTo("13. "),
+            Assert.That(ListMarkers.For("cjk-earthly-branch", null, 13), Is.EqualTo("13\u3001 "),
                 "beyond the list the count falls back to plain decimal, which is what the spec asks for");
-            Assert.That(ListMarkers.For("cjk-heavenly-stem", null, 10), Is.EqualTo("癸. "));
-            Assert.That(ListMarkers.For("cjk-heavenly-stem", null, 11), Is.EqualTo("11. "),
+            Assert.That(ListMarkers.For("cjk-heavenly-stem", null, 10), Is.EqualTo("癸\u3001 "));
+            Assert.That(ListMarkers.For("cjk-heavenly-stem", null, 11), Is.EqualTo("11\u3001 "),
                 "and the stems run out at ten");
         });
     }
@@ -512,10 +568,10 @@ public sealed class ListMarkerTests
     [Test]
     public async Task AStyleWithNoTableHereMarksNothing()
     {
-        // The two kana lists and the additive Caucasian and Ethiopian styles need tables that have to be
-        // taken from the spec rather than written out of memory, so they are absent on purpose: a list
-        // without its marks is a gap, and a wrong mark is a lie.
-        var markers = await Markers("", "<ol style='list-style-type:hiragana-iroha'><li>one</li></ol>");
+        // The Ethiopian numeric style needs an algorithm of its own that has to be taken from the spec
+        // rather than written out of memory, so it is absent on purpose: a list without its marks is a
+        // gap, and a wrong mark is a lie.
+        var markers = await Markers("", "<ol style='list-style-type:ethiopic-numeric'><li>one</li></ol>");
 
         Assert.That(markers, Is.EqualTo(new String?[] { null }),
             "a style with no table here spells no marker");

@@ -54,7 +54,7 @@ internal static class CounterStyles
         ["kannada"] = From('೦'),
         ["lao"] = From('໐'),
         ["malayalam"] = From('൦'),
-        ["mongolian"] = From('༠'),
+        ["mongolian"] = From((Char)0x1810),
         ["myanmar"] = From('၀'),
         ["oriya"] = From('୦'),
         ["persian"] = From('۰'),
@@ -113,36 +113,165 @@ internal static class CounterStyles
     };
 
     /// <summary>
-    /// The Chinese counting styles, which spell a number out as it is read: the digits, a unit word on
-    /// every place, and <c>零</c> where a place was skipped. Nothing here needed a table copied from
-    /// anywhere - the characters are the ones the language writes, and the shape of a number follows
-    /// the shape of the word for it.
+    /// The Chinese, Japanese and Korean counting styles, which spell a number out as it is read: the
+    /// digits, a unit word on every place, and <c>零</c> where a place was skipped. Nothing here needed
+    /// a table copied from anywhere - the characters are the ones the language writes, and the shape of a
+    /// number follows the shape of the word for it.
     /// </summary>
+    /// <param name="Digits">The nine digits, one through nine, in the reading the style is written in.</param>
+    /// <param name="Zero">The word for nought, which stands alone on the item numbered nil.</param>
+    /// <param name="Negative">
+    /// The word said before a number below nought. Korean says it with a room after it, and Chinese and
+    /// Japanese run it into the number.
+    /// </param>
     /// <param name="Formal">
     /// Whether the style is the anti-fraud formal reading (the <c>大写</c>), which keeps the one of
     /// <c>拾</c> - <c>一十</c> rather than the plain reading's <c>十</c> - because a bare <c>十</c> is a
     /// character away from a forged number.
     /// </param>
-    private sealed record Counting(String Digits, String Zero, String Ten, String Hundred, String Thousand, String Myriad, String HundredMyriad, Boolean Formal);
+    /// <param name="Short">
+    /// Whether the style also drops the one before its <c>百</c> and <c>千</c>: <c>百</c> is how Japanese
+    /// and the Korean hanja readings say a hundred, where Chinese says <c>一百</c>.
+    /// </param>
+    /// <param name="WritesZero">
+    /// Whether a place left empty is read out as a nought. Chinese does - <c>一千零五</c> is not the number
+    /// <c>一千五</c> suggests - and Japanese and Korean leave the hole to be felt.
+    /// </param>
+    private sealed record Counting(
+        String Digits,
+        String Zero,
+        String Negative,
+        String Ten,
+        String Hundred,
+        String Thousand,
+        String Myriad,
+        String HundredMyriad,
+        Boolean Formal,
+        Boolean Short,
+        Boolean WritesZero);
 
     private static readonly Dictionary<String, Counting> CountingStyles = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["simplified-chinese-informal"] = new("一二三四五六七八九", "零", "十", "百", "千", "万", "亿", false),
-        ["simplified-chinese-formal"] = new("壹贰叁肆伍陆柒捌玖", "零", "拾", "佰", "仟", "万", "亿", true),
-        ["traditional-chinese-informal"] = new("一二三四五六七八九", "零", "十", "百", "千", "萬", "億", false),
-        ["traditional-chinese-formal"] = new("壹貳參肆伍陸柒捌玖", "零", "拾", "佰", "仟", "萬", "億", true),
+        ["simplified-chinese-informal"] = new("一二三四五六七八九", "零", "负", "十", "百", "千", "万", "亿", false, false, true),
+        ["simplified-chinese-formal"] = new("壹贰叁肆伍陆柒捌玖", "零", "负", "拾", "佰", "仟", "万", "亿", true, false, true),
+        ["traditional-chinese-informal"] = new("一二三四五六七八九", "零", "負", "十", "百", "千", "萬", "億", false, false, true),
+        ["traditional-chinese-formal"] = new("壹貳參肆伍陸柒捌玖", "零", "負", "拾", "佰", "仟", "萬", "億", true, false, true),
 
         // What the older name on the block means, spelled the traditional way.
-        ["cjk-ideographic"] = new("一二三四五六七八九", "零", "十", "百", "千", "萬", "億", false),
+        ["cjk-ideographic"] = new("一二三四五六七八九", "零", "負", "十", "百", "千", "萬", "億", false, false, true),
+
+        // The two Japanese readings. The formal one keeps the one of its hundreds and writes the
+        // anti-fraud digits for the first three places only - 肆 onward are the plain characters, which
+        // is what the corpus shows a browser spelling.
+        ["japanese-informal"] = new("一二三四五六七八九", "〇", "マイナス", "十", "百", "千", "万", "億", false, true, false),
+        ["japanese-formal"] = new("壱弐参肆伍陸柒捌玖", "零", "マイナス", "拾", "百", "阡", "萬", "億", true, false, false),
+
+        // The Korean readings: the hangul one spelled out in the alphabet, the two hanja ones in the
+        // characters, the formal of those keeping 壹貳參 where the plain reading drops the one.
+        ["korean-hangul-formal"] = new("일이삼사오육칠팔구", "영", "마이너스 ", "십", "백", "천", "만", "억", true, false, false),
+        ["korean-hanja-informal"] = new("一二三四五六七八九", "零", "마이너스 ", "十", "百", "千", "万", "億", false, true, false),
+        ["korean-hanja-formal"] = new("壹貳參四五六七八九", "零", "마이너스 ", "拾", "百", "仟", "萬", "億", true, false, false),
+    };
+
+    /// <summary>
+    /// The short names the same styles answer to (CSS Lists 3 §3.1.1 gives each an "A.K.A." beside the
+    /// name of the language it is read in), and the two scripts that are one another's other name.
+    /// </summary>
+    private static readonly Dictionary<String, String> Aliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["simp-chinese-informal"] = "simplified-chinese-informal",
+        ["simp-chinese-formal"] = "simplified-chinese-formal",
+        ["trad-chinese-informal"] = "traditional-chinese-informal",
+        ["trad-chinese-formal"] = "traditional-chinese-formal",
+        ["khmer"] = "cambodian",
+        ["lower-georgian"] = "georgian",
+        ["simp-chinese"] = "simplified-chinese-informal",
+        ["trad-chinese"] = "traditional-chinese-informal",
+    };
+
+    /// <summary>
+    /// The symbolic lists that are a run of characters rather than an arithmetic: the two kana orders,
+    /// each holding its own forty-eight syllables, and the two <c>iroha</c> runs of forty-seven, which
+    /// count the same letters in the order of the old poem. Past the last symbol the count keeps the
+    /// first over, the way every symbolic system does (CSS Counter Styles 3 §3.2).
+    /// </summary>
+    private static readonly Dictionary<String, String> Symbolic = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["hiragana"] = Kana(
+            0x3042, 0x3044, 0x3046, 0x3048, 0x304A, 0x304B, 0x304D, 0x304F, 0x3051, 0x3053,
+            0x3055, 0x3057, 0x3059, 0x305B, 0x305D, 0x305F, 0x3061, 0x3064, 0x3066, 0x3068,
+            0x306A, 0x306B, 0x306C, 0x306D, 0x306E, 0x306F, 0x3072, 0x3075, 0x3078, 0x307B,
+            0x307E, 0x307F, 0x3080, 0x3081, 0x3082, 0x3084, 0x3086, 0x3088, 0x3089, 0x308A,
+            0x308B, 0x308C, 0x308D, 0x308F, 0x3090, 0x3091, 0x3092, 0x3093),
+        ["katakana"] = Kana(
+            0x30A2, 0x30A4, 0x30A6, 0x30A8, 0x30AA, 0x30AB, 0x30AD, 0x30AF, 0x30B1, 0x30B3,
+            0x30B5, 0x30B7, 0x30B9, 0x30BB, 0x30BD, 0x30BF, 0x30C1, 0x30C4, 0x30C6, 0x30C8,
+            0x30CA, 0x30CB, 0x30CC, 0x30CD, 0x30CE, 0x30CF, 0x30D2, 0x30D5, 0x30D8, 0x30DB,
+            0x30DE, 0x30DF, 0x30E0, 0x30E1, 0x30E2, 0x30E4, 0x30E6, 0x30E8, 0x30E9, 0x30EA,
+            0x30EB, 0x30EC, 0x30ED, 0x30EF, 0x30F0, 0x30F1, 0x30F2, 0x30F3),
+        ["hiragana-iroha"] = Kana(
+            0x3044, 0x308D, 0x306F, 0x306B, 0x307B, 0x3078, 0x3068, 0x3061, 0x308A, 0x306C,
+            0x308B, 0x3092, 0x308F, 0x304B, 0x3088, 0x305F, 0x308C, 0x305D, 0x3064, 0x306D,
+            0x306A, 0x3089, 0x3080, 0x3046, 0x3090, 0x306E, 0x304A, 0x304F, 0x3084, 0x307E,
+            0x3051, 0x3075, 0x3053, 0x3048, 0x3066, 0x3042, 0x3055, 0x304D, 0x3086, 0x3081,
+            0x307F, 0x3057, 0x3091, 0x3072, 0x3082, 0x305B, 0x3059),
+        ["katakana-iroha"] = Kana(
+            0x30A4, 0x30ED, 0x30CF, 0x30CB, 0x30DB, 0x30D8, 0x30C8, 0x30C1, 0x30EA, 0x30CC,
+            0x30EB, 0x30F2, 0x30EF, 0x30AB, 0x30E8, 0x30BF, 0x30EC, 0x30BD, 0x30C4, 0x30CD,
+            0x30CA, 0x30E9, 0x30E0, 0x30A6, 0x30F0, 0x30CE, 0x30AA, 0x30AF, 0x30E4, 0x30DE,
+            0x30B1, 0x30D5, 0x30B3, 0x30A8, 0x30C6, 0x30A2, 0x30B5, 0x30AD, 0x30E6, 0x30E1,
+            0x30DF, 0x30B7, 0x30F1, 0x30D2, 0x30E2, 0x30BB, 0x30B9),
+    };
+
+    /// <summary>
+    /// The Armenian and Georgian additive systems: every place worth once, added up from the largest.
+    /// The two armenian spellings are the same letters a case apart, and Georgian's <c>8</c>, <c>60</c>,
+    /// <c>7000</c> and <c>8000</c> are the archaic letters the alphabet keeps for the purpose - which is
+    /// why the runs are not consecutive.
+    /// </summary>
+    private static readonly (Int32 Value, String Numeral)[] ArmenianNumerals = Additive(
+        0x0531, 0x053A, 0x0543, 0x054C);
+
+    private static readonly (Int32 Value, String Numeral)[] GeorgianNumerals =
+    {
+        (10000, "\u10F5"),
+        (9000, "\u10F0"), (8000, "\u10F3"), (7000, "\u10F4"), (6000, "\u10EE"), (5000, "\u10ED"),
+        (4000, "\u10EC"), (3000, "\u10EB"), (2000, "\u10EA"), (1000, "\u10E9"),
+        (900, "\u10E8"), (800, "\u10E7"), (700, "\u10E6"), (600, "\u10E5"), (500, "\u10E4"),
+        (400, "\u10E3"), (300, "\u10E2"), (200, "\u10E1"), (100, "\u10E0"),
+        (90, "\u10DF"), (80, "\u10DE"), (70, "\u10DD"), (60, "\u10F2"), (50, "\u10DC"),
+        (40, "\u10DB"), (30, "\u10DA"), (20, "\u10D9"), (10, "\u10D8"),
+        (9, "\u10D7"), (8, "\u10F1"), (7, "\u10D6"), (6, "\u10D5"), (5, "\u10D4"),
+        (4, "\u10D3"), (3, "\u10D2"), (2, "\u10D1"), (1, "\u10D0"),
     };
 
     /// <summary>Gets whether the name asks for no marker at all.</summary>
     public static Boolean IsNone(String type) => type.Equals("none", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Gets the text a count is followed by: a period and a room for the counts that read as numbers,
+    /// the comma the Korean readings and the full stop the Chinese and Japanese ones are written with,
+    /// and a room alone for a symbol. <c>i.</c> and <c>14.</c> are counts, a bullet is not, and a string
+    /// is whatever its author wrote, punctuation included.
+    /// </summary>
+    public static String Suffix(String type)
+    {
+        if (IsString(type) || !IsCounted(type))
+        {
+            return " ";
+        }
+
+        return SpokenStyle(type) switch
+        {
+            null => ". ",
+            var spoken when spoken.StartsWith("korean", StringComparison.Ordinal) => ", ",
+            _ => "、 ",
+        };
+    }
+
+    /// <summary>
     /// Gets whether the marker is a count rather than a fixed symbol, which is what earns the period
-    /// after it: <c>i.</c> and <c>14.</c> are counts, a bullet is not, and a string is whatever its
-    /// author wrote, punctuation included.
+    /// after it.
     /// </summary>
     public static Boolean IsCounted(String type) =>
         !IsString(type) && !Symbols.ContainsKey(type) && !IsNone(type);
@@ -165,7 +294,10 @@ internal static class CounterStyles
             return Unquote(type);
         }
 
-        if (Symbols.TryGetValue(type, out var symbol))
+        // The chapter gives several of the styles a second, shorter name; both are the same list.
+        var name = Aliases.TryGetValue(type, out var alias) ? alias : type;
+
+        if (Symbols.TryGetValue(name, out var symbol))
         {
             return symbol;
         }
@@ -190,9 +322,36 @@ internal static class CounterStyles
             return Roman(number, true);
         }
 
-        if (CountingStyles.TryGetValue(type, out var counting))
+        if (CountingStyles.TryGetValue(name, out var counting))
         {
             return Counted(counting, number);
+        }
+
+        if (Symbolic.TryGetValue(name, out var run))
+        {
+            return number >= 1 ? Spelled(number, run) : null;
+        }
+
+        if (name.Equals("armenian", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("upper-armenian", StringComparison.OrdinalIgnoreCase))
+        {
+            return Added(number, ArmenianNumerals, 9999);
+        }
+
+        if (name.Equals("lower-armenian", StringComparison.OrdinalIgnoreCase))
+        {
+            return Added(number, ArmenianNumerals, 9999, lower: true);
+        }
+
+        if (name.Equals("georgian", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("lower-georgian", StringComparison.OrdinalIgnoreCase))
+        {
+            return Added(number, GeorgianNumerals, 19999);
+        }
+
+        if (name.Equals("upper-georgian", StringComparison.OrdinalIgnoreCase))
+        {
+            return Added(number, GeorgianNumerals, 19999, mtavruli: true);
         }
 
         if (type.Equals("hebrew", StringComparison.OrdinalIgnoreCase))
@@ -202,24 +361,24 @@ internal static class CounterStyles
             return number is >= 1 and <= 999 ? Additive(number, HebrewNumerals) : Decimal(number);
         }
 
-        if (Alphabetic.TryGetValue(type, out var alphabet))
+        if (Alphabetic.TryGetValue(name, out var alphabet))
         {
             return Spelled(number, alphabet);
         }
 
-        if (Numerals.TryGetValue(type, out var numerals))
+        if (Numerals.TryGetValue(name, out var numerals))
         {
             return Positional(number, numerals);
         }
 
-        if (FixedLists.TryGetValue(type, out var list) && number >= 1 && number <= list.Length)
+        if (FixedLists.TryGetValue(name, out var list) && number >= 1 && number <= list.Length)
         {
             return list[number - 1].ToString();
         }
 
         // Past the end of a fixed run the count carries on in decimal; a name nothing answers for here
         // spells nothing.
-        return FixedLists.ContainsKey(type)
+        return FixedLists.ContainsKey(name)
             ? number.ToString(CultureInfo.InvariantCulture)
             : null;
     }
@@ -227,6 +386,81 @@ internal static class CounterStyles
     /// <summary>Gets the ten numerals of a script, from the code point of its zero.</summary>
     private static String From(Char zero) =>
         new([.. Enumerable.Range(0, 10).Select(offset => (Char)(zero + offset))]);
+
+    /// <summary>Gets a run of symbols from their code points, in the order the count walks them in.</summary>
+    private static String Kana(params Int32[] codePoints) =>
+        string.Concat(codePoints.Select(char.ConvertFromUtf32));
+
+    /// <summary>
+    /// Builds an additive table out of the four letters a script writes its first 1, 10, 100 and 1000
+    /// with: each series runs nine letters up from its own start, each worth ten of the one below.
+    /// </summary>
+    private static (Int32 Value, String Numeral)[] Additive(Int32 ones, Int32 tens, Int32 hundreds, Int32 thousands)
+    {
+        var worth = new List<(Int32 Value, String Numeral)>(36);
+
+        foreach (var (start, size) in new[] { (ones, 1), (tens, 10), (hundreds, 100), (thousands, 1000) })
+        {
+            for (var digit = 1; digit <= 9; digit++)
+            {
+                worth.Add((digit * size, char.ConvertFromUtf32(start + digit - 1)));
+            }
+        }
+
+        worth.Sort(static (left, right) => right.Value.CompareTo(left.Value));
+        return [.. worth];
+    }
+
+    /// <summary>
+    /// Adds a number up from one of the additive systems, or leaves it in decimal where the system has
+    /// no shape for it - below its first symbol, or past the last worth it holds.
+    /// </summary>
+    private static String Added(Int32 number, (Int32 Value, String Numeral)[] worth, Int32 largest, Boolean lower = false, Boolean mtavruli = false)
+    {
+        if (number < 1 || number > largest)
+        {
+            return Decimal(number);
+        }
+
+        var spelled = Additive(number, worth);
+
+        if (!lower && !mtavruli)
+        {
+            return spelled;
+        }
+
+        var shift = lower ? 0x30 : 0xC0;
+        var turned = new StringBuilder(spelled.Length);
+
+        foreach (var letter in spelled)
+        {
+            turned.Append((Char)(letter + shift));
+        }
+
+        return turned.ToString();
+    }
+
+    /// <summary>
+    /// Gets the name of the spoken style a marker asks for, or null where it is a count of digits. This
+    /// is what decides whether the count is followed by a period, a <c>、</c> or a <c>,</c>.
+    /// </summary>
+    private static String? SpokenStyle(String type)
+    {
+        var name = Aliases.TryGetValue(type, out var alias) ? alias : type;
+
+        if (CountingStyles.ContainsKey(name))
+        {
+            return name;
+        }
+
+        return name.Equals("cjk-decimal", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("cjk-earthly-branch", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("cjk-heavenly-stem", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("cjk-ideographic", StringComparison.OrdinalIgnoreCase) ||
+            Symbolic.ContainsKey(name)
+            ? name
+            : null;
+    }
 
     /// <summary>Gets whether the value a page wrote is a string rather than the name of a system.</summary>
     private static Boolean IsQuoted(String type) =>
@@ -301,16 +535,16 @@ internal static class CounterStyles
     /// </remarks>
     private static String? Counted(Counting style, Int32 number)
     {
-        if (number < 0)
-        {
-            // Nothing is read below zero in a spoken style: there is no word for it that an author of
-            // this list meant, so no marker is claimed rather than a borrowed decimal one.
-            return null;
-        }
-
         if (number == 0)
         {
             return style.Zero;
+        }
+
+        if (number < 0)
+        {
+            // The word for "minus" is part of the reading, and the number under it is spelled the same
+            // way it is above: 负十一 is what the page said, and a borrowed hyphen would not be.
+            return style.Negative + Counted(style, -number);
         }
 
         var result = new StringBuilder();
@@ -326,12 +560,14 @@ internal static class CounterStyles
             var group = rest / size;
             rest %= size;
 
-            result.Append(UnderTenThousand(style, group, atStart: result.Length == 0));
+            // A group is read out whole - 一十万 is not shortened to 万 - so it is not the start of the
+            // number however empty the text in front of it still is.
+            result.Append(UnderTenThousand(style, group, atStart: result.Length == 0, grouped: true));
             result.Append(unit);
 
             // A group that begins below its own thousand leaves a hole that is read out as a zero -
             // the one in <c>一亿零五</c>, which is not the same number as <c>一亿五</c> would suggest.
-            if (rest > 0 && rest < size / 10)
+            if (style.WritesZero && rest > 0 && rest < size / 10)
             {
                 result.Append(style.Zero);
             }
@@ -347,7 +583,7 @@ internal static class CounterStyles
     /// unit and skipping the one of a leading ten - <c>十二</c> is how twelve is said, while the formal
     /// hand writes it out as <c>壹拾贰</c> so that nothing stands ready to be added in front of it.
     /// </summary>
-    private static String UnderTenThousand(Counting style, Int32 number, Boolean atStart)
+    private static String UnderTenThousand(Counting style, Int32 number, Boolean atStart, Boolean grouped = false)
     {
         if (number == 0)
         {
@@ -361,23 +597,35 @@ internal static class CounterStyles
         var tens = number / 10 % 10;
         var units = number % 10;
 
+        // Japanese and the Korean hanja readings say a bare 百 and a bare 千 where Chinese says 一百 and
+        // 一千; both say it only at the front of the number, and the formal readings say it nowhere.
+        var shortHere = style.Short && !style.Formal && atStart && !grouped;
+
         if (thousands > 0)
         {
-            result.Append(style.Digits[thousands - 1]);
+            if (!(shortHere && thousands == 1))
+            {
+                result.Append(style.Digits[thousands - 1]);
+            }
+
             result.Append(style.Thousand);
         }
 
         if (hundreds > 0)
         {
-            if (result.Length > 0 && tens == 0 && units > 0)
+            if (result.Length > 0 && tens == 0 && units > 0 && style.WritesZero)
             {
                 result.Append(style.Zero);
             }
 
-            result.Append(style.Digits[hundreds - 1]);
+            if (!(shortHere && hundreds == 1 && result.Length == 0))
+            {
+                result.Append(style.Digits[hundreds - 1]);
+            }
+
             result.Append(style.Hundred);
         }
-        else if (thousands > 0 && (tens > 0 || units > 0))
+        else if (thousands > 0 && (tens > 0 || units > 0) && style.WritesZero)
         {
             result.Append(style.Zero);
         }
@@ -393,9 +641,10 @@ internal static class CounterStyles
 
             result.Append(style.Ten);
         }
-        else if ((thousands > 0 || hundreds > 0) && units > 0 && !(tens == 0 && hundreds == 0))
+        else if ((thousands > 0 || hundreds > 0) && units > 0 && !(tens == 0 && hundreds == 0) && style.WritesZero)
         {
-            // A place with nothing in it, with something written before it and something after.
+            // A place with nothing in it, with something written before it and something after. One nought is read
+            // across a run of empty places, not one each.
             result.Append(style.Zero);
         }
 

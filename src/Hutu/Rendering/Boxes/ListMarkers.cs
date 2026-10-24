@@ -822,7 +822,7 @@ internal static class ListMarkers
             return spelled;
         }
 
-        return CounterStyles.IsCounted(type) ? spelled + ". " : spelled + " ";
+        return spelled + CounterStyles.Suffix(type);
     }
 
     /// <summary>
