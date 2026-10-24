@@ -93,6 +93,30 @@ internal readonly struct FlexStyle
 
     public FlexAlignment AlignContent { get; }
 
+    /// <summary>
+    /// Gets the flex container grown by the zoom its box carries: the two gaps are the room the page
+    /// asked to leave between boxes and the basis is a length like any other, so a scale reaches them
+    /// all. The style holds the declaration's own numbers, so one flex style serves a container drawn at
+    /// two and the same container drawn at one.
+    /// </summary>
+    internal FlexStyle Scaled(Double factor) =>
+        factor == 1
+            ? this
+            : new FlexStyle(
+                Direction,
+                Wrap,
+                JustifyContent,
+                AlignItems,
+                AlignContent,
+                RowGap * factor,
+                ColumnGap * factor,
+                Grow,
+                Shrink,
+                Basis.Scaled(factor),
+                BasisIsContent,
+                Order,
+                AlignSelf);
+
     public Double RowGap { get; }
 
     public Double ColumnGap { get; }

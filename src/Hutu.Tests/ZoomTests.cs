@@ -164,6 +164,8 @@ public sealed class ZoomTests
             "<div style='display:table-row'>" +
             "<div id='c' style='display:table-cell;width:50px'>x</div>" +
             "<div style='display:table-cell;width:50px'>y</div></div></div>" +
+            "<div id='f' style='display:flex;flex-wrap:wrap;column-gap:10px;row-gap:3px;zoom:2'>" +
+            "<div style='width:20px;height:10px'></div><div style='width:20px;height:10px'></div></div>" +
             "</body></html>");
 
         var columns = Find(view, "a").Source.Style;
@@ -175,6 +177,10 @@ public sealed class ZoomTests
             Assert.That(columns.Multi.RowGap, Is.EqualTo(8).Within(0.5));
             Assert.That(table.Table.HorizontalSpacing, Is.EqualTo(20).Within(0.5), "and so does a table's spacing");
             Assert.That(table.Table.VerticalSpacing, Is.EqualTo(12).Within(0.5));
+
+            var flex = Find(view, "f").Source.Style.Flex;
+            Assert.That(flex.ColumnGap, Is.EqualTo(20).Within(0.5), "and the room a flex row leaves between items");
+            Assert.That(flex.RowGap, Is.EqualTo(6).Within(0.5));
         });
     }
 

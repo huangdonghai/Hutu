@@ -4520,7 +4520,8 @@ internal readonly struct ComputedStyle
     /// find no declaration.
     /// </remarks>
     public FlexStyle Flex =>
-        _values.Fused is null ? _values.Flex ??= FlexStyle.Read(this) : _values.Flex ?? FlexStyle.Initial;
+        (_values.Fused is null ? _values.Flex ??= FlexStyle.Read(this) : _values.Flex ?? FlexStyle.Initial)
+            .Scaled(_zoom);
 
     /// <summary>
     /// Gets the grid longhands: the track lists, the automatic track sizes, the automatic flow, the
