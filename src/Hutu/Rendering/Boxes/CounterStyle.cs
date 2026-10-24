@@ -67,7 +67,9 @@ internal sealed record CounterStyle
     /// <summary>Gets whether the descriptors hold together as the system they name asks.</summary>
     internal Boolean IsValid => !Broken && System switch
     {
-        "numeric" => Base is >= 2 && Count >= 2,
+        // A numeric system without a stated base counts in as many digits as it was given marks, so a
+        // `symbols(numeric '0' '1' '2')` list is a base-three one (§3.2.3, §3.3).
+        "numeric" => Count >= 2 && Base is null or >= 2,
         "alphabetic" => Count >= 1,
         "cyclic" => Count >= 1,
         "symbolic" => Count >= 1,
@@ -154,9 +156,16 @@ internal sealed class CounterStyleTable
             return CounterStyles.Suffix(type);
         }
 
-        var pieces = Gather(style, 0);
+        if (!style.IsValid)
+        {
+            // A style that does not hold together is not used at all, and that reaches its suffix too:
+            // what counts is the fallback's own mark (§3.1, and the corpus's `system: *-invalid` pair).
+            return style.Fallback is { Length: > 0 } name && _styles.TryGetValue(name, out var other)
+                ? SuffixFor(name)
+                : CounterStyles.Suffix(style.Fallback ?? "decimal");
+        }
 
-        return pieces.Suffix ?? ". ";
+        return Gather(style, 0).Suffix ?? ". ";
     }
 
     /// <summary>

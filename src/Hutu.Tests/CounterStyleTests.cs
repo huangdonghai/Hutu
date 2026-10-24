@@ -152,6 +152,18 @@ public sealed class CounterStyleTests
             "§3.2.3: an alphabet of two runs a, b, aa, ab - and a list the page wrote carries no period");
     }
 
+    [Test]
+    public async Task AStyleThatDoesNotHoldTogetherLosesItsOwnSuffixToo()
+    {
+        // §3.1: an invalid style is not used at all, so the `:` it asked for goes with it and the
+        // fallback's period stands.
+        var markers = await Markers(
+            "@counter-style a { system: cyclic; suffix: ':' } ol { list-style-type: a }",
+            "<ol start='4'><li>one<li>two</ol>");
+
+        Assert.That(markers, Is.EqualTo(new[] { "4. ", "5. " }));
+    }
+
     /// <summary>
     /// The markers of a document's list items, read off the box tree: the styles are what the sheets
     /// wrote, so the page has to be built the way the engine builds it.
