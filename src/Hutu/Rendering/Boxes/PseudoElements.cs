@@ -612,13 +612,6 @@ internal static class GeneratedContent
             return;
         }
 
-        var items = Items(pseudo, element);
-
-        if (items is null)
-        {
-            return;
-        }
-
         // §4: a tree-abiding pseudo-element inherits what its originating element inherited, and
         // takes the initial value of everything else - which is what `Next` hands over, since it is
         // the same hand an element's own children are dealt by.
@@ -628,6 +621,13 @@ internal static class GeneratedContent
         // than being read through the element's own. `Open` hands the parent back untouched when the
         // arm declares and names nothing, which is every arm but the page that leans on variables.
         var scope = VariableScope.Open(pseudo, variables, parser);
+
+        var items = Items(pseudo, element, scope);
+
+        if (items is null)
+        {
+            return;
+        }
 
         var pseudoStyle = FusedStyleFactory.Build(
             element,
@@ -957,9 +957,11 @@ internal static class GeneratedContent
     /// put words on the page the sheet never wrote. A value that holds something this engine cannot draw is
     /// left out whole, because a half-read <c>content</c> would put up part of what the page asked for.
     /// </remarks>
-    private static List<Item>? Items(MatchedCascade pseudo, IElement element)
+    private static List<Item>? Items(MatchedCascade pseudo, IElement element, VariableScope? variables)
     {
-        var property = pseudo.Find("content");
+        var property = variables is null
+            ? pseudo.Find("content")
+            : variables.ReadProperty(pseudo, "content");
 
         return property is null ? null : Read(property.Value, element);
     }

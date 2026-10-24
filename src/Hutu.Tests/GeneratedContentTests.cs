@@ -227,6 +227,18 @@ public sealed class GeneratedContentTests
         });
     }
 
+    [Test]
+    public async Task AGeneratedStringMadeOfVariablesIsPainted()
+    {
+        // The arm's own content is read through the scope the element's variables are resolved in, so
+        // a generated string the page wrote as references is painted as the words they stand for.
+        using var view = await Build(
+            ":root { --a: 'hello'; --b: 'there' } #x::before { content: var(--a) ' ' var(--b) }",
+            "<p id=x></p>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("hello there"));
+    }
+
     private static async Task<HutuViewInternal> Build(String style, String body)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
