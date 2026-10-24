@@ -826,7 +826,7 @@ internal static class FusedStyleFactory
             CombinesUpright = combine,
             Color = color,
             BackgroundColor = ComputedStyle.ResolveBackgroundColorFused(
-                element, find("background-color"), parent.Background),
+                element, find("background-color"), parent.Background, DarkScheme(find)),
             Backgrounds = ComputedStyle.ResolveBackgroundsFused(find, element, dimensions, size),
 
             // The border image paints the border area and takes no room of its own, so it is read here
@@ -978,6 +978,14 @@ internal static class FusedStyleFactory
     /// no scale of their own, and a keyword the cascade left standing for one of those is read as none
     /// rather than as a size (CSS Viewport, the zoom property).
     /// </summary>
+    /// <summary>
+    /// Gets whether the element's own <c>color-scheme</c> asks for the dark one, which is the branch a
+    /// <c>light-dark()</c> in its colours picks (CSS Color Adjust 1 §2).
+    /// </summary>
+    private static Boolean DarkScheme(Func<String, ICssProperty?> find) =>
+        find("color-scheme")?.Value is { } scheme &&
+        scheme.Contains("dark", StringComparison.OrdinalIgnoreCase);
+
     private static Double ZoomOf(FusedParent parent, ICssProperty? declared)
     {
         var text = declared?.Value?.Trim();

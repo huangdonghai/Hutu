@@ -157,8 +157,8 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
     /// </remarks>
     private static readonly Dictionary<String, String[]> KeywordExtraSubstrings = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["color"] = ["(from "],
-        ["background-color"] = ["(from "],
+        ["color"] = ["(from ", "light-dark("],
+        ["background-color"] = ["(from ", "light-dark("],
     };
 
     /// <summary>

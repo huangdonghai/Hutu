@@ -1461,7 +1461,7 @@ internal readonly struct ComputedStyle
     /// down that way stays the keyword, and each box answers for its own ink (CSS Color 4 5).
     /// </remarks>
     public static CssColorValue? ResolveBackgroundColorFused(
-        IElement? element, ICssProperty? declared, CssColorValue? parentBackground = null)
+        IElement? element, ICssProperty? declared, CssColorValue? parentBackground = null, Boolean dark = false)
     {
         if (declared is null)
         {
@@ -1471,6 +1471,11 @@ internal readonly struct ComputedStyle
         if (declared.RawValue is CssColorValue color)
         {
             return color;
+        }
+
+        if (declared.RawValue is not null && LightDark(declared.RawValue.CssText, dark) is { } picked)
+        {
+            return picked;
         }
 
         // A relative colour that comes to the colour it started from is that colour, and one that
@@ -1489,6 +1494,42 @@ internal readonly struct ComputedStyle
     /// A relative colour leaves the origin alone in that case, so the whole of it stands for the keyword
     /// (CSS Color 5 §4.1) - the asking rather than an answer.
     /// </summary>
+    /// <summary>
+    /// Gets the colour <c>light-dark(&lt;light&gt;, &lt;dark&gt;)</c> stands for, or null where the value is not
+    /// that function: the branch the used colour scheme asks for is the one that paints (CSS Color Adjust
+    /// 1 §2). A page that names no scheme is the light one, which is the branch every browser takes until
+    /// something says otherwise.
+    /// </summary>
+    internal static CssColorValue? LightDark(String? text, Boolean dark)
+    {
+        var trimmed = text?.Trim();
+        const String function = "light-dark(";
+
+        if (trimmed is null || trimmed.Length <= function.Length ||
+            !trimmed.StartsWith(function, StringComparison.OrdinalIgnoreCase) ||
+            trimmed[trimmed.Length - 1] != ')')
+        {
+            return null;
+        }
+
+        var body = trimmed.Substring(function.Length, trimmed.Length - function.Length - 1);
+        var parts = body.Split(',');
+
+        if (parts.Length != 2)
+        {
+            return null;
+        }
+
+        var chosen = parts[dark ? 1 : 0].Trim();
+
+        if (chosen.Equals("currentcolor", StringComparison.OrdinalIgnoreCase))
+        {
+            return CssColorValue.CurrentColor;
+        }
+
+        return CssColorValue.FromName(chosen);
+    }
+
     internal static Boolean IsIdentityRelativeInk(String? text)
     {
         var trimmed = text?.Trim();
