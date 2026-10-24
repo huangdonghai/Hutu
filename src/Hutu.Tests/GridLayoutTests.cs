@@ -1,3 +1,5 @@
+using AngleSharp.Css.Dom;
+using AngleSharp.Css.Parser;
 using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
@@ -897,6 +899,50 @@ public sealed class GridLayoutTests
         // them.
         Assert.That(a.BorderBox.X, Is.EqualTo(10 + 300 - 20).Within(0.5), "at the content box's inline end");
         Assert.That(a.BorderBox.Y, Is.EqualTo(10 + (200 - 20) / 2).Within(0.5), "and centred along the block axis");
+    }
+
+    [Test]
+    public void ASubgridWrittenInATemplateShorthandIsATemplate()
+    {
+        // The template shorthand covers the two track axes and the gaps between them, so writing
+        // `subgrid` in it both names the borrowed tracks and takes the stated gaps back to nothing
+        // (CSS Grid 1 §8.2, CSS Grid 2 §8).
+        var stated = Declared(".x { row-gap: 100px; column-gap: 10px; grid: subgrid / subgrid }");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(stated["grid-template-rows"], Is.EqualTo("subgrid"));
+            Assert.That(stated["grid-template-columns"], Is.EqualTo("subgrid"));
+            Assert.That(stated["row-gap"], Is.Empty, "the gap the page stated before is reset");
+            Assert.That(stated["column-gap"], Is.Empty);
+        });
+    }
+
+    [Test]
+    public void ATrackListOnOneSideOfATemplateShorthandKeepsASubgridOnTheOther()
+    {
+        var stated = Declared(".x { grid: 50px / subgrid }");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(stated["grid-template-rows"], Is.EqualTo("50px"));
+            Assert.That(stated["grid-template-columns"], Is.EqualTo("subgrid"));
+        });
+    }
+
+    /// <summary>Gets the declarations a rule leaves behind, by the name each was filed under.</summary>
+    private static Dictionary<String, String> Declared(String css)
+    {
+        var sheet = (ICssStyleSheet)new CssParser().ParseStyleSheet(css);
+        var rule = sheet.Rules.OfType<ICssStyleRule>().Single();
+        var stated = new Dictionary<String, String>(StringComparer.Ordinal);
+
+        foreach (var property in rule.Style)
+        {
+            stated[property.Name] = property.Value;
+        }
+
+        return stated;
     }
 
     private static LayoutBox Find(HutuViewInternal view, String id)
