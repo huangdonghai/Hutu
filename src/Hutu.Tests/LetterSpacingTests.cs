@@ -65,6 +65,32 @@ public sealed class LetterSpacingTests
     }
 
     [Test]
+    public async Task APercentageIsAShareOfTheFontSize()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<p style='font-size:20px;letter-spacing:10%'>ab</p>"));
+
+        Assert.That(
+            Text(view, "ab").BorderBox.Width,
+            Is.EqualTo(14),
+            "two of the twenty pixels a character, on top of the ten the two glyphs take");
+    }
+
+    [Test]
+    public async Task APercentageKeepsItsShareWhenItIsInherited()
+    {
+        using var view = CreateView();
+
+        // Four tenths of twenty is two, but the span sets ten-pixel text: the share, not the pixels it
+        // came to above, is what reaches it (CSS Text 4 §4.1).
+        await view.SetHtml(Document(
+            "<p style='font-size:20px;letter-spacing:10%'><span style='font-size:10px'>ab</span></p>"));
+
+        Assert.That(Text(view, "ab").BorderBox.Width, Is.EqualTo(12), "one pixel a character at ten");
+    }
+
+    [Test]
     public async Task SpacingMakesALineWrapEarlier()
     {
         using var view = CreateView(40);

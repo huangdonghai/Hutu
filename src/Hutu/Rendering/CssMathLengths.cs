@@ -101,6 +101,69 @@ internal static class CssMathLengths
     }
 
     /// <summary>Takes <c>min(...)</c>, <c>max(...)</c> or <c>clamp(...)</c> apart.</summary>
+    /// <summary>
+    /// Evaluates a <c>calc()</c> written as a sum of length terms, which is the one shape the math
+    /// functions above do not cover. Terms keep the caller's resolver, so a percentage is read against
+    /// the basis the property takes; a term that is not a plain length or percentage declines the sum.
+    /// </summary>
+    public static Double? EvaluateSum(String? text, Func<String, Double?> resolve)
+    {
+        var trimmed = text?.Trim();
+
+        if (trimmed is null || !trimmed.StartsWith("calc(", StringComparison.OrdinalIgnoreCase) ||
+            trimmed[^1] != ')')
+        {
+            return null;
+        }
+
+        var open = trimmed.IndexOf('(');
+        var body = trimmed[(open + 1)..^1];
+        var total = 0.0;
+        var sign = 1.0;
+        var start = 0;
+        var depth = 0;
+        var any = false;
+
+        for (var at = 0; at <= body.Length; at++)
+        {
+            var character = at < body.Length ? body[at] : '+';
+
+            if (character == '(')
+            {
+                depth++;
+            }
+            else if (character == ')')
+            {
+                depth--;
+            }
+
+            var minus = character == '-' && at > start && body[at - 1] is not ('e' or 'E');
+
+            if (depth != 0 || (character != '+' && !minus))
+            {
+                continue;
+            }
+
+            var term = body[start..at].Trim();
+
+            if (term.Length > 0)
+            {
+                if (resolve(term) is not { } value)
+                {
+                    return null;
+                }
+
+                total += sign * value;
+                any = true;
+            }
+
+            sign = minus ? -1.0 : 1.0;
+            start = at + 1;
+        }
+
+        return any ? total : null;
+    }
+
     private static (StyleMathFunction Function, List<String> Arguments)? Parse(String? text)
     {
         var trimmed = text?.Trim();

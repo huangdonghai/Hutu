@@ -34,6 +34,19 @@ public sealed class WordSpacingTests
     }
 
     [Test]
+    public async Task APercentageIsAShareOfTheFontSize()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page("<p style='font-size:20px;word-spacing:50%'>ab cd</p>"));
+
+        Assert.That(
+            Text(view, "ab cd").BorderBox.Width,
+            Is.EqualTo(35),
+            "the five pixels of the space plus ten, half of the twenty-pixel font");
+    }
+
+    [Test]
     public async Task NormalLeavesTheWordsAsTheyWere()
     {
         using var view = CreateView();

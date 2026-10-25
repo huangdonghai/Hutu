@@ -560,14 +560,28 @@ internal static class FusedStyleFactory
             face = new LengthReader.FontSource(
                 new Hutu.Rendering.Layout.FontStyle(family, size, weight, italic, adjust));
 
+            var letterHit = find("letter-spacing");
+            var wordHit = find("word-spacing");
+
+            var letterPercent = letterHit is null || ComputedStyle.IsInherit(letterHit)
+                ? parent.Font?.LetterSpacingPercent
+                : ComputedStyle.IsPercentBearing(letterHit) ? letterHit : null;
+            var wordPercent = wordHit is null || ComputedStyle.IsInherit(wordHit)
+                ? parent.Font?.WordSpacingPercent
+                : ComputedStyle.IsPercentBearing(wordHit) ? wordHit : null;
+
             var built = new FontArea
             {
                 Size = size,
                 Family = family,
                 Weight = weight,
                 Italic = italic,
-                LetterSpacing = ComputedStyle.ResolveLetterSpacingFused(find("letter-spacing"), parent.LetterSpacing, face, dimensions),
-                WordSpacing = ComputedStyle.ResolveWordSpacingFused(find("word-spacing"), parent.WordSpacing, face, dimensions),
+                LetterSpacing = ComputedStyle.ResolveLetterSpacingFused(
+                    letterHit, parent.LetterSpacing, letterPercent, face, dimensions),
+                WordSpacing = ComputedStyle.ResolveWordSpacingFused(
+                    wordHit, parent.WordSpacing, wordPercent, face, dimensions),
+                LetterSpacingPercent = letterPercent,
+                WordSpacingPercent = wordPercent,
                 LineHeight = ComputedStyle.ResolveLineHeightFused(
                     find("line-height"), parent.LineHeightHit, face, parent.LineHeight, dimensions),
                 Adjust = adjust,

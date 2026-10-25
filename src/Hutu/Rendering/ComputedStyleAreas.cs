@@ -281,6 +281,16 @@ internal sealed record FontArea
     /// <summary>Gets the room added between words, in pixels: <c>normal</c> is none.</summary>
     internal Double WordSpacing { get; init; } = CssInitialValues.WordSpacing;
 
+    /// <summary>
+    /// Gets the declaration a percentage <c>letter-spacing</c> was written in, where its value is a
+    /// percentage: the share keeps the font it was written against, so a descendant reads it again
+    /// against its own size rather than inheriting the pixels the first element came to.
+    /// </summary>
+    internal AngleSharp.Css.Dom.ICssProperty? LetterSpacingPercent { get; init; }
+
+    /// <summary>Gets the same declaration for <c>word-spacing</c>.</summary>
+    internal AngleSharp.Css.Dom.ICssProperty? WordSpacingPercent { get; init; }
+
     /// <summary>Gets the line height in pixels, or null for <c>normal</c>, which defers to the
     /// font's own metrics.</summary>
     /// <remarks>

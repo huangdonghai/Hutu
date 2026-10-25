@@ -608,12 +608,17 @@ internal readonly struct ComputedStyle
     private static Boolean TryReadFontSizeValue(ICssProperty declared, IRenderDimensions dimensions, out Double pixels) =>
         TryReadLengthValue(declared, RenderMode.Vertical, new LengthReader.FontSource(dimensions.FontSize), dimensions, out pixels);
 
+    /// <param name="percentBasis">
+    /// What a percentage is read against, where the property takes one; <c>null</c> where it does not.
+    /// A percentage in <c>calc()</c> and one written alone are read the same way.
+    /// </param>
     internal static Boolean TryReadLengthValue(
         ICssProperty declared,
         RenderMode mode,
         LengthReader.FontSource font,
         IRenderDimensions dimensions,
-        out Double pixels)
+        out Double pixels,
+        Double? percentBasis = null)
     {
         pixels = 0;
 
@@ -621,11 +626,15 @@ internal readonly struct ComputedStyle
 
         if (!String.IsNullOrWhiteSpace(text))
         {
-            var math = CssMathLengths.Evaluate(
-                text,
-                argument => CssLengthValue.TryParse(argument.Trim(), out var length)
-                    ? Resolve(length, mode, dimensions, font)
-                    : null);
+            Double? ResolveArgument(String argument) =>
+                CssLengthValue.TryParse(argument.Trim(), out var length)
+                    ? length.Type == CssLengthValue.Unit.Percent && percentBasis.HasValue
+                        ? length.Value / 100 * percentBasis.Value
+                        : Resolve(length, mode, dimensions, font)
+                    : null;
+
+            var math = CssMathLengths.Evaluate(text, ResolveArgument) ??
+                (percentBasis.HasValue ? CssMathLengths.EvaluateSum(text, ResolveArgument) : null);
 
             if (math is not null)
             {
@@ -639,6 +648,12 @@ internal readonly struct ComputedStyle
         if (value is null || value.Is("auto") || value.Is("normal") || value.Is("none"))
         {
             return false;
+        }
+
+        if (value is CssLengthValue { Type: CssLengthValue.Unit.Percent } share && percentBasis.HasValue)
+        {
+            pixels = share.Value / 100 * percentBasis.Value;
+            return true;
         }
 
         var resolved = ResolveValue(value, mode, dimensions, font);
@@ -2105,22 +2120,39 @@ internal readonly struct ComputedStyle
     /// path. The property is inherited: a miss takes the parent's resolved spacing.
     /// </summary>
     public static Double ResolveLetterSpacingFused(
-        ICssProperty? declared, Double parent, LengthReader.FontSource font, IRenderDimensions dimensions)
+        ICssProperty? declared,
+        Double parent,
+        ICssProperty? inheritedPercent,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions)
     {
-        if (declared is null)
+        var inherit = declared is null || IsInherit(declared);
+        var percent = inherit
+            ? inheritedPercent
+            : IsPercentBearing(declared!) ? declared : null;
+
+        // A percentage is read against the element's own font size (CSS Text 4 §4.1, §5.1), at every
+        // element it reaches: the share is inherited, not the pixels it came to on the element above.
+        if (percent is not null &&
+            TryReadLengthValue(percent, RenderMode.Horizontal, font, dimensions, out var scaled, font.Value))
+        {
+            return scaled;
+        }
+
+        if (inherit)
         {
             return parent;
         }
 
-        if (IsInherit(declared))
-        {
-            return parent;
-        }
-
-        return TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels)
+        return TryReadLengthValue(declared!, RenderMode.Horizontal, font, dimensions, out var pixels, font.Value)
             ? pixels
             : CssInitialValues.LetterSpacing;
     }
+
+    /// <summary>Gets whether a length declaration is written with a percentage in it.</summary>
+    internal static Boolean IsPercentBearing(ICssProperty declared) =>
+        (declared.Value ?? String.Empty).Contains('%') ||
+        (declared.RawValue?.CssText ?? String.Empty).Contains('%');
 
     /// <summary>
     /// Resolves the room added between words from the element's own cascaded declaration, for the fused
@@ -2129,14 +2161,29 @@ internal readonly struct ComputedStyle
     /// neither a length nor that keyword is not a declaration of this property, so it answers the same.
     /// </summary>
     public static Double ResolveWordSpacingFused(
-        ICssProperty? declared, Double parent, LengthReader.FontSource font, IRenderDimensions dimensions)
+        ICssProperty? declared,
+        Double parent,
+        ICssProperty? inheritedPercent,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions)
     {
-        if (declared is null || IsInherit(declared))
+        var inherit = declared is null || IsInherit(declared);
+        var percent = inherit
+            ? inheritedPercent
+            : IsPercentBearing(declared!) ? declared : null;
+
+        if (percent is not null &&
+            TryReadLengthValue(percent, RenderMode.Horizontal, font, dimensions, out var scaled, font.Value))
+        {
+            return scaled;
+        }
+
+        if (inherit)
         {
             return parent;
         }
 
-        return TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels)
+        return TryReadLengthValue(declared!, RenderMode.Horizontal, font, dimensions, out var pixels, font.Value)
             ? pixels
             : CssInitialValues.WordSpacing;
     }
