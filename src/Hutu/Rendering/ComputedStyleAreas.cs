@@ -341,6 +341,13 @@ internal sealed record TextArea
     /// </summary>
     internal String WrapStyle { get; init; } = "auto";
 
+    /// <summary>Gets where hyphenation opportunities are taken: <c>none</c>, <c>manual</c> or
+    /// <c>auto</c> (CSS Text 3 §6.1). Only the soft hyphen is read here; `auto` has no dictionary.</summary>
+    internal String Hyphens { get; init; } = "manual";
+
+    /// <summary>Gets the text drawn at the end of a line a soft hyphen broke (CSS Text 4 §6.2).</summary>
+    internal String HyphenateCharacter { get; init; } = "-";
+
     internal String VerticalAlign { get; init; } = CssInitialValues.VerticalAlign;
 
     /// <summary>

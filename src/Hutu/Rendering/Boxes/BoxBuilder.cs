@@ -578,6 +578,13 @@ internal static partial class BoxBuilder
             return null;
         }
 
+        // `hyphens: none` takes every soft hyphen for nothing at all: it is not an opportunity and it is
+        // not drawn (CSS Text 3 §6.1, measured by hyphens-none-011).
+        if (parentStyle.Hyphens.Equals("none", StringComparison.OrdinalIgnoreCase) && raw.Contains('­'))
+        {
+            raw = raw.Replace("­", String.Empty);
+        }
+
         // `break-spaces` keeps its runs as written just as the `pre` spellings do; only the modes that
         // collapse their spaces fold the text down here, and `pre-line` keeps the breaks it was written
         // with while folding everything else.

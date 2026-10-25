@@ -559,6 +559,19 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task HyphensNoneTakesEverySoftHyphenForNothing()
+    {
+        // CSS Text 3 §6.1: under `hyphens: none` a soft hyphen is neither an opportunity nor a glyph,
+        // so the word reads as if the page had written it without one (hyphens-none-011).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0;hyphens:none'>Deoxy&shy;ribo&shy;nucleic</p></body></html>");
+
+        Assert.That(Lines(view).Select(LineText), Is.EqualTo(new[] { "Deoxyribonucleic" }));
+    }
+
+    [Test]
     public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
     {
         // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's

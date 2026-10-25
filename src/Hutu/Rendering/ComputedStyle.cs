@@ -275,6 +275,8 @@ internal readonly struct ComputedStyle
                 Keyword("text-wrap-style", "auto"),
                 Keyword("text-wrap", "wrap"),
                 parent?.WrapStyle ?? "auto"),
+            Hyphens = Keyword("hyphens", "manual"),
+            HyphenateCharacter = parent?.HyphenateCharacter ?? "-",
             OverflowWrap = Keyword("overflow-wrap", Keyword("word-wrap", CssInitialValues.OverflowWrap)),
             WordBreak = Keyword("word-break", CssInitialValues.WordBreak),
             LineBreak = Keyword("line-break", CssInitialValues.LineBreak),
@@ -776,6 +778,10 @@ internal readonly struct ComputedStyle
     /// <summary>Resolves <c>line-break</c>, which is inherited, for the fused path.</summary>
     public static String ResolveLineBreakFused(ICssProperty? declared, String parentValue) =>
         ResolveKeywordFused(declared, parentValue, CssInitialValues.LineBreak, inherited: true);
+
+    /// <summary>Resolves <c>hyphens</c>, which is inherited, for the fused path.</summary>
+    public static String ResolveHyphensFused(ICssProperty? declared, String parentValue) =>
+        ResolveKeywordFused(declared, parentValue, "manual", inherited: true);
 
     /// <summary>Gets whether a property carries no declaration of the value asked for.</summary>
     private static Boolean IsBlank(ICssProperty? property) =>
@@ -3550,6 +3556,46 @@ internal readonly struct ComputedStyle
 
     /// <summary>Gets the line-breaking style the block's text asks for (CSS Text 4 §5).</summary>
     public String WrapStyle => _values.Text.WrapStyle;
+
+    /// <summary>Gets where hyphenation opportunities are taken (CSS Text 3 §6.1).</summary>
+    public String Hyphens => _values.Text.Hyphens;
+
+    /// <summary>Gets the text a soft-hyphen break draws at the end of its line (CSS Text 4 §6.2).</summary>
+    public String HyphenateCharacter => _values.Text.HyphenateCharacter;
+
+    /// <summary>
+    /// Reads <c>hyphenate-character</c>: <c>auto</c> means the user agent's own mark, which is the
+    /// hyphen, and a string is used verbatim. The property is inherited.
+    /// </summary>
+    public static String ReadHyphenateCharacter(String? declared, String inherited)
+    {
+        if (String.IsNullOrWhiteSpace(declared))
+        {
+            return inherited;
+        }
+
+        var value = declared!.Trim();
+
+        if (value.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return "-";
+        }
+
+        if (value.Equals("inherit", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("revert", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("initial", StringComparison.OrdinalIgnoreCase))
+        {
+            return inherited;
+        }
+
+        if (value.Length >= 2 && (value[0] == '"' || value[0] == (Char)39) && value[^1] == value[0])
+        {
+            value = value[1..^1];
+        }
+
+        return value;
+    }
 
     /// <summary>
     /// Reads the two properties that state a line-breaking style: <c>text-wrap-style</c> speaks for

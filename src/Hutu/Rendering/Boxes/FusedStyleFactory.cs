@@ -97,6 +97,12 @@ internal sealed class FusedParent
     /// <summary>Gets the parent's line-breaking style, likewise inherited (CSS Text 4 §5).</summary>
     public String WrapStyle { get; init; } = "auto";
 
+    /// <summary>Gets the parent's hyphenation mode, likewise inherited (CSS Text 3 §6.1).</summary>
+    public String Hyphens { get; init; } = "manual";
+
+    /// <summary>Gets the mark a soft-hyphen break draws, likewise inherited (CSS Text 4 §6.2).</summary>
+    public String HyphenateCharacter { get; init; } = "-";
+
     /// <summary>Gets the parent's tab length in pixels, or null where the tab is counted in characters.</summary>
     public Double? TabLength { get; init; }
 
@@ -382,6 +388,8 @@ internal sealed class FusedParent
         AlignLast = style.TextAlignLast,
         TextJustify = style.TextJustify,
         WrapStyle = style.WrapStyle,
+        Hyphens = style.Hyphens,
+        HyphenateCharacter = style.HyphenateCharacter,
         Visibility = style.Visibility,
         VerticalAlign = style.VerticalAlign,
         UnderlineOffset = style.CascadedUnderlineOffset,
@@ -604,6 +612,9 @@ internal static class FusedStyleFactory
                     find("text-wrap-style")?.Value,
                     find("text-wrap")?.Value,
                     parent.WrapStyle),
+                Hyphens = ComputedStyle.ResolveHyphensFused(find("hyphens"), parent.Hyphens),
+                HyphenateCharacter = ComputedStyle.ReadHyphenateCharacter(
+                    find("hyphenate-character")?.Value, parent.HyphenateCharacter),
                 VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign, PresentationalHints.Valign(element)),
                 Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, face, dimensions),
                 Visibility = ComputedStyle.ResolveVisibilityFused(find("visibility"), parent.Visibility),
