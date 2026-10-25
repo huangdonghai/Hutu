@@ -236,17 +236,24 @@ internal static class BoxModel
     }
 
     /// <summary>Applies the width constraints to an already resolved border-box width.</summary>
-    public static Double ClampWidth(ComputedStyle style, Double borderBoxWidth, Double basis, Double insets)
+    /// <param name="intrinsic">The width the content itself comes to, when the caller has measured it:
+    /// a <c>min-width: max-content</c> and its siblings stand for exactly that.</param>
+    public static Double ClampWidth(
+        ComputedStyle style,
+        Double borderBoxWidth,
+        Double basis,
+        Double insets,
+        Double? intrinsic = null)
     {
         var isBorderBox = IsBorderBox(style);
         var content = Math.Max(0, borderBoxWidth - insets);
 
-        if (ContentBound(style.MaxWidth, basis, insets, isBorderBox) is { } maximum && content > maximum)
+        if (Bound(style.MaxWidth, basis, insets, isBorderBox, intrinsic) is { } maximum && content > maximum)
         {
             content = maximum;
         }
 
-        if (ContentBound(style.MinWidth, basis, insets, isBorderBox) is { } minimum && content < minimum)
+        if (Bound(style.MinWidth, basis, insets, isBorderBox, intrinsic) is { } minimum && content < minimum)
         {
             content = minimum;
         }
@@ -287,23 +294,47 @@ internal static class BoxModel
         return ClampWidth(style, borderBox, basis, insets);
     }
 
-    /// <summary>Applies the height constraints to an already resolved content height.</summary>
-    public static Double ClampHeight(ComputedStyle style, Double contentHeight, Double containingBlockHeight, Double insets)
+    /// <summary>
+    /// Applies the height constraints to an already resolved content height.
+    /// </summary>
+    /// <param name="intrinsic">
+    /// The height the content itself comes to, when the caller has measured it: <c>min-height:
+    /// max-content</c> and its siblings stand for exactly that, so a box stating one is as tall as
+    /// what it holds whatever height it also declared (CSS Sizing 3 §5).
+    /// </param>
+    public static Double ClampHeight(
+        ComputedStyle style,
+        Double contentHeight,
+        Double containingBlockHeight,
+        Double insets,
+        Double? intrinsic = null)
     {
         var isBorderBox = IsBorderBox(style);
 
-        if (ContentBound(style.MaxHeight, containingBlockHeight, insets, isBorderBox) is { } maximum && contentHeight > maximum)
+        if (Bound(style.MaxHeight, containingBlockHeight, insets, isBorderBox, intrinsic) is { } maximum && contentHeight > maximum)
         {
             contentHeight = maximum;
         }
 
-        if (ContentBound(style.MinHeight, containingBlockHeight, insets, isBorderBox) is { } minimum && contentHeight < minimum)
+        if (Bound(style.MinHeight, containingBlockHeight, insets, isBorderBox, intrinsic) is { } minimum && contentHeight < minimum)
         {
             contentHeight = minimum;
         }
 
         return contentHeight;
     }
+
+    /// <summary>Gets one of the two height constraints, reading a content keyword as the content's own
+    /// height when the caller measured it.</summary>
+    private static Double? Bound(
+        StyleLength stated,
+        Double basis,
+        Double insets,
+        Boolean isBorderBox,
+        Double? intrinsic) =>
+        stated.IsContentSized && intrinsic is { } content
+            ? content
+            : ContentBound(stated, basis, insets, isBorderBox);
 
     /// <summary>
     /// Resolves a min or max constraint into a bound on the <em>content</em> box, which is the box

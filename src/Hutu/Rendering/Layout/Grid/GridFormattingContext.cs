@@ -66,7 +66,7 @@ internal sealed class GridFormattingContext
 
         return new Size(
             BoxModel.ClampWidth(style, contentWidth + insetH, basisWidth, insetH),
-            BoxModel.ClampHeight(style, contentHeight, basisHeight, insetV) + insetV);
+            BoxModel.ClampHeight(style, contentHeight, basisHeight, insetV, plan.IntrinsicHeight) + insetV);
     }
 
     public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context)
@@ -581,6 +581,7 @@ internal sealed class GridFormattingContext
         {
             ContentWidth = resolvedWidth,
             ContentHeight = resolvedHeight,
+            IntrinsicHeight = totalHeight,
             MinWidth = minContentWidth,
             ColumnStep = stepX,
             RowStep = stepY,
@@ -2449,6 +2450,10 @@ internal sealed class GridFormattingContext
         public Double ContentWidth;
 
         public Double ContentHeight;
+
+        /// <summary>Gets the height the rows come to on their own, before a declared height is put in
+        /// their place: what `max-content` and `min-content` stand for on the block axis.</summary>
+        public Double IntrinsicHeight;
 
         /// <summary>The sum of the column base sizes before growth: the grid's min-content inline size.</summary>
         public Double MinWidth;

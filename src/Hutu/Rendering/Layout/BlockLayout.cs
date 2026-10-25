@@ -138,7 +138,8 @@ internal sealed class BlockLayout
                 ? BoxModel.ContentRaisesTheRatio(style) ? Math.Max(ratio, contentHeight) : ratio
                 : contentHeight),
             basisHeight,
-            insets.Vertical);
+            insets.Vertical,
+            contentHeight);
 
         return new Size(borderBoxWidth, height + insets.Vertical);
     }

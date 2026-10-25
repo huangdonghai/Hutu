@@ -1,4 +1,4 @@
-﻿using AngleSharp.Css.Dom;
+using AngleSharp.Css.Dom;
 using Hutu.Rendering.Boxes;
 using System;
 
@@ -162,10 +162,27 @@ internal sealed class PositionedLayout
         var insetWidth = padding.Horizontal + border.Horizontal;
         var insetHeight = padding.Vertical + border.Vertical;
 
+        // A constraint stated as one of the content keywords stands for what the box's own content comes
+        // to, so it is measured here - once for each axis, and only when a constraint asks for it
+        // (CSS Sizing 3 §5).
+        Double? intrinsicWidth = null;
+        Double? intrinsicHeight = null;
+
+        if (style.MinWidth.IsContentSized || style.MaxWidth.IsContentSized)
+        {
+            intrinsicWidth = _engine.MeasureContentIntrinsic(box, childContext).MaxContent;
+        }
+
+        if (style.MinHeight.IsContentSized || style.MaxHeight.IsContentSized)
+        {
+            intrinsicHeight = _engine.Measure(
+                box, MeasureConstraints.FitWidth(intrinsicWidth ?? measured.Width), childContext).Height;
+        }
+
         var (width, x) = Horizontal(
-            position, style, containingBlock, staticPosition.X, measured.Width, margin, insetWidth, standing);
+            position, style, containingBlock, staticPosition.X, measured.Width, margin, insetWidth, standing, intrinsicWidth);
         var (height, y) = Vertical(
-            position, style, containingBlock, staticPosition.Y, measured.Height, margin, insetHeight, standing);
+            position, style, containingBlock, staticPosition.Y, measured.Height, margin, insetHeight, standing, intrinsicHeight);
 
         var placed = _engine.Arrange(box, new Rect(x, y, width, height), childContext);
 
@@ -298,7 +315,8 @@ internal sealed class PositionedLayout
         Double measuredWidth,
         Thickness margin,
         Double insets,
-        StaticStanding? standing)
+        StaticStanding? standing,
+        Double? intrinsicWidth = null)
     {
         var hasLeft = position.Left.HasValue;
         var hasRight = position.Right.HasValue;
@@ -320,7 +338,7 @@ internal sealed class PositionedLayout
         // shares the slack for a definite width, which is what centres a box stated
         // `left: 0; right: 0; width: auto; max-width: 1920px; margin: auto` rather than letting it fill
         // the containing block.
-        var width = BoxModel.ClampWidth(style, tentative, containingBlock.Width, insets);
+        var width = BoxModel.ClampWidth(style, tentative, containingBlock.Width, insets, intrinsicWidth);
         var settled = declared || width != tentative;
 
         Double x;
@@ -364,7 +382,8 @@ internal sealed class PositionedLayout
         Double measuredHeight,
         Thickness margin,
         Double insets,
-        StaticStanding? standing)
+        StaticStanding? standing,
+        Double? intrinsicHeight = null)
     {
         var hasTop = position.Top.HasValue;
         var hasBottom = position.Bottom.HasValue;
@@ -386,7 +405,8 @@ internal sealed class PositionedLayout
             style,
             Math.Max(0, tentative - insets),
             containingBlock.Height,
-            insets) + insets;
+            insets,
+            intrinsicHeight is { } content ? Math.Max(0, content - insets) : null) + insets;
         var settled = declared || height != tentative;
 
         Double y;
