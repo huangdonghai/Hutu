@@ -3498,6 +3498,19 @@ internal sealed class BlockLayout
 
         var combined = ownEnd;
 
+        // A child that steps clear of a float keeps its margins out of the collapse with the box above
+        // it on either end, so the walk stops at it the way a box with height stops the run.
+        var floats = false;
+
+        foreach (var candidate in box.Children)
+        {
+            if (candidate.IsBlockLevel && IsFloat(candidate) && !PositionedLayout.IsOutOfFlow(candidate))
+            {
+                floats = true;
+                break;
+            }
+        }
+
         for (var i = box.Children.Count - 1; i >= 0; i--)
         {
             var child = box.Children[i];
@@ -3505,6 +3518,11 @@ internal sealed class BlockLayout
             if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child) || IsFloat(child))
             {
                 continue;
+            }
+
+            if (floats && child.Style.Clear != ClearSide.None)
+            {
+                return combined;
             }
 
             combined = Combine(combined, CollapsedEnd(child, flow, basis));
