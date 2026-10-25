@@ -50,6 +50,27 @@ internal sealed class MasonryFormattingContext
                 : null)
             ?? plan.TotalWidth + inset.Horizontal;
 
+        // Size containment answers both axes from the intrinsic size the page stated, whatever the lanes
+        // and items come to (CSS Contain 1 §3.1.1, CSS Sizing 4 §5) - and with none stated the box comes
+        // to nothing, however its content would have spread.
+        var contain = style.Contain;
+
+        // The intrinsic size only stands where the page stated no size of its own for the axis.
+        var declaredInline = box.Flow.IsVertical ? style.Height : style.Width;
+        var declaredBlock = box.Flow.IsVertical ? style.Width : style.Height;
+
+        if (contain.Inline && !ContainStyle.IsDefinite(declaredInline, basisWidth))
+        {
+            var state = contain.InlineSize ?? (box.Flow.IsVertical ? contain.Height : contain.Width);
+            used = (state is { } inline ? Math.Max(0, inline.Resolve(0)) : 0) + inset.Horizontal;
+        }
+
+        if (contain.Block && !ContainStyle.IsDefinite(declaredBlock, basisHeight))
+        {
+            var state = contain.BlockSize ?? (box.Flow.IsVertical ? contain.Width : contain.Height);
+            height = state is { } block ? Math.Max(0, block.Resolve(0)) : 0;
+        }
+
         return new Size(
             BoxModel.ClampWidth(style, used, basisWidth, inset.Horizontal),
             BoxModel.ClampHeight(style, height, basisHeight, inset.Vertical) + inset.Vertical);

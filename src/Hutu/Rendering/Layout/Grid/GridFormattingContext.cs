@@ -64,6 +64,26 @@ internal sealed class GridFormattingContext
         var plan = Compute(box, contentWidth, declaredHeight, context, definiteWidth: true, sizeRows: true);
         var contentHeight = declaredHeight ?? plan.ContentHeight;
 
+        // Size containment answers both axes from the intrinsic size the page stated, whatever the
+        // tracks and items come to (CSS Contain 1 §3.1.1, CSS Sizing 4 §5).
+        var contain = style.Contain;
+
+        // The intrinsic size only stands where the page stated no size of its own for the axis.
+        var declaredInline = box.Flow.IsVertical ? style.Height : style.Width;
+        var declaredBlock = box.Flow.IsVertical ? style.Width : style.Height;
+
+        if (contain.Inline && !ContainStyle.IsDefinite(declaredInline, basisWidth))
+        {
+            var stated = contain.InlineSize ?? (box.Flow.IsVertical ? contain.Height : contain.Width);
+            contentWidth = stated is { } inline ? Math.Max(0, inline.Resolve(0)) : 0;
+        }
+
+        if (contain.Block && !ContainStyle.IsDefinite(declaredBlock, basisHeight))
+        {
+            var stated = contain.BlockSize ?? (box.Flow.IsVertical ? contain.Width : contain.Height);
+            contentHeight = stated is { } block ? Math.Max(0, block.Resolve(0)) : 0;
+        }
+
         return new Size(
             BoxModel.ClampWidth(style, contentWidth + insetH, basisWidth, insetH),
             BoxModel.ClampHeight(style, contentHeight, basisHeight, insetV, plan.IntrinsicHeight) + insetV);

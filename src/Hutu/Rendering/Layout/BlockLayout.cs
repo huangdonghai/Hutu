@@ -1,4 +1,4 @@
-﻿using Hutu.Rendering.Boxes;
+using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
 
@@ -84,7 +84,7 @@ internal sealed class BlockLayout
         // height it states for itself, which is nothing where it states none (CSS Contain 2 §2.1).
         if (ContainsBlockSize(box) && declaredHeight is null)
         {
-            var stated = style.Contain.Height;
+            var stated = style.Contain.BlockSize ?? style.Contain.Height;
             var contained = stated is { } intrinsic ? Math.Max(0, intrinsic.Resolve(0)) : 0.0;
 
             return new Size(
@@ -371,7 +371,7 @@ internal sealed class BlockLayout
 
         if (ContainsInlineSize(box))
         {
-            var stated = box.Flow.IsVertical ? contain.Height : contain.Width;
+            var stated = contain.InlineSize ?? (box.Flow.IsVertical ? contain.Height : contain.Width);
             var inline = stated is { } length ? Math.Max(0, length.Resolve(0)) : 0.0;
             var outer = inline + insets;
 
@@ -742,7 +742,6 @@ internal sealed class BlockLayout
             }
 
             var size = _engine.Measure(child, childConstraints, passContext);
-
             // A container that establishes no formatting context of its own does not hold the floats
             // inside it: CSS 2.1 §9.4.1 puts them in the block formatting context of the nearest
             // ancestor that does, so they are absorbed here - moved into this container's frame by
@@ -3082,6 +3081,16 @@ internal sealed class BlockLayout
         }
 
         if (DeclaredBlockExtent(box, flow, basis) is > 0)
+        {
+            return false;
+        }
+
+        // Size containment gives the box a block extent of its own even with `height: auto`: the box
+        // comes to the intrinsic size the page stated for it rather than to nothing, so its margins do
+        // not adjoin across it (CSS Contain 1 §3.1.1, CSS Sizing 4 §5).
+        if (ContainsBlockSize(box) &&
+            box.Style.Contain.Height is { } contained &&
+            contained.Resolve(0) > 0)
         {
             return false;
         }

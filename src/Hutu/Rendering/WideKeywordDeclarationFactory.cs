@@ -90,6 +90,14 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // for it, so without this the whole declaration is dropped and an origin stated against the
         // content box would be measured from the border box instead.
         "transform-box",
+        // CSS Sizing 4 §5.1's override for the size a size-contained box would otherwise have none of.
+        // AngleSharp has no grammar for the shorthand or its longhands, so a page stating one had the
+        // declaration dropped and the box came out empty.
+        "contain-intrinsic-size",
+        "contain-intrinsic-width",
+        "contain-intrinsic-height",
+        "contain-intrinsic-inline-size",
+        "contain-intrinsic-block-size",
         // CSS Will Change 1's hint list, kept as the text the page wrote: AngleSharp reads the list
         // against the property names it knows, and rejects the ones its own registry does not carry
         // (`contain`, `backdrop-filter`), which would drop half of a hint that the stacking answer needs

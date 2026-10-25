@@ -20,6 +20,8 @@ internal readonly struct ContainStyle
         Boolean block,
         StyleLength? width,
         StyleLength? height,
+        StyleLength? inlineSize,
+        StyleLength? blockSize,
         Boolean stated,
         Boolean layout,
         Boolean paint)
@@ -28,6 +30,8 @@ internal readonly struct ContainStyle
         Block = block;
         Width = width;
         Height = height;
+        InlineSize = inlineSize;
+        BlockSize = blockSize;
         Stated = stated;
         Layout = layout;
         Paint = paint;
@@ -50,11 +54,31 @@ internal readonly struct ContainStyle
     /// <summary>Gets the intrinsic width, or null where it is <c>auto</c>.</summary>
     public StyleLength? Width { get; }
 
+    /// <summary>
+    /// Gets the intrinsic size along the inline axis, as <c>contain-intrinsic-inline-size</c> states
+    /// it, or null where the page left it to the physical longhand. It is the axis the writing mode
+    /// decides, which is why it is carried apart from <see cref="Width"/> and <see cref="Height"/>.
+    /// </summary>
+    public StyleLength? InlineSize { get; }
+
+    /// <summary>Gets the intrinsic size along the block axis, as <c>contain-intrinsic-block-size</c>
+    /// states it, or null where the page left it to the physical longhand.</summary>
+    public StyleLength? BlockSize { get; }
+
     /// <summary>Gets the intrinsic height, or null where it is <c>auto</c>.</summary>
     public StyleLength? Height { get; }
 
     /// <summary>Gets whether either axis is contained.</summary>
     public Boolean IsContained => Inline || Block;
+
+    /// <summary>
+    /// Gets whether a size the page stated settles an axis on its own, so the intrinsic size the page
+    /// also stated has nothing to answer: a length, or a share of a basis that is itself known. A share
+    /// of an indefinite basis states nothing, which is why a <c>height: 100%</c> inside a block of auto
+    /// height still lets the contained size through.
+    /// </summary>
+    public static Boolean IsDefinite(StyleLength stated, Double basis) =>
+        stated.HasValue && !(stated.Kind == StyleLengthKind.Percent && basis <= 0);
 
     /// <summary>
     /// Gets whether the box contains its layout, which makes it a stacking context and the containing
@@ -92,13 +116,15 @@ internal readonly struct ContainStyle
 
         // The shorthand states one size for both axes or one for each; it is not expanded into the
         // longhands by the parser, so it is read whole and taken apart here.
-        var stated = Lengths(find("contain-intrinsic-size")?.RawValue, dimensions, font);
+        var stated = ReadStated(find("contain-intrinsic-size"), dimensions, font);
 
         return new ContainStyle(
             size || Has(contain!, "inline-size"),
             size || Has(contain!, "block-size"),
             stated.Count > 0 ? stated[0] : LengthOf(find("contain-intrinsic-width"), dimensions, font),
             stated.Count > 1 ? stated[1] : stated.Count > 0 ? stated[0] : LengthOf(find("contain-intrinsic-height"), dimensions, font),
+            LengthOf(find("contain-intrinsic-inline-size"), dimensions, font),
+            LengthOf(find("contain-intrinsic-block-size"), dimensions, font),
             // Any containment at all, not only the axes the layout contains: the canvas background asks the
             // whole question - §2.11.2's note says containment disables the body's special handling, whether
             // the containment is of paint, layout, style or size - and `none` is the only answer that says
@@ -151,6 +177,41 @@ internal readonly struct ContainStyle
         return lengths;
     }
 
+    /// <summary>
+    /// Reads the intrinsic size a declaration states, whether the parser kept it as a value list or as
+    /// the text the page wrote - <c>contain-intrinsic-size</c> is one AngleSharp has no grammar for, so
+    /// its declarations arrive whole (CSS Sizing 4 §5.1).
+    /// </summary>
+    private static System.Collections.Generic.List<StyleLength> ReadStated(
+        ICssProperty? declared,
+        IRenderDimensions dimensions,
+        LengthReader.FontSource font)
+    {
+        if (declared is null)
+        {
+            return new System.Collections.Generic.List<StyleLength>();
+        }
+
+        var lengths = Lengths(declared.RawValue, dimensions, font);
+
+        if (lengths.Count > 0 || declared.Value is not { Length: > 0 } text)
+        {
+            return lengths;
+        }
+
+        foreach (var token in text.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (LengthReader.FromText(token, RenderMode.Horizontal, dimensions, font) is { } length &&
+                length.HasValue &&
+                length.Kind != StyleLengthKind.Percent)
+            {
+                lengths.Add(length);
+            }
+        }
+
+        return lengths;
+    }
+
     private static StyleLength? LengthOf(ICssProperty? declared, IRenderDimensions dimensions, LengthReader.FontSource font)
     {
         if (declared is null)
@@ -158,10 +219,18 @@ internal readonly struct ContainStyle
             return null;
         }
 
-        return LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var length) &&
+        if (LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var length) &&
             length.HasValue &&
-            length.Kind != StyleLengthKind.Percent
-                ? length
-                : null;
+            length.Kind != StyleLengthKind.Percent)
+        {
+            return length;
+        }
+
+        return declared.Value is { Length: > 0 } text
+            ? LengthReader.FromText(text.Trim(), RenderMode.Horizontal, dimensions, font) is { HasValue: true } stated &&
+              stated.Kind != StyleLengthKind.Percent
+                ? stated
+                : null
+            : null;
     }
 }

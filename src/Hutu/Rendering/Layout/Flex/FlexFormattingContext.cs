@@ -99,6 +99,27 @@ internal sealed partial class FlexFormattingContext
         var width = (flex.IsRow ? contentMain : contentCross) + insetH;
         var height = (flex.IsRow ? contentCross : contentMain) + insetV;
 
+        // Size containment answers both axes from the intrinsic size the page stated, whatever the items
+        // want: the box must not change size because of what it holds (CSS Contain 1 §3.1.1, CSS Sizing
+        // 4 §5).
+        var contain = style.Contain;
+
+        // The intrinsic size only stands where the page stated no size of its own for the axis.
+        var declaredInline = box.Flow.IsVertical ? style.Height : style.Width;
+        var declaredBlock = box.Flow.IsVertical ? style.Width : style.Height;
+
+        if (contain.Inline && !ContainStyle.IsDefinite(declaredInline, basisWidth))
+        {
+            var stated = contain.InlineSize ?? (box.Flow.IsVertical ? contain.Height : contain.Width);
+            width = (stated is { } inline ? Math.Max(0, inline.Resolve(0)) : 0) + insetH;
+        }
+
+        if (contain.Block && !ContainStyle.IsDefinite(declaredBlock, basisHeight))
+        {
+            var stated = contain.BlockSize ?? (box.Flow.IsVertical ? contain.Width : contain.Height);
+            height = (stated is { } block ? Math.Max(0, block.Resolve(0)) : 0) + insetV;
+        }
+
         return new Size(
             BoxModel.ClampWidth(style, width, basisWidth, insetH),
             BoxModel.ClampHeight(style, height - insetV, basisHeight, insetV) + insetV);
