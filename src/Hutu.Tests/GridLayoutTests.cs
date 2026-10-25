@@ -864,6 +864,8 @@ public sealed class GridLayoutTests
     [TestCase("left", 110)]
     [TestCase("self-end", 190)]
     [TestCase("right", 190)]
+    // A box with no line of text to hang from synthesizes its last baseline at its end edge.
+    [TestCase("last baseline", 190)]
     public async Task AnAbsolutePathChildStandsOnTheEdgeItsKeywordNames(String keyword, Double expected)
     {
         using var view = CreateView(400);

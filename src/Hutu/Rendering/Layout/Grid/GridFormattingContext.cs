@@ -1,4 +1,4 @@
-﻿using Hutu.Rendering.Boxes;
+using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
 
@@ -115,7 +115,7 @@ internal sealed class GridFormattingContext
                 item.BorderBoxHeight);
 
             // A subgrid item stands on the tracks of the area it spans, which only this pass knows:
-            // it is handed the sizes and gutters before it lays its own children out (CSS Grid 2 §8).
+            // it is handed the sizes and gutters before it lays its own children out (CSS Grid 2 ��8).
             var itemContextHere = itemContext;
             var itemGrid = item.Box.Style.Grid;
 
@@ -142,7 +142,7 @@ internal sealed class GridFormattingContext
     /// Places the absolutely and fixed positioned children, which are not grid items: they take no room
     /// in the grid and contribute nothing to its tracks. An <c>absolute</c> child's place in it is still
     /// the grid's own - <c>grid-row</c> and <c>grid-column</c> name the area that is its containing block
-    /// (CSS Grid 2 §10.1) and the area it stands in for its static position. A <c>fixed</c> child is
+    /// (CSS Grid 2 ��10.1) and the area it stands in for its static position. A <c>fixed</c> child is
     /// offset from the viewport, so the grid lends it nothing but a place to stand: the content edges,
     /// which is where a box with no room of its own in the grid would sit.
     /// </summary>
@@ -177,11 +177,17 @@ internal sealed class GridFormattingContext
                 continue;
             }
 
-            var (block, standing) = OutFlowArea(child.Style.GridItem, grid, plan, paddingBox, contentX, contentY);
+            var (block, standing) = OutFlowArea(
+                child.Style.GridItem,
+                grid,
+                plan,
+                paddingBox,
+                contentX,
+                contentY);
 
             // A container that generates no containing block for the child lends it no area either: the
             // child's place is then the content edges it would have stood against as the sole grid item
-            // in the grid (CSS Grid 2 §10.2), and the offsets it is given count from wherever an ancestor
+            // in the grid (CSS Grid 2 ��10.2), and the offsets it is given count from wherever an ancestor
             // further up puts them.
             if (!anchored)
             {
@@ -192,12 +198,13 @@ internal sealed class GridFormattingContext
 
             // A box with no offsets of its own is put by its own alignment within the area it stands in,
             // which is the one place a grid child's justify-self and align-self reach without the child
-            // being a grid item at all (CSS Align 3 §5.2).
+            // being a grid item at all (CSS Align 3 ��5.2).
             var item = child.Style.GridItem;
+            var baselineAtEnd = !box.Flow.IsVertical && !box.Flow.IsRightToLeft;
             var placed = new StaticStanding(
                 standing,
-                StaticStanding.Resolve(item.JustifySelf, grid.JustifyItems),
-                StaticStanding.Resolve(item.AlignSelf, grid.AlignItems));
+                StaticStanding.Resolve(item.JustifySelf, grid.JustifyItems, baselineAtEnd),
+                StaticStanding.Resolve(item.AlignSelf, grid.AlignItems, baselineAtEnd));
 
             parent.Children.Add(
                 _engine.ArrangePositioned(child, new Offset(standing.X, standing.Y), childContext, placed));
@@ -209,9 +216,9 @@ internal sealed class GridFormattingContext
     /// from and the area its static position stands in. A side named by a line number, a line name or an
     /// area line is the track edge it lands on; a side left auto - or one naming a line the grid has no
     /// room for, which is what the specification says to treat as auto instead of building implicit
-    /// tracks for an out-of-flow box (§10.1) - is the container's padding edge. Where nothing in either
+    /// tracks for an out-of-flow box (��10.1) - is the container's padding edge. Where nothing in either
     /// axis is placed, the area the child stands in is the content box instead, as if it were the sole
-    /// grid item in it (§10.2).
+    /// grid item in it (��10.2).
     /// </summary>
     private static (Rect Block, Rect Standing) OutFlowArea(
         GridItemStyle item,
@@ -224,20 +231,21 @@ internal sealed class GridFormattingContext
         var contentRight = contentX + plan.ContentWidth;
         var contentBottom = contentY + plan.ContentHeight;
 
-        var (blockLeft, leftPlaced) = Edge(
-            item.ColumnStart, grid, plan.ColumnLines, horizontal: true, atEnd: false, contentX, paddingBox.X);
-        var (blockRight, rightPlaced) = Edge(
-            item.ColumnEnd, grid, plan.ColumnLines, horizontal: true, atEnd: true, contentX, paddingBox.Right);
-        var (blockTop, topPlaced) = Edge(
-            item.RowStart, grid, plan.RowLines, horizontal: false, atEnd: false, contentY, paddingBox.Y);
-        var (blockBottom, bottomPlaced) = Edge(
-            item.RowEnd, grid, plan.RowLines, horizontal: false, atEnd: true, contentY, paddingBox.Bottom);
+        var columnStart = LineNumber(item.ColumnStart, grid, plan.ColumnLines.Count, horizontal: true, atEnd: false);
+        var columnEnd = LineNumber(item.ColumnEnd, grid, plan.ColumnLines.Count, horizontal: true, atEnd: true);
+        var rowStart = LineNumber(item.RowStart, grid, plan.RowLines.Count, horizontal: false, atEnd: false);
+        var rowEnd = LineNumber(item.RowEnd, grid, plan.RowLines.Count, horizontal: false, atEnd: true);
+
+        var blockLeft = columnStart is { } left ? LineAt(plan.ColumnLines, left, contentX) : paddingBox.X;
+        var blockRight = columnEnd is { } right ? LineAt(plan.ColumnLines, right, contentX) : paddingBox.Right;
+        var blockTop = rowStart is { } top ? LineAt(plan.RowLines, top, contentY) : paddingBox.Y;
+        var blockBottom = rowEnd is { } bottom ? LineAt(plan.RowLines, bottom, contentY) : paddingBox.Bottom;
 
         var block = Between(blockLeft, blockRight, blockTop, blockBottom);
 
         // A placement named on no side at all has no area of its own to stand in, and the content edges
         // answer for it; the moment one side is named, the child stands where that area begins.
-        var standing = leftPlaced || rightPlaced || topPlaced || bottomPlaced
+        var standing = columnStart is not null || columnEnd is not null || rowStart is not null || rowEnd is not null
             ? block
             : Between(contentX, contentRight, contentY, contentBottom);
 
@@ -249,36 +257,34 @@ internal sealed class GridFormattingContext
         new(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
 
     /// <summary>
-    /// Gets where one side of an out-of-flow child's placement stands, and whether the side was placed at
-    /// all: a named line is the track edge it lands on, and anything else is the container's padding
-    /// edge, which is the special line an auto side contributes (§10.1).
+    /// Gets the number of the line a side names, or null where it names none: an auto side, or a line the
+    /// grid has no room for - which the specification says to treat as auto instead of building implicit
+    /// tracks for an out-of-flow box (CSS Grid 2 §10.1).
     /// </summary>
-    /// <param name="origin">
-    /// Where the line list's own zero stands on the page: the content box's start along this axis.
-    /// </param>
-    private static (Double At, Boolean Placed) Edge(
+    private static Int32? LineNumber(
         GridLine side,
         GridStyle grid,
-        List<Double> lines,
+        Int32 count,
         Boolean horizontal,
-        Boolean atEnd,
-        Double origin,
-        Double paddingEdge)
+        Boolean atEnd)
     {
-        var resolved = grid.Resolve(side, horizontal, atEnd).Resolve(lines.Count);
+        var resolved = grid.Resolve(side, horizontal, atEnd).Resolve(count);
 
-        if (resolved is null || resolved < 1 || resolved > lines.Count)
-        {
-            return (paddingEdge, false);
-        }
-
-        return (origin + lines[resolved.Value - 1], true);
+        return resolved is { } line && line >= 1 && line <= count ? line : null;
     }
+
+    /// <summary>
+    /// Gets where a line stands along the page. A line numbered from the right names the same edge of a
+    /// different track: line 1 is the list's last edge, and the last line its first (CSS Grid 1 ��7.1).
+    /// </summary>
+    private static Double LineAt(List<Double> lines, Int32 line, Double origin) =>
+        origin + lines[line - 1];
+
 
 
     /// <summary>
     /// Gets the stretch of track on either side of each gap: the areas a gap's decoration asks about
-    /// before it is drawn at all (CSS Gaps 1 §3.4).
+    /// before it is drawn at all (CSS Gaps 1 ��3.4).
     /// </summary>
     private static (List<(Double From, Double To)> Before, List<(Double From, Double To)> After) Sides(
         List<TrackGap> gaps,
@@ -300,7 +306,7 @@ internal sealed class GridFormattingContext
     /// <summary>
     /// Works out the decorations of the grid's gaps: the room between each pair of adjacent tracks, run
     /// the whole way across the tracks and split where an item stands in the way or, for the
-    /// <c>intersection</c> break, where a perpendicular gap crosses it (CSS Gaps 1 §3.1).
+    /// <c>intersection</c> break, where a perpendicular gap crosses it (CSS Gaps 1 ��3.1).
     /// </summary>
     private static List<GapRuleSegment>? GapDecorations(Box box, GridPlan plan, Double contentX, Double contentY)
     {
@@ -351,7 +357,7 @@ internal sealed class GridFormattingContext
         var (rowBefore, rowAfter) = Sides(plan.RowGaps, contentY, plan.TracksHeight);
 
         // A column rule runs along the block axis and a row rule along the inline, so each takes its ends
-        // from whichever of the two the container's writing mode turns back (CSS Gaps 1 §3.3).
+        // from whichever of the two the container's writing mode turns back (CSS Gaps 1 ��3.3).
         var columnRules = rules.Column.MeasuredFromTheEnd(box.Flow.BlockSign < 0);
         var rowRules = rules.Row.MeasuredFromTheEnd(box.Flow.InlineSign < 0);
 
@@ -481,7 +487,7 @@ internal sealed class GridFormattingContext
         // gutter, they are not counted when the content is distributed, and the room they would have
         // taken is shared by the tracks that stand - which is why they go before any track is sized, so
         // that a track whose maximum is `auto` grows into the width the dropped ones leave (CSS Grid 1
-        // §7.2.3).
+        // ��7.2.3).
         var keptColumns = grid.ColumnsSubgrid
             ? null
             : Collapse(grid.Columns, items, true, columnBasis, gapX, definiteWidth);
@@ -693,7 +699,7 @@ internal sealed class GridFormattingContext
         // The item's own percentages resolve against its grid area, so the measurement has to be told
         // about that area rather than the grid's content box the shared context was built for. Its
         // height is what this measurement is finding out, so it is told with none: a `height: 100%` on
-        // the item is then no height at all while the rows are being sized (CSS Grid 1 §12.4), where
+        // the item is then no height at all while the rows are being sized (CSS Grid 1 ��12.4), where
         // before it resolved against the whole grid and asked its row to be that tall.
         context = context.ForContainingBlock(new Size(Math.Max(0, basis), 0));
 
@@ -838,7 +844,7 @@ internal sealed class GridFormattingContext
     {
         // The walk is in order-modified document order: `order` numbers the items the automatic
         // placement is about, and an item that states no position is packed where its number puts it
-        // (CSS Grid 1 §8.5). The sort is stable, so two items of one number keep the order they were
+        // (CSS Grid 1 ��8.5). The sort is stable, so two items of one number keep the order they were
         // written in.
         var ordered = items
             .Select((item, index) => (Item: item, Index: index, item.Box.Style.Order))
@@ -1271,8 +1277,8 @@ internal sealed class GridFormattingContext
             Double? declared = null;
 
             // An item whose width is a percentage contributes as `auto` to the sizing of a track it stands
-            // in (CSS Grid 1 §12.4): the percentage is a share of the area that track gives it, so it
-            // cannot be what decides that area (§6.6). Charging it to the container - which is all `basis`
+            // in (CSS Grid 1 ��12.4): the percentage is a share of the area that track gives it, so it
+            // cannot be what decides that area (��6.6). Charging it to the container - which is all `basis`
             // can be before the tracks are known - made a `width: 100%` item inside a `repeat(2, 1fr)`
             // grid ask for the whole grid, and two 110px tracks were laid into a 110px container.
             if (HasWidth(item.Box) && style.Width.Kind != StyleLengthKind.Percent)
@@ -1289,7 +1295,7 @@ internal sealed class GridFormattingContext
             }
 
             // An item with an aspect ratio and a block size its rows have already settled has a definite
-            // inline size: the ratio carries one axis to the other (CSS Grid 1 §6.6, CSS Sizing 4 §4), and
+            // inline size: the ratio carries one axis to the other (CSS Grid 1 ��6.6, CSS Sizing 4 ��4), and
             // the columns are sized from it. Only a fixed track has a size before the rows are sized, so
             // only a span of fixed tracks answers here - every other row waits for its content.
             if (!HasWidth(item.Box) && style.AspectRatio is { } ratio && FixedRows(grid, item) is { } blockSize)
@@ -1419,7 +1425,7 @@ internal sealed class GridFormattingContext
                 continue;
             }
 
-            // A grid item's containing block is its own grid area (CSS Grid 1 §6.6), so a percentage on
+            // A grid item's containing block is its own grid area (CSS Grid 1 ��6.6), so a percentage on
             // its margin or padding counts against that area's inline size and not the whole grid's.
             // Padding is where this shows: `padding-bottom: 39.54%` is the classic way to give a box a
             // fixed ratio, and charging it to the container instead doubles the height the item asks for,
@@ -1428,8 +1434,8 @@ internal sealed class GridFormattingContext
             var margin = style.Margin.Resolve(areaWidth).Vertical;
             var padding = style.Padding.Resolve(areaWidth);
             var insetV = padding.Vertical + BlockLayout.BorderOf(item.Box).Vertical;
-            // The same rule down the block axis (CSS Grid 1 §12.4): a `height: 100%` item contributes as
-            // `auto` to its row, since the percentage is a share of that row's height (§6.6) and a share of
+            // The same rule down the block axis (CSS Grid 1 ��12.4): a `height: 100%` item contributes as
+            // `auto` to its row, since the percentage is a share of that row's height (��6.6) and a share of
             // a size cannot be what decides the size.
             var declared = HasHeight(item.Box) && style.Height.Kind != StyleLengthKind.Percent
                 ? BoxModel.DeclaredHeight(style, basis, insetV)
@@ -1637,7 +1643,7 @@ internal sealed class GridFormattingContext
     /// goes.
     /// </summary>
     /// <remarks>
-    /// CSS Grid 1 §11.5 resolves intrinsic track sizes "first ... based on items that are contained
+    /// CSS Grid 1 ��11.5 resolves intrinsic track sizes "first ... based on items that are contained
     /// wholly within a single track", and only "then ... gradually adds in the space requirements of
     /// items that span multiple tracks", those being taken in increasing span order. Reading the
     /// items in document order instead gives a spanning item a share of a deficit that does not
@@ -1707,7 +1713,7 @@ internal sealed class GridFormattingContext
         // An item that spans a flexible track is measured against a set of tracks the specification
         // calls fixed - "distributing space only to flexible tracks (i.e. treating all other tracks as
         // having a fixed sizing function of their current base size)", with a flexible track itself
-        // "having a max track sizing function equal to their min" (§11.5, Increase sizes to
+        // "having a max track sizing function equal to their min" (��11.5, Increase sizes to
         // accommodate spanning items crossing flexible tracks). So the demand of such an item is
         // shared out among the flexible tracks it spans, by their factors, and the content-sized
         // tracks it also covers are left at the size they hold. Sharing it with them instead is what
@@ -2041,7 +2047,7 @@ internal sealed class GridFormattingContext
     {
         var style = item.Box.Style;
 
-        // The area the item was placed in is its containing block (CSS Grid 1 §6.6), so percentages on
+        // The area the item was placed in is its containing block (CSS Grid 1 ��6.6), so percentages on
         // its own margin and padding count against the area, not against the grid's content box.
         var basis = areaWidth;
         var margin = style.Margin.Resolve(basis);
@@ -2057,7 +2063,7 @@ internal sealed class GridFormattingContext
         var width = ResolveWidth(style, item.Box, areaWidth, insetH, isBorderBox, justify, context);
         var height = ResolveHeight(style, item.Box, areaHeight, basis, insetV, isBorderBox, align, context);
 
-        // A declared height is definite, and so is a stretch: CSS Sizing 3 §5.2 counts a size that can
+        // A declared height is definite, and so is a stretch: CSS Sizing 3 ��5.2 counts a size that can
         // be resolved from a `stretch` self-alignment as definite, so a percentage inside the item has
         // to resolve against the area it was stretched to rather than collapse to nothing.
         item.HeightIsDefinite =
@@ -2141,7 +2147,7 @@ internal sealed class GridFormattingContext
     private static Double Space(FlexAlignment align, Double free) => align switch
     {
         FlexAlignment.Center => Math.Max(0, free) / 2,
-        FlexAlignment.End => Math.Max(0, free),
+        FlexAlignment.End or FlexAlignment.Right => Math.Max(0, free),
         _ => 0.0,
     };
 

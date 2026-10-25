@@ -314,7 +314,7 @@ internal sealed class PositionedLayout
             // it was lent by the alignment it asks for, since a box with no offsets of its own is aligned
             // within that area rather than dropped at its start (CSS Align 3 §5.2).
             x = staticX + margin.Left + (standing is { } area
-                ? Stand(area.Justify, area.Area.Width - width - margin.Horizontal)
+                ? StaticStanding.Stand(area.Horizontal, area.Area.Width - width - margin.Horizontal)
                 : 0);
         }
 
@@ -375,7 +375,7 @@ internal sealed class PositionedLayout
         else
         {
             y = staticY + margin.Top + (standing is { } area
-                ? Stand(area.Align, area.Area.Height - height - margin.Vertical)
+                ? StaticStanding.Stand(area.Vertical, area.Area.Height - height - margin.Vertical)
                 : 0);
         }
 
@@ -392,10 +392,4 @@ internal sealed class PositionedLayout
     /// that area on both edges when it is centred, and past its far edge when it is pushed there, which
     /// is what a browser draws and the corpus's negative margins stand for.
     /// </remarks>
-    private static Double Stand(FlexAlignment align, Double free) => align switch
-    {
-        FlexAlignment.Center => free / 2,
-        FlexAlignment.End => free,
-        _ => 0,
-    };
 }

@@ -897,7 +897,7 @@ internal sealed partial class FlexFormattingContext
 
         return justify switch
         {
-            FlexAlignment.End => (free, 0.0),
+            FlexAlignment.End or FlexAlignment.Right => (free, 0.0),
             FlexAlignment.Center => (free / 2, 0.0),
             FlexAlignment.SpaceBetween when count > 1 => (0.0, free / (count - 1)),
             FlexAlignment.SpaceAround when count > 0 => (free / count / 2, free / count),

@@ -28,18 +28,44 @@ internal readonly struct StaticStanding
     /// <summary>Gets the alignment along the block axis, once resolved.</summary>
     public FlexAlignment Align { get; }
 
+    /// <summary>Gets the alignment that moves the box across the page.</summary>
+    public FlexAlignment Horizontal => Justify;
+
+    /// <summary>Gets the alignment that moves the box down the page.</summary>
+    public FlexAlignment Vertical => Align;
+
     /// <summary>
     /// Resolves the alignment one axis of an out-of-flow box asks for. <c>auto</c> takes what the
     /// container says for that axis; every keyword that would otherwise stretch the box or set it on a
     /// line of text stands at the area's start edge instead, because an out-of-flow box has no line to
-    /// join and no room it is expected to fill. <c>last baseline</c> is not read apart from a plain
-    /// <c>baseline</c> yet, and comes to the same start edge.
+    /// join and no room it is expected to fill. A <c>last baseline</c> box has no last line to hang from
+    /// either, so it stands at the end edge; a plain <c>baseline</c> keeps the start edge.
     /// </summary>
-    public static FlexAlignment Resolve(FlexAlignment self, FlexAlignment container) =>
+    /// <param name="baselineAtEnd">
+    /// Whether the end edge a last baseline would stand on is the physical right one - true of a row
+    /// that reads left to right, which is the only axis this placement lays tracks along so far.
+    /// </param>
+    public static FlexAlignment Resolve(FlexAlignment self, FlexAlignment container, Boolean baselineAtEnd) =>
         (self == FlexAlignment.Auto ? container : self) switch
         {
             FlexAlignment.Center => FlexAlignment.Center,
             FlexAlignment.End => FlexAlignment.End,
+            FlexAlignment.LastBaseline when baselineAtEnd => FlexAlignment.End,
+            FlexAlignment.Left => FlexAlignment.Left,
+            FlexAlignment.Right => FlexAlignment.Right,
             _ => FlexAlignment.Start,
         };
+
+    /// <summary>
+    /// The distance from the area's start edge to where the box stands, given the room left over. The
+    /// room is not held at zero: a box wider than its area keeps the edge the alignment names and
+    /// overflows the other one, and a centred one hangs as far over the start as the end - which is
+    /// what a browser draws and what the corpus's negative margins stand for.
+    /// </summary>
+    public static Double Stand(FlexAlignment align, Double slack) => align switch
+    {
+        FlexAlignment.Center => slack / 2,
+        FlexAlignment.End or FlexAlignment.Right => slack,
+        _ => 0,
+    };
 }

@@ -32,6 +32,22 @@ internal enum FlexAlignment : byte
     /// for an item in flow, the start edge for an out-of-flow box (CSS Align 3 §5.1).
     /// </summary>
     Normal,
+
+    /// <summary>
+    /// The <c>baseline</c> position taken from the box's last line rather than its first. An
+    /// out-of-flow box has no line to stand on, so its last baseline is synthesized at the end edge.
+    /// </summary>
+    LastBaseline,
+
+    /// <summary>
+    /// The physical left edge, which is the logical end of a right-to-left row. Kept apart from
+    /// <see cref="Start"/> so that a page asking for the left edge gets the left edge in either
+    /// direction (CSS Align 3 §5.2).
+    /// </summary>
+    Left,
+
+    /// <summary>The physical right edge, kept apart from <see cref="End"/> for the same reason.</summary>
+    Right,
 }
 
 /// <summary>
@@ -521,14 +537,15 @@ internal readonly struct FlexStyle
         // The two physical spellings name the left and the right edge of the area rather than its start
         // and end along an axis. Writing modes and right-to-left tracks are not carried apart from one
         // another here, so the edge each names is the edge the box is placed against.
-        "left" => FlexAlignment.Start,
-        "right" => FlexAlignment.End,
+        "left" => FlexAlignment.Left,
+        "right" => FlexAlignment.Right,
         "center" => FlexAlignment.Center,
         "space-between" => FlexAlignment.SpaceBetween,
         "space-around" => FlexAlignment.SpaceAround,
         "space-evenly" => FlexAlignment.SpaceEvenly,
         "stretch" => FlexAlignment.Stretch,
         "baseline" => FlexAlignment.Baseline,
+        "last baseline" => FlexAlignment.LastBaseline,
         "normal" => FlexAlignment.Normal,
         _ => fallback,
     };

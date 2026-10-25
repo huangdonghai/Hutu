@@ -169,10 +169,10 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // not), and `normal`, which its converter reads as `auto` - losing the difference between the
         // layout's own answer and the container's. Dropped or merged, an item asking for one of them is
         // left on the container's default instead of the edge it named.
-        ["align-self"] = ["left", "right", "self-start", "self-end", "normal"],
-        ["justify-self"] = ["left", "right", "self-start", "self-end", "normal"],
-        ["align-items"] = ["left", "right", "self-start", "self-end", "normal"],
-        ["justify-items"] = ["left", "right", "self-start", "self-end", "normal"],
+        ["align-self"] = ["left", "right", "self-start", "self-end", "normal", "last baseline"],
+        ["justify-self"] = ["left", "right", "self-start", "self-end", "normal", "last baseline"],
+        ["align-items"] = ["left", "right", "self-start", "self-end", "normal", "last baseline"],
+        ["justify-items"] = ["left", "right", "self-start", "self-end", "normal", "last baseline"],
         ["align-content"] = ["left", "right", "self-start", "self-end"],
         ["justify-content"] = ["left", "right", "self-start", "self-end"],
     };
