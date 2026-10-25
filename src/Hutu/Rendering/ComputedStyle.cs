@@ -4009,7 +4009,7 @@ internal readonly struct ComputedStyle
     /// </remarks>
     public LineBreaks.WordBreaking WordBreakingRules =>
         BreaksAnywhere
-            ? LineBreaks.WordBreaking.Normal
+            ? LineBreaks.WordBreaking.Anywhere
             : BreaksBetweenLetters
                 ? LineBreaks.WordBreaking.BreakAll
                 : KeepsWordsWhole

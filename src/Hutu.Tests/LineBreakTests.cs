@@ -246,7 +246,41 @@ public sealed class LineBreakTests
         return view;
     }
 
+    [Test]
+    public void AnywhereEndsALineBetweenUnitsTheGlueWouldOtherwiseHold()
+    {
+        // CSS Text 3 §5.3: `line-break: anywhere` sets the Unicode rules aside, so the glue class of a
+        // non-breaking hyphen no longer holds the line together - but a mark still keeps to its base,
+        // because the boundary inside a character unit is not one a line can end at.
+        Assert.That(
+            Chunks("XX‑X", LineBreaks.WordBreaking.Anywhere),
+            Is.EqualTo(new[] { "X", "X", "‑", "X" }),
+            "every character unit boundary is an opportunity");
+
+        Assert.That(
+            Chunks("X́X", LineBreaks.WordBreaking.Anywhere),
+            Is.EqualTo(new[] { "X́", "X" }),
+            "a mark does not begin a line");
+
+        Assert.That(
+            LineBreaks.MayBreak('X', 0x2011, LineBreaks.WordBreaking.Anywhere),
+            Is.True,
+            "the pair across an inline edge is an opportunity too");
+    }
+
     private static List<String> Chunks(String text) => TextChunker.Chunks(text).ToList();
+
+    private static List<String> Chunks(String text, LineBreaks.WordBreaking word)
+    {
+        var chunks = new List<String>();
+
+        foreach (var range in TextChunker.Ranges(text, word))
+        {
+            chunks.Add(text.Substring(range.Start, range.Length));
+        }
+
+        return chunks;
+    }
 
     private static LayoutBox Text(HutuViewInternal view, String content) =>
         Walk(view).SingleOrDefault(n => n.Kind == LayoutKind.Text && n.Text == content)

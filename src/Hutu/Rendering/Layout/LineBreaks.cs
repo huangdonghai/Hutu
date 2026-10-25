@@ -55,6 +55,12 @@ internal static class LineBreaks
 
         /// <summary><c>word-break: keep-all</c> - no implicit break between two letter units.</summary>
         KeepAll,
+
+        /// <summary>
+        /// <c>line-break: anywhere</c> - a line may end between any two typographic character units,
+        /// whatever the Unicode rules would have said of the pair (CSS Text 3 §5.3).
+        /// </summary>
+        Anywhere,
     }
     /// <summary>
     /// Gets whether a line may end between the code point at <paramref name="left"/> and the one at
@@ -83,6 +89,14 @@ internal static class LineBreaks
         if (after is BreakClass.Cm or BreakClass.Zwj)
         {
             return false;
+        }
+
+        // `line-break: anywhere` sets the rules aside: every boundary between two typographic
+        // character units is a place a line may end, including the ones the glue, joiner and
+        // zero-width classes would otherwise hold (CSS Text 3 §5.3).
+        if (word is WordBreaking.Anywhere)
+        {
+            return true;
         }
 
         // LB8a, LB9: a joiner or a mark written after a character is written onto it, and nothing may
@@ -150,6 +164,11 @@ internal static class LineBreaks
         if (after is BreakClass.Cm or BreakClass.Zwj)
         {
             return false;
+        }
+
+        if (word is WordBreaking.Anywhere)
+        {
+            return true;
         }
 
         var before = ClassOf(beforeCodePoint, word);
