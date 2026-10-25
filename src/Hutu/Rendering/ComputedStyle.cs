@@ -5056,11 +5056,28 @@ internal readonly struct ComputedStyle
     /// nothing to do beyond hiding the overflow, and they are treated as one. Either axis clipping is
     /// enough: with one axis <c>visible</c> and the other not, CSS makes the visible one <c>auto</c>.
     /// </remarks>
-    public Boolean ClipsOverflow => _values.DisplayPositioning.ClipsOverflow;
+    public Boolean ClipsOverflow =>
+        _values.DisplayPositioning.ClipsOverflow || (Contain.Paint && PaintContainmentApplies);
+
+    /// <summary>
+    /// Gets whether paint containment has a principal box to apply to. An internal table element has
+    /// none, and neither has <c>display: contents</c>; a non-replaced inline box is not a box the
+    /// containment can cut (CSS Contain 2 §3.3).
+    /// </summary>
+    private Boolean PaintContainmentApplies =>
+        Display is not "contents" and not "inline" && !IsInternalTableBox;
+
+    /// <summary>
+    /// Gets whether the box is an internal table element. Containment does not apply to those: an
+    /// internal table box has no principal box of its own, and its size and its contents are the
+    /// table's business (CSS Contain 2 §3.1.1, §3.3).
+    /// </summary>
+    private Boolean IsInternalTableBox =>
+        Display is "table-row-group" or "table-header-group" or "table-footer-group" or "table-row"
+            or "table-cell" or "table-column" or "table-column-group";
 
     /// <summary>Gets the keyword the box's inline overflow axis was left with.</summary>
     public String OverflowX => _values.DisplayPositioning.OverflowX;
-
     /// <summary>Gets the keyword the box's block overflow axis was left with.</summary>
     public String OverflowY => _values.DisplayPositioning.OverflowY;
 
