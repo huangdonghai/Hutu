@@ -122,9 +122,20 @@ internal static class ChildSlicer
 
             // A cut at the end of the list is no boundary between two children at all: the fragment takes
             // what is left and the flow moves on.
+            var natural = cut;
+
             while (cut > start && cut < children.Count && !Allowed(children, cut))
             {
                 cut--;
+            }
+
+            // With no allowed boundary before this child, the page's avoid cannot be honoured: the
+            // natural cut stands and the avoid is ignored, rather than leave the fragment almost empty
+            // (CSS Break 3 §4.4; measured - Chrome fills the column and breaks at the forbidden point
+            // when there is nowhere better to break).
+            if (cut <= start && natural > start)
+            {
+                cut = natural;
             }
 
             // No boundary before any child may take the break: the fragment overflows with the one child,
