@@ -1344,6 +1344,40 @@ internal readonly struct ComputedStyle
             {
                 return TextDirection.LeftToRight;
             }
+
+            // `dir=auto` takes the direction from the first character of the element that has one, so
+            // a field or a heading in a language the page did not name reads the way it is written
+            // (HTML §3.2.6.5, P2/P3 of UAX #9). An ancestor that says it hands the answer down like
+            // any other direction.
+            if (String.Equals(dir, "auto", StringComparison.OrdinalIgnoreCase))
+            {
+                return FirstStrongDirection(current);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Gets the direction of the first character of the element's text that has one, or null.</summary>
+    private static TextDirection? FirstStrongDirection(IElement element)
+    {
+        var text = element.TextContent;
+
+        for (var at = 0; at < text.Length;)
+        {
+            var cls = Layout.BidiClasses.Of(Char.ConvertToUtf32(text, at));
+
+            if (cls == Layout.BidiClass.L)
+            {
+                return TextDirection.LeftToRight;
+            }
+
+            if (cls is Layout.BidiClass.R or Layout.BidiClass.AL)
+            {
+                return TextDirection.RightToLeft;
+            }
+
+            at += Char.IsSurrogatePair(text, at) ? 2 : 1;
         }
 
         return null;

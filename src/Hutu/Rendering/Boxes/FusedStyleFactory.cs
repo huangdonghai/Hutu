@@ -907,7 +907,14 @@ internal static class FusedStyleFactory
 
             // Inherited like the direction it decides the reading of, except where the element writes a
             // keyword of its own - which the UA sheet does for every element that carries a `dir`.
-            UnicodeBidi = find("unicode-bidi")?.Value ?? parent.UnicodeBidi,
+            //
+            // A text field that takes its direction from its text reads each of its lines that way, so
+            // the field's content is resolved line by line as `unicode-bidi: plaintext` resolves a
+            // paragraph (HTML §3.2.6.5, measured by unicode-bidi-plaintext-textarea-1).
+            UnicodeBidi = element.LocalName.Equals("textarea", StringComparison.OrdinalIgnoreCase) &&
+                String.Equals(element.GetAttribute("dir")?.Trim(), "auto", StringComparison.OrdinalIgnoreCase)
+                    ? "plaintext"
+                    : find("unicode-bidi")?.Value ?? parent.UnicodeBidi,
             Orientation = orientation,
             CombinesUpright = combine,
             Color = color,
