@@ -709,15 +709,28 @@ internal sealed class Painter
 
     private void PaintBlock(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred = null)
     {
+        PaintPresentation(box, target);
+        PaintMarker(box, target);
+        PaintChildren(box, list, target, deferred);
+    }
+
+    /// <summary>
+    /// Emits the ground a box paints for itself: its shadows, background, borders and gap rules, in the
+    /// order a backend has to lay them down.
+    /// </summary>
+    /// <remarks>
+    /// This is the part CSS 2.1 §Appendix E puts in a pass of its own, before the line the box's text
+    /// stands on - which is why it is separated from what the box says rather than painted with it.
+    /// </remarks>
+    private void PaintPresentation(LayoutBox box, List<PaintCommand> target)
+    {
         var style = box.Source.Style;
 
         // A generated anonymous box - the block stood between an inline run and a block sibling, or
         // wrapping the whole inline content of a block - is not an element and owns no presentation. It
         // borrows the container's computed values to lay its children out, but it must not paint them:
-        // the container already painted its own background behind the whole content box, so the
-        // anonymous block painting that same background again only risks covering a float that stands
-        // beside the run it wraps (children paint in document order, so the later anonymous block would
-        // bury the earlier float). It draws only what is inside it.
+        // the container already painted its own background behind the whole content box. It draws only
+        // what is inside it.
         if (box.Source.IsAnonymous)
         {
             // An anonymous table cell is the exception: the border it carries is not the container's
@@ -728,7 +741,6 @@ internal sealed class Painter
                 AddBorder(box, style, target);
             }
 
-            PaintChildren(box, list, target, deferred);
             return;
         }
 
@@ -759,7 +771,14 @@ internal sealed class Painter
         // The rules a container's gaps ask for, where its own layout worked them out: a flex, grid or
         // grid-lanes container's gaps from its context, a multi-column one's from the columns it made.
         AddGapDecorations(box, style, target);
+    }
 
+    /// <summary>
+    /// Emits the mark a list item is drawn with, which is text of the item rather than ground: it stands
+    /// with the content, so a line pulled over it by a negative indent reaches above it.
+    /// </summary>
+    private void PaintMarker(LayoutBox box, List<PaintCommand> target)
+    {
         // A marker is text, drawn where the layout put it and in the font and colour the rules written for
         // it settled - the item's own where the sheet says nothing about markers, which is the usual page.
         // It stands beside the item rather than in it, so nothing about the box decides where it goes.
@@ -768,25 +787,25 @@ internal sealed class Painter
         // <c>text-indent</c>, a block shifted out there by <c>position: relative</c> - and each of those
         // lies over the mark, which is what both outside-marker-paint-order and
         // outside-marker-covered-by-relpos-block-link are drawn to say.
-        if (box.MarkerBounds is { } marker && box.Source.Marker is { Length: > 0 } marks)
+        if (box.MarkerBounds is not { } marker || box.Source.Marker is not { Length: > 0 } marks)
         {
-            var marked = box.Source.MarkerStyle ?? box.Source.Style;
-
-            target.Add(new TextCommand(
-                marker,
-                marks,
-                box.MarkerBaseline,
-                marked.GetFont(),
-                marked.TextFillColor ?? ToArgb(marked.Color),
-                box.Decorations ?? NoDecorations,
-                box.Flow,
-                marked.LetterSpacing,
-                wordSpacing: marked.WordSpacing,
-                skip: marked.SkipInk,
-                shadows: marked.TextShadows));
+            return;
         }
 
-        PaintChildren(box, list, target, deferred);
+        var marked = box.Source.MarkerStyle ?? box.Source.Style;
+
+        target.Add(new TextCommand(
+            marker,
+            marks,
+            box.MarkerBaseline,
+            marked.GetFont(),
+            marked.TextFillColor ?? ToArgb(marked.Color),
+            box.Decorations ?? NoDecorations,
+            box.Flow,
+            marked.LetterSpacing,
+            wordSpacing: marked.WordSpacing,
+            skip: marked.SkipInk,
+            shadows: marked.TextShadows));
     }
 
     /// <summary>
@@ -943,21 +962,292 @@ internal sealed class Painter
     private static List<ClipEdge> CopiesOf(List<ClipEdge> clips) => clips.Count > 0 ? [.. clips] : NoClips;
 
     /// <summary>
-    /// Paints the children that stay in the flow, in document order. A box taken out of it is left out
-    /// wherever a context has gathered it; with no gathering - the plain walk, and each box that forms a
-    /// context of its own - every child is painted where it stands.
+    /// Paints the children that stay in the flow, in the three passes CSS 2.1 §Appendix E gives a
+    /// stacking context: first the ground of every block-level box below this one, then the floats with
+    /// everything they carry, then the lines the text stands on.
     /// </summary>
+    /// <remarks>
+    /// A box taken out of the flow is left out wherever a context has gathered it; with no gathering - the
+    /// plain walk, and each box that forms a context of its own - every child is painted where it stands.
+    /// <para>
+    /// The passes are made over the boxes below this one rather than box by box because that is what makes
+    /// a line stand over ground that was written after it: a page pulls a later block up with a negative
+    /// margin, and the earlier box's text is still the ink on top of it. Painting each box completely as
+    /// the walk reaches it buries that text instead.
+    /// </para>
+    /// </remarks>
     private void PaintInFlow(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? owner)
     {
-        foreach (var child in box.Children)
+        var children = Standing(box, owner);
+
+        if (box.Kind == LayoutKind.Line)
         {
-            if (owner is not null && child.Position != PositionMode.Static)
+            // The line's own runs and the replaced boxes standing on it are the inline-level content, and
+            // each is drawn complete where it stands: an atomic inline is a context of its own for what
+            // is inside it.
+            foreach (var child in children)
+            {
+                PaintChild(child, list, target, owner);
+            }
+
+            return;
+        }
+
+        var floated = new List<LayoutBox>();
+
+        foreach (var child in children)
+        {
+            if (Floats(child))
+            {
+                floated.Add(child);
+            }
+        }
+
+        // 1. The ground: every block's shadows, background, borders and gap rules, each box before the
+        //    boxes inside it, and no line among them. A replaced box is drawn complete here, since its
+        //    picture is its ground; what a context of its own holds is left to its own passes.
+        foreach (var child in children)
+        {
+            if (Floats(child) || IsInlineLevel(child))
             {
                 continue;
             }
 
+            if (IsReplaced(child))
+            {
+                PaintChild(child, list, target, owner);
+                continue;
+            }
+
+            if (child.EstablishesStackingContext)
+            {
+                // A box that forms a context of its own is drawn as one unit where it stands: what it
+                // holds is laid down with its ground, under the layers of the boxes around it.
+                PaintChild(child, list, target, owner);
+                continue;
+            }
+
+            PaintGround(child, list, target, owner);
+        }
+
+        // 2. The floats, in the order the document wrote them, each with the whole of what it holds.
+        foreach (var child in floated)
+        {
             PaintChild(child, list, target, owner);
         }
+
+        // 3. The ink: the lines this box's text stands on, and the same pass over the blocks below it, so
+        //    a run deep in an early box still lies over the ground of a later one.
+        foreach (var child in children)
+        {
+            if (Floats(child) || IsReplaced(child) || child.EstablishesStackingContext)
+            {
+                // A float came with the pass before, drawn with all that hangs on it; a replaced box and a
+                // box that forms a context of its own came with the ground, each as one unit.
+                continue;
+            }
+
+            if (IsInlineLevel(child))
+            {
+                PaintChild(child, list, target, owner);
+                continue;
+            }
+
+            PaintInk(child, list, target, owner);
+        }
+    }
+
+    /// <summary>
+    /// Paints the ground of one block and of every block below it, clipped as its own overflow hides.
+    /// </summary>
+    private void PaintGround(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? owner)
+    {
+        var hidden = box.Kind != LayoutKind.Line && box.Source.Style.IsHidden;
+
+        if (!hidden)
+        {
+            PaintPresentation(box, target);
+        }
+
+        // The clip covers what the box holds and never the box itself, which is what keeps a border from
+        // being cut off by the radius it draws.
+        var clipped = box.ClipsOverflow && box.Children.Count > 0;
+
+        if (clipped)
+        {
+            target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
+        }
+
+        foreach (var child in Standing(box, owner))
+        {
+            if (Floats(child) || IsInlineLevel(child))
+            {
+                continue;
+            }
+
+            if (IsReplaced(child))
+            {
+                PaintChild(child, list, target, owner);
+                continue;
+            }
+
+            if (child.EstablishesStackingContext)
+            {
+                PaintChild(child, list, target, owner);
+                continue;
+            }
+
+            PaintGround(child, list, target, owner);
+        }
+
+        if (clipped)
+        {
+            target.Add(new PopClipCommand(box.PaddingBox));
+        }
+    }
+
+    /// <summary>
+    /// Paints what a block says - its mark, its lines and whatever stands on them - over the ground the
+    /// pass before has already laid, and clipped by the same overflow that held its ground.
+    /// </summary>
+    private void PaintInk(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? owner)
+    {
+        var hidden = box.Kind != LayoutKind.Line && box.Source.Style.IsHidden;
+
+        if (!hidden)
+        {
+            PaintMarker(box, target);
+        }
+
+        // The clip is only worth opening when this pass has ink to put inside it, and it covers that ink
+        // alone: a mark hung outside the box is not cut by what the box hides.
+        var clipped = box.ClipsOverflow && HasInk(box, owner);
+
+        if (clipped)
+        {
+            target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
+        }
+
+        foreach (var child in Standing(box, owner))
+        {
+            if (IsInlineLevel(child))
+            {
+                PaintChild(child, list, target, owner);
+                continue;
+            }
+
+            if (Floats(child))
+            {
+                // A float this deep had no pass of its own above, since the passes reach only the children
+                // of the box they belong to: it is drawn with all that hangs on it, here.
+                PaintChild(child, list, target, owner);
+                continue;
+            }
+
+            if (IsReplaced(child))
+            {
+                // Its picture came with its ground.
+                continue;
+            }
+
+            if (child.EstablishesStackingContext)
+            {
+                // It came with the ground as one unit, layer and all.
+                continue;
+            }
+
+            PaintInk(child, list, target, owner);
+        }
+
+        if (clipped)
+        {
+            target.Add(new PopClipCommand(box.PaddingBox));
+        }
+
+        // The outline is drawn around the box rather than in it, so it comes after the clip that held the
+        // box's own overflow: that clip must not cut it off, while the clip of the nearest ancestor that
+        // hides its overflow still holds it in. A line box and a run of text are not elements of their
+        // own, so neither grows one.
+        if (box.Kind is not (LayoutKind.Line or LayoutKind.Text))
+        {
+            AddOutline(box, box.Source.Style, target);
+        }
+    }
+
+    /// <summary>
+    /// Gets the children of a box that the flow paints in place: one taken right out is left to the level
+    /// that gathered it, and is nothing to any of the three passes.
+    /// </summary>
+    private static List<LayoutBox> Standing(LayoutBox box, DeferredStack? owner)
+    {
+        if (owner is null)
+        {
+            return box.Children;
+        }
+
+        var stays = new List<LayoutBox>(box.Children.Count);
+
+        foreach (var child in box.Children)
+        {
+            if (child.Position == PositionMode.Static)
+            {
+                stays.Add(child);
+            }
+        }
+
+        return stays;
+    }
+
+    /// <summary>Gets whether a box stands on a line rather than as a block of its own.</summary>
+    private static Boolean IsInlineLevel(LayoutBox box) =>
+        box.Kind is LayoutKind.Line or LayoutKind.Inline or LayoutKind.Text;
+
+    /// <summary>
+    /// Gets whether a box is drawn complete where it stands, because what it holds belongs to a context of
+    /// its own: a replaced box draws its own picture, and a box that forms a stacking context answers the
+    /// levels inside itself rather than lending its ground to the pass above.
+    /// </summary>
+    private static Boolean IsAtomic(LayoutBox box) =>
+        box.Kind is LayoutKind.Image or LayoutKind.Svg or LayoutKind.HorizontalRule
+        || box.EstablishesStackingContext;
+
+    private static Boolean Floats(LayoutBox box) => box.Source.Style.Float != FloatSide.None;
+
+    /// <summary>
+    /// Gets whether a box is drawn by being replaced rather than by saying what is inside it - an image, a
+    /// vector, a rule - which is why its picture comes with its ground rather than with the lines. A box
+    /// that forms a stacking context of its own is atomic in the same way but is not replaced: what it
+    /// holds is painted together with it wherever it stands, so neither pass reaches inside it on the
+    /// terms of the context above.
+    /// </summary>
+    private static Boolean IsReplaced(LayoutBox box) =>
+        box.Kind is LayoutKind.Image or LayoutKind.Svg or LayoutKind.HorizontalRule;
+
+    /// <summary>
+    /// Gets whether the ink pass has anything to lay inside a box: a mark of its own, a line, a replaced
+    /// or atomic box, a float nested below, or the same answer further down.
+    /// </summary>
+    private static Boolean HasInk(LayoutBox box, DeferredStack? owner)
+    {
+        if (box.MarkerBounds is not null && box.Source.Marker is { Length: > 0 })
+        {
+            return true;
+        }
+
+        foreach (var child in Standing(box, owner))
+        {
+            if (IsInlineLevel(child) || Floats(child))
+            {
+                return true;
+            }
+
+            if (HasInk(child, owner))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
