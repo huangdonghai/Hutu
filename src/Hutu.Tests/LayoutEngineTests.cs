@@ -485,6 +485,27 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task ASingleColumnFragmentainerStillStartsASecondColumnAtAForcedBreak()
+    {
+        // `columns: 1` is the corpus's fragmentainer: a forced break still begins another column, which
+        // overflows the one-column box in the inline direction (CSS Break 3 §3.2).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='columns:1;column-gap:0;column-fill:auto;width:100px;height:100px'>" +
+            "<div style='break-after:column'></div><div id='next' style='height:99px'></div>" +
+            "</div></body></html>");
+
+        var next = ById(view, "next");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(next.BorderBox.X, Is.EqualTo(100).Within(0.5), "the column after the break");
+            Assert.That(next.BorderBox.Y, Is.EqualTo(0).Within(0.5), "at its top edge");
+        });
+    }
+
+    [Test]
     public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
     {
         // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's

@@ -855,7 +855,10 @@ internal sealed class BlockLayout
 
         var used = box.Style.Multi.Used(contentWidth);
 
-        if (used.Count <= 1)
+        // One column is the ordinary stack unless something inside it forces a break: a fragmentainer
+        // of a single column still starts another column at a forced break, and the repeated
+        // fragmentainer pattern of the corpus writes `columns:1` exactly for that (CSS Break 3 §3.2).
+        if (used.Count <= 1 && !HoldsForcedBreak(box, contentWidth))
         {
             return false;
         }
@@ -863,6 +866,24 @@ internal sealed class BlockLayout
         columns = used.Count;
         share = used.Width;
         return true;
+    }
+
+    /// <summary>
+    /// Gets whether a child of the box asks for a forced break before or after itself, bare wrappers
+    /// counted through as they are for the slicer.
+    /// </summary>
+    private static Boolean HoldsForcedBreak(Box box, Double contentWidth)
+    {
+        foreach (var child in EffectiveMembers(box.Children, contentWidth))
+        {
+            if (child.Style.Breaks.Before is BreakValue.Column or BreakValue.Page ||
+                child.Style.Breaks.After is BreakValue.Column or BreakValue.Page)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -2621,13 +2642,16 @@ internal sealed class BlockLayout
 
         var counts = Fragmentainer.Fill(fragments, extents);
         var childContext = context.ForContainingBlock(new Size(share, wraps ? boxHeight : heightStated ? declaredHeight : 0));
+        // Only a wrapping container puts its columns in rows. A run that spills past the stated count
+        // keeps going to the right (a `column-fill: auto` fragmentainer of one column starts a second
+        // column beside it), so the row's width is the number of columns the fill actually made.
         ArrangeMulticolRun(
             children,
             counts,
             parent,
             content.X,
             content.Y,
-            columns,
+            wraps ? columns : Math.Max(1, counts.Count),
             share,
             multi.Gap,
             boxHeight,
