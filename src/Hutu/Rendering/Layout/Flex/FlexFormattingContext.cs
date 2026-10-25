@@ -137,7 +137,7 @@ internal sealed partial class FlexFormattingContext
         var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
         // A container that holds its descendants is what an absolutely positioned child anchors to.
-        itemContext = PositionedLayout.ForDescendants(itemContext, box, layout.PaddingBox);
+        itemContext = PositionedLayout.ForDescendants(itemContext, box, layout.PaddingBox, layout.BorderBox);
 
         var plan = Compute(
             box,

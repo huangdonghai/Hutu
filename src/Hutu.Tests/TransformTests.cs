@@ -105,6 +105,105 @@ public sealed class TransformTests
         Assert.That(view.LinkAt(5, 5), Is.Null, "its layout place is empty once moved");
     }
 
+    /// <summary>
+    /// A transform-origin is a point inside the box, so a box a relative ancestor moves keeps its
+    /// origin with it. Reading it in document coordinates when the box is laid out would leave the point
+    /// behind and turn the box about the place it used to stand.
+    /// </summary>
+    [Test]
+    public async Task ATransformOriginTravelsWithTheBoxItBelongsTo()
+    {
+        using var view = View(400, 400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:relative;left:100px;top:100px;width:200px;height:200px'>" +
+            "<div id='box' style='position:relative;width:40px;height:40px;transform:rotate(45deg);transform-origin:10px 10px'></div>" +
+            "</div></body></html>");
+
+        var box = Find(view, "box");
+        var transform = FirstTransform(view);
+
+        Assert.That(box.TransformOrigin.X, Is.EqualTo(10).Within(0.5), "the origin is read within the box");
+        Assert.That(box.TransformOrigin.Y, Is.EqualTo(10).Within(0.5));
+        Assert.That(transform.Origin.X, Is.EqualTo(110).Within(0.5), "and the painter resolves it against the box's own corner");
+        Assert.That(transform.Origin.Y, Is.EqualTo(110).Within(0.5));
+    }
+
+    /// <summary>
+    /// With no <c>at</c> in the shape, a declared <c>offset-position</c> is the circle's centre: `auto`
+    /// is the element's own corner, which leaves a zero-radius circle to stand on.
+    /// </summary>
+    [Test]
+    public async Task AnOffsetPositionIsTheCentreOfAShapeThatNamesNone()
+    {
+        using var view = View(300, 300);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:relative;width:200px;height:100px'>" +
+            "<div id='box' style='position:relative;width:40px;height:40px;offset-path:circle();offset-position:auto'></div>" +
+            "</div></body></html>");
+
+        var transform = FirstTransform(view);
+
+        Assert.That(transform.Matrix.E, Is.EqualTo(-20).Within(0.5), "the middle of the box lands on its own top-left corner");
+        Assert.That(transform.Matrix.F, Is.EqualTo(-20).Within(0.5));
+    }
+
+    /// <summary>
+    /// An explicit <c>offset-anchor</c> names the point that rides the path, so the matrix has to take the
+    /// anchor out of the transform-origin after turning: the corner lands on the path, not the middle.
+    /// </summary>
+    [Test]
+    public async Task AnOffsetAnchorLandsTheCornerItNamesOnThePath()
+    {
+        using var view = View(800, 500);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:relative;width:600px;height:400px'>" +
+            "<div id='box' style='position:relative;width:100px;height:100px;offset-path:rect(5px 95% 95% 5px);offset-distance:40%;offset-anchor:10% 10%'></div>" +
+            "</div></body></html>");
+
+        var transform = FirstTransform(view);
+        var matrix = transform.Matrix;
+
+        // 40% of the rectangle's outline is the middle of its right edge, at (570,192); the box turns a
+        // quarter turn there, and its 10%/10% anchor is what stands on the point.
+        Assert.That(matrix.A, Is.EqualTo(0).Within(0.001));
+        Assert.That(matrix.B, Is.EqualTo(1).Within(0.001));
+        Assert.That(matrix.C, Is.EqualTo(-1).Within(0.001));
+        Assert.That(matrix.D, Is.EqualTo(0).Within(0.001));
+
+        var origin = transform.Origin;
+        var anchorX = 10.0;
+        var anchorY = 10.0;
+        var imageX = origin.X + matrix.A * (anchorX - origin.X) + matrix.C * (anchorY - origin.Y) + matrix.E;
+        var imageY = origin.Y + matrix.B * (anchorX - origin.X) + matrix.D * (anchorY - origin.Y) + matrix.F;
+
+        Assert.That(imageX, Is.EqualTo(570).Within(0.5), "the anchor's image is the path point");
+        Assert.That(imageY, Is.EqualTo(192).Within(0.5));
+    }
+
+    /// <summary>
+    /// A basic shape sizes into the box its <c>&lt;coord-box&gt;</c> names on the element that establishes
+    /// the containing block - here the padding box of the parent, not the parent's content box.
+    /// </summary>
+    [Test]
+    public async Task AShapeSizesIntoTheCoordBoxTheValueNames()
+    {
+        using var view = View(400, 400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:relative;width:200px;height:100px;padding:10px;border:10px solid #000'>" +
+            "<div id='box' style='position:relative;width:40px;height:40px;offset-path:padding-box'></div>" +
+            "</div></body></html>");
+
+        var transform = FirstTransform(view);
+
+        // The padding box starts at (10,10); the box stands at (20,20) with its middle at (40,40).
+        Assert.That(transform.Matrix.E, Is.EqualTo(-30).Within(0.5));
+        Assert.That(transform.Matrix.F, Is.EqualTo(-30).Within(0.5));
+    }
+
     // --- helpers --------------------------------------------------------
 
     private static HutuViewInternal View(Int32 width, Int32 height)

@@ -106,7 +106,7 @@ internal sealed class ElementHitTester
 
         if (box.Transform is { } transform)
         {
-            var origin = box.TransformOrigin;
+            var origin = new Offset(box.BorderBox.X + box.TransformOrigin.X, box.BorderBox.Y + box.TransformOrigin.Y);
             var inverse = transform.Inverse();
             var ux = _x - origin.X;
             var uy = _y - origin.Y;

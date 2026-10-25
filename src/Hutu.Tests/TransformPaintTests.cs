@@ -62,17 +62,17 @@ public sealed class TransformPaintTests
     /// A keyword says which axis it stands on, whatever else the value writes: top and bottom are the
     /// block's own height, left and right its width, and the axis nobody names is read as half of it. A
     /// single <c>top</c> therefore moves the y and leaves the x at the middle - Chrome computes it as
-    /// 50px 0px on a box a hundred wide and fifty tall, measured here in the page's own coordinates.
+    /// 50px 0px on a box a hundred wide and fifty tall, measured here within the box's own border box.
     /// </summary>
     [Test]
-    [TestCase("top", 50, 200)]
-    [TestCase("bottom", 50, 250)]
-    [TestCase("left", 0, 225)]
-    [TestCase("right", 100, 225)]
-    [TestCase("top right", 100, 200)]
-    [TestCase("center top", 50, 200)]
-    [TestCase("left 20px", 0, 220)]
-    [TestCase("20px", 20, 225)]
+    [TestCase("top", 50, 0)]
+    [TestCase("bottom", 50, 50)]
+    [TestCase("left", 0, 25)]
+    [TestCase("right", 100, 25)]
+    [TestCase("top right", 100, 0)]
+    [TestCase("center top", 50, 0)]
+    [TestCase("left 20px", 0, 20)]
+    [TestCase("20px", 20, 25)]
     public async Task ALoneKeywordStandsOnTheAxisItNames(String origin, Double x, Double y)
     {
         using var view = new HutuViewInternal(new SkiaTextMeasurer());

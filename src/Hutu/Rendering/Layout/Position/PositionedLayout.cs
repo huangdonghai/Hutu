@@ -56,8 +56,19 @@ internal sealed class PositionedLayout
     /// style of the element it was made from, and the frame belongs to that element - and its padding box
     /// is not the same rectangle anyway, since the anonymous box stands inside the element's padding.
     /// </remarks>
-    public static LayoutContext ForDescendants(LayoutContext context, Box box, Rect paddingBox)
+    public static LayoutContext ForDescendants(LayoutContext context, Box box, Rect paddingBox, Rect borderBox)
     {
+        // The boxes are recorded for every container, not only one that lends a frame: a shape an
+        // offset-path draws sizes into the border, padding or content box of the element establishing
+        // the containing block, which is this container whatever its positioning says.
+        if (!box.IsAnonymous)
+        {
+            context = context.WithReferenceBox(
+                borderBox,
+                paddingBox,
+                CornerRadii.Resolve(box.Style.BorderRadius, borderBox.Width, borderBox.Height));
+        }
+
         if (!LendsAFrame(box))
         {
             return context;
@@ -82,12 +93,6 @@ internal sealed class PositionedLayout
     {
         switch (position.Position)
         {
-            case PositionMode.Relative:
-                // A relative box keeps its place in flow; only the drawing is moved, so the siblings
-                // around it do not budge.
-                Translate(layout, RelativeOffset(position, context.ContainingBlock));
-                break;
-
             case PositionMode.Sticky:
                 layout.Sticky = StickyRule(position, context, layout.BorderBox);
                 break;
@@ -116,6 +121,11 @@ internal sealed class PositionedLayout
             : context.AbsoluteContainingBlock;
 
         var childContext = context.ForContainingBlock(containingBlock);
+
+        // An out-of-flow box resolves its offsets against this frame, so a shape its offset-path draws
+        // sizes into this frame too - the padding box of the ancestor that answers for it, or the
+        // viewport when none does - rather than into whatever box its parent happened to be laid out in.
+        childContext = childContext.WithReferenceBox(containingBlock, containingBlock, default);
 
         var style = box.Style;
         var margin = style.Margin.Resolve(containingBlock.Width);

@@ -1,4 +1,5 @@
-﻿using Hutu.Rendering.Boxes;
+﻿using AngleSharp.Css.Dom;
+using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -1158,9 +1159,20 @@ internal sealed record LayoutProfile(
             return ArrangeCore(box, borderBox, context, definiteHeight, lines, slice, start);
         }
 
-        var layout = ArrangeCore(box, borderBox, context, definiteHeight, lines, slice, start);
-
         var position = box.Style.Position;
+
+        // A relative box keeps the place it had in flow: its own box and everything inside it are laid
+        // out where the flow put them, then drawn where the offset says. Taking the offset in before the
+        // content is arranged keeps every descendant - and every transform or motion path measured
+        // against the containing block - in the coordinates the page is finally drawn in, rather than
+        // leaving a subtree whose boxes were moved after its matrices were resolved.
+        if (position.Position == PositionMode.Relative)
+        {
+            var offset = PositionedLayout.RelativeOffset(position, context.ContainingBlock);
+            borderBox = new Rect(borderBox.X + offset.X, borderBox.Y + offset.Y, borderBox.Width, borderBox.Height);
+        }
+
+        var layout = ArrangeCore(box, borderBox, context, definiteHeight, lines, slice, start);
 
         layout.Position = position.Position;
         layout.ZIndex = position.HasZIndex ? position.ZIndex : 0;
@@ -1194,7 +1206,7 @@ internal sealed record LayoutProfile(
                 ? transformValue.Resolve(frame.Width, frame.Height, dimensions, fold, zoom)
                 : null;
 
-            if (MotionTransform.Compute(box.Style, frame, context.ContainingBlockRect, dimensions, fontSize, originX, originY) is { } motion)
+            if (MotionTransform.Compute(box.Style, frame, context, dimensions, fontSize, originX, originY) is { } motion)
             {
                 matrix = matrix is { } m ? m.Then(motion) : motion;
             }
@@ -1203,7 +1215,7 @@ internal sealed record LayoutProfile(
             // block, so it is marked for the painter even when the matrix is an identity (a
             // translate(0,0)): the wrapping is what keeps its out-of-flow descendants inside it.
             layout.Transform = matrix ?? Affine.Identity;
-            layout.TransformOrigin = new Offset(frame.X + originX, frame.Y + originY);
+            layout.TransformOrigin = new Offset(originX, originY);
         }
 
         _positioned.Finish(layout, position, context);

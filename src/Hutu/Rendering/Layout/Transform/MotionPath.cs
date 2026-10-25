@@ -5,21 +5,46 @@ using System.Globalization;
 namespace Hutu.Rendering.Layout;
 
 /// <summary>
-/// An <em>offset path</em> from CSS Motion Path, flattened to a polyline so a point and a direction can
-/// be read off it at a distance. Built from <c>offset-path</c>'s <c>path()</c> (SVG path data), the
-/// equivalent paths of the basic shapes, or a <c>ray()</c>.
+/// An <em>offset path</em> from CSS Motion Path, kept as straight segments and elliptical arcs so a point
+/// and a direction can be read off it at a distance. Built from <c>offset-path</c>'s <c>path()</c> (SVG path
+/// data), the equivalent paths of the basic shapes, or a <c>ray()</c>.
 /// </summary>
 /// <remarks>
-/// Curves and elliptical arcs are sampled into short straight segments; the distance along the path is
-/// measured over that polyline (Motion Path §path-distance, which leaves the sampling to the engine). A
-/// closed path counts its closing segment, as SVG's direction of a path does.
+/// An arc keeps its exact geometry: the distance into it is turned back into the angle it stands at, so a
+/// quarter of a circle lands on the quarter rather than on a chord near it - which matters in a reftest,
+/// where a box half a pixel off is a page that fails. Bézier curves are still sampled into short straight
+/// segments; the distance along the path is measured over what is there (Motion Path §path-distance leaves
+/// the sampling to the engine). A closed path counts its closing segment, as SVG's direction of a path does.
 /// </remarks>
 internal sealed class MotionPath
 {
     private readonly List<Double> _x = new();
     private readonly List<Double> _y = new();
+
+    /// <summary>The exact direction where each segment starts and ends, which is the segment's own angle
+    /// for a line and the curve's derivative at the ends of an arc.</summary>
+    private readonly List<Double> _fromAngle = new();
+    private readonly List<Double> _toAngle = new();
+
+    /// <summary>The elliptical arc each segment is, or null where it is a straight one.</summary>
+    private readonly List<ArcSegment?> _arcs = new();
+
     private Double[] _cumulative = Array.Empty<Double>();
     private Boolean _closed;
+
+    /// <summary>One exact elliptical arc, in the path's own coordinate system.</summary>
+    private sealed class ArcSegment
+    {
+        internal Double Cx;
+        internal Double Cy;
+        internal Double Rx;
+        internal Double Ry;
+        internal Double Cos;
+        internal Double Sin;
+        internal Double Start;
+        internal Double Sweep;
+        internal Double Length;
+    }
 
     private MotionPath()
     {
@@ -27,6 +52,9 @@ internal sealed class MotionPath
 
     /// <summary>Gets the total length of the path; a point at <c>offset-distance</c> is read against it.</summary>
     public Double Total { get; private set; }
+
+    /// <summary>Gets whether the path ends where it began, which makes its distance run as a loop.</summary>
+    public Boolean Closed => _closed;
 
     /// <summary>
     /// The point at a distance along the path, with the direction there (the tangent, as the angle the
@@ -39,42 +67,160 @@ internal sealed class MotionPath
             return (0, 0, 0);
         }
 
-        if (_x.Count == 1)
+        if (_arcs.Count == 0)
         {
             return (_x[0], _y[0], 0);
         }
 
         var d = Math.Clamp(distance, 0, Total);
+        var segment = 0;
 
-        var segment = 1;
-
-        while (segment < _cumulative.Length - 1 && _cumulative[segment] < d)
+        while (segment < _arcs.Count - 1 && _cumulative[segment + 1] < d - 1e-9)
         {
             segment++;
         }
 
-        var from = segment - 1;
-        var span = _cumulative[segment] - _cumulative[from];
-        var t = span > 0 ? (d - _cumulative[from]) / span : 0;
+        var span = _cumulative[segment + 1] - _cumulative[segment];
+        var local = d - _cumulative[segment];
+        var t = span > 0 ? local / span : 0;
 
-        var dx = _x[segment] - _x[from];
-        var dy = _y[segment] - _y[from];
+        if (_arcs[segment] is { } arc)
+        {
+            return PointOnArc(arc, local);
+        }
+
+        var dx = _x[segment + 1] - _x[segment];
+        var dy = _y[segment + 1] - _y[segment];
+
+        // A sampled segment knows the direction at both ends, so the direction inside it is read between
+        // them rather than from the chord.
+        var angle = Math.Atan2(dy, dx);
+
+        if (segment < _fromAngle.Count)
+        {
+            var sweep = _toAngle[segment] - _fromAngle[segment];
+
+            while (sweep > Math.PI)
+            {
+                sweep -= 2 * Math.PI;
+            }
+
+            while (sweep < -Math.PI)
+            {
+                sweep += 2 * Math.PI;
+            }
+
+            angle = _fromAngle[segment] + sweep * t;
+        }
 
         return (
-            _x[from] + dx * t,
-            _y[from] + dy * t,
-            Math.Atan2(dy, dx));
+            _x[segment] + dx * t,
+            _y[segment] + dy * t,
+            angle);
+    }
+
+    private static (Double X, Double Y, Double Angle) PointOnArc(ArcSegment arc, Double local)
+    {
+        var fraction = arc.Length > 0 ? Math.Clamp(local / arc.Length, 0, 1) : 0;
+
+        // The angle is found by bisecting the arc length rather than by dividing it, because an ellipse's
+        // length is not proportional to its angle.
+        if (arc.Length > 0 && fraction > 0 && fraction < 1)
+        {
+            var lo = 0.0;
+            var hi = 1.0;
+
+            for (var i = 0; i < 60; i++)
+            {
+                var mid = (lo + hi) / 2;
+
+                if (ArcLength(arc, mid) < local)
+                {
+                    lo = mid;
+                }
+                else
+                {
+                    hi = mid;
+                }
+            }
+
+            fraction = (lo + hi) / 2;
+        }
+
+        var theta = arc.Start + arc.Sweep * fraction;
+        var cos = Math.Cos(theta);
+        var sin = Math.Sin(theta);
+
+        var x = arc.Cx + arc.Cos * arc.Rx * cos - arc.Sin * arc.Ry * sin;
+        var y = arc.Cy + arc.Sin * arc.Rx * cos + arc.Cos * arc.Ry * sin;
+
+        var dx = -arc.Cos * arc.Rx * sin - arc.Sin * arc.Ry * cos;
+        var dy = -arc.Sin * arc.Rx * sin + arc.Cos * arc.Ry * cos;
+
+        return (x, y, Math.Atan2(dy, dx));
+    }
+
+    /// <summary>The length of the arc from its start to <paramref name="fraction"/> of its sweep.</summary>
+    private static Double ArcLength(ArcSegment arc, Double fraction)
+    {
+        var to = arc.Start + arc.Sweep * fraction;
+
+        if (Math.Abs(arc.Rx - arc.Ry) < 1e-12)
+        {
+            return Math.Abs(arc.Rx * (to - arc.Start));
+        }
+
+        var sign = arc.Sweep < 0 ? -1 : 1;
+        var from = arc.Start;
+        var end = to;
+
+        return sign > 0
+            ? Integrate(t => Math.Sqrt(Sq(arc.Rx * Math.Sin(t)) + Sq(arc.Ry * Math.Cos(t))), from, end)
+            : Integrate(t => Math.Sqrt(Sq(arc.Rx * Math.Sin(t)) + Sq(arc.Ry * Math.Cos(t))), end, from);
+    }
+
+    /// <summary>Adaptive Simpson's rule, which integrates the ellipse's speed closely enough that the
+    /// point on it lands where the exact angle says.</summary>
+    private static Double Integrate(Func<Double, Double> f, Double a, Double b)
+    {
+        var fa = f(a);
+        var fb = f(b);
+        var m = (a + b) / 2;
+        var fm = f(m);
+        var whole = (b - a) / 6 * (fa + 4 * fm + fb);
+
+        return Refine(f, a, b, fa, fm, fb, whole, 1e-13, 40);
+    }
+
+    private static Double Refine(Func<Double, Double> f, Double a, Double b, Double fa, Double fm, Double fb, Double whole, Double tolerance, Int32 depth)
+    {
+        var m = (a + b) / 2;
+        var lm = (a + m) / 2;
+        var rm = (m + b) / 2;
+        var flm = f(lm);
+        var frm = f(rm);
+        var left = (m - a) / 6 * (fa + 4 * flm + fm);
+        var right = (b - m) / 6 * (fm + 4 * frm + fb);
+        var sum = left + right;
+
+        if (depth <= 0 || Math.Abs(sum - whole) <= tolerance)
+        {
+            return sum + (sum - whole) / 15;
+        }
+
+        return Refine(f, a, m, fa, flm, fm, left, tolerance / 2, depth - 1) +
+               Refine(f, m, b, fm, frm, fb, right, tolerance / 2, depth - 1);
     }
 
     private void Finish()
     {
-        _cumulative = new Double[_x.Count];
+        _cumulative = new Double[_arcs.Count + 1];
         var running = 0.0;
 
-        for (var i = 1; i < _x.Count; i++)
+        for (var i = 0; i < _arcs.Count; i++)
         {
-            running += Math.Sqrt(Sq(_x[i] - _x[i - 1]) + Sq(_y[i] - _y[i - 1]));
-            _cumulative[i] = running;
+            running += _arcs[i]?.Length ?? Math.Sqrt(Sq(_x[i + 1] - _x[i]) + Sq(_y[i + 1] - _y[i]));
+            _cumulative[i + 1] = running;
         }
 
         Total = running;
@@ -100,8 +246,23 @@ internal sealed class MotionPath
             return;
         }
 
+        var angle = Math.Atan2(y - _y[^1], x - _x[^1]);
         _x.Add(x);
         _y.Add(y);
+        _fromAngle.Add(angle);
+        _toAngle.Add(angle);
+        _arcs.Add(null);
+    }
+
+    /// <summary>Adds an exact elliptical arc as one segment, with the direction the curve has at each end
+    /// of the step.</summary>
+    private void ArcStep(ArcSegment arc, Double x, Double y, Double fromAngle, Double toAngle)
+    {
+        _x.Add(x);
+        _y.Add(y);
+        _fromAngle.Add(fromAngle);
+        _toAngle.Add(toAngle);
+        _arcs.Add(arc);
     }
 
     private void Close()
@@ -111,12 +272,11 @@ internal sealed class MotionPath
         // Return to the start of the whole path for the closing segment's length and direction.
         if (_x.Count > 0)
         {
-            _x.Add(_x[0]);
-            _y.Add(_y[0]);
+            Line(_x[0], _y[0]);
         }
     }
 
-    /// <summary>Builds a path from SVG path data (the <c>path('…')</c> argument).</summary>
+    /// <summary>Builds a path from SVG path data (the <c>path('…)</c> argument).</summary>
     public static MotionPath FromPathData(String? data)
     {
         var path = new MotionPath();
@@ -442,15 +602,29 @@ internal sealed class MotionPath
             delta += 2 * Math.PI;
         }
 
-        const int Steps = 20;
-
-        for (var s = 1; s <= Steps; s++)
+        var arc = new ArcSegment
         {
-            var t = phi1 + delta * s / Steps;
-            var px = cos * rx * Math.Cos(t) - sin * ry * Math.Sin(t) + cx;
-            var py = sin * rx * Math.Cos(t) + cos * ry * Math.Sin(t) + cy;
-            path.Line(px, py);
-        }
+            Cx = cx,
+            Cy = cy,
+            Rx = rx,
+            Ry = ry,
+            Cos = cos,
+            Sin = sin,
+            Start = phi1,
+            Sweep = delta,
+        };
+
+        arc.Length = ArcLength(arc, 1);
+
+        var endAngle = phi1 + delta;
+        var startTangent = Math.Atan2(
+            -sin * rx * Math.Sin(phi1) + cos * ry * Math.Cos(phi1),
+            -cos * rx * Math.Sin(phi1) - sin * ry * Math.Cos(phi1));
+        var endTangent = Math.Atan2(
+            -sin * rx * Math.Sin(endAngle) + cos * ry * Math.Cos(endAngle),
+            -cos * rx * Math.Sin(endAngle) - sin * ry * Math.Cos(endAngle));
+
+        path.ArcStep(arc, x, y, startTangent, endTangent);
     }
 
     private static List<String> Tokenize(String data)

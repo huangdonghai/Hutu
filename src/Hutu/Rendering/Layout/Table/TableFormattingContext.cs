@@ -142,7 +142,7 @@ internal sealed partial class TableFormattingContext
         // of its own (the border the drawing shows sits on the inner table box), so its padding edge is the
         // outer edge. Insetting by this box's border would push every abs descendant off by that border,
         // the way the gecko table-abs-pos references say it should not.
-        var childContext = PositionedLayout.ForDescendants(context, box, layout.BorderBox);
+        var childContext = PositionedLayout.ForDescendants(context, box, layout.BorderBox, layout.BorderBox);
 
         foreach (var caption in build.Captions)
         {

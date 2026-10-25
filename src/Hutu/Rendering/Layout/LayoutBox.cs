@@ -256,8 +256,10 @@ internal sealed class LayoutBox
     public Affine? Transform { get; set; }
 
     /// <summary>
-    /// Gets or sets the point the <see cref="Transform"/> is taken about, in document coordinates: the
-    /// border box's origin plus the resolved <c>transform-origin</c>.
+    /// Gets or sets the point the <see cref="Transform"/> is taken about, within the border box: the
+    /// resolved <c>transform-origin</c>. It is kept relative to the box rather than in document
+    /// coordinates, so that moving the box later - a relative offset on an ancestor, a scroll, a table
+    /// alignment - carries the point along without patching it wherever the box is moved.
     /// </summary>
     public Offset TransformOrigin { get; set; }
 

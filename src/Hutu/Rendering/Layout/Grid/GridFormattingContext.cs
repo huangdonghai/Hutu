@@ -104,7 +104,7 @@ internal sealed class GridFormattingContext
         // A container that holds its descendants is what an absolutely positioned child anchors to.
         var anchored = PositionedLayout.LendsAFrame(box);
 
-        itemContext = PositionedLayout.ForDescendants(itemContext, box, layout.PaddingBox);
+        itemContext = PositionedLayout.ForDescendants(itemContext, box, layout.PaddingBox, layout.BorderBox);
 
         foreach (var item in plan.Items)
         {

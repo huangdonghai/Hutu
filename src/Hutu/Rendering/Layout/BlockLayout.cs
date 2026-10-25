@@ -570,7 +570,7 @@ internal sealed class BlockLayout
         // A box that holds its descendants - positioned, transformed, filtered, contained - lends the
         // whole subtree its padding box, so an absolute descendant anchors to it rather than to an
         // ancestor further up.
-        childContext = PositionedLayout.ForDescendants(childContext, box, layout.PaddingBox);
+        childContext = PositionedLayout.ForDescendants(childContext, box, layout.PaddingBox, layout.BorderBox);
 
         var content = new Rect(contentX, contentY, contentWidth, contentHeight);
         var used = 0.0;

@@ -64,7 +64,10 @@ internal readonly struct LayoutContext
         FloatBand? floats,
         Boolean hypothetical,
         SubgridTracks? subgrid = null,
-        Rect? capturedContainingBlock = null)
+        Rect? capturedContainingBlock = null,
+        Rect? referenceBorderBox = null,
+        Rect? referencePaddingBox = null,
+        CornerRadii? referenceRadii = null)
     {
         ContainingBlock = containingBlock;
         ContainingBlockRect = containingBlockRect;
@@ -77,6 +80,9 @@ internal readonly struct LayoutContext
         BasisIsHypothetical = hypothetical;
         Subgrid = subgrid;
         CapturedContainingBlock = capturedContainingBlock;
+        ReferenceBorderBox = referenceBorderBox;
+        ReferencePaddingBox = referencePaddingBox;
+        ReferenceRadii = referenceRadii;
     }
 
     /// <summary>Gets the box percentages, auto widths and relative positioning resolve against.</summary>
@@ -105,6 +111,19 @@ internal readonly struct LayoutContext
     /// none. A fixed descendant resolves against this in preference to the viewport.
     /// </summary>
     public Rect? CapturedContainingBlock { get; }
+
+    /// <summary>
+    /// Gets the border box of the element that establishes this containing block, which is the
+    /// reference box an <c>offset-path</c> shape sizes into when it names no <c>&lt;coord-box&gt;</c>.
+    /// Null when nothing recorded it, in which case the content box stands in.
+    /// </summary>
+    public Rect? ReferenceBorderBox { get; }
+
+    /// <summary>Gets the padding box of the element that establishes this containing block.</summary>
+    public Rect? ReferencePaddingBox { get; }
+
+    /// <summary>Gets the corner radii of that element's border box.</summary>
+    public CornerRadii? ReferenceRadii { get; }
 
     public ITextMeasurer Measurer { get; }
 
@@ -149,7 +168,10 @@ internal readonly struct LayoutContext
         Floats,
         true,
         Subgrid,
-        CapturedContainingBlock);
+        CapturedContainingBlock,
+        ReferenceBorderBox,
+        ReferencePaddingBox,
+        ReferenceRadii);
 
     /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
@@ -171,7 +193,10 @@ internal readonly struct LayoutContext
         Floats,
         BasisIsHypothetical,
         subgrid,
-        CapturedContainingBlock);
+        CapturedContainingBlock,
+        ReferenceBorderBox,
+        ReferencePaddingBox,
+        ReferenceRadii);
 
     /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
@@ -189,7 +214,10 @@ internal readonly struct LayoutContext
         floats,
         BasisIsHypothetical,
         Subgrid,
-        CapturedContainingBlock);
+        CapturedContainingBlock,
+        ReferenceBorderBox,
+        ReferencePaddingBox,
+        ReferenceRadii);
 
     /// <summary>Gets the context a box's children see, with its content box as their containing block.</summary>
     /// <remarks>
@@ -209,7 +237,10 @@ internal readonly struct LayoutContext
         Floats,
         BasisIsHypothetical,
         Subgrid,
-        CapturedContainingBlock);
+        CapturedContainingBlock,
+        ReferenceBorderBox,
+        ReferencePaddingBox,
+        ReferenceRadii);
 
     /// <summary>
     /// Gets the context a box's children see when the content box's position is known, which is what
@@ -226,7 +257,10 @@ internal readonly struct LayoutContext
         Floats,
         BasisIsHypothetical,
         Subgrid,
-        CapturedContainingBlock);
+        CapturedContainingBlock,
+        ReferenceBorderBox,
+        ReferencePaddingBox,
+        ReferenceRadii);
 
     /// <summary>
     /// Gets the context a positioned box's children see: the absolute containing block becomes this
@@ -244,7 +278,10 @@ internal readonly struct LayoutContext
         Floats,
         BasisIsHypothetical,
         Subgrid,
-        CapturedContainingBlock);
+        CapturedContainingBlock,
+        ReferenceBorderBox,
+        ReferencePaddingBox,
+        ReferenceRadii);
 
     /// <summary>
     /// Gets the context a box that captures its descendants hands them: the padding box becomes the frame
@@ -264,5 +301,29 @@ internal readonly struct LayoutContext
         Floats,
         BasisIsHypothetical,
         Subgrid,
-        paddingBox);
+        paddingBox,
+        ReferenceBorderBox,
+        ReferencePaddingBox,
+        ReferenceRadii);
+
+    /// <summary>
+    /// Gets the context with the boxes of the element that establishes it, so a shape an
+    /// <c>offset-path</c> draws can size into the border box, padding box or content box it names -
+    /// the element the containing block belongs to, not the element carrying the path.
+    /// </summary>
+    internal LayoutContext WithReferenceBox(Rect borderBox, Rect paddingBox, CornerRadii radii) => new(
+        ContainingBlock,
+        ContainingBlockRect,
+        Viewport,
+        ViewportRect,
+        Scroll,
+        AbsoluteContainingBlock,
+        Measurer,
+        Floats,
+        BasisIsHypothetical,
+        Subgrid,
+        CapturedContainingBlock,
+        borderBox,
+        paddingBox,
+        radii);
 }

@@ -332,7 +332,8 @@ internal sealed class Painter
 
         if (box.Transform is { } transform)
         {
-            target.Add(new PushTransformCommand(box.BorderBox, transform, box.TransformOrigin));
+            var origin = new Offset(box.BorderBox.X + box.TransformOrigin.X, box.BorderBox.Y + box.TransformOrigin.Y);
+            target.Add(new PushTransformCommand(box.BorderBox, transform, origin));
 
             // The cut is measured in the page, the matrix in the box: inside the transform the rectangle
             // the box was cut to travels with it, which is what the pair of commands below lays down.
