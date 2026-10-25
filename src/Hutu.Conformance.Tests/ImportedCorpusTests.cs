@@ -81,6 +81,15 @@ public sealed class ImportedCorpusTests
     private static Int32 Limit =>
         Int32.TryParse(Environment.GetEnvironmentVariable("HUTU_SCORE_LIMIT"), out var cap) ? cap : 0;
 
+    /// <summary>
+    /// Only the pairs whose name contains this, so one module can be scored on its own. The whole
+    /// corpus is a minute's work, but a module is a fix's worth: without this a run that asks whether
+    /// one family moved has to draw every other family to find out.
+    /// </summary>
+    private static String? Only => Environment.GetEnvironmentVariable("HUTU_SCORE_ONLY") is { Length: > 0 } only
+        ? only
+        : null;
+
     [Test]
     public void TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay()
     {
@@ -383,12 +392,14 @@ public sealed class ImportedCorpusTests
     {
         var folder = Path.Combine(ReftestExpectations.Folder, "reftests");
         var pairs = new List<(String, String)>();
+        var only = Only;
 
         foreach (var corpus in Corpora())
         {
             foreach (var test in Directory.EnumerateFiles(Path.Combine(folder, corpus), "*.html", SearchOption.AllDirectories))
             {
-                if (test.EndsWith("-ref.html", StringComparison.OrdinalIgnoreCase))
+                if (test.EndsWith("-ref.html", StringComparison.OrdinalIgnoreCase) ||
+                    only is not null && !test.Replace('\\', '/').Contains(only, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -443,9 +454,11 @@ public sealed class ImportedCorpusTests
     private static String Score(String corpus)
     {
         var folder = Path.Combine(ReftestExpectations.Folder, "reftests", corpus);
+        var only = Only;
         var pairs = Directory.EnumerateFiles(folder, "*.html", SearchOption.AllDirectories)
-            .Where(f => !f.EndsWith("-ref.html", StringComparison.OrdinalIgnoreCase))
             .Select(f => f.Replace('\\', '/'))
+            .Where(f => !f.EndsWith("-ref.html", StringComparison.OrdinalIgnoreCase))
+            .Where(f => only is null || f.Contains(only, StringComparison.OrdinalIgnoreCase))
             .OrderBy(f => f, StringComparer.Ordinal)
             .ToList();
 
@@ -558,6 +571,21 @@ public sealed class ImportedCorpusTests
         }
         catch (Exception exception)
         {
+            // A page that cannot be drawn is the engine's failure, and the message alone rarely says
+            // where: the stack is written beside the run - `build/undrawable.log` - while the report
+            // keeps the one line it is read for.
+            try
+            {
+                var path = Path.Combine(Corpus.Root, "build", "undrawable.log");
+
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.AppendAllText(path, $"## {test}{Environment.NewLine}{exception}{Environment.NewLine}{Environment.NewLine}");
+            }
+            catch
+            {
+                // A run that cannot write its log still has a finding to report.
+            }
+
             return (Drawn.Undrawable, $"{exception.GetType().Name}: {Line(exception.Message)}",
                 exception is TimeoutException);
         }
