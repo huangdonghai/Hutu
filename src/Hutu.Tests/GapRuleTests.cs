@@ -418,6 +418,81 @@ public sealed class GapRuleTests
     }
 
     /// <summary>
+    /// The gaps of a multi-column container's column grid are cut into one stretch per column, and the
+    /// visibility asks about the cells of that one column - so a row rule is not drawn under a column the
+    /// row below leaves empty, even though the rows as a whole both hold something
+    /// (multicol-gap-decorations-014).
+    /// </summary>
+    [Test]
+    public async Task ARowRuleOfAColumnGridStopsWhereAColumnRunsEmpty()
+    {
+        using var view = await Render(ColumnGrid(
+            "rule-visibility-items: between; row-rule: 2px solid gold"));
+
+        var rules = Rules(view).Where(rule => rule.Bounds.Height <= 2.01).ToList();
+
+        Assert.That(rules, Has.Count.EqualTo(1), "only the column both rows fill gets its rule");
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.X, Is.EqualTo(0).Within(0.01));
+            Assert.That(rules[0].Bounds.Width, Is.EqualTo(60).Within(0.01), "as far as that column reaches");
+            Assert.That(rules[0].Bounds.Y, Is.EqualTo(64).Within(0.01), "in the middle of the row gap");
+        });
+    }
+
+    /// <summary>
+    /// A row rule that says it starts and ends at every crossing is cut by each column gap, whatever the
+    /// visibility makes of the stretches (multicol-gap-decorations-035).
+    /// </summary>
+    [Test]
+    public async Task AnIntersectingRowRuleOfAColumnGridIsCutAtEveryColumnGap()
+    {
+        using var view = await Render(ColumnGrid(
+            "row-rule: 4px solid gold; row-rule-break: intersection", 6));
+
+        var rules = Rules(view).Where(rule => rule.Bounds.Height <= 4.01).ToList();
+
+        Assert.That(rules, Has.Count.EqualTo(3), "three columns, three stretches of one row gap");
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.Right, Is.EqualTo(60).Within(0.01), "up to the crossing");
+            Assert.That(rules[1].Bounds.X, Is.EqualTo(70).Within(0.01), "and resuming past it");
+            Assert.That(rules[2].Bounds.Right, Is.EqualTo(200).Within(0.01), "the last to the edge");
+        });
+    }
+
+    /// <summary>
+    /// A column rule that says crossings do not break it runs on through the row gaps, from the head of the
+    /// run to its foot (multicol-gap-decorations-025).
+    /// </summary>
+    [Test]
+    public async Task AColumnRuleBrokenByNothingRunsThroughTheRowGaps()
+    {
+        using var view = await Render(ColumnGrid(
+            "column-rule: 10px solid blue; column-rule-break: none; row-rule: none", 6));
+
+        var rules = Rules(view).Where(rule => rule.Bounds.Width <= 10.01).ToList();
+
+        Assert.That(rules, Has.Count.EqualTo(2), "one rule per pair of neighbouring columns");
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules[0].Bounds.X, Is.EqualTo(60).Within(0.01));
+            Assert.That(rules[0].Bounds.Y, Is.EqualTo(0).Within(0.01));
+            Assert.That(rules[0].Bounds.Height, Is.EqualTo(130).Within(0.01), "past the row gap between");
+        });
+    }
+
+    /// <summary>
+    /// A three-column, two-row column grid of 60 by 60 boxes with 10 of room on either side of each, which
+    /// is the shape the multi-column gap-decoration cases are written in.
+    /// </summary>
+    private static String ColumnGrid(String rules, Int32 items = 4) =>
+        "<style>#d { width:200px; height:130px; column-count:3; column-width:60px; column-height:60px;" +
+        " column-gap:10px; row-gap:10px; column-wrap:wrap; column-fill:auto; " + rules + " }" +
+        " p { height:60px; margin:0 }</style><div id='d'>" +
+        String.Concat(Enumerable.Repeat("<p></p>", items)) + "</div>";
+
+    /// <summary>
     /// A crossing only lets an <c>intersection</c> decoration through where items on both sides span it:
     /// a row the items leave open splits the rule at that crossing even when the row opposite spans it
     /// (grid-gap-decorations-007).

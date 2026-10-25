@@ -70,8 +70,34 @@ internal static class MulticolRules
                 }
             }
 
-            AddColumnGaps(segments, style.Gap.Column, along, count, width, step, columnHeight, rows, rowStep, start, run, filled);
-            AddRowGaps(segments, style.Gap.Row, along, count, rows, rowStep, columnHeight, run, content, filled);
+            AddColumnGaps(
+                segments,
+                style.Gap.Column,
+                style.Gap.Row,
+                along,
+                count,
+                width,
+                step,
+                columnHeight,
+                rows,
+                rowStep,
+                start,
+                run,
+                filled);
+            AddRowGaps(
+                segments,
+                style.Gap.Row,
+                style.Gap.Column,
+                along,
+                count,
+                width,
+                step,
+                start,
+                rows,
+                rowStep,
+                columnHeight,
+                run,
+                filled);
         }
 
         if (segments.Count > 0)
@@ -80,9 +106,20 @@ internal static class MulticolRules
         }
     }
 
+    /// <summary>
+    /// Appends the decorations of the gaps between two neighbouring columns.
+    /// </summary>
+    /// <remarks>
+    /// A column gap stands in one row's height, so the gap's stretches are the rows the columns wrapped
+    /// into: the decoration of one is drawn along that row's column height, and the row gap either cuts it
+    /// there or is run through, which is what the axis's break says (§3.1.2). Stretches of neighbouring
+    /// rows of one gap merge into one decoration when the break lets them, so a gap whose every row is
+    /// filled is drawn from the head of the run to its foot.
+    /// </remarks>
     private static void AddColumnGaps(
         List<GapRuleSegment> target,
         GapRuleAxis axis,
+        GapRuleAxis across,
         Boolean along,
         Int32 count,
         Double width,
@@ -99,53 +136,117 @@ internal static class MulticolRules
             return;
         }
 
-        // A multi-column container draws its column rules between every pair of used columns, which is
-        // what its `normal` means (CSS Gaps 1 §3.4).
+        // A multi-column container draws its column rules between every pair of used columns that both
+        // hold something, which is what its `normal` means (CSS Gaps 1 §3.4).
         var visibility = axis.Visibility == GapRuleVisibility.Normal ? GapRuleVisibility.Between : axis.Visibility;
         var gaps = count - 1;
 
-        for (var row = 0; row < rows; row++)
-        {
-            for (var index = 0; index < gaps; index++)
-            {
-                var rule = axis.At(row * gaps + index, rows * gaps);
-                var shown = visibility == GapRuleVisibility.All ||
-                    (visibility == GapRuleVisibility.Around
-                        ? filled[row * count + index] || filled[row * count + index + 1]
-                        : filled[row * count + index] && filled[row * count + index + 1]);
+        // Stretches of the same gap run into one decoration only where the break says nothing of crossings.
+        var merges = axis.Break == GapRuleBreak.None;
 
-                if (!rule.Appears || !shown)
+        for (var index = 0; index < gaps; index++)
+        {
+            var centre = start + index * step + width + (step - width) / 2;
+            var row = 0;
+
+            while (row < rows)
+            {
+                if (!Filled(visibility, filled, count, row, index))
                 {
+                    row++;
                     continue;
                 }
 
-                var centre = start + index * step + width + (step - width) / 2;
-                var low = run.From + row * rowStep + axis.CapStart.Resolve(0, 0);
-                var high = run.From + row * rowStep + columnHeight - axis.CapEnd.Resolve(0, 0);
+                var low = run.From + row * rowStep;
+                var high = low + columnHeight;
+                var from = row;
 
-                if (high > low)
+                while (merges && row + 1 < rows && Filled(visibility, filled, count, row + 1, index))
                 {
-                    target.Add(new GapRuleSegment(
-                        along
-                            ? new Rect(low, centre - rule.Width / 2, high - low, rule.Width)
-                            : new Rect(centre - rule.Width / 2, low, rule.Width, high - low),
-                        rule,
-                        isRow: false));
+                    row++;
+                    high = run.From + row * rowStep + columnHeight;
                 }
+
+                var rule = axis.At(from * gaps + index, rows * gaps);
+
+                if (rule.Appears)
+                {
+                    // An end at the bound of the whole gap takes its cap inset; an end at a row crossing
+                    // takes the inset written for crossings, read against the row gap standing there.
+                    low += from == 0
+                        ? axis.CapStart.Resolve(0, 0)
+                        : axis.JunctionStart.Resolve(
+                            rowStep - columnHeight,
+                            across.At(from - 1, rows - 1).Width);
+                    high -= row == rows - 1
+                        ? axis.CapEnd.Resolve(0, 0)
+                        : axis.JunctionEnd.Resolve(
+                            rowStep - columnHeight,
+                            across.At(row, rows - 1).Width);
+
+                    if (high > low)
+                    {
+                        target.Add(new GapRuleSegment(
+                            along
+                                ? new Rect(low, centre - rule.Width / 2, high - low, rule.Width)
+                                : new Rect(centre - rule.Width / 2, low, rule.Width, high - low),
+                            rule,
+                            isRow: false));
+                    }
+                }
+
+                row++;
             }
         }
     }
 
+    /// <summary>
+    /// Gets whether the stretch of a column gap in one row is drawn: of the two columns that gap's place
+    /// in the row stands between, the visibility asks for both, either, or neither.
+    /// </summary>
+    private static Boolean Filled(
+        GapRuleVisibility visibility,
+        Boolean[] filled,
+        Int32 count,
+        Int32 row,
+        Int32 index)
+    {
+        if (visibility == GapRuleVisibility.All)
+        {
+            return true;
+        }
+
+        var before = filled[row * count + index];
+        var after = filled[row * count + index + 1];
+
+        return visibility == GapRuleVisibility.Around ? before || after : before && after;
+    }
+
+    /// <summary>
+    /// Appends the decorations of the gaps between two rows of column boxes.
+    /// </summary>
+    /// <remarks>
+    /// The gap runs the whole width the columns were laid out across, but it is still cut into one stretch
+    /// per column, because that is where the columns and the room between them make their bounds: which of
+    /// those stretches is drawn is asked of the column it stands under, since the visibility the axis asks
+    /// for is about the areas beside a gap and the areas beside one stretch are that one column's cell
+    /// above and below (CSS Gaps 1 §3.1.2, §3.4). Stretches of neighbouring columns run into one decoration
+    /// - the crossing between them is painted too - unless the axis says its decoration starts and ends at
+    /// every crossing.
+    /// </remarks>
     private static void AddRowGaps(
         List<GapRuleSegment> target,
         GapRuleAxis axis,
+        GapRuleAxis across,
         Boolean along,
         Int32 count,
+        Double width,
+        Double step,
+        Double start,
         Int32 rows,
         Double rowStep,
         Double columnHeight,
         (Double From, Double To) run,
-        Rect content,
         Boolean[] filled)
     {
         if (rows < 2 || !axis.IsStated)
@@ -153,49 +254,92 @@ internal static class MulticolRules
             return;
         }
 
-        // Between two rows of column boxes the decoration is drawn without asking what stands beside
-        // it, which is what `normal` means for a multi-column container's row gaps (§3.4).
+        // Between two rows of column boxes the decoration is drawn whatever stands beside it, which is
+        // what `normal` means for a multi-column container's row gaps (§3.4).
         var visibility = axis.Visibility == GapRuleVisibility.Normal ? GapRuleVisibility.All : axis.Visibility;
+
+        // A crossing splits the decoration where it stands; only a gap that says nothing of crossings runs
+        // through them.
+        var atCrossing = axis.Break == GapRuleBreak.Intersection;
+        var crossing = step - width;
+        var gaps = count - 1;
 
         for (var row = 0; row + 1 < rows; row++)
         {
             var rule = axis.At(row, rows - 1);
-            var before = RowHasContent(filled, count, row);
-            var after = RowHasContent(filled, count, row + 1);
-            var shown = visibility == GapRuleVisibility.All ||
-                (visibility == GapRuleVisibility.Around ? before || after : before && after);
 
-            if (!rule.Appears || !shown)
+            if (!rule.Appears)
             {
                 continue;
             }
 
             var centre = run.From + (row + 1) * rowStep - (rowStep - columnHeight) / 2;
-            var low = (along ? content.Y : content.X) + axis.CapStart.Resolve(0, 0);
-            var high = (along ? content.Y + content.Height : content.X + content.Width) - axis.CapEnd.Resolve(0, 0);
+            var column = 0;
 
-            if (high > low)
+            while (column < count)
             {
-                target.Add(new GapRuleSegment(
-                    along
-                        ? new Rect(centre - rule.Width / 2, low, rule.Width, high - low)
-                        : new Rect(low, centre - rule.Width / 2, high - low, rule.Width),
-                    rule,
-                    isRow: true));
+                if (!Shown(visibility, filled, count, row, column))
+                {
+                    column++;
+                    continue;
+                }
+
+                var low = start + column * step;
+                var high = low + width;
+                var from = column;
+
+                while (!atCrossing && column + 1 < count && Shown(visibility, filled, count, row, column + 1))
+                {
+                    column++;
+                    high = start + column * step + width;
+                }
+
+                // An end at the bound of the whole gap takes its cap inset; an end at a crossing takes the
+                // inset written for crossings, read against the column gap standing there.
+                var startAtBound = from == 0;
+                var endAtBound = column == count - 1;
+
+                low += startAtBound
+                    ? axis.CapStart.Resolve(0, 0)
+                    : axis.JunctionStart.Resolve(crossing, across.At(from - 1, gaps).Width);
+                high -= endAtBound
+                    ? axis.CapEnd.Resolve(0, 0)
+                    : axis.JunctionEnd.Resolve(crossing, across.At(column, gaps).Width);
+
+                if (high > low)
+                {
+                    target.Add(new GapRuleSegment(
+                        along
+                            ? new Rect(centre - rule.Width / 2, low, rule.Width, high - low)
+                            : new Rect(low, centre - rule.Width / 2, high - low, rule.Width),
+                        rule,
+                        isRow: true));
+                }
+
+                column++;
             }
         }
     }
 
-    private static Boolean RowHasContent(Boolean[] filled, Int32 count, Int32 row)
+    /// <summary>
+    /// Gets whether the stretch of a row gap under one column is drawn: of the two cells that column's
+    /// place in the rows either side of the gap, the visibility asks for both, either, or neither.
+    /// </summary>
+    private static Boolean Shown(
+        GapRuleVisibility visibility,
+        Boolean[] filled,
+        Int32 count,
+        Int32 row,
+        Int32 column)
     {
-        for (var column = 0; column < count; column++)
+        if (visibility == GapRuleVisibility.All)
         {
-            if (filled[row * count + column])
-            {
-                return true;
-            }
+            return true;
         }
 
-        return false;
+        var above = filled[row * count + column];
+        var below = filled[(row + 1) * count + column];
+
+        return visibility == GapRuleVisibility.Around ? above || below : above && below;
     }
 }
