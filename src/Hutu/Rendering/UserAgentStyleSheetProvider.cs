@@ -104,10 +104,6 @@ input, select   { display: inline-block }
 input, select,
 textarea        { text-align: initial }
 
-/* HTML Standard §15.3.10: a text field is a preformatted box - the line breaks written into it are
- * the lines it shows, and the spaces it holds are held. Without the rule the control's text was one
- * line of everything the page wrote, its breaks folded to spaces like a paragraph's. */
-textarea        { white-space: pre-wrap }
 input[type=reset],
 input[type=button],
 input[type=submit],

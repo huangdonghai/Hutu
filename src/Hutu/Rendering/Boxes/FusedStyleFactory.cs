@@ -615,7 +615,12 @@ internal static class FusedStyleFactory
 
             var built = new TextArea
             {
-                WhiteSpace = ComputedStyle.ResolveWhiteSpaceFused(find("white-space"), parent.WhiteSpace),
+                // A text field holds the text it was given: its spaces and its line breaks stand
+                // whatever `white-space` says, which the rendering rules make the value of a field
+                // (HTML §15.3.10, measured by textarea-always-preserves-spaces-001).
+                WhiteSpace = element.LocalName.Equals("textarea", StringComparison.OrdinalIgnoreCase)
+                    ? "pre-wrap"
+                    : ComputedStyle.ResolveWhiteSpaceFused(find("white-space"), parent.WhiteSpace),
 
                 // The three properties that say where a line may end stand on the same footing as
                 // white-space: each is inherited, and the text below the element is what reads them.

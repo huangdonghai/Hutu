@@ -138,6 +138,17 @@ internal static class Bidi
             }
         }
 
+        // X9: the characters that only steer the ordering are taken out of the text the weak and
+        // neutral rules read, which is what lets a neutral run carry on across them.
+        for (var at = 0; at < count; at++)
+        {
+            if (classes[at] is BidiClass.LRE or BidiClass.RLE or BidiClass.LRO or BidiClass.RLO or
+                BidiClass.PDF or BidiClass.LRI or BidiClass.RLI or BidiClass.FSI or BidiClass.PDI)
+            {
+                classes[at] = BidiClass.BN;
+            }
+        }
+
         // W1-W7: the weak classes, resolved across the paragraph.
         var lastStrong = baseLevel % 2 == 1 ? BidiClass.R : BidiClass.L;
 
@@ -259,8 +270,12 @@ internal static class Bidi
                 from++;
             }
 
-            var before = at > 0 ? Direction(classes[at - 1]) : baseLevel == 0 ? BidiClass.L : BidiClass.R;
-            var after = from < count ? Direction(classes[from]) : baseLevel == 0 ? BidiClass.L : BidiClass.R;
+            // A neutral run that reaches the edge of its sequence takes the direction the sequence is
+            // embedded at, which is the level the characters stand at rather than the paragraph's own
+            // (that is what the sos and eos of an isolating run sequence are, UAX #9 §3.3).
+            var embedding = levels[at] % 2 == 1 ? BidiClass.R : BidiClass.L;
+            var before = at > 0 ? Direction(classes[at - 1]) : embedding;
+            var after = from < count ? Direction(classes[from]) : embedding;
             var taken = before == after ? before : baseLevel == 0 ? BidiClass.L : BidiClass.R;
 
             for (var at2 = at; at2 < from; at2++)
@@ -363,7 +378,7 @@ internal static class Bidi
     }
 
     private static Boolean IsNeutral(BidiClass type) =>
-        type is BidiClass.B or BidiClass.S or BidiClass.WS or BidiClass.ON;
+        type is BidiClass.B or BidiClass.S or BidiClass.WS or BidiClass.ON or BidiClass.BN;
 
     private static BidiClass Direction(BidiClass type) => type switch
     {

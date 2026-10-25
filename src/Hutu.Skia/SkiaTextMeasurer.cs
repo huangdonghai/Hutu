@@ -178,6 +178,20 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             return Array.Empty<SkiaTextRun>();
         }
 
+        // The characters that only steer the ordering are not drawn: they take no room and carry no
+        // ink, and a face that has no glyph for one would draw the box it keeps for what it has none
+        // of. The layout's levels have already been read from them, so the text reaches the shaper
+        // without them (UAX #9 X9).
+        if (HasBidiControls(text))
+        {
+            text = WithoutBidiControls(text);
+
+            if (text.Length == 0)
+            {
+                return Array.Empty<SkiaTextRun>();
+            }
+        }
+
         return _decompositions.GetOrAdd(
             new DecompositionKey(style, text),
             _ => DecomposeInto(text, style, GetFont(style)));
@@ -513,6 +527,42 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 
     private static Int32 CodepointAt(String text, Int32 index) =>
         Char.IsSurrogatePair(text, index) ? Char.ConvertToUtf32(text, index) : text[index];
+
+    private static Boolean HasBidiControls(String text)
+    {
+        foreach (var character in text)
+        {
+            if (IsBidiControl(character))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static String WithoutBidiControls(String text)
+    {
+        var kept = new System.Text.StringBuilder(text.Length);
+
+        foreach (var character in text)
+        {
+            if (!IsBidiControl(character))
+            {
+                kept.Append(character);
+            }
+        }
+
+        return kept.ToString();
+    }
+
+    private static Boolean IsBidiControl(Char character) => character switch
+    {
+        (Char)0x061C or (Char)0x200E or (Char)0x200F or
+        (Char)0x202A or (Char)0x202B or (Char)0x202C or (Char)0x202D or (Char)0x202E or
+        (Char)0x2066 or (Char)0x2067 or (Char)0x2068 or (Char)0x2069 => true,
+        _ => false,
+    };
 
     private static Int32 WidthAt(String text, Int32 index) => Char.IsSurrogatePair(text, index) ? 2 : 1;
 
