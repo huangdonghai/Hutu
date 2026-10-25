@@ -794,7 +794,8 @@ internal sealed class InlineLayout
             breaks.Orphans,
             breaks.Widows,
             starts,
-            ends);
+            ends,
+            spills: multi.Fills && !wraps);
 
         // Each column trims the leading off its own first and last lines (CSS Inline 3 §6.2), so every
         // column begins with its first line standing where that line's text edge asks.

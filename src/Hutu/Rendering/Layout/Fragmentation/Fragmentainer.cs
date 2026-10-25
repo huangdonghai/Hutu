@@ -55,7 +55,8 @@ internal static class Fragmentainer
         Int32 orphans,
         Int32 widows,
         IReadOnlyList<Double>? startTrims = null,
-        IReadOnlyList<Double>? endTrims = null)
+        IReadOnlyList<Double>? endTrims = null,
+        Boolean spills = false)
     {
         var counts = new List<Int32>(Math.Min(columns, heights.Count));
         var from = 0;
@@ -63,6 +64,16 @@ internal static class Fragmentainer
         for (var column = 0; column < columns && from < heights.Count; column++)
         {
             var fit = FragmentSlicer.Fitting(heights, extent, orphans, widows, from, startTrims, endTrims);
+
+            // A block that cannot keep its orphans in this room moves whole to the next fragment. A fill
+            // that names as many columns as it needs offers that next fragment the very same room for the
+            // very same lines, so asking it again would never come back: such a spill lets the block land
+            // where it stands and overflow the column instead (CSS Break 3 §4.3).
+            if (spills && fit == 0)
+            {
+                counts.Add(heights.Count - from);
+                return counts;
+            }
 
             counts.Add(fit);
             from += fit;
