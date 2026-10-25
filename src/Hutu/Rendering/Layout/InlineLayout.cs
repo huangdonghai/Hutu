@@ -2240,19 +2240,37 @@ internal sealed class InlineLayout
                         if (breaks && (room.Room > 0 || hyphen) &&
                             builder.ExtentFor(item.Inline) + asks > room.Room && item.Style.WrapsLines)
                         {
-                            if (builder.HasContent)
+                            // The mark a break draws is part of the line it ends: a shortened line that
+                            // cannot hold it moves down first, the way any line too small for its content
+                            // does (CSS 2.1 §9.5). Without this the line broke at the soft hyphen and
+                            // overhung the float by the width of the mark.
+                            if (hyphen && room.Shortened)
                             {
-                                NextLine(hyphenate: hyphen);
-                                moved = false;
+                                var trailing = builder.ExtentFor(item.Inline) +
+                                    (builder.EndsInSoftHyphen ? HyphenWidth(_measurer, item.Style, itemFlow) : 0);
+
+                                if (trailing > room.Room)
+                                {
+                                    room.Drop(trailing);
+                                }
                             }
-                            else if (room.Shortened)
+
+                            if (builder.ExtentFor(item.Inline) + asks > room.Room)
                             {
-                                // CSS 2.1 §9.5: a line box a float has shortened, too small for the
-                                // content standing on it, is shifted downward until some content fits
-                                // or no floats are left - the long word beside the floated picture goes
-                                // below it rather than overflowing the room the float left, which is
-                                // the specification's own example of the rule.
-                                room.Drop(builder.ExtentFor(item.Inline) + asks);
+                                if (builder.HasContent)
+                                {
+                                    NextLine(hyphenate: hyphen);
+                                    moved = false;
+                                }
+                                else if (room.Shortened)
+                                {
+                                    // CSS 2.1 §9.5: a line box a float has shortened, too small for the
+                                    // content standing on it, is shifted downward until some content fits
+                                    // or no floats are left - the long word beside the floated picture goes
+                                    // below it rather than overflowing the room the float left, which is
+                                    // the specification's own example of the rule.
+                                    room.Drop(builder.ExtentFor(item.Inline) + asks);
+                                }
                             }
                         }
 
@@ -2899,9 +2917,10 @@ internal sealed class InlineLayout
     /// pairs).
     /// </summary>
     private static String HyphenMark(ComputedStyle style, WritingModeInfo flow) =>
-        flow.IsVertical && style.HyphenateCharacter == "-"
-            ? Char.ConvertFromUtf32(0x2010)
-            : style.HyphenateCharacter;
+        flow.IsVertical && style.HyphenateCharacter == "-" ? UprightHyphen : style.HyphenateCharacter;
+
+    /// <summary>The mark a browser draws at a break: the upright hyphen, U+2010.</summary>
+    private static readonly String UprightHyphen = Char.ConvertFromUtf32(0x2010);
 
     /// <summary>
     /// Gets the room the mark a break draws takes: the hyphenate character, set in the run's own font.
