@@ -471,9 +471,22 @@ internal sealed class GridFormattingContext
         }
 
         Place(items, grid, explicitColumns, explicitRows);
+
+        // An `auto-fit` repetition leaves the tracks no item reaches as nothing at all: they hold no
+        // gutter, they are not counted when the content is distributed, and the room they would have
+        // taken is shared by the tracks that stand - which is why they go before any track is sized, so
+        // that a track whose maximum is `auto` grows into the width the dropped ones leave (CSS Grid 1
+        // §7.2.3).
+        var keptColumns = grid.ColumnsSubgrid
+            ? null
+            : Collapse(grid.Columns, items, true, columnBasis, gapX, definiteWidth);
+        var keptRows = grid.RowsSubgrid
+            ? null
+            : Collapse(grid.Rows, items, false, rowBasis, gapY, contentHeight is not null);
+
         var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight ?? 0));
 
-        // How far the items reach, which is what collapses an `auto-fit` repetition.
+        // How far the items reach, which is what takes an `auto-fit` repetition past its end.
         var usedColumns = Used(items, true);
 
         // Columns first. A row can only be sized once its items' final widths are known, because the
@@ -489,7 +502,16 @@ internal sealed class GridFormattingContext
         }
         else
         {
-            columnTracks = SizeColumns(grid, items, usedColumns, columnBasis, gapX, definiteWidth, itemContext, out minContentWidth);
+            columnTracks = SizeColumns(
+                grid,
+                items,
+                usedColumns,
+                columnBasis,
+                gapX,
+                definiteWidth,
+                itemContext,
+                out minContentWidth,
+                keptColumns);
         }
 
         var totalWidth = Total(columnTracks, gapX);
@@ -520,7 +542,8 @@ internal sealed class GridFormattingContext
                 columnTracks,
                 gapX,
                 namedColumns ?? grid.ColumnLines,
-                namedRows ?? grid.RowLines);
+                namedRows ?? grid.RowLines,
+                keptRows);
 
         var totalHeight = Total(rowTracks, gapY);
         var resolvedHeight = definiteWidth ? contentHeight ?? totalHeight : totalHeight;
@@ -948,6 +971,85 @@ internal sealed class GridFormattingContext
 
     private static Int64 Key(Int32 row, Int32 column) => ((Int64)row << 32) | (UInt32)column;
 
+    /// <summary>
+    /// Drops the tracks of an <c>auto-fit</c> repetition that no item reaches, and moves the items onto
+    /// the tracks that are left, which is what the axis then sizes, aligns and decorates. Nothing is
+    /// dropped where the room to fill is not settled, where the list holds no such repetition, or where
+    /// an item reaches past the list - what an item stands in beyond the repetition is an implicit track,
+    /// which is a track of its own however empty the tracks beside it are.
+    /// </summary>
+    /// <returns>The sizes of the tracks that stand, or nothing to say the list is wanted as it is.</returns>
+    private static IReadOnlyList<GridTrackSize>? Collapse(
+        GridTrackList list,
+        List<GridCell> items,
+        Boolean horizontal,
+        Double basis,
+        Double gap,
+        Boolean definite)
+    {
+        if (!definite || !list.IsAutoFit)
+        {
+            return null;
+        }
+
+        var all = list.Resolve(basis, gap, Int32.MaxValue);
+        var total = all.Count;
+        var (from, repeated) = list.Repeated(basis, gap);
+        var taken = new Boolean[total];
+
+        foreach (var item in items)
+        {
+            var start = horizontal ? item.Column : item.Row;
+            var span = horizontal ? item.ColumnSpan : item.RowSpan;
+
+            if (start < 0 || start + span > total)
+            {
+                return null;
+            }
+
+            for (var index = start; index < start + span; index++)
+            {
+                taken[index] = true;
+            }
+        }
+
+        var rank = new Int32[total];
+        var kept = new List<GridTrackSize>(total);
+
+        for (var index = 0; index < total; index++)
+        {
+            rank[index] = kept.Count;
+
+            if (index < from || index >= from + repeated || taken[index])
+            {
+                kept.Add(all[index]);
+            }
+        }
+
+        if (kept.Count == total)
+        {
+            return null;
+        }
+
+        foreach (var item in items)
+        {
+            if (horizontal)
+            {
+                var last = item.Column + item.ColumnSpan - 1;
+                item.Column = rank[item.Column];
+                item.ColumnSpan = rank[last] - item.Column + 1;
+            }
+            else
+            {
+                var last = item.Row + item.RowSpan - 1;
+                item.Row = rank[item.Row];
+                item.RowSpan = rank[last] - item.Row + 1;
+            }
+        }
+
+        return kept;
+    }
+
     /// <summary>Counts the tracks the items reach on one axis.</summary>
     private static Int32 Used(List<GridCell> items, Boolean horizontal)
     {
@@ -971,9 +1073,10 @@ internal sealed class GridFormattingContext
         GridTrackSize auto,
         Int32 used,
         Double basis,
-        Double gap)
+        Double gap,
+        IReadOnlyList<GridTrackSize>? kept = null)
     {
-        var resolved = list.Resolve(basis, gap, used);
+        var resolved = kept ?? list.Resolve(basis, gap, used);
         var total = Math.Max(Math.Max(used, 1), resolved.Count);
         var tracks = new List<Track>(total);
 
@@ -993,9 +1096,10 @@ internal sealed class GridFormattingContext
         Double gap,
         Boolean definite,
         LayoutContext context,
-        out Double minTotal)
+        out Double minTotal,
+        IReadOnlyList<GridTrackSize>? kept = null)
     {
-        var tracks = Build(grid.Columns, grid.AutoColumn, used, basis, gap);
+        var tracks = Build(grid.Columns, grid.AutoColumn, used, basis, gap, kept);
 
         Initialize(tracks, basis);
         ContributeWidths(tracks, items, context, grid);
@@ -1099,9 +1203,10 @@ internal sealed class GridFormattingContext
         List<Track> columns,
         Double columnGap,
         GridLineNames? columnNames,
-        GridLineNames? rowNames)
+        GridLineNames? rowNames,
+        IReadOnlyList<GridTrackSize>? kept)
     {
-        var tracks = Build(grid.Rows, grid.AutoRow, used, basis, gap);
+        var tracks = Build(grid.Rows, grid.AutoRow, used, basis, gap, kept);
 
         Initialize(tracks, basis);
         ContributeHeights(

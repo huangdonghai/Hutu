@@ -256,6 +256,34 @@ public sealed class GridLayoutTests
         Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(206).Within(0.5));
     }
 
+    /// <summary>
+    /// What an `auto-fit` repetition leaves empty is nothing at all, wherever it sits: the hole between
+    /// two tracks that hold items goes as the trailing run does, and only the tracks that stand are
+    /// counted when the content distribution shares the room (CSS Grid 1 §7.2.3).
+    /// </summary>
+    [Test]
+    public async Task AutoFitDropsTheEmptyTrackBetweenTwoThatHoldItems()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;grid-template-columns:repeat(auto-fit,25px);grid-template-rows:25px;" +
+            "width:200px;justify-content:space-evenly'>" +
+            "<div id='a' style='grid-column:2'></div><div id='b' style='grid-column:4'></div>" +
+            "<div id='c' style='grid-column:7'></div>" +
+            "</div></body></html>");
+
+        // Eight tracks of 25 fill the width, but three of them hold an item: the five that do not,
+        // including the hole at column 3, leave no room and no gap, so the free space is shared out in
+        // four between the three that stand.
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "a").BorderBox.X, Is.EqualTo(31.25).Within(0.5), "the first that stands");
+            Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(87.5).Within(0.5), "not the track it was written in");
+            Assert.That(Find(view, "c").BorderBox.X, Is.EqualTo(143.75).Within(0.5));
+        });
+    }
+
     [Test]
     public async Task AutoFillKeepsTheTracksNoItemReaches()
     {

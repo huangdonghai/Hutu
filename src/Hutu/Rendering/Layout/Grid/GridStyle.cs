@@ -134,6 +134,17 @@ internal sealed class GridTrackList
     /// <summary>Gets whether the repetition collapses the tracks no item reaches.</summary>
     public Boolean IsAutoFit => HasAutoRepeat && _repeat.IsAutoFit;
 
+    /// <summary>
+    /// Gets where the automatic repetition stands, and how many tracks it fills, in the list spliced out
+    /// in full. These are the tracks an <c>auto-fit</c> repetition may collapse; the tracks the list holds
+    /// beside them are written out by the page, and what an item reaches past the whole list is an
+    /// implicit track, which nothing collapses (CSS Grid 1 §7.2.3).
+    /// </summary>
+    public (Int32 From, Int32 Count) Repeated(Double basis, Double gap) =>
+        _repeatIndex < 0 || !HasAutoRepeat
+            ? (0, 0)
+            : (_repeatIndex, Repetitions(basis, gap) * _repeat.Tracks.Count);
+
     /// <summary>Adds one explicit track at the end of the list.</summary>
     public void Add(GridTrackSize track) => _tracks.Add(track);
 
@@ -157,7 +168,9 @@ internal sealed class GridTrackList
     /// <summary>
     /// Splices the automatic repetition in for a container whose content box is <paramref name="basis"/>
     /// wide, with <paramref name="gap"/> between tracks. <paramref name="used"/> is how many tracks the
-    /// items actually reach, which is what an <c>auto-fit</c> repetition collapses down to.
+    /// items actually reach: where the room to fill is not settled, that is as far as an <c>auto-fit</c>
+    /// repetition goes, since nothing is known of the tracks past it. Where the room is settled, the
+    /// items are already placed and the caller drops the tracks among them that stand empty.
     /// </summary>
     public IReadOnlyList<GridTrackSize> Resolve(Double basis, Double gap, Int32 used)
     {
