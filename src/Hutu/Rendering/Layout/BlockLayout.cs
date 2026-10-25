@@ -3257,6 +3257,18 @@ internal sealed class BlockLayout
     }
 
     /// <summary>
+    /// Gets the least block extent the box states for itself: a <c>min-height</c> (or a column's
+    /// <c>min-width</c>) that holds the box open even when its content is nothing, which keeps its
+    /// two margins from adjoining across it (CSS 2.1 §8.3.1).
+    /// </summary>
+    private static Double MinBlockExtent(Box box, WritingModeInfo flow)
+    {
+        var length = flow.IsVertical ? box.Style.MinWidth : box.Style.MinHeight;
+
+        return length.HasValue ? length.Resolve(0) : 0;
+    }
+
+    /// <summary>
     /// Gets the block extent an <c>aspect-ratio</c> gives the box on its own, which is a height where the
     /// text runs down and a width where it runs across (CSS Sizing 4 §4).
     /// </summary>
@@ -3297,7 +3309,7 @@ internal sealed class BlockLayout
             return false;
         }
 
-        if (DeclaredBlockExtent(box, flow, basis) is > 0)
+        if (DeclaredBlockExtent(box, flow, basis) is > 0 || MinBlockExtent(box, flow) > 0)
         {
             return false;
         }
@@ -3548,6 +3560,14 @@ internal sealed class BlockLayout
             return new MarginGroup(ownEnd);
         }
 
+        // A minimum height that holds the box open over nothing keeps its last child's bottom margin
+        // from adjoining its own end edge: the box's end stands below the child's margin, not on it.
+        // A box whose content fills it is not held open by the minimum, and folds through as before.
+        if (MinBlockExtent(box, flow) > 0 && AllSelfCollapsing(box, flow, basis))
+        {
+            return new MarginGroup(ownEnd);
+        }
+
         var combined = new MarginGroup(ownEnd);
 
         // A child that steps clear of a float keeps its margins out of the collapse with the box above
@@ -3591,6 +3611,28 @@ internal sealed class BlockLayout
         }
 
         return combined;
+    }
+
+    /// <summary>
+    /// Gets whether every in-flow block child of the box is self-collapsing, so the box's own content
+    /// along the stack is nothing at all.
+    /// </summary>
+    private static Boolean AllSelfCollapsing(Box box, WritingModeInfo flow, Double basis)
+    {
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child) || IsFloat(child))
+            {
+                continue;
+            }
+
+            if (!IsSelfCollapsing(child, flow, basis))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
