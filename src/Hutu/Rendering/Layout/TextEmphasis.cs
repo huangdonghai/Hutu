@@ -124,20 +124,29 @@ internal readonly struct TextEmphasis
 
         var first = element[0];
 
-        if (Char.IsWhiteSpace(first) && (Skip & (EmphasisSkip.Space | EmphasisSkip.Auto)) != 0)
+        // What a page that says nothing asks for is the spaces plus the *narrow* forms - the
+        // characters UAX #50 lists against a fullwidth or halfwidth twin. A wide punctuation mark is
+        // its own character and takes its mark, which is what the references for a CJK sentence show.
+        var asked = Skip == EmphasisSkip.Auto
+            ? EmphasisSkip.Space | EmphasisSkip.Punctuation | EmphasisSkip.Symbols
+            : Skip;
+
+        if ((asked & EmphasisSkip.Space) != 0 && Char.IsWhiteSpace(first))
         {
             return true;
         }
 
-        // `auto` is the reading a page that says nothing asked for, so it joins the sets the page named.
-        var asked = Skip | EmphasisSkip.Auto;
+        if (Skip == EmphasisSkip.Auto)
+        {
+            return ReservedWithWideForm(first);
+        }
 
         if ((asked & EmphasisSkip.Punctuation) != 0 && IsPunctuation(first))
         {
             return true;
         }
 
-        return (asked & EmphasisSkip.Symbols) != 0 && ReservedWithWideForm(first);
+        return (asked & EmphasisSkip.Symbols) != 0 && IsSymbol(first);
     }
 
     private static Boolean IsPunctuation(Char character) =>
@@ -165,6 +174,16 @@ internal readonly struct TextEmphasis
             >= 0x5b and <= 0x60 => true,
             >= 0x7b and <= 0x7e => true,
             0xa0 or 0xa1 or 0xa7 or 0xb7 => true,
+            _ => false,
+        };
+
+    private static Boolean IsSymbol(Char character) =>
+        Char.GetUnicodeCategory(character) switch
+        {
+            UnicodeCategory.MathSymbol => true,
+            UnicodeCategory.CurrencySymbol => true,
+            UnicodeCategory.ModifierSymbol => true,
+            UnicodeCategory.OtherSymbol => true,
             _ => false,
         };
 

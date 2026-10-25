@@ -1350,6 +1350,8 @@ internal sealed class InlineLayout
         }
 
         var width = measurer.MeasureAdvance(emphasis.Mark!, drawn, flow);
+        var spacing = fragment.Style.LetterSpacing;
+        var words = fragment.Style.WordSpacing;
         var start = cursor + (emphasis.StandsAtTheEnd(flow) ? line.Height - block : 0);
         var colour = emphasis.HasColor ? emphasis.Color : ComputedStyle.ToArgb(fragment.Style.Color);
         var elements = new List<String>();
@@ -1366,6 +1368,10 @@ internal sealed class InlineLayout
             }
 
             var advance = measurer.MeasureAdvance(element, font, flow);
+
+            // The room between one character and the next is the spacing the page wrote after it, which
+            // carries the marks along with the letters - and the space a word ends on is a word space too.
+            advance += spacing + (Char.IsWhiteSpace(element[0]) ? words : 0);
 
             elements.Add(element);
             advances.Add(advance);
