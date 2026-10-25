@@ -1839,6 +1839,11 @@ internal sealed class InlineLayout
         var leading = indent > 0 ? Math.Max(0, indent - room.Inset) : indent;
         var builder = new LineBuilder(strut, leading, flow.IsVertical);
 
+        // The place the line could be cut back to at a soft hyphen, and the steps it has taken since:
+        // they begin the next line when the run after the hyphen turns out not to fit.
+        LineBuilder.Checkpoint? hyphenPoint = null;
+        List<TailStep>? tail = null;
+
         void Close(LineBuilder filled, Boolean forced = false, Boolean hyphen = false)
         {
             var line = filled.Build(_measurer, room.Room, carried, forced, hyphen);
@@ -1853,13 +1858,29 @@ internal sealed class InlineLayout
             room.Next(line.Height);
         }
 
+        void NextLine(Boolean forced = false, Boolean hyphenate = false)
+        {
+            Close(builder, forced, hyphenate);
+            builder = new LineBuilder(strut, carried, flow.IsVertical);
+            hyphenPoint = null;
+            tail = null;
+        }
+
         foreach (var item in items)
         {
             if (item.IsBreak)
             {
-                Close(builder, forced: true);
-                builder = new LineBuilder(strut, carried, flow.IsVertical);
+                NextLine(forced: true);
                 continue;
+            }
+
+            // Only runs of text are kept for the line after a soft hyphen: a box the page puts there
+            // is placed where it stands and cannot be handed back, so the hyphen offers no cutting
+            // place past it.
+            if (String.IsNullOrEmpty(item.Text) || item.IsRuby || item.IsReplaced || item.IsAtomic || item.IsOutOfFlow)
+            {
+                hyphenPoint = null;
+                tail = null;
             }
 
             if (item.IsOutOfFlow)
@@ -1887,8 +1908,7 @@ internal sealed class InlineLayout
                     if (builder.HasContent)
                     {
                         room.Restore(band);
-                        Close(builder);
-                        builder = new LineBuilder(strut, carried, flow.IsVertical);
+                        NextLine();
                         room.Grow(blockSize);
                     }
                     else if (room.Shortened)
@@ -1930,8 +1950,7 @@ internal sealed class InlineLayout
                     if (builder.HasContent)
                     {
                         room.Restore(band);
-                        Close(builder);
-                        builder = new LineBuilder(strut, carried, flow.IsVertical);
+                        NextLine();
                         room.Grow(atomic.BlockSize + atomic.BlockStartMargin + atomic.BlockEndMargin);
                     }
                     else if (room.Shortened)
@@ -1974,8 +1993,7 @@ internal sealed class InlineLayout
                     if (builder.HasContent)
                     {
                         room.Restore(band);
-                        Close(builder);
-                        builder = new LineBuilder(strut, carried, flow.IsVertical);
+                        NextLine();
                         room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()) + annotation.Block);
                     }
                     else if (room.Shortened)
@@ -1996,6 +2014,10 @@ internal sealed class InlineLayout
             // taken once for the item, because every piece of it is set in that one font.
             var itemFlow = item.Box.Flow;
             var font = item.Style.GetFont();
+
+            // A line does not break inside ruby: the base and its reading stand together, so a soft
+            // hyphen written there offers no place to end and draws no mark (CSS Ruby 1 §3).
+            var inRuby = InsideRuby(item.Inline);
 
             // The words a line carries make it as tall as the line height their own style asks for, and
             // that band is what a shape beside the line is read across.
@@ -2098,8 +2120,7 @@ internal sealed class InlineLayout
 
                     if (steps && stepsWord && movesWhole && builder.HasContent)
                     {
-                        Close(builder);
-                        builder = new LineBuilder(strut, carried, flow.IsVertical);
+                        NextLine();
                         moved = true;
                     }
 
@@ -2146,15 +2167,48 @@ internal sealed class InlineLayout
                         // A soft hyphen is the one opportunity a line takes even when it has no room at
                         // all: the word has nowhere else to go, and the mark is drawn where the page put
                         // the hyphen (CSS Text 3 §6.1). Chrome measured on a zero-width box does the same.
-                        var hyphen = builder.EndsInSoftHyphen && item.Style.WrapsLines;
+                        var hyphen = builder.EndsInSoftHyphen && item.Style.WrapsLines && !inRuby;
+
+                        // A line that ran past a soft hyphen may have to give back what came after it:
+                        // this step cannot fit and no opportunity stands at its start, so the line ends
+                        // at that hyphen - the mark drawn there - and the steps since it begin the next
+                        // line. Chrome measured: "high­wa" then "y" in a six-character box breaks
+                        // at the hyphen rather than letting the y overflow the word it completes.
+                        if (hyphenPoint is { } point && !breaks && !spaces && builder.HasContent && !inRuby &&
+                            advance > 0 && !String.IsNullOrEmpty(item.Text) && item.Style.WrapsLines &&
+                            builder.ExtentFor(item.Inline) + advance > room.Room)
+                        {
+                            var replay = tail ?? new List<TailStep>();
+
+                            builder.Restore(point);
+                            NextLine(hyphenate: true);
+
+                            foreach (var step in replay)
+                            {
+                                builder.Add(
+                                    step.Source, step.Start, step.Length, step.Advance,
+                                    step.Style, step.Box, step.Flow, step.Inline);
+
+                                if (hyphenPoint is not null && tail is not null)
+                                {
+                                    tail.Add(step);
+                                }
+
+                                if (step.Source[step.Start + step.Length - 1] == (Char)0x00AD &&
+                                    builder.EndsInSoftHyphen && step.Style.WrapsLines)
+                                {
+                                    hyphenPoint = builder.Capture();
+                                    tail = new List<TailStep>();
+                                }
+                            }
+                        }
 
                         if (breaks && (room.Room > 0 || hyphen) &&
                             builder.ExtentFor(item.Inline) + asks > room.Room && item.Style.WrapsLines)
                         {
                             if (builder.HasContent)
                             {
-                                Close(builder, hyphen: hyphen);
-                                builder = new LineBuilder(strut, carried, flow.IsVertical);
+                                NextLine(hyphenate: hyphen);
                                 moved = false;
                             }
                             else if (room.Shortened)
@@ -2169,6 +2223,22 @@ internal sealed class InlineLayout
                         }
 
                         builder.Add(run.Source, at, taken, advance, item.Style, item.Box, piece.Flow, item.Inline);
+
+                        // A step that ends at a soft hyphen is a place the line may be cut back to; the
+                        // steps taken after one are kept beside it, so the next line can begin with them.
+                        if (hyphenPoint is not null && tail is not null)
+                        {
+                            tail.Add(new TailStep(
+                                run.Source, at, taken, advance, item.Style, item.Box, piece.Flow, item.Inline));
+                        }
+
+                        if (at + taken == end && run.Source[end - 1] == (Char)0x00AD &&
+                            builder.EndsInSoftHyphen && item.Style.WrapsLines && !inRuby)
+                        {
+                            hyphenPoint = builder.Capture();
+                            tail = new List<TailStep>();
+                        }
+
                         previous = at;
                         at += taken;
                     }
@@ -2772,6 +2842,22 @@ internal sealed class InlineLayout
     /// the measurer's sake is characters copied that the run would only copy again when it merged with
     /// the piece after it.
     /// </remarks>
+    /// <summary>
+    /// Gets whether the box's chain stands inside a <c>ruby</c> element, where a line may not break.
+    /// </summary>
+    private static Boolean InsideRuby(InlineAncestor? inline)
+    {
+        for (var ancestor = inline; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (ancestor.Box.Element?.LocalName.Equals("ruby", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Gets the room the mark a break draws takes: the hyphenate character, set in the run's own font.
     /// </summary>
@@ -4459,6 +4545,20 @@ internal sealed class InlineLayout
         };
     }
 
+    /// <summary>
+    /// One step a line took: a piece of a run, the room it was charged, and where it came from, kept so
+    /// the step can be taken again on the line after a soft hyphen.
+    /// </summary>
+    private readonly record struct TailStep(
+        String Source,
+        Int32 Start,
+        Int32 Length,
+        Double Advance,
+        ComputedStyle Style,
+        Box Box,
+        WritingModeInfo Flow,
+        InlineAncestor? Inline);
+
     private sealed class LineBuilder
     {
         private readonly List<TextFragment> _fragments = new();
@@ -4514,13 +4614,74 @@ internal sealed class InlineLayout
         public Boolean HasFragments => _fragments.Count > 0;
 
         /// <summary>
-        /// Gets whether the last character the line carries is a soft hyphen, which is where the page let
-        /// the line end: the mark is drawn there, and only there (CSS Text 3 §6.1).
+        /// Gets whether the line ends in a soft hyphen that may end it: the mark is drawn there, and only
+        /// where the line carries something before the hyphen - a line of soft hyphens alone is where the
+        /// previous one was cut, and cutting it again would draw a mark with nothing before it.
         /// </summary>
-        public Boolean EndsInSoftHyphen =>
-            _fragments.Count > 0 &&
-            _fragments[^1] is { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null } last &&
-            last.Source[last.Start + last.Length - 1] == '­';
+        public Boolean EndsInSoftHyphen
+        {
+            get
+            {
+                if (_fragments.Count == 0 ||
+                    _fragments[^1] is not { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null } last)
+                {
+                    return false;
+                }
+
+                var text = last.Text;
+                var trailing = 0;
+
+                while (trailing < text.Length && text[text.Length - 1 - trailing] == (Char)0x00AD)
+                {
+                    trailing++;
+                }
+
+                return trailing > 0 && (text.Length > trailing || _fragments.Count > 1);
+            }
+        }
+
+        /// <summary>
+        /// Gets a place the line can be cut back to: the runs it holds, the room they took, and the
+        /// elements their chain had opened.
+        /// </summary>
+        public Checkpoint Capture() => new(
+            _fragments.Count,
+            _fragments.Count > 0 ? _fragments[^1].Length : 0,
+            _fragments.Count > 0 ? _fragments[^1].Width : 0,
+            Width,
+            _open.ToArray());
+
+        /// <summary>
+        /// Cuts the line back to a place it stood at. The caller has kept the steps taken since and
+        /// takes them again on the next line, so nothing is drawn here and the boxes those runs would
+        /// open are never made - the placing pass runs only when a line closes.
+        /// </summary>
+        public void Restore(Checkpoint at)
+        {
+            if (_fragments.Count > at.Fragments)
+            {
+                _fragments.RemoveRange(at.Fragments, _fragments.Count - at.Fragments);
+            }
+
+            if (at.Fragments > 0 && _fragments.Count == at.Fragments)
+            {
+                var last = _fragments[^1];
+                last.Length = at.Length;
+                last.Width = at.RunWidth;
+            }
+
+            Width = at.Width;
+            _open.Clear();
+            _open.AddRange(at.Open);
+        }
+
+        /// <summary>The state a line may be cut back to, kept while a soft hyphen offers the place.</summary>
+        public readonly record struct Checkpoint(
+            Int32 Fragments,
+            Int32 Length,
+            Double RunWidth,
+            Double Width,
+            OpenInline[] Open);
 
         /// <summary>
         /// Gets the code point the line's text ends on, or null where it ends on a box rather than a run.
@@ -5064,12 +5225,22 @@ internal sealed class InlineLayout
                     last.Source[last.Start + last.Length - 1] == '­' &&
                     !String.IsNullOrEmpty(last.Style.HyphenateCharacter))
                 {
-                    var mark = last.Style.HyphenateCharacter;
-                    var replaced = last.Source[last.Start + last.Length - 1].ToString();
-                    var gained = MeasureChunk(measurer, last.Style, mark, 0, mark.Length, last.Flow) -
-                        MeasureChunk(measurer, last.Style, replaced, 0, 1, last.Flow);
+                    // A run of soft hyphens stands where the page could have cut the word once: the whole
+                    // run gives way to the single mark the break draws.
+                    var text = last.Text;
+                    var trailing = 0;
 
-                    last.MergeInto(last.Text[..^1] + mark);
+                    while (trailing < text.Length && text[text.Length - 1 - trailing] == (Char)0x00AD)
+                    {
+                        trailing++;
+                    }
+
+                    var mark = last.Style.HyphenateCharacter;
+                    var shy = text.Substring(text.Length - trailing, trailing);
+                    var gained = MeasureChunk(measurer, last.Style, mark, 0, mark.Length, last.Flow) -
+                        MeasureChunk(measurer, last.Style, shy, 0, shy.Length, last.Flow);
+
+                    last.MergeInto(text[..^trailing] + mark);
                     last.Width += gained;
                     used += gained;
                 }

@@ -423,6 +423,20 @@ public sealed class InlineBoxTests
     }
 
     [Test]
+    public async Task ConsecutiveSoftHyphensDrawOneMark()
+    {
+        using var view = CreateView();
+
+        // Two soft hyphens stand for one place the line may end: the break draws a single mark, and the
+        // second hyphen neither draws nor opens a line of its own (soft-hyphens-1b).
+        await view.SetHtml(Document("Hy\u00AD\u00ADphen.", width: 16));
+
+        Assert.That(Lines(view).Count(), Is.EqualTo(2), "the word is set on two lines");
+        Assert.That(Text(view, "Hy-").BorderBox.Width, Is.EqualTo(15), "with one mark where it was cut");
+        Assert.That(Text(view, "phen.").BorderBox.Width, Is.EqualTo(25), "and no line of the mark alone");
+    }
+
+    [Test]
     public async Task ASoftHyphenThatHeadsAnotherBoxStillEndsTheWord()
     {
         using var view = CreateView();
@@ -435,6 +449,22 @@ public sealed class InlineBoxTests
         Assert.That(Lines(view).Count(), Is.EqualTo(2), "the line ends where the hyphen stands");
         Assert.That(Text(view, "-").BorderBox.X, Is.EqualTo(10), "the mark follows the letters the span set");
         Assert.That(Text(view, "phen.").BorderBox.Y, Is.EqualTo(20), "and the rest follows on the next line");
+    }
+
+    [Test]
+    public async Task ASoftHyphenIsUsedWhenTheRestOfTheWordWouldNotFit()
+    {
+        using var view = CreateView();
+
+        // The word began in the span and continues in the text node after it. "high\u00ADwa" fits the
+        // line, but its last letter has nowhere to go and no break stands before it: the line ends at
+        // the soft hyphen and "wa" and "y" begin the next one (CSS Text 3 §6.1).
+        await view.SetHtml(Document("<span>high\u00ADwa</span>y", width: 37));
+
+        Assert.That(Lines(view).Count(), Is.EqualTo(2), "the line ends at the hyphen");
+        Assert.That(Text(view, "high-").BorderBox.Width, Is.EqualTo(25), "with the mark drawn there");
+        Assert.That(Text(view, "wa").BorderBox.X, Is.EqualTo(0), "and the syllable after it begins the next line");
+        Assert.That(Text(view, "y").BorderBox.Y, Is.EqualTo(20), "with the letter that ended the word");
     }
 
     [Test]
