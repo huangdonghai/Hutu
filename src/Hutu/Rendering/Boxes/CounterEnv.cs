@@ -59,6 +59,14 @@ internal sealed class CounterEnv
     /// </remarks>
     internal static CounterEnv? Extend(CounterEnv? env, MatchedCascade cascade, Object origin, IElement? above)
     {
+        // Style containment makes the element's subtree a scope of its own: a counter that means
+        // something above the box is not in scope inside it, and one the box itself starts does not
+        // outlive it (CSS Contain 1 §3.4). The chain handed down is therefore empty here.
+        if (ContainsStyle(cascade.Find("contain")?.Value))
+        {
+            env = Empty;
+        }
+
         var reset = cascade.Find("counter-reset")?.Value;
         var set = cascade.Find("counter-set")?.Value;
         var increment = cascade.Find("counter-increment")?.Value;
@@ -77,6 +85,30 @@ internal sealed class CounterEnv
         mine = Apply(mine, increment, CounterWrite.Increment, origin, above);
 
         return mine;
+    }
+
+    /// <summary>Gets whether a <c>contain</c> value scopes what the box holds, which is what
+    /// <c>style</c>, and the shorthands that include it, ask for.</summary>
+    private static Boolean ContainsStyle(String? contain)
+    {
+        if (contain is not { Length: > 0 })
+        {
+            return false;
+        }
+
+        foreach (var token in contain.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            // `style` and the `strict` shorthand that includes it. `content` is layout, paint and style
+            // in CSS Contain 1's first draft, but the requirement dropped style from it: a page writing
+            // `contain: content` counts exactly as it would without the containment.
+            if (token.Equals("style", StringComparison.OrdinalIgnoreCase) ||
+                token.Equals("strict", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Gets the value of the innermost counter of that name, or nought where there is none.</summary>
