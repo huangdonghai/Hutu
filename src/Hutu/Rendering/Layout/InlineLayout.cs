@@ -967,6 +967,14 @@ internal sealed class InlineLayout
             // the line that dropped stands at the height it reached, and the ones below it stack from there.
             cursor += line.GapBefore;
 
+            // A line whose text runs both ways is drawn in the order the bidi algorithm gives it: the
+            // runs are split where their direction changes, and the pieces stand in the line by their
+            // levels (UAX #9 L2). A line of one direction is left exactly as the markup wrote it.
+            if (!flow.IsVertical)
+            {
+                BidiOrder(line, flow, container.Style.PlaintextParagraph);
+            }
+
             // The line box spans the whole inline extent of the content box and only as much of the
             // block one as it needs, so in a row it is the content width and the line's own height,
             // and in a column the content height and the band the text runs down.
@@ -1039,6 +1047,133 @@ internal sealed class InlineLayout
         }
 
         return cursor;
+    }
+
+    /// <summary>
+    /// Splits a line's runs where their direction changes, so each piece of text is shaped in the
+    /// direction it is read in: a Latin word inside a right-to-left line keeps its letters in the order
+    /// a reader of it expects, and a neutral at the end of such a line is set at the line's own level
+    /// (UAX #9 W, N, I). The pieces keep the logical order of the runs - the line places its fragments
+    /// from the edge its own direction begins at, and the shaper turns the glyphs of a run of the other
+    /// direction within its box - so only the boundaries are new.
+    /// </summary>
+    /// <remarks>
+    /// The levels are resolved over the whole line, not over one fragment at a time: what the strong
+    /// text before a space says about it is a question about the line, and the whitespace at the line's
+    /// end is the only whitespace the rules reset (L1). A line that holds no change of direction is left
+    /// as the markup wrote it and pays one pass over its classes.
+    /// </remarks>
+    private void BidiOrder(Line line, WritingModeInfo flow, Boolean plaintextParagraph)
+    {
+        var baseLevel = flow.IsRightToLeft ? 1 : 0;
+        var changed = false;
+        var ordered = new List<TextFragment>(line.Fragments.Count);
+        var group = new List<TextFragment>();
+        var joined = new System.Text.StringBuilder();
+
+        void Flush()
+        {
+            if (group.Count == 0)
+            {
+                return;
+            }
+
+            var text = joined.ToString();
+
+            // `unicode-bidi: plaintext` takes the paragraph's direction from the first strong character
+            // written on the line, so a line is resolved at the level its own text asks for (P2, P3).
+            var level = plaintextParagraph || group[0].Style.PlaintextParagraph
+                ? Bidi.ParagraphLevel(text, baseLevel)
+                : baseLevel;
+            var levels = Bidi.Levels(text, level);
+            var offset = 0;
+
+            foreach (var fragment in group)
+            {
+                var own = new Int32[fragment.Length];
+                Array.Copy(levels, offset, own, 0, fragment.Length);
+                offset += fragment.Length;
+
+                var uniform = true;
+
+                for (var at = 1; at < own.Length; at++)
+                {
+                    if (own[at] != own[0])
+                    {
+                        uniform = false;
+                        break;
+                    }
+                }
+
+                if (uniform)
+                {
+                    ordered.Add(fragment);
+                    continue;
+                }
+
+                changed = true;
+                var runs = Bidi.Runs(fragment.Text, own);
+                var pieces = new List<TextFragment>(runs.Count);
+                var earned = 0.0;
+
+                foreach (var run in runs)
+                {
+                    var width = MeasureChunk(_measurer, fragment.Style, fragment.Text, run.Start, run.Length, fragment.Flow);
+                    earned += width;
+                    pieces.Add(new TextFragment(
+                        fragment.Text, run.Start, run.Length, width,
+                        fragment.Style, fragment.Box, fragment.Flow, fragment.Inline));
+                }
+
+                if (pieces.Count > 0)
+                {
+                    if (Math.Abs(earned - fragment.Width) > 0.0001)
+                    {
+                        pieces[^1].Width += fragment.Width - earned;
+                    }
+
+                    // The space a pre-wrap line hangs is at the end of its own text, so it is the last
+                    // piece that carries it: the line takes the room off that piece and the painter
+                    // draws it without the characters it hangs.
+                    if (fragment.Hanging > 0)
+                    {
+                        pieces[^1].Hanging = Math.Min(fragment.Hanging, pieces[^1].Length);
+                    }
+                }
+
+                foreach (var piece in pieces)
+                {
+                    ordered.Add(piece);
+                }
+            }
+
+            group.Clear();
+            joined.Clear();
+        }
+
+        foreach (var fragment in line.Fragments)
+        {
+            if (fragment.Length == 0 || fragment.IsReplaced || fragment.Atomic is not null ||
+                fragment.Ruby is not null || fragment.OutOfFlow)
+            {
+                Flush();
+                ordered.Add(fragment);
+                continue;
+            }
+
+            group.Add(fragment);
+            joined.Append(fragment.Text);
+        }
+
+        Flush();
+
+        if (!changed)
+        {
+            return;
+        }
+
+        line.Fragments.Clear();
+        line.Fragments.AddRange(ordered);
     }
 
     /// <summary>
