@@ -2930,7 +2930,18 @@ internal sealed class InlineLayout
             if (source[index] == '\t')
             {
                 var at = position + width;
-                width = (Math.Floor(at / unit) + 1) * unit - position;
+                var next = (Math.Floor(at / unit) + 1) * unit;
+
+                // A tab that would move the line less than half a character is taken to the stop after
+                // the nearest one instead, so a tab does not become a hairline space (CSS Text 3 §4.2).
+                var half = Measure(style, "0", flow) / 2;
+
+                if (next - at < half)
+                {
+                    next += unit;
+                }
+
+                width = next - position;
                 index++;
                 continue;
             }
@@ -3510,6 +3521,13 @@ internal sealed class InlineLayout
 
         /// <summary>Gets how many characters the fragment holds.</summary>
         public Int32 Length { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether the fragment's run ends in a tab. A tab is drawn as one space but was
+        /// charged the room up to its stop, so a run written into it would put its first glyph where the
+        /// space ends rather than where the stop does.
+        /// </summary>
+        public Boolean FromTab { get; set; }
 
         /// <summary>
         /// Gets or sets how many of the fragment's trailing characters hang past the line's advance:
@@ -4502,12 +4520,18 @@ internal sealed class InlineLayout
             {
                 var last = _fragments[^1];
 
+                // A run that ended in a tab is one nothing may be written into: the tab was charged the
+                // room up to its stop, and the character that follows it stands after that room rather
+                // than after the one space the tab is drawn as. Starting a new fragment there is what
+                // puts the following text on the stop the layout settled on.
+                //
                 // Chunks of one text node belong to one run. Keeping them together stops the paint
                 // commands - and the decorations drawn for them - from being split per word. Pieces
                 // that are drawn differently, a turned word among upright text, are not the same run
                 // however they happened to be chunked, and neither are pieces from either side of an
                 // inline element's edge.
-                if (ReferenceEquals(last.Box, box) && last.Flow.Equals(flow) && ReferenceEquals(last.Inline, inline))
+                if (!last.FromTab &&
+                    ReferenceEquals(last.Box, box) && last.Flow.Equals(flow) && ReferenceEquals(last.Inline, inline))
                 {
                     // The run grows by the piece added and nothing is copied, because the piece is the
                     // next thing in the same string - which every chunk of one text node is. A run whose
@@ -4524,6 +4548,7 @@ internal sealed class InlineLayout
                     }
 
                     last.Width += width;
+                    last.FromTab = drawn is not null;
                     Width += width;
                     return;
                 }
@@ -4534,6 +4559,7 @@ internal sealed class InlineLayout
             if (drawn is not null)
             {
                 added.MergeInto(drawn);
+                added.FromTab = true;
             }
 
             _fragments.Add(added);

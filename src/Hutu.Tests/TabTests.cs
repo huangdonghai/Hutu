@@ -106,6 +106,34 @@ public sealed class TabTests
             "the stop is counted along the axis the text runs on");
     }
 
+    [Test]
+    public async Task TheLetterAfterATabStandsOnTheStopNotAfterTheSpaceTheTabIsDrawnAs()
+    {
+        using var view = await Render(Line(
+            "pre",
+            "width:200px",
+            "<span style='display:inline-block;width:30px'></span>\tP"));
+
+        var letter = Walk(view.Layout!.Root).First(box => box.Text == "P");
+
+        Assert.That(letter.BorderBox.X, Is.EqualTo(40), "the stop the tab reached, not the end of one space");
+    }
+
+    [Test]
+    public async Task ATabCloserToAStopThanHalfACharacterGoesOnToTheNextOne()
+    {
+        // Thirty-eight pixels in, the next stop is two away - less than the half character a tab has
+        // to be worth taking - so the tab runs on to eighty instead (CSS Text 3 §4.2).
+        using var view = await Render(Line(
+            "pre",
+            "width:200px",
+            "<span style='display:inline-block;width:38px'></span>\tP"));
+
+        var letter = Walk(view.Layout!.Root).First(box => box.Text == "P");
+
+        Assert.That(letter.BorderBox.X, Is.EqualTo(80));
+    }
+
     private static String Line(String mode, String extra, String content) =>
         $"<style>#t {{ {extra}; white-space: {mode} }}</style><div id='t'>{content}</div>";
 
