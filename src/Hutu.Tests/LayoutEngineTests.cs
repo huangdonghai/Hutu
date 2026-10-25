@@ -463,6 +463,28 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task AForcedBreakInsideABareWrapperStartsTheNextColumn()
+    {
+        // A bare wrapper carries no box of its own picture, and a forced column break inside it still
+        // ends the column it falls in (CSS Break 3 §3.2; containment is measured to leave break-before
+        // alone - contain-layout-breaks-001).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='columns:2;column-gap:0;column-fill:auto;height:40px;font-size:10px;line-height:1'>" +
+            "<div id='w'><div>A<br>A</div><div id='second' style='break-before:column'>B<br>B</div></div>" +
+            "</div></body></html>");
+
+        var second = ById(view, "second");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(second.BorderBox.X, Is.EqualTo(200).Within(0.5), "the second column");
+            Assert.That(second.BorderBox.Y, Is.EqualTo(0).Within(0.5), "at the column's top edge");
+        });
+    }
+
+    [Test]
     public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
     {
         // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's

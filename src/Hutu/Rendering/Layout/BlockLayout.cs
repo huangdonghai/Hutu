@@ -908,7 +908,7 @@ internal sealed class BlockLayout
             return MeasureMulticolSections(box, sections, share, fullWidth, declaredHeight, heightStated, columns, context);
         }
 
-        var children = MulticolChildren(box, share, declaredHeight, context);
+        var children = MulticolChildren(box, share, declaredHeight, context, EffectiveMembers(box.Children, share));
 
         var multi = box.Style.Multi;
 
@@ -1007,6 +1007,108 @@ internal sealed class BlockLayout
     /// <c>box-decoration-break: slice</c> says (CSS Break 3 §4.7), each drawing the edges it owns and the
     /// background painted across the whole box and cut with it.
     /// </remarks>
+    /// <summary>
+    /// Gets the children a column fragments, with a bare wrapper that exists only to carry a forced
+    /// break replaced by what it holds.
+    /// </summary>
+    /// <remarks>
+    /// A forced break inside a nested block still ends the column the break falls in (CSS Break 3
+    /// §3.2, measured: layout and style containment leave break-before alone), but the slicer breaks a
+    /// child at its own lines and keeps a block child whole. A wrapper with no border, padding, margin,
+    /// background or stated size has nothing of its own to draw or place, so its children can be
+    /// fragmented as if the page had written them in the column container - which is the same picture
+    /// the wrapper would have given.
+    /// </remarks>
+    private static IReadOnlyList<Box> EffectiveMembers(IReadOnlyList<Box> source, Double share)
+    {
+        var carries = false;
+
+        foreach (var child in source)
+        {
+            if (IsForcedBreakCarrier(child, share))
+            {
+                carries = true;
+                break;
+            }
+        }
+
+        if (!carries)
+        {
+            return source;
+        }
+
+        var members = new List<Box>(source.Count);
+
+        foreach (var child in source)
+        {
+            if (IsForcedBreakCarrier(child, share))
+            {
+                members.AddRange(child.Children);
+            }
+            else
+            {
+                members.Add(child);
+            }
+        }
+
+        return members;
+    }
+
+    /// <summary>
+    /// Gets whether a block is a bare wrapper whose direct children hold a forced column break: no
+    /// border, padding, margin, background or stated size of its own, no clipping, a block axis the
+    /// columns share, and block children only.
+    /// </summary>
+    private static Boolean IsForcedBreakCarrier(Box child, Double share)
+    {
+        if (child.Kind != BoxKind.Block || child.Flow.IsVertical || child.Children.Count == 0)
+        {
+            return false;
+        }
+
+        var style = child.Style;
+
+        if (!style.Width.IsAuto || !style.Height.IsAuto ||
+            style.MinWidth.HasValue || style.MaxWidth.HasValue ||
+            style.MinHeight.HasValue || style.MaxHeight.HasValue ||
+            style.Breaks.Before != BreakValue.Auto || style.Breaks.After != BreakValue.Auto ||
+            style.Breaks.Inside != BreakValue.Auto ||
+            style.ClipsOverflow || ContainsBlockSize(child) ||
+            style.BackgroundColor is { A: > 0 } || style.Backgrounds.Count > 0)
+        {
+            return false;
+        }
+
+        var border = BorderOf(child);
+        var padding = style.Padding.Resolve(share);
+        var margin = style.Margin.Resolve(share);
+
+        if (border.Horizontal != 0 || border.Vertical != 0 ||
+            padding.Horizontal != 0 || padding.Vertical != 0 ||
+            margin.Horizontal != 0 || margin.Vertical != 0)
+        {
+            return false;
+        }
+
+        var forced = false;
+
+        foreach (var grandchild in child.Children)
+        {
+            if (!grandchild.IsBlockLevel || PositionedLayout.IsOutOfFlow(grandchild) || IsFloat(grandchild))
+            {
+                return false;
+            }
+
+            if (grandchild.Style.Breaks.Before is BreakValue.Column or BreakValue.Page ||
+                grandchild.Style.Breaks.After is BreakValue.Column or BreakValue.Page)
+            {
+                forced = true;
+            }
+        }
+
+        return forced;
+    }
+
     private static Boolean FragmentsInColumns(Box child) =>
         !HasBlockChildren(child) && BreaksAtLines(child);
 
@@ -1733,7 +1835,7 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            var children = MulticolChildren(box, share, declaredHeight, context, section.Members);
+            var children = MulticolChildren(box, share, declaredHeight, context, EffectiveMembers(section.Members, share));
             total += MulticolExtent(box.Style.Multi, columns, heightStated ? declaredHeight : null, children);
         }
 
@@ -2491,7 +2593,7 @@ internal sealed class BlockLayout
             return ArrangeMulticolSections(box, sections, parent, content, columns, share, heightStated, declaredHeight, context);
         }
 
-        var children = MulticolChildren(box, share, heightStated ? declaredHeight : 0, context);
+        var children = MulticolChildren(box, share, heightStated ? declaredHeight : 0, context, EffectiveMembers(box.Children, share));
         var multi = box.Style.Multi;
         var extent = MulticolExtent(multi, columns, heightStated ? declaredHeight : null, children);
         var fragments = new List<FragmentChild>(children.Count);
@@ -2713,7 +2815,7 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            var children = MulticolChildren(box, share, heightStated ? declaredHeight : 0, context, section.Members);
+            var children = MulticolChildren(box, share, heightStated ? declaredHeight : 0, context, EffectiveMembers(section.Members, share));
             var extent = MulticolExtent(multi, columns, heightStated ? declaredHeight : null, children);
             var fragments = new List<FragmentChild>(children.Count);
 
