@@ -85,7 +85,7 @@ internal static partial class BoxBuilder
         CounterEnv? rootCounters = null;
 
         var box = BuildFusedElement(
-            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, QuoteSet.Default, false, true, profile,
+            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, QuoteSet.Default, null, false, true, profile,
             ref rootCounters, ref supported);
 
         if (profile is not null)
@@ -116,6 +116,10 @@ internal static partial class BoxBuilder
         // The numbers are settled, so the content that asked for `counter(list-item)` can be spelled.
         ListItemCounter.Resolve(box, index.Counters);
 
+        // Text transformation is a question about the words the whole tree spells, so it follows the
+        // same rule: apply it once every box stands.
+        TextTransformResolver.Apply(box);
+
         // Remembered only now that the walk has agreed to describe the document: a build that
         // abstained has proved nothing about the sheets, so the next one starts again.
         state.Keep(index);
@@ -134,6 +138,7 @@ internal static partial class BoxBuilder
         ICssParser? parser,
         WritingModeInfo inheritedFlow,
         QuoteSet inheritedQuotes,
+        String? inheritedTransform,
         Boolean inItemContainer,
         Boolean inTable,
         FusedProfile? profile,
@@ -152,6 +157,9 @@ internal static partial class BoxBuilder
         // Quotation pairs inherit, and content keywords are resolved after the whole tree stands; the
         // element's own answer travels down the build so every box it holds can read it.
         var quoted = QuoteSet.Read(cascade.Find("quotes")?.Value, inheritedQuotes);
+
+        // `text-transform` inherits; the value the page states here, or the one the parent handed down.
+        var transform = cascade.Find("text-transform")?.Value?.Trim() ?? inheritedTransform;
 
         if (profile is not null)
         {
@@ -359,7 +367,7 @@ internal static partial class BoxBuilder
                     // The parent's own tag name travels down with it: a box model needs it, because the
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
-                        elementChild, index, parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands), device, images, faces, state, parser, flow, quoted,
+                        elementChild, index, parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands), device, images, faces, state, parser, flow, quoted, transform,
                         itemChildren, childInTable, profile, ref among, ref supported);
 
                     if (childBox is not null)
@@ -379,7 +387,7 @@ internal static partial class BoxBuilder
                 case IText textChild:
                     if (BuildTextValue(textChild.Data, style, flow) is { } text)
                     {
-                        children.Add(new Box(BoxKind.Text, style) { Source = textChild, Text = text, Flow = flow });
+                        children.Add(new Box(BoxKind.Text, style) { Source = textChild, Text = text, Flow = flow, TextTransform = transform });
                     }
 
                     break;
@@ -427,6 +435,7 @@ internal static partial class BoxBuilder
             Element = element,
             Flow = flow,
             Quotes = quoted,
+            TextTransform = transform,
             IsContents = displayContents,
             IsInlineOuter = inlineOuter,
             TableRole = tableRole,

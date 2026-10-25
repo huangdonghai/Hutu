@@ -227,6 +227,13 @@ internal sealed class Box
     public String? Text { get; set; }
 
     /// <summary>
+    /// Gets the <c>text-transform</c> the element inherited, or null where it asked for none. It is
+    /// applied once the whole tree stands, because capitalizing a word needs the letters written in
+    /// the boxes around it - and out-of-flow text is not a letter of the word before it.
+    /// </summary>
+    public String? TextTransform { get; init; }
+
+    /// <summary>
     /// Gets the quotation pairs the element hands down, or null where it asked for none. A generated
     /// box takes the value from the element it came from, which is why only element boxes set it.
     /// </summary>

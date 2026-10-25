@@ -524,6 +524,21 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task CapitalizeReadsAWordAcrossInlineBoxesAndIgnoresOutOfFlow()
+    {
+        // CSS Text 3 §2.1: capitalize puts the first typographic letter of each word in titlecase. The
+        // word runs across the span's edge, and the absolutely positioned empty span is not a letter of
+        // it (text-transform-capitalize-033).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0;text-transform:capitalize'>p<span style='position:absolute'></span>ass <b>bold</b></p>" +
+            "</body></html>");
+
+        Assert.That(Lines(view).Select(LineText), Is.EqualTo(new[] { "Pass Bold" }));
+    }
+
+    [Test]
     public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
     {
         // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's
