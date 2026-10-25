@@ -224,10 +224,26 @@ internal sealed partial class FlexFormattingContext
         var lineGaps = new List<Gap>();
         var laid = new List<List<(Double From, Double To)>>(plan.Lines.Count);
 
-        foreach (var line in plan.Lines)
+        // The room between two lines is the crossing a rule between items of one line runs into at its
+        // ends, and its size is what a percentage junction inset is read against.
+        var between = new Double[Math.Max(0, plan.Lines.Count - 1)];
+
+        for (var index = 0; index < between.Length; index++)
         {
+            var line = plan.Lines[index];
+            var next = plan.Lines[index + 1];
+            between[index] = Math.Max(0,
+                Math.Max(line.CrossStart, next.CrossStart) -
+                Math.Min(line.CrossStart + line.CrossSize, next.CrossStart + next.CrossSize));
+        }
+
+        for (var lineIndex = 0; lineIndex < plan.Lines.Count; lineIndex++)
+        {
+            var line = plan.Lines[lineIndex];
             var lineStart = crossStart + line.CrossStart;
             var lineEnd = lineStart + line.CrossSize;
+            var startCrossing = lineIndex > 0 ? between[lineIndex - 1] : (Double?)null;
+            var endCrossing = lineIndex + 1 < plan.Lines.Count ? between[lineIndex] : (Double?)null;
             var previousLow = Double.NaN;
             var previousHigh = Double.NaN;
             var intervals = new List<(Double From, Double To)>();
@@ -248,7 +264,8 @@ internal sealed partial class FlexFormattingContext
                     var from = Math.Min(high, previousHigh);
                     var to = Math.Max(low, previousLow);
 
-                    itemGaps.Add(new Gap(isRow, mainStart + (from + to) / 2, lineStart, lineEnd));
+                    itemGaps.Add(new Gap(
+                        isRow, mainStart + (from + to) / 2, lineStart, lineEnd, startCrossing, endCrossing));
                     intervals.Add((mainStart + from, mainStart + to));
                 }
 

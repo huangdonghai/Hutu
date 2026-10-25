@@ -10,11 +10,24 @@ namespace Hutu.Rendering.Layout;
 internal readonly struct Gap
 {
     internal Gap(Boolean centreIsX, Double centre, Double from, Double to)
+        : this(centreIsX, centre, from, to, null, null)
+    {
+    }
+
+    internal Gap(
+        Boolean centreIsX,
+        Double centre,
+        Double from,
+        Double to,
+        Double? startCrossing,
+        Double? endCrossing)
     {
         CentreIsX = centreIsX;
         Centre = centre;
         From = from;
         To = to;
+        StartCrossing = startCrossing;
+        EndCrossing = endCrossing;
     }
 
     /// <summary>Gets whether <see cref="Centre"/> is the horizontal coordinate of the gap's midline.</summary>
@@ -28,6 +41,15 @@ internal readonly struct Gap
 
     /// <summary>Gets where it runs to.</summary>
     public Double To { get; }
+
+    /// <summary>
+    /// Gets the size of the gap this one crosses at its start, where its end is a junction with that gap
+    /// rather than a bound of the container; <c>null</c> where the decoration ends at a bound.
+    /// </summary>
+    public Double? StartCrossing { get; }
+
+    /// <summary>Gets the size of the gap this one crosses at its end, where that end is a junction.</summary>
+    public Double? EndCrossing { get; }
 }
 
 /// <summary>
@@ -67,10 +89,15 @@ internal static class GapRuleBands
                 continue;
             }
 
-            // Both ends of a gap between two boxes stand at the bounds of the gap, so both take the cap
-            // insets; there is no crossing here to take a percentage of.
-            var from = gap.From + axis.CapStart.Resolve(0, 0);
-            var to = gap.To - axis.CapEnd.Resolve(0, 0);
+            // An end that stands at a gap crossing is a junction and takes that gap's size to resolve a
+            // percentage against; one that stands at a bound of the container is a cap. A negative inset
+            // runs the decoration on into the crossing it meets (CSS Gaps 1 §3.3).
+            var from = gap.From + (gap.StartCrossing is { } startCrossing
+                ? axis.JunctionStart.Resolve(startCrossing, 0)
+                : axis.CapStart.Resolve(0, 0));
+            var to = gap.To - (gap.EndCrossing is { } endCrossing
+                ? axis.JunctionEnd.Resolve(endCrossing, 0)
+                : axis.CapEnd.Resolve(0, 0));
 
             if (to > from)
             {
