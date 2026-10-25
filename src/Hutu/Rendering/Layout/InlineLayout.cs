@@ -1103,17 +1103,21 @@ internal sealed class InlineLayout
     /// </summary>
     private Double Leading(Line line, TextBoxEdge edge, Boolean atStart)
     {
-        var style = atStart ? line.Fragments[0].Style : line.Fragments[^1].Style;
-        var metrics = _measurer.GetMetrics(style.GetFont());
+        var fragment = atStart ? line.Fragments[0] : line.Fragments[^1];
+        var metrics = _measurer.GetRunMetrics(fragment.Text, fragment.Style.GetFont());
 
-        // The line's leading is split evenly over the text box, and the edge asked for stands somewhere
-        // inside that box: what is trimmed is the half-leading plus the part of the box the edge leaves.
-        var textBox = metrics.Ascent + metrics.Descent;
-        var halfLeading = Math.Max(0, (line.Height - textBox) / 2);
+        // What is trimmed is everything between the line box and the edge asked for: the room the line
+        // takes beyond the text - the block's strut, or a run set taller than this one - and the part of
+        // the text box the edge leaves. The room is read off the line's own sides rather than halved,
+        // because a strut and a borrowed face need not stand the same distance above and below.
+        var outside = atStart
+            ? line.Ascent - metrics.Ascent
+            : line.Height - line.Ascent - metrics.Descent;
+        var inside = atStart
+            ? metrics.Ascent - Edge(metrics, edge, atStart: true)
+            : metrics.Descent - Edge(metrics, edge, atStart: false);
 
-        return atStart
-            ? halfLeading + Math.Max(0, metrics.Ascent - Edge(metrics, edge, atStart: true))
-            : halfLeading + Math.Max(0, metrics.Descent - Edge(metrics, edge, atStart: false));
+        return Math.Max(0, outside) + Math.Max(0, inside);
     }
 
     private static Double Edge(FontMetrics metrics, TextBoxEdge edge, Boolean atStart) => edge switch
@@ -1833,7 +1837,7 @@ internal sealed class InlineLayout
         // float standing where the indent reaches leaves the line to start where the float ends, not
         // that far past it. A negative indent hangs out of the box and is never pulled back in.
         var leading = indent > 0 ? Math.Max(0, indent - room.Inset) : indent;
-        var builder = new LineBuilder(strut, leading);
+        var builder = new LineBuilder(strut, leading, flow.IsVertical);
 
         void Close(LineBuilder filled, Boolean forced = false)
         {
@@ -1854,7 +1858,7 @@ internal sealed class InlineLayout
             if (item.IsBreak)
             {
                 Close(builder, forced: true);
-                builder = new LineBuilder(item.Style, carried);
+                builder = new LineBuilder(strut, carried, flow.IsVertical);
                 continue;
             }
 
@@ -1884,7 +1888,7 @@ internal sealed class InlineLayout
                     {
                         room.Restore(band);
                         Close(builder);
-                        builder = new LineBuilder(item.Style, carried);
+                        builder = new LineBuilder(strut, carried, flow.IsVertical);
                         room.Grow(blockSize);
                     }
                     else if (room.Shortened)
@@ -1927,7 +1931,7 @@ internal sealed class InlineLayout
                     {
                         room.Restore(band);
                         Close(builder);
-                        builder = new LineBuilder(item.Style, carried);
+                        builder = new LineBuilder(strut, carried, flow.IsVertical);
                         room.Grow(atomic.BlockSize + atomic.BlockStartMargin + atomic.BlockEndMargin);
                     }
                     else if (room.Shortened)
@@ -1971,7 +1975,7 @@ internal sealed class InlineLayout
                     {
                         room.Restore(band);
                         Close(builder);
-                        builder = new LineBuilder(item.Style, carried);
+                        builder = new LineBuilder(strut, carried, flow.IsVertical);
                         room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()) + annotation.Block);
                     }
                     else if (room.Shortened)
@@ -2082,7 +2086,7 @@ internal sealed class InlineLayout
                     if (steps && stepsWord && movesWhole && builder.HasContent)
                     {
                         Close(builder);
-                        builder = new LineBuilder(item.Style, carried);
+                        builder = new LineBuilder(strut, carried, flow.IsVertical);
                         moved = true;
                     }
 
@@ -2132,7 +2136,7 @@ internal sealed class InlineLayout
                             if (builder.HasContent)
                             {
                                 Close(builder);
-                                builder = new LineBuilder(item.Style, carried);
+                                builder = new LineBuilder(strut, carried, flow.IsVertical);
                                 moved = false;
                             }
                             else if (room.Shortened)
@@ -4435,6 +4439,7 @@ internal sealed class InlineLayout
         private readonly List<OpenInline> _open = new();
         private readonly HashSet<InlineAncestor>? _carried;
         private readonly ComputedStyle? _fallback;
+        private readonly Boolean _vertical;
         private readonly Double _indent;
 
         public LineBuilder()
@@ -4446,17 +4451,19 @@ internal sealed class InlineLayout
         /// out having used, so the run that would not have fitted without it is carried to the next
         /// line - which is what an indented first line does to the text on it.
         /// </param>
-        public LineBuilder(ComputedStyle strut, Double indent)
+        public LineBuilder(ComputedStyle strut, Double indent, Boolean vertical)
         {
             _fallback = strut;
             _indent = indent;
+            _vertical = vertical;
             Width = indent;
         }
 
-        public LineBuilder(ComputedStyle fallback, HashSet<InlineAncestor>? carried)
+        public LineBuilder(ComputedStyle fallback, HashSet<InlineAncestor>? carried, Boolean vertical)
         {
             _fallback = fallback;
             _carried = carried;
+            _vertical = vertical;
         }
 
         /// <summary>
@@ -4873,39 +4880,41 @@ internal sealed class InlineLayout
                 line.ContinuesToNext = pending;
             }
 
-            if (Double.IsNegativeInfinity(ascent))
-            {
-                // Nothing on the line reaches above or below its baseline. A line holding nothing in
-                // flow - one whose only content left the flow, and which exists only to say where that
-                // box's static position is - is a zero-height line box (CSS 2.1 §9.4.2). Giving it the
-                // fallback's height instead left a line's worth of room in the box the out-of-flow box
-                // hung from: an absolutely positioned panel added 21.3px to the 32px button above it,
-                // and every row below moved down with it.
-                //
-                // A line the break ended is not that line: CSS 2.1 §9.4.2 keeps a line box that ends
-                // with a preserved newline standing, blank or not, at the height of the strut - the
-                // container's own font and line height - which is what sets the room a blank line takes.
-                //
-                // A line that carries content and still reaches nowhere is as tall as the fallback asks
-                // for and no taller - the container's own font standing in where no run does.
-                if (_fallback is { } fallback && (HasContent || forced))
-                {
-                    var metrics = measurer.GetMetrics(fallback.GetFont());
-                    ascent = metrics.Ascent;
-                    descent = metrics.Descent;
+            // Every line box starts with the container's strut: its own font and line height, a
+            // zero-width box standing on the baseline (CSS 2.1 §10.8). Usually the runs on the line ask
+            // for as much or more, but a run set at no size - or one whose line height is zero - does
+            // not, and the line keeps the room the block's text would have taken.
+            // A line holding an inline-block, a picture or a ruby pair already says how far it reaches
+            // on its own; the corpus's buttons and badges are measured without the strut's descent added
+            // under the box that stands on the baseline, so the strut answers only for a line of text.
+            // A column's width comes from the runs set down it, each standing the block's font and
+            // line height as it inherits them; the strut is asked only where a break left a line with
+            // no run to speak for it, which no run on that line can make wider or narrower.
+            var textual = _vertical
+                ? _fragments.Count == 0
+                : _fragments.TrueForAll(fragment =>
+                    !fragment.IsReplaced && fragment.Atomic is null && fragment.Ruby is null);
 
-                    if (fallback.LineHeight is { } lineHeight)
-                    {
-                        var halfLeading = (lineHeight - (ascent + descent)) / 2;
-                        ascent += halfLeading;
-                        descent += halfLeading;
-                    }
-                }
-                else
-                {
-                    ascent = 0;
-                    descent = 0;
-                }
+            var strut = textual && _fallback is { } fallback && (HasContent || forced)
+                ? Stretched(measurer, fallback)
+                : ((Double Ascent, Double Descent)?)null;
+
+            if (strut is { } strutMetrics)
+            {
+                ascent = Double.IsNegativeInfinity(ascent)
+                    ? strutMetrics.Ascent
+                    : Math.Max(ascent, strutMetrics.Ascent);
+                descent = Double.IsNegativeInfinity(descent)
+                    ? strutMetrics.Descent
+                    : Math.Max(descent, strutMetrics.Descent);
+            }
+            else if (Double.IsNegativeInfinity(ascent))
+            {
+                // A line holding nothing in flow - one whose only content left the flow, and which
+                // exists only to say where that box's static position is - is a zero-height line box
+                // (CSS 2.1 §9.4.2), unless a break ended it (the strut then keeps it standing).
+                ascent = 0;
+                descent = 0;
             }
 
             // The line box is grown from the boxes as they end up standing (CSS 2.1 §10.8.1): a run
@@ -4999,6 +5008,26 @@ internal sealed class InlineLayout
             line.Offset = Aligned(line, maxInline);
 
             return line;
+        }
+
+        /// <summary>
+        /// Gets the strut of a line box: the container's font and line height, with the leading the
+        /// line height puts above and below the face it is set in.
+        /// </summary>
+        private static (Double Ascent, Double Descent) Stretched(ITextMeasurer measurer, ComputedStyle style)
+        {
+            var metrics = measurer.GetMetrics(style.GetFont());
+            var ascent = metrics.Ascent;
+            var descent = metrics.Descent;
+
+            if (style.LineHeight is { } lineHeight)
+            {
+                var halfLeading = (lineHeight - (ascent + descent)) / 2;
+                ascent += halfLeading;
+                descent += halfLeading;
+            }
+
+            return (ascent, descent);
         }
 
         /// <summary>

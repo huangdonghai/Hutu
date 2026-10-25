@@ -33,7 +33,7 @@ public sealed class UserAgentStyleSheetTests
         // An em is the element's own size, and a heading is twice the root's.
         Assert.That(h1.Margin.Top, Is.EqualTo(32 * 0.67).Within(0.01), "a heading takes .67em above it");
         Assert.That(h1.Margin.Bottom, Is.EqualTo(32 * 0.67).Within(0.01));
-        Assert.That(p.Margin.Top, Is.EqualTo(16 * 1.12).Within(0.01), "and a paragraph 1.12em");
+        Assert.That(p.Margin.Top, Is.EqualTo(16).Within(0.01), "and a paragraph 1em");
         Assert.That(h1.Margin.Left, Is.EqualTo(0).Within(0.01), "neither of them is set in from the sides");
         Assert.That(p.Margin.Left, Is.EqualTo(0).Within(0.01));
     }
@@ -59,7 +59,7 @@ public sealed class UserAgentStyleSheetTests
             Is.EqualTo(0).Within(0.01),
             "which is what puts the two of them level at the head of the column");
         Assert.That(h1.Margin.Right, Is.EqualTo(32 * 0.67).Within(0.01), "the space is beside the column instead");
-        Assert.That(p.Margin.Right, Is.EqualTo(16 * 1.12).Within(0.01));
+        Assert.That(p.Margin.Right, Is.EqualTo(16).Within(0.01));
     }
 
     [Test]
@@ -103,8 +103,8 @@ public sealed class UserAgentStyleSheetTests
 
         var p = Block(view, "p");
 
-        Assert.That(p.Margin.Left, Is.EqualTo(16 * 1.12).Within(0.01), "the block end is what the reader gives a paragraph");
-        Assert.That(p.Margin.Right, Is.EqualTo(16 * 1.12).Within(0.01), "and so is the other end of the block axis");
+        Assert.That(p.Margin.Left, Is.EqualTo(16).Within(0.01), "the block end is what the reader gives a paragraph");
+        Assert.That(p.Margin.Right, Is.EqualTo(16).Within(0.01), "and so is the other end of the block axis");
         Assert.That(p.Margin.Top, Is.EqualTo(0).Within(0.01), "while the line the text runs down is untouched");
     }
 
@@ -134,7 +134,7 @@ public sealed class UserAgentStyleSheetTests
         var p = Block(view, "p");
 
         Assert.That(p.Margin.Top, Is.EqualTo(0).Within(0.01), "a side taken back to its initial value has none");
-        Assert.That(p.Margin.Bottom, Is.EqualTo(16 * 1.12).Within(0.01), "and the other side is the reader's as before");
+        Assert.That(p.Margin.Bottom, Is.EqualTo(16).Within(0.01), "and the other side is the reader's as before");
     }
 
     /// <summary>

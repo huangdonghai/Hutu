@@ -60,6 +60,18 @@ public sealed class FontUnitTests
         Assert.That(Box(view).Width, Is.EqualTo(40), "two of the face's own zeros");
     }
 
+    [Test]
+    public void AnAdjustmentRescalesTheFaceByItsXHeight()
+    {
+        // CSS Fonts 3 §3.6: the used size is the stated size times the adjustment divided by the
+        // face's x-height share. Ahem's share is 0.8, so 0.9 asks for a face 1.125 times as large.
+        using var measurer = new SkiaTextMeasurer();
+        var plain = measurer.MeasureWidth("abc", new FontStyle("Ahem", 40));
+        var adjusted = measurer.MeasureWidth("abc", new FontStyle("Ahem", 40, adjust: 0.9));
+
+        Assert.That(adjusted, Is.EqualTo(plain * 0.9 / 0.8).Within(0.5));
+    }
+
     /// <summary>
     /// A run of a line that reads up the page is set with its first character at the far end of the room
     /// the line gave it, while every glyph keeps the face the font drew it in. This is how Chrome lays

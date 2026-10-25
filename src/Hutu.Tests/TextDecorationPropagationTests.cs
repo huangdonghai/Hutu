@@ -71,6 +71,29 @@ public sealed class TextDecorationPropagationTests
     }
 
     [Test]
+    public async Task AnInheritedColourIsTheOneTheParentComputed()
+    {
+        // `text-decoration-color` is not inherited, but a child may ask for the parent's answer by name.
+        // The parent need not decorate anything itself: the first paragraph computed no colour of its
+        // own, so the child's line falls to the text's colour, and the second computed green, which is
+        // what its child takes. The two children are written alike, so only the parents tell them apart
+        // (CSS Text Decoration 4 §2.3).
+        using var view = await Loaded(
+            $"<p style='margin:0;font-family:{Family};font-size:40px;line-height:2;color:red'>" +
+            "<span style='text-decoration:underline;text-decoration-color:inherit'>aa</span></p>" +
+            $"<p style='margin:0;font-family:{Family};font-size:40px;line-height:2;color:red;" +
+            "text-decoration-color:green'>" +
+            "<span style='text-decoration:underline;text-decoration-color:inherit'>bb</span></p>");
+
+        var bands = Walk(view.Layout!.Root)
+            .Where(node => node.Kind == LayoutKind.Text)
+            .ToDictionary(node => node.Text!, node => Band.Of(view, node));
+
+        Assert.That(bands["aa"].Colour, Is.EqualTo(0xFFFF0000), "with nothing said above, the line takes the red the text is set in");
+        Assert.That(bands["bb"].Colour, Is.EqualTo(0xFF008000), "and the parent's green is what the second child asks for");
+    }
+
+    [Test]
     public async Task EveryWordOfTheShorthandReachesTheLineItDraws()
     {
         // Line, colour and thickness are all words the shorthand takes (CSS Text Decoration 4 §2.6). A

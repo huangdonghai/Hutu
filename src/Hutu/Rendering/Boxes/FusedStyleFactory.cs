@@ -100,6 +100,15 @@ internal sealed class FusedParent
     /// <summary>Gets the parent's hyphenation mode, likewise inherited (CSS Text 3 §6.1).</summary>
     public String Hyphens { get; init; } = "manual";
 
+    /// <summary>Gets the parent's font-size-adjust, likewise inherited (CSS Fonts 3 §3.6).</summary>
+    public Double? FontAdjust { get; init; }
+
+    /// <summary>
+    /// Gets the colour the parent computes for its decoration lines. The property is not inherited, but
+    /// a child may ask for it by name with <c>inherit</c> (CSS Text Decoration 4 §2.3).
+    /// </summary>
+    public UInt32? DecorationColor { get; init; }
+
     /// <summary>Gets the mark a soft-hyphen break draws, likewise inherited (CSS Text 4 §6.2).</summary>
     public String HyphenateCharacter { get; init; } = "-";
 
@@ -389,6 +398,8 @@ internal sealed class FusedParent
         TextJustify = style.TextJustify,
         WrapStyle = style.WrapStyle,
         Hyphens = style.Hyphens,
+        FontAdjust = style.ResolvedFont.Adjust,
+        DecorationColor = style.ComputedDecorationColor,
         HyphenateCharacter = style.HyphenateCharacter,
         Visibility = style.Visibility,
         VerticalAlign = style.VerticalAlign,
@@ -495,7 +506,7 @@ internal static class FusedStyleFactory
         var size = ComputedStyle.ResolveFontSizeFused(
             find("font-size"),
             new LengthReader.FontSource(
-                new Hutu.Rendering.Layout.FontStyle(parent.FontFamily, parent.FontSize, parent.Weight, parent.Italic)),
+                new Hutu.Rendering.Layout.FontStyle(parent.FontFamily, parent.FontSize, parent.Weight, parent.Italic, parent.FontAdjust)),
             dimensions);
 
         // The root's size is the number every `rem` further down the document is a share of, and the
@@ -527,7 +538,7 @@ internal static class FusedStyleFactory
             // matched alike, at the same size, under the same inherited font and the same authored
             // line-height.
             face = new LengthReader.FontSource(
-                new Hutu.Rendering.Layout.FontStyle(font.Family, font.Size, font.Weight, font.Italic));
+                new Hutu.Rendering.Layout.FontStyle(font.Family, font.Size, font.Weight, font.Italic, font.Adjust));
         }
         else
         {
@@ -538,8 +549,12 @@ internal static class FusedStyleFactory
             // The whole font, settled before any length is folded: ex and ch are heights of the face a
             // length is written in rather than fractions of its size, and a reader handed the number
             // alone has nothing to measure them against.
+            var adjust = ComputedStyle.ResolveFontSizeAdjustFused(find("font-size-adjust"), parent.FontAdjust);
+
+            // A font-relative unit is measured against the size the face is really drawn at, so the
+            // adjustment travels into the font a length is read with (font-size-adjust-order-001).
             face = new LengthReader.FontSource(
-                new Hutu.Rendering.Layout.FontStyle(family, size, weight, italic));
+                new Hutu.Rendering.Layout.FontStyle(family, size, weight, italic, adjust));
 
             var built = new FontArea
             {
@@ -551,6 +566,7 @@ internal static class FusedStyleFactory
                 WordSpacing = ComputedStyle.ResolveWordSpacingFused(find("word-spacing"), parent.WordSpacing, face, dimensions),
                 LineHeight = ComputedStyle.ResolveLineHeightFused(
                     find("line-height"), parent.LineHeightHit, face, parent.LineHeight, dimensions),
+                Adjust = adjust,
             };
 
             font = pool is null ? built : pool.Font(built);
@@ -842,18 +858,24 @@ internal static class FusedStyleFactory
             }
         }
 
-        if (cache is not null && cache.TryDecoration(plain, out var textDecoration))
+        // An element that asks for the parent's decoration colour by name borrows an answer the key
+        // below cannot see: two alike children under parents that computed different colours would
+        // otherwise share the first one's area, so this element keeps its own (CSS Text Decoration 4
+        // §2.3).
+        var borrowsColour = ComputedStyle.IsInherit(find("text-decoration-color"));
+
+        if (!borrowsColour && cache is not null && cache.TryDecoration(plain, out var textDecoration))
         {
             // Neither stroke was read.
         }
         else
         {
             var built = ComputedStyle.ResolveDecorationFused(
-                find, parent.UnderlineOffset, parent.Skip, face, dimensions);
+                find, parent.DecorationColor, parent.UnderlineOffset, parent.Skip, face, dimensions);
 
             textDecoration = pool is null ? built : pool.Decoration(built);
 
-            if (cache is not null)
+            if (!borrowsColour && cache is not null)
             {
                 cache.Store(plain, textDecoration);
             }

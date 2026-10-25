@@ -288,6 +288,9 @@ internal sealed record FontArea
     /// full before anything reads it - the ambiguity a lazily filled field would have does not arise.
     /// </remarks>
     internal Double? LineHeight { get; init; }
+
+    /// <summary>Gets the <c>font-size-adjust</c> factor, or null where the face keeps its own size.</summary>
+    internal Double? Adjust { get; init; }
 }
 
 /// <summary>

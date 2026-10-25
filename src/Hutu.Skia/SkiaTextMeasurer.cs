@@ -42,6 +42,9 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     /// </summary>
     private readonly ConcurrentDictionary<CodePointAdvanceKey, Double> _advances = new();
 
+    /// <summary>The x-height of a face as a share of its size, which is what font-size-adjust divides by.</summary>
+    private readonly ConcurrentDictionary<AspectKey, Double> _aspects = new();
+
     public SkiaTextMeasurer() : this(null)
     {
     }
@@ -113,7 +116,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 
         // A size of zero gives every face the same weightless answer, so there is no run to fold: the
         // fallback faces a size-zero style reaches would otherwise stand their bare ratios on the line.
-        if (style.Size <= 0)
+        if (EffectiveSize(style) <= 0)
         {
             return primary;
         }
@@ -268,6 +271,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         _decompositions.Clear();
         _uprightCells.Clear();
         _advances.Clear();
+        _aspects.Clear();
         _blobs.Clear();
     }
 
@@ -289,6 +293,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         _decompositions.Clear();
         _uprightCells.Clear();
         _advances.Clear();
+        _aspects.Clear();
         _blobs.Dispose();
         _shaper.Dispose();
         _resolver.Dispose();
@@ -442,7 +447,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         // carries share one font and the run they sit in is not needlessly split between them.
         return face is null
             ? null
-            : _fallbackFonts.GetOrAdd(new FallbackFontKey(style, face.Handle), _ => new SKFont(face, (Single)style.Size));
+            : _fallbackFonts.GetOrAdd(new FallbackFontKey(style, face.Handle), _ => new SKFont(face, (Single)EffectiveSize(style)));
     }
 
     private FontMetrics Measure(FontStyle style)
@@ -450,7 +455,9 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         // A font of no size stands nothing on the line, and Skia answers a size of zero with the face's
         // bare ratios - as if the size were one - so the weightless strut a zero-size run owes the line
         // is stated here rather than read out of the face (CSS 2.1 §10.8.1).
-        if (style.Size <= 0)
+        var usedSize = EffectiveSize(style);
+
+        if (usedSize <= 0)
         {
             return new FontMetrics(0, 0, 0, 0, 0, 0, 0, xHeight: 0, capHeight: 0);
         }
@@ -470,11 +477,39 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             metrics.StrikeoutThickness ?? 0,
             // Skia's metrics carry no x-height, so the face itself is asked what it stands its lowercase
             // at; a font that does not say leaves the field empty and the layout guesses from the em.
-            xHeight: _openType.GetXHeight(font.Typeface, (Single)style.Size) ?? 0,
+            xHeight: _openType.GetXHeight(font.Typeface, (Single)usedSize) ?? 0,
             capHeight: metrics.CapHeight);
     }
 
-    private SKFont CreateFont(FontStyle style) => new(_resolver.Resolve(style), (Single)style.Size);
+    private SKFont CreateFont(FontStyle style) => new(_resolver.Resolve(style), (Single)EffectiveSize(style));
+
+    /// <summary>
+    /// Gets the size the face is really drawn at: the CSS size where nothing asks for an adjustment,
+    /// and otherwise the size whose x-height is the share <c>font-size-adjust</c> states (CSS Fonts 3
+    /// §3.6). A face whose x-height is not known keeps its own size rather than guessing.
+    /// </summary>
+    private Double EffectiveSize(FontStyle style)
+    {
+        if (style.Adjust is not { } adjust || style.Size <= 0)
+        {
+            return style.Size;
+        }
+
+        var aspect = _aspects.GetOrAdd(new AspectKey(style.Family, style.Weight, style.IsItalic), key =>
+        {
+            var probe = new FontStyle(key.Family, AspectProbeSize, key.Weight, key.Italic);
+            var typeface = _resolver.Resolve(probe);
+            var height = _openType.GetXHeight(typeface, (Single)AspectProbeSize);
+
+            return height is > 0 ? height.Value / AspectProbeSize : 0;
+        });
+
+        return aspect > 0 ? Math.Max(0, style.Size * adjust / aspect) : style.Size;
+    }
+
+    private const Double AspectProbeSize = 100;
+
+    private readonly record struct AspectKey(String Family, Int32 Weight, Boolean Italic);
 
     private static Int32 CodepointAt(String text, Int32 index) =>
         Char.IsSurrogatePair(text, index) ? Char.ConvertToUtf32(text, index) : text[index];

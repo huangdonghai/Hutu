@@ -10,12 +10,13 @@ namespace Hutu.Rendering.Layout;
 /// </summary>
 public readonly struct FontStyle : IEquatable<FontStyle>
 {
-    public FontStyle(String family, Double size, Int32 weight = 400, Boolean italic = false)
+    public FontStyle(String family, Double size, Int32 weight = 400, Boolean italic = false, Double? adjust = null)
     {
         Family = String.IsNullOrWhiteSpace(family) ? "sans-serif" : family;
         Size = size;
         Weight = weight;
         IsItalic = italic;
+        Adjust = adjust;
     }
 
     /// <summary>Gets the CSS family list, e.g. <c>"Helvetica Neue", Arial, sans-serif</c>.</summary>
@@ -58,11 +59,19 @@ public readonly struct FontStyle : IEquatable<FontStyle>
 
     public Boolean IsItalic { get; }
 
+    /// <summary>
+    /// Gets the <c>font-size-adjust</c> the text asks for, or null where it asks for none. The size
+    /// above stays the CSS size the lengths around the text are measured in; the face is drawn at the
+    /// size this factor works out (CSS Fonts 3 §3.6).
+    /// </summary>
+    public Double? Adjust { get; }
+
     public Boolean Equals(FontStyle other) =>
         String.Equals(Family, other.Family, StringComparison.Ordinal) &&
         Size.Equals(other.Size) &&
         Weight == other.Weight &&
-        IsItalic == other.IsItalic;
+        IsItalic == other.IsItalic &&
+        Nullable.Equals(Adjust, other.Adjust);
 
     public override Boolean Equals(Object? obj) => obj is FontStyle other && Equals(other);
 
@@ -72,6 +81,7 @@ public readonly struct FontStyle : IEquatable<FontStyle>
         {
             var hash = StringComparer.Ordinal.GetHashCode(Family);
             hash = (hash * 397) ^ Size.GetHashCode();
+            hash = (hash * 397) ^ Adjust.GetHashCode();
             hash = (hash * 397) ^ Weight;
             hash = (hash * 397) ^ (IsItalic ? 1 : 0);
             return hash;

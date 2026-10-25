@@ -783,6 +783,40 @@ internal readonly struct ComputedStyle
     public static String ResolveHyphensFused(ICssProperty? declared, String parentValue) =>
         ResolveKeywordFused(declared, parentValue, "manual", inherited: true);
 
+    /// <summary>
+    /// Resolves <c>font-size-adjust</c> (CSS Fonts 3 §3.6). The property is inherited; <c>none</c> is
+    /// the answer that adjusts nothing, and a number is the x-height the face is rescaled to.
+    /// </summary>
+    public static Double? ResolveFontSizeAdjustFused(ICssProperty? declared, Double? parent)
+    {
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrEmpty(text))
+        {
+            return parent;
+        }
+
+        text = text!.ToLowerInvariant();
+
+        if (text is "none" or "auto" or "from-font" or "initial")
+        {
+            return null;
+        }
+
+        if (text is "inherit" or "unset" or "revert" or "revert-layer")
+        {
+            return parent;
+        }
+
+        return Double.TryParse(text, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var number)
+            ? number
+            : parent;
+    }
+
+    /// <summary>Gets the <c>font-size-adjust</c> factor, or null where the face keeps its size.</summary>
+    public Double? FontSizeAdjust => _values.Font.Adjust;
+
     /// <summary>Gets whether a property carries no declaration of the value asked for.</summary>
     private static Boolean IsBlank(ICssProperty? property) =>
         property is null || String.IsNullOrWhiteSpace(property.Value);
@@ -1610,6 +1644,7 @@ internal readonly struct ComputedStyle
     /// </summary>
     internal static TextDecorationArea ResolveDecorationFused(
         Func<String, ICssProperty?> find,
+        UInt32? parentColor,
         Double? parentUnderlineOffset,
         DecorationSkip parentSkip,
         LengthReader.FontSource font,
@@ -1627,7 +1662,7 @@ internal readonly struct ComputedStyle
 
             // The cascade expands the shorthand into its longhands, so the colour the shorthand carries
             // is read from the same place the line and the shape are.
-            Color = find("text-decoration-color")?.RawValue is CssColorValue { } color ? ToArgb(color) : null,
+            Color = ResolveDecorationColorFused(find("text-decoration-color"), parentColor),
             Thickness = ResolveDecorationThicknessFused(find("text-decoration-thickness"), font, dimensions),
             UnderlineOffset = ResolveUnderlineOffsetFused(
                 find("text-underline-offset"), parentUnderlineOffset, font, dimensions),
@@ -1636,6 +1671,17 @@ internal readonly struct ComputedStyle
             Skip = ResolveSkipInkFused(find("text-decoration-skip-ink"), parentSkip),
         };
     }
+
+    /// <summary>
+    /// Resolves the colour of the element's own decoration lines: a colour as written, the parent's
+    /// computed colour where the element says <c>inherit</c>, and nothing where it says nothing - which
+    /// leaves the line to the current colour of the text it crosses (CSS Text Decoration 4 §2.3).
+    /// </summary>
+    private static UInt32? ResolveDecorationColorFused(ICssProperty? declared, UInt32? parent) =>
+        declared is null ? null
+        : declared.RawValue is CssColorValue color ? ToArgb(color)
+        : IsInherit(declared) ? parent
+        : null;
 
     /// <summary>
     /// Resolves how thick a decoration line is, for the fused path. The property is not inherited: a miss
@@ -4717,6 +4763,13 @@ internal readonly struct ComputedStyle
         _values.Decoration.Color is { } packed && Effect.Applies ? FilterInk(packed) : _values.Decoration.Color;
 
     /// <summary>
+    /// Gets the colour the element computes for its decoration lines, before any filter is drawn over
+    /// them: this is the value a child saying <c>inherit</c> takes, since a filter belongs to the paint
+    /// of the box that carries it (CSS Text Decoration 4 §2.3).
+    /// </summary>
+    public UInt32? ComputedDecorationColor => _values.Decoration.Color;
+
+    /// <summary>
     /// Gets a packed ARGB colour put through the filter the box carries. The colour a box paints and the
     /// value it computes are two things: a filter belongs to the paint, so it is applied where the packed
     /// colour is handed to the painter and never to the value another box may inherit.
@@ -5847,16 +5900,19 @@ internal readonly struct ComputedStyle
             return (null, null, StyleLength.Auto, StyleLength.Auto);
         }
 
+        // The margins the HTML rendering rules give these elements, in em of their own font size
+        // (WHATWG rendering.html §15.3, measured in Chromium: h2 0.83, h3 1, h4 1.33, h5 1.67,
+        // h6 2.33, and one em around paragraphs, lists and forms).
         var block = tag switch
         {
             "h1" => 0.67,
-            "h2" => 0.75,
-            "h3" => 0.83,
-            "h4" => 1.12,
-            "h5" => 1.5,
-            "h6" => 1.67,
-            "p" or "blockquote" or "dl" or "dir" or "menu" or "fieldset" or "form" => 1.12,
-            "ul" or "ol" => IsNested(element) ? (Double?)null : 1.12,
+            "h2" => 0.83,
+            "h3" => 1.0,
+            "h4" => 1.33,
+            "h5" => 1.67,
+            "h6" => 2.33,
+            "p" or "blockquote" or "dl" or "dir" or "menu" or "fieldset" or "form" => 1.0,
+            "ul" or "ol" => IsNested(element) ? (Double?)null : 1.0,
             _ => null,
         };
 

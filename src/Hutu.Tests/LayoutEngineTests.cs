@@ -572,6 +572,20 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task ALineKeepsTheBlocksStrutWhenItsRunsAskForLess()
+    {
+        // CSS 2.1 §10.8: every line box starts with the container's own font and line height. A run
+        // whose line height is zero does not take that room away from the line it stands on.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0;font-size:20px;line-height:20px'>" +
+            "<span style='font-size:10px;line-height:0'>x</span></p></body></html>");
+
+        Assert.That(Lines(view).Single().BorderBox.Height, Is.EqualTo(20).Within(0.5), "the block's strut");
+    }
+
+    [Test]
     public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
     {
         // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's
