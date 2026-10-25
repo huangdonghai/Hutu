@@ -47,6 +47,21 @@ public sealed class WordSpacingTests
     }
 
     [Test]
+    public async Task AProductInCalcIsTheRoomItsFactorsComeTo()
+    {
+        using var view = CreateView();
+
+        // `calc(0.5*40px)` is twenty pixels, which the layout reads as readily as the plain length;
+        // AngleSharp's own fold left the product at zero, so the words came out unspaced.
+        await view.SetHtml(Page("<p style='word-spacing:calc(0.5*40px)'>ab cd</p>"));
+
+        Assert.That(
+            Text(view, "ab cd").BorderBox.Width,
+            Is.EqualTo(45),
+            "the five characters and the space of five, the space and twenty more");
+    }
+
+    [Test]
     public async Task NormalLeavesTheWordsAsTheyWere()
     {
         using var view = CreateView();

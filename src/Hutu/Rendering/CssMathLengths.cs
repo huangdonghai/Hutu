@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Hutu.Rendering;
 
@@ -148,7 +149,7 @@ internal static class CssMathLengths
 
             if (term.Length > 0)
             {
-                if (resolve(term) is not { } value)
+                if (EvaluateTerm(term, resolve) is not { } value)
                 {
                     return null;
                 }
@@ -162,6 +163,62 @@ internal static class CssMathLengths
         }
 
         return any ? total : null;
+    }
+
+    /// <summary>
+    /// Evaluates one term of a sum: a length, a plain number, or a product or quotient of them, as
+    /// <c>calc(0.5 * 2ch)</c> writes the two factors. A factor that is neither a number nor a length
+    /// the caller can resolve declines the term.
+    /// </summary>
+    private static Double? EvaluateTerm(String term, Func<String, Double?> resolve)
+    {
+        var value = 1.0;
+        var any = false;
+        var operation = '*';
+        var start = 0;
+        var depth = 0;
+
+        for (var at = 0; at <= term.Length; at++)
+        {
+            var character = at < term.Length ? term[at] : '*';
+
+            if (character == '(')
+            {
+                depth++;
+            }
+            else if (character == ')')
+            {
+                depth--;
+            }
+
+            if (depth != 0 || (character != '*' && character != '/'))
+            {
+                continue;
+            }
+
+            var factor = term[start..at].Trim();
+
+            if (factor.Length == 0)
+            {
+                return null;
+            }
+
+            Double? number = Double.TryParse(factor, NumberStyles.Float, CultureInfo.InvariantCulture, out var plain)
+                ? plain
+                : resolve(factor);
+
+            if (number is null)
+            {
+                return null;
+            }
+
+            value = operation == '*' ? value * number.Value : value / number.Value;
+            any = true;
+            operation = character;
+            start = at + 1;
+        }
+
+        return any ? value : null;
     }
 
     private static (StyleMathFunction Function, List<String> Arguments)? Parse(String? text)
