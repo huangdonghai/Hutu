@@ -1986,8 +1986,8 @@ internal sealed class InlineLayout
 
         // The place the line could be cut back to at a soft hyphen, and the steps it has taken since:
         // they begin the next line when the run after the hyphen turns out not to fit.
-        LineBuilder.Checkpoint? hyphenPoint = null;
-        List<TailStep>? tail = null;
+        LineBuilder.Checkpoint? breakPoint = null;
+        List<TailStep>? following = null;
 
         void Close(LineBuilder filled, Boolean forced = false, Boolean hyphen = false)
         {
@@ -2007,8 +2007,8 @@ internal sealed class InlineLayout
         {
             Close(builder, forced, hyphenate);
             builder = new LineBuilder(strut, carried, flow.IsVertical);
-            hyphenPoint = null;
-            tail = null;
+            breakPoint = null;
+            following = null;
         }
 
         foreach (var item in items)
@@ -2024,8 +2024,8 @@ internal sealed class InlineLayout
             // place past it.
             if (String.IsNullOrEmpty(item.Text) || item.IsRuby || item.IsReplaced || item.IsAtomic || item.IsOutOfFlow)
             {
-                hyphenPoint = null;
-                tail = null;
+                breakPoint = null;
+                following = null;
             }
 
             if (item.IsOutOfFlow)
@@ -2217,7 +2217,8 @@ internal sealed class InlineLayout
                     // space, to keep a line from overflowing at all, and between the characters of a word.
                     // Only `word-break: break-all` leaves the first of these alone, because the rule it sets
                     // aside is the one about words.
-                    var beforeFirst = stepsSpaces && item.Style.WrapsBeforeSpaces;
+                    var beforeFirst = stepsSpaces && item.Style.WrapsBeforeSpaces &&
+                        !item.Style.BreaksBetweenLetters;
 
                     // A word is stepped only where the break inside it is worth something: where the value
                     // gives it as an opportunity of its own, or where the word will not fit on a line at all
@@ -2333,42 +2334,51 @@ internal sealed class InlineLayout
                             {
                                 hyphen = false;
                                 breaks = false;
-                                hyphenPoint = null;
-                                tail = null;
+                                breakPoint = null;
+                                following = null;
                             }
                         }
 
-                        // A line that ran past a soft hyphen may have to give back what came after it:
-                        // this step cannot fit and no opportunity stands at its start, so the line ends
-                        // at that hyphen - the mark drawn there - and the steps since it begin the next
-                        // line. Chrome measured: "high­wa" then "y" in a six-character box breaks
-                        // at the hyphen rather than letting the y overflow the word it completes.
-                        if (hyphenPoint is { } point && !breaks && !spaces && builder.HasContent && !inRuby &&
+                        // The line may end at the boundary this step begins at: the state it stands in
+                        // before the step is kept, and the steps taken after it are kept beside it, so a
+                        // line forced to end earlier can back up to the last place it was allowed to.
+                        if (breaks && builder.HasContent && !inRuby)
+                        {
+                            breakPoint = builder.Capture();
+                            following = new List<TailStep>();
+                        }
+
+                        // A line that ran past its last opportunity may have to give back what came
+                        // after it: this step cannot fit where it stands and nothing here lets the line
+                        // end, so the line ends at the opportunity it last passed and the steps since it
+                        // begin the next line. Chrome measured: "X XX " in a four-character box ends
+                        // before the space rather than overflowing the line, and "high-shy-wa" then "y"
+                        // breaks at the hyphen rather than letting the y overflow the word it completes
+                        // (CSS Text 3 §5.1 - a line ends at an opportunity, not where the room runs out).
+                        // A collapsible space is not given back: it hangs at the end of the line instead.
+                        // A preserved space is worth an earlier line only when something else follows it:
+                        // a space at the very end of the text overflows with the word it trails, because
+                        // moving it down would open a line nobody asked for.
+                        var followed = at + taken < run.Source.Length &&
+                            !TextChunker.IsCollapsible(run.Source, at + taken, 1);
+
+                        if (breakPoint is { } point && !breaks && builder.HasContent && !inRuby &&
                             advance > 0 && !String.IsNullOrEmpty(item.Text) && item.Style.WrapsLines &&
+                            (!spaces || (item.Style.WrapsInsideSpaces && followed)) &&
                             builder.ExtentFor(item.Inline) + advance > room.Room)
                         {
-                            var replay = tail ?? new List<TailStep>();
+                            var replay = following ?? new List<TailStep>();
 
                             builder.Restore(point);
-                            NextLine(hyphenate: true);
+                            NextLine(hyphenate: builder.EndsInSoftHyphen);
+                            breakPoint = null;
+                            following = null;
 
                             foreach (var step in replay)
                             {
                                 builder.Add(
                                     step.Source, step.Start, step.Length, step.Advance,
                                     step.Style, step.Box, step.Flow, step.Inline);
-
-                                if (hyphenPoint is not null && tail is not null)
-                                {
-                                    tail.Add(step);
-                                }
-
-                                if (step.Source[step.Start + step.Length - 1] == (Char)0x00AD &&
-                                    builder.EndsInSoftHyphen && step.Style.WrapsLines)
-                                {
-                                    hyphenPoint = builder.Capture();
-                                    tail = new List<TailStep>();
-                                }
                             }
                         }
 
@@ -2411,19 +2421,12 @@ internal sealed class InlineLayout
 
                         builder.Add(run.Source, at, taken, advance, item.Style, item.Box, piece.Flow, item.Inline);
 
-                        // A step that ends at a soft hyphen is a place the line may be cut back to; the
-                        // steps taken after one are kept beside it, so the next line can begin with them.
-                        if (hyphenPoint is not null && tail is not null)
+                        // The steps taken after the last opportunity are kept beside it, so the line
+                        // after the break can begin with them.
+                        if (breakPoint is not null && following is not null)
                         {
-                            tail.Add(new TailStep(
+                            following.Add(new TailStep(
                                 run.Source, at, taken, advance, item.Style, item.Box, piece.Flow, item.Inline));
-                        }
-
-                        if (at + taken == end && run.Source[end - 1] == (Char)0x00AD &&
-                            builder.EndsInSoftHyphen && item.Style.WrapsLines && !inRuby)
-                        {
-                            hyphenPoint = builder.Capture();
-                            tail = new List<TailStep>();
                         }
 
                         previous = at;
