@@ -2212,7 +2212,7 @@ internal readonly struct ComputedStyle
         Func<String, ICssProperty?> find,
         IElement? element,
         IRenderDimensions dimensions,
-        Double fontSize)
+        LengthReader.FontSource font)
     {
         // The author's own background-image, or the element's legacy `background` attribute standing in
         // for it at the presentational-hint level when the author said nothing. The attribute is honoured
@@ -2232,7 +2232,7 @@ internal readonly struct ComputedStyle
                 find("background-repeat-x")?.Value,
                 find("background-repeat-y")?.Value),
             dimensions,
-            fontSize,
+            font,
             element is null ? null : url => ImageUrlResolver.Resolve(element, url));
     }
 

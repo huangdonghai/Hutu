@@ -31,7 +31,7 @@ internal static class BackgroundLayerParser
         String? sizes,
         String? repeats,
         IRenderDimensions dimensions,
-        Double fontSize,
+        LengthReader.FontSource font,
         Func<String, String?>? resolveUrl = null)
     {
         var imageList = CssValueList.SplitTopLevel(images);
@@ -56,12 +56,12 @@ internal static class BackgroundLayerParser
                 continue;
             }
 
-            if (Drawn(image, dimensions, fontSize) is not { } drawn)
+            if (Drawn(image, dimensions, font) is not { } drawn)
             {
                 continue;
             }
 
-            var gradient = ParseGradient(drawn, dimensions, fontSize);
+            var gradient = ParseGradient(drawn, dimensions, font);
             var urls = gradient is null ? CssUrlReferences.Extract(drawn) : new List<String>();
 
             if (gradient is null && urls.Count == 0)
@@ -69,8 +69,8 @@ internal static class BackgroundLayerParser
                 continue;
             }
 
-            var position = ParsePosition(At(positionList, index), dimensions, fontSize);
-            var size = ParseSize(At(sizeList, index), dimensions, fontSize);
+            var position = ParsePosition(At(positionList, index), dimensions, font);
+            var size = ParseSize(At(sizeList, index), dimensions, font);
 
             var repeat = RepeatOf(At(repeatList, index));
 
@@ -161,7 +161,7 @@ internal static class BackgroundLayerParser
 
     // --- position -------------------------------------------------------
 
-    private static (BackgroundOffset X, BackgroundOffset Y) ParsePosition(String value, IRenderDimensions dimensions, Double fontSize)
+    private static (BackgroundOffset X, BackgroundOffset Y) ParsePosition(String value, IRenderDimensions dimensions, LengthReader.FontSource font)
     {
         var parts = CssValueList.SplitWhitespace(value);
 
@@ -172,7 +172,7 @@ internal static class BackgroundLayerParser
 
         if (parts.Count == 1)
         {
-            var single = Component(parts[0], dimensions, fontSize);
+            var single = Component(parts[0], dimensions, font);
 
             // A lone vertical keyword leaves the horizontal axis centred, and vice versa.
             return IsVertical(parts[0])
@@ -180,14 +180,14 @@ internal static class BackgroundLayerParser
                 : (single, new BackgroundOffset(0, 0.5));
         }
 
-        var first = Component(parts[0], dimensions, fontSize);
-        var second = Component(parts[1], dimensions, fontSize);
+        var first = Component(parts[0], dimensions, font);
+        var second = Component(parts[1], dimensions, font);
 
         // `top left` is as valid as `left top`; normalise so the horizontal component comes first.
         return IsVertical(parts[0]) ? (second, first) : (first, second);
     }
 
-    private static BackgroundOffset Component(String part, IRenderDimensions dimensions, Double fontSize)
+    private static BackgroundOffset Component(String part, IRenderDimensions dimensions, LengthReader.FontSource font)
     {
         if (part.Equals("left", StringComparison.OrdinalIgnoreCase) ||
             part.Equals("top", StringComparison.OrdinalIgnoreCase))
@@ -206,7 +206,7 @@ internal static class BackgroundLayerParser
             return new BackgroundOffset(0, 0.5);
         }
 
-        return ParseOffset(part, dimensions, fontSize) ?? default;
+        return ParseOffset(part, dimensions, font) ?? default;
     }
 
     private static Boolean IsVertical(String part) =>
@@ -218,7 +218,7 @@ internal static class BackgroundLayerParser
     private static (BackgroundLayerSizeKind Kind, BackgroundOffset Width, BackgroundOffset Height) ParseSize(
         String value,
         IRenderDimensions dimensions,
-        Double fontSize)
+        LengthReader.FontSource font)
     {
         if (String.IsNullOrWhiteSpace(value))
         {
@@ -256,9 +256,9 @@ internal static class BackgroundLayerParser
             return (BackgroundLayerSizeKind.Auto, default, default);
         }
 
-        var width = firstIsAuto ? null : ParseOffset(first, dimensions, fontSize);
+        var width = firstIsAuto ? null : ParseOffset(first, dimensions, font);
         var height = parts.Count > 1 && !parts[1].Equals("auto", StringComparison.OrdinalIgnoreCase)
-            ? ParseOffset(parts[1], dimensions, fontSize)
+            ? ParseOffset(parts[1], dimensions, font)
             : null;
 
         if (width is null && height is null)
@@ -273,12 +273,12 @@ internal static class BackgroundLayerParser
     /// Converts one component to an offset. A percentage is kept as a fraction because it is
     /// relative to the positioning area, which is only known when the box is painted.
     /// </summary>
-    private static BackgroundOffset? ParseOffset(String text, IRenderDimensions dimensions, Double fontSize)
+    private static BackgroundOffset? ParseOffset(String text, IRenderDimensions dimensions, LengthReader.FontSource font)
     {
         // A position or a size written as arithmetic keeps its two parts apart: `calc(100% / 4)` is a
         // share of a box the style has not been told the size of yet (CSS Values 4 §10.8), so the sum is
         // read as words and added up where the box is known.
-        if (CalcText.Read(text, atom => Length(atom, dimensions, fontSize, conic: false)) is { } sum)
+        if (CalcText.Read(text, atom => Length(atom, dimensions, font, conic: false)) is { } sum)
         {
             return new BackgroundOffset(sum.Distance, sum.Share);
         }
@@ -295,7 +295,7 @@ internal static class BackgroundLayerParser
 
         try
         {
-            return new BackgroundOffset(LengthReader.ToPixel(length, RenderMode.Horizontal, dimensions, fontSize), 0);
+            return new BackgroundOffset(LengthReader.ToPixel(length, RenderMode.Horizontal, dimensions, font), 0);
         }
         catch (Exception)
         {
@@ -316,7 +316,7 @@ internal static class BackgroundLayerParser
     /// The candidates are tried in the order the page wrote them rather than by the resolution beside
     /// them: a box is drawn at one resolution here, so the choice between them has nothing to weigh.
     /// </remarks>
-    private static String? Drawn(String image, IRenderDimensions dimensions, Double fontSize)
+    private static String? Drawn(String image, IRenderDimensions dimensions, LengthReader.FontSource font)
     {
         var open = image.IndexOf('(');
 
@@ -345,7 +345,7 @@ internal static class BackgroundLayerParser
                 return "url(" + candidate + ")";
             }
 
-            if (ParseGradient(candidate, dimensions, fontSize) is not null ||
+            if (ParseGradient(candidate, dimensions, font) is not null ||
                 CssUrlReferences.Extract(candidate).Count > 0)
             {
                 return candidate;
@@ -361,12 +361,12 @@ internal static class BackgroundLayerParser
     /// itself is read the one way (CSS Backgrounds 3 §6.2).
     /// </summary>
     internal static GradientSpec? ParseGradientImage(String text, IRenderDimensions dimensions, Double fontSize) =>
-        ParseGradient(text, dimensions, fontSize);
+        ParseGradient(text, dimensions, new LengthReader.FontSource(fontSize));
 
     private static GradientSpec? ParseGradient(
         String value,
         IRenderDimensions dimensions,
-        Double fontSize)
+        LengthReader.FontSource font)
     {
         var open = value.IndexOf('(');
 
@@ -407,7 +407,7 @@ internal static class BackgroundLayerParser
 
         if (arguments.Count > 0 && radial)
         {
-            if (ParseRadialHead(arguments[0], dimensions, fontSize) is { } head)
+            if (ParseRadialHead(arguments[0], dimensions, font) is { } head)
             {
                 if (!head.Ok)
                 {
@@ -423,7 +423,7 @@ internal static class BackgroundLayerParser
         }
         else if (arguments.Count > 0 && conic)
         {
-            if (ParseSweepHead(arguments[0], dimensions, fontSize) is not { } head)
+            if (ParseSweepHead(arguments[0], dimensions, font) is not { } head)
             {
                 // No head was written, so the first argument is the first colour of the sweep.
             }
@@ -458,7 +458,7 @@ internal static class BackgroundLayerParser
 
         for (var index = start; index < arguments.Count; index++)
         {
-            var stop = ParseStop(arguments[index], dimensions, fontSize, conic);
+            var stop = ParseStop(arguments[index], dimensions, font, conic);
 
             if (stop is null)
             {
@@ -596,7 +596,7 @@ internal static class BackgroundLayerParser
     /// told from one whose head was written broken - and the head otherwise, with
     /// <see cref="RadialHead.Ok"/> saying whether it stood up.
     /// </returns>
-    private static RadialHead? ParseRadialHead(String text, IRenderDimensions dimensions, Double fontSize)
+    private static RadialHead? ParseRadialHead(String text, IRenderDimensions dimensions, LengthReader.FontSource font)
     {
         var words = CssValueList.SplitWhitespace(text);
 
@@ -607,7 +607,7 @@ internal static class BackgroundLayerParser
         // the shape is where the argument list begins.
         if (first.Length == 0 ||
             (Ending(first) is null && !Is(first, "circle") && !Is(first, "ellipse") && !Is(first, "at") &&
-             Radius(first, dimensions, fontSize) is null))
+             Radius(first, dimensions, font) is null))
         {
             return null;
         }
@@ -661,12 +661,12 @@ internal static class BackgroundLayerParser
                     place.Add(words[++index]);
                 }
 
-                if (!TryParsePlace(place, dimensions, fontSize, out x, out y))
+                if (!TryParsePlace(place, dimensions, font, out x, out y))
                 {
                     return broken;
                 }
             }
-            else if (Radius(word, dimensions, fontSize) is { } radius)
+            else if (Radius(word, dimensions, font) is { } radius)
             {
                 if (radii > 0 && ending != RadialEnding.Explicit)
                 {
@@ -716,9 +716,9 @@ internal static class BackgroundLayerParser
     /// answers zero to any word it does not know - <c>red</c> comes back as <c>0</c> - so the shape of the
     /// token is asked first, or the first colour of a gradient is read as its size.
     /// </summary>
-    private static BackgroundOffset? Radius(String text, IRenderDimensions dimensions, Double fontSize) =>
+    private static BackgroundOffset? Radius(String text, IRenderDimensions dimensions, LengthReader.FontSource font) =>
         text.Length > 0 && (Char.IsDigit(text[0]) || text[0] is '.' or '+' or '-')
-            ? Offset(text, dimensions, fontSize, conic: false)
+            ? Offset(text, dimensions, font, conic: false)
             : null;
 
     /// <summary>
@@ -747,7 +747,7 @@ internal static class BackgroundLayerParser
     /// told from one whose head was written broken - and the head, with <see cref="SweepHead.Ok"/> saying
     /// whether it stood up, otherwise.
     /// </returns>
-    private static SweepHead? ParseSweepHead(String text, IRenderDimensions dimensions, Double fontSize)
+    private static SweepHead? ParseSweepHead(String text, IRenderDimensions dimensions, LengthReader.FontSource font)
     {
         var words = CssValueList.SplitWhitespace(text);
 
@@ -782,7 +782,7 @@ internal static class BackgroundLayerParser
                     place.Add(words[++index]);
                 }
 
-                if (!TryParsePlace(place, dimensions, fontSize, out x, out y))
+                if (!TryParsePlace(place, dimensions, font, out x, out y))
                 {
                     return broken;
                 }
@@ -802,7 +802,7 @@ internal static class BackgroundLayerParser
     private static Boolean TryParsePlace(
         List<String> words,
         IRenderDimensions dimensions,
-        Double fontSize,
+        LengthReader.FontSource font,
         out BackgroundOffset centerX,
         out BackgroundOffset centerY)
     {
@@ -847,7 +847,7 @@ internal static class BackgroundLayerParser
                     vertical = true;
                 }
             }
-            else if (Offset(word, dimensions, fontSize, conic: false) is { } offset)
+            else if (Offset(word, dimensions, font, conic: false) is { } offset)
             {
                 if (!horizontal)
                 {
@@ -922,7 +922,7 @@ internal static class BackgroundLayerParser
     /// and only one of them is a quarter of the way round.
     /// </para>
     /// </remarks>
-    private static ColorStop? ParseStop(String text, IRenderDimensions dimensions, Double fontSize, Boolean conic)
+    private static ColorStop? ParseStop(String text, IRenderDimensions dimensions, LengthReader.FontSource font, Boolean conic)
     {
         var parts = CssValueList.SplitWhitespace(text);
 
@@ -932,7 +932,7 @@ internal static class BackgroundLayerParser
         }
 
         var last = parts.Count - 1;
-        var position = last > 0 ? ParseStopPosition(parts[last], dimensions, fontSize, conic) : null;
+        var position = last > 0 ? ParseStopPosition(parts[last], dimensions, font, conic) : null;
         var color = ParseColor(position is null ? text.Trim() : String.Join(' ', parts.Take(last)));
 
         if (color is null)
@@ -940,7 +940,7 @@ internal static class BackgroundLayerParser
             // A position with no colour beside it is an interpolation hint: it says where the ramp
             // between the two colours on either side reaches their midpoint, and is neither of them
             // (CSS Images 3 §3.4).
-            return last == 0 && ParseStopPosition(parts[0], dimensions, fontSize, conic) is { } hint
+            return last == 0 && ParseStopPosition(parts[0], dimensions, font, conic) is { } hint
                 ? new ColorStop(0, hint, true, isHint: true)
                 : null;
         }
@@ -955,20 +955,20 @@ internal static class BackgroundLayerParser
     private static StopOffset? ParseStopPosition(
         String text,
         IRenderDimensions dimensions,
-        Double fontSize,
+        LengthReader.FontSource font,
         Boolean conic) =>
-        CalcText.Read(text, atom => Length(atom, dimensions, fontSize, conic)) is { } amount
+        CalcText.Read(text, atom => Length(atom, dimensions, font, conic)) is { } amount
             ? new StopOffset(amount.Distance, amount.Share)
-            : Of(Offset(text.Trim(), dimensions, fontSize, conic));
+            : Of(Offset(text.Trim(), dimensions, font, conic));
 
     private static BackgroundOffset? Offset(
         String text,
         IRenderDimensions dimensions,
-        Double fontSize,
+        LengthReader.FontSource font,
         Boolean conic) =>
         conic && Angle(text) is { } degrees
             ? new BackgroundOffset(degrees, 0)
-            : ParseOffset(text, dimensions, fontSize);
+            : ParseOffset(text, dimensions, font);
 
     private static StopOffset? Of(BackgroundOffset? offset) => offset is not { } stated
         ? null
@@ -978,9 +978,9 @@ internal static class BackgroundLayerParser
     private static StyleLength? Length(
         String atom,
         IRenderDimensions dimensions,
-        Double fontSize,
+        LengthReader.FontSource font,
         Boolean conic) =>
-        Offset(atom, dimensions, fontSize, conic) is not { } stated
+        Offset(atom, dimensions, font, conic) is not { } stated
             ? null
             : stated.Percent != 0
                 ? StyleLength.FromPercent(stated.Percent)

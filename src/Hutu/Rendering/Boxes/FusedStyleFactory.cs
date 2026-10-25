@@ -920,7 +920,7 @@ internal static class FusedStyleFactory
             Color = color,
             BackgroundColor = ComputedStyle.ResolveBackgroundColorFused(
                 element, find("background-color"), parent.Background, DarkScheme(find)),
-            Backgrounds = ComputedStyle.ResolveBackgroundsFused(find, element, dimensions, size),
+            Backgrounds = ComputedStyle.ResolveBackgroundsFused(find, element, dimensions, face),
 
             // The border image paints the border area and takes no room of its own, so it is read here
             // with the border the box came to - the widths it is measured against are those of the border
