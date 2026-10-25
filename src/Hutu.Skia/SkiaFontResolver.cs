@@ -127,11 +127,19 @@ internal sealed class SkiaFontResolver : IDisposable
                 return fetched;
             }
 
-            var match = SKFontManager.Default.MatchFamily(family, style);
-
-            if (match is not null)
+            // The generic names ask for a class of face rather than one the platform keeps under that
+            // name, so the class is answered with the families a reader keeps for it, in order: asking
+            // the font manager for "sans-serif" outright is asking it for a family it has never heard
+            // of, and it answers with nothing - which leaves the default face standing in for every
+            // weight and slant the page asked for.
+            foreach (var name in StandsFor(family))
             {
-                return match;
+                var match = SKFontManager.Default.MatchFamily(name, style);
+
+                if (match is not null)
+                {
+                    return match;
+                }
             }
 
             if (Named(family) is { } named)
@@ -144,6 +152,44 @@ internal sealed class SkiaFontResolver : IDisposable
         // process default, which is what the initial value of font-family resolves to anyway.
         return SKFontManager.Default.MatchFamily("sans-serif", style) ?? SKTypeface.Default;
     }
+
+    /// <summary>
+    /// Gets the families a written name stands for: the name itself, and for one of the CSS generics the
+    /// families a reader keeps behind that class, in the order they are tried.
+    /// </summary>
+    /// <remarks>
+    /// Which family a generic means is the user agent's to decide (CSS Fonts 3 §6), and this follows what
+    /// Chrome keeps on the platform it runs on: Arial for its sans-serif, Times New Roman for its serif,
+    /// Courier New for its monospace. The rest of the list is the names the same class goes by on the
+    /// other platforms, so one answer covers them without asking the machine which it is.
+    /// </remarks>
+    private static IEnumerable<String> StandsFor(String family)
+    {
+        var name = FontStyle.Unquote(family.Trim());
+
+        if (Generics.TryGetValue(name, out var behind))
+        {
+            return behind;
+        }
+
+        return new[] { family };
+    }
+
+    private static readonly Dictionary<String, String[]> Generics = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["sans-serif"] = new[] { "Arial", "Helvetica", "Liberation Sans", "DejaVu Sans", "Segoe UI" },
+        ["serif"] = new[] { "Times New Roman", "Times", "Liberation Serif", "DejaVu Serif", "Georgia" },
+        ["monospace"] = new[] { "Courier New", "Courier", "Liberation Mono", "DejaVu Sans Mono", "Consolas" },
+        ["cursive"] = new[] { "Comic Sans MS", "Brush Script MT", "Segoe Script", "Apple Chancery" },
+        ["fantasy"] = new[] { "Impact", "Trebuchet MS", "Copperplate" },
+        ["system-ui"] = new[] { "Segoe UI", "system-ui", "-apple-system", "Roboto" },
+        ["ui-sans-serif"] = new[] { "Arial", "Helvetica Neue", "sans-serif" },
+        ["ui-serif"] = new[] { "Times New Roman", "Times New Roman PS", "serif" },
+        ["ui-monospace"] = new[] { "Courier New", "Menlo", "monospace" },
+        ["ui-rounded"] = new[] { "Arial Rounded MT Bold", "Nunito", "sans-serif" },
+        ["math"] = new[] { "Cambria Math", "STIX Two Math", "DejaVu Math TeX Gyre" },
+        ["emoji"] = new[] { "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji" },
+    };
 
     /// <summary>
     /// Gets the font a name stands for when the name is the one the font carries rather than the one
