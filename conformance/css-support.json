@@ -65,6 +65,7 @@
     "row-gap": "partial: read as the space between flex and grid tracks, and as nothing else",
     "text-indent": "modelled",
     "top": "modelled",
-    "width": "modelled"
+    "width": "modelled",
+    "rule": "modelled: AngleSharp expands it into the six per-axis rule longhands, so a longhand written after it still answers its own axis"
   }
 }

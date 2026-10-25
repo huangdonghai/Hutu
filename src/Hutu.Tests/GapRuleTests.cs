@@ -38,6 +38,33 @@ public sealed class GapRuleTests
         Assert.That(widths.IsStated, Is.False);
     }
 
+    /// <summary>
+    /// `rule` asks for the same decoration on both axes: it stands for the six per-axis longhands, so a
+    /// width and a style written once arrive at each axis, and an axis that writes a longhand of its own
+    /// after it answers that one itself (CSS Gaps 1 §4.7).
+    /// </summary>
+    [Test]
+    public async Task TheSharedRuleShorthandAnswersBothAxes()
+    {
+        using var view = await Render(
+            "<style>#d { display:flex; flex-direction:column; row-gap:10px; width:100px;" +
+            " rule: 6px solid; column-rule-color: green }</style>" +
+            "<div id='d'><div>a</div><div>b</div><div>c</div></div>");
+
+        var gap = Find(view, "d").Source.Style.Gap;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(gap.IsStated, Is.True, "a rule written for both axes still asks for a decoration");
+            Assert.That(gap.Row.At(0, 2).Width, Is.EqualTo(6), "the row axis takes the shared width");
+            Assert.That(gap.Row.At(0, 2).Style, Is.EqualTo(BorderLineStyle.Solid));
+            Assert.That(gap.Column.At(0, 2).Width, Is.EqualTo(6), "and so does the column axis");
+            Assert.That(gap.Column.At(0, 2).Style, Is.EqualTo(BorderLineStyle.Solid));
+            Assert.That(gap.Column.At(0, 2).Color, Is.EqualTo(0xff008000u), "the longhand written after it wins");
+            Assert.That(gap.Row.At(0, 2).Color, Is.EqualTo(0xff000000u), "and the other axis keeps the ink");
+        });
+    }
+
     [Test]
     public async Task AnIntegerRepeaterStandsForItsValuesWrittenOut()
     {
