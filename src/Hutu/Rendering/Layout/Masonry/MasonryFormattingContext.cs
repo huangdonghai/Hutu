@@ -641,6 +641,28 @@ internal sealed class MasonryFormattingContext
 
                 if (rule.Appears)
                 {
+                    // A `between` or `around` rule only stands where the items on the gap's two sides
+                    // say it may (CSS Gaps 1 §3.4); `all` and `normal` take the whole gap. A spanning
+                    // item makes the gap interior to itself, so it flanks nothing on either side.
+                    var visible = VisibleStretches(plan, column, columnAxis.Visibility, plan.TotalHeight);
+
+                    void Add(Double start, Double end)
+                    {
+                        foreach (var (from, to) in visible)
+                        {
+                            var from_ = Math.Max(start, from);
+                            var to_ = Math.Min(end, to);
+
+                            if (to_ - from_ > 0.01)
+                            {
+                                segments.Add(new GapRuleSegment(
+                                    GapRuleBands.Band(rule, true, gapMid, from_, to_),
+                                    rule,
+                                    isRow: false));
+                            }
+                        }
+                    }
+
                     foreach (var (cutFrom, cutTo) in merged)
                     {
                         var before = cutFrom - band;
@@ -653,30 +675,28 @@ internal sealed class MasonryFormattingContext
 
                             if (end > start)
                             {
-                                segments.Add(new GapRuleSegment(
-                                    GapRuleBands.Band(rule, true, gapMid, start, end),
-                                    rule,
-                                    isRow: false));
+                                Add(start, end);
                             }
                         }
 
                         band = cutTo;
                     }
 
+                    // No lane leaves a gap between two items, so there is nothing to cut the rule at:
+                    // it runs the whole of the container. Reading the last gap here would step off the
+                    // end of an empty list - a container whose items each stand alone in its column is
+                    // exactly that case.
                     var tail = plan.TotalHeight - band;
-                    var tailCrossing = merged[^1].To - merged[^1].From;
+                    var tailCrossing = merged.Count > 0 ? merged[^1].To - merged[^1].From : 0;
 
                     if (tail > 0.01)
                     {
-                        var start = band + columnAxis.CapStart.Resolve(tailCrossing, 0);
+                        var start = (band < 0 ? 0 : band) + columnAxis.CapStart.Resolve(tailCrossing, 0);
                         var end = plan.TotalHeight;
 
                         if (end > start)
                         {
-                            segments.Add(new GapRuleSegment(
-                                GapRuleBands.Band(rule, true, gapMid, start, end),
-                                rule,
-                                isRow: false));
+                            Add(start, end);
                         }
                     }
 
@@ -756,6 +776,74 @@ internal sealed class MasonryFormattingContext
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// The vertical stretches an item covers in <paramref name="side"/> without also covering
+    /// <paramref name="across"/>: an item that spans both sides crosses the gap between them, and a gap
+    /// a spanning item crosses is interior to it, so it flanks neither side (CSS Gaps 1 §3.4).
+    /// </summary>
+    private static List<(Double From, Double To)> FlankCoverage(LanePlan plan, Int32 side, Int32 across)
+    {
+        var spans = new List<(Double From, Double To)>();
+
+        foreach (var item in plan.Items)
+        {
+            if (Covers(item, side) && !Covers(item, across))
+            {
+                spans.Add((item.Y, item.Y + item.Height));
+            }
+        }
+
+        return JunctionBands(spans);
+    }
+
+    /// <summary>Whether the item's area reaches the given column.</summary>
+    private static Boolean Covers(PlacedItem item, Int32 column) =>
+        item.Lane <= column && column < item.Lane + item.LaneSpan;
+
+    /// <summary>
+    /// The stretches of a column gap a rule may stand on: the whole gap for <c>all</c> and
+    /// <c>normal</c>, the stretches both flanking columns hold for <c>between</c>, and either one holds
+    /// for <c>around</c> (CSS Gaps 1 §3.4).
+    /// </summary>
+    private static List<(Double From, Double To)> VisibleStretches(
+        LanePlan plan,
+        Int32 column,
+        GapRuleVisibility visibility,
+        Double height)
+    {
+        if (visibility is not (GapRuleVisibility.Between or GapRuleVisibility.Around))
+        {
+            return [(0, height)];
+        }
+
+        var left = FlankCoverage(plan, column, column + 1);
+        var right = FlankCoverage(plan, column + 1, column);
+
+        if (visibility == GapRuleVisibility.Around)
+        {
+            left.AddRange(right);
+            return JunctionBands(left);
+        }
+
+        var overlap = new List<(Double From, Double To)>();
+
+        foreach (var onLeft in left)
+        {
+            foreach (var onRight in right)
+            {
+                var from = Math.Max(onLeft.From, onRight.From);
+                var to = Math.Min(onLeft.To, onRight.To);
+
+                if (to - from > 0.01)
+                {
+                    overlap.Add((from, to));
+                }
+            }
+        }
+
+        return JunctionBands(overlap);
     }
 
     /// <summary>Gets whether a spanning item crosses the gap over the stretch, leaving it interior to itself.</summary>

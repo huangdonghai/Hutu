@@ -2,6 +2,7 @@ using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Hutu.Tests;
@@ -133,6 +134,49 @@ public sealed class MasonryLayoutTests
         // A inherits the container's center (25px into its lane); B overrides it back to start.
         Assert.That(a.BorderBox.X, Is.EqualTo(25).Within(0.5));
         Assert.That(b.BorderBox.X, Is.EqualTo(80).Within(0.5));
+    }
+
+    [Test]
+    public async Task AClearRuleBetweenColumnsNobodyFlanksIsNotDrawn()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='lanes' style='display:grid-lanes;grid-template-columns:repeat(3,60px);gap:20px;" +
+            "width:max-content;column-rule:4px solid blue;column-rule-break:none;" +
+            "column-rule-visibility-items:between'>" +
+            "<div style='grid-column:1;height:60px'></div>" +
+            "<div style='grid-column:3;height:60px'></div>" +
+            "</div>" +
+            "</body></html>");
+
+        // Neither column gap has an item on both sides, so a `between` rule stands nowhere - and the
+        // container has no two stacked items, which used to leave the decoration pass reading the last
+        // of an empty list of cuts.
+        Assert.That(Find(view, "lanes").GapDecorations, Is.Null.Or.Empty);
+    }
+
+    [Test]
+    public async Task AStatedRuleBetweenTwoHeldColumnsRunsTheStretchTheyShare()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='lanes' style='display:grid-lanes;grid-template-columns:repeat(2,60px);gap:20px;" +
+            "width:max-content;column-rule:4px solid blue;column-rule-break:none;" +
+            "column-rule-visibility-items:between'>" +
+            "<div style='grid-column:1;height:60px'></div>" +
+            "<div style='grid-column:2;height:60px'></div>" +
+            "</div>" +
+            "</body></html>");
+
+        var segment = Find(view, "lanes").GapDecorations?.Single();
+
+        Assert.That(segment, Is.Not.Null, "both columns hold an item over the same stretch");
+        Assert.That(segment!.Value.Band.X, Is.EqualTo(68).Within(0.5), "centred in the 20px gap");
+        Assert.That(segment.Value.Band.Width, Is.EqualTo(4).Within(0.5));
+        Assert.That(segment.Value.Band.Y, Is.EqualTo(0).Within(0.5));
+        Assert.That(segment.Value.Band.Height, Is.EqualTo(60).Within(0.5));
     }
 
     private static HutuViewInternal CreateView(Int32 viewportWidth)
