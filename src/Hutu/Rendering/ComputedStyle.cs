@@ -3072,6 +3072,9 @@ internal readonly struct ComputedStyle
         /// <summary>Gets the declared <c>transform-style</c>, or null for the flat default.</summary>
         internal String? TransformStyle;
 
+        /// <summary>Gets the declared <c>transform-box</c>, or null for the border box default.</summary>
+        internal String? TransformBox;
+
         /// <summary>Gets the declared <c>translate</c>, or null when the box moves in no direction.</summary>
         internal String? Translate;
 
@@ -3171,6 +3174,18 @@ internal readonly struct ComputedStyle
     /// <summary>Gets the declared <c>perspective</c> text, or null when the children are seen flat.</summary>
     public String? PerspectiveText =>
         _values.Fused is { } fused ? fused.Perspective : _style.GetPropertyValue("perspective");
+
+    /// <summary>Gets the declared <c>transform-box</c> text, or null for the border box default.</summary>
+    public String? TransformBoxText =>
+        _values.Fused is { } fused ? fused.TransformBox : _style.GetPropertyValue("transform-box");
+
+    /// <summary>
+    /// Gets whether a transform's origin is measured from the content box rather than the border box,
+    /// which is what <c>transform-box: content-box</c> asks for (CSS Transforms 1 §transform-box).
+    /// </summary>
+    public Boolean TransformsFromContentBox =>
+        TransformBoxText is { Length: > 0 } stated &&
+        stated.Contains("content-box", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Gets the declared <c>perspective-origin</c> text, or null for the middle of the box.</summary>
     public String? PerspectiveOriginText =>

@@ -1203,10 +1203,16 @@ internal sealed record LayoutProfile(
             // apart, and the one the painter's own font size is not.
             var fold = box.Style.FoldingFontSize;
             var zoom = box.Style.Zoom;
-            var (originX, originY) = TransformValue.ResolveOrigin(box.Style.TransformOriginText, frame.Width, frame.Height, dimensions, fold, zoom);
-            var originZ = TransformValue.ResolveOriginZ(box.Style.TransformOriginText, frame.Width, frame.Height, dimensions, fold, zoom);
-            var originLeft = frame.X + originX;
-            var originTop = frame.Y + originY;
+
+            // transform-box names the box the origin is measured from: the content box when the page
+            // asks for it, the border box otherwise (CSS Transforms 1 §transform-box).
+            var reference = box.Style.TransformsFromContentBox ? layout.ContentBox : frame;
+            var (originX, originY) = TransformValue.ResolveOrigin(
+                box.Style.TransformOriginText, reference.Width, reference.Height, dimensions, fold, zoom);
+            var originZ = TransformValue.ResolveOriginZ(
+                box.Style.TransformOriginText, reference.Width, reference.Height, dimensions, fold, zoom);
+            var originLeft = reference.X + originX;
+            var originTop = reference.Y + originY;
 
             // The individual properties and the transform list, in the order CSS Transforms 2 §individual-transforms
             // asks for them: move, turn, resize, then transform.
@@ -1221,6 +1227,14 @@ internal sealed record LayoutProfile(
                 fold,
                 zoom);
 
+            // The box's own matrix as a 4×4 of the page, and the perspective its parent states. A 3D
+            // rendering context composes the first through every box above it, and the second applies to
+            // the boxes inside the one that declared it.
+            layout.OwnTransform4 = Matrix4.Translation(originLeft, originTop, originZ)
+                .Then(own)
+                .Then(Matrix4.Translation(-originLeft, -originTop, -originZ));
+            layout.ParentView4 = context.Perspective is { } parentView ? ViewOf(parentView) : Matrix4.Identity;
+
             Affine matrix;
 
             if (context.Perspective is { } perspective || originZ != 0)
@@ -1230,16 +1244,10 @@ internal sealed record LayoutProfile(
                 // the page, which is turned back to the point the painter draws a matrix about. A turn
                 // that happens away from the plane's own z is carried the same way, because the move it
                 // makes depends on where along z the box is cut.
-                var view = context.Perspective is { } seen
-                    ? Matrix4.Translation(seen.OriginX, seen.OriginY, 0)
-                        .Then(Matrix4.Perspective(seen.Distance))
-                        .Then(Matrix4.Translation(-seen.OriginX, -seen.OriginY, 0))
-                    : Matrix4.Identity;
+                var view = layout.ParentView4;
 
                 var page = view
-                    .Then(Matrix4.Translation(originLeft, originTop, originZ))
-                    .Then(own)
-                    .Then(Matrix4.Translation(-originLeft, -originTop, -originZ))
+                    .Then(layout.OwnTransform4)
                     .Project();
 
                 matrix = new Affine(1, 0, 0, 1, -originLeft, -originTop)
@@ -1260,11 +1268,13 @@ internal sealed record LayoutProfile(
             // block, so it is marked for the painter even when the matrix is an identity (a
             // translate(0,0)): the wrapping is what keeps its out-of-flow descendants inside it.
             layout.Transform = matrix;
-            layout.TransformOrigin = new Offset(originX, originY);
+            layout.TransformOrigin = new Offset(originLeft - frame.X, originTop - frame.Y);
 
             // A plane turned away from the viewer is seen from behind, which is what a box with
-            // backface-visibility: hidden is not drawn at all for.
+            // backface-visibility: hidden is not drawn at all for. A matrix that cannot be undone has no
+            // place to draw the box in either.
             layout.FacesAway = own.Facing < 0;
+            layout.SingularTransform = own.IsSingular;
         }
 
         _positioned.Finish(layout, position, context);
@@ -1274,6 +1284,16 @@ internal sealed record LayoutProfile(
     /// <summary>Gets whether a transform-ish property states anything but <c>none</c>.</summary>
     private static Boolean Stated(String? text) =>
         text is { Length: > 0 } value && !value.Equals("none", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets the perspective a box's children are seen through as a 4×4 of the page: the eye stands at the
+    /// perspective origin, and every point inside is carried through it (CSS Transforms 2
+    /// §perspective-property).
+    /// </summary>
+    private static Matrix4 ViewOf(PerspectiveView view) =>
+        Matrix4.Translation(view.OriginX, view.OriginY, 0)
+            .Then(Matrix4.Perspective(view.Distance))
+            .Then(Matrix4.Translation(-view.OriginX, -view.OriginY, 0));
 
     /// <summary>
     /// Records the floats a container's walk placed, for the container above it to absorb when it

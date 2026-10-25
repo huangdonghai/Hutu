@@ -86,6 +86,10 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // transform grammar rejects an unresolved var() and discards the declaration to `none`, which
         // would leave nothing for our substitution to resolve.
         "transform",
+        // CSS Transforms 1's reference box for the transform-origin. AngleSharp's grammar has no entry
+        // for it, so without this the whole declaration is dropped and an origin stated against the
+        // content box would be measured from the border box instead.
+        "transform-box",
         // CSS Will Change 1's hint list, kept as the text the page wrote: AngleSharp reads the list
         // against the property names it knows, and rejects the ones its own registry does not carry
         // (`contain`, `backdrop-filter`), which would drop half of a hint that the stacking answer needs

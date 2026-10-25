@@ -404,30 +404,57 @@ public sealed class SkiaPaintExecutor
 
     /// <summary>
     /// Moves each edge of an area onto the device pixel it is nearest to, which is the same thing as
-    /// <see cref="Snap"/> while the canvas draws in page coordinates. Under a transform the rectangle is
+    /// <see cref="Snap"/> while the canvas draws in page coordinates. Under a transform the edge is
     /// taken to where it will be drawn, snapped there, and carried back, so a scale does not scale the
-    /// rounding with it. A turned or skewed canvas has no whole-pixel edge to speak of, so its rectangle
-    /// is snapped where it stands, as before.
+    /// rounding along with it. Only a transform that keeps the rectangle a rectangle has edges on the
+    /// device grid at all - the axes mapped straight or swapped, which is what a quarter turn does - so
+    /// a box turned by any other angle is snapped where it stands, as before.
     /// </summary>
     private static SKRect SnapToDevice(SKCanvas canvas, SKRect area)
     {
         var matrix = canvas.TotalMatrix;
 
-        if (matrix.ScaleX == 0 || matrix.ScaleY == 0 ||
-            matrix.SkewX != 0 || matrix.SkewY != 0 ||
-            !matrix.TryInvert(out var inverse))
+        // A perspective divide bends the edges away from any grid, and a skew slides them apart.
+        var straight = Math.Abs(matrix.SkewX) < Epsilon && Math.Abs(matrix.SkewY) < Epsilon;
+        var swapped = Math.Abs(matrix.ScaleX) < Epsilon && Math.Abs(matrix.ScaleY) < Epsilon;
+
+        if (matrix.Persp0 != 0 || matrix.Persp1 != 0 ||
+            Math.Abs(matrix.Persp2 - 1) > Epsilon ||
+            !(straight ^ swapped))
         {
             return Snap(area);
         }
 
-        var snapped = inverse.MapRect(Snap(matrix.MapRect(area)));
+        if (straight)
+        {
+            return Edges(
+                SnapEdge(area.Left, matrix.ScaleX, matrix.TransX),
+                SnapEdge(area.Top, matrix.ScaleY, matrix.TransY),
+                SnapEdge(area.Right, matrix.ScaleX, matrix.TransX),
+                SnapEdge(area.Bottom, matrix.ScaleY, matrix.TransY));
+        }
 
-        return new SKRect(
-            Math.Min(snapped.Left, snapped.Right),
-            Math.Min(snapped.Top, snapped.Bottom),
-            Math.Max(snapped.Left, snapped.Right),
-            Math.Max(snapped.Top, snapped.Bottom));
+        // A quarter turn: the box's y runs across the page and its x down.
+        return Edges(
+            SnapEdge(area.Left, matrix.SkewY, matrix.TransY),
+            SnapEdge(area.Top, matrix.SkewX, matrix.TransX),
+            SnapEdge(area.Right, matrix.SkewY, matrix.TransY),
+            SnapEdge(area.Bottom, matrix.SkewX, matrix.TransX));
     }
+
+    /// <summary>Moves one edge onto the device pixel it is nearest to, read back into the box's own
+    /// coordinates through the scale and the move that carry it there.</summary>
+    private static Single SnapEdge(Single at, Single scale, Single move) =>
+        scale == 0 ? at : (Single)((Math.Round(at * scale + move) - move) / scale);
+
+    /// <summary>Builds a rectangle from edges that may have crossed over a negative scale.</summary>
+    private static SKRect Edges(Single left, Single top, Single right, Single bottom) => new(
+        Math.Min(left, right),
+        Math.Min(top, bottom),
+        Math.Max(left, right),
+        Math.Max(top, bottom));
+
+    private const Single Epsilon = 1e-6f;
 
     /// <summary>Moves each edge of an area onto the whole pixel it is nearest to.</summary>
     private static SKRect Snap(SKRect rect) => new(

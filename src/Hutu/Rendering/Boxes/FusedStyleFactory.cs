@@ -263,6 +263,10 @@ internal sealed class FusedParent
     /// </summary>
     internal String? Perspective { get; init; }
 
+    /// <summary>Gets the <c>transform-origin</c> the parent was drawn with, for the one keyword that
+    /// asks for it: <c>transform-origin: inherit</c>.</summary>
+    internal String? TransformOrigin { get; init; }
+
     /// <summary>
     /// Gets the scope this element's own <c>var()</c> references were read through, which is what its
     /// children inherit unless they redeclare a custom property of their own. Null for a page that
@@ -340,6 +344,8 @@ internal sealed class FusedParent
         Scale = style.ScaleText,
         Position = style.Position,
         Perspective = style.PerspectiveText,
+        TransformOrigin = TransformValue.AbsoluteOrigin(
+            style.TransformOriginText, style.Dimensions, style.FoldingFontSize, style.Zoom),
         Clip = style.Clip,
         ClipPath = style.ClipPath,
         ShapeOutside = style.ShapeOutside,
@@ -899,7 +905,8 @@ internal static class FusedStyleFactory
             Opacity = find("opacity")?.Value,
             WillChange = find("will-change")?.Value,
             TransformStyle = find("transform-style")?.Value,
-            TransformOrigin = find("transform-origin")?.Value,
+            TransformBox = find("transform-box")?.Value,
+            TransformOrigin = ComputedStyle.ResolveTransformFused(find("transform-origin"), parent.TransformOrigin),
             Perspective = ComputedStyle.ResolveTransformFused(find("perspective"), parent.Perspective),
             PerspectiveOrigin = find("perspective-origin")?.Value,
             BackfaceVisibility = find("backface-visibility")?.Value,

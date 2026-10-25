@@ -270,6 +270,32 @@ internal sealed class LayoutBox
     public Boolean FacesAway { get; set; }
 
     /// <summary>
+    /// Gets or sets whether the box is drawn through a matrix that cannot be undone - a zero scale, say -
+    /// which CSS Transforms 2 §mathematical-description answers with nothing at all, the box and
+    /// everything inside it.
+    /// </summary>
+    public Boolean SingularTransform { get; set; }
+
+    /// <summary>
+    /// Gets or sets the box's own matrix as a 4×4 of the page: the transform (and its origin) without any
+    /// perspective a parent states, which is what a 3D rendering context composes.
+    /// </summary>
+    internal Matrix4 OwnTransform4 { get; set; } = Matrix4.Identity;
+
+    /// <summary>
+    /// Gets or sets the perspective the parent states, as a 4×4 of the page. It is carried apart from
+    /// <see cref="OwnTransform4"/> because it applies to what is inside the box rather than to the box.
+    /// </summary>
+    internal Matrix4 ParentView4 { get; set; } = Matrix4.Identity;
+
+    /// <summary>
+    /// Gets or sets whether <see cref="Transform"/> already carries every ancestor's transform, which is
+    /// what a box inside a 3D rendering context is drawn with: it is placed in the page outright rather
+    /// than through the matrices the boxes around it were drawn with.
+    /// </summary>
+    public Boolean AbsoluteTransform { get; set; }
+
+    /// <summary>
     /// Gets the corner radii of the padding box, which is where the background stops once the border
     /// has eaten into the curve and where descendants are clipped.
     /// </summary>

@@ -525,8 +525,9 @@ internal sealed class Painter
         }
 
         // A box seen from behind shows nothing - and neither does what stands on its plane, which is
-        // the box's own content rather than a plane of its own.
-        if (box.Kind != LayoutKind.Line && box.FacesAway && box.Source.Style.HidesBackface)
+        // the box's own content rather than a plane of its own. A matrix that cannot be undone has no
+        // plane to show either.
+        if (box.Kind != LayoutKind.Line && (box.SingularTransform || (box.FacesAway && box.Source.Style.HidesBackface)))
         {
             return;
         }

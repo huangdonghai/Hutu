@@ -200,6 +200,25 @@ internal sealed class TransformValue
                 ? n
                 : fallback;
 
+        // A scale is a ratio, and CSS Transforms 1 lets it be written as a share as well.
+        Double Ratio(Int32 index, Double fallback)
+        {
+            if (index >= args.Length)
+            {
+                return fallback;
+            }
+
+            var token = args[index].Trim();
+
+            if (token.EndsWith('%') &&
+                Double.TryParse(token[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out var percent))
+            {
+                return percent / 100;
+            }
+
+            return Double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) ? number : fallback;
+        }
+
         Double Distance(Int32 index) => Number(index, 0) * zoom;
 
         Double Angle(Int32 index) => index < args.Length ? ToRadians(args[index]) : 0;
@@ -222,20 +241,20 @@ internal sealed class TransformValue
                 return Matrix4.Translation(Length(0, width, 0), Length(1, height, 0), Length(2, 0, 0));
 
             case "scale":
-                var sx = Number(0, 1);
-                return Matrix4.Scaling(sx, args.Length > 1 ? Number(1, 1) : sx, 1);
+                var sx = Ratio(0, 1);
+                return Matrix4.Scaling(sx, args.Length > 1 ? Ratio(1, 1) : sx, 1);
 
             case "scalex":
-                return Matrix4.Scaling(Number(0, 1), 1, 1);
+                return Matrix4.Scaling(Ratio(0, 1), 1, 1);
 
             case "scaley":
-                return Matrix4.Scaling(1, Number(0, 1), 1);
+                return Matrix4.Scaling(1, Ratio(0, 1), 1);
 
             case "scalez":
-                return Matrix4.Scaling(1, 1, Number(0, 1));
+                return Matrix4.Scaling(1, 1, Ratio(0, 1));
 
             case "scale3d":
-                return Matrix4.Scaling(Number(0, 1), Number(1, 1), Number(2, 1));
+                return Matrix4.Scaling(Ratio(0, 1), Ratio(1, 1), Ratio(2, 1));
 
             case "rotate":
                 return Matrix4.Rotation(0, 0, 1, Angle(0));
@@ -404,6 +423,52 @@ internal sealed class TransformValue
 
         return ToPixels(stated, 0, dimensions, fontSize, zoom);
     }
+
+    /// <summary>
+    /// Rewrites an origin's lengths in pixels, leaving the shares and the keywords as they stand: what a
+    /// child inherits is the parent's <em>computed</em> origin, so a relative length must be read against
+    /// the ancestor that wrote it and not against the one that inherits it (CSS Transforms 1
+    /// §transform-origin-property).
+    /// </summary>
+    public static String? AbsoluteOrigin(
+        String? text,
+        IRenderDimensions dimensions,
+        Double fontSize,
+        Double zoom = 1)
+    {
+        if (text is not { Length: > 0 } stated)
+        {
+            return null;
+        }
+
+        var parts = SplitTop(stated);
+        var rewritten = new System.Collections.Generic.List<String>(parts.Count);
+
+        foreach (var part in parts)
+        {
+            var token = part.Trim();
+
+            if (token.EndsWith('%') || IsOriginKeyword(token) || !CssLengthValue.TryParse(token, out _))
+            {
+                rewritten.Add(token);
+                continue;
+            }
+
+            var pixels = ToPixels(token, 0, dimensions, fontSize, zoom);
+            rewritten.Add(pixels.ToString("0.####", CultureInfo.InvariantCulture) + "px");
+        }
+
+        return String.Join(' ', rewritten);
+    }
+
+    /// <summary>Gets whether a token names one side of a box rather than a distance.</summary>
+    private static Boolean IsOriginKeyword(String token) =>
+        token.Equals("left", StringComparison.OrdinalIgnoreCase) ||
+        token.Equals("right", StringComparison.OrdinalIgnoreCase) ||
+        token.Equals("top", StringComparison.OrdinalIgnoreCase) ||
+        token.Equals("bottom", StringComparison.OrdinalIgnoreCase) ||
+        token.Equals("center", StringComparison.OrdinalIgnoreCase) ||
+        token.Equals("centre", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Reads the individual <c>translate</c>, <c>rotate</c> and <c>scale</c> properties and the

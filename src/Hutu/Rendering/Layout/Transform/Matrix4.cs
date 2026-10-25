@@ -172,4 +172,97 @@ internal readonly struct Matrix4
     /// <summary>Gets whether the plane's front or back is turned toward the viewer, read from where
     /// the z axis itself lands: a plane whose third axis points away is one seen from behind.</summary>
     public Double Facing => M33;
+
+    /// <summary>
+    /// Gets whether the matrix cannot be undone - a scale of zero along any axis, or a plane flattened
+    /// onto a line. CSS Transforms 2 §mathematical-description draws nothing through such a matrix,
+    /// because there is no point in the page a point of the box came from.
+    /// </summary>
+    public Boolean IsSingular
+    {
+        get
+        {
+            // The determinant by expansion, with the rows scaled first so the answer does not depend on
+            // how large the numbers are.
+            var values = new Double[16]
+            {
+                M11, M12, M13, M14,
+                M21, M22, M23, M24,
+                M31, M32, M33, M34,
+                M41, M42, M43, M44,
+            };
+
+            var largest = 0.0;
+
+            foreach (var value in values)
+            {
+                largest = Math.Max(largest, Math.Abs(value));
+            }
+
+            if (largest == 0)
+            {
+                return true;
+            }
+
+            for (var row = 0; row < 4; row++)
+            {
+                for (var column = 0; column < 4; column++)
+                {
+                    values[row * 4 + column] /= largest;
+                }
+            }
+
+            return Math.Abs(Determinant(values)) < 1e-12;
+        }
+    }
+
+    /// <summary>The determinant of a row-major 4×4 matrix, by Gaussian elimination.</summary>
+    private static Double Determinant(Double[] matrix)
+    {
+        var values = (Double[])matrix.Clone();
+        var determinant = 1.0;
+
+        for (var column = 0; column < 4; column++)
+        {
+            var pivot = column;
+
+            for (var row = column + 1; row < 4; row++)
+            {
+                if (Math.Abs(values[row * 4 + column]) > Math.Abs(values[pivot * 4 + column]))
+                {
+                    pivot = row;
+                }
+            }
+
+            if (values[pivot * 4 + column] == 0)
+            {
+                return 0;
+            }
+
+            if (pivot != column)
+            {
+                for (var k = 0; k < 4; k++)
+                {
+                    (values[column * 4 + k], values[pivot * 4 + k]) = (values[pivot * 4 + k], values[column * 4 + k]);
+                }
+
+                determinant = -determinant;
+            }
+
+            var diagonal = values[column * 4 + column];
+            determinant *= diagonal;
+
+            for (var row = column + 1; row < 4; row++)
+            {
+                var factor = values[row * 4 + column] / diagonal;
+
+                for (var k = column; k < 4; k++)
+                {
+                    values[row * 4 + k] -= factor * values[column * 4 + k];
+                }
+            }
+        }
+
+        return determinant;
+    }
 }
