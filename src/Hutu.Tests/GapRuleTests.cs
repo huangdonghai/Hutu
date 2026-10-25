@@ -601,6 +601,43 @@ public sealed class GapRuleTests
     }
 
     /// <summary>
+    /// The two ends of a rule are the ends of the axis it runs along, so a right-to-left row insets a row
+    /// rule from the edge its reader starts at - the right - while a column rule, which runs along the
+    /// block axis the direction leaves alone, keeps the end the page named (CSS Gaps 1 §3.3).
+    /// </summary>
+    [Test]
+    public async Task ARightToLeftRowInsetsItsRulesFromTheRight()
+    {
+        using var left = await Render(
+            "<style>#d { display:grid; grid-template-columns:50px 50px; grid-template-rows:40px 40px;" +
+            " gap:10px; width:110px; height:90px; row-rule:4px solid red; row-rule-inset-start:10px }" +
+            "</style><div id='d'><div></div><div></div><div></div><div></div></div>");
+
+        using var view = await Render(
+            "<style>#d { display:grid; direction:rtl; grid-template-columns:50px 50px; grid-template-rows:40px 40px;" +
+            " gap:10px; width:110px; height:90px; row-rule:4px solid red; row-rule-inset-start:10px }" +
+            "</style><div id='d'><div></div><div></div><div></div><div></div></div>");
+
+        var forward = Rules(left);
+        var rules = Rules(view);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(forward, Has.Count.EqualTo(1), "the one gap between the two rows");
+            Assert.That(rules, Has.Count.EqualTo(1), "and the same gap read right to left");
+            Assert.That(
+                forward[0].Bounds.X,
+                Is.EqualTo(10).Within(0.01),
+                "a row starts its rule ten in from the left, where its reader begins");
+            Assert.That(
+                rules[0].Bounds.Right,
+                Is.EqualTo(100).Within(0.01),
+                "and a right-to-left row ten in from the right");
+            Assert.That(rules[0].Bounds.X, Is.EqualTo(0).Within(0.01), "running to the left edge, its end");
+        });
+    }
+
+    /// <summary>
     /// Where an end stands at a crossing, its percentage is a share of the crossing gap; where it stands at
     /// a bound there is no crossing, so the same percentage comes to nothing.
     /// </summary>

@@ -43,6 +43,11 @@ internal static class MulticolRules
         var start = along ? content.Y : content.X;
         var segments = new List<GapRuleSegment>();
 
+        // A column rule runs along the block axis and a row rule along the inline, so each takes its ends
+        // from whichever of the two the container's writing mode turns back (CSS Gaps 1 §3.3).
+        var columnRules = style.Gap.Column.MeasuredFromTheEnd(layout.Flow.BlockSign < 0);
+        var rowRules = style.Gap.Row.MeasuredFromTheEnd(layout.Flow.InlineSign < 0);
+
         foreach (var run in runs)
         {
             var rows = multi.Wraps && multi.Height is { } tall && tall > 0 && rowStep > 0
@@ -72,8 +77,8 @@ internal static class MulticolRules
 
             AddColumnGaps(
                 segments,
-                style.Gap.Column,
-                style.Gap.Row,
+                columnRules,
+                rowRules,
                 along,
                 count,
                 width,
@@ -86,8 +91,8 @@ internal static class MulticolRules
                 filled);
             AddRowGaps(
                 segments,
-                style.Gap.Row,
-                style.Gap.Column,
+                rowRules,
+                columnRules,
                 along,
                 count,
                 width,

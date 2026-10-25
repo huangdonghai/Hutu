@@ -350,8 +350,13 @@ internal sealed class GridFormattingContext
         var (columnBefore, columnAfter) = Sides(plan.ColumnGaps, contentX, plan.TracksWidth);
         var (rowBefore, rowAfter) = Sides(plan.RowGaps, contentY, plan.TracksHeight);
 
-        GridGapBands.Add(target, rules.Column, rules.Row, isRow: false, columns, rowCrossings, columnBefore, columnAfter, rules.Column.Break, items);
-        GridGapBands.Add(target, rules.Row, rules.Column, isRow: true, rows, columnCrossings, rowBefore, rowAfter, rules.Row.Break, items);
+        // A column rule runs along the block axis and a row rule along the inline, so each takes its ends
+        // from whichever of the two the container's writing mode turns back (CSS Gaps 1 §3.3).
+        var columnRules = rules.Column.MeasuredFromTheEnd(box.Flow.BlockSign < 0);
+        var rowRules = rules.Row.MeasuredFromTheEnd(box.Flow.InlineSign < 0);
+
+        GridGapBands.Add(target, columnRules, rowRules, isRow: false, columns, rowCrossings, columnBefore, columnAfter, columnRules.Break, items);
+        GridGapBands.Add(target, rowRules, columnRules, isRow: true, rows, columnCrossings, rowBefore, rowAfter, rowRules.Break, items);
 
         return target.Count > 0 ? target : null;
     }

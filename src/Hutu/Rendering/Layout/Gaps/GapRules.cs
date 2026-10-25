@@ -409,6 +409,26 @@ internal sealed class GapRuleAxis
         new(_width.At(index, count), _style.At(index, count), _color.At(index, count));
 
     /// <summary>
+    /// Gets the axis as a container whose rules run against the coordinate they are measured along reads
+    /// it: the two ends of every decoration change places, so what the page inset from the start is drawn
+    /// at the end that stands nearer the reader - which is what a right-to-left row does to a row rule and
+    /// a right-to-left page does to a column rule (CSS Gaps 1 §3.3).
+    /// </summary>
+    internal GapRuleAxis MeasuredFromTheEnd(Boolean reversed) =>
+        reversed
+            ? new GapRuleAxis(
+                _width,
+                _style,
+                _color,
+                Break,
+                CapEnd,
+                CapStart,
+                JunctionEnd,
+                JunctionStart,
+                Visibility)
+            : this;
+
+    /// <summary>
     /// Reads one axis, from the longhands the page wrote.
     /// </summary>
     /// <remarks>

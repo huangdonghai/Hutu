@@ -149,7 +149,7 @@ internal sealed partial class FlexFormattingContext
             itemContext);
 
         layout.GapDecorations = GapDecorations(
-            style.Gap, flex, plan, contentWidth, contentHeight, contentX, contentY);
+            style.Gap, flex, box.Flow, plan, contentWidth, contentHeight, contentX, contentY);
 
         foreach (var item in plan.Items)
         {
@@ -182,6 +182,7 @@ internal sealed partial class FlexFormattingContext
     private static List<GapRuleSegment>? GapDecorations(
         GapRules rules,
         FlexStyle flex,
+        WritingModeInfo flow,
         FlexPlan plan,
         Double contentWidth,
         Double contentHeight,
@@ -263,17 +264,17 @@ internal sealed partial class FlexFormattingContext
         }
 
         var target = new List<GapRuleSegment>();
-        var lineAxis = isRow ? rules.Row : rules.Column;
+
+        // The room between two boxes runs along the axis the boxes are not stacked on, so a rule's two ends
+        // follow whichever of them the container's writing mode turns back: a column rule down the block
+        // axis, a row rule along the inline (CSS Gaps 1 §3.3).
+        var blockReversed = flow.BlockSign < 0;
+        var inlineReversed = flow.InlineSign < 0;
+        var itemAxis = (isRow ? rules.Column : rules.Row).MeasuredFromTheEnd(isRow ? blockReversed : inlineReversed);
+        var lineAxis = (isRow ? rules.Row : rules.Column).MeasuredFromTheEnd(isRow ? inlineReversed : blockReversed);
         var lineKind = isRow;
 
-        if (isRow)
-        {
-            GapRuleBands.Add(target, rules.Column, isRow: false, itemGaps);
-        }
-        else
-        {
-            GapRuleBands.Add(target, rules.Row, isRow: true, itemGaps);
-        }
+        GapRuleBands.Add(target, itemAxis, isRow: !isRow, itemGaps);
 
         for (var index = 0; index < lineGaps.Count; index++)
         {
