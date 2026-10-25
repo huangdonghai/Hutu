@@ -539,7 +539,7 @@ internal sealed class InlineLayout
                 // A tab asks the same question here as on a line: how far the content has run decides
                 // where the next stop is.
                 var width = TextChunker.IsCollapsible(source, chunk.Start, chunk.Length)
-                    ? WhiteSpaceWidth(item.Style, source, chunk.Start, chunk.Length, maxContent, flow)
+                    ? WhiteSpaceWidth(item.Style, container.Style, source, chunk.Start, chunk.Length, maxContent, flow)
                     : Measure(item.Style, source, chunk.Start, chunk.Length, flow);
                 var space = TextChunker.IsCollapsible(source, chunk.Start, chunk.Length);
                 var collapsible = space && item.Style.CollapsesSpaces;
@@ -591,7 +591,7 @@ internal sealed class InlineLayout
                         }
 
                         unbreakable += space
-                            ? WhiteSpaceWidth(item.Style, source, at, units, maxContent, flow)
+                            ? WhiteSpaceWidth(item.Style, container.Style, source, at, units, maxContent, flow)
                             : Measure(item.Style, source, at, units, flow);
                         before = at + units - 1;
                         at += units;
@@ -620,7 +620,7 @@ internal sealed class InlineLayout
                         // "A   B" is the width of "A " for exactly that reason).
                         minContent = Math.Max(
                             minContent,
-                            unbreakable + WhiteSpaceWidth(item.Style, source, chunk.Start, 1, maxContent, flow));
+                            unbreakable + WhiteSpaceWidth(item.Style, container.Style, source, chunk.Start, 1, maxContent, flow));
 
                         unbreakable = 0;
 
@@ -628,7 +628,7 @@ internal sealed class InlineLayout
                         {
                             minContent = Math.Max(
                                 minContent,
-                                WhiteSpaceWidth(item.Style, source, index, 1, 0, flow));
+                                WhiteSpaceWidth(item.Style, container.Style, source, index, 1, 0, flow));
                         }
                     }
                     else if (item.Style.WrapsLines)
@@ -2183,7 +2183,7 @@ internal sealed class InlineLayout
                     // where the line stands rather than about the font, so it is asked here where that
                     // is known and not of the measurer.
                     var width = piece.IsWhiteSpace
-                        ? WhiteSpaceWidth(item.Style, run.Source, run.Start, run.Length, builder.Width, itemFlow)
+                        ? WhiteSpaceWidth(item.Style, strut, run.Source, run.Start, run.Length, builder.Width, itemFlow)
                         : piece.Width;
 
                     // White space a line begins with is not drawn, but only where the mode collapses it:
@@ -2265,7 +2265,7 @@ internal sealed class InlineLayout
                     // opportunity to end at, which is not the case when a word is standing on it.
                     var trailed = item.Style.WrapsInsideSpaces && !spaces && end < run.Source.Length &&
                         TextChunker.IsBreakSpace(run.Source[end])
-                            ? WhiteSpaceWidth(item.Style, run.Source, end, 1, builder.Width, itemFlow)
+                            ? WhiteSpaceWidth(item.Style, strut, run.Source, end, 1, builder.Width, itemFlow)
                             : 0;
 
                     if (steps && stepsWord && movesWhole && builder.HasContent)
@@ -2284,7 +2284,7 @@ internal sealed class InlineLayout
                         var advance = !steps
                             ? width
                             : spaces
-                                ? WhiteSpaceWidth(item.Style, run.Source, at, taken, builder.Width, itemFlow)
+                                ? WhiteSpaceWidth(item.Style, strut, run.Source, at, taken, builder.Width, itemFlow)
                                 : Measure(item.Style, run.Source, at, taken, itemFlow);
 
                         // Where the break may be taken. The mode's own licence stands after a space it keeps,
@@ -3298,16 +3298,23 @@ internal sealed class InlineLayout
     /// has to be asked of the line rather than of the font.
     /// </summary>
     private Double WhiteSpaceWidth(
-        ComputedStyle style, String source, Int32 start, Int32 length, Double position, WritingModeInfo flow)
+        ComputedStyle style,
+        ComputedStyle tabStyle,
+        String source,
+        Int32 start,
+        Int32 length,
+        Double position,
+        WritingModeInfo flow)
     {
         if (source.IndexOf('\t', start, length) < 0)
         {
             return Measure(style, source, start, length, flow);
         }
 
-        // The character form counts spaces as the element's font gives them, letter and word spacing
-        // included, which is what Chrome's tab stops are built out of.
-        var unit = style.TabLength ?? style.TabUnits * Measure(style, " ", flow);
+        // The stop is the width of a space in the font of the nearest block container, not in the
+        // inline element the tab happens to stand in: an integer tab size is that many spaces of the
+        // block's font, while a length is already absolute (CSS Text 3 §4.2).
+        var unit = style.TabLength ?? style.TabUnits * Measure(tabStyle, " ", flow);
 
         if (unit <= 0)
         {
@@ -3327,7 +3334,7 @@ internal sealed class InlineLayout
 
                 // A tab that would move the line less than half a character is taken to the stop after
                 // the nearest one instead, so a tab does not become a hairline space (CSS Text 3 §4.2).
-                var half = Measure(style, "0", flow) / 2;
+                var half = Measure(tabStyle, "0", flow) / 2;
 
                 if (next - at < half)
                 {

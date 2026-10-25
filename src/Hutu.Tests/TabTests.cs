@@ -9,8 +9,8 @@ namespace Hutu.Tests;
 
 /// <summary>
 /// Covers the room a tab takes in a mode that keeps its white space: the line runs on to the next
-/// multiple of the tab size counted from where the line began, the count form is a number of the
-/// element's own spaces, and a tab the line trails into hangs (CSS Text 3 §4.2).
+/// multiple of the tab size counted from where the line began, the count form is a number of spaces in
+/// the block container's font, and a tab the line trails into hangs (CSS Text 3 §4.2).
 /// </summary>
 /// <remarks>
 /// The fake measurer gives every character five pixels, so the initial <c>tab-size: 8</c> puts a stop
@@ -42,6 +42,22 @@ public sealed class TabTests
         using var view = await Render(Line("pre", "width:200px;tab-size:2", "A\t<span id='b'>B</span>"));
 
         Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(10), "two of the element's five-pixel spaces");
+    }
+
+    [Test]
+    public async Task ACountedStopUsesTheBlocksSpaceNotTheInlineElements()
+    {
+        // The stop is two spaces of the block's font; the span's letter spacing is not part of the
+        // measurement, so the three-space stop is fifteen and the tab from ten reaches it.
+        using var view = await Render(Line(
+            "pre",
+            "width:200px;tab-size:3",
+            "<span style='letter-spacing:5px'>A	<span id='b'>B</span></span>"));
+
+        Assert.That(
+            Find(view, "b").BorderBox.X,
+            Is.EqualTo(15),
+            "three of the block's five-pixel spaces, not three of the eleven-pixel spaced ones");
     }
 
     [Test]
