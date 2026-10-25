@@ -232,6 +232,22 @@ internal readonly struct ChunkRange
     }
 
     /// <summary>
+    /// Gets the code point that ends just before an index, joining a surrogate pair into the one
+    /// character it stands for.
+    /// </summary>
+    public static Int32 CodePointBefore(String text, Int32 index)
+    {
+        var start = index - 1;
+
+        if (start > 0 && Char.IsLowSurrogate(text[start]) && Char.IsHighSurrogate(text[start - 1]))
+        {
+            start--;
+        }
+
+        return CodePointAt(text, start);
+    }
+
+    /// <summary>
     /// Gets how many of the string's characters the code point at an index occupies.
     /// </summary>
     public static Int32 UnitsAt(String text, Int32 index) => IsPair(text, index) ? 2 : 1;

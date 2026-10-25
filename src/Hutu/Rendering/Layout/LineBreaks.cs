@@ -86,6 +86,50 @@ internal static class LineBreaks
 
         var before = own is BreakClass.Cm ? Base(text, left, word) : own;
 
+        return Decide(text, left, right, before, after, word);
+    }
+
+    /// <summary>
+    /// Gets whether a line may end between two code points that stand in different runs - the two
+    /// sides of an inline element's edge, which no single string holds. The rules that need the
+    /// characters around the pair - whether a hyphen opens a word, whether a number runs on - are not
+    /// asked, since the runs do not carry their neighbours; the pair's own rules are.
+    /// </summary>
+    public static Boolean MayBreak(Int32 beforeCodePoint, Int32 afterCodePoint, WordBreaking word = WordBreaking.Normal)
+    {
+        // The document's white space processing is what settled the spaces around this pair; the line
+        // breaker sees the space itself only where a run of it reaches the edge of a box. A space
+        // before the pair is the opportunity itself (LB31 after SP), and a space after it is never a
+        // place to begin a line (LB7).
+        if (beforeCodePoint <= Char.MaxValue && TextChunker.IsCollapsible((Char)beforeCodePoint))
+        {
+            return true;
+        }
+
+        if (afterCodePoint <= Char.MaxValue && TextChunker.IsCollapsible((Char)afterCodePoint))
+        {
+            return false;
+        }
+
+        var after = ClassOf(afterCodePoint, word);
+
+        if (after is BreakClass.Cm or BreakClass.Zwj)
+        {
+            return false;
+        }
+
+        var before = ClassOf(beforeCodePoint, word);
+
+        if (before is BreakClass.Zwj)
+        {
+            return false;
+        }
+
+        return Decide(null, 0, 0, before, after, word);
+    }
+
+    private static Boolean Decide(String? text, Int32 left, Int32 right, BreakClass before, BreakClass after, WordBreaking word)
+    {
         // LB11: a word joiner holds both sides of itself.
         if (before is BreakClass.Wj || after is BreakClass.Wj)
         {
@@ -126,7 +170,7 @@ internal static class LineBreaks
         }
 
         // LB20a: a hyphen that begins a word begins it, and does not break after itself.
-        if (before is BreakClass.Hy or BreakClass.Hh && after is BreakClass.Al && StartsWord(text, left, word))
+        if (text is not null && before is BreakClass.Hy or BreakClass.Hh && after is BreakClass.Al && StartsWord(text, left, word))
         {
             return false;
         }
@@ -137,7 +181,7 @@ internal static class LineBreaks
             return false;
         }
 
-        if (EndsNumber(text, left, before, word))
+        if (text is not null && EndsNumber(text, left, before, word))
         {
             // LB23, LB25: a number is one thing - the digits, the letter stuck to the end of them, the
             // sign that counts them and the bracket that closes them.
@@ -177,7 +221,7 @@ internal static class LineBreaks
         }
 
         // LB25 again, from the other side: a sign before a bracketed number holds to the bracket.
-        if (before is BreakClass.Pr or BreakClass.Po && after is BreakClass.Op && StartsNumber(text, right, word))
+        if (text is not null && before is BreakClass.Pr or BreakClass.Po && after is BreakClass.Op && StartsNumber(text, right, word))
         {
             return false;
         }

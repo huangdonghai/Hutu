@@ -212,10 +212,11 @@ public sealed class InlineBoxTests
     {
         using var view = CreateView();
 
-        // Twenty pixels of run, sixteen of padding, and a line only forty wide: together they do not
-        // fit, so the run has to wait for the next line rather than having its band reach back over
-        // the text in front of it.
-        await view.SetHtml(Document("aaaa<span style='padding-left:16px'>bb</span>", width: 40));
+        // Twenty-five pixels of run and its space, sixteen of padding, and a line only forty wide:
+        // together they do not fit, so the run has to wait for the next line rather than having its
+        // band reach back over the text in front of it. The space is what offers the break: two
+        // letters meeting across the span's edge are one word (measured in Chromium).
+        await view.SetHtml(Document("aaaa <span style='padding-left:16px'>bb</span>", width: 40));
 
         Assert.That(Lines(view).Count(), Is.EqualTo(2));
 

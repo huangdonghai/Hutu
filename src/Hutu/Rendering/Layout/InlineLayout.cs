@@ -2036,7 +2036,9 @@ internal sealed class InlineLayout
                         // two of them - the punctuation keeps the rules it had, as does the character that
                         // opened the piece, whose boundary the chunking already answered.
                         var breaks = at == run.Start
-                            ? spaces ? beforeFirst : !moved
+                            ? spaces
+                                ? beforeFirst
+                                : !moved && builder.CanBreakBefore(run.Source, run.Start, item.Style)
                             : (inside && TextChunker.IsBreakSpace(run.Source[previous])) ||
                                 (stepsWord &&
                                     (!item.Style.BreaksBetweenLetters ||
@@ -4566,8 +4568,44 @@ internal sealed class InlineLayout
             Width += width;
         }
 
-        private static Boolean HasTab(String source, Int32 start, Int32 length) =>
-            source.IndexOf('\t', start, length) >= 0;
+        /// <summary>
+        /// Gets whether a line may end where a new run begins. A run from another box is shaped and
+        /// chunked on its own, so the chunker cannot see the character standing before it: the pair
+        /// is asked here, across the box edge. Two letters from either side of an inline element are
+        /// one word, and splitting them put "PASS" and "FAIL" on two lines where the page wrote one
+        /// word across two elements (contain-paint-table-002).
+        /// </summary>
+        public Boolean CanBreakBefore(String source, Int32 start, ComputedStyle style)
+        {
+            // Where the page licensed a break anywhere - `line-break: anywhere`, `overflow-wrap` in
+            // either value, `break-spaces` - the rules between the two characters are set aside, and
+            // the edge of an inline element is no place to bring them back.
+            if (style.BreaksAnywhere || style.BreaksBetweenLetters || style.WrapsLongWords || style.WrapsInsideSpaces)
+            {
+                return true;
+            }
+
+            if (_fragments.Count == 0)
+            {
+                return true;
+            }
+
+            var last = _fragments[^1];
+
+            if (last.IsReplaced || last.Atomic is not null || last.Ruby is not null || last.Length <= 0)
+            {
+                return true;
+            }
+
+            var end = last.Start + last.Length;
+
+            return LineBreaks.MayBreak(
+                TextChunker.CodePointBefore(last.Source, end),
+                TextChunker.CodePointAt(source, start),
+                style.WordBreakingRules);
+        }
+
+        private static Boolean HasTab(String source, Int32 start, Int32 length) =>            source.IndexOf('\t', start, length) >= 0;
 
         private static String ToSpaces(String source, Int32 start, Int32 length) =>
             source.Substring(start, length).Replace('\t', ' ');
