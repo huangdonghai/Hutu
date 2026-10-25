@@ -817,6 +817,16 @@ internal readonly struct ComputedStyle
     /// <summary>Gets the <c>font-size-adjust</c> factor, or null where the face keeps its size.</summary>
     public Double? FontSizeAdjust => _values.Font.Adjust;
 
+    /// <summary>
+    /// Gets whether every soft hyphen is taken for nothing: under <c>hyphens: none</c> it is neither a
+    /// place a line may end nor a character drawn on it (CSS Text 3 §6.1).
+    /// </summary>
+    public Boolean DropsSoftHyphens => Hyphens.Equals("none", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Gets the text with every soft hyphen taken out where this element asks for none of them.</summary>
+    public String WithoutSoftHyphens(String text) =>
+        DropsSoftHyphens && text.Contains('­') ? text.Replace("­", String.Empty) : text;
+
     /// <summary>Gets whether a property carries no declaration of the value asked for.</summary>
     private static Boolean IsBlank(ICssProperty? property) =>
         property is null || String.IsNullOrWhiteSpace(property.Value);

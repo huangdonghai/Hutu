@@ -396,6 +396,60 @@ public sealed class InlineBoxTests
             "the text after the blank column stands two columns along");
     }
 
+    [Test]
+    public async Task ALineEndsAtASoftHyphenAndDrawsTheMark()
+    {
+        using var view = CreateView();
+
+        // A soft hyphen is a place a line may end and nothing else: in a box too narrow for the whole
+        // word the line ends after it and the mark stands at the break, taking the room the next
+        // character does not (CSS Text 3 §6.1, §6.2). The fake measurer gives every character five
+        // pixels, so "Hy-" is fifteen and the box at sixteen holds it.
+        await view.SetHtml(Document("Hy\u00ADphen.", width: 16));
+
+        Assert.That(Lines(view).Count(), Is.EqualTo(2), "the word is set on two lines");
+        Assert.That(Text(view, "Hy-").BorderBox.Width, Is.EqualTo(15), "the mark stands where the word was cut");
+        Assert.That(Text(view, "phen.").BorderBox.Width, Is.EqualTo(25), "and the rest follows on the next line");
+    }
+
+    [Test]
+    public async Task TheMarkIsTheCharacterThePageNamed()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<span style='hyphenate-character:\"+\"'>Hy\u00ADphen.</span>", width: 16));
+
+        Assert.That(Text(view, "Hy+").BorderBox.Width, Is.EqualTo(15), "the break draws the character the element named");
+    }
+
+    [Test]
+    public async Task ASoftHyphenThatHeadsAnotherBoxStillEndsTheWord()
+    {
+        using var view = CreateView();
+
+        // The word began in the span and the soft hyphen heads the text node after it: LB20a asks
+        // whether the hyphen opens a word, and this one stands inside the one the span began. The mark
+        // is a run of its own here, because it comes from the text node the hyphen was written in.
+        await view.SetHtml(Document("<span>Hy</span>\u00ADphen.", width: 16));
+
+        Assert.That(Lines(view).Count(), Is.EqualTo(2), "the line ends where the hyphen stands");
+        Assert.That(Text(view, "-").BorderBox.X, Is.EqualTo(10), "the mark follows the letters the span set");
+        Assert.That(Text(view, "phen.").BorderBox.Y, Is.EqualTo(20), "and the rest follows on the next line");
+    }
+
+    [Test]
+    public async Task ASoftHyphenTheLineDoesNotEndAtIsInvisible()
+    {
+        using var view = CreateView();
+
+        // Nothing is drawn and nothing is charged where the line runs on across the hyphen: the word
+        // is the word the page would have written without it.
+        await view.SetHtml(Document("Hy\u00ADphen.", width: 60));
+
+        Assert.That(Lines(view).Count(), Is.EqualTo(1), "the whole word fits");
+        Assert.That(Text(view, "Hy\u00ADphen.").BorderBox.Width, Is.EqualTo(40), "and the hyphen takes no room in it");
+    }
+
     /// <summary>
     /// Gets the document the inline box is asserted in: a paragraph with no margin of its own, set in a
     /// font the fake measurer gives a ten-pixel content area whatever the size.

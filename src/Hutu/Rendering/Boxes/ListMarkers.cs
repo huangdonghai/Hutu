@@ -137,7 +137,12 @@ internal static class ListMarkers
     /// <summary>Puts one item's marker where its position asks, spelled out as its list and its content do.</summary>
     private static void SetMarker(Box item, Int32[] chain, CounterStyleTable styles)
     {
+        var marker = item.MarkerStyle ?? item.Style;
         var text = MarkerText(item, chain, styles);
+        if (text is not null)
+        {
+            text = marker.WithoutSoftHyphens(text);
+        }
 
         if (text is not null && item.MarkerPosition == MarkerPosition.Inside)
         {

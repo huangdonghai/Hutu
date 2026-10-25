@@ -49,8 +49,11 @@ internal readonly struct ChunkRange
     /// chunk is what a line may not be ended inside, so a property that moves those boundaries has to be
     /// answered here and not only where a line is measured (CSS Text 3 §5.6).
     /// </param>
-    public static ChunkRanges Ranges(String text, LineBreaks.WordBreaking word = LineBreaks.WordBreaking.Normal)
-        => new(text, word);
+    public static ChunkRanges Ranges(
+        String text,
+        LineBreaks.WordBreaking word = LineBreaks.WordBreaking.Normal,
+        Boolean continuesWord = false)
+        => new(text, word, continuesWord);
 
     public static IEnumerable<String> Chunks(String text)
     {
@@ -402,13 +405,16 @@ internal readonly struct ChunkRanges
 
         private readonly LineBreaks.WordBreaking _word;
 
-        public ChunkRanges(String text, LineBreaks.WordBreaking word)
+        public ChunkRanges(String text, LineBreaks.WordBreaking word, Boolean continuesWord = false)
         {
             _text = text;
             _word = word;
+            _continuesWord = continuesWord;
         }
 
-        public Enumerator GetEnumerator() => new(_text, _word);
+        private readonly Boolean _continuesWord;
+
+        public Enumerator GetEnumerator() => new(_text, _word, _continuesWord);
 
         /// <summary>The walk itself: the same rule <see cref="Chunks"/> applies, over indices.</summary>
 internal struct Enumerator
@@ -419,13 +425,16 @@ internal struct Enumerator
 
             private Int32 _index;
 
-            public Enumerator(String text, LineBreaks.WordBreaking word)
+            public Enumerator(String text, LineBreaks.WordBreaking word, Boolean continuesWord)
             {
                 _text = text;
                 _word = word;
+                _continuesWord = continuesWord;
                 _index = 0;
                 Current = default;
             }
+
+            private readonly Boolean _continuesWord;
 
             public ChunkRange Current { get; private set; }
 
@@ -467,7 +476,7 @@ internal struct Enumerator
 
                     if (next >= text.Length ||
                         IsCollapsible(text[next]) ||
-                        (next > start && LineBreaks.MayBreak(text, index, next, _word)))
+                        (next > start && LineBreaks.MayBreak(text, index, next, _word, continuesWord: index == 0 && _continuesWord)))
                     {
                         _index = next;
                         Current = new ChunkRange(start, next - start);

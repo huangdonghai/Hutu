@@ -1839,9 +1839,9 @@ internal sealed class InlineLayout
         var leading = indent > 0 ? Math.Max(0, indent - room.Inset) : indent;
         var builder = new LineBuilder(strut, leading, flow.IsVertical);
 
-        void Close(LineBuilder filled, Boolean forced = false)
+        void Close(LineBuilder filled, Boolean forced = false, Boolean hyphen = false)
         {
-            var line = filled.Build(_measurer, room.Room, carried, forced);
+            var line = filled.Build(_measurer, room.Room, carried, forced, hyphen);
 
             line.Left = room.Inset;
             line.Extent = room.Room;
@@ -2001,7 +2001,12 @@ internal sealed class InlineLayout
             // that band is what a shape beside the line is read across.
             room.Grow(LineBoxHeight(item.Style, font));
 
-            foreach (var chunk in TextChunker.Ranges(item.Text!, item.Style.WordBreakingRules))
+            // A text node that follows letters is inside the word they began: its own first hyphen does
+            // not open one, and the chunker is told so (UAX14 LB20a).
+            var continuesWord = builder.LastCodePoint is { } prior &&
+                LineBreaks.ContinuesWord(prior, item.Style.WordBreakingRules);
+
+            foreach (var chunk in TextChunker.Ranges(item.Text!, item.Style.WordBreakingRules, continuesWord))
             {
                 foreach (var run in new OrientedPieces(item.Text!, chunk.Start, chunk.Length, itemFlow))
                 {
@@ -2061,6 +2066,14 @@ internal sealed class InlineLayout
                     var end = run.Start + run.Length;
                     var at = run.Start;
                     var previous = -1;
+
+                    // A chunk the page may end a line after carries the mark it would draw: the hyphenate
+                    // character is part of how much room the chunk needs, since a line that takes it and
+                    // then breaks after it is one character longer than the chunk alone (CSS Text 3
+                    // §6.2). Without this, "im-ple-" was set in a line five and a half characters wide.
+                    var mark = run.Source[end - 1] == '­' && item.Style.WrapsLines
+                        ? HyphenWidth(_measurer, item.Style, itemFlow)
+                        : 0;
 
                     // A word broken only because nothing else would serve is begun on a line of its own
                     // first: the room the line had left is not filled with the end of it, which is what
@@ -2127,15 +2140,20 @@ internal sealed class InlineLayout
                         // gives the break as an opportunity of its own, the line is filled to its end edge.
                         var asks = at == run.Start && !spaces && !letters &&
                             !TextChunker.IsBreakSpace(run.Source[run.Start])
-                            ? width + trailed
+                            ? width + trailed + mark
                             : advance;
 
-                        if (breaks && room.Room > 0 &&
+                        // A soft hyphen is the one opportunity a line takes even when it has no room at
+                        // all: the word has nowhere else to go, and the mark is drawn where the page put
+                        // the hyphen (CSS Text 3 §6.1). Chrome measured on a zero-width box does the same.
+                        var hyphen = builder.EndsInSoftHyphen && item.Style.WrapsLines;
+
+                        if (breaks && (room.Room > 0 || hyphen) &&
                             builder.ExtentFor(item.Inline) + asks > room.Room && item.Style.WrapsLines)
                         {
                             if (builder.HasContent)
                             {
-                                Close(builder);
+                                Close(builder, hyphen: hyphen);
                                 builder = new LineBuilder(strut, carried, flow.IsVertical);
                                 moved = false;
                             }
@@ -2754,6 +2772,14 @@ internal sealed class InlineLayout
     /// the measurer's sake is characters copied that the run would only copy again when it merged with
     /// the piece after it.
     /// </remarks>
+    /// <summary>
+    /// Gets the room the mark a break draws takes: the hyphenate character, set in the run's own font.
+    /// </summary>
+    private static Double HyphenWidth(ITextMeasurer measurer, ComputedStyle style, WritingModeInfo flow) =>
+        String.IsNullOrEmpty(style.HyphenateCharacter)
+            ? 0
+            : MeasureChunk(measurer, style, style.HyphenateCharacter, 0, style.HyphenateCharacter.Length, flow);
+
     private static Double MeasureChunk(
         ITextMeasurer measurer,
         ComputedStyle style,
@@ -4488,6 +4514,32 @@ internal sealed class InlineLayout
         public Boolean HasFragments => _fragments.Count > 0;
 
         /// <summary>
+        /// Gets whether the last character the line carries is a soft hyphen, which is where the page let
+        /// the line end: the mark is drawn there, and only there (CSS Text 3 §6.1).
+        /// </summary>
+        public Boolean EndsInSoftHyphen =>
+            _fragments.Count > 0 &&
+            _fragments[^1] is { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null } last &&
+            last.Source[last.Start + last.Length - 1] == '­';
+
+        /// <summary>
+        /// Gets the code point the line's text ends on, or null where it ends on a box rather than a run.
+        /// </summary>
+        public Int32? LastCodePoint
+        {
+            get
+            {
+                if (_fragments.Count == 0 ||
+                    _fragments[^1] is not { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null } last)
+                {
+                    return null;
+                }
+
+                return TextChunker.CodePointBefore(last.Source, last.Start + last.Length);
+            }
+        }
+
+        /// <summary>
         /// Gets the extent the line would already take if the next run sat in the given chain. The
         /// wrap test asks this rather than reading <see cref="Width"/>, so that the padding and border
         /// a run brings with it are counted before the run itself is measured against what is left.
@@ -4740,7 +4792,12 @@ internal sealed class InlineLayout
         /// Closes the line and hands it back, with the extent it takes along the inline axis and the
         /// report of which elements it ends inside.
         /// </summary>
-        public Line Build(ITextMeasurer measurer, Double maxInline, HashSet<InlineAncestor>? carried, Boolean forced)
+        public Line Build(
+            ITextMeasurer measurer,
+            Double maxInline,
+            HashSet<InlineAncestor>? carried,
+            Boolean forced,
+            Boolean hyphen)
         {
             TrimTrailingSpaces(measurer);
 
@@ -4992,6 +5049,29 @@ internal sealed class InlineLayout
                     fragment.BaselineShift = running;
                     reach = Math.Max(reach, above[position] - running);
                     depth = Math.Max(depth, below[position] + running);
+                }
+            }
+
+            // A line the page's own soft hyphen ended draws the mark where the character stood: the
+            // hyphenate character takes its place and its room, and the run keeps reading as the word
+            // the page spelled (CSS Text 3 §6.2). A line that ends anywhere else keeps the hyphen as the
+            // invisible character it is, taking nothing and drawing nothing.
+            if (hyphen)
+            {
+                var last = _fragments.Count > 0 ? _fragments[^1] : null;
+
+                if (last is { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null } &&
+                    last.Source[last.Start + last.Length - 1] == '­' &&
+                    !String.IsNullOrEmpty(last.Style.HyphenateCharacter))
+                {
+                    var mark = last.Style.HyphenateCharacter;
+                    var replaced = last.Source[last.Start + last.Length - 1].ToString();
+                    var gained = MeasureChunk(measurer, last.Style, mark, 0, mark.Length, last.Flow) -
+                        MeasureChunk(measurer, last.Style, replaced, 0, 1, last.Flow);
+
+                    last.MergeInto(last.Text[..^1] + mark);
+                    last.Width += gained;
+                    used += gained;
                 }
             }
 

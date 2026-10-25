@@ -64,7 +64,18 @@ internal static class LineBreaks
     /// What the page asked of the breaks inside its words, which decides how the letters themselves are
     /// classed (CSS Text 3 §5.6).
     /// </param>
-    public static Boolean MayBreak(String text, Int32 left, Int32 right, WordBreaking word = WordBreaking.Normal)
+    /// <param name="continuesWord">
+    /// Whether the piece begins inside a word the characters before it have already begun - a text
+    /// node whose first character stands after an inline element's letter. LB20a asks whether a hyphen
+    /// opens a word, and a piece beginning with a soft hyphen after a letter is inside one, not at its
+    /// head, however the piece alone reads.
+    /// </param>
+    public static Boolean MayBreak(
+        String text,
+        Int32 left,
+        Int32 right,
+        WordBreaking word = WordBreaking.Normal,
+        Boolean continuesWord = false)
     {
         var after = ClassOf(TextChunker.CodePointAt(text, right), word);
 
@@ -86,7 +97,30 @@ internal static class LineBreaks
 
         var before = own is BreakClass.Cm ? Base(text, left, word) : own;
 
-        return Decide(text, left, right, before, after, word);
+        // A hyphen at the head of this piece need not be at the head of the word: the piece may stand
+        // where the letters before it left off, and then LB20a has nothing to hold.
+        var startsWord = left == 0 && continuesWord ? false : (Boolean?)null;
+
+        return Decide(text, left, right, before, after, word, startsWord);
+    }
+
+    /// <summary>
+    /// Gets whether text beginning after the given code point begins inside a word - the question LB20a
+    /// asks of a hyphen that heads the text, when the character before the text is in another piece.
+    /// </summary>
+    public static Boolean ContinuesWord(Int32 codePoint, WordBreaking word = WordBreaking.Normal)
+    {
+        if (codePoint < 0)
+        {
+            return false;
+        }
+
+        if (codePoint <= Char.MaxValue && TextChunker.IsCollapsible((Char)codePoint))
+        {
+            return false;
+        }
+
+        return ClassOf(codePoint, word) is not (BreakClass.Op or BreakClass.Gl);
     }
 
     /// <summary>
@@ -128,7 +162,14 @@ internal static class LineBreaks
         return Decide(null, 0, 0, before, after, word);
     }
 
-    private static Boolean Decide(String? text, Int32 left, Int32 right, BreakClass before, BreakClass after, WordBreaking word)
+    private static Boolean Decide(
+        String? text,
+        Int32 left,
+        Int32 right,
+        BreakClass before,
+        BreakClass after,
+        WordBreaking word,
+        Boolean? startsWord = null)
     {
         // LB11: a word joiner holds both sides of itself.
         if (before is BreakClass.Wj || after is BreakClass.Wj)
@@ -170,7 +211,8 @@ internal static class LineBreaks
         }
 
         // LB20a: a hyphen that begins a word begins it, and does not break after itself.
-        if (text is not null && before is BreakClass.Hy or BreakClass.Hh && after is BreakClass.Al && StartsWord(text, left, word))
+        if (text is not null && before is BreakClass.Hy or BreakClass.Hh && after is BreakClass.Al &&
+            (startsWord ?? StartsWord(text, left, word)))
         {
             return false;
         }

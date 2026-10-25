@@ -176,9 +176,23 @@ internal sealed class PseudoRuleIndex
         }
 
         // What is left when the pseudo-elements are taken off selects the originating element. An arm
-        // written `::before` alone is written for every element, which is what `*` says.
-        var rest = text[Math.Min(colon, start)..colon].Trim();
-        ArmsOf(arm).Add(rest.Length == 0 ? "*" : rest, order, origin);
+        // written `::before` alone is written for every element, which is what `*` says - and so is one
+        // that leaves the subject unwritten behind a combinator: `ol ::marker` is written for the marker
+        // of any descendant of the list, which is `ol *::marker`, and reading it as the list itself
+        // picked no marker at all.
+        var subject = text[Math.Min(colon, start)..colon];
+        var rest = subject.Trim();
+
+        if (rest.Length == 0)
+        {
+            rest = "*";
+        }
+        else if (Char.IsWhiteSpace(subject[^1]) || rest[^1] is '>' or '+' or '~')
+        {
+            rest += " *";
+        }
+
+        ArmsOf(arm).Add(rest, order, origin);
     }
 
     /// <summary>Gets the arms of one pseudo-element out of the three the index keeps.</summary>
@@ -774,7 +788,13 @@ internal static class GeneratedContent
     }
 
     private static Box Run(String text, IElement element, ComputedStyle style, WritingModeInfo flow) =>
-        new Box(BoxKind.Text, style) { Element = element, Text = text, Flow = flow, IsGenerated = true };
+        new Box(BoxKind.Text, style)
+        {
+            Element = element,
+            Text = style.WithoutSoftHyphens(text),
+            Flow = flow,
+            IsGenerated = true,
+        };
 
     /// <summary>
     /// Gets the box a <c>content: url(...)</c> draws: an inline replaced element sized by the picture
