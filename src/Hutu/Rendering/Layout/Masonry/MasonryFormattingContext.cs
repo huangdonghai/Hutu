@@ -107,7 +107,7 @@ internal sealed class MasonryFormattingContext
 
         if (gapRules.IsStated)
         {
-            layout.GapDecorations = LaneDecorations(plan, gapRules);
+            layout.GapDecorations = LaneDecorations(plan, gapRules, plan.RowLanes);
         }
 
         return layout;
@@ -128,7 +128,10 @@ internal sealed class MasonryFormattingContext
         }
     }
 
-    /// <summary>One placed lane item, in the container's content coordinates.</summary>
+    /// <summary>
+    /// One placed lane item, in the container's content coordinates: where it stands, how big it is, and
+    /// the lanes and columns its declared area covers.
+    /// </summary>
     private sealed record PlacedItem(
         Box Box,
         Double X,
@@ -150,13 +153,16 @@ internal sealed class MasonryFormattingContext
 
         /// <summary>The lane axis's tracks: the top and the height of each lane, in lane order.</summary>
         public List<(Double Top, Double Height)> Lanes = new();
+
+        /// <summary>Whether the lanes run in rows (and the cross axis down the columns).</summary>
+        public Boolean RowLanes;
     }
 
     /// <summary>
-    /// Packs every in-flow item down its column. The cross (column) axis is settled by the grid - the
-    /// track count, the widths, and which column each item belongs to are whatever an ordinary grid
-    /// would come to - and only the lane axis differs: each item drops just below the deepest floor among
-    /// the columns it spans, so a column that has held nothing takes no gap above it.
+    /// Packs every in-flow item. The cross (column) axis is settled by the grid - the track count, the
+    /// widths, and which column each item belongs to are whatever an ordinary grid would come to - and
+    /// only the lane axis differs: a column-lane grid packs each item down the column the grid gave it,
+    /// and a row-lane grid stands each item in the lane its declared row names.
     /// </summary>
     private LanePlan Compute(Box box, Double contentWidth, Boolean definiteWidth, LayoutContext context)
     {
@@ -175,12 +181,14 @@ internal sealed class MasonryFormattingContext
         var gapX = cross.GapX;
         var gapY = cross.GapY;
 
-        // The direction the lanes run in: the declared value, or the column packing everything has
-        // assumed. A row-lane grid's lanes are its declared rows - real tracks the items sit in -
-        // while a column-lane grid packs each item down the column the grid gave it.
+        // The direction the lanes run in: the declared value, or - where the page declared lane tracks of
+        // its own - the axis those tracks sit on. A row-lane grid's lanes are its declared rows - real
+        // tracks the items sit in - while a column-lane grid packs each item down the column the grid
+        // gave it.
         var declared = box.Style.LanesDirection;
-        var rowLanes = String.Equals(declared, "row", StringComparison.OrdinalIgnoreCase);
-        System.IO.File.AppendAllText("D:/_git0/Hutu/.tmp/direction.log", $"direction={declared} rowLanes={rowLanes}\n");
+        var rowLanes = plan.RowLanes = declared is { } direction
+            ? String.Equals(direction, "row", StringComparison.OrdinalIgnoreCase)
+            : LaneTracksDefinite(grid, gapY);
 
         // The x of each column's start, and a running floor for how far down it has been filled.
         var laneX = new Double[trackCount];
@@ -197,7 +205,7 @@ internal sealed class MasonryFormattingContext
 
         if (rowLanes)
         {
-            PackRows(plan, cross, grid, contentWidth, gapY, definiteWidth, itemContext);
+            PackRows(plan, cross, grid, gapY, itemContext);
             return plan;
         }
 
@@ -254,6 +262,27 @@ internal sealed class MasonryFormattingContext
         return plan;
     }
 
+    /// <summary>Gets whether every lane track the container declares is a definite size.</summary>
+    private static Boolean LaneTracksDefinite(GridStyle grid, Double gapY)
+    {
+        var count = grid.Rows.ExplicitCount(0, gapY);
+
+        if (count == 0)
+        {
+            return false;
+        }
+
+        foreach (var size in grid.Rows.Resolve(0, gapY, count))
+        {
+            if (size.Max.Kind != GridBreadthKind.Length)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>Orders two cross-placed items by their grid row, then by the column they land in.</summary>
     private static Int32 CompareByRow(GridFormattingContext.CrossPlacedItem a, GridFormattingContext.CrossPlacedItem b)
     {
@@ -271,7 +300,7 @@ internal sealed class MasonryFormattingContext
     /// the top of the lane its declared row names, spanning the lanes its span covers. The container's
     /// height is the lanes' own extent (CSS Grid Lanes §5).
     /// </summary>
-    private void PackRows(LanePlan plan, GridFormattingContext.CrossAxisLayout cross, GridStyle grid, Double contentWidth, Double gapY, Boolean definiteWidth, LayoutContext itemContext)
+    private void PackRows(LanePlan plan, GridFormattingContext.CrossAxisLayout cross, GridStyle grid, Double gapY, LayoutContext itemContext)
     {
         var columnWidths = cross.ColumnWidths;
         var trackCount = columnWidths.Count;
@@ -294,9 +323,7 @@ internal sealed class MasonryFormattingContext
             laneCount = Math.Max(laneCount, item.Row + item.RowSpan);
         }
 
-        var laneSizes = grid.Rows.Resolve(0, gapY, laneCount);
-
-        var resolved = new List<GridTrackSize>(laneSizes);
+        var resolved = new List<GridTrackSize>(grid.Rows.Resolve(0, gapY, laneCount));
 
         while (resolved.Count < laneCount)
         {
@@ -377,20 +404,25 @@ internal sealed class MasonryFormattingContext
 
         plan.TotalHeight = Math.Max(0, top - gapY);
 
-        plan.TotalWidth = definiteWidth
-            ? contentWidth
-            : laneX[trackCount - 1] + columnWidths[trackCount - 1];
+        plan.TotalWidth = cross.GapX * 0 + laneX[trackCount - 1] + columnWidths[trackCount - 1];
+
+        if (plan.Cross.ColumnWidths.Count > 0)
+        {
+            plan.TotalWidth = laneX[trackCount - 1] + columnWidths[trackCount - 1];
+        }
     }
 
     /// <summary>
     /// Appends the decorations of the grid-lanes gaps. The lane axis's rules stand centred in each gap
     /// between two consecutive lane tracks - every gap for <c>all</c> and <c>normal</c>, and, for
     /// <c>between</c> and <c>around</c>, only where the items whose areas cover the lanes on each side
-    /// satisfy the visibility (CSS Gaps 1 §3.4, the lanes being the masonry case of the tracks). The
-    /// cross axis's rules stand in the gaps between consecutive items across a lane, running the height
-    /// of the lane they flank.
+    /// satisfy the visibility, a gap a spanning item crosses being interior to it (CSS Gaps 1 §3.4). The
+    /// cross axis's rules stand in the gaps between consecutive items across a lane: a column-lane grid
+    /// cuts them by the union of the lanes' own item gaps merged into bands, the ends drawn in by the
+    /// caps the rule states, the percentages resolving against the band they inset into (CSS Gaps 1
+    /// §3.3); a row-lane grid runs each across a lane whose flanking items satisfy the visibility.
     /// </summary>
-    private static List<GapRuleSegment>? LaneDecorations(LanePlan plan, GapRules rules)
+    private static List<GapRuleSegment>? LaneDecorations(LanePlan plan, GapRules rules, Boolean rowLanes)
     {
         var rowAxis = rules.Row;
         var columnAxis = rules.Column;
@@ -402,107 +434,197 @@ internal sealed class MasonryFormattingContext
 
         var segments = new List<GapRuleSegment>();
 
-        for (var lane = 0; lane + 1 < plan.Lanes.Count; lane++)
+        if (rowLanes)
         {
-            var top = plan.Lanes[lane].Top + plan.Lanes[lane].Height;
-            var bottom = plan.Lanes[lane + 1].Top;
-
-            if (bottom - top <= 0.01)
+            for (var lane = 0; lane + 1 < plan.Lanes.Count; lane++)
             {
-                continue;
-            }
+                var top = plan.Lanes[lane].Top + plan.Lanes[lane].Height;
+                var bottom = plan.Lanes[lane + 1].Top;
 
-            var rule = rowAxis.At(lane, plan.Lanes.Count - 1);
-
-            if (!rule.Appears)
-            {
-                continue;
-            }
-
-            // The visibility is asked of the items whose areas cover the lane and column on each side,
-            // per column: an item that spans both lanes crosses the gap, which is then interior to that
-            // item and draws nothing at all (CSS Gaps 1 §3.4). The columns whose sides answer are merged
-            // into bands, the gaps between them run through under a none break.
-            var drawnFrom = -1.0;
-            var drawnTo = -1.0;
-            var columnX = 0.0;
-
-            for (var column = 0; column < plan.Cross.ColumnWidths.Count; column++)
-            {
-                var holds = ItemCovering(plan, lane, column) is not null;
-                var holdsNext = ItemCovering(plan, lane + 1, column) is not null;
-                var crossed = ItemCovering(plan, lane, column) is { } upper
-                    && ItemCovering(plan, lane + 1, column) is { } lower
-                    && ReferenceEquals(upper, lower);
-
-                var draw = rowAxis.Visibility switch
+                if (bottom - top <= 0.01)
                 {
-                    GapRuleVisibility.Between => holds && holdsNext && !crossed,
-                    GapRuleVisibility.Around => (holds || holdsNext) && !crossed,
-                    _ => true,
-                };
+                    continue;
+                }
 
-                if (draw)
+                var rule = rowAxis.At(lane, plan.Lanes.Count - 1);
+
+                if (!rule.Appears)
                 {
-                    if (drawnFrom < 0)
+                    continue;
+                }
+
+                // The visibility is asked of the items whose areas cover the lane and column on each side,
+                // per column: an item that spans both lanes crosses the gap, which is then interior to that
+                // item and draws nothing at all (CSS Gaps 1 §3.4). The columns whose sides answer are merged
+                // into bands, the gaps between them run through under a none break.
+                var drawnFrom = -1.0;
+                var drawnTo = -1.0;
+                var columnX = 0.0;
+
+                for (var column = 0; column < plan.Cross.ColumnWidths.Count; column++)
+                {
+                    var holds = ItemCovering(plan, lane, column) is not null;
+                    var holdsNext = ItemCovering(plan, lane + 1, column) is not null;
+                    var crossed = ItemCovering(plan, lane, column) is { } upper
+                        && ItemCovering(plan, lane + 1, column) is { } lower
+                        && ReferenceEquals(upper, lower);
+
+                    var draw = rowAxis.Visibility switch
                     {
-                        drawnFrom = columnX;
+                        GapRuleVisibility.Between => holds && holdsNext && !crossed,
+                        GapRuleVisibility.Around => (holds || holdsNext) && !crossed,
+                        _ => true,
+                    };
+
+                    if (draw)
+                    {
+                        if (drawnFrom < 0)
+                        {
+                            drawnFrom = columnX;
+                        }
+
+                        drawnTo = columnX + plan.Cross.ColumnWidths[column];
+                    }
+                    else if (drawnFrom >= 0)
+                    {
+                        segments.Add(new GapRuleSegment(
+                            GapRuleBands.Band(rule, false, (top + bottom) / 2, drawnFrom, drawnTo),
+                            rule,
+                            isRow: true));
+                        drawnFrom = -1;
                     }
 
-                    drawnTo = columnX + plan.Cross.ColumnWidths[column];
+                    columnX += plan.Cross.ColumnWidths[column] + plan.Cross.GapX;
                 }
-                else if (drawnFrom >= 0)
+
+                if (drawnFrom >= 0)
                 {
                     segments.Add(new GapRuleSegment(
                         GapRuleBands.Band(rule, false, (top + bottom) / 2, drawnFrom, drawnTo),
                         rule,
                         isRow: true));
-                    drawnFrom = -1;
+                }
+            }
+
+            // The cross axis's rules: per lane, in the gaps between the consecutive items across it, each
+            // running the height of the lane it flanks.
+            for (var lane = 0; lane < plan.Lanes.Count; lane++)
+            {
+                var across = ItemsAcross(plan, lane);
+
+                for (var k = 0; k + 1 < across.Count; k++)
+                {
+                    var from = across[k].X + across[k].Width;
+                    var to = across[k + 1].X;
+                    var rule = columnAxis.At(k, across.Count - 1);
+
+                    if (!rule.Appears || to - from <= 0.01)
+                    {
+                        continue;
+                    }
+
+                    segments.Add(new GapRuleSegment(
+                        GapRuleBands.Band(rule, true, (from + to) / 2, plan.Lanes[lane].Top, plan.Lanes[lane].Top + plan.Lanes[lane].Height),
+                        rule,
+                        isRow: false));
+                }
+            }
+
+            return segments.Count > 0 ? segments : null;
+        }
+
+        // A column-lane grid: the lanes run down the page, so the column rules stand in the cross gaps
+        // between the lanes, cut by the union of the lanes' own item gaps merged into bands, the ends
+        // drawn in by the caps the rule states.
+        if (columnAxis.IsStated)
+        {
+            var laneGaps = new List<(Double From, Double To)>();
+
+            for (var lane = 0; lane < plan.Cross.ColumnWidths.Count; lane++)
+            {
+                var across = ItemsAcross(plan, lane);
+
+                for (var k = 0; k + 1 < across.Count; k++)
+                {
+                    var gapFrom = across[k].Y + across[k].Height;
+                    var gapTo = across[k + 1].Y;
+
+                    if (gapTo - gapFrom > 0.01)
+                    {
+                        laneGaps.Add((gapFrom, gapTo));
+                    }
+                }
+            }
+
+            laneGaps.Sort((a, b) => a.From.CompareTo(b.From));
+
+            var merged = new List<(Double From, Double To)>();
+
+            foreach (var gap in laneGaps)
+            {
+                if (merged.Count > 0 && gap.From <= merged[^1].To + 0.01)
+                {
+                    merged[^1] = (merged[^1].From, Math.Max(merged[^1].To, gap.To));
+                }
+                else
+                {
+                    merged.Add(gap);
+                }
+            }
+
+            var columnX = 0.0;
+            var band = -1.0;
+
+            for (var column = 0; column + 1 < plan.Cross.ColumnWidths.Count; column++)
+            {
+                var gapMid = columnX + plan.Cross.ColumnWidths[column] + plan.Cross.GapX / 2;
+                var rule = columnAxis.At(column, plan.Cross.ColumnWidths.Count - 1);
+
+                if (rule.Appears)
+                {
+                    foreach (var (cutFrom, cutTo) in merged)
+                    {
+                        var before = cutFrom - band;
+                        var crossing = cutTo - cutFrom;
+
+                        if (before > 0.01)
+                        {
+                            var start = band;
+                            var end = cutFrom - columnAxis.CapEnd.Resolve(crossing, 0);
+
+                            if (end > start)
+                            {
+                                segments.Add(new GapRuleSegment(
+                                    GapRuleBands.Band(rule, true, gapMid, start, end),
+                                    rule,
+                                    isRow: false));
+                            }
+                        }
+
+                        band = cutTo;
+                    }
+
+                    var tail = plan.TotalHeight - band;
+                    var tailCrossing = merged[^1].To - merged[^1].From;
+
+                    if (tail > 0.01)
+                    {
+                        var start = band + columnAxis.CapStart.Resolve(tailCrossing, 0);
+                        var end = plan.TotalHeight;
+
+                        if (end > start)
+                        {
+                            segments.Add(new GapRuleSegment(
+                                GapRuleBands.Band(rule, true, gapMid, start, end),
+                                rule,
+                                isRow: false));
+                        }
+                    }
+
+                    band = -1;
                 }
 
                 columnX += plan.Cross.ColumnWidths[column] + plan.Cross.GapX;
-            }
-
-            if (drawnFrom >= 0)
-            {
-                segments.Add(new GapRuleSegment(
-                    GapRuleBands.Band(rule, false, (top + bottom) / 2, drawnFrom, drawnTo),
-                    rule,
-                    isRow: true));
-            }
-        }
-
-        for (var lane = 0; lane < plan.Lanes.Count; lane++)
-        {
-            var across = ItemsAcross(plan, lane);
-
-            for (var k = 0; k + 1 < across.Count; k++)
-            {
-                var from = across[k].X + across[k].Width;
-                var to = across[k + 1].X;
-                var rule = columnAxis.At(k, across.Count - 1);
-
-                if (!rule.Appears || to - from <= 0.01)
-                {
-                    continue;
-                }
-
-                var drawn = columnAxis.Visibility switch
-                {
-                    GapRuleVisibility.Between => true,
-                    GapRuleVisibility.Around => true,
-                    _ => true,
-                };
-
-                if (!drawn)
-                {
-                    continue;
-                }
-
-                segments.Add(new GapRuleSegment(
-                    GapRuleBands.Band(rule, true, (from + to) / 2, plan.Lanes[lane].Top, plan.Lanes[lane].Top + plan.Lanes[lane].Height),
-                    rule,
-                    isRow: false));
             }
         }
 
@@ -527,6 +649,14 @@ internal sealed class MasonryFormattingContext
         return across;
     }
 
+    private static (Double Horizontal, Double Vertical) Insets(Box box, Double basis)
+    {
+        var padding = box.Style.Padding.Resolve(basis);
+        var border = BlockLayout.BorderOf(box);
+
+        return (padding.Horizontal + border.Horizontal, padding.Vertical + border.Vertical);
+    }
+
     /// <summary>Gets the item whose area covers the lane and column, or null.</summary>
     private static PlacedItem? ItemCovering(LanePlan plan, Int32 lane, Int32 column)
     {
@@ -540,13 +670,5 @@ internal sealed class MasonryFormattingContext
         }
 
         return null;
-    }
-
-    private static (Double Horizontal, Double Vertical) Insets(Box box, Double basis)
-    {
-        var padding = box.Style.Padding.Resolve(basis);
-        var border = BlockLayout.BorderOf(box);
-
-        return (padding.Horizontal + border.Horizontal, padding.Vertical + border.Vertical);
     }
 }
