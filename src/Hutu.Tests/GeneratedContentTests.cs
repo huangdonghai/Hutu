@@ -428,6 +428,18 @@ public sealed class GeneratedContentTests
         Assert.That(String.Concat(Painted(view)), Is.EqualTo("A1Z"));
     }
 
+    [Test]
+    public async Task TheListItemCounterIsSpelledInGeneratedContent()
+    {
+        // CSS Lists 3 §4.4: the list-item counter is the number each item lands on, and a style-contained
+        // subtree counts its own items from one while the outer list keeps running.
+        using var view = await Build(
+            "li::before, li::after { content: counter(list-item) }",
+            "<ol start=10><li>A</li><li>B</li><div style='contain:style'><li>C</li></div><li>D</li></ol>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("10. 10A1011. 11B111. 1C112. 12D12"));
+    }
+
     private static async Task<HutuViewInternal> Build(String style, String body)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

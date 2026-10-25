@@ -1150,7 +1150,13 @@ internal static class GeneratedContent
 
                 if (!multiple)
                 {
-                    items.Add(new Item(Spelled(chain.ValueOf(counter), spelling, styles), null));
+                    // The list-item counter's number is settled once every list has counted, which is
+                    // after this box is made - ListItemCounter fills it in then.
+                    items.Add(new Item(
+                        counter.Equals("list-item", StringComparison.OrdinalIgnoreCase)
+                            ? ListItemCounter.ForCounter(spelling)
+                            : Spelled(chain.ValueOf(counter), spelling, styles),
+                        null));
 
                     i = close + 1;
                     continue;
@@ -1166,6 +1172,14 @@ internal static class GeneratedContent
                 var between = new StringBuilder();
                 var at = 0;
                 ReadRun(mark, ref at, between);
+
+                if (counter.Equals("list-item", StringComparison.OrdinalIgnoreCase))
+                {
+                    items.Add(new Item(ListItemCounter.ForCounters(between.ToString(), spelling), null));
+
+                    i = close + 1;
+                    continue;
+                }
 
                 var joined = new StringBuilder();
 
@@ -1349,7 +1363,7 @@ internal static class GeneratedContent
     /// CSS Lists 3 §5.2 gives a counter style that does not reach the value the fallback rather than
     /// nothing, and a number the page asked to be shown is not the kind of thing to withhold.
     /// </remarks>
-    private static String Spelled(Int32 number, String? style, CounterStyleTable styles) =>
+    internal static String Spelled(Int32 number, String? style, CounterStyleTable styles) =>
         styles.Spell(String.IsNullOrWhiteSpace(style) ? "decimal" : style!, number) ??
         number.ToString(CultureInfo.InvariantCulture);
 

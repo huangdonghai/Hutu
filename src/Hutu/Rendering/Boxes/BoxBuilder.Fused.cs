@@ -113,6 +113,9 @@ internal static partial class BoxBuilder
         // which for a nested list needs the counts of the lists around it. See ListMarkers.Finish.
         ListMarkers.Finish(box, index.Counters);
 
+        // The numbers are settled, so the content that asked for `counter(list-item)` can be spelled.
+        ListItemCounter.Resolve(box, index.Counters);
+
         // Remembered only now that the walk has agreed to describe the document: a build that
         // abstained has proved nothing about the sheets, so the next one starts again.
         state.Keep(index);
