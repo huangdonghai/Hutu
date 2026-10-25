@@ -165,14 +165,9 @@ internal sealed class SkiaFontResolver : IDisposable
     /// </remarks>
     private static IEnumerable<String> StandsFor(String family)
     {
-        var name = FontStyle.Unquote(family.Trim());
+        var written = family.Trim();
 
-        if (Generics.TryGetValue(name, out var behind))
-        {
-            return behind;
-        }
-
-        return new[] { family };
+        return Generics.TryGetValue(written, out var behind) ? behind : new[] { written };
     }
 
     private static readonly Dictionary<String, String[]> Generics = new(StringComparer.OrdinalIgnoreCase)
