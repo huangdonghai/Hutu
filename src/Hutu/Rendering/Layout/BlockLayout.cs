@@ -699,11 +699,17 @@ internal sealed class BlockLayout
             var childBottom = CollapsedEnd(child, box.Flow, contentWidth);
             var childSelfCollapses = IsSelfCollapsing(child, box.Flow, contentWidth);
 
+            // A child that steps clear of a float keeps its top margin out of the collapse with the
+            // box above it: CSS 2.1 §8.3.1 folds the margins of a child with clearance into nothing,
+            // so the box stands where its own margin puts it and the child's margin is spent inside.
+            var clears = tracks is { } floated && child.Style.Clear != ClearSide.None &&
+                floated.ClearBelow(child.Style.Clear, cursor + pending) >= cursor + pending + childTop;
+
             // While the leading run of self-collapsing boxes continues, every top the walk meets
             // is already part of this box's own reported collapsed top and escapes upward through
             // it. The chain ends at the first box that has height of its own, and that box's top
             // joins the escape too - the run adjoins all the way down to it.
-            if (topEscapes)
+            if (topEscapes && !clears)
             {
                 if (!childSelfCollapses)
                 {
@@ -2384,8 +2390,12 @@ internal sealed class BlockLayout
 
             // Same rule the measuring pass followed: while the leading run of self-collapsing
             // boxes continues, every top has already escaped through the parent's own collapsed
-            // top, and the walk stops that escape at the first box with height.
-            if (topEscapes)
+            // top, and the walk stops that escape at the first box with height - or at a box that
+            // steps clear of a float, whose margin the collapse keeps out (CSS 2.1 §8.3.1).
+            var clears = tracks is { } floated && child.Style.Clear != ClearSide.None &&
+                floated.ClearBelow(child.Style.Clear, cursor + pending) >= cursor + pending + childTop;
+
+            if (topEscapes && !clears)
             {
                 if (!childSelfCollapses)
                 {
@@ -3408,11 +3418,29 @@ internal sealed class BlockLayout
 
         var combined = own;
 
+        // A float among the children can give the first in-flow child clearance, and a child with
+        // clearance keeps its top margin out of the collapse with the box above it (CSS 2.1 §8.3.1).
+        var floats = false;
+
+        foreach (var candidate in box.Children)
+        {
+            if (candidate.IsBlockLevel && IsFloat(candidate) && !PositionedLayout.IsOutOfFlow(candidate))
+            {
+                floats = true;
+                break;
+            }
+        }
+
         foreach (var child in box.Children)
         {
             if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child) || IsFloat(child))
             {
                 continue;
+            }
+
+            if (floats && child.Style.Clear != ClearSide.None)
+            {
+                return combined;
             }
 
             combined = Combine(combined, CollapsedStart(child, flow, basis));
