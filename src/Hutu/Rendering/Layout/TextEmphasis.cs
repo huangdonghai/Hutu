@@ -189,24 +189,30 @@ internal readonly struct TextEmphasis
     /// and what is skipped. The shorthand is read token by token beside the longhands, and a longhand the
     /// page wrote answers for its own part.
     /// </summary>
-    internal static TextEmphasis Read(Func<String, ICssProperty?> find, CssColorValue color)
+    internal static TextEmphasis Read(
+        Func<String, ICssProperty?> find,
+        CssColorValue color,
+        TextEmphasis inherited = default)
     {
-        var mark = (String?)null;
+        // Every part of the marks is inherited on its own: an element that names only the position
+        // keeps the marks and the colour its ancestors asked for, and one that names none of them takes
+        // everything from above (CSS Text Decoration 4 §5.2).
+        var mark = inherited.Mark;
         var shape = (String?)null;
         var filled = true;
-        var edge = EmphasisEdge.Start;
-        var side = EmphasisSide.Right;
-        var skip = EmphasisSkip.Auto;
-        var paint = ComputedStyle.ToArgb(color);
-        var named = false;
+        var edge = inherited.Edge;
+        var side = inherited.Side;
+        var skip = inherited.IsSet ? inherited.Skip : EmphasisSkip.Auto;
+        var paint = inherited.HasColor ? inherited.Color : ComputedStyle.ToArgb(color);
+        var named = inherited.HasColor;
 
         // `text-emphasis` carries the style as part of itself, so a page that wrote only the shorthand
         // is read from it, and a longhand written beside it answers the shape on its own.
-        var written = Value(find("text-emphasis-style"));
+        var written = Value(Declared(find, "text-emphasis-style"));
 
         if (String.IsNullOrEmpty(written))
         {
-            written = Value(find("text-emphasis"));
+            written = Value(Declared(find, "text-emphasis"));
         }
 
         foreach (var token in Words(written))
@@ -249,7 +255,7 @@ internal readonly struct TextEmphasis
 
         mark ??= shape;
 
-        foreach (var token in Words(Value(find("text-emphasis-position"))))
+        foreach (var token in Words(Value(Declared(find, "text-emphasis-position"))))
         {
             if (token.Equals("under", StringComparison.OrdinalIgnoreCase))
             {
@@ -269,7 +275,7 @@ internal readonly struct TextEmphasis
             }
         }
 
-        var skipped = Value(find("text-emphasis-skip"));
+        var skipped = Value(Declared(find, "text-emphasis-skip"));
 
         if (!String.IsNullOrEmpty(skipped))
         {
@@ -293,7 +299,7 @@ internal readonly struct TextEmphasis
             skip = sets;
         }
 
-        foreach (var token in Words(Value(find("text-emphasis-color"))))
+        foreach (var token in Words(Value(Declared(find, "text-emphasis-color"))))
         {
             if (BackgroundLayerParser.ParseColor(token) is { } colour)
             {
@@ -332,6 +338,24 @@ internal readonly struct TextEmphasis
     private static String Character(Int32 codePoint) => Char.ConvertFromUtf32(codePoint);
 
     private static String? Value(ICssProperty? declared) => declared?.Value;
+
+    /// <summary>
+    /// Gets a declaration the element itself wrote: the cascade hands out an <c>initial</c> property for
+    /// a name nobody authored, and that is not something the element asked for.
+    /// </summary>
+    private static ICssProperty? Declared(Func<String, ICssProperty?> find, String name)
+    {
+        var declared = find(name);
+
+        if (declared is null || String.IsNullOrWhiteSpace(declared.Value))
+        {
+            return null;
+        }
+
+        return declared.Value.Trim().Equals("initial", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : declared;
+    }
 
     private static Boolean IsQuoted(String token) =>
         token.Length > 1 && (token[0] == '"' || token[0] == '\'');

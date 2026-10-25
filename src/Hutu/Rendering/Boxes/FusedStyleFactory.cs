@@ -103,6 +103,9 @@ internal sealed class FusedParent
     /// <summary>Gets the parent's font-size-adjust, likewise inherited (CSS Fonts 3 §3.6).</summary>
     public Double? FontAdjust { get; init; }
 
+    /// <summary>Gets the marks the ancestor's runs are drawn with, which every descendant inherits.</summary>
+    public TextEmphasis Emphasis { get; init; }
+
     /// <summary>
     /// Gets the colour the parent computes for its decoration lines. The property is not inherited, but
     /// a child may ask for it by name with <c>inherit</c> (CSS Text Decoration 4 §2.3).
@@ -400,6 +403,7 @@ internal sealed class FusedParent
         Hyphens = style.Hyphens,
         FontAdjust = style.ResolvedFont.Adjust,
         DecorationColor = style.ComputedDecorationColor,
+        Emphasis = style.Emphasis,
         HyphenateCharacter = style.HyphenateCharacter,
         Visibility = style.Visibility,
         VerticalAlign = style.VerticalAlign,
@@ -1045,7 +1049,7 @@ internal static class FusedStyleFactory
         // so a page that writes none pays next to nothing for the feature.
         // The marks a run is drawn with are read for every box: the properties ride on any element that
         // holds text, and five lookups that miss cost less than a rule guessing which could.
-        values.Emphasis = TextEmphasis.Read(find, color);
+        values.Emphasis = TextEmphasis.Read(find, color, parent.Emphasis);
 
         values.Contain = ContainStyle.ReadFused(find, face, dimensions);
 
