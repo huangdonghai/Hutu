@@ -247,6 +247,24 @@ public sealed class SpecConformanceTests
     }
 
     [Test]
+    public async Task ADefiniteItemWidthAnswersForTheContainersIntrinsicSize()
+    {
+        // CSS Flexbox 1 §9.9.3 with Sizing 3 §5.2: the item's stated width settles what it contributes,
+        // so an item written `width: 0` adds nothing to the inline-flex around it even though its text
+        // has glyphs. Measured in Chromium: the container is as wide as its border.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><head><style>" +
+            "div.wrap{display:inline-flex;border:10px solid}" +
+            "span.none{width:0}" +
+            "</style></head><body style='margin:0'>" +
+            "<div id='w' class='wrap'><span class='none'>i</span></div>" +
+            "</body></html>");
+
+        Assert.That(Find(view, "w").BorderBox.Width, Is.EqualTo(20).Within(0.5), "the borders and nothing from the text");
+    }
+
+    [Test]
     public async Task AnIntrinsicSizeIsClampedByMinWidthAndMaxWidth()
     {
         using var view = CreateView(400);

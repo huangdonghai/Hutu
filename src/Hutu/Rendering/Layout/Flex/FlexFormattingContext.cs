@@ -752,8 +752,12 @@ internal sealed partial class FlexFormattingContext
                     InlineInsets(child, basis),
                     context.BasisIsHypothetical) is { } settled)
             {
-                childMin = Math.Max(childMin, settled + margin);
-                childMax = Math.Max(childMax, settled + margin);
+                // A stated width settles what the item contributes, whatever its content wants: the
+                // container of a 200px item is 200px wide even when the item's text is longer or
+                // shorter, and an item written `width: 0` contributes nothing (measured in Chromium;
+                // CSS Flexbox 1 §9.9.3).
+                childMin = settled + margin;
+                childMax = settled + margin;
             }
 
             min = Math.Max(min, childMin);
