@@ -8,7 +8,8 @@ using System.Globalization;
 namespace Hutu.Rendering.Layout;
 
 /// <summary>
-/// Which edge of the line the marks of <c>text-emphasis</c> stand on (CSS Text Decoration 4 §5.2).
+/// Which edge of the line's block extent the marks of <c>text-emphasis</c> stand on, which is what the
+/// <c>over</c> and <c>under</c> half of the value says (CSS Text Decoration 4 §5.2).
 /// </summary>
 internal enum EmphasisEdge
 {
@@ -17,11 +18,21 @@ internal enum EmphasisEdge
 
     /// <summary>The block-end edge, which is what <c>under</c> asks for.</summary>
     End,
+}
 
-    /// <summary>The right-hand side of the text, which only a column can answer.</summary>
+/// <summary>
+/// Which physical side of the text the marks stand on, which is what the <c>right</c> and <c>left</c>
+/// half of the value says. Only a column answers it: on a line those two say nothing, and a line reads
+/// the edge from <c>over</c> and <c>under</c> alone. The half always has a value, because the initial
+/// value of the property names a side - <c>over right</c> - so a page that writes only <c>under</c>
+/// still stands its marks to the right of a column (CSS Text Decoration 4 §5.2).
+/// </summary>
+internal enum EmphasisSide
+{
+    /// <summary>The marks stand to the right of the text, whatever the writing mode is.</summary>
     Right,
 
-    /// <summary>The left-hand side of the text, which only a column can answer.</summary>
+    /// <summary>The marks stand to the left of the text, whatever the writing mode is.</summary>
     Left,
 }
 
@@ -77,8 +88,11 @@ internal readonly struct TextEmphasis
     /// <summary>Gets the string drawn over each character that takes a mark.</summary>
     public String? Mark { get; init; }
 
-    /// <summary>Gets the edge of the line the marks stand against.</summary>
+    /// <summary>Gets the edge of the line's block extent the marks stand against.</summary>
     public EmphasisEdge Edge { get; init; }
+
+    /// <summary>Gets the side of a column the marks stand on, named or come to by default.</summary>
+    public EmphasisSide Side { get; init; }
 
     /// <summary>Gets which characters of the run are left unmarked.</summary>
     public EmphasisSkip Skip { get; init; }
@@ -93,21 +107,19 @@ internal readonly struct TextEmphasis
     public Boolean IsSet => Mark is { Length: > 0 };
 
     /// <summary>
-    /// Gets whether the marks stand at the far edge of the line's block extent in this flow. A column
-    /// reads <c>right</c> and <c>left</c> as the two edges its block runs between; on a line they say
-    /// nothing, and the edge no keyword named is the one <c>over</c> means.
+    /// Gets whether the marks stand at the far edge of the line's block extent in this flow. The two
+    /// halves of the value answer different flows: a line reads <c>over</c> and <c>under</c> and pays no
+    /// heed to the side, while a column reads only the side - which its value always gives it, the
+    /// initial value naming the right.
     /// </summary>
     internal Boolean StandsAtTheEnd(WritingModeInfo flow)
     {
-        var blockStartsAtTheRight = flow.IsVertical && flow.StartsAtTheRight;
-
-        return Edge switch
+        if (!flow.IsVertical)
         {
-            EmphasisEdge.End => true,
-            EmphasisEdge.Right => !blockStartsAtTheRight,
-            EmphasisEdge.Left => blockStartsAtTheRight,
-            _ => false,
-        };
+            return Edge == EmphasisEdge.End;
+        }
+
+        return Side == EmphasisSide.Right ? !flow.StartsAtTheRight : flow.StartsAtTheRight;
     }
 
     /// <summary>
@@ -203,6 +215,7 @@ internal readonly struct TextEmphasis
         var shape = (String?)null;
         var filled = true;
         var edge = EmphasisEdge.Start;
+        var side = EmphasisSide.Right;
         var skip = EmphasisSkip.Auto;
         var paint = ComputedStyle.ToArgb(color);
         var named = false;
@@ -262,13 +275,17 @@ internal readonly struct TextEmphasis
             {
                 edge = EmphasisEdge.End;
             }
+            else if (token.Equals("over", StringComparison.OrdinalIgnoreCase))
+            {
+                edge = EmphasisEdge.Start;
+            }
             else if (token.Equals("right", StringComparison.OrdinalIgnoreCase))
             {
-                edge = EmphasisEdge.Right;
+                side = EmphasisSide.Right;
             }
             else if (token.Equals("left", StringComparison.OrdinalIgnoreCase))
             {
-                edge = EmphasisEdge.Left;
+                side = EmphasisSide.Left;
             }
         }
 
@@ -314,6 +331,7 @@ internal readonly struct TextEmphasis
         {
             Mark = mark,
             Edge = edge,
+            Side = side,
             Skip = skip,
             Color = paint,
             HasColor = named,

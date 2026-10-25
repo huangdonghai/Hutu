@@ -315,6 +315,46 @@ public sealed class VerticalLayoutTests
         });
     }
 
+    /// <summary>
+    /// The two halves of <c>text-emphasis-position</c> answer different flows: a line puts its marks on
+    /// the edge <c>over</c> or <c>under</c> names, whatever side stands beside them, and a column reads
+    /// only the side - which a value that names none still gives it, because the initial value of the
+    /// property is <c>over right</c> (CSS Text Decoration 4 §5.2).
+    /// </summary>
+    [Test]
+    public async Task TheSideOfAPositionAnswersOnlyAColumn()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:4;" +
+            "text-emphasis:filled dot;text-emphasis-position:over right'>ab</p>" +
+            "<p style='margin:0;font-size:10px;line-height:4;writing-mode:vertical-rl;" +
+            "text-emphasis:filled dot;text-emphasis-position:right under'>cd</p>" +
+            "<p style='margin:0;font-size:10px;line-height:4;writing-mode:vertical-rl;" +
+            "text-emphasis:filled dot;text-emphasis-position:under'>ef</p></body></html>");
+
+        var line = Text(view, "ab");
+        var column = Text(view, "cd");
+        var unnamed = Text(view, "ef");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                line.Marks![0].Band.Y,
+                Is.EqualTo(line.BorderBox.Y),
+                "the marks stand at the block-start edge, where over puts them and right says nothing");
+            Assert.That(
+                column.Marks![0].Band.X,
+                Is.EqualTo(column.BorderBox.Right - 5),
+                "the marks stand to the right, the side the value named, and not to the left under would have put them");
+            Assert.That(
+                unnamed.Marks![0].Band.X,
+                Is.EqualTo(unnamed.BorderBox.Right - 5),
+                "a column takes the side the initial value names when the page wrote only an edge");
+        });
+    }
+
     [Test]
     public async Task RubyPositionUnderSetsTheReadingOnTheOtherSide()
     {
