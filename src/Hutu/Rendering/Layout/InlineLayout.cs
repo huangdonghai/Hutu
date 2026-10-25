@@ -676,7 +676,17 @@ internal sealed class InlineLayout
                 trailing = 0;
                 sawContent = true;
 
-                if (TextChunker.IsCjk(source, chunk.Start) && item.Style.WrapsLines)
+                if (source[chunk.Start + chunk.Length - 1] == (Char)0x00AD && item.Style.WrapsLines &&
+                    !item.Style.WordBreak.Equals("auto-phrase", StringComparison.OrdinalIgnoreCase))
+                {
+                    // A line may end at the soft hyphen, so the piece before it is one the content can
+                    // be as narrow as - the mark included, since the break draws it (CSS Text 3 §6.1).
+                    // Without this a table cell holding "supercalifragilistic-shy-expialidocious" was
+                    // as wide as the whole word and never wrapped.
+                    minContent = Math.Max(minContent, unbreakable + width + HyphenWidth(_measurer, item.Style, flow));
+                    unbreakable = 0;
+                }
+                else if (TextChunker.IsCjk(source, chunk.Start) && item.Style.WrapsLines)
                 {
                     // A line may break on either side of a CJK character, so the character stands
                     // alone rather than joining the run around it, and it is the run beside it - the
@@ -2169,6 +2179,30 @@ internal sealed class InlineLayout
                         // the hyphen (CSS Text 3 §6.1). Chrome measured on a zero-width box does the same.
                         var hyphen = builder.EndsInSoftHyphen && item.Style.WrapsLines && !inRuby;
 
+                        // `auto-phrase` gives hyphenation up rather than overflow: the rest of the word is
+                        // measured against the room the line has, and a word that fits runs on with its
+                        // soft hyphens drawn as nothing. Only a word that cannot fit keeps them (CSS Text
+                        // 4 §5.6, measured by word-break-auto-phrase-006 and -008).
+                        if (hyphen && item.Style.WordBreak.Equals("auto-phrase", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var wordEnd = at;
+
+                            while (wordEnd < run.Source.Length && !TextChunker.IsCollapsible(run.Source[wordEnd]))
+                            {
+                                wordEnd += TextClusters.UnitsAt(run.Source, wordEnd, run.Source.Length);
+                            }
+
+                            var rest = Measure(item.Style, run.Source, at, wordEnd - at, itemFlow);
+
+                            if (builder.ExtentFor(item.Inline) + rest <= room.Room)
+                            {
+                                hyphen = false;
+                                breaks = false;
+                                hyphenPoint = null;
+                                tail = null;
+                            }
+                        }
+
                         // A line that ran past a soft hyphen may have to give back what came after it:
                         // this step cannot fit and no opportunity stands at its start, so the line ends
                         // at that hyphen - the mark drawn there - and the steps since it begin the next
@@ -2859,12 +2893,23 @@ internal sealed class InlineLayout
     }
 
     /// <summary>
+    /// Gets the mark a break draws. A column draws the upright hyphen: the hyphen-minus a line sets its
+    /// mark in is turned on its side where a column carries it, and the upright form is the one a reading
+    /// of the same base draws beside the text (CSS Text 4 §6.2, measured on the vertical soft-hyphen
+    /// pairs).
+    /// </summary>
+    private static String HyphenMark(ComputedStyle style, WritingModeInfo flow) =>
+        flow.IsVertical && style.HyphenateCharacter == "-"
+            ? Char.ConvertFromUtf32(0x2010)
+            : style.HyphenateCharacter;
+
+    /// <summary>
     /// Gets the room the mark a break draws takes: the hyphenate character, set in the run's own font.
     /// </summary>
     private static Double HyphenWidth(ITextMeasurer measurer, ComputedStyle style, WritingModeInfo flow) =>
         String.IsNullOrEmpty(style.HyphenateCharacter)
             ? 0
-            : MeasureChunk(measurer, style, style.HyphenateCharacter, 0, style.HyphenateCharacter.Length, flow);
+            : MeasureChunk(measurer, style, HyphenMark(style, flow), 0, HyphenMark(style, flow).Length, flow);
 
     private static Double MeasureChunk(
         ITextMeasurer measurer,
@@ -5235,7 +5280,7 @@ internal sealed class InlineLayout
                         trailing++;
                     }
 
-                    var mark = last.Style.HyphenateCharacter;
+                    var mark = HyphenMark(last.Style, last.Flow);
                     var shy = text.Substring(text.Length - trailing, trailing);
                     var gained = MeasureChunk(measurer, last.Style, mark, 0, mark.Length, last.Flow) -
                         MeasureChunk(measurer, last.Style, shy, 0, shy.Length, last.Flow);
@@ -5243,6 +5288,29 @@ internal sealed class InlineLayout
                     last.MergeInto(text[..^trailing] + mark);
                     last.Width += gained;
                     used += gained;
+
+                    // The mark now stands in the run's text, so the line is as tall as the character it
+                    // draws: a column's upright hyphen is taller than the letters beside it, and the
+                    // line that does not count it stands a little narrower than the same word spelled
+                    // with the hyphen written out (hyphens-vertical-001).
+                    var drawnMark = measurer.GetRunMetrics(mark, last.Style.GetFont());
+                    var markAscent = drawnMark.Ascent;
+                    var markDescent = drawnMark.Descent;
+
+                    if (last.Style.LineHeight is { } markLine)
+                    {
+                        var half = (markLine - (markAscent + markDescent)) / 2;
+                        markAscent += half;
+                        markDescent += half;
+                    }
+
+                    var at = line.Fragments.Count - 1;
+                    above[at] = Math.Max(above[at], markAscent);
+                    below[at] = Math.Max(below[at], markDescent);
+                    ascent = Math.Max(ascent, above[at]);
+                    descent = Math.Max(descent, below[at]);
+                    reach = Math.Max(reach, ascent);
+                    depth = Math.Max(depth, descent);
                 }
             }
 
