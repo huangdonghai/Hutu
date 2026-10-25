@@ -3482,6 +3482,14 @@ internal sealed class BlockLayout
 
         var combined = new MarginGroup(own);
 
+        // A percentage margin inside the box resolves against the box's own content width, not against
+        // the width of whatever holds the box: the fold into a child is asked of the child's own
+        // containing block (CSS 2.1 §8.3).
+        var inner = flow.IsVertical
+            ? basis
+            : BoxModel.DeclaredWidth(box.Style, basis, padding.Horizontal + border.Horizontal)
+                ?? Math.Max(0, basis - box.Style.Margin.Resolve(basis).Horizontal - padding.Horizontal - border.Horizontal);
+
         // A float among the children can give the first in-flow child clearance, and a child with
         // clearance keeps its top margin out of the collapse with the box above it (CSS 2.1 §8.3.1).
         var floats = false;
@@ -3507,7 +3515,7 @@ internal sealed class BlockLayout
                 return combined;
             }
 
-            combined = combined.With(CollapsedStart(child, flow, basis));
+            combined = combined.With(CollapsedStart(child, flow, inner));
 
             if (!IsSelfCollapsing(child, flow, basis))
             {
@@ -3570,6 +3578,13 @@ internal sealed class BlockLayout
 
         var combined = new MarginGroup(ownEnd);
 
+        // A percentage margin inside the box resolves against the box's own content width, not against
+        // the width of whatever holds the box (CSS 2.1 §8.3).
+        var inner = flow.IsVertical
+            ? basis
+            : BoxModel.DeclaredWidth(box.Style, basis, padding.Horizontal + border.Horizontal)
+                ?? Math.Max(0, basis - box.Style.Margin.Resolve(basis).Horizontal - padding.Horizontal - border.Horizontal);
+
         // A child that steps clear of a float keeps its margins out of the collapse with the box above
         // it on either end, so the walk stops at it the way a box with height stops the run.
         var floats = false;
@@ -3597,7 +3612,7 @@ internal sealed class BlockLayout
                 return combined;
             }
 
-            combined = combined.With(CollapsedEnd(child, flow, basis));
+            combined = combined.With(CollapsedEnd(child, flow, inner));
 
             if (!IsSelfCollapsing(child, flow, basis))
             {
