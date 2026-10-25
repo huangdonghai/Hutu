@@ -66,6 +66,11 @@
     "text-indent": "modelled",
     "top": "modelled",
     "width": "modelled",
-    "rule": "modelled: AngleSharp expands it into the six per-axis rule longhands, so a longhand written after it still answers its own axis"
+    "rule": "modelled: AngleSharp expands it into the six per-axis rule longhands, so a longhand written after it still answers its own axis",
+    "text-emphasis": "modelled: the shorthand of the marks a run is drawn with, read token by token beside the longhands",
+    "text-emphasis-style": "modelled: the shape or string each marked character takes, and whether it is filled or open",
+    "text-emphasis-color": "modelled: the colour the marks are drawn in, or the box's ink where none is named",
+    "text-emphasis-position": "modelled: the edge of the line the marks stand against, read for a column from right and left",
+    "text-emphasis-skip": "modelled: which characters go unmarked; `auto` leaves the spaces and the narrow punctuation alone"
   }
 }

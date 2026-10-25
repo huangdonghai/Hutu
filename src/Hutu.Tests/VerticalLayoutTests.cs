@@ -253,6 +253,68 @@ public sealed class VerticalLayoutTests
             "the room a reading takes is its own line height - half the size and set solid, which is what `rt` asks for - and not the height of the font it is set in");
     }
 
+    /// <summary>
+    /// A ruby is a sequence of pairs, and each reading is set over the base it follows: two pairs in one
+    /// element take two readings, each centred on its own base, rather than one reading spread across the
+    /// whole word (CSS Ruby 1 §3.1).
+    /// </summary>
+    [Test]
+    public async Task EachReadingIsSetOverTheBaseItFollows()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:1'>" +
+            "<ruby>ab<rt>x</rt>cd<rt>y</rt></ruby></p></body></html>");
+
+        var first = Text(view, "ab");
+        var second = Text(view, "cd");
+        var firstReading = Text(view, "x");
+        var secondReading = Text(view, "y");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(second.BorderBox.X, Is.GreaterThanOrEqualTo(first.BorderBox.Right), "and reads in order");
+            Assert.That(
+                firstReading.BorderBox.X + (firstReading.BorderBox.Width / 2),
+                Is.EqualTo(first.BorderBox.X + (first.BorderBox.Width / 2)).Within(0.01),
+                "the first reading stands over its own base");
+            Assert.That(
+                secondReading.BorderBox.X + (secondReading.BorderBox.Width / 2),
+                Is.EqualTo(second.BorderBox.X + (second.BorderBox.Width / 2)).Within(0.01),
+                "and so does the second");
+        });
+    }
+
+    /// <summary>
+    /// <c>text-emphasis</c> marks each character of a run at half the size of the text, and — like the
+    /// reading it is drawn in the manner of — the marks take a strip of the line: the line grows by the
+    /// strip on the side the page named, which is what keeps a mark inside the line it belongs to
+    /// (CSS Text Decoration 4 §5.2).
+    /// </summary>
+    [Test]
+    public async Task EmphasisMarksTheTextWithoutTakingRoom()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:4;" +
+            "text-emphasis-style: filled dot'>ab</p></body></html>");
+
+        var run = Text(view, "ab");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(run.Marks, Is.Not.Null, "the page asked for marks");
+            Assert.That(run.Marks!.Count, Is.EqualTo(2), "one over each character");
+            Assert.That(run.Marks[0].Text, Is.EqualTo(Char.ConvertFromUtf32(0x2022)));
+            Assert.That(run.Marks[0].Font.Size, Is.EqualTo(5), "half the size of the text it marks");
+            Assert.That(run.Marks[0].Band.Height, Is.EqualTo(5), "a strip its own size");
+            Assert.That(run.Marks[0].Baseline, Is.InRange(1, 6), "and the glyph set solid inside it");
+            Assert.That(run.BorderBox.Height, Is.EqualTo(45), "the line gains the strip the marks stand in");
+        });
+    }
+
     [Test]
     public async Task RubyPositionUnderSetsTheReadingOnTheOtherSide()
     {

@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
+using System.Globalization;
+
 namespace Hutu.Rendering.Layout;
 
 /// <summary>The extent inline content occupies along each of the two axes it is laid out in.</summary>
@@ -933,7 +935,7 @@ internal sealed class InlineLayout
                 // them, which is what a right-to-line-end hanging looks like from both directions.
                 var room = ReferenceEquals(fragment, last) ? fragment.Width - line.Hanging : fragment.Width;
 
-                Place(fragment, open, lineBox, contentBox, flow, line, origin, cursor, context, room, placement);
+                Place(fragment, open, lineBox, contentBox, flow, line, origin, cursor, context, room, placement, _measurer);
                 origin += fragment.Width;
             }
 
@@ -1151,7 +1153,8 @@ internal sealed class InlineLayout
         Double cursor,
         InlineContext context,
         Double room,
-        Placement placement)
+        Placement placement,
+        ITextMeasurer measurer)
     {
         if (fragment.OutOfFlow)
         {
@@ -1281,7 +1284,7 @@ internal sealed class InlineLayout
             return;
         }
 
-        Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Text)
+        var run = new LayoutBox(fragment.Box, LayoutKind.Text)
         {
             Text = fragment.Hanging > 0
                 ? fragment.Source.Substring(fragment.Start, fragment.Length - fragment.Hanging)
@@ -1292,7 +1295,117 @@ internal sealed class InlineLayout
             Justification = fragment.Justify,
             Justifies = fragment.Expansions,
             BorderBox = flow.Map(contentBox, origin, room, cursor, line.Height),
-        });
+        };
+
+        run.Marks = Marks(
+            fragment, run.Text!, flow, contentBox, origin, room, cursor, line, measurer);
+
+        Attach(open, lineBox, run);
+    }
+
+    /// <summary>
+    /// The marks a run of text is drawn with: one over each character the page asked to have marked,
+    /// centred on that character within the room the run was given - so a line that was spread carries its
+    /// marks with the spread - and set against the edge of the line its position named. Nothing here
+    /// changes a size: the line keeps the height it was laid out with, which is what makes a mark paint
+    /// rather than content (CSS Text Decoration 4 §5.2).
+    /// </summary>
+    private static List<EmphasisMark>? Marks(
+        TextFragment fragment,
+        String text,
+        WritingModeInfo flow,
+        Rect contentBox,
+        Double origin,
+        Double room,
+        Double cursor,
+        Line line,
+        ITextMeasurer measurer)
+    {
+        var emphasis = fragment.Style.Emphasis;
+
+        // A base carrying its own reading is not marked as well - the reading stands where the mark
+        // would - and a run with no room along the line has no character to mark.
+        if (!emphasis.IsSet || fragment.Ruby is not null || room <= 0 || text.Length == 0)
+        {
+            return null;
+        }
+
+        var font = fragment.Style.GetFont();
+
+        // A mark is drawn at half the size of the text it marks, which is the size a reading of that base
+        // comes to.
+        var drawn = new FontStyle(font.Family, Math.Max(1, font.Size / 2), font.Weight, font.IsItalic);
+        var metrics = measurer.GetMetrics(drawn);
+
+        // A mark is set solid in a strip its own size: the glyph is lifted to the middle of that strip,
+        // which is how a reading of the same size stands (CSS Ruby 1 §3.2 and the `rt` rule the
+        // rendering requirements give it), and it is why a mark neither hangs below the line's headroom
+        // nor reaches into the line above.
+        var block = drawn.Size;
+        var ascent = metrics.Ascent + ((block - (metrics.Ascent + metrics.Descent)) / 2);
+
+        if (block <= 0)
+        {
+            return null;
+        }
+
+        var width = measurer.MeasureAdvance(emphasis.Mark!, drawn, flow);
+        var start = cursor + (emphasis.StandsAtTheEnd(flow) ? line.Height - block : 0);
+        var colour = emphasis.HasColor ? emphasis.Color : ComputedStyle.ToArgb(fragment.Style.Color);
+        var elements = new List<String>();
+        var advances = new List<Double>();
+        var total = 0.0;
+
+        for (var run = StringInfo.GetTextElementEnumerator(text); run.MoveNext(); )
+        {
+            var element = (String)run.Current!;
+
+            if (emphasis.Skips(element))
+            {
+                continue;
+            }
+
+            var advance = measurer.MeasureAdvance(element, font, flow);
+
+            elements.Add(element);
+            advances.Add(advance);
+            total += advance;
+        }
+
+        if (elements.Count == 0)
+        {
+            return null;
+        }
+
+        // The run was measured as a whole and the line may have been spread since, so the marks follow the
+        // spread rather than the plain advances. A backwards run starts at the far end of its room.
+        var share = total > 0 ? room / total : 0;
+        var backwards = flow.IsRightToLeft;
+        var marks = new List<EmphasisMark>(elements.Count);
+        var walk = 0.0;
+
+        for (var index = 0; index < elements.Count; index++)
+        {
+            var centre = walk + (advances[index] / 2);
+
+            walk += advances[index];
+
+            marks.Add(new EmphasisMark(
+                flow.Map(
+                    contentBox,
+                    backwards
+                        ? origin + room - (centre * share) - (width / 2)
+                        : origin + (centre * share) - (width / 2),
+                    width,
+                    start,
+                    block),
+                emphasis.Mark!,
+                flow.BlockOffsetFromLeft(block, ascent),
+                drawn,
+                colour));
+        }
+
+        return marks;
     }
 
     /// <summary>Adds a node inside the innermost inline element still open, or inside the line itself.</summary>
@@ -1460,51 +1573,110 @@ internal sealed class InlineLayout
     /// </remarks>
     private static void AddRuby(Box ruby, List<InlineItem> items, InlineAncestor? chain)
     {
+        // A ruby is a sequence of pairs: each reading is set over the base it follows, and it is that
+        // base alone the reading is centred on - which is what puts a mark above its own character rather
+        // than spread out along the whole run (CSS Ruby 1 §3.1).
+        var bases = new List<String>();
+        var readings = new List<(String Text, ComputedStyle Style, Box Box)>();
+
         var baseText = new System.Text.StringBuilder();
-        var annotationText = new System.Text.StringBuilder();
-        var annotationStyle = ruby.Style;
-        Box? annotationBox = null;
+        var readingText = new System.Text.StringBuilder();
+        var readingStyle = ruby.Style;
+        Box? readingBox = null;
+
+        void CloseReading()
+        {
+            if (readingText.Length > 0)
+            {
+                readings.Add((readingText.ToString(), readingStyle, readingBox ?? ruby));
+            }
+
+            readingText = new System.Text.StringBuilder();
+            readingBox = null;
+            readingStyle = ruby.Style;
+        }
 
         foreach (var child in ruby.Children)
         {
             if (child.Kind == BoxKind.RubyText)
             {
-                Flatten(child, annotationText);
-
-                // The first annotation is the one the reading is set in; a pair carries one of them,
-                // whatever the markup wrapped it in.
-                if (annotationBox is null)
+                // The base of the pair ends where its reading begins.
+                if (baseText.Length > 0)
                 {
-                    annotationStyle = child.Style;
-                    annotationBox = child;
+                    bases.Add(baseText.ToString());
+                    baseText = new System.Text.StringBuilder();
                 }
+
+                Flatten(child, readingText);
+
+                // The first element of a reading is the one it is set in; a second written beside it
+                // joins the text of the same pair, as it always has.
+                readingBox ??= child;
+                readingStyle = child.Style;
+                continue;
             }
-            else
-            {
-                Flatten(child, baseText);
-            }
+
+            // A base begins where the reading of the pair before it ends.
+            CloseReading();
+            Flatten(child, baseText);
         }
 
-        if (baseText.Length == 0)
+        CloseReading();
+
+        if (baseText.Length > 0)
+        {
+            bases.Add(baseText.ToString());
+        }
+
+        if (bases.Count == 0)
         {
             // A ruby with nothing to annotate has nothing to contribute.
             return;
         }
 
-        if (annotationText.Length == 0 || annotationBox is null)
+        if (readings.Count == 0)
         {
             // Without an annotation there is nothing to set the base apart from ordinary text.
-            items.Add(InlineItem.CreateText(baseText.ToString(), ruby.Style, ruby, chain));
+            items.Add(InlineItem.CreateText(String.Concat(bases), ruby.Style, ruby, chain));
+            return;
+        }
+
+        // Each base carrying the reading that follows it, and at most one base at the end carrying none -
+        // a reading with no base before it, or anything else that will not pair off, is set as one
+        // passage over the whole ruby, which is what all but the shortest ruby passage comes to.
+        var off = bases.Count - readings.Count;
+
+        if (off == 0 || (off == 1 && bases[^1].Length > 0))
+        {
+            for (var index = 0; index < readings.Count; index++)
+            {
+                var (text, style, box) = readings[index];
+
+                items.Add(InlineItem.CreateRuby(
+                    bases[index],
+                    ruby.Style,
+                    ruby,
+                    text,
+                    style,
+                    box,
+                    chain));
+            }
+
+            if (off == 1)
+            {
+                items.Add(InlineItem.CreateText(bases[^1], ruby.Style, ruby, chain));
+            }
+
             return;
         }
 
         items.Add(InlineItem.CreateRuby(
-            baseText.ToString(),
+            String.Concat(bases),
             ruby.Style,
             ruby,
-            annotationText.ToString(),
-            annotationStyle,
-            annotationBox,
+            String.Concat(readings.ConvertAll(reading => reading.Text)),
+            readings[0].Style,
+            readings[0].Box,
             chain));
     }
 
@@ -4517,6 +4689,23 @@ internal sealed class InlineLayout
                     else
                     {
                         fragmentAscent += annotation.Block;
+                    }
+                }
+                else if (fragment.Style.Emphasis is { IsSet: true } marks)
+                {
+                    // Marks are drawn in the manner of a reading, and they take the room one would: the
+                    // line grows by the strip they stand in, which is their own size, on the side the page
+                    // named (CSS Text Decoration 4 §5.2). A base carrying its own reading is marked
+                    // through that reading instead, so it is asked for nothing here.
+                    var strip = Math.Max(1, fragment.Style.GetFont().Size / 2);
+
+                    if (marks.StandsAtTheEnd(fragment.Flow))
+                    {
+                        fragmentDescent += strip;
+                    }
+                    else
+                    {
+                        fragmentAscent += strip;
                     }
                 }
 

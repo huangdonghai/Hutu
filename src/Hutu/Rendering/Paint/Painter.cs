@@ -1636,6 +1636,34 @@ internal sealed class Painter
             box.DecorationPlacements,
             style.SkipInk,
             (line is { Shadow: true } cast ? cast.Style : style).TextShadows));
+
+        // The marks the run asked for stand over the text they mark. They carry no lines of their own - a
+        // mark is not underlined because the word under it is - and they follow the run, which is where the
+        // ink of the marks falls in the order the text is drawn in.
+        if (box.Marks is { Count: > 0 } marks)
+        {
+            foreach (var mark in marks)
+            {
+                target.Add(new TextCommand(
+                    mark.Band,
+                    mark.Text,
+                    mark.Baseline,
+                    mark.Font,
+                    mark.Color,
+                    NoDecorations,
+                    box.Flow,
+                    style.LetterSpacing,
+                    stroke.TextStrokeWidth,
+                    stroke.TextStrokeColor,
+                    0,
+                    0,
+                    style.TextJustify,
+                    0,
+                    null,
+                    style.SkipInk,
+                    (line is { Shadow: true } shadow ? shadow.Style : style).TextShadows));
+            }
+        }
     }
 
     /// <summary>

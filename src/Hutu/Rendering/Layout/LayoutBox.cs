@@ -337,6 +337,13 @@ internal sealed class LayoutBox
     /// </summary>
     public List<GapRuleSegment>? GapDecorations { get; set; }
 
+    /// <summary>
+    /// Gets or sets the marks this run of text is drawn with, one per character the page asked to have
+    /// marked, placed against the line the run stands on. They are paint alone: the line was laid out as
+    /// though the text had none.
+    /// </summary>
+    public List<EmphasisMark>? Marks { get; set; }
+
     public Rect ContentBox => new(
         BorderBox.X + Border.Left + Padding.Left,
         BorderBox.Y + Border.Top + Padding.Top,

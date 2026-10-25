@@ -2919,6 +2919,8 @@ internal readonly struct ComputedStyle
 
         internal GapRules? Gap;
 
+        internal TextEmphasis? Emphasis;
+
         internal ContainStyle? Contain;
 
         internal BreakStyle Breaks;
@@ -4763,6 +4765,16 @@ internal readonly struct ComputedStyle
     /// </summary>
     public GapRules Gap =>
         _values.Fused is null ? _values.Gap ??= GapRules.Read(this) : _values.Gap ?? GapRules.None;
+
+    /// <summary>
+    /// Gets the marks the box's own text asks for. The properties are inherited, so a run standing inside
+    /// a box that says nothing takes the value the cascade settled for it; a box that names no shape gets
+    /// the set that marks nothing, which draws nothing.
+    /// </summary>
+    internal TextEmphasis Emphasis =>
+        _values.Fused is null
+            ? _values.Emphasis ??= TextEmphasis.Read(this)
+            : _values.Emphasis ?? TextEmphasis.None;
 
     /// <summary>
     /// Gets the size containment the box asks for, and the intrinsic size it states for the axes it

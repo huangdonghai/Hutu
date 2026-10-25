@@ -958,6 +958,10 @@ internal static class FusedStyleFactory
 
         // Size containment is one lookup for every box and a second only where the page asked for it,
         // so a page that writes none pays next to nothing for the feature.
+        // The marks a run is drawn with are read for every box: the properties ride on any element that
+        // holds text, and five lookups that miss cost less than a rule guessing which could.
+        values.Emphasis = TextEmphasis.Read(find, color);
+
         values.Contain = ContainStyle.ReadFused(find, face, dimensions);
 
         values.Fused = keywords;

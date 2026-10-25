@@ -98,6 +98,15 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // this the declaration is dropped and the box is drawn at the size the page wrote rather than
         // the size it asked to scale that by. The style reads the factor from the text.
         "zoom",
+        // CSS Text Decoration 4 §5's emphasis marks. AngleSharp has no grammar for any of these, so
+        // without this the declaration is dropped at the parse and a page marking its text is left with
+        // none of the marks it asked for. The style reads each value as the text it was written in, and
+        // every one of them is inherited down to the runs it marks.
+        "text-emphasis",
+        "text-emphasis-style",
+        "text-emphasis-color",
+        "text-emphasis-position",
+        "text-emphasis-skip",
         // CSS Lists 3 §2.3's ten descriptors of `@counter-style`. AngleSharp has no grammar for any of
         // them - they name no property of an element - so every one of them was dropped at the parse and
         // the style the page wrote arrived with nothing in it. The table reads each value as the text it
@@ -112,6 +121,19 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         "range",
         "fallback",
         "speak-as",
+    };
+
+    /// <summary>
+    /// The raw-kept names that are inherited rather than answered from the box's own rule, which is what
+    /// carries an element's marks down to the text inside it (CSS Text Decoration 4 §5).
+    /// </summary>
+    private static readonly HashSet<String> InheritedRawNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "text-emphasis",
+        "text-emphasis-style",
+        "text-emphasis-color",
+        "text-emphasis-position",
+        "text-emphasis-skip",
     };
 
     /// <summary>
@@ -219,10 +241,17 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // no shorthands or longhands ride with it.
         if (RawValueNames.Contains(propertyName))
         {
+            // The emphasis properties mark the text of everything inside the box asking for them, so they
+            // carry the inherited mark: the cascade then passes the declaration down to the children,
+            // which is what puts a mark over a run the page never wrote a property on.
+            var flags = InheritedRawNames.Contains(propertyName)
+                ? PropertyFlags.Inherited
+                : PropertyFlags.None;
+
             var raw = new DeclarationInfo(
                 propertyName,
                 new RawKeep(),
-                PropertyFlags.None,
+                flags,
                 new CssRawValue(String.Empty),
                 Array.Empty<String>(),
                 Array.Empty<String>());
