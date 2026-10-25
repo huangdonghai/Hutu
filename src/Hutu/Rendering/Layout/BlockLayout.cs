@@ -227,6 +227,7 @@ internal sealed class BlockLayout
     {
         var cursor = 0.0;
         var pending = 0.0;
+        var pendingGroup = MarginGroup.Zero;
         var throughStart = CollapsesThroughStart(box, flow, contentInline);
         var throughEnd = CollapsesThroughEnd(box, flow, contentInline);
         var childContext = context.ForContainingBlock(new Size(basisBlock, contentInline));
@@ -266,7 +267,8 @@ internal sealed class BlockLayout
             }
             else
             {
-                pending = Combine(pending, childStart);
+                pendingGroup = pendingGroup.With(childStart);
+                pending = pendingGroup.Value;
             }
 
             if (childSelfCollapses)
@@ -278,6 +280,7 @@ internal sealed class BlockLayout
 
             cursor += pending + flow.BlockExtent(size.Width, size.Height);
             pending = childEnd;
+            pendingGroup = new MarginGroup(childEnd);
         }
 
         // A container grows for the floats it holds, and the axis it grows along is the physical one a
@@ -650,6 +653,7 @@ internal sealed class BlockLayout
     {
         var cursor = 0.0;
         var pending = 0.0;
+        var pendingGroup = MarginGroup.Zero;
         var throughTop = CollapsesThroughStart(box, box.Flow, contentWidth);
         var throughBottom = CollapsesThroughEnd(box, box.Flow, contentWidth);
         var childContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
@@ -718,7 +722,8 @@ internal sealed class BlockLayout
             }
             else
             {
-                pending = Combine(pending, childTop);
+                pendingGroup = pendingGroup.With(childTop);
+                pending = pendingGroup.Value;
             }
 
             if (childSelfCollapses)
@@ -781,6 +786,7 @@ internal sealed class BlockLayout
 
             cursor += pending + drop + size.Height;
             pending = childBottom;
+            pendingGroup = new MarginGroup(childBottom);
         }
 
         // The trailing strip either escaped through the box (already in the collapsed bottom this
@@ -2356,6 +2362,7 @@ internal sealed class BlockLayout
     {
         var cursor = contentY;
         var pending = 0.0;
+        var pendingGroup = MarginGroup.Zero;
         var throughTop = CollapsesThroughStart(box, box.Flow, contentWidth);
         var constraints = MeasureConstraints.FitWidth(contentWidth);
         var tracks = TracksFor(box, contentWidth, contentX);
@@ -2408,7 +2415,8 @@ internal sealed class BlockLayout
                 // into it and folds none of the run into it, so the strip the walk gathered is where that
                 // box would have stood, and the margins it would have carried are the positioning pass's
                 // own to add (ibid. §10.3.7).
-                pending = Combine(pending, childTop);
+                pendingGroup = pendingGroup.With(childTop);
+                pending = pendingGroup.Value;
             }
 
             if (PositionedLayout.IsOutOfFlow(child))
@@ -2506,6 +2514,7 @@ internal sealed class BlockLayout
 
             cursor = rect.Bottom;
             pending = childBottom;
+            pendingGroup = new MarginGroup(childBottom);
         }
 
         // Published for the container above, which absorbs these when it holds no formatting
@@ -2908,6 +2917,7 @@ internal sealed class BlockLayout
         var contentInline = flow.InlineExtent(content.Width, content.Height);
         var cursor = 0.0;
         var pending = 0.0;
+        var pendingGroup = MarginGroup.Zero;
         var throughStart = CollapsesThroughStart(box, flow, contentInline);
         var constraints = MeasureConstraints.FitWidth(basisBlock);
         var outOfFlow = new List<(Box Box, Offset Static)>();
@@ -2952,7 +2962,8 @@ internal sealed class BlockLayout
             else if (!PositionedLayout.IsOutOfFlow(child))
             {
                 // Same as in a row: the box that left the flow keeps its margins out of the run.
-                pending = Combine(pending, childStart);
+                pendingGroup = pendingGroup.With(childStart);
+                pending = pendingGroup.Value;
             }
 
             if (PositionedLayout.IsOutOfFlow(child))
@@ -2985,6 +2996,7 @@ internal sealed class BlockLayout
 
             cursor += pending + blockSize;
             pending = childEnd;
+            pendingGroup = new MarginGroup(childEnd);
         }
 
         foreach (var (child, staticPosition) in outOfFlow)
@@ -3119,11 +3131,51 @@ internal sealed class BlockLayout
 
     /// <summary>
     /// Folds two adjoining margins the way CSS 2.1 §8.3.1 says a run of them collapses: the greatest
-    /// positive value plus the smallest negative one. A run of margins folds the same way however the
-    /// pairs are bracketed, which is what lets the stack accumulate them one neighbour at a time.
+    /// positive value plus the smallest negative one.
     /// </summary>
+    /// <remarks>
+    /// Two values fold the same way however they are paired, but a run of three or more does not: the
+    /// greatest positive and the smallest negative of the whole run decide it, and folding the run's
+    /// values two at a time loses one of them - "80, -40, 20, -10" is 40 as a group, while
+    /// <c>Combine(Combine(Combine(80, -40), 20), -10)</c> is 30. A run that is being gathered therefore
+    /// keeps <see cref="MarginGroup"/>'s two ends rather than its value.
+    /// </remarks>
     private static Double Combine(Double left, Double right) =>
         Math.Max(Math.Max(left, right), 0) + Math.Min(Math.Min(left, right), 0);
+
+    /// <summary>
+    /// A run of margins being gathered: the greatest positive and the smallest negative it holds, which
+    /// together are the one margin the run collapses to. The two ends are kept apart because adding a
+    /// margin to the value already folded would lose whichever end the new margin does not agree with.
+    /// </summary>
+    private readonly struct MarginGroup
+    {
+        internal static readonly MarginGroup Zero = new(0, 0);
+
+        private MarginGroup(Double positive, Double negative)
+        {
+            Positive = positive;
+            Negative = negative;
+        }
+
+        internal MarginGroup(Double margin) : this(Math.Max(margin, 0), Math.Min(margin, 0))
+        {
+        }
+
+        internal Double Positive { get; }
+
+        internal Double Negative { get; }
+
+        internal Double Value => Positive + Negative;
+
+        internal MarginGroup With(Double margin) =>
+            new(Math.Max(Positive, margin), Math.Min(Negative, margin));
+
+        internal MarginGroup With(MarginGroup other) =>
+            new(Math.Max(Positive, other.Positive), Math.Min(Negative, other.Negative));
+
+        public static implicit operator Double(MarginGroup group) => group.Value;
+    }
 
     /// <summary>
     /// Gets whether the box establishes a new block formatting context: it seals its children's
@@ -3395,7 +3447,7 @@ internal sealed class BlockLayout
     /// outward through the box when nothing separates them, and what the box's stack reads as its
     /// outer margin on that side.
     /// </summary>
-    private static Double CollapsedStart(Box box, WritingModeInfo flow, Double basis)
+    private static MarginGroup CollapsedStart(Box box, WritingModeInfo flow, Double basis)
     {
         var (own, ownEnd) = flow.BlockMargins(box.Style.Margin.Resolve(basis));
 
@@ -3403,7 +3455,7 @@ internal sealed class BlockLayout
         // through it along the axis this walk collapses on.
         if (IsWall(box) || !SameBlockAxis(box, flow))
         {
-            return own;
+            return new MarginGroup(own);
         }
 
         var border = BorderOf(box);
@@ -3413,10 +3465,10 @@ internal sealed class BlockLayout
 
         if (startBorder > 0 || startPadding > 0)
         {
-            return own;
+            return new MarginGroup(own);
         }
 
-        var combined = own;
+        var combined = new MarginGroup(own);
 
         // A float among the children can give the first in-flow child clearance, and a child with
         // clearance keeps its top margin out of the collapse with the box above it (CSS 2.1 §8.3.1).
@@ -3443,7 +3495,7 @@ internal sealed class BlockLayout
                 return combined;
             }
 
-            combined = Combine(combined, CollapsedStart(child, flow, basis));
+            combined = combined.With(CollapsedStart(child, flow, basis));
 
             if (!IsSelfCollapsing(child, flow, basis))
             {
@@ -3456,7 +3508,7 @@ internal sealed class BlockLayout
         // and the strip is one value the box reports on both sides.
         if (IsSelfCollapsing(box, flow, basis))
         {
-            combined = Combine(combined, ownEnd);
+            combined = combined.With(ownEnd);
         }
 
         return combined;
@@ -3466,13 +3518,13 @@ internal sealed class BlockLayout
     /// The margin the box presents on the block-end side: the mirror of <see cref="CollapsedStart"/>,
     /// walking backward through the trailing self-collapsing children.
     /// </summary>
-    private static Double CollapsedEnd(Box box, WritingModeInfo flow, Double basis)
+    private static MarginGroup CollapsedEnd(Box box, WritingModeInfo flow, Double basis)
     {
         var (own, ownEnd) = flow.BlockMargins(box.Style.Margin.Resolve(basis));
 
         if (IsWall(box) || !SameBlockAxis(box, flow))
         {
-            return ownEnd;
+            return new MarginGroup(ownEnd);
         }
 
         var border = BorderOf(box);
@@ -3482,7 +3534,7 @@ internal sealed class BlockLayout
 
         if (endBorder > 0 || endPadding > 0)
         {
-            return ownEnd;
+            return new MarginGroup(ownEnd);
         }
 
         // A box that declares its extent along the stacking axis - a fixed height on a row - pins its
@@ -3493,10 +3545,10 @@ internal sealed class BlockLayout
         // child margin further down. (An auto extent says nothing here, so the walk folds through.)
         if (DeclaredBlockExtent(box, flow, basis) is > 0)
         {
-            return ownEnd;
+            return new MarginGroup(ownEnd);
         }
 
-        var combined = ownEnd;
+        var combined = new MarginGroup(ownEnd);
 
         // A child that steps clear of a float keeps its margins out of the collapse with the box above
         // it on either end, so the walk stops at it the way a box with height stops the run.
@@ -3525,7 +3577,7 @@ internal sealed class BlockLayout
                 return combined;
             }
 
-            combined = Combine(combined, CollapsedEnd(child, flow, basis));
+            combined = combined.With(CollapsedEnd(child, flow, basis));
 
             if (!IsSelfCollapsing(child, flow, basis))
             {
@@ -3535,7 +3587,7 @@ internal sealed class BlockLayout
 
         if (IsSelfCollapsing(box, flow, basis))
         {
-            combined = Combine(combined, own);
+            combined = combined.With(own);
         }
 
         return combined;
