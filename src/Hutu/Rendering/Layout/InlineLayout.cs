@@ -208,7 +208,7 @@ internal sealed class InlineLayout
         InlineContext context,
         Int32 index)
     {
-        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context));
+        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, maxInline));
 
         if (index < 0 || index >= lines.Count)
         {
@@ -262,7 +262,7 @@ internal sealed class InlineLayout
 
     private InlineContentSize MeasureCore(Box container, Double maxInline, WritingModeInfo flow, InlineContext context)
     {
-        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context));
+        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, maxInline));
 
         var block = 0.0;
         var inline = 0.0;
@@ -292,7 +292,7 @@ internal sealed class InlineLayout
 
             if (columns > 1)
             {
-                var columnLines = Plan(container, share, flow, context, Indentation(container, flow, context));
+                var columnLines = Plan(container, share, flow, context, Indentation(container, flow, share));
                 var breaks = container.Style.Breaks;
                 var heights = Heights(columnLines);
                 var starts = Leadings(container, columnLines, atStart: true);
@@ -359,7 +359,7 @@ internal sealed class InlineLayout
         // The first line carries the box's indentation ahead of anything set on it, so both extents the
         // content asks for are that much wider: one line is the indent and the line, and the narrowest
         // break is the indent and the longest thing that cannot be broken.
-        var indent = Indentation(container, flow, context);
+        var indent = Indentation(container, flow, basis);
 
         var minContent = 0.0;
         var maxContent = indent;
@@ -652,7 +652,7 @@ internal sealed class InlineLayout
     /// </summary>
     public IReadOnlyList<Double> LineHeights(
         Box container, Double maxInline, WritingModeInfo flow, InlineContext context) =>
-        Heights(Plan(container, maxInline, flow, context, Indentation(container, flow, context)));
+        Heights(Plan(container, maxInline, flow, context, Indentation(container, flow, maxInline)));
 
     /// <summary>
     /// Gets how tall each line of the content from <paramref name="start"/> on stands: what a column
@@ -661,7 +661,7 @@ internal sealed class InlineLayout
     /// </summary>
     internal IReadOnlyList<Double> LineHeights(
         Box container, Double maxInline, WritingModeInfo flow, InlineContext context, InlineStart start) =>
-        Heights(Plan(container, maxInline, flow, context, Indentation(container, flow, context), start));
+        Heights(Plan(container, maxInline, flow, context, Indentation(container, flow, maxInline), start));
 
     /// <summary>
     /// Lays the lines numbered <paramref name="from"/> up to <paramref name="to"/> into the given content
@@ -681,7 +681,7 @@ internal sealed class InlineLayout
         InlineStart? start = null)
     {
         var maxInline = flow.InlineExtent(contentBox.Width, contentBox.Height);
-        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context), start);
+        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, maxInline), start);
 
         AlignLastLines(lines, maxInline);
         DistributeSpace(lines);
@@ -721,7 +721,7 @@ internal sealed class InlineLayout
         // The lines the measuring phase broke this content into, if it broke them at the same extent -
         // which is what the block layout makes sure of, since it reconstructs the child's containing
         // block from the same arithmetic it measured against.
-        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, context));
+        var lines = Plan(container, maxInline, flow, context, Indentation(container, flow, maxInline));
 
         // Which lines the block's alignment reaches is settled before the room is spread: the last line
         // and the ones a forced break ended are the block's `text-align-last` to align, and a line it
@@ -763,7 +763,7 @@ internal sealed class InlineLayout
         Double share,
         MulticolStyle multi)
     {
-        var lines = Plan(container, share, flow, context, Indentation(container, flow, context));
+        var lines = Plan(container, share, flow, context, Indentation(container, flow, share));
         AlignLastLines(lines, share);
         DistributeSpace(lines);
 
@@ -2614,7 +2614,7 @@ internal sealed class InlineLayout
         var items = new List<InlineItem>();
         Collect(box, items, box.Flow, null, contentInline);
 
-        var lines = BuildLines(items, contentInline, box.Flow, context, style, Indentation(box, box.Flow, context));
+        var lines = BuildLines(items, contentInline, box.Flow, context, style, Indentation(box, box.Flow, contentInline));
 
         if (lines.Count == 0)
         {
@@ -3205,18 +3205,17 @@ internal sealed class InlineLayout
     /// the block the text sits in rather than the one it makes - the same extent every other length of
     /// the line resolves against.
     /// </remarks>
-    private static Double Indentation(Box container, WritingModeInfo flow, InlineContext context)
+    /// <summary>
+    /// Gets the distance the first line of the container is set in by, as a percentage of the
+    /// container's own content box along the line (CSS Text 3 §8.1, measured: a border-box 120px
+    /// div with 20px of right inset indents 50px for `text-indent: 50%`, not 50% of the containing
+    /// block - text-indent-percentage-002).
+    /// </summary>
+    private static Double Indentation(Box container, WritingModeInfo flow, Double contentInline)
     {
         var indent = container.Style.TextIndent;
 
-        if (!indent.HasValue)
-        {
-            return 0;
-        }
-
-        var containing = context.Containing.ContainingBlock;
-
-        return indent.Resolve(flow.InlineExtent(containing.Width, containing.Height));
+        return indent.HasValue ? indent.Resolve(contentInline) : 0;
     }
 
     /// <summary>

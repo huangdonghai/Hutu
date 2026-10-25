@@ -506,6 +506,24 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task ATextIndentPercentageReadsTheElementsOwnContentBox()
+    {
+        // CSS Text 3 §8.1 measured in Chromium: a border-box 120px div with 20px of right inset indents
+        // 50px for `text-indent: 50%` - half of the 100px content box, not of the containing block
+        // (text-indent-percentage-002).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='box-sizing:border-box;width:120px;padding-right:10px;border-right:10px solid;" +
+            "text-indent:50%;font:10px/1 monospace'><span id='after'>x</span></div>" +
+            "</body></html>");
+
+        var tick = Walk(view.Layout!.Root).First(node => node.Kind == LayoutKind.Text && node.Text == "x");
+
+        Assert.That(tick.BorderBox.X, Is.EqualTo(50).Within(0.5), "half of the 100px content box");
+    }
+
+    [Test]
     public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
     {
         // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's
