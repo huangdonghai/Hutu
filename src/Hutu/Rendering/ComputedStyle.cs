@@ -271,6 +271,10 @@ internal readonly struct ComputedStyle
         var text = new TextArea
         {
             WhiteSpace = Keyword("white-space", CssInitialValues.WhiteSpace),
+            WrapStyle = TextWrapStyle(
+                Keyword("text-wrap-style", "auto"),
+                Keyword("text-wrap", "wrap"),
+                parent?.WrapStyle ?? "auto"),
             OverflowWrap = Keyword("overflow-wrap", Keyword("word-wrap", CssInitialValues.OverflowWrap)),
             WordBreak = Keyword("word-break", CssInitialValues.WordBreak),
             LineBreak = Keyword("line-break", CssInitialValues.LineBreak),
@@ -3543,6 +3547,40 @@ internal readonly struct ComputedStyle
 
     /// <summary>Gets the text area this style answers from, shared with every style whose text agrees.</summary>
     internal TextArea ResolvedText => _values.Text;
+
+    /// <summary>Gets the line-breaking style the block's text asks for (CSS Text 4 §5).</summary>
+    public String WrapStyle => _values.Text.WrapStyle;
+
+    /// <summary>
+    /// Reads the two properties that state a line-breaking style: <c>text-wrap-style</c> speaks for
+    /// itself, and the <c>text-wrap</c> shorthand may state it in the same value. The style is
+    /// inherited, so a value this reader cannot take leaves the parent's answer standing.
+    /// </summary>
+    public static String TextWrapStyle(String? style, String? wrap, String inherited)
+    {
+        var value = style is { Length: > 0 } ? style.Trim() : wrap?.Trim();
+
+        if (String.IsNullOrEmpty(value))
+        {
+            return inherited;
+        }
+
+        if (value.Equals("inherit", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("revert", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("revert-layer", StringComparison.OrdinalIgnoreCase))
+        {
+            return inherited;
+        }
+
+        if (value.Equals("initial", StringComparison.OrdinalIgnoreCase))
+        {
+            return "auto";
+        }
+
+        // The shorthand may also state `wrap`/`nowrap`, which say nothing about the style.
+        return value is "auto" or "balance" or "stable" or "pretty" ? value : inherited;
+    }
 
     /// <summary>
     /// Gets the list marker style the element's items are marked with. Read as an area by the builder,

@@ -539,6 +539,26 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task BalanceSharesAShortParagraphsLinesEvenly()
+    {
+        // CSS Text 4 §5: text-wrap: balance picks the narrowest line box that still needs the same
+        // number of lines, so the lines come out even; the line box itself stays the block's width.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0;width:175px;text-wrap:balance'>" +
+            "The quickest brown fox jumped over the lazy dog</p></body></html>");
+
+        var lines = Lines(view).ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines.Select(LineText), Is.EqualTo(new[] { "The quickest brown fox", "jumped over the lazy dog" }));
+            Assert.That(lines[0].BorderBox.Width, Is.EqualTo(175).Within(0.5), "the box stays the block's width");
+        });
+    }
+
+    [Test]
     public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
     {
         // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's

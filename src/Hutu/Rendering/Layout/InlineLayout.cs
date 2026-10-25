@@ -125,8 +125,76 @@ internal sealed class InlineLayout
             ? new List<Line>()
             : BuildLines(items, maxInline, flow, context, container.Style, indent);
 
+        if (items.Count > 0 && container.Style.WrapStyle == "balance")
+        {
+            lines = Balanced(items, maxInline, flow, context, indent, container.Style, lines);
+        }
+
         _plans[key] = lines;
         return lines;
+    }
+
+    /// <summary>
+    /// Shares a short paragraph's lines more evenly: the narrowest line box that still needs the same
+    /// number of lines is the width whose line breaks balance the text, and the lines are then drawn
+    /// in the block's own (wider) box - only where they end changes (CSS Text 4 §5, text-wrap: balance).
+    /// </summary>
+    private List<Line> Balanced(
+        List<InlineItem> items,
+        Double maxInline,
+        WritingModeInfo flow,
+        InlineContext context,
+        Double indent,
+        ComputedStyle strut,
+        List<Line> greedy)
+    {
+        // The corpus's balancing is about a short paragraph in its own block: a column, a float's band
+        // and a paragraph too long to be worth the search keep the ordinary plan.
+        // A height-capped block is the shape a line clamp takes (line-clamp itself is not read yet);
+        // balancing it before the clamp is modelled only exposes content the page meant to clip.
+        if (flow.IsVertical || context.Containing.Floats is not null || strut.ClipsOverflow ||
+            strut.MaxHeight.HasValue ||
+            greedy.Count <= 1 || greedy.Count > 6 || maxInline <= 0)
+        {
+            return greedy;
+        }
+
+        var target = greedy.Count;
+        var low = 0.0;
+        var high = maxInline;
+        var best = greedy;
+
+        for (var step = 0; step < 24; step++)
+        {
+            var middle = (low + high) / 2;
+
+            if (middle <= 0)
+            {
+                break;
+            }
+
+            var candidate = BuildLines(items, middle, flow, context, strut, indent, emergency: false);
+
+            if (candidate.Count <= target)
+            {
+                best = candidate;
+                high = middle;
+            }
+            else
+            {
+                low = middle;
+            }
+        }
+
+        // The break decisions were made at the balanced width; the line box is the block's own, which
+        // is what text-align and justification read.
+        foreach (var line in best)
+        {
+            line.Extent = maxInline;
+            line.Offset = Aligned(line, maxInline);
+        }
+
+        return best;
     }
 
     /// <summary>
@@ -1742,7 +1810,8 @@ internal sealed class InlineLayout
         WritingModeInfo flow,
         InlineContext context,
         ComputedStyle strut,
-        Double indent = 0)
+        Double indent = 0,
+        Boolean emergency = true)
     {
         var lines = new List<Line>();
 
@@ -1980,7 +2049,7 @@ internal sealed class InlineLayout
                     var letters = !spaces &&
                         (item.Style.BreaksAnywhere || item.Style.BreaksBetweenLetters);
                     var stepsWord = !spaces &&
-                        (letters || (item.Style.WrapsLongWords && width > room.Room));
+                        (letters || (emergency && item.Style.WrapsLongWords && width > room.Room));
 
                     var steps = (stepsSpaces || stepsWord) && room.Room > 0 &&
                         builder.ExtentFor(item.Inline) + width > room.Room && item.Style.WrapsLines;

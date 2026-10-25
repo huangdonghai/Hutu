@@ -94,6 +94,9 @@ internal sealed class FusedParent
     /// <summary>Gets the parent's <c>line-break</c>, likewise inherited.</summary>
     public String LineBreak { get; init; } = CssInitialValues.LineBreak;
 
+    /// <summary>Gets the parent's line-breaking style, likewise inherited (CSS Text 4 §5).</summary>
+    public String WrapStyle { get; init; } = "auto";
+
     /// <summary>Gets the parent's tab length in pixels, or null where the tab is counted in characters.</summary>
     public Double? TabLength { get; init; }
 
@@ -378,6 +381,7 @@ internal sealed class FusedParent
         Align = style.TextAlign,
         AlignLast = style.TextAlignLast,
         TextJustify = style.TextJustify,
+        WrapStyle = style.WrapStyle,
         Visibility = style.Visibility,
         VerticalAlign = style.VerticalAlign,
         UnderlineOffset = style.CascadedUnderlineOffset,
@@ -596,6 +600,10 @@ internal static class FusedStyleFactory
                 Align = all,
                 AlignLast = last,
                 TextJustify = ComputedStyle.ResolveTextJustifyFused(find("text-justify"), parent.TextJustify),
+                WrapStyle = ComputedStyle.TextWrapStyle(
+                    find("text-wrap-style")?.Value,
+                    find("text-wrap")?.Value,
+                    parent.WrapStyle),
                 VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign, PresentationalHints.Valign(element)),
                 Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, face, dimensions),
                 Visibility = ComputedStyle.ResolveVisibilityFused(find("visibility"), parent.Visibility),
