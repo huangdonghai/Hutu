@@ -42,8 +42,16 @@ internal sealed class MasonryFormattingContext
         var plan = Compute(box, contentWidth, true, context);
         var height = declaredHeight ?? plan.TotalHeight;
 
+        // The used width is the one the page sized: a content-sized width is the measurement it asked
+        // for, a stated one its own size, and only an auto width takes the lanes' packed extent.
+        var used = _engine.ContentSizedWidth(box, basisWidth, context)
+            ?? (BoxModel.DeclaredWidth(style, context.ContainingBlock.Width, inset.Horizontal) is { } stated
+                ? (Double?)stated + inset.Horizontal
+                : null)
+            ?? plan.TotalWidth + inset.Horizontal;
+
         return new Size(
-            BoxModel.ClampWidth(style, plan.TotalWidth + inset.Horizontal, basisWidth, inset.Horizontal),
+            BoxModel.ClampWidth(style, used, basisWidth, inset.Horizontal),
             BoxModel.ClampHeight(style, height, basisHeight, inset.Vertical) + inset.Vertical);
     }
 
@@ -51,6 +59,13 @@ internal sealed class MasonryFormattingContext
     {
         var style = box.Style;
         var inset = Insets(box, context.ContainingBlock.Width);
+
+        // A width the page states is the intrinsic one: min-content and max-content are both the stated
+        // size, whatever the packed lanes would have asked for (CSS Sizing 3 §5.1).
+        if (BoxModel.DeclaredWidth(style, context.ContainingBlock.Width, inset.Horizontal) is { } stated)
+        {
+            return new IntrinsicSize(stated + inset.Horizontal, stated + inset.Horizontal);
+        }
 
         // Without a container width the cross tracks take the width of what they hold; measuring at zero
         // available width lets each item report its min-content and the sum is the container's own.
@@ -302,16 +317,7 @@ internal sealed class MasonryFormattingContext
     /// </summary>
     private void PackRows(LanePlan plan, GridFormattingContext.CrossAxisLayout cross, GridStyle grid, Double gapY, LayoutContext itemContext)
     {
-        var columnWidths = cross.ColumnWidths;
-        var trackCount = columnWidths.Count;
-        var laneX = new Double[trackCount];
-        var cursor = 0.0;
-
-        for (var c = 0; c < trackCount; c++)
-        {
-            laneX[c] = cursor;
-            cursor += columnWidths[c] + cross.GapX;
-        }
+        var trackCount = cross.ColumnWidths.Count;
 
         var ordered = new List<GridFormattingContext.CrossPlacedItem>(cross.Items);
         ordered.Sort(CompareByRow);
@@ -331,7 +337,10 @@ internal sealed class MasonryFormattingContext
         }
 
         // Each item is measured at its area width before the lanes are sized: an auto lane takes the
-        // tallest item whose declared row names it.
+        // tallest item whose declared row names it. The inline axis packs each lane on its own: an item
+        // stands where the lane's cursor puts it, the cursor crossing its own width and the cross gap -
+        // a row-lane grid's lanes flow like lines, not like shared tracks (CSS Grid Lanes).
+        var laneCursor = new Double[laneCount];
         var measured = new List<(GridFormattingContext.CrossPlacedItem Item, Double Height)>();
         var placements = new Dictionary<Box, (Double X, Double Y, Double Width, Double Height, Int32 Lane, Int32 LaneSpan, Int32 Column, Int32 ColumnSpan)>();
 
@@ -345,11 +354,14 @@ internal sealed class MasonryFormattingContext
                 span = Math.Max(1, trackCount - start);
             }
 
-            var (offset, width) = _grid.AlignInline(item.Box, item.AreaWidth, grid.JustifyItems, itemContext);
+            var (_, width) = _grid.AlignInline(item.Box, item.AreaWidth, grid.JustifyItems, itemContext);
             var size = _engine.Measure(item.Box, MeasureConstraints.FitWidth(width), itemContext);
 
             measured.Add((item, size.Height));
-            placements[item.Box] = (laneX[start] + offset, 0, width, size.Height, item.Row, item.RowSpan, start, span);
+
+            var lane = Math.Clamp(item.Row, 0, laneCount - 1);
+            placements[item.Box] = (laneCursor[lane], 0, width, size.Height, item.Row, item.RowSpan, start, span);
+            laneCursor[lane] += width + cross.GapX;
         }
 
         // Each lane's height: the definite size its sizing states, or the tallest item it holds.
@@ -404,12 +416,14 @@ internal sealed class MasonryFormattingContext
 
         plan.TotalHeight = Math.Max(0, top - gapY);
 
-        plan.TotalWidth = cross.GapX * 0 + laneX[trackCount - 1] + columnWidths[trackCount - 1];
+        var extent = 0.0;
 
-        if (plan.Cross.ColumnWidths.Count > 0)
+        foreach (var cursor in laneCursor)
         {
-            plan.TotalWidth = laneX[trackCount - 1] + columnWidths[trackCount - 1];
+            extent = Math.Max(extent, cursor - cross.GapX);
         }
+
+        plan.TotalWidth = extent;
     }
 
     /// <summary>
@@ -453,56 +467,101 @@ internal sealed class MasonryFormattingContext
                     continue;
                 }
 
-                // The visibility is asked of the items whose areas cover the lane and column on each side,
-                // per column: an item that spans both lanes crosses the gap, which is then interior to that
-                // item and draws nothing at all (CSS Gaps 1 §3.4). The columns whose sides answer are merged
-                // into bands, the gaps between them run through under a none break.
-                var drawnFrom = -1.0;
-                var drawnTo = -1.0;
-                var columnX = 0.0;
-
-                for (var column = 0; column < plan.Cross.ColumnWidths.Count; column++)
+                if (rowAxis.Break == GapRuleBreak.Intersection)
                 {
-                    var holds = ItemCovering(plan, lane, column) is not null;
-                    var holdsNext = ItemCovering(plan, lane + 1, column) is not null;
-                    var crossed = ItemCovering(plan, lane, column) is { } upper
-                        && ItemCovering(plan, lane + 1, column) is { } lower
-                        && ReferenceEquals(upper, lower);
+                    // The junctions where either flanking lane's own item gap, or a spanning item's
+                    // crossing, abuts the row gap: each is an end and a start segment endpoint, and the
+                    // segments pair between them (CSS Gaps 1 §3.1.1-3.1.2). No junction of a lane gap is
+                    // ever flanked - the lane's own absence is what made it - so no two segments merge.
+                    var junctions = new List<(Double From, Double To)>();
 
+                    foreach (var acrossLane in new[] { lane, lane + 1 })
+                    {
+                        var across = ItemsAcross(plan, acrossLane);
+
+                        for (var k = 0; k + 1 < across.Count; k++)
+                        {
+                            if (across[k + 1].X - (across[k].X + across[k].Width) > 0.01)
+                            {
+                                junctions.Add((across[k].X + across[k].Width, across[k + 1].X));
+                            }
+                        }
+                    }
+
+                    foreach (var crossing in plan.Items)
+                    {
+                        if (crossing.Lane <= lane && lane + 1 < crossing.Lane + crossing.LaneSpan)
+                        {
+                            junctions.Add((crossing.X, crossing.X + crossing.Width));
+                        }
+                    }
+
+                    foreach (var (from, to) in ComplementOf(JunctionBands(junctions), plan.TotalWidth))
+                    {
+                        DrawLaneRuleSegment(segments, plan, rule, rowAxis, lane, top, bottom, from, to);
+                    }
+
+                    continue;
+                }
+
+                // A none break runs through the junctions: the rule is one stretch from bound to
+                // bound - save where a spanning item crosses, which is interior to it; and the rule may
+                // not end inside a junction, so the crossing's stretch is widened to the item gaps that
+                // abut it in the lanes it covers (CSS Gaps 1 §3.1.1, §3.4).
+                var crossings = new List<(Double From, Double To)>();
+
+                foreach (var crossing in plan.Items)
+                {
+                    if (!(crossing.Lane <= lane && lane + 1 < crossing.Lane + crossing.LaneSpan))
+                    {
+                        continue;
+                    }
+
+                    var from = crossing.X;
+                    var to = crossing.X + crossing.Width;
+
+                    for (var covered = Math.Max(crossing.Lane, lane); covered <= Math.Min(crossing.Lane + crossing.LaneSpan - 1, lane + 1); covered++)
+                    {
+                        var across = ItemsAcross(plan, covered);
+
+                        for (var k = 0; k < across.Count; k++)
+                        {
+                            if (!ReferenceEquals(across[k], crossing))
+                            {
+                                continue;
+                            }
+
+                            if (k > 0)
+                            {
+                                from = Math.Min(from, across[k - 1].X + across[k - 1].Width);
+                            }
+
+                            if (k + 1 < across.Count)
+                            {
+                                to = Math.Max(to, across[k + 1].X);
+                            }
+                        }
+                    }
+
+                    crossings.Add((from, to));
+                }
+
+                foreach (var (from, to) in ComplementOf(JunctionBands(crossings), plan.TotalWidth))
+                {
                     var draw = rowAxis.Visibility switch
                     {
-                        GapRuleVisibility.Between => holds && holdsNext && !crossed,
-                        GapRuleVisibility.Around => (holds || holdsNext) && !crossed,
+                        GapRuleVisibility.Between => LaneHolds(plan, lane, from, to) && LaneHolds(plan, lane + 1, from, to),
+                        GapRuleVisibility.Around => LaneHolds(plan, lane, from, to) || LaneHolds(plan, lane + 1, from, to),
                         _ => true,
                     };
 
                     if (draw)
                     {
-                        if (drawnFrom < 0)
-                        {
-                            drawnFrom = columnX;
-                        }
-
-                        drawnTo = columnX + plan.Cross.ColumnWidths[column];
-                    }
-                    else if (drawnFrom >= 0)
-                    {
                         segments.Add(new GapRuleSegment(
-                            GapRuleBands.Band(rule, false, (top + bottom) / 2, drawnFrom, drawnTo),
+                            GapRuleBands.Band(rule, false, (top + bottom) / 2, from, to),
                             rule,
                             isRow: true));
-                        drawnFrom = -1;
                     }
-
-                    columnX += plan.Cross.ColumnWidths[column] + plan.Cross.GapX;
-                }
-
-                if (drawnFrom >= 0)
-                {
-                    segments.Add(new GapRuleSegment(
-                        GapRuleBands.Band(rule, false, (top + bottom) / 2, drawnFrom, drawnTo),
-                        rule,
-                        isRow: true));
                 }
             }
 
@@ -647,6 +706,113 @@ internal sealed class MasonryFormattingContext
         across.Sort((a, b) => a.X.CompareTo(b.X));
 
         return across;
+    }
+
+    /// <summary>
+    /// Emits one stretch of a lane gap's rule the break left whole: the visibility is asked of the items
+    /// of the lanes on either side over the stretch, an item standing on each side for <c>between</c>, on
+    /// either for <c>around</c> (CSS Gaps 1 §3.4).
+    /// </summary>
+    private static void DrawLaneRuleSegment(
+        List<GapRuleSegment> segments,
+        LanePlan plan,
+        GapRule rule,
+        GapRuleAxis rowAxis,
+        Int32 lane,
+        Double top,
+        Double bottom,
+        Double from,
+        Double to)
+    {
+        var shown = rowAxis.Visibility switch
+        {
+            GapRuleVisibility.Between => LaneHolds(plan, lane, from, to) && LaneHolds(plan, lane + 1, from, to),
+            GapRuleVisibility.Around => LaneHolds(plan, lane, from, to) || LaneHolds(plan, lane + 1, from, to),
+            _ => true,
+        };
+
+        if (shown)
+        {
+            segments.Add(new GapRuleSegment(
+                GapRuleBands.Band(rule, false, (top + bottom) / 2, from, to),
+                rule,
+                isRow: true));
+        }
+    }
+
+    /// <summary>
+    /// Gets whether the lane's area counts as occupied over the stretch: an item covering it, an edge
+    /// touching the stretch being as good as overlapping it - the stretch an item bounds is one it
+    /// stands beside (CSS Gaps 1 §3.4).
+    /// </summary>
+    private static Boolean LaneHolds(LanePlan plan, Int32 lane, Double from, Double to)
+    {
+        foreach (var item in plan.Items)
+        {
+            if (item.Lane <= lane && lane < item.Lane + item.LaneSpan && item.X <= to + 0.01 && item.X + item.Width >= from - 0.01)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Gets whether a spanning item crosses the gap over the stretch, leaving it interior to itself.</summary>
+    private static Boolean LaneCrossed(LanePlan plan, Int32 lane, Double from, Double to)
+    {
+        foreach (var item in plan.Items)
+        {
+            if (item.Lane <= lane && lane + 1 < item.Lane + item.LaneSpan && item.X < to && item.X + item.Width > from)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Merges stretches that touch or overlap into the bands the junctions take.</summary>
+    private static List<(Double From, Double To)> JunctionBands(List<(Double From, Double To)> junctions)
+    {
+        junctions.Sort((a, b) => a.From.CompareTo(b.From));
+
+        var bands = new List<(Double From, Double To)>();
+
+        foreach (var junction in junctions)
+        {
+            if (bands.Count > 0 && junction.From <= bands[^1].To + 0.01)
+            {
+                bands[^1] = (bands[^1].From, Math.Max(bands[^1].To, junction.To));
+            }
+            else
+            {
+                bands.Add(junction);
+            }
+        }
+
+        return bands;
+    }
+
+    /// <summary>Walks the stretches of [0, <paramref name="width"/>] the bands leave open.</summary>
+    private static IEnumerable<(Double From, Double To)> ComplementOf(List<(Double From, Double To)> bands, Double width)
+    {
+        var cut = 0.0;
+
+        foreach (var (from, to) in bands)
+        {
+            if (from - cut > 0.01)
+            {
+                yield return (cut, from);
+            }
+
+            cut = Math.Max(cut, to);
+        }
+
+        if (width - cut > 0.01)
+        {
+            yield return (cut, width);
+        }
     }
 
     private static (Double Horizontal, Double Vertical) Insets(Box box, Double basis)
