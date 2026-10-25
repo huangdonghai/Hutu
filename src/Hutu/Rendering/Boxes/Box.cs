@@ -224,7 +224,13 @@ internal sealed class Box
     public IText? Source { get; init; }
 
     /// <summary>Gets the processed text of a text box (white space already collapsed where applicable).</summary>
-    public String? Text { get; init; }
+    public String? Text { get; set; }
+
+    /// <summary>
+    /// Gets the quotation pairs the element hands down, or null where it asked for none. A generated
+    /// box takes the value from the element it came from, which is why only element boxes set it.
+    /// </summary>
+    public QuoteSet? Quotes { get; init; } = QuoteSet.Default;
 
     /// <summary>Gets whether this box was generated to hold inline content, not by an element.</summary>
     public Boolean IsAnonymous { get; init; }

@@ -22,20 +22,36 @@ namespace Hutu.Rendering.Boxes;
 internal sealed class CounterEnv
 {
     /// <summary>The environment of a page that counts nothing.</summary>
-    internal static readonly CounterEnv Empty = new(null, null, null, 0);
+    internal static readonly CounterEnv Empty = new(null, null, null, 0, null, null);
 
     private readonly CounterEnv? _inner;
     private readonly Object? _origin;
     private readonly String? _name;
     private readonly Int32 _value;
 
-    private CounterEnv(CounterEnv? inner, Object? origin, String? name, Int32 value)
+    /// <summary>The scope the counter was written in, or null for the document's own.</summary>
+    private readonly Object? _written;
+
+    /// <summary>
+    /// The scope writes made through this environment belong to. It is the document's own unless the
+    /// environment stands inside a style-contained subtree, where CSS Contain 2 §3.4 scopes
+    /// <c>counter-increment</c> and <c>counter-set</c>: a name that only means something outside is
+    /// not stepped there, but instantiated afresh.
+    /// </summary>
+    private readonly Object? _current;
+
+    private CounterEnv(CounterEnv? inner, Object? origin, String? name, Int32 value, Object? written, Object? current)
     {
         _inner = inner;
         _origin = origin;
         _name = name;
         _value = value;
+        _written = written;
+        _current = current;
     }
+
+    /// <summary>Gets the scope writes through this environment belong to.</summary>
+    internal Object? Scope => _current;
 
     /// <summary>
     /// Gets the chain with this element's counters hung on it, read off the three declarations it wrote.
@@ -51,22 +67,24 @@ internal sealed class CounterEnv
     /// The first thing above <paramref name="origin"/> whose counters stand outside it: the parent of an
     /// element, and the element itself for one of its pseudo-elements.
     /// </param>
+    /// <param name="inside">
+    /// The chain the element's own contents stand on. It is the returned chain except for a
+    /// style-contained element, whose subtree gets a scope of its own while the element itself - being
+    /// outside that scope (CSS Contain 2 §3.4) - still steps the counters around it.
+    /// </param>
     /// <remarks>
     /// The three are applied in the order the chapter states them - reset, then set, then increment -
     /// because an element that both resets a counter and steps it means the step to come on top of the
     /// reset rather than to replace it (§4.4.2, "the counter is incremented after the element's own
     /// counter-reset and counter-set").
     /// </remarks>
-    internal static CounterEnv? Extend(CounterEnv? env, MatchedCascade cascade, Object origin, IElement? above)
+    internal static CounterEnv? Extend(
+        CounterEnv? env,
+        MatchedCascade cascade,
+        Object origin,
+        IElement? above,
+        out CounterEnv? inside)
     {
-        // Style containment makes the element's subtree a scope of its own: a counter that means
-        // something above the box is not in scope inside it, and one the box itself starts does not
-        // outlive it (CSS Contain 1 §3.4). The chain handed down is therefore empty here.
-        if (ContainsStyle(cascade.Find("contain")?.Value))
-        {
-            env = Empty;
-        }
-
         var reset = cascade.Find("counter-reset")?.Value;
         var set = cascade.Find("counter-set")?.Value;
         var increment = cascade.Find("counter-increment")?.Value;
@@ -75,6 +93,7 @@ internal sealed class CounterEnv
             String.IsNullOrWhiteSpace(set) &&
             String.IsNullOrWhiteSpace(increment))
         {
+            inside = ContainsStyle(cascade.Find("contain")?.Value) ? InScope(env, new Object()) : env;
             return env;
         }
 
@@ -84,7 +103,37 @@ internal sealed class CounterEnv
         mine = Apply(mine, set, CounterWrite.Set, origin, above);
         mine = Apply(mine, increment, CounterWrite.Increment, origin, above);
 
+        // The box itself is outside its own subtree, so the counters it writes are the ones the siblings
+        // around it see; only what its contents write is kept to the subtree (CSS Contain 2 §3.4).
+        inside = ContainsStyle(cascade.Find("contain")?.Value) ? InScope(mine, new Object()) : mine;
+
         return mine;
+    }
+
+    /// <summary>
+    /// Gets the chain with its writes scoped to <paramref name="scope"/>: from here on a counter of a
+    /// name whose innermost instance was written outside this scope is instantiated afresh rather than
+    /// stepped, while every counter already in scope is still read normally.
+    /// </summary>
+    private static CounterEnv InScope(CounterEnv? env, Object scope)
+    {
+        var source = env ?? Empty;
+
+        var nodes = new List<CounterEnv>();
+
+        for (var at = source; at._name is not null; at = at._inner!)
+        {
+            nodes.Add(at);
+        }
+
+        CounterEnv chain = new(null, null, null, 0, null, scope);
+
+        for (var at = nodes.Count - 1; at >= 0; at--)
+        {
+            chain = new CounterEnv(chain, nodes[at]._origin, nodes[at]._name, nodes[at]._value, nodes[at]._written, scope);
+        }
+
+        return chain;
     }
 
     /// <summary>Gets whether a <c>contain</c> value scopes what the box holds, which is what
@@ -208,23 +257,47 @@ internal sealed class CounterEnv
                 at++;
             }
 
+            var outside = write != CounterWrite.Reset && Outside(env, name);
+
             var value = write switch
             {
                 CounterWrite.Reset => stated == Int32.MinValue ? 0 : stated,
-                CounterWrite.Set => stated == Int32.MinValue ? env.ValueOf(name) : stated,
-                _ => env.ValueOf(name) + (stated == Int32.MinValue ? 1 : stated),
+                CounterWrite.Set => outside
+                    ? stated == Int32.MinValue ? 0 : stated
+                    : stated == Int32.MinValue ? env.ValueOf(name) : stated,
+                _ => (outside ? 0 : env.ValueOf(name)) + (stated == Int32.MinValue ? 1 : stated),
             };
 
-            env = Instantiate(env, origin, above, name, value);
+            env = Instantiate(env, origin, above, name, value, outside);
         }
 
         return env;
     }
 
     /// <summary>
-    /// Puts a counter of that name, belonging to <paramref name="origin"/>, at the inner end of the
-    /// chain - and takes out of it the counter it stands in place of.
+    /// Gets whether a step or a set of that name would reach a counter outside the scope this
+    /// environment writes in - which is the case CSS Contain 2 §3.4 instantiates afresh instead.
+    /// A name nothing has written yet has no outside counter either, and both readings start at zero.
     /// </summary>
+    private static Boolean Outside(CounterEnv env, String name) =>
+        env._current is not null && !ReferenceEquals(env.ScopeOf(name), env._current);
+
+    /// <summary>Gets the scope the innermost counter of that name was written in.</summary>
+    private Object? ScopeOf(String name)
+    {
+        for (var at = this; at._name is not null; at = at._inner!)
+        {
+            if (String.Equals(at._name, name, StringComparison.Ordinal))
+            {
+                return at._written;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Puts a counter of that name, belonging to <paramref name="origin"/>, at the inner end of the
+    /// chain - and takes out of it the counter it stands in place of.</summary>
     /// <remarks>
     /// §4.4.2: "Newly instantiated counters replace identically-named counters originating from previous
     /// siblings, but are added in addition to identically-named counters originating from ancestor
@@ -239,7 +312,8 @@ internal sealed class CounterEnv
         Object origin,
         IElement? above,
         String name,
-        Int32 value)
+        Int32 value,
+        Boolean fresh)
     {
         for (var at = env; at._name is not null; at = at._inner!)
         {
@@ -248,12 +322,15 @@ internal sealed class CounterEnv
                 continue;
             }
 
-            return StandsAbove(at._origin, above)
-                ? new CounterEnv(env, origin, name, value)
-                : new CounterEnv(env.Without(at), origin, name, value);
+            // A style-contained subtree's counter stands beside the one outside it, whatever made that
+            // one: the chapter's own example shows a contained element's descendants reading "2.1"
+            // inside while the outer counter stays at 2 (CSS Contain 2 §3.4).
+            return fresh || StandsAbove(at._origin, above)
+                ? new CounterEnv(env, origin, name, value, env._current, env._current)
+                : new CounterEnv(env.Without(at), origin, name, value, env._current, env._current);
         }
 
-        return new CounterEnv(env, origin, name, value);
+        return new CounterEnv(env, origin, name, value, env._current, env._current);
     }
 
     /// <summary>Gets whether a counter's creator is one of the things standing above this one.</summary>
@@ -284,11 +361,11 @@ internal sealed class CounterEnv
         }
 
         // The walk ran inwards, so the survivors are hung back on one another from the outer end in.
-        CounterEnv chain = Empty;
+        CounterEnv chain = new(null, null, null, 0, null, _current);
 
         for (var at = kept.Count - 1; at >= 0; at--)
         {
-            chain = new CounterEnv(chain, kept[at]._origin, kept[at]._name, kept[at]._value);
+            chain = new CounterEnv(chain, kept[at]._origin, kept[at]._name, kept[at]._value, kept[at]._written, _current);
         }
 
         return chain;

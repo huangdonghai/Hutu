@@ -357,6 +357,77 @@ public sealed class GeneratedContentTests
         Assert.That(String.Concat(Painted(view)), Is.EqualTo("12"));
     }
 
+    [Test]
+    public async Task AStyleContainedBoxScopesTheIncrementToItsSubtree()
+    {
+        // CSS Contain 2 §3.4: the box itself is outside its own subtree, so its increment is the one
+        // around it; the arm inside starts a fresh counter rather than stepping that one.
+        using var view = await Build(
+            "div { contain: style; counter-increment: n }" +
+            "div::before, div::after { content: counters(n, '.') ' ' }" +
+            "div::after { counter-increment: n 2 }",
+            "<div></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("1 1.2"));
+    }
+
+    [Test]
+    public async Task AnIncrementInsideAStyleContainedSubtreeStartsFresh()
+    {
+        // The contained div's own 123 belongs to the outer scope; the spans inside may not step it, so
+        // they instantiate a counter of their own and run 1, 2.
+        using var view = await Build(
+            "div { contain: style; counter-increment: c 123 }" +
+            "span { counter-increment: c 1 }" +
+            "span::before { content: counter(c) ' ' }",
+            "<div><span></span><span></span></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("1 2"));
+    }
+
+    [Test]
+    public async Task AStyleContainedSubtreeDoesNotStepTheCounterAroundIt()
+    {
+        // A1 steps the outer counter to 1 and its arm reads it; B1 and B2 start a fresh counter inside
+        // A1, so A2 - outside A1 - steps the outer one again to 2 and reads that.
+        using var view = await Build(
+            ".i { contain: style; counter-increment: c }" +
+            ".i::before { content: '[' counter(c) '] ' }",
+            "<div class=i>A1<div class=i>B1</div><div class=i>B2</div></div><div class=i>A2</div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("[1] A1[1] B1[2] B2[2] A2"));
+    }
+
+    [Test]
+    public async Task QuotationMarksNestAndCloseWhereThePagePutsThem()
+    {
+        // CSS 2.1 §12.3.2: open-quote draws the pair at the depth the box stands at and steps in;
+        // close-quote steps out and draws that pair's closing mark.
+        using var view = await Build(
+            "div { quotes: 'A' 'Z' '1' '9' }" +
+            "div::before, span::before { content: open-quote }" +
+            "div::after { content: close-quote }",
+            "<div><span></span></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("A19"));
+    }
+
+    [Test]
+    public async Task AStyleContainedSubtreeKeepsItsQuotationDepthToItself()
+    {
+        // CSS Contain 2 §3.4: the subtree reads the depth its context implies, but stepping it inside
+        // does not step the depth outside - so the span's mark is the second pair and the div's
+        // closing mark is still the first pair's.
+        using var view = await Build(
+            "div { quotes: 'A' 'Z' '1' '9' }" +
+            "span { contain: style }" +
+            "div::before, span::before { content: open-quote }" +
+            "div::after { content: close-quote }",
+            "<div><span></span></div>");
+
+        Assert.That(String.Concat(Painted(view)), Is.EqualTo("A1Z"));
+    }
+
     private static async Task<HutuViewInternal> Build(String style, String body)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

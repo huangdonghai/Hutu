@@ -24,7 +24,8 @@ internal readonly struct ContainStyle
         StyleLength? blockSize,
         Boolean stated,
         Boolean layout,
-        Boolean paint)
+        Boolean paint,
+        Boolean style)
     {
         Inline = inline;
         Block = block;
@@ -35,6 +36,7 @@ internal readonly struct ContainStyle
         Stated = stated;
         Layout = layout;
         Paint = paint;
+        Style = style;
     }
 
     /// <summary>
@@ -93,6 +95,12 @@ internal readonly struct ContainStyle
     public Boolean Paint { get; }
 
     /// <summary>
+    /// Gets whether the box contains its style, which gives its subtree counters and quotation marks of
+    /// their own (CSS Contain 2 §3.4).
+    /// </summary>
+    public Boolean Style { get; }
+
+    /// <summary>
     /// Reads the containment from the box's own declarations, or null where the page asked for none -
     /// which is every box that writes no <c>contain</c> at all.
     /// </summary>
@@ -131,7 +139,8 @@ internal readonly struct ContainStyle
             // nothing.
             !Has(contain!, "none"),
             layout,
-            paint);
+            paint,
+            Has(contain!, "style") || Has(contain!, "strict"));
     }
 
     private static Boolean Has(String text, String keyword) =>

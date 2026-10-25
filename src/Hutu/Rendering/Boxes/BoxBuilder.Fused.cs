@@ -85,7 +85,7 @@ internal static partial class BoxBuilder
         CounterEnv? rootCounters = null;
 
         var box = BuildFusedElement(
-            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, false, true, profile,
+            root, index, FusedParent.Root, device, images, faces, state, parser, WritingModeInfo.Horizontal, QuoteSet.Default, false, true, profile,
             ref rootCounters, ref supported);
 
         if (profile is not null)
@@ -104,6 +104,10 @@ internal static partial class BoxBuilder
         var rootCascade = MatchedCascade.ForElement(index, root, StyleRecord.MarksOf(root));
         AdoptBodyFlow(box, rootCascade.Find("writing-mode") is not null);
         MarkBasisUse(box);
+
+        // A quotation mark is read where the page shows it, which is not the order the builder walked:
+        // the ::before box is made after the element's children are. See QuoteResolver.
+        QuoteResolver.Resolve(box);
 
         // Every list has now counted, so this is the first moment an item can be told what its mark says -
         // which for a nested list needs the counts of the lists around it. See ListMarkers.Finish.
@@ -126,6 +130,7 @@ internal static partial class BoxBuilder
         StyleResolution state,
         ICssParser? parser,
         WritingModeInfo inheritedFlow,
+        QuoteSet inheritedQuotes,
         Boolean inItemContainer,
         Boolean inTable,
         FusedProfile? profile,
@@ -140,6 +145,10 @@ internal static partial class BoxBuilder
 
         var matchStart = FusedProfile.Stamp(profile);
         var cascade = MatchedCascade.ForElement(index, element, marks);
+
+        // Quotation pairs inherit, and content keywords are resolved after the whole tree stands; the
+        // element's own answer travels down the build so every box it holds can read it.
+        var quoted = QuoteSet.Read(cascade.Find("quotes")?.Value, inheritedQuotes);
 
         if (profile is not null)
         {
@@ -232,6 +241,7 @@ internal static partial class BoxBuilder
         // the siblings after it, so the chain is hung here - once the element is known to make a box at
         // all, since CSS 2.1 §12.4.1 counts an element that was never shown as having written nothing.
         var noOwnBox = false;
+        var inside = counters;
 
         if (index.Pseudo.HasCounterContent)
         {
@@ -242,7 +252,7 @@ internal static partial class BoxBuilder
 
             if (!noOwnBox)
             {
-                counters = CounterEnv.Extend(counters, cascade, element, element.ParentElement);
+                counters = CounterEnv.Extend(counters, cascade, element, element.ParentElement, out inside);
             }
         }
 
@@ -277,7 +287,7 @@ internal static partial class BoxBuilder
 
         if (kind == BoxKind.HorizontalRule)
         {
-            return new Box(kind, style) { Element = element, Flow = flow };
+            return new Box(kind, style) { Element = element, Flow = flow, Quotes = quoted };
         }
 
         if (element is IHtmlImageElement image)
@@ -294,7 +304,7 @@ internal static partial class BoxBuilder
 
         // The children are counted in turn: what one of them creates is in scope for the next, and what
         // they create between them is not in scope for anybody standing after this element.
-        var among = counters;
+        var among = inside;
 
         // A child is in a table only where its parent is one: the rows of a row group that is a flex
         // container are rows of nothing (CSS Display 3 §2.7), and so are the cells of a row that is.
@@ -311,7 +321,7 @@ internal static partial class BoxBuilder
                     // The parent's own tag name travels down with it: a box model needs it, because the
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
-                        elementChild, index, parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands), device, images, faces, state, parser, flow,
+                        elementChild, index, parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands), device, images, faces, state, parser, flow, quoted,
                         kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry, childInTable, profile, ref among, ref supported);
 
                     if (childBox is not null)
@@ -371,6 +381,7 @@ internal static partial class BoxBuilder
         {
             Element = element,
             Flow = flow,
+            Quotes = quoted,
             IsInlineOuter = inlineOuter,
             TableRole = tableRole,
             IsInTable = inTable,
@@ -449,7 +460,7 @@ internal static partial class BoxBuilder
         // child is in place - and before the markers are, because CSS 2.1 §12.5.1 puts a marker
         // stated `inside` its item "before the element's content and before any :before
         // pseudo-elements", which is the order the reader sees them in.
-        GeneratedContent.Place(box, element, index, style, cascade, variables, parent, device, faces, state, images, parser, flow, counters);
+        GeneratedContent.Place(box, element, index, style, cascade, variables, parent, device, faces, state, images, parser, flow, inside);
 
         // The first letter is a piece of the text the block opens with, and the generated box that comes
         // before that text is part of what the block says, so the letter is looked for once

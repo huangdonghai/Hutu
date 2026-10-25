@@ -658,7 +658,7 @@ internal static class GeneratedContent
         // A counter the arm itself declares belongs to the generated box, which stands as a child of the
         // element: its own numbers are read inside it and reach nobody else, but the ones the element
         // above it created are added to rather than replaced (CSS Lists 3 §4.4.1, §4.5).
-        var chain = CounterEnv.Extend(counters ?? CounterEnv.Empty, pseudo, pseudo, element);
+        var chain = CounterEnv.Extend(counters ?? CounterEnv.Empty, pseudo, pseudo, element, out _);
 
         var items = Items(pseudo, element, scope, chain, index.Counters);
 
@@ -949,6 +949,15 @@ internal static class GeneratedContent
             return;
         }
 
+        // The builder has already wrapped the element's leading words in an anonymous block, and a
+        // generated inline box is part of that run: opening a second anonymous block here would put
+        // the words on a line of their own below the generated text (CSS 2.1 §9.2.1.1).
+        if (host.Children[0] is { IsAnonymous: true, Kind: BoxKind.Block } leading)
+        {
+            leading.Children.InsertRange(0, generated);
+            return;
+        }
+
         var line = new Box(BoxKind.Block, host.Style.AsAnonymous()) { IsAnonymous = true, Flow = host.Flow };
         line.Children.AddRange(generated);
         host.Children.Insert(0, line);
@@ -962,6 +971,12 @@ internal static class GeneratedContent
         if (!generated[0].IsInlineLevel || last < 0 || host.Children[last].IsInlineLevel)
         {
             host.Children.AddRange(generated);
+            return;
+        }
+
+        if (host.Children[last] is { IsAnonymous: true, Kind: BoxKind.Block } trailing)
+        {
+            trailing.Children.AddRange(generated);
             return;
         }
 
@@ -1169,16 +1184,101 @@ internal static class GeneratedContent
                 continue;
             }
 
+            // A quotation mark is a keyword of its own: it is drawn at the depth the box stands at, and
+            // opens or closes a level. The pairs the page stated are read at layout time, when the
+            // marks around this one are known (CSS Generated Content 3 §3; see QuoteResolver).
+            if (KeywordAt(text, i, "no-open-quote"))
+            {
+                items.Add(new Item(QuoteResolver.NoOpen.ToString(), null));
+                i += "no-open-quote".Length;
+                continue;
+            }
+
+            if (KeywordAt(text, i, "no-close-quote"))
+            {
+                items.Add(new Item(QuoteResolver.NoClose.ToString(), null));
+                i += "no-close-quote".Length;
+                continue;
+            }
+
+            if (KeywordAt(text, i, "open-quote"))
+            {
+                items.Add(new Item(QuoteResolver.Open.ToString(), null));
+                i += "open-quote".Length;
+                continue;
+            }
+
+            if (KeywordAt(text, i, "close-quote"))
+            {
+                items.Add(new Item(QuoteResolver.Close.ToString(), null));
+                i += "close-quote".Length;
+                continue;
+            }
+
             return null;
         }
 
-        return items;
+        return items.Count == 0 ? items : Merge(items);
+    }
+
+    /// <summary>
+    /// Joins the text a content value spells into the runs it really is: a string, a counter and the
+    /// punctuation around them are one run of text on one line, and shaped apart their advances do not
+    /// add up to the advance of the whole - a kerning pair across an item boundary is lost, and with it
+    /// the place the text after it lands on.
+    /// </summary>
+    private static List<Item> Merge(List<Item> items)
+    {
+        var merged = new List<Item>(items.Count);
+        StringBuilder? run = null;
+
+        foreach (var item in items)
+        {
+            if (item.Url is null)
+            {
+                run ??= new StringBuilder();
+                run.Append(item.Text);
+                continue;
+            }
+
+            if (run is not null)
+            {
+                merged.Add(new Item(run.ToString(), null));
+                run = null;
+            }
+
+            merged.Add(item);
+        }
+
+        if (run is not null)
+        {
+            merged.Add(new Item(run.ToString(), null));
+        }
+
+        return merged;
     }
 
     /// <summary>Gets whether the value reads as this function at this point, whatever case it was spelt in.</summary>
     private static Boolean Starts(String text, Int32 at, String word) =>
         at + word.Length <= text.Length &&
         text.AsSpan(at, word.Length).Equals(word, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets whether the value reads as this keyword at this point: the word, and not the head of a
+    /// longer identifier such as a custom property name.
+    /// </summary>
+    private static Boolean KeywordAt(String text, Int32 at, String word)
+    {
+        if (!Starts(text, at, word))
+        {
+            return false;
+        }
+
+        var next = at + word.Length;
+
+        return next >= text.Length ||
+               !(Char.IsLetterOrDigit(text[next]) || text[next] is '-' or '_' or '\\');
+    }
 
     /// <summary>
     /// Gets where the parenthesis opened at <paramref name="open"/> closes, stepping over the strings and
