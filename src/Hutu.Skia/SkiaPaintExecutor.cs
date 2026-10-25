@@ -394,10 +394,39 @@ public sealed class SkiaPaintExecutor
         // A background covers whole pixels, the way a browser snaps the rectangle it fills. An edge
         // that falls inside a pixel row is otherwise anti-aliased there, while the same edge reached
         // as a clip boundary is not - a clip keeps the rows it partly covers - and so the two pictures
-        // of one box part over a single row of it. Snapping the edges puts both on the same terms.
-        var area = command.Radii.IsZero ? Snap(ToRect(command.Bounds)) : ToRect(command.Bounds);
+        // of one box part over a single row of it. The snap belongs in the pixels the page is drawn in,
+        // not in the box's own coordinates: a box moved by a scale would otherwise have its rounded
+        // edge scaled along with it and land off the pixel grid again.
+        var area = command.Radii.IsZero ? SnapToDevice(canvas, ToRect(command.Bounds)) : ToRect(command.Bounds);
 
         SkiaRounded.Fill(canvas, area, command.Radii, paint);
+    }
+
+    /// <summary>
+    /// Moves each edge of an area onto the device pixel it is nearest to, which is the same thing as
+    /// <see cref="Snap"/> while the canvas draws in page coordinates. Under a transform the rectangle is
+    /// taken to where it will be drawn, snapped there, and carried back, so a scale does not scale the
+    /// rounding with it. A turned or skewed canvas has no whole-pixel edge to speak of, so its rectangle
+    /// is snapped where it stands, as before.
+    /// </summary>
+    private static SKRect SnapToDevice(SKCanvas canvas, SKRect area)
+    {
+        var matrix = canvas.TotalMatrix;
+
+        if (matrix.ScaleX == 0 || matrix.ScaleY == 0 ||
+            matrix.SkewX != 0 || matrix.SkewY != 0 ||
+            !matrix.TryInvert(out var inverse))
+        {
+            return Snap(area);
+        }
+
+        var snapped = inverse.MapRect(Snap(matrix.MapRect(area)));
+
+        return new SKRect(
+            Math.Min(snapped.Left, snapped.Right),
+            Math.Min(snapped.Top, snapped.Bottom),
+            Math.Max(snapped.Left, snapped.Right),
+            Math.Max(snapped.Top, snapped.Bottom));
     }
 
     /// <summary>Moves each edge of an area onto the whole pixel it is nearest to.</summary>
