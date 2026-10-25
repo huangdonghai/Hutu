@@ -2256,6 +2256,22 @@ public sealed class SkiaPaintExecutor
         var area = ToRect(command.Bounds);
         var tile = ToRect(command.Tile);
 
+        // A gradient tile is a background the same way a fill is, and covers whole pixels the same
+        // way: an edge inside a pixel row is anti-aliased there while the same edge reached as a clip
+        // boundary is not, and the two pictures then part over one faint row of the box. Rounded
+        // corners keep their own edges, which are meant to be soft (CSS Backgrounds 3 §2.10).
+        if (command.Radii.IsZero)
+        {
+            var alignedArea = Snap(area);
+            var alignedTile = Snap(tile);
+
+            if (alignedTile.Width >= 1 && alignedTile.Height >= 1)
+            {
+                area = alignedArea;
+                tile = alignedTile;
+            }
+        }
+
         if (area.Width <= 0 || area.Height <= 0 || tile.Width <= 0 || tile.Height <= 0)
         {
             return;

@@ -338,6 +338,31 @@ public sealed class SkiaRenderingTests
             $"`{repeat}` fills the corner a second tile of each axis reaches");
     }
 
+    /// <summary>
+    /// A gradient tile's edge is a background edge, and a background covers whole pixels: a box that
+    /// starts on a fraction of one has no faint row where the tile begins. This is the shape the
+    /// white-space corpus's <c>pre-wrap</c> pairs are drawn in - a red square behind text that lands
+    /// on one faint red row when the tile is anti-aliased instead.
+    /// </summary>
+    [Test]
+    public async Task AGradientTileCoversThePixelItsEdgeFallsIn()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(120, 80);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='height:6.4px'></div>" +
+            "<div style='width:80px;height:40px;background:linear-gradient(red,red) 0 0/40px 40px no-repeat'></div>" +
+            "</body></html>");
+
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+
+        Assert.That(bitmap.GetPixel(10, 5), Is.EqualTo(SKColors.White), "the row above the tile stays white");
+        Assert.That(bitmap.GetPixel(10, 6), Is.EqualTo(SKColors.Red), "the tile takes the whole row its edge is nearest to");
+    }
+
     [Test]
     public async Task AnInlineElementNestedInAnotherIsPaintedOverIt()
     {
