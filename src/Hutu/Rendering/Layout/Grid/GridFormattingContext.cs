@@ -72,7 +72,8 @@ internal sealed class GridFormattingContext
         var declaredInline = box.Flow.IsVertical ? style.Height : style.Width;
         var declaredBlock = box.Flow.IsVertical ? style.Width : style.Height;
 
-        if (contain.Inline && !ContainStyle.IsDefinite(declaredInline, basisWidth))
+        if (contain.Inline && !ContainStyle.IsDefinite(declaredInline, basisWidth) &&
+            (box.Flow.IsVertical || ContainStyle.InlineSizeIsContentBased(box)))
         {
             var stated = contain.InlineSize ?? (box.Flow.IsVertical ? contain.Height : contain.Width);
             contentWidth = stated is { } inline ? Math.Max(0, inline.Resolve(0)) : 0;

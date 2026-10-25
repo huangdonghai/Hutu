@@ -312,6 +312,139 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task ASizeContainedFlexFillsTheWidthAndAsksItsContentForNothing()
+    {
+        // Size containment answers the block size the content would have decided, but a block-level
+        // flex container's auto width is the containing block's, not the content's (CSS Contain 1
+        // §3.1.1; CSS Flexbox 1 §4).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='c' style='display:flex;contain:size;border:10px solid'>" +
+            "<div style='width:100px;height:100px'></div></div>" +
+            "</body></html>");
+
+        var box = ById(view, "c");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(box.BorderBox.Width, Is.EqualTo(400).Within(0.5), "auto width fills the body");
+            Assert.That(box.BorderBox.Height, Is.EqualTo(20).Within(0.5), "the content lends no height");
+        });
+    }
+
+    [Test]
+    public async Task AContainedMulticolAsksForTheGapsBetweenItsColumns()
+    {
+        // Size containment leaves the content with no size, but the columns and the gaps between them
+        // still stand: a floated three-column box is as wide as its two 1em gaps (Chromium measured,
+        // contain-size-multicol-002).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='c' style='float:left;contain:size;column-count:3;border:10px solid'></div>" +
+            "</body></html>");
+
+        Assert.That(ById(view, "c").BorderBox.Width, Is.EqualTo(52).Within(0.5), "20 of border and two 16px gaps");
+    }
+
+    [Test]
+    public async Task ACanvasIsAReplacedBoxAtTheSizeThePageStates()
+    {
+        // A canvas is replaced content the page draws itself: its CSS width and height size the box,
+        // and the default object size answers an axis the page leaves out (CSS 2.1 §10.3.2, §10.6.2).
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<canvas id='c' style='display:block;width:100px;height:200px;background:orange'></canvas>" +
+            "</body></html>");
+
+        var canvas = Walk(view.Layout!.Root).FirstOrDefault(node => node.Source.Element?.LocalName == "canvas");
+
+        Assert.That(canvas, Is.Not.Null, "a canvas generates a box");
+        Assert.Multiple(() =>
+        {
+            Assert.That(canvas!.BorderBox.Width, Is.EqualTo(100).Within(0.5), "the stated width");
+            Assert.That(canvas.BorderBox.Height, Is.EqualTo(200).Within(0.5), "the stated height");
+        });
+    }
+
+    [Test]
+    public async Task SizeContainmentAppliesToATableCaption()
+    {
+        // CSS Contain 2 §3.1.1 excludes table boxes and internal table boxes from size containment but
+        // says a caption is not one of them: a caption can hold a size of its own, so `contain: size`
+        // leaves it zero-sized and its content is hidden by the clip.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='caption' style='display:table-caption;contain:size;overflow:hidden'>FAIL</div>" +
+            "</body></html>");
+
+        var caption = Walk(view.Layout!.Root)
+            .FirstOrDefault(node => node.Source.Element?.GetAttribute("id") == "caption");
+
+        Assert.That(caption, Is.Not.Null, "the caption generates a box");
+        Assert.That(caption!.BorderBox.Height, Is.EqualTo(0).Within(0.5), "nothing from its content");
+    }
+
+    [Test]
+    public async Task ALayoutContainedBoxStandsClearOfAFloat()
+    {
+        // Layout containment makes the box an independent formatting context (CSS Contain 2 §3.2), so
+        // its border box may not overlap a float, exactly as an `overflow: hidden` box may not: it
+        // steps into the room the float leaves.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='float:left;width:100px;height:20px'></div>" +
+            "<div id='c' style='contain:layout;width:50px;height:10px'></div>" +
+            "</body></html>");
+
+        Assert.That(ById(view, "c").BorderBox.X, Is.EqualTo(100).Within(0.5), "the float's width");
+    }
+
+    [Test]
+    public async Task HiddenContentVisibilityKeepsTheBoxAndSkipsWhatItHolds()
+    {
+        // CSS Contain 4 §2: `content-visibility: hidden` skips the element's contents - it paints
+        // neither them nor its pseudo-elements - while the element's own box, background and size
+        // remain. Nothing under it is laid out.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='h' style='content-visibility:hidden;width:100px;height:100px;background:green'>" +
+            "<div id='k' style='width:50px;height:50px'></div>text</div>" +
+            "<div id='v'>visible</div></body></html>");
+
+        var hidden = ById(view, "h");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hidden.BorderBox.Width, Is.EqualTo(100).Within(0.5), "the element's own box stays");
+            Assert.That(hidden.BorderBox.Height, Is.EqualTo(100).Within(0.5), "and its stated height");
+            Assert.That(
+                Walk(view.Layout!.Root).Any(node => node.Source.Element?.GetAttribute("id") == "k"),
+                Is.False,
+                "nothing below it is laid out");
+            Assert.That(String.Concat(Lines(view).Select(LineText)), Is.EqualTo("visible"), "the sibling is untouched");
+        });
+    }
+
+    [Test]
+    public async Task ALineDoesNotBreakBetweenLettersAcrossAnInlineElement()
+    {
+        // UAX #14 LB28: two letters are one word, whichever element wrote them. A run from another
+        // box is chunked on its own, so the break its start offers has to be refused across the edge.
+        using var view = CreateView(25);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0'>PASS<span>FAIL</span></p></body></html>");
+
+        Assert.That(Lines(view).Select(LineText), Is.EqualTo(new[] { "PASSFAIL" }));
+    }
+
+    [Test]
     public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
     {
         // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's

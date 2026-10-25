@@ -85,6 +85,7 @@ internal sealed class CounterEnv
         IElement? above,
         out CounterEnv? inside)
     {
+        var scoped = ContainsStyle(cascade);
         var reset = cascade.Find("counter-reset")?.Value;
         var set = cascade.Find("counter-set")?.Value;
         var increment = cascade.Find("counter-increment")?.Value;
@@ -93,7 +94,7 @@ internal sealed class CounterEnv
             String.IsNullOrWhiteSpace(set) &&
             String.IsNullOrWhiteSpace(increment))
         {
-            inside = ContainsStyle(cascade.Find("contain")?.Value) ? InScope(env, new Object()) : env;
+            inside = scoped ? InScope(env, new Object()) : env;
             return env;
         }
 
@@ -105,7 +106,7 @@ internal sealed class CounterEnv
 
         // The box itself is outside its own subtree, so the counters it writes are the ones the siblings
         // around it see; only what its contents write is kept to the subtree (CSS Contain 2 §3.4).
-        inside = ContainsStyle(cascade.Find("contain")?.Value) ? InScope(mine, new Object()) : mine;
+        inside = scoped ? InScope(mine, new Object()) : mine;
 
         return mine;
     }
@@ -136,9 +137,16 @@ internal sealed class CounterEnv
         return chain;
     }
 
-    /// <summary>Gets whether a <c>contain</c> value scopes what the box holds, which is what
-    /// <c>style</c>, and the shorthands that include it, ask for.</summary>
-    private static Boolean ContainsStyle(String? contain)
+    /// <summary>
+    /// Gets whether the element scopes what it holds: the <c>contain</c> values that include style, and
+    /// <c>content-visibility: hidden</c>, which applies style containment as it skips its contents.
+    /// </summary>
+    private static Boolean ContainsStyle(MatchedCascade cascade) =>
+        (String.Equals(cascade.Find("content-visibility")?.Value?.Trim(), "hidden", StringComparison.OrdinalIgnoreCase) &&
+            ComputedStyle.ContentVisibilityAppliesTo(cascade.Find("display")?.Value)) ||
+        ContainsStyleKeyword(cascade.Find("contain")?.Value);
+
+    private static Boolean ContainsStyleKeyword(String? contain)
     {
         if (contain is not { Length: > 0 })
         {
@@ -147,11 +155,11 @@ internal sealed class CounterEnv
 
         foreach (var token in contain.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
         {
-            // `style` and the `strict` shorthand that includes it. `content` is layout, paint and style
-            // in CSS Contain 1's first draft, but the requirement dropped style from it: a page writing
-            // `contain: content` counts exactly as it would without the containment.
+            // `style`, and the `strict` and `content` shorthands that include it (CSS Contain 2 §2:
+            // `content` computes to `layout paint style`).
             if (token.Equals("style", StringComparison.OrdinalIgnoreCase) ||
-                token.Equals("strict", StringComparison.OrdinalIgnoreCase))
+                token.Equals("strict", StringComparison.OrdinalIgnoreCase) ||
+                token.Equals("content", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }

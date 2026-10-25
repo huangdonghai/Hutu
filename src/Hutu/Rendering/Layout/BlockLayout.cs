@@ -358,9 +358,11 @@ internal sealed class BlockLayout
         box.Style.Contain.Block && !IsInternalTable(box.Style);
 
     // Size containment does not apply to a table box or an internal table box: the table's own layout
-    // decides those sizes (CSS Contain 1 §3.2).
+    // decides those sizes (CSS Contain 2 §3.1.1). A table caption is not one of the internal boxes -
+    // the chapter says so in as many words - so containment does apply to it.
     private static Boolean IsInternalTable(ComputedStyle style) =>
-        style.Display.Contains("table", StringComparison.OrdinalIgnoreCase);
+        style.Display is "table" or "inline-table" or "table-row-group" or "table-header-group" or
+            "table-footer-group" or "table-row" or "table-cell" or "table-column" or "table-column-group";
 
     private IntrinsicSize ContentIntrinsic(Box box, Double basis, Double insets, LayoutContext context)
     {
@@ -373,7 +375,16 @@ internal sealed class BlockLayout
         {
             var stated = contain.InlineSize ?? (box.Flow.IsVertical ? contain.Height : contain.Width);
             var inline = stated is { } length ? Math.Max(0, length.Resolve(0)) : 0.0;
-            var outer = inline + insets;
+
+            // The columns still stand, and the gaps between them are room the box asks for even when
+            // the content is the nothing size containment leaves: three empty columns of a float are
+            // two 1em gaps wide, which is what Chromium gives the contained float in
+            // contain-size-multicol-002.
+            var columnCount = !box.Flow.IsVertical && box.Style.Multi.IsMultiColumn
+                ? Math.Max(1, box.Style.Multi.Count ?? 1)
+                : 1;
+            var gaps = columnCount > 1 ? (columnCount - 1) * box.Style.Multi.Gap : 0;
+            var outer = inline * columnCount + gaps + insets;
 
             return new IntrinsicSize(outer, outer);
         }
@@ -1887,8 +1898,7 @@ internal sealed class BlockLayout
         FloatBand? band,
         Double contentWidth)
     {
-        if (band is null || !(child.Style.ClipsOverflow ||
-                              child.Style.Display.Contains("flow-root", StringComparison.OrdinalIgnoreCase)))
+        if (band is null || !IsFormattingRoot(child))
         {
             return (0, contentWidth, 0, band);
         }
@@ -1909,11 +1919,20 @@ internal sealed class BlockLayout
 
         var (left, right) = tracks.FreeSpanAt(top, 0.001);
 
+        // The band's origin is the box's own content corner, while the rule speaks of its border edge:
+        // the padding and border between the two are part of what may not overlap the float. Taking
+        // the shift off the content corner put a padded formatting root a padding's width into the
+        // float it was stepping clear of (contain-layout-ifc-022).
+        var border = BorderOf(child);
+        var padding = child.Style.Padding.Resolve(contentWidth);
+
         // A right-to-left row's content begins at its right edge, so the room a formatting root is
         // given and the distance it is shifted from that edge are read the other way round.
         var reversed = child.Flow.InlineSign < 0;
         var contentRight = band.Left + contentWidth;
-        var shift = Math.Max(0, reversed ? contentRight - right : left - band.Left);
+        var shift = Math.Max(0, reversed
+            ? contentRight + padding.Right + border.Right - right
+            : left - (band.Left - padding.Left - border.Left));
         var room = Math.Max(0, Math.Min(contentWidth, reversed ? contentRight - left : right - band.Left) - shift);
         var drop = Math.Max(0, top - band.OriginY);
 
@@ -3000,11 +3019,21 @@ internal sealed class BlockLayout
         // A multi-column container holds its own formatting context (CSS Multicol 3 §3.1): its
         // columns' floats stay in it, and a child's margins do not collapse through it.
         box.Style.Multi.IsMultiColumn ||
-        box.Style.ClipsOverflow ||
-        box.Style.Display.Contains("flow-root", StringComparison.OrdinalIgnoreCase) ||
+        IsFormattingRoot(box) ||
         box.Kind is BoxKind.InlineBlock or BoxKind.HorizontalRule or BoxKind.Flex or BoxKind.Grid or
                     BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or BoxKind.TableCell or
                     BoxKind.TableCaption;
+
+    /// <summary>
+    /// Gets whether the box holds a block formatting context of its own - what a float beside it may
+    /// not overlap, and what its children's margins do not collapse through. Clipping says so,
+    /// <c>flow-root</c> says so, and so does containment of layout or paint: "the containment box
+    /// establishes an independent formatting context" (CSS Contain 2 §3.2, §3.3).
+    /// </summary>
+    private static Boolean IsFormattingRoot(Box box) =>
+        box.Style.ClipsOverflow ||
+        box.Style.Display.Contains("flow-root", StringComparison.OrdinalIgnoreCase) ||
+        box.Style.ContainmentApplies && (box.Style.Contain.Layout || box.Style.Contain.Paint);
 
     /// <summary>
     /// Gets whether the box seals a block formatting context of its own for the collapse walk: it

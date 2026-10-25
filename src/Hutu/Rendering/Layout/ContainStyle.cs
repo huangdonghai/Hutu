@@ -83,6 +83,20 @@ internal readonly struct ContainStyle
         stated.HasValue && !(stated.Kind == StyleLengthKind.Percent && basis <= 0);
 
     /// <summary>
+    /// Gets whether a horizontal box's own inline size is asked of its content rather than settled by
+    /// its containing block: an inline-level or floated box shrinks to fit, a box out of the flow is
+    /// sized the same way, and a content keyword says so in words. Every other block-level box in
+    /// normal flow has an <c>auto</c> width that fills the containing block, so size containment has
+    /// nothing to answer for that axis - a contained block-level flex container is still as wide as
+    /// the block it stands in (CSS Contain 1 §3.1.1).
+    /// </summary>
+    public static Boolean InlineSizeIsContentBased(Boxes.Box box) =>
+        box.IsInlineOuter ||
+        box.Style.Float != FloatSide.None ||
+        PositionedLayout.IsOutOfFlow(box) ||
+        box.Style.Width.IsContentSized;
+
+    /// <summary>
     /// Gets whether the box contains its layout, which makes it a stacking context and the containing
     /// block for any descendant taken out of the flow (CSS Contain 2 §2.5).
     /// </summary>
@@ -111,16 +125,25 @@ internal readonly struct ContainStyle
     {
         var contain = find("contain")?.Value?.Trim();
 
-        if (String.IsNullOrEmpty(contain))
+        // `content-visibility: hidden` skips the element's contents, and pays for that with layout,
+        // style and paint containment (CSS Contain 4 §2). It is read here so every reader of the
+        // containment - the clip, the independent formatting context, the counter scope - answers it.
+        var hidden = String.Equals(
+                find("content-visibility")?.Value?.Trim(), "hidden", StringComparison.OrdinalIgnoreCase) &&
+            ComputedStyle.ContentVisibilityAppliesTo(find("display")?.Value);
+
+        if (String.IsNullOrEmpty(contain) && !hidden)
         {
             return null;
         }
 
+        contain ??= "none";
+
         // `strict` is size, layout, paint and style; `content` is the other three without size, so it
         // does not contain either axis.
         var size = Has(contain!, "size") || Has(contain!, "strict");
-        var layout = Has(contain!, "layout") || Has(contain!, "strict") || Has(contain!, "content");
-        var paint = Has(contain!, "paint") || Has(contain!, "strict") || Has(contain!, "content");
+        var layout = hidden || Has(contain!, "layout") || Has(contain!, "strict") || Has(contain!, "content");
+        var paint = hidden || Has(contain!, "paint") || Has(contain!, "strict") || Has(contain!, "content");
 
         // The shorthand states one size for both axes or one for each; it is not expanded into the
         // longhands by the parser, so it is read whole and taken apart here.
@@ -137,10 +160,10 @@ internal readonly struct ContainStyle
             // whole question - §2.11.2's note says containment disables the body's special handling, whether
             // the containment is of paint, layout, style or size - and `none` is the only answer that says
             // nothing.
-            !Has(contain!, "none"),
+            hidden || !Has(contain!, "none"),
             layout,
             paint,
-            Has(contain!, "style") || Has(contain!, "strict"));
+            hidden || Has(contain!, "style") || Has(contain!, "strict") || Has(contain!, "content"));
     }
 
     private static Boolean Has(String text, String keyword) =>

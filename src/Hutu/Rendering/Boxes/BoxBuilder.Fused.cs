@@ -237,6 +237,13 @@ internal static partial class BoxBuilder
             return null;
         }
 
+        // `content-visibility: hidden` lays out and paints neither the element's children nor its
+        // pseudo-elements; the element's own box is still there, with the background the page gave it
+        // (CSS Contain 4 §2). The box tree simply has nothing under it.
+        var skipsContents = String.Equals(
+                cascade.Find("content-visibility")?.Value?.Trim(), "hidden", StringComparison.OrdinalIgnoreCase) &&
+            ComputedStyle.ContentVisibilityAppliesTo(style.Display);
+
         // The counters this element creates are seen by its own generated content, by its children and by
         // the siblings after it, so the chain is hung here - once the element is known to make a box at
         // all, since CSS 2.1 §12.4.1 counts an element that was never shown as having written nothing.
@@ -295,6 +302,22 @@ internal static partial class BoxBuilder
             return BuildReplaced(image, kind, style, flow, images);
         }
 
+        // A canvas, a frame or a media element is replaced by something the page brings itself: the CSS
+        // size applies to the box and the default object size answers the axis the page left out. The
+        // engine draws no content for one, but the box stands where the page put it and its background
+        // is painted like any other box's.
+        if (element.LocalName is "canvas" or "video" or "iframe" or "object" or "embed")
+        {
+            return new Box(kind, style)
+            {
+                Element = element,
+                Flow = flow,
+                Quotes = quoted,
+                IsReplaced = true,
+                IntrinsicSize = new ImageSize(300, 150),
+            };
+        }
+
         if (IsInlineSvgRoot(element))
         {
             return BuildInlineSvg(element, kind, style, flow);
@@ -313,7 +336,7 @@ internal static partial class BoxBuilder
         var childInTable = kind is BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or
             BoxKind.TableColumnGroup;
 
-        foreach (var child in element.ChildNodes)
+        foreach (var child in skipsContents ? Enumerable.Empty<INode>() : element.ChildNodes)
         {
             switch (child)
             {
@@ -429,6 +452,12 @@ internal static partial class BoxBuilder
             default:
                 box.Children.AddRange(children);
                 break;
+        }
+
+        // Nothing under a skipped element is made, so neither its marker nor its arms are asked about.
+        if (skipsContents)
+        {
+            return box;
         }
 
         // A marker is a box of its own, so an arm written `li::marker` styles that box rather than the item
