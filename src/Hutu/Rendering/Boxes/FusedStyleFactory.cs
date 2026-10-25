@@ -912,6 +912,7 @@ internal static class FusedStyleFactory
         // The column longhands are read for every box: a page that writes none of them costs two lookups,
         // and a box that writes either is a multi-column container whatever its display says.
         values.Multi = MulticolStyle.ReadFused(find, face, dimensions);
+        values.LanesDirection = find("grid-lanes-direction")?.Value?.Trim();
         values.Breaks = BreakStyle.ReadFused(find, parent.Widows, parent.Orphans);
 
         values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)

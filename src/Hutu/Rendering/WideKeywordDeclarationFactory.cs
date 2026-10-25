@@ -53,6 +53,9 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // CSS Sizing 4's aspect ratio, which AngleSharp has no grammar for either: the value is a ratio
         // written "21/9" or "auto 16/9", and the box model reads it as text.
         "aspect-ratio",
+        // CSS Grid Lanes' direction, which AngleSharp has no grammar for: the value is the keyword
+        // row or column, and the masonry layout reads it as text.
+        "grid-lanes-direction",
         // CSS Inline 3's leading trim, which AngleSharp has no grammar for either: the two properties
         // are kept as text and read by the block layout.
         "text-box-trim",

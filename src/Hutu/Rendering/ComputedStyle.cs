@@ -2919,6 +2919,8 @@ internal readonly struct ComputedStyle
 
         internal GapRules? Gap;
 
+        internal String? LanesDirection;
+
         internal TextEmphasis? Emphasis;
 
         internal ContainStyle? Contain;
@@ -4755,6 +4757,9 @@ internal readonly struct ComputedStyle
     /// the table longhands the box builder resolved instead. One that was not given any is not a
     /// table box, and the initial values are what every longhand of a box that is not one comes to.
     /// </remarks>
+    public String? LanesDirection =>
+        _values.Fused is null ? default : _values.LanesDirection;
+
     public MulticolStyle Multi =>
         (_values.Fused is null ? default : _values.Multi ?? default).Scaled(_zoom);
 

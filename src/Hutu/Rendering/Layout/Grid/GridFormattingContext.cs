@@ -1183,7 +1183,7 @@ internal sealed class GridFormattingContext
         foreach (var item in items)
         {
             var areaWidth = Span(columnTracks, item.Column, item.ColumnSpan, gapX);
-            layout.Items.Add(new CrossPlacedItem(item.Box, item.Column, item.ColumnSpan, item.Row, areaWidth));
+            layout.Items.Add(new CrossPlacedItem(item.Box, item.Column, item.ColumnSpan, item.Row, item.RowSpan, areaWidth));
         }
 
         return layout;
@@ -2493,12 +2493,13 @@ internal sealed class GridFormattingContext
     /// <summary>One in-flow item's cross-axis placement and area width, as the grid settled them.</summary>
     internal readonly struct CrossPlacedItem
     {
-        public CrossPlacedItem(Box box, Int32 column, Int32 columnSpan, Int32 row, Double areaWidth)
+        public CrossPlacedItem(Box box, Int32 column, Int32 columnSpan, Int32 row, Int32 rowSpan, Double areaWidth)
         {
             Box = box;
             Column = column;
             ColumnSpan = columnSpan;
             Row = row;
+            RowSpan = rowSpan;
             AreaWidth = areaWidth;
         }
 
@@ -2509,6 +2510,8 @@ internal sealed class GridFormattingContext
         public Int32 ColumnSpan { get; }
 
         public Int32 Row { get; }
+
+        public Int32 RowSpan { get; }
 
         public Double AreaWidth { get; }
     }

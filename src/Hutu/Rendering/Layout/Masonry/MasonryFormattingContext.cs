@@ -5,17 +5,16 @@ using System.Collections.Generic;
 namespace Hutu.Rendering.Layout;
 
 /// <summary>
-/// The grid-lanes (masonry) formatting context: the cross axis keeps its declared tracks (the
-/// <c>grid-template-columns</c> of a column-lane grid) while the lane axis grows as items are stacked,
-/// each item dropping into the shortest run of lanes it fits. This is the milestone-one core - a fixed
-/// cross track set, default (row-lane) direction, gaps, and column spans - and deliberately leaves the
-/// reverse/fill packing, baseline, and subgrid to later passes.
+/// The grid-lanes (masonry) formatting context. A column-lane grid packs each item down the column the
+/// grid gave it, the lane axis growing as the items stack; a row-lane grid's lanes are its declared rows
+/// - real tracks the items sit in, spanning the lanes their span covers. Both leave the reverse/fill
+/// packing, baseline, and subgrid to later passes.
 /// </summary>
 /// <remarks>
 /// The cross tracks are settled by the grid itself: <see cref="GridFormattingContext.LayoutCrossTracks"/>
 /// sizes the columns and places each item into one exactly as a grid would, since a grid-lanes cross
-/// axis is an ordinary grid axis. Only the lane axis - the rungs down each column - is packed here,
-/// collapsing each column's items independently instead of aligning them to shared rows.
+/// axis is an ordinary grid axis. The lane axis is what differs from a grid: a column-lane grid packs
+/// each column's items independently, and a row-lane grid stands each item in the lane its row names.
 /// </remarks>
 internal sealed class MasonryFormattingContext
 {
@@ -104,6 +103,13 @@ internal sealed class MasonryFormattingContext
         // out drops them from the picture altogether.
         ArrangeOutOfFlow(box, layout, contentX, contentY, itemContext);
 
+        var gapRules = box.Style.Gap;
+
+        if (gapRules.IsStated)
+        {
+            layout.GapDecorations = LaneDecorations(plan, gapRules);
+        }
+
         return layout;
     }
 
@@ -123,7 +129,16 @@ internal sealed class MasonryFormattingContext
     }
 
     /// <summary>One placed lane item, in the container's content coordinates.</summary>
-    private sealed record PlacedItem(Box Box, Double X, Double Y, Double Width, Double Height);
+    private sealed record PlacedItem(
+        Box Box,
+        Double X,
+        Double Y,
+        Double Width,
+        Double Height,
+        Int32 Lane,
+        Int32 LaneSpan,
+        Int32 Column,
+        Int32 ColumnSpan);
 
     /// <summary>The result of packing the items: their places, and the content size the pack came to.</summary>
     private sealed class LanePlan
@@ -131,6 +146,10 @@ internal sealed class MasonryFormattingContext
         public List<PlacedItem> Items = new();
         public Double TotalWidth;
         public Double TotalHeight;
+        public GridFormattingContext.CrossAxisLayout Cross = new();
+
+        /// <summary>The lane axis's tracks: the top and the height of each lane, in lane order.</summary>
+        public List<(Double Top, Double Height)> Lanes = new();
     }
 
     /// <summary>
@@ -142,7 +161,7 @@ internal sealed class MasonryFormattingContext
     private LanePlan Compute(Box box, Double contentWidth, Boolean definiteWidth, LayoutContext context)
     {
         var plan = new LanePlan();
-        var cross = _grid.LayoutCrossTracks(box, contentWidth, definiteWidth, context);
+        var cross = plan.Cross = _grid.LayoutCrossTracks(box, contentWidth, definiteWidth, context);
         var grid = box.Style.Grid;
         var columnWidths = cross.ColumnWidths;
         var trackCount = columnWidths.Count;
@@ -156,6 +175,13 @@ internal sealed class MasonryFormattingContext
         var gapX = cross.GapX;
         var gapY = cross.GapY;
 
+        // The direction the lanes run in: the declared value, or the column packing everything has
+        // assumed. A row-lane grid's lanes are its declared rows - real tracks the items sit in -
+        // while a column-lane grid packs each item down the column the grid gave it.
+        var declared = box.Style.LanesDirection;
+        var rowLanes = String.Equals(declared, "row", StringComparison.OrdinalIgnoreCase);
+        System.IO.File.AppendAllText("D:/_git0/Hutu/.tmp/direction.log", $"direction={declared} rowLanes={rowLanes}\n");
+
         // The x of each column's start, and a running floor for how far down it has been filled.
         var laneX = new Double[trackCount];
         var floor = new Double[trackCount];
@@ -168,6 +194,12 @@ internal sealed class MasonryFormattingContext
         }
 
         var itemContext = context.ForContainingBlock(new Size(contentWidth, 0));
+
+        if (rowLanes)
+        {
+            PackRows(plan, cross, grid, contentWidth, gapY, definiteWidth, itemContext);
+            return plan;
+        }
 
         // Each column is packed top to bottom in the order the grid placed its items: an item's row is
         // its rung, so ordering by row stacks a column's items in their flow while leaving items that
@@ -207,7 +239,7 @@ internal sealed class MasonryFormattingContext
                 floor[c] = y + height;
             }
 
-            plan.Items.Add(new PlacedItem(item.Box, laneX[start] + offset, y, width, height));
+            plan.Items.Add(new PlacedItem(item.Box, laneX[start] + offset, y, width, height, start, span, start, span));
         }
 
         for (var c = 0; c < trackCount; c++)
@@ -231,6 +263,283 @@ internal sealed class MasonryFormattingContext
         }
 
         return a.Column.CompareTo(b.Column);
+    }
+
+    /// <summary>
+    /// Packs a row-lane grid: the lanes are the container's declared rows - real tracks of the height
+    /// their sizing states, or of the tallest item they hold when that is auto - and each item stands at
+    /// the top of the lane its declared row names, spanning the lanes its span covers. The container's
+    /// height is the lanes' own extent (CSS Grid Lanes §5).
+    /// </summary>
+    private void PackRows(LanePlan plan, GridFormattingContext.CrossAxisLayout cross, GridStyle grid, Double contentWidth, Double gapY, Boolean definiteWidth, LayoutContext itemContext)
+    {
+        var columnWidths = cross.ColumnWidths;
+        var trackCount = columnWidths.Count;
+        var laneX = new Double[trackCount];
+        var cursor = 0.0;
+
+        for (var c = 0; c < trackCount; c++)
+        {
+            laneX[c] = cursor;
+            cursor += columnWidths[c] + cross.GapX;
+        }
+
+        var ordered = new List<GridFormattingContext.CrossPlacedItem>(cross.Items);
+        ordered.Sort(CompareByRow);
+
+        var laneCount = grid.Rows.ExplicitCount(0, gapY);
+
+        foreach (var item in ordered)
+        {
+            laneCount = Math.Max(laneCount, item.Row + item.RowSpan);
+        }
+
+        var laneSizes = grid.Rows.Resolve(0, gapY, laneCount);
+
+        var resolved = new List<GridTrackSize>(laneSizes);
+
+        while (resolved.Count < laneCount)
+        {
+            resolved.Add(GridTrackSize.Auto);
+        }
+
+        // Each item is measured at its area width before the lanes are sized: an auto lane takes the
+        // tallest item whose declared row names it.
+        var measured = new List<(GridFormattingContext.CrossPlacedItem Item, Double Height)>();
+        var placements = new Dictionary<Box, (Double X, Double Y, Double Width, Double Height, Int32 Lane, Int32 LaneSpan, Int32 Column, Int32 ColumnSpan)>();
+
+        foreach (var item in ordered)
+        {
+            var start = Math.Clamp(item.Column, 0, trackCount - 1);
+            var span = item.ColumnSpan;
+
+            if (start + span > trackCount)
+            {
+                span = Math.Max(1, trackCount - start);
+            }
+
+            var (offset, width) = _grid.AlignInline(item.Box, item.AreaWidth, grid.JustifyItems, itemContext);
+            var size = _engine.Measure(item.Box, MeasureConstraints.FitWidth(width), itemContext);
+
+            measured.Add((item, size.Height));
+            placements[item.Box] = (laneX[start] + offset, 0, width, size.Height, item.Row, item.RowSpan, start, span);
+        }
+
+        // Each lane's height: the definite size its sizing states, or the tallest item it holds.
+        var laneHeights = new Double[laneCount];
+        var laneDefinite = new Boolean[laneCount];
+
+        for (var lane = 0; lane < laneCount && lane < resolved.Count; lane++)
+        {
+            if (resolved[lane].Max.Kind == GridBreadthKind.Length)
+            {
+                laneHeights[lane] = resolved[lane].Max.Value;
+                laneDefinite[lane] = true;
+            }
+        }
+
+        foreach (var (item, height) in measured)
+        {
+            var first = Math.Clamp(item.Row, 0, laneCount - 1);
+            var last = Math.Clamp(item.Row + item.RowSpan - 1, 0, laneCount - 1);
+
+            for (var lane = first; lane <= last; lane++)
+            {
+                if (!laneDefinite[lane])
+                {
+                    laneHeights[lane] = Math.Max(laneHeights[lane], height);
+                }
+            }
+        }
+
+        // The items stand at the tops of the first lanes their rows name.
+        var top = 0.0;
+
+        for (var lane = 0; lane < laneCount; lane++)
+        {
+            var laneTop = top;
+            plan.Lanes.Add((laneTop, laneHeights[lane]));
+            top += laneHeights[lane] + gapY;
+
+            foreach (var (item, height) in measured)
+            {
+                if (item.Row == lane && placements.TryGetValue(item.Box, out var spot))
+                {
+                    placements[item.Box] = (spot.X, laneTop, spot.Width, spot.Height, spot.Lane, spot.LaneSpan, spot.Column, spot.ColumnSpan);
+                }
+            }
+        }
+
+        foreach (var (item, spot) in placements)
+        {
+            plan.Items.Add(new PlacedItem(item, spot.X, spot.Y, spot.Width, spot.Height, spot.Lane, spot.LaneSpan, spot.Column, spot.ColumnSpan));
+        }
+
+        plan.TotalHeight = Math.Max(0, top - gapY);
+
+        plan.TotalWidth = definiteWidth
+            ? contentWidth
+            : laneX[trackCount - 1] + columnWidths[trackCount - 1];
+    }
+
+    /// <summary>
+    /// Appends the decorations of the grid-lanes gaps. The lane axis's rules stand centred in each gap
+    /// between two consecutive lane tracks - every gap for <c>all</c> and <c>normal</c>, and, for
+    /// <c>between</c> and <c>around</c>, only where the items whose areas cover the lanes on each side
+    /// satisfy the visibility (CSS Gaps 1 §3.4, the lanes being the masonry case of the tracks). The
+    /// cross axis's rules stand in the gaps between consecutive items across a lane, running the height
+    /// of the lane they flank.
+    /// </summary>
+    private static List<GapRuleSegment>? LaneDecorations(LanePlan plan, GapRules rules)
+    {
+        var rowAxis = rules.Row;
+        var columnAxis = rules.Column;
+
+        if (!rowAxis.IsStated && !columnAxis.IsStated)
+        {
+            return null;
+        }
+
+        var segments = new List<GapRuleSegment>();
+
+        for (var lane = 0; lane + 1 < plan.Lanes.Count; lane++)
+        {
+            var top = plan.Lanes[lane].Top + plan.Lanes[lane].Height;
+            var bottom = plan.Lanes[lane + 1].Top;
+
+            if (bottom - top <= 0.01)
+            {
+                continue;
+            }
+
+            var rule = rowAxis.At(lane, plan.Lanes.Count - 1);
+
+            if (!rule.Appears)
+            {
+                continue;
+            }
+
+            // The visibility is asked of the items whose areas cover the lane and column on each side,
+            // per column: an item that spans both lanes crosses the gap, which is then interior to that
+            // item and draws nothing at all (CSS Gaps 1 §3.4). The columns whose sides answer are merged
+            // into bands, the gaps between them run through under a none break.
+            var drawnFrom = -1.0;
+            var drawnTo = -1.0;
+            var columnX = 0.0;
+
+            for (var column = 0; column < plan.Cross.ColumnWidths.Count; column++)
+            {
+                var holds = ItemCovering(plan, lane, column) is not null;
+                var holdsNext = ItemCovering(plan, lane + 1, column) is not null;
+                var crossed = ItemCovering(plan, lane, column) is { } upper
+                    && ItemCovering(plan, lane + 1, column) is { } lower
+                    && ReferenceEquals(upper, lower);
+
+                var draw = rowAxis.Visibility switch
+                {
+                    GapRuleVisibility.Between => holds && holdsNext && !crossed,
+                    GapRuleVisibility.Around => (holds || holdsNext) && !crossed,
+                    _ => true,
+                };
+
+                if (draw)
+                {
+                    if (drawnFrom < 0)
+                    {
+                        drawnFrom = columnX;
+                    }
+
+                    drawnTo = columnX + plan.Cross.ColumnWidths[column];
+                }
+                else if (drawnFrom >= 0)
+                {
+                    segments.Add(new GapRuleSegment(
+                        GapRuleBands.Band(rule, false, (top + bottom) / 2, drawnFrom, drawnTo),
+                        rule,
+                        isRow: true));
+                    drawnFrom = -1;
+                }
+
+                columnX += plan.Cross.ColumnWidths[column] + plan.Cross.GapX;
+            }
+
+            if (drawnFrom >= 0)
+            {
+                segments.Add(new GapRuleSegment(
+                    GapRuleBands.Band(rule, false, (top + bottom) / 2, drawnFrom, drawnTo),
+                    rule,
+                    isRow: true));
+            }
+        }
+
+        for (var lane = 0; lane < plan.Lanes.Count; lane++)
+        {
+            var across = ItemsAcross(plan, lane);
+
+            for (var k = 0; k + 1 < across.Count; k++)
+            {
+                var from = across[k].X + across[k].Width;
+                var to = across[k + 1].X;
+                var rule = columnAxis.At(k, across.Count - 1);
+
+                if (!rule.Appears || to - from <= 0.01)
+                {
+                    continue;
+                }
+
+                var drawn = columnAxis.Visibility switch
+                {
+                    GapRuleVisibility.Between => true,
+                    GapRuleVisibility.Around => true,
+                    _ => true,
+                };
+
+                if (!drawn)
+                {
+                    continue;
+                }
+
+                segments.Add(new GapRuleSegment(
+                    GapRuleBands.Band(rule, true, (from + to) / 2, plan.Lanes[lane].Top, plan.Lanes[lane].Top + plan.Lanes[lane].Height),
+                    rule,
+                    isRow: false));
+            }
+        }
+
+        return segments.Count > 0 ? segments : null;
+    }
+
+    /// <summary>Gets the items placed in <paramref name="lane"/>, ordered across it.</summary>
+    private static List<PlacedItem> ItemsAcross(LanePlan plan, Int32 lane)
+    {
+        var across = new List<PlacedItem>();
+
+        foreach (var item in plan.Items)
+        {
+            if (item.Lane == lane)
+            {
+                across.Add(item);
+            }
+        }
+
+        across.Sort((a, b) => a.X.CompareTo(b.X));
+
+        return across;
+    }
+
+    /// <summary>Gets the item whose area covers the lane and column, or null.</summary>
+    private static PlacedItem? ItemCovering(LanePlan plan, Int32 lane, Int32 column)
+    {
+        foreach (var item in plan.Items)
+        {
+            if (lane >= item.Lane && lane < item.Lane + item.LaneSpan
+                && column >= item.Column && column < item.Column + item.ColumnSpan)
+            {
+                return item;
+            }
+        }
+
+        return null;
     }
 
     private static (Double Horizontal, Double Vertical) Insets(Box box, Double basis)
