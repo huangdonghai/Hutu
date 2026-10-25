@@ -236,6 +236,13 @@ internal sealed class Box
     public Boolean IsAnonymous { get; init; }
 
     /// <summary>
+    /// Gets whether the element asked for <c>display: contents</c>, which generates no box of its own:
+    /// the box here exists only to hold the children the walk found, and paints none of the element's
+    /// background, border or margin (CSS Display 3 §2.5).
+    /// </summary>
+    public Boolean IsContents { get; init; }
+
+    /// <summary>
     /// Gets whether this box is the letter an <c>initial-letter</c> made into a float. It stands on the
     /// block's first line even though it has left it, so <c>::first-line</c> still reaches it.
     /// </summary>

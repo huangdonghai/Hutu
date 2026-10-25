@@ -155,6 +155,25 @@ public sealed class CanvasBackgroundTests
     }
 
     [Test]
+    public async Task ADisplayContentsElementPaintsNoBackground()
+    {
+        // CSS Display 3 §2.5: the element generates no box, so the background it states has nothing to
+        // paint on; its children are the page.
+        using var view = await Drawn(
+            "body{margin:0}",
+            "<div style='display:contents;background-color:#ff0000'>" +
+            "<div style='width:20px;height:20px;background-color:#008000'></div></div>");
+
+        var solid = SolidOf(view);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(solid.Exists(fill => fill.Color == Red), Is.False, "no box, so no red");
+            Assert.That(solid.Exists(fill => fill.Color == Green), Is.True, "the child still paints");
+        });
+    }
+
+    [Test]
     public async Task TheCanvasIsPaintedBeforeAnythingTheDocumentPutsOnIt()
     {
         using var view = await Drawn("html{background-color:#ff0000}body{margin:0}", "<div style='background-color:#008000;width:20px;height:20px'></div>");

@@ -740,7 +740,7 @@ internal sealed class Painter
         // borrows the container's computed values to lay its children out, but it must not paint them:
         // the container already painted its own background behind the whole content box. It draws only
         // what is inside it.
-        if (box.Source.IsAnonymous)
+        if (box.Source.IsAnonymous || box.Source.IsContents)
         {
             // An anonymous table cell is the exception: the border it carries is not the container's
             // presentation borrowed but the half of a collapsed grid line the table settled on, and the

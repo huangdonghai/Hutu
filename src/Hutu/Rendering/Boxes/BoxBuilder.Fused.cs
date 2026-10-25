@@ -405,6 +405,7 @@ internal static partial class BoxBuilder
             Element = element,
             Flow = flow,
             Quotes = quoted,
+            IsContents = String.Equals(cascade.Find("display")?.Value?.Trim(), "contents", StringComparison.OrdinalIgnoreCase),
             IsInlineOuter = inlineOuter,
             TableRole = tableRole,
             IsInTable = inTable,
