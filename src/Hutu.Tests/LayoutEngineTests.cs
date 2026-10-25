@@ -283,6 +283,35 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task ANoBreakSpaceIsALineOnThePage()
+    {
+        // U+00A0 is white space to the framework but not the collapsible kind CSS removes at a line's
+        // edge, so a box holding one has a line of its own and its margins do not fold through it.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='space' style='font-size:15px;line-height:1;margin:10px 0 20px'>&nbsp;</div>" +
+            "</body></html>");
+
+        Assert.That(ById(view, "space").BorderBox.Height, Is.EqualTo(15).Within(0.5), "one line, not nothing");
+    }
+
+    [Test]
+    public async Task EmptyInlineBoxesLeaveNoLineToSeparateTheMargins()
+    {
+        // CSS 2.1 §9.4.2: a line box holding nothing but collapsible white space and inline elements
+        // without margins, padding or borders is zero-height and does not exist for any other purpose.
+        // The anonymous block the run makes must therefore collapse through, letting the paragraph's
+        // top margin fold with the body's.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:8px'><span></span> <span></span>" +
+            "<p style='margin:16px 0'>x</p></body></html>");
+
+        Assert.That(Find(view, "p")!.BorderBox.Y, Is.EqualTo(16).Within(0.5), "max(body 8, paragraph 16)");
+    }
+
+    [Test]
     public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
     {
         // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's

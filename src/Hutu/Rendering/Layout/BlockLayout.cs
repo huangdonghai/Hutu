@@ -3117,13 +3117,110 @@ internal sealed class BlockLayout
 
             // An inline-level child generates a line box, and a line box occupies the block axis; a
             // block-level child keeps the box from self-collapsing unless that child collapses in turn.
-            if (!child.IsBlockLevel || IsFloat(child) || !IsSelfCollapsing(child, flow, basis))
+            // A line box that holds nothing but collapsible white space and inline elements with no
+            // margins, padding or borders is zero-height and "treated as not existing for any other
+            // purpose" (CSS 2.1 §9.4.2), so it does not stand between the margins either.
+            if (!child.IsBlockLevel || IsFloat(child))
+            {
+                if (!child.IsBlockLevel && !LeavesALine(child, flow, basis))
+                {
+                    continue;
+                }
+
+                return false;
+            }
+
+            if (!IsSelfCollapsing(child, flow, basis))
             {
                 return false;
             }
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Gets whether an inline-level box puts something on its line that makes the line exist: text that
+    /// is not collapsible white space, a break, a replaced box, or an inline box with margins, padding,
+    /// borders, or content of its own (CSS 2.1 §9.4.2).
+    /// </summary>
+    private static Boolean LeavesALine(Box box, WritingModeInfo flow, Double basis)
+    {
+        if (box.IsReplaced || box.Kind is BoxKind.LineBreak or BoxKind.InlineBlock)
+        {
+            return true;
+        }
+
+        if (box.Kind == BoxKind.Text)
+        {
+            return HoldsText(box);
+        }
+
+        if (box.Kind != BoxKind.Inline)
+        {
+            // An atomic inline container - inline-flex, inline-grid, inline-table, inline masonry -
+            // is one piece of the line whatever it holds.
+            return true;
+        }
+
+        var margin = box.Style.Margin.Resolve(basis);
+        var padding = box.Style.Padding.Resolve(basis);
+        var border = BorderOf(box);
+
+        if (margin.Horizontal != 0 || margin.Vertical != 0 ||
+            padding.Horizontal != 0 || padding.Vertical != 0 ||
+            border.Horizontal != 0 || border.Vertical != 0)
+        {
+            return true;
+        }
+
+        foreach (var child in box.Children)
+        {
+            if (PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (child.IsBlockLevel || LeavesALine(child, flow, basis))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Gets whether a text box carries anything a line keeps: a non-white-space character under a mode
+    /// that collapses spaces, a preserved character under one that does not, or a kept segment break.
+    /// </summary>
+    private static Boolean HoldsText(Box box)
+    {
+        var text = box.Text;
+
+        if (String.IsNullOrEmpty(text))
+        {
+            return false;
+        }
+
+        if (!box.Style.CollapsesSpaces)
+        {
+            return true;
+        }
+
+        foreach (var character in text!)
+        {
+            // Only the CSS-collapsible white space disappears at a line's edge. A no-break space is
+            // white space to .NET but a glyph on the page, and an element holding one has a line.
+            if (!TextChunker.IsCollapsible(character))
+            {
+                return true;
+            }
+        }
+
+        // `pre-line` collapses the spaces but keeps the segment breaks, so a run of nothing but breaks
+        // still opens a line of its own.
+        return text.IndexOf('\n') >= 0 && box.Style.WhiteSpace.Equals("pre-line", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
