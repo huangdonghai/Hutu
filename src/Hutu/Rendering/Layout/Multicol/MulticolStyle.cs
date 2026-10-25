@@ -131,6 +131,15 @@ internal readonly struct MulticolStyle
             return (count, Math.Max(0, (room - (count - 1) * gap) / count));
         }
 
+        // A wrapped grid keeps what the page stated: its rows are the page's own arithmetic, and a
+        // stated count and width overflow the container rather than refit into the room, which is what
+        // the ordinary path below does (CSS Multicol 2 §3) - three columns of sixty in a box of a
+        // hundred and ninety-six stay three columns of sixty.
+        if (Wraps && Height is { } stated && stated > 0)
+        {
+            return (Count.Value, Width.Value);
+        }
+
         var used = Math.Clamp(Count.Value, 1, Fitting(room, Width.Value, gap));
 
         return (used, Math.Max(Width.Value, Math.Max(0, (room - (used - 1) * gap) / used)));
