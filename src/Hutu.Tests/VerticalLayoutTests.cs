@@ -355,6 +355,32 @@ public sealed class VerticalLayoutTests
         });
     }
 
+    /// <summary>
+    /// What nothing was said about leaves every stop of a CJK sentence unmarked, wide or narrow: the
+    /// marks stand over the letters and the digits, and no mark stands over <c>。</c> or <c>，</c>
+    /// (CSS Text Decoration 4 §5.4.1, as text-emphasis-punctuation-2 draws it).
+    /// </summary>
+    [Test]
+    public async Task EmphasisMarksLeaveEveryStopOfASentenceUnmarked()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:2;" +
+            "text-emphasis:filled circle'>" + Char.ConvertFromUtf32(0x6625) + Char.ConvertFromUtf32(0x3002) +
+            Char.ConvertFromUtf32(0x590f) + Char.ConvertFromUtf32(0xFF0C) + Char.ConvertFromUtf32(0x79CB) +
+            "</p></body></html>");
+
+        var run = Text(view, Char.ConvertFromUtf32(0x6625) + Char.ConvertFromUtf32(0x3002) +
+            Char.ConvertFromUtf32(0x590f) + Char.ConvertFromUtf32(0xFF0C) + Char.ConvertFromUtf32(0x79CB));
+
+        Assert.That(run.Marks, Is.Not.Null, "the page asked for marks");
+        Assert.That(
+            run.Marks!.Count,
+            Is.EqualTo(3),
+            "one mark over each of the three letters, and none over the two stops");
+    }
+
     [Test]
     public async Task RubyPositionUnderSetsTheReadingOnTheOtherSide()
     {

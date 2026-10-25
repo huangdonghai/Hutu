@@ -1354,28 +1354,29 @@ internal sealed class InlineLayout
         var words = fragment.Style.WordSpacing;
         var start = cursor + (emphasis.StandsAtTheEnd(flow) ? line.Height - block : 0);
         var colour = emphasis.HasColor ? emphasis.Color : ComputedStyle.ToArgb(fragment.Style.Color);
-        var elements = new List<String>();
+        var elements = new List<Int32>();
         var advances = new List<Double>();
         var total = 0.0;
 
         for (var run = StringInfo.GetTextElementEnumerator(text); run.MoveNext(); )
         {
             var element = (String)run.Current!;
-
-            if (emphasis.Skips(element))
-            {
-                continue;
-            }
-
             var advance = measurer.MeasureAdvance(element, font, flow);
 
             // The room between one character and the next is the spacing the page wrote after it, which
             // carries the marks along with the letters - and the space a word ends on is a word space too.
             advance += spacing + (Char.IsWhiteSpace(element[0]) ? words : 0);
 
-            elements.Add(element);
+            // A character left unmarked still takes its room on the line, so what it leaves behind is its
+            // place in the walk: the marks after it stand over the characters they mark, not where a line
+            // without the character would have put them.
             advances.Add(advance);
             total += advance;
+
+            if (!emphasis.Skips(element))
+            {
+                elements.Add(advances.Count - 1);
+            }
         }
 
         if (elements.Count == 0)
@@ -1392,9 +1393,10 @@ internal sealed class InlineLayout
 
         for (var index = 0; index < elements.Count; index++)
         {
-            var centre = walk + (advances[index] / 2);
+            var at = elements[index];
+            var centre = walk + (advances[at] / 2);
 
-            walk += advances[index];
+            walk += advances[at];
 
             marks.Add(new EmphasisMark(
                 flow.Map(

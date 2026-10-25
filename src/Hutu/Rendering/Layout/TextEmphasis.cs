@@ -53,9 +53,9 @@ internal enum EmphasisSkip
     Symbols = 4,
 
     /// <summary>
-    /// What a page that says nothing asks for: the spaces, and the narrow characters UAX #50 lists
-    /// against a fullwidth twin - which is why a marked English word keeps its letters and loses its
-    /// brackets, while a CJK line is marked letter by letter (CSS Text Decoration 4 §5.4.1).
+    /// What a page that says nothing asks for: the spaces, the punctuation and the symbols, so a marked
+    /// English word keeps its letters and loses its brackets and a CJK sentence is marked letter by
+    /// letter with no mark over any of its stops (CSS Text Decoration 4 §5.4.1).
     /// </summary>
     Auto = 8,
 }
@@ -124,8 +124,9 @@ internal readonly struct TextEmphasis
 
     /// <summary>
     /// Gets whether a character of the run is left unmarked. A space is never marked unless the page
-    /// asked for every character, and what nothing was said about leaves the narrow punctuation and the
-    /// narrow symbols alone - the forms that have a wide twin.
+    /// asked for every character, and what nothing was said about leaves the punctuation and the symbols
+    /// alone beside it - which is what a CJK sentence's references show: the marks stand over the
+    /// letters and the digits, and no mark stands over <c>。</c>, <c>，</c> or <c>…</c>.
     /// </summary>
     internal Boolean Skips(String element)
     {
@@ -136,9 +137,8 @@ internal readonly struct TextEmphasis
 
         var first = element[0];
 
-        // What a page that says nothing asks for is the spaces plus the *narrow* forms - the
-        // characters UAX #50 lists against a fullwidth or halfwidth twin. A wide punctuation mark is
-        // its own character and takes its mark, which is what the references for a CJK sentence show.
+        // A page that says nothing asks for the spaces, the punctuation and the symbols to go unmarked;
+        // naming the sets asks for exactly those.
         var asked = Skip == EmphasisSkip.Auto
             ? EmphasisSkip.Space | EmphasisSkip.Punctuation | EmphasisSkip.Symbols
             : Skip;
@@ -146,11 +146,6 @@ internal readonly struct TextEmphasis
         if ((asked & EmphasisSkip.Space) != 0 && Char.IsWhiteSpace(first))
         {
             return true;
-        }
-
-        if (Skip == EmphasisSkip.Auto)
-        {
-            return ReservedWithWideForm(first);
         }
 
         if ((asked & EmphasisSkip.Punctuation) != 0 && IsPunctuation(first))
@@ -171,21 +166,6 @@ internal readonly struct TextEmphasis
             UnicodeCategory.OtherPunctuation => true,
             UnicodeCategory.InitialQuotePunctuation => true,
             UnicodeCategory.FinalQuotePunctuation => true,
-            _ => false,
-        };
-
-    /// <summary>
-    /// Gets whether the character is one of the narrow forms UAX #50 lists against a fullwidth or
-    /// halfwidth twin: the ASCII and Latin-1 punctuation, symbols and spacing marks.
-    /// </summary>
-    private static Boolean ReservedWithWideForm(Char character) =>
-        (Int32)character switch
-        {
-            >= 0x21 and <= 0x2f => true,
-            >= 0x3a and <= 0x40 => true,
-            >= 0x5b and <= 0x60 => true,
-            >= 0x7b and <= 0x7e => true,
-            0xa0 or 0xa1 or 0xa7 or 0xb7 => true,
             _ => false,
         };
 
