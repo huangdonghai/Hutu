@@ -179,7 +179,27 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         ["justify-items"] = ["left", "right", "self-start", "self-end", "normal", "last baseline"],
         ["align-content"] = ["left", "right", "self-start", "self-end"],
         ["justify-content"] = ["left", "right", "self-start", "self-end"],
+        // CSS Sizing 3 §5's sizes that settle from the content rather than from a length. AngleSharp's
+        // grammar for the size properties takes only `auto`, a length or a share, so a page asking for
+        // one of these had the whole declaration dropped and the box fell back to `auto` - a
+        // `height: max-content` item then stretched instead of standing at its content's size, and a
+        // `min-width: min-content` floor vanished.
+        ["width"] = ContentSizeKeywords,
+        ["height"] = ContentSizeKeywords,
+        ["min-width"] = ContentSizeKeywords,
+        ["min-height"] = ContentSizeKeywords,
+        ["max-width"] = ContentSizeKeywords,
+        ["max-height"] = ContentSizeKeywords,
+        ["inline-size"] = ContentSizeKeywords,
+        ["block-size"] = ContentSizeKeywords,
+        ["min-inline-size"] = ContentSizeKeywords,
+        ["min-block-size"] = ContentSizeKeywords,
+        ["max-inline-size"] = ContentSizeKeywords,
+        ["max-block-size"] = ContentSizeKeywords,
     };
+
+    /// <summary>Gets the content-based sizes of CSS Sizing 3 §5, which the layout reads as themselves.</summary>
+    private static String[] ContentSizeKeywords => ["max-content", "min-content", "fit-content"];
 
     /// <summary>
     /// The properties whose value is kept whole when it merely names one of these keywords somewhere in
@@ -210,6 +230,20 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // identifier. Dropped, the generated content vanishes; kept whole, the content reader takes the
         // marks from the same place the marker does.
         ["content"] = ["symbols("],
+        // `fit-content(<length>)` is the same content-based size with a cap, and it reaches the reader
+        // as one token rather than as a bare keyword.
+        ["width"] = ["fit-content("],
+        ["height"] = ["fit-content("],
+        ["min-width"] = ["fit-content("],
+        ["min-height"] = ["fit-content("],
+        ["max-width"] = ["fit-content("],
+        ["max-height"] = ["fit-content("],
+        ["inline-size"] = ["fit-content("],
+        ["block-size"] = ["fit-content("],
+        ["min-inline-size"] = ["fit-content("],
+        ["min-block-size"] = ["fit-content("],
+        ["max-inline-size"] = ["fit-content("],
+        ["max-block-size"] = ["fit-content("],
     };
 
     /// <summary>

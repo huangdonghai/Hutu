@@ -624,8 +624,25 @@ internal sealed partial class TableFormattingContext
 
                 var contentHeight = Math.Max(0, measured.Height - styleInsetsV);
 
+                // A height a cell states is a floor under the row, not a size for the cell box: the cell
+                // is as tall as the row the floor helped settle. The row is one that asked for a height,
+                // so a table taller than its rows leaves the room to the rows that asked for none
+                // (CSS Tables 3 §5.2) - which is what keeps a fixed row beside an auto one at its size.
+                // A border-box height already holds the cell's padding and border, so only what is left
+                // over is content.
+                if (cell.Box.Style.Height is { HasValue: true } stated && stated.Kind != StyleLengthKind.Percent)
+                {
+                    var floor = Math.Max(0, stated.Resolve(0));
+                    var contentFloor = BoxModel.IsBorderBox(cell.Box.Style)
+                        ? Math.Max(0, floor - cell.Insets.Vertical)
+                        : floor;
+
+                    contentHeight = Math.Max(contentHeight, contentFloor);
+                    row.HeightDeclared = true;
+                }
+
                 // A height a cell's attribute asks for is a floor under the row, not a size for the cell
-                // box: the cell is as tall as the row the floor helped settle.
+                // box either.
                 if (cell.Box.HintedHeight is { HasValue: true } hinted && hinted.Kind != StyleLengthKind.Percent)
                 {
                     contentHeight = Math.Max(contentHeight, Math.Max(0, hinted.Resolve(0)));

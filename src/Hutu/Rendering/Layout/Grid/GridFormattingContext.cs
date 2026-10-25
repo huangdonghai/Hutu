@@ -683,6 +683,15 @@ internal sealed class GridFormattingContext
     /// </summary>
     private static Boolean HasWidth(Box box) => !box.IsAnonymous && box.Style.Width.HasValue;
 
+    /// <summary>Gets whether the item states a width of its own that the layout can be sized from,
+    /// including the content keywords the item's content settles.</summary>
+    private static Boolean StatesWidth(Box box) =>
+        !box.IsAnonymous && (box.Style.Width.HasValue || box.Style.Width.IsContentSized);
+
+    /// <summary>Gets whether the item states a height of its own, on the same terms.</summary>
+    private static Boolean StatesHeight(Box box) =>
+        !box.IsAnonymous && (box.Style.Height.HasValue || box.Style.Height.IsContentSized);
+
     /// <summary>Gets whether the item's own declared height may be used, for the same reason.</summary>
     private static Boolean HasHeight(Box box) => !box.IsAnonymous && box.Style.Height.HasValue;
 
@@ -692,6 +701,15 @@ internal sealed class GridFormattingContext
     /// height is the container's own rather than anything about the text - and has to be arranged at
     /// zero height and read back from where its content ended instead.
     /// </summary>
+    /// <summary>Gets the inline size a content-based keyword asks for, capped by the room there is.</summary>
+    private Double ContentWidth(StyleLength width, Box box, Double space, LayoutContext context)
+    {
+        var intrinsic = _engine.MeasureContentIntrinsic(box, context);
+        var wanted = width.Kind == StyleLengthKind.MinContent ? intrinsic.MinContent : intrinsic.MaxContent;
+
+        return Math.Min(Math.Max(0, wanted), space);
+    }
+
     private Double ContentHeight(Box box, Double width, Double basis, LayoutContext context)
     {
         var available = Math.Max(0, width);
@@ -2067,7 +2085,7 @@ internal sealed class GridFormattingContext
         // be resolved from a `stretch` self-alignment as definite, so a percentage inside the item has
         // to resolve against the area it was stretched to rather than collapse to nothing.
         item.HeightIsDefinite =
-            (HasHeight(item.Box) && !(style.Height.Kind == StyleLengthKind.Percent && areaHeight <= 0)) ||
+            (StatesHeight(item.Box) && !(style.Height.Kind == StyleLengthKind.Percent && areaHeight <= 0)) ||
             align is FlexAlignment.Stretch or FlexAlignment.Auto or FlexAlignment.Normal;
 
         var outerX = width + margin.Left + margin.Right;
@@ -2098,7 +2116,13 @@ internal sealed class GridFormattingContext
 
         if (HasWidth(box) && !(style.Width.Kind == StyleLengthKind.Percent && area <= 0))
         {
-            var resolved = Math.Max(0, style.Width.Resolve(area));
+            // A content keyword is answered by the content, not by a length: `max-content` wants the
+            // room the content takes on one line, `min-content` the least it fits in, and both are
+            // capped by the area the item was given (CSS Sizing 3 §5).
+            var resolved = style.Width.IsContentSized
+                ? ContentWidth(style.Width, box, space, context)
+                : Math.Max(0, style.Width.Resolve(area));
+
             value = isBorderBox ? resolved : resolved + insets;
         }
         else if (align is FlexAlignment.Stretch or FlexAlignment.Auto or FlexAlignment.Normal)
@@ -2128,8 +2152,15 @@ internal sealed class GridFormattingContext
     {
         var space = Math.Max(0, area);
 
-        if (HasHeight(box) && !(style.Height.Kind == StyleLengthKind.Percent && area <= 0))
+        if (StatesHeight(box) && !(style.Height.Kind == StyleLengthKind.Percent && area <= 0))
         {
+            // The content keywords are answered by the content itself, as on the inline axis: the block
+            // is as tall as what it holds and does not stretch (CSS Sizing 3 §5).
+            if (style.Height.IsContentSized)
+            {
+                return Math.Min(ContentHeight(box, space, basis, context) + insets, space);
+            }
+
             var resolved = Math.Max(0, style.Height.Resolve(area));
             var content = isBorderBox ? Math.Max(0, resolved - insets) : resolved;
             return BoxModel.ClampHeight(style, content, area, insets) + insets;
