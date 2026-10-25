@@ -45,7 +45,7 @@ internal sealed partial class TableFormattingContext
         /// outer edge pushes the rows by. Reserving it here would shove the rows down and overflow the
         /// table out of an <c>overflow: hidden</c> box that was sized to hold them.
         /// </summary>
-        public Double OuterHeight => Margin.Top + Height;
+        public Double OuterHeight => Margin.Vertical + Height;
     }
 
     /// <summary>Everything the table context computes for one table, shared by both phases.</summary>
