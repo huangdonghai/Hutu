@@ -2217,8 +2217,12 @@ internal sealed class InlineLayout
                     // space, to keep a line from overflowing at all, and between the characters of a word.
                     // Only `word-break: break-all` leaves the first of these alone, because the rule it sets
                     // aside is the one about words.
+                    // The opportunity before a preserved space is set aside by `word-break: break-all`,
+                    // which is the one value that leaves the word rules standing and fills the line
+                    // instead. `line-break: anywhere` sets those rules aside too, so there the line
+                    // may still end before a space it would not have room for (CSS Text 3 §5.4-§5.6).
                     var beforeFirst = stepsSpaces && item.Style.WrapsBeforeSpaces &&
-                        !item.Style.BreaksBetweenLetters;
+                        (!item.Style.BreaksBetweenLetters || item.Style.BreaksAnywhere);
 
                     // A word is stepped only where the break inside it is worth something: where the value
                     // gives it as an opportunity of its own, or where the word will not fit on a line at all
