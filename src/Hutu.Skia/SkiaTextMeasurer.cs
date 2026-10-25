@@ -110,6 +110,14 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     public FontMetrics GetRunMetrics(String text, FontStyle style)
     {
         var primary = GetMetrics(style);
+
+        // A size of zero gives every face the same weightless answer, so there is no run to fold: the
+        // fallback faces a size-zero style reaches would otherwise stand their bare ratios on the line.
+        if (style.Size <= 0)
+        {
+            return primary;
+        }
+
         var ascent = primary.Ascent;
         var descent = primary.Descent;
         var gap = primary.LineGap;
@@ -439,6 +447,14 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 
     private FontMetrics Measure(FontStyle style)
     {
+        // A font of no size stands nothing on the line, and Skia answers a size of zero with the face's
+        // bare ratios - as if the size were one - so the weightless strut a zero-size run owes the line
+        // is stated here rather than read out of the face (CSS 2.1 §10.8.1).
+        if (style.Size <= 0)
+        {
+            return new FontMetrics(0, 0, 0, 0, 0, 0, 0, xHeight: 0, capHeight: 0);
+        }
+
         // GetFontMetrics reports the recommended line spacing; the metrics themselves are always
         // filled in. The decoration offsets are optional because a font may not define them.
         var font = GetFont(style);

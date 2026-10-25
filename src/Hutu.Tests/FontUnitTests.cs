@@ -19,6 +19,25 @@ namespace Hutu.Tests;
 [TestFixture]
 public sealed class FontUnitTests
 {
+    /// <summary>
+    /// A font of size zero stands nothing on the line: its strut is weightless, so no ascent, descent or
+    /// leading comes out of it, and a preserved space set in it breaks lines without lifting one
+    /// (CSS 2.1 §10.8.1, as line-breaking-font-size-zero-001 draws it).
+    /// </summary>
+    [Test]
+    public void AFontOfSizeZeroCarriesNoMetrics()
+    {
+        using var measurer = new SkiaTextMeasurer();
+
+        var metrics = measurer.GetMetrics(new FontStyle("Arial", 0));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(metrics.Ascent, Is.EqualTo(0).Within(0.001), "no ascent at size zero");
+            Assert.That(metrics.Descent, Is.EqualTo(0).Within(0.001), "and no descent");
+            Assert.That(metrics.LineGap, Is.EqualTo(0).Within(0.001), "and no leading");
+        });
+    }
     [Test]
     public async Task ExIsTheHeightOfTheFaceTheTextIsSetIn()
     {
