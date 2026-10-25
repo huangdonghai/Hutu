@@ -85,12 +85,14 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 |---|---|
 | `build/reftest-score.md` | 每个语料的通过率 + "已经画对的"清单 + finding 清单 |
 | `build/score-wpt.log`、`build/score-gecko.log` | 进度日志 |
+| `build/undrawable.log` | 画不出来的页面，连同完整异常栈——那张页面画不出来时，栈是唯一能说出"哪里"的东西 |
 
 **环境变量**：
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `HUTU_SCORE_LIMIT` | 0（不限） | 每个语料最多画几页。**冒烟用，也是唯一可靠的回归对比基线**，见下 |
+| `HUTU_SCORE_ONLY` | 空 | 只画路径里含这段文字的页面，比如 `css-text/white-space/tab`。改一个模块时用它秒级计分，不必每次都跑全量 |
 | `HUTU_SCORE_FINDINGS` | 10 | 只影响快速检测 |
 
 ### 回归对比：用固定样本，别用快速检测
