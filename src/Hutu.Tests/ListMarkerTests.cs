@@ -134,9 +134,40 @@ public sealed class ListMarkerTests
             "the inner list is a list of one, and the outer one of two");
     }
 
+    /// <summary>
+    /// A marker hangs at the head of its line, and no line begins inside a float: an item that stands
+    /// beside one puts its marker in the room the float leaves, which is the same picture an item simply
+    /// given that much margin gives (CSS 2.1 §12.5.1 read with §9.5, as Chrome lays an outside marker).
+    /// </summary>
     [Test]
-    public async Task AListKeepsRoomAtTheEdgeItsItemsBeginAt()
+    public async Task AMarkerStandsBesideTheFloatItsLineBeginsAfter()
     {
+        var beside = await LaidOut("",
+            "<body style='margin:0'><div style='float:left;width:60px;height:60px'></div>" +
+            "<div style='display:list-item;list-style:square'></div></body>");
+        var floated = Marked(beside.Root);
+
+        var pushed = await LaidOut("",
+            "<body style='margin:0'><div style='display:list-item;list-style:square;" +
+            "margin-left:60px'></div></body>");
+        var margined = Marked(pushed.Root);
+
+        Assert.That(floated.MarkerBounds, Is.Not.Null, "an item with no content of its own is still marked");
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                floated.MarkerBounds!.Value.Right,
+                Is.EqualTo(60).Within(0.5),
+                "the marker stands in the room the float leaves, not at the box's own edge");
+            Assert.That(
+                margined.MarkerBounds!.Value.Right,
+                Is.EqualTo(60).Within(0.5),
+                "and the same room given as a margin puts it in the same place");
+        });
+    }
+
+    [Test]
+    public async Task AListKeepsRoomAtTheEdgeItsItemsBeginAt()    {
         var laid = await LaidOut("", "<ul><li>one</li></ul>");
         var item = Marked(laid.Root);
 

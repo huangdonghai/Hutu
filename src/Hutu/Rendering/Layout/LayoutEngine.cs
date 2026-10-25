@@ -153,7 +153,7 @@ internal sealed class LayoutEngine
         // The markers of a list are placed from the same geometry, and after it for the same reason: an
         // item's marker stands level with the first line the item reaches, which is only known once the
         // lines have been put down.
-        ResolveMarkers(rootBox);
+        ResolveMarkers(rootBox, FloatsOf(rootBox.Source));
 
         // A first line is the same kind of answer, and it comes after for the same reason: the arm is read
         // while the boxes are made, but which fragments the block reaches first is only known here, with
@@ -321,7 +321,7 @@ internal sealed record LayoutProfile(
 
         decoration?.Start();
         ResolveDecorations(rootBox);
-        ResolveMarkers(rootBox);
+        ResolveMarkers(rootBox, FloatsOf(rootBox.Source));
         Hutu.Rendering.Boxes.FirstLine.Mark(rootBox);
         decoration?.Stop();
 
@@ -952,7 +952,7 @@ internal sealed record LayoutProfile(
     /// marker is. Only the marker that hangs beside an item is placed from the finished geometry.
     /// </para>
     /// </remarks>
-    private void ResolveMarkers(LayoutBox box)
+    private void ResolveMarkers(LayoutBox box, FloatTracks? around)
     {
         var source = box.Source;
 
@@ -1011,14 +1011,25 @@ internal sealed record LayoutProfile(
                     ? first.BorderBox.Y + first.Baseline
                     : content.Y + metrics.Ascent;
 
-                // The edge the marker hangs outside is the principal box's border edge: CSS 2.1
-                // §12.5.1 fixes an outside marker with respect to the principal block box's border,
-                // not to the content inside its padding. A page that reads right to left puts the
-                // edge on the other side - and the marker ends there rather than starting there,
-                // since it is the item's text that keeps its edge and the marker that hangs out.
-                var start = box.Flow.InlineSign > 0
-                    ? box.BorderBox.X - advance
-                    : box.BorderBox.Right;
+                // CSS 2.1 §12.5.1 fixes an outside marker to the principal box's border edge rather than to
+                // the content inside its padding, and a page that reads right to left puts that edge on the
+                // other side - the marker ends there rather than starting there, since it is the item's text
+                // that keeps its edge and the marker that hangs out.
+                var edge = box.Flow.InlineSign > 0 ? box.BorderBox.X : box.BorderBox.Right;
+
+                // No line begins inside a float, and the marker hangs at the head of its line: an item that
+                // stands beside one puts its marker in the room the float leaves, which is where the same
+                // marker stands for an item that was simply given that much margin (CSS 2.1 §12.5.1 read
+                // with §9.5, the way Chrome lays it). A column asks for nothing of the kind, because a
+                // float of either side cuts a column's block extent and not the head a marker hangs at.
+                if (around is { } tracks)
+                {
+                    var span = tracks.LineSpanAt(standing - metrics.Ascent, metrics.Ascent + metrics.Descent);
+
+                    edge = box.Flow.InlineSign > 0 ? Math.Max(edge, span.Left) : Math.Min(edge, span.Right);
+                }
+
+                var start = box.Flow.InlineSign > 0 ? edge - advance : edge;
 
                 box.MarkerBounds = new Rect(start, standing - metrics.Ascent, advance, metrics.Ascent + metrics.Descent);
                 box.MarkerBaseline = metrics.Ascent;
@@ -1027,7 +1038,7 @@ internal sealed record LayoutProfile(
 
         foreach (var child in box.Children)
         {
-            ResolveMarkers(child);
+            ResolveMarkers(child, FloatsOf(box.Source) ?? around);
         }
     }
 
