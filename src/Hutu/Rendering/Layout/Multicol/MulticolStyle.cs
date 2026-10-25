@@ -176,7 +176,8 @@ internal readonly struct MulticolStyle
         var fills = String.Equals(fill, "auto", StringComparison.OrdinalIgnoreCase);
 
         var height = HeightOf(find("column-height"), font, dimensions);
-        var wraps = String.Equals(find("column-wrap")?.Value?.Trim(), "wrap", StringComparison.OrdinalIgnoreCase);
+        var wraps = String.Equals(find("column-wrap")?.Value?.Trim(), "wrap", StringComparison.OrdinalIgnoreCase)
+            || height is not null;
         var rowGap = FlexStyle.GapsFused(find, font, dimensions).Row;
 
         return new MulticolStyle(count, width, gap, fills, height, wraps, rowGap);
