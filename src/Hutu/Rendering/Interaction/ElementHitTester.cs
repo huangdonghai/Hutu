@@ -108,11 +108,10 @@ internal sealed class ElementHitTester
         {
             var origin = new Offset(box.BorderBox.X + box.TransformOrigin.X, box.BorderBox.Y + box.TransformOrigin.Y);
             var inverse = transform.Inverse();
-            var ux = _x - origin.X;
-            var uy = _y - origin.Y;
+            var (insideX, insideY) = inverse.Map(_x - origin.X, _y - origin.Y);
 
-            _x = origin.X + inverse.A * ux + inverse.C * uy + inverse.E;
-            _y = origin.Y + inverse.B * ux + inverse.D * uy + inverse.F;
+            _x = origin.X + insideX;
+            _y = origin.Y + insideY;
         }
 
         try

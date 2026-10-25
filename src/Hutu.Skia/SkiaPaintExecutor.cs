@@ -2460,5 +2460,5 @@ public sealed class SkiaPaintExecutor
     private static SKMatrix ToSkMatrix(Affine m) => new(
         (Single)m.A, (Single)m.C, (Single)m.E,
         (Single)m.B, (Single)m.D, (Single)m.F,
-        0, 0, 1);
+        (Single)m.P0, (Single)m.P1, (Single)m.P2);
 }

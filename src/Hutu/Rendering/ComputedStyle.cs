@@ -1949,12 +1949,33 @@ internal readonly struct ComputedStyle
     /// fused path. Percentages stay unresolved for the layout pass.
     /// </summary>
     public static StyleLength ResolveInsetFused(
-        ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions) =>
-        declared is not null &&
-        LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var length) &&
-        length.HasValue
-            ? length
-            : StyleLength.Auto;
+        ICssProperty? declared,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions) =>
+        ResolveInsetFused(declared, StyleLength.Auto, font, dimensions);
+
+    /// <summary>
+    /// Reads an inset for the fused path, where <c>inherit</c> takes the offset the parent was given:
+    /// the property is not inherited, so that one keyword is the only way a child is placed where its
+    /// parent was.
+    /// </summary>
+    public static StyleLength ResolveInsetFused(
+        ICssProperty? declared,
+        StyleLength inherited,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions)
+    {
+        if (declared?.Value is { Length: > 0 } text && CssWideKeyword.Is(text))
+        {
+            return text.Trim().ToLowerInvariant() == "inherit" ? inherited : StyleLength.Auto;
+        }
+
+        return declared is not null &&
+            LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var length) &&
+            length.HasValue
+                ? length
+                : StyleLength.Auto;
+    }
 
     /// <summary>
     /// Resolves the stacking level from the element's own cascaded declaration, for the fused path.
@@ -3051,6 +3072,24 @@ internal readonly struct ComputedStyle
         /// <summary>Gets the declared <c>transform-style</c>, or null for the flat default.</summary>
         internal String? TransformStyle;
 
+        /// <summary>Gets the declared <c>translate</c>, or null when the box moves in no direction.</summary>
+        internal String? Translate;
+
+        /// <summary>Gets the declared <c>rotate</c>, or null when the box is not turned.</summary>
+        internal String? Rotate;
+
+        /// <summary>Gets the declared <c>scale</c>, or null when the box is not resized.</summary>
+        internal String? Scale;
+
+        /// <summary>Gets the declared <c>perspective</c>, or null when the children are seen flat.</summary>
+        internal String? Perspective;
+
+        /// <summary>Gets the declared <c>perspective-origin</c>, or null for the middle of the box.</summary>
+        internal String? PerspectiveOrigin;
+
+        /// <summary>Gets the declared <c>backface-visibility</c>, or null for the visible default.</summary>
+        internal String? BackfaceVisibility;
+
         /// <summary>Gets the declared <c>transform-origin</c>, or null for the default centre.</summary>
         internal String? TransformOrigin;
 
@@ -3117,14 +3156,59 @@ internal readonly struct ComputedStyle
     public String? TransformOriginText =>
         _values.Fused is { } fused ? fused.TransformOrigin : _style.GetPropertyValue("transform-origin");
 
+    /// <summary>Gets the declared <c>translate</c> text, or null when the box moves in no direction.</summary>
+    public String? TranslateText =>
+        _values.Fused is { } fused ? fused.Translate : _style.GetPropertyValue("translate");
+
+    /// <summary>Gets the declared <c>rotate</c> text, or null when the box is not turned.</summary>
+    public String? RotateText =>
+        _values.Fused is { } fused ? fused.Rotate : _style.GetPropertyValue("rotate");
+
+    /// <summary>Gets the declared <c>scale</c> text, or null when the box is not resized.</summary>
+    public String? ScaleText =>
+        _values.Fused is { } fused ? fused.Scale : _style.GetPropertyValue("scale");
+
+    /// <summary>Gets the declared <c>perspective</c> text, or null when the children are seen flat.</summary>
+    public String? PerspectiveText =>
+        _values.Fused is { } fused ? fused.Perspective : _style.GetPropertyValue("perspective");
+
+    /// <summary>Gets the declared <c>perspective-origin</c> text, or null for the middle of the box.</summary>
+    public String? PerspectiveOriginText =>
+        _values.Fused is { } fused ? fused.PerspectiveOrigin : _style.GetPropertyValue("perspective-origin");
+
+    /// <summary>Gets the declared <c>backface-visibility</c> text, or null for the visible default.</summary>
+    public String? BackfaceVisibilityText =>
+        _values.Fused is { } fused ? fused.BackfaceVisibility : _style.GetPropertyValue("backface-visibility");
+
+    /// <summary>Gets whether the box asks not to be drawn when its plane is turned away.</summary>
+    public Boolean HidesBackface =>
+        BackfaceVisibilityText is { Length: > 0 } stated &&
+        stated.Contains("hidden", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Gets the perspective the box's own children are seen with, in pixels, or null when the value is
+    /// absent or <c>none</c>. A perspective of zero or less is the flat view as well.
+    /// </summary>
+    public Boolean HasPerspective =>
+        PerspectiveText is { Length: > 0 } stated &&
+        !stated.Equals("none", StringComparison.OrdinalIgnoreCase) &&
+        !stated.Contains("inherit", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Gets whether the box carries a <c>transform</c> or an <c>offset-path</c> that is not <c>none</c>.
     /// Such a box becomes the containing block for its absolute and fixed descendants and a stacking
     /// context, whether or not the resulting matrix moves anything (CSS Transforms 1 §transform-rendering).
     /// </summary>
     public Boolean IsTransformed =>
-        (TransformText is { Length: > 0 } transform && !transform.Equals("none", StringComparison.OrdinalIgnoreCase)) ||
+        SaysATransform(TransformText) ||
+        SaysATransform(TranslateText) ||
+        SaysATransform(RotateText) ||
+        SaysATransform(ScaleText) ||
         (OffsetValue("offset-path") is { Length: > 0 } path && !path.Equals("none", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Gets whether a transform-ish property states anything but <c>none</c>.</summary>
+    private static Boolean SaysATransform(String? stated) =>
+        stated is { Length: > 0 } && !stated.Equals("none", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Gets the declared <c>filter</c> text, or null/empty when the box carries none. Read as text on both

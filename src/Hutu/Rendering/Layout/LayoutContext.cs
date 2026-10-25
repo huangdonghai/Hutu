@@ -3,6 +3,13 @@ using System;
 namespace Hutu.Rendering.Layout;
 
 /// <summary>
+/// A viewer standing <see cref="Distance"/> pixels in front of the plane, looking through the point
+/// <see cref="OriginX"/>, <see cref="OriginY"/> in document coordinates: what the <c>perspective</c>
+/// property puts between a box and its children (CSS Transforms 2 §perspective-property).
+/// </summary>
+internal readonly record struct PerspectiveView(Double Distance, Double OriginX, Double OriginY);
+
+/// <summary>
 /// The state that flows through a layout pass: the box a percentage resolves against, the viewport,
 /// the scroll offset and the text measurer.
 /// </summary>
@@ -67,7 +74,8 @@ internal readonly struct LayoutContext
         Rect? capturedContainingBlock = null,
         Rect? referenceBorderBox = null,
         Rect? referencePaddingBox = null,
-        CornerRadii? referenceRadii = null)
+        CornerRadii? referenceRadii = null,
+        PerspectiveView? perspective = null)
     {
         ContainingBlock = containingBlock;
         ContainingBlockRect = containingBlockRect;
@@ -83,7 +91,16 @@ internal readonly struct LayoutContext
         ReferenceBorderBox = referenceBorderBox;
         ReferencePaddingBox = referencePaddingBox;
         ReferenceRadii = referenceRadii;
+        Perspective = perspective;
     }
+
+    /// <summary>
+    /// Gets the perspective a box in this context is seen with, when the element establishing the
+    /// context declares one: a viewer <see cref="PerspectiveView.Distance"/> pixels away, looking
+    /// through the point <see cref="PerspectiveView.OriginX"/>, <see cref="PerspectiveView.OriginY"/>
+    /// in document coordinates. Null when the context's children are drawn flat.
+    /// </summary>
+    public PerspectiveView? Perspective { get; }
 
     /// <summary>Gets the box percentages, auto widths and relative positioning resolve against.</summary>
     public Size ContainingBlock { get; }
@@ -171,7 +188,8 @@ internal readonly struct LayoutContext
         CapturedContainingBlock,
         ReferenceBorderBox,
         ReferencePaddingBox,
-        ReferenceRadii);
+        ReferenceRadii,
+        Perspective);
 
     /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
@@ -196,7 +214,8 @@ internal readonly struct LayoutContext
         CapturedContainingBlock,
         ReferenceBorderBox,
         ReferencePaddingBox,
-        ReferenceRadii);
+        ReferenceRadii,
+        Perspective);
 
     /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
@@ -217,7 +236,8 @@ internal readonly struct LayoutContext
         CapturedContainingBlock,
         ReferenceBorderBox,
         ReferencePaddingBox,
-        ReferenceRadii);
+        ReferenceRadii,
+        Perspective);
 
     /// <summary>Gets the context a box's children see, with its content box as their containing block.</summary>
     /// <remarks>
@@ -240,7 +260,8 @@ internal readonly struct LayoutContext
         CapturedContainingBlock,
         ReferenceBorderBox,
         ReferencePaddingBox,
-        ReferenceRadii);
+        ReferenceRadii,
+        Perspective);
 
     /// <summary>
     /// Gets the context a box's children see when the content box's position is known, which is what
@@ -260,7 +281,8 @@ internal readonly struct LayoutContext
         CapturedContainingBlock,
         ReferenceBorderBox,
         ReferencePaddingBox,
-        ReferenceRadii);
+        ReferenceRadii,
+        Perspective);
 
     /// <summary>
     /// Gets the context a positioned box's children see: the absolute containing block becomes this
@@ -281,7 +303,8 @@ internal readonly struct LayoutContext
         CapturedContainingBlock,
         ReferenceBorderBox,
         ReferencePaddingBox,
-        ReferenceRadii);
+        ReferenceRadii,
+        Perspective);
 
     /// <summary>
     /// Gets the context a box that captures its descendants hands them: the padding box becomes the frame
@@ -304,7 +327,8 @@ internal readonly struct LayoutContext
         paddingBox,
         ReferenceBorderBox,
         ReferencePaddingBox,
-        ReferenceRadii);
+        ReferenceRadii,
+        Perspective);
 
     /// <summary>
     /// Gets the context with the boxes of the element that establishes it, so a shape an
@@ -325,5 +349,28 @@ internal readonly struct LayoutContext
         CapturedContainingBlock,
         borderBox,
         paddingBox,
-        radii);
+        radii,
+        Perspective);
+
+    /// <summary>
+    /// Gets the context a box's children are seen through: the viewer the box declares, or none when
+    /// it declares no perspective - a perspective reaches only the children of the box that states it,
+    /// so a context that descends past that box loses it again (CSS Transforms 2 §perspective-property).
+    /// </summary>
+    internal LayoutContext WithPerspective(PerspectiveView? perspective) => new(
+        ContainingBlock,
+        ContainingBlockRect,
+        Viewport,
+        ViewportRect,
+        Scroll,
+        AbsoluteContainingBlock,
+        Measurer,
+        Floats,
+        BasisIsHypothetical,
+        Subgrid,
+        CapturedContainingBlock,
+        ReferenceBorderBox,
+        ReferencePaddingBox,
+        ReferenceRadii,
+        perspective);
 }

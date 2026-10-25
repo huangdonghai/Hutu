@@ -112,12 +112,15 @@ internal readonly struct PositionStyle
     /// fused path. Percentages stay unresolved for the layout pass.
     /// </summary>
     public static PositionStyle ReadFused(
-        Func<String, ICssProperty?> find, LengthReader.FontSource font, IRenderDimensions dimensions) => new(
+        Func<String, ICssProperty?> find,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions,
+        PositionStyle parent) => new(
         ComputedStyle.ResolvePositionModeFused(find("position")),
-        ComputedStyle.ResolveInsetFused(find("top"), font, dimensions),
-        ComputedStyle.ResolveInsetFused(find("right"), font, dimensions),
-        ComputedStyle.ResolveInsetFused(find("bottom"), font, dimensions),
-        ComputedStyle.ResolveInsetFused(find("left"), font, dimensions),
+        ComputedStyle.ResolveInsetFused(find("top"), parent.Top, font, dimensions),
+        ComputedStyle.ResolveInsetFused(find("right"), parent.Right, font, dimensions),
+        ComputedStyle.ResolveInsetFused(find("bottom"), parent.Bottom, font, dimensions),
+        ComputedStyle.ResolveInsetFused(find("left"), parent.Left, font, dimensions),
         ReadZIndexFused(find("z-index"), out var hasZIndex),
         hasZIndex);
 

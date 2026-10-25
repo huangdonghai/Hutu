@@ -67,6 +67,8 @@ internal sealed class PositionedLayout
                 borderBox,
                 paddingBox,
                 CornerRadii.Resolve(box.Style.BorderRadius, borderBox.Width, borderBox.Height));
+
+            context = context.WithPerspective(PerspectiveOf(box, borderBox));
         }
 
         if (!LendsAFrame(box))
@@ -77,6 +79,27 @@ internal sealed class PositionedLayout
         return box.Style.FormsContainingBlock(inlineLevel: false)
             ? context.WithCapturedContainingBlock(paddingBox)
             : context.WithAbsoluteContainingBlock(paddingBox);
+    }
+
+    /// <summary>
+    /// The viewer a box puts between itself and its children, or null when it states no perspective. The
+    /// distance is measured once against the box's own size, and the origin - a position - through the
+    /// border box, which is where the eye stands in the page.
+    /// </summary>
+    private static PerspectiveView? PerspectiveOf(Box box, Rect borderBox)
+    {
+        var style = box.Style;
+        var distance = TransformValue.ResolvePerspective(style.PerspectiveText, style.Dimensions, style.FoldingFontSize, style.Zoom);
+
+        if (distance <= 0)
+        {
+            return null;
+        }
+
+        var (x, y) = TransformValue.ResolveOrigin(
+            style.PerspectiveOriginText, borderBox.Width, borderBox.Height, style.Dimensions, style.FoldingFontSize, style.Zoom);
+
+        return new PerspectiveView(distance, borderBox.X + x, borderBox.Y + y);
     }
 
     /// <summary>

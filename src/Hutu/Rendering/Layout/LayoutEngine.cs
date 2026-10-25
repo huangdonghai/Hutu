@@ -1,4 +1,4 @@
-﻿using AngleSharp.Css.Dom;
+using AngleSharp.Css.Dom;
 using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
@@ -1185,9 +1185,12 @@ internal sealed record LayoutProfile(
         // against - and handed to the painter. The offset transform is applied before the transform
         // property (CSS Transforms 2 §ctm), so it is the inner factor of the product.
         var transformText = box.Style.TransformText;
+        var translateText = box.Style.TranslateText;
+        var rotateText = box.Style.RotateText;
+        var scaleText = box.Style.ScaleText;
         var offsetPath = box.Style.OffsetValue("offset-path");
-        var hasTransform = transformText is { Length: > 0 } && !transformText.Equals("none", StringComparison.OrdinalIgnoreCase);
-        var hasOffset = offsetPath is { Length: > 0 } && !offsetPath.Equals("none", StringComparison.OrdinalIgnoreCase);
+        var hasTransform = Stated(transformText) || Stated(translateText) || Stated(rotateText) || Stated(scaleText);
+        var hasOffset = Stated(offsetPath);
 
         if (hasTransform || hasOffset)
         {
@@ -1201,26 +1204,76 @@ internal sealed record LayoutProfile(
             var fold = box.Style.FoldingFontSize;
             var zoom = box.Style.Zoom;
             var (originX, originY) = TransformValue.ResolveOrigin(box.Style.TransformOriginText, frame.Width, frame.Height, dimensions, fold, zoom);
+            var originZ = TransformValue.ResolveOriginZ(box.Style.TransformOriginText, frame.Width, frame.Height, dimensions, fold, zoom);
+            var originLeft = frame.X + originX;
+            var originTop = frame.Y + originY;
 
-            Affine? matrix = hasTransform && TransformValue.Parse(transformText) is { } transformValue
-                ? transformValue.Resolve(frame.Width, frame.Height, dimensions, fold, zoom)
-                : null;
+            // The individual properties and the transform list, in the order CSS Transforms 2 §individual-transforms
+            // asks for them: move, turn, resize, then transform.
+            var own = TransformValue.Compose(
+                translateText,
+                rotateText,
+                scaleText,
+                Stated(transformText) ? TransformValue.Parse(transformText) : null,
+                frame.Width,
+                frame.Height,
+                dimensions,
+                fold,
+                zoom);
+
+            Affine matrix;
+
+            if (context.Perspective is { } perspective || originZ != 0)
+            {
+                // The parent's perspective stands between it and this box: the eye is at the perspective
+                // origin, and the box's own matrix is carried through it. The result is a homography of
+                // the page, which is turned back to the point the painter draws a matrix about. A turn
+                // that happens away from the plane's own z is carried the same way, because the move it
+                // makes depends on where along z the box is cut.
+                var view = context.Perspective is { } seen
+                    ? Matrix4.Translation(seen.OriginX, seen.OriginY, 0)
+                        .Then(Matrix4.Perspective(seen.Distance))
+                        .Then(Matrix4.Translation(-seen.OriginX, -seen.OriginY, 0))
+                    : Matrix4.Identity;
+
+                var page = view
+                    .Then(Matrix4.Translation(originLeft, originTop, originZ))
+                    .Then(own)
+                    .Then(Matrix4.Translation(-originLeft, -originTop, -originZ))
+                    .Project();
+
+                matrix = new Affine(1, 0, 0, 1, -originLeft, -originTop)
+                    .Then(page)
+                    .Then(new Affine(1, 0, 0, 1, originLeft, originTop));
+            }
+            else
+            {
+                matrix = own.Project();
+            }
 
             if (MotionTransform.Compute(box.Style, frame, context, dimensions, fontSize, originX, originY) is { } motion)
             {
-                matrix = matrix is { } m ? m.Then(motion) : motion;
+                matrix = matrix.Then(motion);
             }
 
             // Any non-none transform or offset path makes the box a stacking context and a containing
             // block, so it is marked for the painter even when the matrix is an identity (a
             // translate(0,0)): the wrapping is what keeps its out-of-flow descendants inside it.
-            layout.Transform = matrix ?? Affine.Identity;
+            layout.Transform = matrix;
             layout.TransformOrigin = new Offset(originX, originY);
+
+            // A plane turned away from the viewer is seen from behind, which is what a box with
+            // backface-visibility: hidden is not drawn at all for.
+            layout.FacesAway = own.Facing < 0;
         }
 
         _positioned.Finish(layout, position, context);
         return layout;
     }
+
+    /// <summary>Gets whether a transform-ish property states anything but <c>none</c>.</summary>
+    private static Boolean Stated(String? text) =>
+        text is { Length: > 0 } value && !value.Equals("none", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Records the floats a container's walk placed, for the container above it to absorb when it

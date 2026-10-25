@@ -264,6 +264,12 @@ internal sealed class LayoutBox
     public Offset TransformOrigin { get; set; }
 
     /// <summary>
+    /// Gets or sets whether the box's plane is turned away from the viewer, which is when a box with
+    /// <c>backface-visibility: hidden</c> shows nothing (CSS Transforms 2 §backface-visibility).
+    /// </summary>
+    public Boolean FacesAway { get; set; }
+
+    /// <summary>
     /// Gets the corner radii of the padding box, which is where the background stops once the border
     /// has eaten into the curve and where descendants are clipped.
     /// </summary>

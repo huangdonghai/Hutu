@@ -239,6 +239,31 @@ internal sealed class FusedParent
     internal String? Transform { get; init; }
 
     /// <summary>
+    /// Gets the <c>translate</c> the parent is drawn with, carried for the same reason
+    /// <see cref="Transform"/> is: the property is not inherited, but <c>translate: inherit</c> asks for it.
+    /// </summary>
+    internal String? Translate { get; init; }
+
+    /// <summary>Gets the <c>rotate</c> the parent is drawn with, for <c>rotate: inherit</c>.</summary>
+    internal String? Rotate { get; init; }
+
+    /// <summary>Gets the <c>scale</c> the parent is drawn with, for <c>scale: inherit</c>.</summary>
+    internal String? Scale { get; init; }
+
+    /// <summary>
+    /// Gets the offsets the parent was placed with. The insets are not inherited, so they travel for
+    /// the one keyword that asks for them: a child written <c>bottom: inherit</c> sits where its parent
+    /// was put.
+    /// </summary>
+    internal PositionStyle Position { get; init; } = PositionStyle.Static;
+
+    /// <summary>
+    /// Gets the <c>perspective</c> the parent's children are seen through, carried for
+    /// <c>perspective: inherit</c>: the property is not inherited on its own.
+    /// </summary>
+    internal String? Perspective { get; init; }
+
+    /// <summary>
     /// Gets the scope this element's own <c>var()</c> references were read through, which is what its
     /// children inherit unless they redeclare a custom property of their own. Null for a page that
     /// declares none anywhere, which is every sample page and most of the tests.
@@ -310,6 +335,11 @@ internal sealed class FusedParent
         FlexBasis = style.CascadedFlexBasis,
         Effect = style.Effect,
         Transform = style.TransformText,
+        Translate = style.TranslateText,
+        Rotate = style.RotateText,
+        Scale = style.ScaleText,
+        Position = style.Position,
+        Perspective = style.PerspectiveText,
         Clip = style.Clip,
         ClipPath = style.ClipPath,
         ShapeOutside = style.ShapeOutside,
@@ -860,6 +890,9 @@ internal static class FusedStyleFactory
             TextStrokeColor = strokeColor,
             TextFillColor = fillColor,
             Transform = ComputedStyle.ResolveTransformFused(find("transform"), parent.Transform),
+            Translate = ComputedStyle.ResolveTransformFused(find("translate"), parent.Translate),
+            Rotate = ComputedStyle.ResolveTransformFused(find("rotate"), parent.Rotate),
+            Scale = ComputedStyle.ResolveTransformFused(find("scale"), parent.Scale),
             Order = ComputedStyle.ResolveOrderFused(find("order")),
             Filter = find("filter")?.Value,
             BackdropFilter = find("backdrop-filter")?.Value,
@@ -867,6 +900,9 @@ internal static class FusedStyleFactory
             WillChange = find("will-change")?.Value,
             TransformStyle = find("transform-style")?.Value,
             TransformOrigin = find("transform-origin")?.Value,
+            Perspective = ComputedStyle.ResolveTransformFused(find("perspective"), parent.Perspective),
+            PerspectiveOrigin = find("perspective-origin")?.Value,
+            BackfaceVisibility = find("backface-visibility")?.Value,
             OffsetPath = find("offset-path")?.Value,
             OffsetDistance = find("offset-distance")?.Value,
             OffsetRotate = find("offset-rotate")?.Value,
@@ -904,7 +940,7 @@ internal static class FusedStyleFactory
         values.VisualEffects = visual;
         values.Decoration = textDecoration;
         values.List = pool is null ? list : pool.List(list);
-        values.Position = PositionStyle.ReadFused(find, face, dimensions);
+        values.Position = PositionStyle.ReadFused(find, face, dimensions, parent.Position);
 
         // The table longhands are five property lookups no element that is not part of a table has a
         // use for, so they are only read where the display says the box is one. Every spelling of it
