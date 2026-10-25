@@ -218,8 +218,8 @@ public sealed class GapRuleTests
             Assert.That(rules[1].Bounds.Y, Is.EqualTo(60).Within(0.01), "the second line's own");
             Assert.That(rules[2].Bounds.Y, Is.EqualTo(52).Within(0.01), "the row rule centred on its gap");
             Assert.That(rules[2].Bounds.Width, Is.EqualTo(110).Within(0.01), "and running the whole line");
-            Assert.That(rules[2].Widths.Top, Is.EqualTo(6), "drawn as the side of the band it fills");
-            Assert.That(rules[2].TopColor, Is.EqualTo(0xffff0000u));
+            Assert.That(rules[2].Widths.Bottom, Is.EqualTo(6), "drawn as the side of the band it fills");
+            Assert.That(rules[2].BottomColor, Is.EqualTo(0xffff0000u));
         });
     }
 
@@ -299,7 +299,7 @@ public sealed class GapRuleTests
         {
             Assert.That(rules[0].Bounds.Y, Is.EqualTo(50).Within(0.01));
             Assert.That(rules[0].Bounds.Width, Is.EqualTo(50).Within(0.01), "across the line");
-            Assert.That(rules[0].Widths.Top, Is.EqualTo(10), "as a rule lying across the page");
+            Assert.That(rules[0].Widths.Bottom, Is.EqualTo(10), "as a rule lying across the page");
         });
     }
 
@@ -319,7 +319,7 @@ public sealed class GapRuleTests
 
         var rules = Rules(view);
 
-        Assert.That(rules[^1].Widths.Top, Is.GreaterThan(0), "laid down last, so on top");
+        Assert.That(rules[^1].Widths.Bottom, Is.GreaterThan(0), "laid down last, so on top");
 
         using var swapped = await Render(
             "<style>#d { display:flex; flex-wrap:wrap; gap:10px; width:110px; height:110px; rule-overlap:column-over-row;" +
@@ -328,7 +328,7 @@ public sealed class GapRuleTests
             "<div id='d'><div class='i'></div><div class='i'></div>" +
             "<div class='i'></div><div class='i'></div></div>");
 
-        Assert.That(Rules(swapped)[0].Widths.Top, Is.GreaterThan(0), "and first when the page asks for the reverse");
+        Assert.That(Rules(swapped)[^1].Widths.Left, Is.GreaterThan(0), "and on top when the page asks for the reverse");
     }
 
     [Test]

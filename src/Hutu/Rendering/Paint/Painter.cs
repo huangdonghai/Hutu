@@ -1719,22 +1719,32 @@ internal sealed class Painter
     }
 
     /// <summary>
-    /// Draws a rule as the side of a box that is nothing but that side: the top edge for a rule that runs
-    /// across the page, the left edge for one that runs down it. Turning the band into a border side is
-    /// what gives a dashed rule its dashes and a double rule its two lines.
+    /// Draws a rule as the side of a box that is nothing but that side: the bottom edge for a rule that
+    /// runs across the page, the left edge for one that runs down it. Turning the band into a border side
+    /// is what gives a dashed rule its dashes and a double rule its two lines.
     /// </summary>
     private static void AddRuleBand(List<PaintCommand> target, Rect band, GapRule rule, Boolean thinAlongY)
     {
         var width = rule.Width;
 
+        // A decoration sits in the gap, seen from the reader's side of it: an `inset` rule reads as a
+        // ridge and an `outset` one as a groove, the shade on the near half being the light one either
+        // way (CSS Gaps 1 §3.3).
+        var stroke = rule.Style switch
+        {
+            BorderLineStyle.Inset => BorderLineStyle.Ridge,
+            BorderLineStyle.Outset => BorderLineStyle.Groove,
+            _ => rule.Style,
+        };
+
         target.Add(new BorderCommand(
             band,
             thinAlongY
-                ? new Thickness(width, 0, 0, 0)
+                ? new Thickness(0, 0, width, 0)
                 : new Thickness(0, 0, 0, width),
             thinAlongY
-                ? new BorderStyles(rule.Style, BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None)
-                : new BorderStyles(BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None, rule.Style),
+                ? new BorderStyles(BorderLineStyle.None, BorderLineStyle.None, stroke, BorderLineStyle.None)
+                : new BorderStyles(BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None, stroke),
             default,
             rule.Color,
             rule.Color,
