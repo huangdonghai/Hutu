@@ -44,14 +44,17 @@ internal static partial class BoxBuilder
     /// </summary>
     private static void AdoptBodyFlow(Box root, Boolean rootDeclaresWritingMode)
     {
-        if (root.Element is null || rootDeclaresWritingMode)
+        // CSS Contain 1 §2: any containment on the root or the body - not only the layout kind - turns
+        // the body's special handling off, so its writing mode stops at its own box.
+        if (root.Element is null || rootDeclaresWritingMode || root.Style.Contain.Stated)
         {
             return;
         }
 
         foreach (var child in root.Children)
         {
-            if (child.Element is { } body && IsTag(body, "body") && child.Flow.IsVertical)
+            if (child.Element is { } body && IsTag(body, "body") && child.Flow.IsVertical &&
+                !child.Style.Contain.Stated)
             {
                 root.Flow = child.Flow;
                 return;

@@ -591,7 +591,7 @@ internal sealed class BlockLayout
                         usedHeight ?? 0,
                         context)
                     : flow.IsVertical
-                        ? ArrangeColumnChildren(box, layout, content, childContext, context.ContainingBlock.Width)
+                        ? ArrangeColumnChildren(box, layout, content, childContext, childBox.Width)
                         : ArrangeBlockChildren(box, layout, contentX, contentY, contentWidth, childContext);
         }
         else

@@ -268,6 +268,48 @@ public sealed class LayoutEngineTests
         });
     }
 
+    [Test]
+    public async Task AColumnLendsItsOwnWidthToAHorizontalChild()
+    {
+        // The arranging pass has to hand a column's child the same block size the measuring pass did.
+        // It used to hand it the column's own containing block instead, so a paragraph turned back to
+        // horizontal filled the viewport rather than the 200px body it stands in.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0;width:200px;height:200px;writing-mode:vertical-rl'>" +
+            "<p style='margin:0;writing-mode:horizontal-tb'>x</p></body></html>");
+
+        Assert.That(Find(view, "p")!.BorderBox.Width, Is.EqualTo(200).Within(0.5), "the body's declared width");
+    }
+
+    [Test]
+    public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
+    {
+        // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's
+        // writing-mode, overflow and background to the page. Only the writing mode is asserted here; the
+        // canvas already answers the background, and no box in this document can overflow.
+        using var plain = CreateView(400);
+        await plain.SetHtml(
+            "<html><body style='margin:0;writing-mode:vertical-rl'><p style='margin:0'>x</p></body></html>");
+
+        using var onBody = CreateView(400);
+        await onBody.SetHtml(
+            "<html><body style='margin:0;writing-mode:vertical-rl;contain:layout'>" +
+            "<p style='margin:0'>x</p></body></html>");
+
+        using var onRoot = CreateView(400);
+        await onRoot.SetHtml(
+            "<html style='contain:layout'><body style='margin:0;writing-mode:vertical-rl'>" +
+            "<p style='margin:0'>x</p></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(plain.Layout!.Root.Flow.IsVertical, Is.True, "the body's mode reaches a page that contains nothing");
+            Assert.That(onBody.Layout!.Root.Flow.IsVertical, Is.False, "a contained body keeps its mode");
+            Assert.That(onRoot.Layout!.Root.Flow.IsVertical, Is.False, "and so does a body under a contained root");
+        });
+    }
+
     private static HutuViewInternal CreateView(int viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
