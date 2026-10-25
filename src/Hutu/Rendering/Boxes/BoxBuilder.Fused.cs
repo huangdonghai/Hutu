@@ -244,6 +244,12 @@ internal static partial class BoxBuilder
                 cascade.Find("content-visibility")?.Value?.Trim(), "hidden", StringComparison.OrdinalIgnoreCase) &&
             ComputedStyle.ContentVisibilityAppliesTo(style.Display);
 
+        // `display: contents` generates no box: the children this walk builds are spliced into the
+        // parent's child list below, so they take part in the formatting context the element's box
+        // would have stood in (CSS Display 3 §2.5).
+        var displayContents = String.Equals(
+            cascade.Find("display")?.Value?.Trim(), "contents", StringComparison.OrdinalIgnoreCase);
+
         // The counters this element creates are seen by its own generated content, by its children and by
         // the siblings after it, so the chain is hung here - once the element is known to make a box at
         // all, since CSS 2.1 §12.4.1 counts an element that was never shown as having written nothing.
@@ -333,8 +339,14 @@ internal static partial class BoxBuilder
         // container are rows of nothing (CSS Display 3 §2.7), and so are the cells of a row that is.
         // A table opens the context itself, wherever it stands, and so does a part whose display names
         // a role of the table - a cell written `table-row` is a row, and the table lays it out.
-        var childInTable = kind is BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or
-            BoxKind.TableColumnGroup;
+        var childInTable = displayContents
+            ? inTable
+            : kind is BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or BoxKind.TableColumnGroup;
+
+        // A contents element's children take the place its box would have had, so an item container or
+        // a table around it is a container around them too.
+        var itemChildren = inItemContainer && displayContents ||
+            kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry;
 
         foreach (var child in skipsContents ? Enumerable.Empty<INode>() : element.ChildNodes)
         {
@@ -345,11 +357,18 @@ internal static partial class BoxBuilder
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
                     var childBox = BuildFusedElement(
                         elementChild, index, parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands), device, images, faces, state, parser, flow, quoted,
-                        kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry, childInTable, profile, ref among, ref supported);
+                        itemChildren, childInTable, profile, ref among, ref supported);
 
                     if (childBox is not null)
                     {
-                        children.Add(childBox);
+                        if (childBox.IsContents)
+                        {
+                            children.AddRange(childBox.Children);
+                        }
+                        else
+                        {
+                            children.Add(childBox);
+                        }
                     }
 
                     break;
@@ -405,7 +424,7 @@ internal static partial class BoxBuilder
             Element = element,
             Flow = flow,
             Quotes = quoted,
-            IsContents = String.Equals(cascade.Find("display")?.Value?.Trim(), "contents", StringComparison.OrdinalIgnoreCase),
+            IsContents = displayContents,
             IsInlineOuter = inlineOuter,
             TableRole = tableRole,
             IsInTable = inTable,

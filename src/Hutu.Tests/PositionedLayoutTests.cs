@@ -979,14 +979,12 @@ public sealed class PositionedLayoutTests
     }
 
     /// <summary>
-    /// A <c>display: contents</c> element whose box the engine still draws takes part in the line its
-    /// parent is laying out, not in the block flow: the chapter generates no box for it and hands its
-    /// children to the parent's formatting context (CSS Display 3 §2.5), so a run is the nearer answer than
-    /// a block that parts the lines - which is what
-    /// <c>wpt/css-display/display-contents-line-height</c> asks of two lines of forty-pixel text.
+    /// A <c>display: contents</c> element generates no box: the chapter hands its children to the
+    /// parent's formatting context (CSS Display 3 §2.5), so the text it holds stands on the parent's
+    /// line as if the element were not there.
     /// </summary>
     [Test]
-    public async Task AContentsElementIsLaidOutAsARunNotAsABlock()
+    public async Task AContentsElementGeneratesNoBoxAtAll()
     {
         using var view = CreateView(400);
         await view.SetHtml(
@@ -994,11 +992,13 @@ public sealed class PositionedLayoutTests
             "<div id='p' style='font:16px/16px Arial'>a" +
             "<span id='c' style='display:contents;font-size:40px'>b</span>c</div></body></html>");
 
-        var box = FragmentsOf(view, "c").Single();
-
         Assert.Multiple(() =>
         {
-            Assert.That(box.Kind, Is.EqualTo(LayoutKind.Inline), "the contents element is a run on the line");
+            Assert.That(FragmentsOf(view, "c"), Is.Empty, "no box carries the element");
+            Assert.That(
+                Walk(view.Layout!.Root).Where(node => node.Kind == LayoutKind.Text).Select(node => node.Text),
+                Is.EqualTo(new[] { "a", "b", "c" }),
+                "its text joins the parent's line");
             Assert.That(Find(view, "p").BorderBox.Height, Is.EqualTo(16), "and the block is one line tall");
         });
     }

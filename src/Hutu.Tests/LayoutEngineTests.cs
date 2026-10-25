@@ -445,6 +445,24 @@ public sealed class LayoutEngineTests
     }
 
     [Test]
+    public async Task ADisplayContentsElementLeavesItsChildrenInTheParentsFlow()
+    {
+        // CSS Display 3 §2.5: the element generates no box, so its block child stacks in the parent's
+        // flow and its text joins the parent's inline content.
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='display:contents'>" +
+            "<p style='margin:0'>first</p>second</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "body"), Is.Null, "the body generates no box");
+            Assert.That(Find(view, "p"), Is.Not.Null, "its paragraph is a child of the root");
+            Assert.That(Lines(view).Select(LineText), Is.EquivalentTo(new[] { "first", "second" }));
+        });
+    }
+
+    [Test]
     public async Task AContainedBodyDoesNotHandItsWritingModeToTheRoot()
     {
         // CSS Contain 1 §2: containment on the root or the body disables the propagation of the body's
