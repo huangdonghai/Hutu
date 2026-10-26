@@ -476,6 +476,12 @@ internal static class FusedStyleFactory
         // is then the reader, exactly as it was before variables came in.
         ICssStyleDeclaration? computed = null;
 
+        // A pseudo-element is not the element it belongs to, and the reader's sample values for the
+        // element's tag - a fieldset's margin and padding, a list's marker room - are not part of what
+        // it inherits. Only the element's own box reads them; a generated box is left with the
+        // initial distances its own rules state.
+        var reader = pseudoElement is null ? element : null;
+
         Func<String, ICssProperty?> find = name =>
         {
             // A pseudo-element that is not fully styleable has the declarations it was given taken off
@@ -818,12 +824,12 @@ internal static class FusedStyleFactory
                     RenderMode.Vertical, size, dimensions, StyleLength.None, parent.Box?.MaxHeight),
                 AspectRatio = AspectRatio.Parse(find("aspect-ratio")?.Value),
                 Margin = ComputedStyle.ResolveThicknessFused(
-                    find, element, face, dimensions, flow, "margin", StyleLength.Zero, parent.Box?.Margin),
+                    find, reader, face, dimensions, flow, "margin", StyleLength.Zero, parent.Box?.Margin),
 
                 // The room a cell keeps is its table's, and the room it keeps where its table says nothing
                 // is the pixel every browser's sheet gives a cell.
                 Padding = ComputedStyle.ResolveThicknessFused(
-                    find, element, face, dimensions, flow, "padding",
+                    find, reader, face, dimensions, flow, "padding",
                     PresentationalHints.CellPadding(element) ?? StyleLength.Zero, parent.Box?.Padding),
             };
 
@@ -1002,6 +1008,7 @@ internal static class FusedStyleFactory
             BackdropFilter = find("backdrop-filter")?.Value,
             Opacity = find("opacity")?.Value,
             MixBlendMode = find("mix-blend-mode")?.Value,
+            ScrollMarkerGroup = find("scroll-marker-group")?.Value,
             WillChange = find("will-change")?.Value,
             TransformStyle = find("transform-style")?.Value,
             TransformBox = find("transform-box")?.Value,

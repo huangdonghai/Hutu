@@ -21,6 +21,12 @@ internal enum PseudoArm
     Marker,
     FirstLetter,
     FirstLine,
+
+    /// <summary>One marker of a scroll container's <c>::scroll-marker-group</c> (CSS Overflow 5 §4.2).</summary>
+    ScrollMarker,
+
+    /// <summary>The box a scroll container puts its markers in, before or after itself (CSS Overflow 5 §4.1).</summary>
+    ScrollMarkerGroup,
 }
 
 /// <summary>
@@ -52,6 +58,8 @@ internal sealed class PseudoRuleIndex
     private readonly ArmSet _marker = new();
     private readonly ArmSet _firstLetter = new();
     private readonly ArmSet _firstLine = new();
+    private readonly ArmSet _scrollMarker = new();
+    private readonly ArmSet _scrollMarkerGroup = new();
 
     /// <summary>
     /// Gets whether no arm anywhere in the sheets is written for either generated-content pseudo-element.
@@ -69,6 +77,12 @@ internal sealed class PseudoRuleIndex
 
     /// <summary>Gets whether any arm anywhere in the sheets is written for a block's first line.</summary>
     internal Boolean HasFirstLines => _firstLine.Count > 0;
+
+    /// <summary>Gets whether any arm anywhere in the sheets is written for a scroll marker.</summary>
+    internal Boolean HasScrollMarkers => _scrollMarker.Count > 0;
+
+    /// <summary>Gets whether any arm anywhere in the sheets is written for a scroll marker group.</summary>
+    internal Boolean HasScrollMarkerGroups => _scrollMarkerGroup.Count > 0;
 
     /// <summary>
     /// Gets whether any arm written for a generated-content pseudo-element asks for a counter.
@@ -260,6 +274,8 @@ internal sealed class PseudoRuleIndex
         PseudoArm.After => _after,
         PseudoArm.FirstLetter => _firstLetter,
         PseudoArm.FirstLine => _firstLine,
+        PseudoArm.ScrollMarker => _scrollMarker,
+        PseudoArm.ScrollMarkerGroup => _scrollMarkerGroup,
         _ => _marker,
     };
 
@@ -358,6 +374,23 @@ internal sealed class PseudoRuleIndex
         if (name.Equals("first-line", StringComparison.OrdinalIgnoreCase))
         {
             arm = PseudoArm.FirstLine;
+            colon = at;
+            return true;
+        }
+
+        // A scroll marker and its group are boxes the engine makes for a scroll container, in the same
+        // tree-abiding place as the generated boxes above (CSS Overflow 5 §4). They are held apart from
+        // the two generated-content arms because a page that writes neither must not pay for them.
+        if (name.Equals("scroll-marker", StringComparison.OrdinalIgnoreCase))
+        {
+            arm = PseudoArm.ScrollMarker;
+            colon = at;
+            return true;
+        }
+
+        if (name.Equals("scroll-marker-group", StringComparison.OrdinalIgnoreCase))
+        {
+            arm = PseudoArm.ScrollMarkerGroup;
             colon = at;
             return true;
         }
@@ -691,6 +724,181 @@ internal static class GeneratedContent
         counters = Put(box, element, index, PseudoArm.Before, style, cascade, variables, parent, device, faces, state, images, parser, flow, counters);
 
         Put(box, element, index, PseudoArm.After, style, cascade, variables, parent, device, faces, state, images, parser, flow, counters);
+    }
+
+    /// <summary>
+    /// Builds the <c>::scroll-marker-group</c> a scroll container asks for, with one
+    /// <c>::scroll-marker</c> for each of its in-flow children (CSS Overflow 5 §4).
+    /// </summary>
+    /// <remarks>
+    /// The group is a sibling of the scroll container rather than a child of it, so the builder inserts
+    /// the box it returns on the side <c>scroll-marker-group</c> names. A marker is a tree-abiding
+    /// pseudo-element of the child it stands for, so its style inherits from that child, not from the
+    /// group it is drawn in; the group itself inherits from the scroll container.
+    /// </remarks>
+    internal static Box? ScrollMarkerGroup(
+        Box scroller,
+        IElement element,
+        RuleBucketIndex index,
+        ComputedStyle scrollerStyle,
+        FusedParent parent,
+        HutuRenderDevice device,
+        FontFaceTable? faces,
+        StyleResolution state,
+        IImageProvider? images,
+        ICssParser? parser,
+        WritingModeInfo flow,
+        VariableScope? variables,
+        CounterEnv? counters)
+    {
+        // A marker group belongs to a scroll container. The property on a box that does not scroll
+        // makes no group at all (CSS Overflow 5 §4.1), which is what the test that sets it on an
+        // ordinary div checks.
+        if (scrollerStyle.ScrollMarkerGroup is null ||
+            (!scrollerStyle.ScrollsInline && !scrollerStyle.ScrollsBlock))
+        {
+            return null;
+        }
+
+        var groupCascade = index.Pseudo.Cascade(PseudoArm.ScrollMarkerGroup, element, index.Rules, index.Origins);
+
+        if (groupCascade is null)
+        {
+            return null;
+        }
+
+        var groupScope = VariableScope.Open(groupCascade, variables, parser);
+        var groupStyle = FusedStyleFactory.Build(
+            element,
+            groupCascade,
+            parent.Next(scrollerStyle, groupCascade, groupScope, state.Tag(element.LocalName), false),
+            device,
+            faces,
+            state.Pool,
+            state.Cache,
+            groupScope,
+            applies: null,
+            pseudoElement: "::scroll-marker-group");
+
+        if (groupStyle.IsDisplayNone)
+        {
+            return null;
+        }
+
+        // The group is a block-level sibling by default; a page that gives it a display gets that
+        // instead, and the two item kinds blockify their markers the way any flex or grid child is.
+        var groupDeclared = groupCascade.Find("display")?.Value;
+        var groupKind = KindOf(String.IsNullOrWhiteSpace(groupDeclared) ? "block" : groupDeclared!.Trim(), groupStyle);
+        var group = new Box(groupKind, groupStyle)
+        {
+            Element = element,
+            Flow = flow,
+            IsGenerated = true,
+            IsInlineOuter = BoxBuilder.HasInlineOuter(groupKind, groupStyle),
+        };
+
+        // The group's markers are inline-level, and a line holding only them would otherwise be as
+        // tall as the tallest marker. The reader's line is the group's own font and line height, so a
+        // zero-width run stands for that strut without taking room between the markers.
+        if (groupKind is not (BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry))
+        {
+            group.Children.Add(new Box(BoxKind.Text, groupStyle)
+            {
+                Element = element,
+                Flow = flow,
+                Text = "\u200B",
+                IsGenerated = true,
+            });
+        }
+
+        var markersAreItems = groupKind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry;
+        var markerCounters = counters;
+
+        foreach (var child in scroller.Children)
+        {
+            // A marker belongs to a scroll target: an element the page can scroll to. Generated boxes
+            // and boxes that left the flow are not targets, and a text run has no pseudo-element of its
+            // own to style a marker with.
+            if (child.Element is not IElement target || child.IsGenerated || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            var markerCascade = index.Pseudo.Cascade(PseudoArm.ScrollMarker, target, index.Rules, index.Origins);
+
+            if (markerCascade is null)
+            {
+                continue;
+            }
+
+            // A scroll marker is a link to the target it marks, and the reader's own sheet draws it
+            // as one: the link colour and an underline (CSS Overflow 5 §4.2). The defaults stand
+            // below every declaration the page wrote, so a page that colours its markers keeps it.
+            var markerDefaults = parser.ParseStyleSheet(
+                "*{color:#551a8b;text-decoration:underline;text-decoration-thickness:1px}");
+
+            if (markerDefaults.Rules.Length > 0 && markerDefaults.Rules[0] is ICssStyleRule markerRule)
+            {
+                markerCascade = markerCascade.WithPreceding(markerRule, RuleOrigin.UserAgent, default);
+            }
+
+            var markerScope = VariableScope.Open(markerCascade, variables, parser);
+            var markerStyle = FusedStyleFactory.Build(
+                target,
+                markerCascade,
+                parent.Next(child.Style, markerCascade, markerScope, state.Tag(target.LocalName), false),
+                device,
+                faces,
+                state.Pool,
+                state.Cache,
+                markerScope,
+                applies: null,
+                pseudoElement: "::scroll-marker");
+
+            if (markerStyle.IsDisplayNone)
+            {
+                continue;
+            }
+
+            var markerDeclared = markerCascade.Find("display")?.Value;
+            var markerKind = KindOf(String.IsNullOrWhiteSpace(markerDeclared) ? "inline" : markerDeclared!.Trim(), markerStyle);
+
+            if (markersAreItems && markerKind is BoxKind.Inline or BoxKind.InlineBlock)
+            {
+                markerKind = BoxKind.Block;
+            }
+
+            // The counter a marker reads is the one it has just incremented, and the next marker
+            // continues from it - the markers stand in the group in the order of the targets they name.
+            var chain = CounterEnv.Extend(
+                markerCounters ?? CounterEnv.Empty, markerCascade, markerCascade, target, out _);
+            markerCounters = chain;
+
+            var items = Items(markerCascade, target, markerScope, chain, index.Counters);
+            var marker = new Box(markerKind, markerStyle)
+            {
+                Element = target,
+                Flow = flow,
+                IsGenerated = true,
+                IsInlineOuter = BoxBuilder.HasInlineOuter(markerKind, markerStyle),
+                IsItem = markersAreItems,
+            };
+
+            if (items is not null)
+            {
+                foreach (var item in items)
+                {
+                    if (item.Text is { Length: > 0 } text)
+                    {
+                        marker.Children.Add(Run(text, target, markerStyle, flow));
+                    }
+                }
+            }
+
+            group.Children.Add(marker);
+        }
+
+        return group;
     }
 
     private static CounterEnv? Put(

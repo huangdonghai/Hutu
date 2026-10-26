@@ -82,6 +82,23 @@ internal sealed class MatchedCascade
         _inline = inline;
     }
 
+    /// <summary>
+    /// Gets this cascade with one more rule standing before every rule it already holds. The user
+    /// agent uses it to give a generated pseudo-element the defaults the page did not state: a rule
+    /// from a lower origin loses to every declaration the page wrote, and answers only for the
+    /// properties the page left alone.
+    /// </summary>
+    internal MatchedCascade WithPreceding(ICssStyleRule rule, RuleOrigin origin, Priority specificity)
+    {
+        var rules = new List<MatchedRule>(_rules.Count + 1)
+        {
+            new(rule, origin, specificity, -1),
+        };
+
+        rules.AddRange(_rules);
+        return new MatchedCascade(rules, _inline);
+    }
+
     /// <summary>Gets the rules that matched, in the order the cascade applies them.</summary>
     internal IReadOnlyList<ICssStyleRule> Matched
     {

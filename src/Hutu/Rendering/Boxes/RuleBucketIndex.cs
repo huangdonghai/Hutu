@@ -1,5 +1,6 @@
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
+using AngleSharp.Css.Parser;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
 using AngleSharp.Svg.Dom;
@@ -420,6 +421,21 @@ internal sealed class RuleBucketIndex
                 {
                     Flatten(rule, collected, origins, origin);
                 }
+
+                // A selector naming a pseudo-element the CSS parser does not know is dropped whole,
+                // declarations and all. The scroll markers are the case that matters here: the
+                // parser knows ::before and ::marker, but not ::scroll-marker. Read those rules from
+                // the <style> text the parser was given and hand the pseudo-element index a rule that
+                // keeps the original selector while carrying the declarations parsed without it.
+                if (sheet.OwnerNode is IElement style && style.LocalName == "style")
+                {
+                    var parser = style.Owner?.Context.GetService<ICssParser>();
+
+                    if (parser is not null)
+                    {
+                        CollectScrollMarkerRules(style.TextContent, parser, collected, origins, origin);
+                    }
+                }
             }
         }
 
@@ -473,6 +489,248 @@ internal sealed class RuleBucketIndex
         return new RuleBucketIndex(
             flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches, origins.ToArray(), PseudoRuleIndex.Build(flattened),
             pseudoOnly, CounterStyleTable.Build(styles));
+    }
+
+    /// <summary>
+    /// Reads the style rules that name a scroll-marker pseudo-element out of a <c>&lt;style&gt;</c>
+    /// element's text. The CSS parser drops such a rule because it does not know the pseudo-element,
+    /// so the text is walked here and each arm is parsed again without the pseudo-element, keeping
+    /// the declarations the page wrote.
+    /// </summary>
+    private static void CollectScrollMarkerRules(
+        String css,
+        ICssParser parser,
+        List<ICssStyleRule> collected,
+        List<RuleOrigin> origins,
+        RuleOrigin origin)
+    {
+        var i = 0;
+
+        while (i < css.Length)
+        {
+            while (i < css.Length && Char.IsWhiteSpace(css[i]))
+            {
+                i++;
+            }
+
+            if (i >= css.Length)
+            {
+                return;
+            }
+
+            if (css[i] == '/' && i + 1 < css.Length && css[i + 1] == '*')
+            {
+                i = SkipComment(css, i);
+                continue;
+            }
+
+            // An at-rule either ends at a semicolon (an @import, say) or holds a block. Only the
+            // grouping rules can hold style rules, so only those are walked into.
+            if (css[i] == '@')
+            {
+                var atOpen = css.IndexOf('{', i);
+                var atSemi = css.IndexOf(';', i);
+
+                if (atSemi >= 0 && (atOpen < 0 || atSemi < atOpen))
+                {
+                    i = atSemi + 1;
+                    continue;
+                }
+
+                if (atOpen < 0)
+                {
+                    return;
+                }
+
+                var atClose = MatchingBrace(css, atOpen);
+
+                if (atClose < 0)
+                {
+                    return;
+                }
+
+                var header = css[i..atOpen].Trim();
+
+                if (header.StartsWith("@media", StringComparison.OrdinalIgnoreCase) ||
+                    header.StartsWith("@supports", StringComparison.OrdinalIgnoreCase) ||
+                    header.StartsWith("@layer", StringComparison.OrdinalIgnoreCase))
+                {
+                    CollectScrollMarkerRules(css[(atOpen + 1)..atClose], parser, collected, origins, origin);
+                }
+
+                i = atClose + 1;
+                continue;
+            }
+
+            var open = css.IndexOf('{', i);
+
+            if (open < 0)
+            {
+                return;
+            }
+
+            var selector = css[i..open].Trim();
+            var close = MatchingBrace(css, open);
+
+            if (close < 0)
+            {
+                return;
+            }
+
+            if (selector.Contains("::scroll-marker", StringComparison.OrdinalIgnoreCase))
+            {
+                var body = css[(open + 1)..close];
+
+                foreach (var rawArm in SplitSelectors(selector))
+                {
+                    var arm = rawArm.Trim();
+                    var pseudo = ScrollMarkerPseudo(arm);
+
+                    if (pseudo < 0)
+                    {
+                        continue;
+                    }
+
+                    var length = arm.AsSpan(pseudo).StartsWith("::scroll-marker-group", StringComparison.OrdinalIgnoreCase)
+                        ? "::scroll-marker-group".Length
+                        : "::scroll-marker".Length;
+
+                    // The selector text keeps the pseudo-element, which is what the pseudo-element
+                    // index reads; the selector it parses for matching is the arm without it.
+                    var selectorText = arm[..(pseudo + length)];
+                    var stripped = arm[..pseudo].Trim();
+
+                    if (stripped.Length == 0)
+                    {
+                        stripped = "*";
+                    }
+
+                    var sheet = parser.ParseStyleSheet(stripped + "{" + body + "}");
+
+                    if (sheet.Rules.Length > 0 && sheet.Rules[0] is ICssStyleRule inner)
+                    {
+                        collected.Add(new SyntheticPseudoRule(inner, selectorText));
+                        origins.Add(origin);
+                    }
+                }
+            }
+
+            i = close + 1;
+        }
+    }
+
+    /// <summary>Gets where the scroll-marker pseudo-element begins in a selector arm, or -1.</summary>
+    private static Int32 ScrollMarkerPseudo(String arm)
+    {
+        var group = arm.LastIndexOf("::scroll-marker-group", StringComparison.OrdinalIgnoreCase);
+        var marker = arm.LastIndexOf("::scroll-marker", StringComparison.OrdinalIgnoreCase);
+        return Math.Max(group, marker);
+    }
+
+    /// <summary>Finds the brace that closes the block opened at <paramref name="open"/>.</summary>
+    private static Int32 MatchingBrace(String css, Int32 open)
+    {
+        var depth = 0;
+        var quote = '\0';
+
+        for (var i = open; i < css.Length; i++)
+        {
+            var c = css[i];
+
+            if (quote != '\0')
+            {
+                if (c == '\\')
+                {
+                    i++;
+                }
+                else if (c == quote)
+                {
+                    quote = '\0';
+                }
+
+                continue;
+            }
+
+            if (c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if (c == '/' && i + 1 < css.Length && css[i + 1] == '*')
+            {
+                i = SkipComment(css, i) - 1;
+            }
+            else if (c == '{')
+            {
+                depth++;
+            }
+            else if (c == '}')
+            {
+                depth--;
+
+                if (depth == 0)
+                {
+                    return i;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>Gets the position just after the comment that starts at <paramref name="at"/>.</summary>
+    private static Int32 SkipComment(String css, Int32 at)
+    {
+        var end = css.IndexOf("*/", at + 2, StringComparison.Ordinal);
+        return end < 0 ? css.Length : end + 2;
+    }
+
+    /// <summary>Splits a selector list at the commas that are not inside brackets or quotes.</summary>
+    private static List<String> SplitSelectors(String text)
+    {
+        var parts = new List<String>();
+        var start = 0;
+        var depth = 0;
+        var quote = '\0';
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (quote != '\0')
+            {
+                if (c == '\\')
+                {
+                    i++;
+                }
+                else if (c == quote)
+                {
+                    quote = '\0';
+                }
+
+                continue;
+            }
+
+            if (c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if (c is '(' or '[')
+            {
+                depth++;
+            }
+            else if (c is ')' or ']')
+            {
+                depth = Math.Max(0, depth - 1);
+            }
+            else if (c == ',' && depth == 0)
+            {
+                parts.Add(text[start..i]);
+                start = i + 1;
+            }
+        }
+
+        parts.Add(text[start..]);
+        return parts;
     }
 
     /// <summary>

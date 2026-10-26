@@ -3229,6 +3229,13 @@ internal readonly struct ComputedStyle
         /// <summary>Gets the declared <c>mix-blend-mode</c>, or null when the box says nothing of its own.</summary>
         internal String? MixBlendMode;
 
+        /// <summary>
+        /// Gets the declared <c>scroll-marker-group</c> value, or null where the page wrote nothing.
+        /// Only <c>before</c> and <c>after</c> make a box; the keyword is read as written and the
+        /// builder decides which side of the scroll container it stands on.
+        /// </summary>
+        internal String? ScrollMarkerGroup;
+
         /// <summary>Gets the declared <c>will-change</c> list, or null where the page wrote nothing.</summary>
         internal String? WillChange;
 
@@ -3418,6 +3425,22 @@ internal readonly struct ComputedStyle
     /// </summary>
     public String? OpacityText =>
         _values.Fused is { } fused ? fused.Opacity : _style.GetPropertyValue("opacity");
+
+    /// <summary>
+    /// Gets the side of the box a <c>scroll-marker-group</c> stands on - <c>before</c>, <c>after</c>,
+    /// or null where the box makes no group. Only a scroll container reads it (CSS Overflow 5 §4.1).
+    /// </summary>
+    public String? ScrollMarkerGroup
+    {
+        get
+        {
+            var stated = (_values.Fused is { } fused
+                ? fused.ScrollMarkerGroup
+                : _style.GetPropertyValue("scroll-marker-group"))?.Trim().ToLowerInvariant();
+
+            return stated is "before" or "after" ? stated : null;
+        }
+    }
 
     /// <summary>
     /// Gets the declared <c>mix-blend-mode</c> text, or null/empty when the box carries none. Read as

@@ -372,8 +372,9 @@ internal static partial class BoxBuilder
                 case IElement elementChild:
                     // The parent's own tag name travels down with it: a box model needs it, because the
                     // sample stylesheet leaves a list inside a list to its outer one's margins.
+                    var childParent = parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands);
                     var childBox = BuildFusedElement(
-                        elementChild, index, parent.Next(style, cascade, variables, state.Tag(element.LocalName), stands), device, images, faces, state, parser, flow, quoted, transform,
+                        elementChild, index, childParent, device, images, faces, state, parser, flow, quoted, transform,
                         itemChildren, childInTable, profile, ref among, ref supported);
 
                     if (childBox is not null)
@@ -384,6 +385,46 @@ internal static partial class BoxBuilder
                         }
                         else
                         {
+                            // A scroll container's marker group is a sibling of the container, not a
+                            // child of it (CSS Overflow 5 §4.1), so it is put on the side the page asked
+                            // for around the box it belongs to.
+                            var markerSide = childBox.Style.ScrollMarkerGroup;
+
+                            if (markerSide is not null)
+                            {
+                                var markerGroup = GeneratedContent.ScrollMarkerGroup(
+                                    childBox,
+                                    elementChild,
+                                    index,
+                                    childBox.Style,
+                                    childParent,
+                                    device,
+                                    faces,
+                                    state,
+                                    images,
+                                    parser,
+                                    flow,
+                                    variables,
+                                    among);
+
+                                if (markerGroup is not null)
+                                {
+                                    if (markerSide == "before")
+                                    {
+                                        children.Add(markerGroup);
+                                    }
+
+                                    children.Add(childBox);
+
+                                    if (markerSide == "after")
+                                    {
+                                        children.Add(markerGroup);
+                                    }
+
+                                    break;
+                                }
+                            }
+
                             children.Add(childBox);
                         }
                     }
