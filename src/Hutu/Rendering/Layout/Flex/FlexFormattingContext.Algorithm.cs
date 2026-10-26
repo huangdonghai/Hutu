@@ -368,7 +368,17 @@ internal sealed partial class FlexFormattingContext
                 // The used main size is a content size, so the available width that produces it is
                 // that size plus the item's own margins and insets.
                 var available = item.UsedMain + item.InsetMain + item.MarginMainStart + item.MarginMainEnd;
-                cross = _engine.Measure(item.Box, MeasureConstraints.FitWidth(available), context).Height - item.InsetCross;
+
+                // A column of vertical text takes its inline extent from the room it is given rather
+                // than from its content when it is measured as a block, which is right for a box filling
+                // its container but not for a flex item whose cross size is being asked for. The item's
+                // own content is the answer here, so the height it is handed is none at all
+                // (gap-003-rl).
+                var constraints = item.Box.Flow.IsVertical
+                    ? MeasureConstraints.FitWidth(available).WithHeight(0)
+                    : MeasureConstraints.FitWidth(available);
+
+                cross = _engine.Measure(item.Box, constraints, context).Height - item.InsetCross;
             }
         }
         else if (IsDefinite(style.Width, context.ContainingBlock.Width))

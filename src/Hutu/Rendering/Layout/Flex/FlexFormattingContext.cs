@@ -637,8 +637,12 @@ internal sealed partial class FlexFormattingContext
         }
         else
         {
-            mainFromEnd = flow.InlineSign < 0;
-            crossFromEnd = flow.BlockSign < 0;
+            // A column's main axis is the block axis, so it is the writing mode that turns its start
+            // round, while its cross axis is the inline one and it is the direction that does. Reading
+            // the inline sign for the main axis put a block-start margin at the item's foot in a
+            // right-to-left page (gap-002-rtl).
+            mainFromEnd = flow.BlockSign < 0;
+            crossFromEnd = flow.InlineSign < 0;
 
             item.MarginMainStart = mainFromEnd ? resolved.Bottom : resolved.Top;
             item.MarginMainEnd = mainFromEnd ? resolved.Top : resolved.Bottom;
