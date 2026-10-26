@@ -2863,6 +2863,10 @@ internal readonly struct ComputedStyle
             Float = ToFloat(Keyword("float", CssInitialValues.Float)),
             Clear = ToClear(Keyword("clear", CssInitialValues.Clear)),
             ClipsOverflow = !IsOverflowVisible("overflow-x") || !IsOverflowVisible("overflow-y"),
+            ClipMargin = ReadClipMargin(
+                _style?.GetPropertyValue("overflow-clip-margin"), FontSourceOf(), _dimensions),
+            OverflowX = OverflowKeyword("overflow-x") ?? CssInitialValues.Overflow,
+            OverflowY = OverflowKeyword("overflow-y") ?? CssInitialValues.Overflow,
             ScrollsInline = IsScrollOverflowText(OverflowKeyword("overflow-x")),
             ScrollsBlock = IsScrollOverflowText(OverflowKeyword("overflow-y")),
             AlignContent = FlexStyle.ReadAlignment(this, "align-content", CssInitialValues.AlignContent),
@@ -5422,6 +5426,108 @@ internal readonly struct ComputedStyle
     /// </remarks>
     public Boolean ClipsOverflow =>
         _values.DisplayPositioning.ClipsOverflow || (Contain.Paint && PaintContainmentApplies);
+
+    /// <summary>
+    /// Gets how far past its own edge a box with <c>overflow: clip</c> still shows what it holds: the
+    /// visual box the distance is measured from and the distance itself (CSS Overflow 3 §3.3).
+    /// </summary>
+    /// <remarks>
+    /// The property is read here rather than kept in an area because only a clipping box ever asks for
+    /// it, and the painter asks once per clip it makes. A page that never writes it answers the initial
+    /// value - the padding edge with no room past it - which leaves every clip where it was.
+    /// </remarks>
+    public ClipMargin OverflowClipMargin => _values.DisplayPositioning.ClipMargin;
+
+    /// <summary>
+    /// Gets whether the box clips with <c>overflow: clip</c>, which is the one value
+    /// <c>overflow-clip-margin</c> has any effect on. A box that hides its overflow still clips at its
+    /// padding edge.
+    /// </summary>
+    public Boolean ClipsWithMargin =>
+        IsOverflowClip(OverflowX) || IsOverflowClip(OverflowY);
+
+    private static Boolean IsOverflowClip(String? keyword) =>
+        keyword is not null && keyword.Trim().Equals("clip", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Resolves <c>overflow-clip-margin</c> for the fused path, where the declaration is at hand.</summary>
+    internal static ClipMargin ResolveClipMarginFused(
+        ICssProperty? declared,
+        ClipMargin parent,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions)
+    {
+        var text = declared?.Value?.Trim();
+
+        // The property is not inherited, but `inherit` is the one keyword that reaches the box above,
+        // and it does so even where the property had no effect there (overflow-clip-margin-009).
+        if (text is null or "")
+        {
+            return ClipMargin.None;
+        }
+
+        if (text.Equals("inherit", StringComparison.OrdinalIgnoreCase))
+        {
+            return parent;
+        }
+
+        if (CssWideKeyword.Is(text))
+        {
+            return ClipMargin.None;
+        }
+
+        return ReadClipMargin(text, font, dimensions);
+    }
+
+    /// <summary>
+    /// Reads <c>overflow-clip-margin</c>: an optional visual box keyword and an optional distance, in
+    /// either order. A miss is the padding edge with no room past it.
+    /// </summary>
+    internal static ClipMargin ReadClipMargin(
+        String? text,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions)
+    {
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            return ClipMargin.None;
+        }
+
+        var box = ClipMarginBox.Padding;
+        var length = 0.0;
+
+        foreach (var term in InsetTerms(text!))
+        {
+            switch (term.Trim().ToLowerInvariant())
+            {
+                case "content-box":
+                    box = ClipMarginBox.Content;
+                    continue;
+                case "padding-box":
+                    box = ClipMarginBox.Padding;
+                    continue;
+                case "border-box":
+                    box = ClipMarginBox.Border;
+                    continue;
+            }
+
+            if (!CssLengthValue.TryParse(term.Trim(), out var value) ||
+                value.Type == CssLengthValue.Unit.Percent)
+            {
+                continue;
+            }
+
+            try
+            {
+                length = LengthReader.ToPixel(value, RenderMode.Horizontal, dimensions, font);
+            }
+            catch (ArgumentException)
+            {
+                // A length the reader cannot make pixels of is no distance at all.
+            }
+        }
+
+        return new ClipMargin(box, length);
+    }
 
     /// <summary>
     /// Gets whether paint containment has a principal box to apply to. An internal table element other

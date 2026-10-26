@@ -115,6 +115,25 @@ public readonly struct CornerRadii
         Normalize(radius.Horizontal + distance, radius.Vertical + distance);
 
     /// <summary>
+    /// Gets the radii of a shape whose edges were all moved out by <paramref name="distance"/>: every
+    /// corner grows by it, then the four are fitted to the larger box. This is how the overflow clip
+    /// edge keeps the rounded shape of the box it grew out of (CSS Overflow 3 §3.3).
+    /// </summary>
+    internal CornerRadii Grow(Double distance, Double width, Double height) =>
+        Fit(new CornerRadii(
+            Grow(TopLeft, distance),
+            Grow(TopRight, distance),
+            Grow(BottomRight, distance),
+            Grow(BottomLeft, distance)),
+            width,
+            height);
+
+    // A square corner stays square however far the edges move out; only a corner that was already
+    // round grows with them.
+    private static CornerRadius Grow(CornerRadius radius, Double distance) =>
+        radius.IsZero ? CornerRadius.Zero : Normalize(radius.Horizontal + distance, radius.Vertical + distance);
+
+    /// <summary>
     /// Gets the radii of a box that has them, or four square corners where it has none to speak of.
     /// </summary>
     internal static CornerRadii Fit(CornerRadii radii, Double width, Double height)

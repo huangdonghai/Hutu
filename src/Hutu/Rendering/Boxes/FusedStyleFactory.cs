@@ -95,6 +95,12 @@ internal sealed class FusedParent
     /// </summary>
     public (String X, String Y) Overflow { get; init; } = (CssInitialValues.Overflow, CssInitialValues.Overflow);
 
+    /// <summary>
+    /// Gets the parent's <c>overflow-clip-margin</c>. The property is not inherited, so it travels for
+    /// the one keyword that asks for it, and it does so even where the parent's overflow did not clip.
+    /// </summary>
+    public ClipMargin ClipMargin { get; init; } = ClipMargin.None;
+
     /// <summary>Gets the parent's <c>word-break</c>, likewise inherited.</summary>
     public String WordBreak { get; init; } = CssInitialValues.WordBreak;
 
@@ -398,6 +404,7 @@ internal sealed class FusedParent
         TextOverflow = style.TextOverflow,
         OverflowWrap = style.OverflowWrap,
         Overflow = (style.OverflowX, style.OverflowY),
+        ClipMargin = style.OverflowClipMargin,
         WordBreak = style.WordBreak,
         LineBreak = style.LineBreak,
         TabLength = style.CascadedTabLength,
@@ -857,6 +864,8 @@ internal static class FusedStyleFactory
                 Clear = ComputedStyle.ResolveClearFused(find("clear")),
                 ObjectFit = ComputedStyle.ResolveObjectFitFused(find("object-fit")),
                 ClipsOverflow = ComputedStyle.ResolveClipsOverflowFused(overflowX, overflowY),
+                ClipMargin = ComputedStyle.ResolveClipMarginFused(
+                    find("overflow-clip-margin"), parent.ClipMargin, face, dimensions),
                 OverflowX = overflowX,
                 OverflowY = overflowY,
                 ScrollsInline = scrolls.Inline,

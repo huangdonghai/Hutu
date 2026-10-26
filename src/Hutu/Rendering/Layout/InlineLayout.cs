@@ -1689,7 +1689,7 @@ internal sealed class InlineLayout
                 contentBox,
                 origin + atomic.InlineStartMargin,
                 atomic.InlineSize - atomic.InlineStartMargin - atomic.InlineEndMargin,
-                cursor + line.Ascent - atomic.Ascent,
+                cursor + line.Ascent + fragment.BaselineShift - atomic.Ascent,
                 atomic.BlockSize);
 
             // Its own content is under the same inline element, so whatever leaves the flow inside the

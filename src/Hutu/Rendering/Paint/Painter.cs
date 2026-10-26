@@ -788,14 +788,15 @@ internal sealed class Painter
 
         if (cutsRules)
         {
-            target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
+            var edge = OverflowClipEdge(box);
+            target.Add(new PushClipCommand(edge.Bounds, edge.Radii));
         }
 
         AddGapDecorations(box, style, target);
 
         if (cutsRules)
         {
-            target.Add(new PopClipCommand(box.PaddingBox));
+            target.Add(new PopClipCommand(OverflowClipEdge(box).Bounds));
         }
     }
 
@@ -851,11 +852,11 @@ internal sealed class Painter
         // The clip covers the children only: the box's own background and border were painted before
         // it, which is what keeps a border from being cut off by the radius it draws.
         var clipped = box.ClipsOverflow && box.Children.Count > 0;
-        var edge = new ClipEdge(box.PaddingBox, box.PaddingRadii);
+        var edge = OverflowClipEdge(box);
 
         if (clipped)
         {
-            target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
+            target.Add(new PushClipCommand(edge.Bounds, edge.Radii));
         }
 
         if (deferred is not null)
@@ -902,7 +903,7 @@ internal sealed class Painter
 
         if (clipped)
         {
-            target.Add(new PopClipCommand(box.PaddingBox));
+            target.Add(new PopClipCommand(edge.Bounds));
         }
     }
 
@@ -945,7 +946,7 @@ internal sealed class Painter
             if (!child.EstablishesStackingContext)
             {
                 var cut = CutOf(child);
-                ClipEdge? hiding = child.ClipsOverflow ? new ClipEdge(child.PaddingBox, child.PaddingRadii) : null;
+                ClipEdge? hiding = child.ClipsOverflow ? OverflowClipEdge(child) : null;
 
                 if (cut is { } standing)
                 {
@@ -987,6 +988,36 @@ internal sealed class Painter
     /// a gathered box carries is only ever read, so an empty one needs no copy.
     /// </summary>
     private static List<ClipEdge> CopiesOf(List<ClipEdge> clips) => clips.Count > 0 ? [.. clips] : NoClips;
+
+    /// <summary>
+    /// Gets the edge a box with <c>overflow: clip</c> cuts its content to: the visual box
+    /// <c>overflow-clip-margin</c> names, moved out by the distance it states, with the corners grown
+    /// along with the edges (CSS Overflow 3 §3.3). Without the property this is the padding edge, which
+    /// is what the clip has always been.
+    /// </summary>
+    private static ClipEdge OverflowClipEdge(LayoutBox box)
+    {
+        var style = box.Source.Style;
+        var margin = style.ClipsWithMargin ? style.OverflowClipMargin : ClipMargin.None;
+
+        var (area, radii) = margin.Box switch
+        {
+            ClipMarginBox.Content => (box.ContentBox, box.PaddingRadii.Shrink(box.Padding)),
+            ClipMarginBox.Border => (box.BorderBox, box.Radii),
+            _ => (box.PaddingBox, box.PaddingRadii),
+        };
+
+        if (margin.Length == 0)
+        {
+            return new ClipEdge(area, radii);
+        }
+
+        var width = Math.Max(0, area.Width + margin.Length * 2);
+        var height = Math.Max(0, area.Height + margin.Length * 2);
+        var grown = new Rect(area.X - margin.Length, area.Y - margin.Length, width, height);
+
+        return new ClipEdge(grown, radii.Grow(margin.Length, width, height));
+    }
 
     /// <summary>
     /// Paints the children that stay in the flow, in the three passes CSS 2.1 §Appendix E gives a
@@ -1102,10 +1133,11 @@ internal sealed class Painter
         // The clip covers what the box holds and never the box itself, which is what keeps a border from
         // being cut off by the radius it draws.
         var clipped = box.ClipsOverflow && box.Children.Count > 0;
+        var edge = clipped ? OverflowClipEdge(box) : default;
 
         if (clipped)
         {
-            target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
+            target.Add(new PushClipCommand(edge.Bounds, edge.Radii));
         }
 
         foreach (var child in Standing(box, owner))
@@ -1132,7 +1164,7 @@ internal sealed class Painter
 
         if (clipped)
         {
-            target.Add(new PopClipCommand(box.PaddingBox));
+            target.Add(new PopClipCommand(edge.Bounds));
         }
     }
 
@@ -1152,10 +1184,11 @@ internal sealed class Painter
         // The clip is only worth opening when this pass has ink to put inside it, and it covers that ink
         // alone: a mark hung outside the box is not cut by what the box hides.
         var clipped = box.ClipsOverflow && HasInk(box, owner);
+        var edge = clipped ? OverflowClipEdge(box) : default;
 
         if (clipped)
         {
-            target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
+            target.Add(new PushClipCommand(edge.Bounds, edge.Radii));
         }
 
         foreach (var child in Standing(box, owner))
@@ -1191,7 +1224,7 @@ internal sealed class Painter
 
         if (clipped)
         {
-            target.Add(new PopClipCommand(box.PaddingBox));
+            target.Add(new PopClipCommand(edge.Bounds));
         }
 
         // The outline is drawn around the box rather than in it, so it comes after the clip that held the

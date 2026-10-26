@@ -201,6 +201,12 @@ internal sealed record DisplayPositioningArea
     internal Boolean ClipsOverflow { get; init; }
 
     /// <summary>
+    /// Gets how far past its own edge a box that clips with <c>overflow: clip</c> still shows what it
+    /// holds (CSS Overflow 3 §3.3). The initial answer is the padding edge with no room past it.
+    /// </summary>
+    internal ClipMargin ClipMargin { get; init; } = ClipMargin.None;
+
+    /// <summary>
     /// Gets the keyword the inline axis of the box was left with. The two are kept because the property is
     /// not inherited and still has a keyword - <c>inherit</c> - that asks for the box above: what travels
     /// down is these two words, and a child that asks takes them rather than a guess.
