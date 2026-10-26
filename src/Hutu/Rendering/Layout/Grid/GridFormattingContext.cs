@@ -293,6 +293,19 @@ internal sealed class GridFormattingContext
         var rowStart = LineNumber(item.RowStart, grid, plan.RowLines.Count, horizontal: false, atEnd: false);
         var rowEnd = LineNumber(item.RowEnd, grid, plan.RowLines.Count, horizontal: false, atEnd: true);
 
+        // A placement that names the same line for both edges spans one track rather than none: an
+        // `auto` end from the same start is a span of one (CSS Grid 1 §8.3), and an out-of-flow item
+        // gets the same area its in-flow sibling would (positioned-grid-items-023).
+        if (columnStart is { } columnAt && columnEnd == columnAt && columnAt < plan.ColumnLines.Count)
+        {
+            columnEnd = columnAt + 1;
+        }
+
+        if (rowStart is { } rowAt && rowEnd == rowAt && rowAt < plan.RowLines.Count)
+        {
+            rowEnd = rowAt + 1;
+        }
+
         // A column is the inline axis and a row the block one, so a vertical page turns the two
         // around: the columns of the template run down the page and its rows across it.
         Double blockLeft, blockRight, blockTop, blockBottom;
@@ -369,9 +382,7 @@ internal sealed class GridFormattingContext
         Boolean horizontal,
         Boolean atEnd)
     {
-        var resolved = grid.Resolve(side, horizontal, atEnd).Resolve(count);
-
-        return resolved is { } line && line >= 1 && line <= count ? line : null;
+        return grid.Resolve(side, horizontal, atEnd).ResolveWithin(count);
     }
 
     /// <summary>

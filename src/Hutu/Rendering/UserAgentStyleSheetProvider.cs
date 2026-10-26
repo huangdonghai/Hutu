@@ -88,6 +88,10 @@ pre             { white-space: pre }
 button, textarea,
 input, select   { display: inline-block }
 
+/* The legacy scrolling element is still a box the page can size and clip, even though this reader
+ * does not scroll it: an inline-block that hides what leaves it, which is how a browser states it. */
+marquee         { display: inline-block; overflow: hidden }
+
 /* HTML Standard §15.3.10. A form control is not aligned by what surrounds it: a field states its
  * text at the head of the line, and the three pressable inputs and a button state their label at
  * the middle of it. Without the pair, a page that centers a column - a header's search box, its

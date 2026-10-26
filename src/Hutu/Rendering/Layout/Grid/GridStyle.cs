@@ -315,6 +315,24 @@ internal readonly struct GridLine
         _ => null,
     };
 
+    /// <summary>
+    /// Resolves the line to a one-based number only when it names a line of the explicit grid, and to
+    /// null when it falls outside it. An absolutely positioned grid child never builds implicit tracks,
+    /// so a line outside the explicit grid is treated as <c>auto</c> instead (CSS Grid 2 §10.1), which
+    /// is what makes a negative index past the first line name the container's padding edge.
+    /// </summary>
+    public Int32? ResolveWithin(Int32 lineCount)
+    {
+        var line = Kind switch
+        {
+            GridLineKind.Index when Index > 0 => Index,
+            GridLineKind.Index => lineCount + 1 + Index,
+            _ => (Int32?)null,
+        };
+
+        return line is { } number && number >= 1 && number <= lineCount ? number : null;
+    }
+
     public override String ToString() => Kind switch
     {
         GridLineKind.Index => Index.ToString(),
