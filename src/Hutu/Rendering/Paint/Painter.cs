@@ -1779,7 +1779,12 @@ internal sealed class Painter
                 {
                     // A row gap separates along the block axis, so its rule is thin along that axis:
                     // across the page in a horizontal flow, down it in a vertical one.
-                    AddRuleBand(target, segment.Band, segment.Rule, thinAlongY: segment.IsRow != vertical);
+                    AddRuleBand(
+                        target,
+                        segment.Band,
+                        segment.Rule,
+                        thinAlongY: segment.IsRow != vertical,
+                        segment.GapWidth);
                 }
             }
         }
@@ -1790,7 +1795,12 @@ internal sealed class Painter
     /// runs across the page, the left edge for one that runs down it. Turning the band into a border side
     /// is what gives a dashed rule its dashes and a double rule its two lines.
     /// </summary>
-    private static void AddRuleBand(List<PaintCommand> target, Rect band, GapRule rule, Boolean thinAlongY)
+    private static void AddRuleBand(
+        List<PaintCommand> target,
+        Rect band,
+        GapRule rule,
+        Boolean thinAlongY,
+        Double gapWidth)
     {
         var width = rule.Width;
 
@@ -1804,14 +1814,24 @@ internal sealed class Painter
             _ => rule.Style,
         };
 
+        // A column rule that fills its gap is drawn as the far edge of the band, so the dashes of a
+        // dotted or dashed stripe start where the gap ends; one narrower than its gap is drawn from
+        // the near edge, which is the side the stripe is seen from. A row rule runs across the page
+        // and keeps the bottom edge either way.
+        var fillsGap = !thinAlongY && gapWidth > 0 && width >= gapWidth;
+
         target.Add(new BorderCommand(
             band,
             thinAlongY
                 ? new Thickness(0, 0, width, 0)
-                : new Thickness(0, 0, 0, width),
+                : fillsGap
+                    ? new Thickness(0, width, 0, 0)
+                    : new Thickness(0, 0, 0, width),
             thinAlongY
                 ? new BorderStyles(BorderLineStyle.None, BorderLineStyle.None, stroke, BorderLineStyle.None)
-                : new BorderStyles(BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None, stroke),
+                : fillsGap
+                    ? new BorderStyles(BorderLineStyle.None, stroke, BorderLineStyle.None, BorderLineStyle.None)
+                    : new BorderStyles(BorderLineStyle.None, BorderLineStyle.None, BorderLineStyle.None, stroke),
             default,
             rule.Color,
             rule.Color,

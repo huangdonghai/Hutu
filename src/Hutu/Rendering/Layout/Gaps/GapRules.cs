@@ -337,11 +337,12 @@ internal sealed class GapRuleTerms<T> where T : struct
 /// </summary>
 internal readonly struct GapRuleSegment
 {
-    internal GapRuleSegment(Rect band, GapRule rule, Boolean isRow)
+    internal GapRuleSegment(Rect band, GapRule rule, Boolean isRow, Double gapWidth = 0)
     {
         Band = band;
         Rule = rule;
         IsRow = isRow;
+        GapWidth = gapWidth;
     }
 
     /// <summary>Gets the band the rule is drawn in: as wide as the rule, centred on the gap.</summary>
@@ -355,6 +356,13 @@ internal readonly struct GapRuleSegment
     /// above a column decoration where the two cross unless the page says otherwise.
     /// </summary>
     public Boolean IsRow { get; }
+
+    /// <summary>
+    /// Gets the room between the boxes the gap separates, or zero where this kind of container did not
+    /// record it. A rule that fills its gap is drawn from the gap's far edge, which is where the dashes
+    /// of its stripe begin (CSS Gaps 1 §3.3); one narrower than the gap is drawn from its near edge.
+    /// </summary>
+    public Double GapWidth { get; }
 }
 
 /// <summary>

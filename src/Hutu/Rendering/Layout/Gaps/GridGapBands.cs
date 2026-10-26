@@ -83,7 +83,8 @@ internal static class GridGapBands
                     target.Add(new GapRuleSegment(
                         GapRuleBands.Band(rule, gap.CentreIsX, gap.Centre, start, end),
                         rule,
-                        isRow));
+                        isRow,
+                        gap.Across));
                 }
             }
         }
