@@ -50,6 +50,9 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // Text Decoration 4's inset, which AngleSharp has no grammar for at all: without this the whole
         // declaration is dropped and the line runs to the edges of the text however the page asked.
         "text-decoration-inset",
+        // CSS Overflow's text-overflow, which AngleSharp has no grammar for: the value decides whether
+        // a clipped line ends in an ellipsis (or a named string), so the layout reads it as text.
+        "text-overflow",
         // CSS Sizing 4's aspect ratio, which AngleSharp has no grammar for either: the value is a ratio
         // written "21/9" or "auto 16/9", and the box model reads it as text.
         "aspect-ratio",

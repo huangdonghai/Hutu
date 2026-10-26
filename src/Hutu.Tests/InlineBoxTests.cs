@@ -452,6 +452,22 @@ public sealed class InlineBoxTests
     }
 
     [Test]
+    public async Task ALineOfAClippedBlockEndsInTheEllipsis()
+    {
+        using var view = CreateView();
+
+        // The block is twenty pixels wide and every character of the fake font is five, so three
+        // characters and the ellipsis fill it; the rest of the word is not drawn at all.
+        await view.SetHtml(Document(
+            "<p style='width:20px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis'>abcdef</p>"));
+
+        Assert.That(Text(view, "abc").BorderBox.Width, Is.EqualTo(15), "the characters the mark left room for");
+        Assert.That(Text(view, "…").BorderBox.X, Is.EqualTo(15), "the mark stands where the line was cut");
+        Assert.That(Walk(view).Any(node => node.Kind == LayoutKind.Text && node.Text == "def"), Is.False,
+            "and nothing after it is drawn");
+    }
+
+    [Test]
     public async Task ASoftHyphenCarriesAcrossABoxThatLeftTheFlow()
     {
         using var view = CreateView();

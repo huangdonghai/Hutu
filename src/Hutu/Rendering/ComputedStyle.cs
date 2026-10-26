@@ -3700,6 +3700,83 @@ internal readonly struct ComputedStyle
     /// <summary>Gets the text a soft-hyphen break draws at the end of its line (CSS Text 4 §6.2).</summary>
     public String HyphenateCharacter => _values.Text.HyphenateCharacter;
 
+    /// <summary>Gets the value <c>text-overflow</c> came to (CSS Overflow 3 §3).</summary>
+    public String TextOverflow => _values.Text.TextOverflow;
+
+    /// <summary>Gets whether the box clips its inline overflow and marks the line it cuts.</summary>
+    public Boolean EllipsisOverflow => _values.Text.EllipsisOverflow;
+
+    /// <summary>
+    /// Gets the string a line the page clips ends in, or null where it asks for no mark: <c>ellipsis</c>
+    /// is the horizontal ellipsis (the shaper turns it upright down a column), and a quoted string is
+    /// taken as written.
+    /// </summary>
+    public String? EllipsisText => TextOverflow.Contains("ellipsis", StringComparison.OrdinalIgnoreCase)
+        ? "\u2026"
+        : UnquotedText(TextOverflow);
+
+    /// <summary>
+    /// Reads <c>text-overflow</c> from a kept declaration. The property takes <c>clip</c> or a mark;
+    /// the two-value form the corpus does not write is read by its first value.
+    /// </summary>
+    public static String ReadTextOverflow(ICssProperty? declared)
+    {
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrEmpty(text))
+        {
+            return "clip";
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// Resolves <c>text-overflow</c> from the element's own declaration. The property is not inherited,
+    /// so a miss and every wide keyword but <c>inherit</c> answer <c>clip</c>; <c>inherit</c> takes the
+    /// parent's value, which is what lets a wrapper hand its mark down (CSS Overflow 3, section 3).
+    /// </summary>
+    public static String ResolveTextOverflowFused(ICssProperty? declared, String parent)
+    {
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrEmpty(text))
+        {
+            return "clip";
+        }
+
+        if (text.Equals("inherit", StringComparison.OrdinalIgnoreCase))
+        {
+            return parent;
+        }
+
+        if (text.Equals("initial", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert-layer", StringComparison.OrdinalIgnoreCase))
+        {
+            return "clip";
+        }
+
+        return text;
+    }
+
+    private static String? UnquotedText(String value)
+    {
+        var quoted = value.IndexOf((Char)0x22);
+        var apostrophe = value.IndexOf((Char)0x27);
+        var first = quoted < 0 || (apostrophe >= 0 && apostrophe < quoted) ? apostrophe : quoted;
+
+        if (first < 0)
+        {
+            return null;
+        }
+
+        var close = value.IndexOf(value[first], first + 1);
+        var text = close > first + 1 ? value.Substring(first + 1, close - first - 1) : null;
+        return String.IsNullOrEmpty(text) ? null : text;
+    }
+
     /// <summary>
     /// Reads <c>hyphenate-character</c>: <c>auto</c> means the user agent's own mark, which is the
     /// hyphen, and a string is used verbatim. The property is inherited.

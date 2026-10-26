@@ -78,6 +78,13 @@ internal sealed class FusedParent
 
     public String WhiteSpace { get; init; } = "normal";
 
+    /// <summary>
+    /// Gets the parent's <c>text-overflow</c>. The property is not inherited, so this travels for the
+    /// one keyword that asks for it: a child that writes <c>inherit</c> marks its clipped lines the way
+    /// the box above did.
+    /// </summary>
+    public String TextOverflow { get; init; } = "clip";
+
     /// <summary>Gets the parent's <c>overflow-wrap</c>, which every element under it gives its text.</summary>
     public String OverflowWrap { get; init; } = CssInitialValues.OverflowWrap;
 
@@ -388,6 +395,7 @@ internal sealed class FusedParent
             ? lineHeight
             : LineHeightHit,
         WhiteSpace = style.WhiteSpace,
+        TextOverflow = style.TextOverflow,
         OverflowWrap = style.OverflowWrap,
         Overflow = (style.OverflowX, style.OverflowY),
         WordBreak = style.WordBreak,
@@ -654,6 +662,13 @@ internal static class FusedStyleFactory
                 Hyphens = ComputedStyle.ResolveHyphensFused(find("hyphens"), parent.Hyphens),
                 HyphenateCharacter = ComputedStyle.ReadHyphenateCharacter(
                     find("hyphenate-character")?.Value, parent.HyphenateCharacter),
+                TextOverflow = ComputedStyle.ResolveTextOverflowFused(
+                    find("text-overflow"), parent.TextOverflow),
+                EllipsisOverflow = ComputedStyle.ResolveTextOverflowFused(
+                    find("text-overflow"), parent.TextOverflow) != "clip" &&
+                    ComputedStyle.ResolveClipsOverflowFused(
+                        ComputedStyle.ResolveOverflowAxisFused(find("overflow-x"), parent.Overflow.X),
+                        ComputedStyle.ResolveOverflowAxisFused(find("overflow-y"), parent.Overflow.Y)),
                 VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign, PresentationalHints.Valign(element)),
                 Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, face, dimensions),
                 Visibility = ComputedStyle.ResolveVisibilityFused(find("visibility"), parent.Visibility),

@@ -130,8 +130,124 @@ internal sealed class InlineLayout
             lines = Balanced(items, maxInline, flow, context, indent, container.Style, lines);
         }
 
+        // A block that clips its inline overflow may mark the line it cuts short: the text is cut at a
+        // character boundary and the mark the page named is drawn where the line ends (CSS Overflow 3
+        // section 3). The clip and the mark are read together, so an anonymous block carrying the text
+        // of a clipping parent still marks the line.
+        if (items.Count > 0 && container.Style.EllipsisOverflow &&
+            container.Style.EllipsisText is { Length: > 0 } ellipsis)
+        {
+            Ellipsize(lines, maxInline, flow, ellipsis, container);
+        }
+
         _plans[key] = lines;
         return lines;
+    }
+
+    /// <summary>
+    /// Cuts every line of the plan that runs past the container's inline extent and sets the mark where
+    /// it ends. The line's runs are kept up to the last character that still fits beside the mark, and
+    /// nothing after it is drawn.
+    /// </summary>
+    private void Ellipsize(
+        List<Line> lines, Double maxInline, WritingModeInfo flow, String mark, Box container)
+    {
+        foreach (var line in lines)
+        {
+            var used = line.Indent;
+
+            foreach (var fragment in line.Fragments)
+            {
+                used += fragment.Width;
+            }
+
+            // A line shortened by a float ends at the float, not at the block's edge.
+            var edge = line.Extent > 0 ? Math.Min(maxInline, line.Extent) : maxInline;
+            var available = edge - line.Indent;
+
+            if (line.Fragments.Count == 0 || available <= 0 || used <= edge + 0.01)
+            {
+                continue;
+            }
+
+            // The mark stands in the block container's own font, not in the run it cuts: a wide span
+            // still ends in the block's small ellipsis (measured on text-overflow-002).
+            var style = container.Style;
+            var markWidth = MeasureChunk(_measurer, style, mark, 0, mark.Length, flow);
+            var room = Math.Max(0, available - markWidth);
+            var kept = 0;
+            var remaining = room;
+            var cut = -1;
+
+            for (var index = 0; index < line.Fragments.Count; index++)
+            {
+                var fragment = line.Fragments[index];
+
+                if (fragment.OutOfFlow)
+                {
+                    kept = index + 1;
+                    continue;
+                }
+
+                if (remaining >= fragment.Width - 0.001)
+                {
+                    remaining -= fragment.Width;
+                    kept = index + 1;
+                    continue;
+                }
+
+                if (fragment.Length == 0 || fragment.IsReplaced || fragment.Ruby is not null ||
+                    fragment.Atomic is not null)
+                {
+                    cut = index;
+                    break;
+                }
+
+                // The longest run of whole characters that still leaves room for the mark.
+                var length = 0;
+                var width = 0.0;
+
+                while (length < fragment.Length)
+                {
+                    var at = fragment.Start + length;
+                    var units = TextClusters.UnitsAt(fragment.Text, at, fragment.Start + fragment.Length);
+                    var piece = MeasureChunk(_measurer, fragment.Style, fragment.Text, at, units, fragment.Flow);
+
+                    if (width + piece > remaining + 0.001)
+                    {
+                        break;
+                    }
+
+                    width += piece;
+                    length += units;
+                }
+
+                fragment.Length = length;
+                fragment.Width = width;
+                cut = index + 1;
+                break;
+            }
+
+            if (cut < 0)
+            {
+                cut = kept;
+            }
+
+            if (cut < line.Fragments.Count)
+            {
+                line.Fragments.RemoveRange(cut, line.Fragments.Count - cut);
+            }
+
+            if (line.Fragments.Count == 0)
+            {
+                continue;
+            }
+
+            var last = line.Fragments[^1];
+
+            line.Fragments.Add(new TextFragment(
+                mark, 0, mark.Length, markWidth, style, container, flow, null));
+        }
     }
 
     /// <summary>

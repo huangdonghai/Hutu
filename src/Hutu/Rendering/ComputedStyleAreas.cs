@@ -361,6 +361,19 @@ internal sealed record TextArea
     /// <summary>Gets the text drawn at the end of a line a soft hyphen broke (CSS Text 4 §6.2).</summary>
     internal String HyphenateCharacter { get; init; } = "-";
 
+    /// <summary>
+    /// Gets the value <c>text-overflow</c> came to: <c>clip</c> where nothing marks a clipped line, or
+    /// the string the line ends in - <c>ellipsis</c> or a quoted string (CSS Overflow 3 §3).
+    /// </summary>
+    internal String TextOverflow { get; init; } = "clip";
+
+    /// <summary>
+    /// Gets whether the box clips its inline overflow and marks the line it cuts: the two properties
+    /// are read together here, because the mark travels with the anonymous block a float leaves behind
+    /// while the clip stays on the block that asked for it.
+    /// </summary>
+    internal Boolean EllipsisOverflow { get; init; }
+
     internal String VerticalAlign { get; init; } = CssInitialValues.VerticalAlign;
 
     /// <summary>
