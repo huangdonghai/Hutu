@@ -100,14 +100,17 @@ internal static class ConstraintValidity
     {
         var tag = element.LocalName.ToLowerInvariant();
 
-        if (tag == "fieldset")
-        {
-            return element.HasAttribute("disabled");
-        }
-
-        if (Array.IndexOf(Controls, tag) < 0)
+        // A field is held down by its own attribute or by the field around it; a control by the field
+        // it stands in. Chromium answers `:disabled` true for a fieldset inside a disabled one, which
+        // is what the Gecko legend pages measure against.
+        if (tag != "fieldset" && Array.IndexOf(Controls, tag) < 0)
         {
             return false;
+        }
+
+        if (element.HasAttribute("disabled"))
+        {
+            return true;
         }
 
         var labelled = false;
