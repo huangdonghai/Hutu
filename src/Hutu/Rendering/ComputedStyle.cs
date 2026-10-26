@@ -6145,6 +6145,8 @@ internal readonly struct ComputedStyle
             "h5" => 1.67,
             "h6" => 2.33,
             "p" or "blockquote" or "dl" or "dir" or "menu" or "fieldset" or "form" => 1.0,
+            "pre" => 1.0,
+            "hr" => 0.5,
             "ul" or "ol" => IsNested(element) ? (Double?)null : 1.0,
             _ => null,
         };
