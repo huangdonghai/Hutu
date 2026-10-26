@@ -284,6 +284,27 @@ internal sealed class PositionedLayout
                 !(style.Width.Kind == StyleLengthKind.Percent && containingBlock.Width <= 0));
         var fills = position.Left.HasValue && position.Right.HasValue;
 
+        // A box that reads down the page has its inline extent along the physical height, and that is
+        // the extent §10.3.7 leaves an automatic out-of-flow box to shrink to fit; its width is the
+        // block size, which the content settles. Measuring it as an in-flow orthogonal block would
+        // stretch the column to the whole height the containing block has, which is what an absolutely
+        // positioned box only does when both its vertical edges are fixed.
+        if (box.Flow.IsVertical && !style.Height.IsContentSized &&
+            !(style.Height.HasValue &&
+                !(style.Height.Kind == StyleLengthKind.Percent && containingBlock.Height <= 0)) &&
+            !(position.Top.HasValue && position.Bottom.HasValue))
+        {
+            var along = _engine.MeasureIntrinsic(box, childContext);
+            var columnRoom = Math.Max(0, containingBlock.Height - margin.Vertical);
+            var columnFit = Math.Max(along.MinContent, Math.Min(columnRoom, along.MaxContent));
+
+            return _engine.Measure(
+                box,
+                MeasureConstraints.FitWidth(containingBlock.Width)
+                    .WithHeight(columnFit + margin.Vertical),
+                childContext);
+        }
+
         if (declared || fills)
         {
             return _engine.Measure(box, MeasureConstraints.FitWidth(containingBlock.Width), childContext);
