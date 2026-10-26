@@ -6066,11 +6066,17 @@ internal readonly struct ComputedStyle
             ? (inlineStartKeyword, inlineEndKeyword)
             : (inlineEndKeyword, inlineStartKeyword);
 
+        // What the reader gives an unsaid side is stated logically too: the room a list keeps for its
+        // markers belongs at the edge the items begin at, which a right-to-left row begins at the right.
+        var (defaultStart, defaultEnd) = flow.InlineSign > 0
+            ? (defaultInlineStart, defaultInlineEnd)
+            : (defaultInlineEnd, defaultInlineStart);
+
         return new StyleThickness(
             Side(top, topKeyword, blockStart, blockStartKeyword, defaultBlockStart, fallback, inherited?.Top),
-            Side(right, rightKeyword, byEnd, keywordEnd, defaultInlineEnd, fallback, inherited?.Right),
+            Side(right, rightKeyword, byEnd, keywordEnd, defaultEnd, fallback, inherited?.Right),
             Side(bottom, bottomKeyword, blockEnd, blockEndKeyword, defaultBlockEnd, fallback, inherited?.Bottom),
-            Side(left, leftKeyword, byStart, keywordStart, defaultInlineStart, fallback, inherited?.Left));
+            Side(left, leftKeyword, byStart, keywordStart, defaultStart, fallback, inherited?.Left));
     }
 
     private (StyleLength? BlockStart, StyleLength? BlockEnd, StyleLength? InlineStart, StyleLength? InlineEnd) Defaults(String prefix) =>
