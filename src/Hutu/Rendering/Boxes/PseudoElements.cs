@@ -804,13 +804,15 @@ internal static class GeneratedContent
         ICssParser? parser,
         WritingModeInfo flow,
         VariableScope? variables,
-        CounterEnv? counters)
+        CounterEnv? counters,
+        Boolean root = false)
     {
         // A marker group belongs to a scroll container. The property on a box that does not scroll
         // makes no group at all (CSS Overflow 5 §4.1), which is what the test that sets it on an
-        // ordinary div checks.
+        // ordinary div checks. The document element is the root scroller whether or not it states an
+        // overflow, so it is let through.
         if (scrollerStyle.ScrollMarkerGroup is null ||
-            (!scrollerStyle.ScrollsInline && !scrollerStyle.ScrollsBlock))
+            (!root && !scrollerStyle.ScrollsInline && !scrollerStyle.ScrollsBlock))
         {
             return null;
         }

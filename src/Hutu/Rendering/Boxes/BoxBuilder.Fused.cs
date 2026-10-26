@@ -125,6 +125,71 @@ internal static partial class BoxBuilder
         // matters, where the clamp belongs to the child's line boxes.
         PropagateLineClamp(box);
 
+        // The document element is the root scroller, and its markers and buttons belong to the page
+        // rather than to the body it scrolls: the boxes stand beside the root, and the targets the
+        // markers name are the body's in-flow children.
+        var body = box.Children.Find(child => child.Element is { LocalName: "body" }) ?? box;
+
+        if (box.Style.ScrollMarkerGroup is { } rootMarkerSide)
+        {
+            var rootGroup = GeneratedContent.ScrollMarkerGroup(
+                body,
+                root,
+                index,
+                box.Style,
+                FusedParent.Root,
+                device,
+                faces,
+                state,
+                images,
+                parser,
+                WritingModeInfo.Horizontal,
+                null,
+                rootCounters,
+                root: true);
+
+            if (rootGroup is not null)
+            {
+                // The group stands with the body's content, as its first or last child, so it is
+                // the neighbour the first block's margin collapses against - or does not, because a
+                // fixed box stands there. Painting does not care where a fixed box sits; the margin
+                // of the content after it does.
+                if (rootMarkerSide == "before")
+                {
+                    body.Children.Insert(0, rootGroup);
+                }
+                else
+                {
+                    body.Children.Add(rootGroup);
+                }
+            }
+        }
+
+        var (rootBefore, rootAfter) = GeneratedContent.ScrollButtons(
+            box,
+            root,
+            index,
+            box.Style,
+            FusedParent.Root,
+            device,
+            faces,
+            state,
+            images,
+            parser,
+            WritingModeInfo.Horizontal,
+            null,
+            rootCounters);
+
+        foreach (var button in rootBefore)
+        {
+            box.Children.Add(button);
+        }
+
+        foreach (var button in rootAfter)
+        {
+            box.Children.Add(button);
+        }
+
         // Remembered only now that the walk has agreed to describe the document: a build that
         // abstained has proved nothing about the sheets, so the next one starts again.
         state.Keep(index);
