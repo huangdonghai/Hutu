@@ -2515,6 +2515,29 @@ internal readonly struct ComputedStyle
     }
 
     /// <summary>
+    /// Gets the shape a <c>corner-shape: bevel</c> cuts the box to where no <c>clip-path</c> does. The
+    /// bevel is the straight chord across each rounded corner, which is the one corner shape the
+    /// painter can answer as an outline; the other shapes keep the rounded box they have.
+    /// </summary>
+    public static ClipPathShape? ResolveCornerShapeFused(
+        Func<String, ICssProperty?> find, IRenderDimensions dimensions, LengthReader.FontSource font)
+    {
+        var shape = find("corner-shape")?.Value?.Trim();
+
+        if (!String.Equals(shape, "bevel", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return new ClipPathShape
+        {
+            Form = ClipForm.Bevel,
+            Box = ClipBox.Border,
+            Corners = ResolveBorderRadiusFused(find, font, dimensions),
+        };
+    }
+
+    /// <summary>
     /// Reads the four offsets of a clip shape. A side that is neither the keyword that leaves it to the
     /// edge nor a length the device can fold is no clip at all, which is also what the grammar says.
     /// </summary>

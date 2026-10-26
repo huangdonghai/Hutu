@@ -20,6 +20,12 @@ internal enum ClipForm
     /// <summary><c>polygon()</c>.</summary>
     Polygon,
 
+    /// <summary>
+    /// A box whose four corners are cut straight between the ends of their radii, which is what
+    /// <c>corner-shape: bevel</c> asks for (CSS Borders 4 §4.1).
+    /// </summary>
+    Bevel,
+
     /// <summary><c>path()</c>, whose own coordinates start at the reference box's top left corner.</summary>
     Path,
 
@@ -163,6 +169,7 @@ internal sealed partial class ClipPathShape
             ClipForm.Rectangle => RectangleOf(reference),
             ClipForm.Ellipse => EllipseOf(reference),
             ClipForm.Polygon => PolygonOf(reference),
+            ClipForm.Bevel => BevelOf(reference),
             ClipForm.Shape => ShapeOf(reference),
             _ => PathOf(reference),
         };
@@ -356,6 +363,30 @@ internal sealed partial class ClipPathShape
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// Gets the outline a beveled box comes to: each corner is the straight line between the two ends
+    /// of its radius, and a corner with no radius stays square.
+    /// </summary>
+    private ClipCut BevelOf(Rect reference)
+    {
+        var radii = CornerRadii.Resolve(Corners, reference.Width, reference.Height);
+        var edges = new List<ClipSegment>(8);
+
+        void Point(Double x, Double y) =>
+            edges.Add(ClipSegment.To(edges.Count == 0 ? ClipEdge.Begin : ClipEdge.Line, x, y));
+
+        Point(reference.X + radii.TopLeft.Horizontal, reference.Y);
+        Point(reference.Right - radii.TopRight.Horizontal, reference.Y);
+        Point(reference.Right, reference.Y + radii.TopRight.Vertical);
+        Point(reference.Right, reference.Bottom - radii.BottomRight.Vertical);
+        Point(reference.Right - radii.BottomRight.Horizontal, reference.Bottom);
+        Point(reference.X + radii.BottomLeft.Horizontal, reference.Bottom);
+        Point(reference.X, reference.Bottom - radii.BottomLeft.Vertical);
+        Point(reference.X, reference.Y + radii.TopLeft.Vertical);
+
+        return new ClipCut(reference, CornerRadii.None, edges, false);
     }
 
     private ClipCut PolygonOf(Rect reference)
