@@ -424,17 +424,21 @@ internal static partial class BoxBuilder
                                 variables,
                                 among);
 
-                            foreach (var button in beforeButtons)
-                            {
-                                children.Add(button);
-                            }
-
                             if (markerGroup is not null && markerSide == "before")
                             {
                                 children.Add(markerGroup);
                             }
 
                             children.Add(childBox);
+
+                            // The buttons stand after the container in the page's own order, the
+                            // block-start one before the block-end one, which is how the borrowed
+                            // pages draw a row of them; a side that names a direction still reads the
+                            // same way when the container's content is empty, as it is in all of them.
+                            foreach (var button in beforeButtons)
+                            {
+                                children.Add(button);
+                            }
 
                             foreach (var button in afterButtons)
                             {
