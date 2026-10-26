@@ -1010,6 +1010,7 @@ internal static class FusedStyleFactory
             Opacity = find("opacity")?.Value,
             MixBlendMode = find("mix-blend-mode")?.Value,
             ScrollMarkerGroup = find("scroll-marker-group")?.Value,
+            CornerShape = find("corner-shape")?.Value,
             WillChange = find("will-change")?.Value,
             TransformStyle = find("transform-style")?.Value,
             TransformBox = find("transform-box")?.Value,

@@ -3259,6 +3259,9 @@ internal readonly struct ComputedStyle
         /// </summary>
         internal String? ScrollMarkerGroup;
 
+        /// <summary>Gets the declared <c>corner-shape</c> list, or null where the page wrote none.</summary>
+        internal String? CornerShape;
+
         /// <summary>Gets the declared <c>will-change</c> list, or null where the page wrote nothing.</summary>
         internal String? WillChange;
 
@@ -5462,7 +5465,81 @@ internal readonly struct ComputedStyle
     /// percentage against the size of the box itself - which is what a percentage radius is relative
     /// to - and shrink radii that would overlap.
     /// </summary>
-    public StyleCornerRadii BorderRadius => _values.Border.Radius.Scaled(_zoom);
+    public StyleCornerRadii BorderRadius
+    {
+        get
+        {
+            var radii = _values.Border.Radius.Scaled(_zoom);
+            var shapes = CornerShapeText;
+
+            if (String.IsNullOrWhiteSpace(shapes))
+            {
+                return radii;
+            }
+
+            var parts = shapes.Split((Char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+            if (parts.Length == 0)
+            {
+                return radii;
+            }
+
+            String At(Int32 corner) => parts.Length switch
+            {
+                1 => parts[0],
+                2 => corner is 0 or 2 ? parts[0] : parts[1],
+                3 => corner switch
+                {
+                    0 => parts[0],
+                    1 or 3 => parts[1],
+                    _ => parts[2],
+                },
+                _ => parts[Math.Min(corner, parts.Length - 1)],
+            };
+
+            return new StyleCornerRadii(
+                SquareCorner(At(0)) ? StyleCornerRadius.Zero : radii.TopLeft,
+                SquareCorner(At(1)) ? StyleCornerRadius.Zero : radii.TopRight,
+                SquareCorner(At(2)) ? StyleCornerRadius.Zero : radii.BottomRight,
+                SquareCorner(At(3)) ? StyleCornerRadius.Zero : radii.BottomLeft);
+        }
+    }
+
+    /// <summary>
+    /// Gets the declared <c>corner-shape</c> list, or null where the page wrote none. One to four
+    /// values, expanded over the corners the way <c>border-radius</c> expands its own.
+    /// </summary>
+    public String? CornerShapeText =>
+        _values.Fused is { } fused ? fused.CornerShape : _style.GetPropertyValue("corner-shape");
+
+    /// <summary>
+    /// Gets whether a corner shape is a square one: <c>square</c>, or a superellipse whose exponent
+    /// has flattened the curve to the corner. The negative exponents - the notches - are not square.
+    /// </summary>
+    private static Boolean SquareCorner(String shape)
+    {
+        var value = shape.Trim();
+
+        if (value.Equals("square", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (value.StartsWith("superellipse(", StringComparison.OrdinalIgnoreCase) && value.EndsWith(')'))
+        {
+            var inside = value["superellipse(".Length..^1].Trim();
+
+            if (inside.Equals("infinity", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return Double.TryParse(inside, NumberStyles.Float, CultureInfo.InvariantCulture, out var exponent) &&
+                exponent >= 10;
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Gets the box the background is painted into: <c>border-box</c> (the initial value) reaches
