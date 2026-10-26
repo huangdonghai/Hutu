@@ -491,6 +491,41 @@ internal sealed class GridLineNames
     }
 
     /// <summary>
+    /// Gets the nearest line carrying <paramref name="name"/> before <paramref name="line"/>, both
+    /// one-based, or null where there is none. A <c>span &lt;name&gt;</c> reaches this line: the one
+    /// next to the side it spans from, not the first one in the whole list.
+    /// </summary>
+    public Int32? NearestBefore(String name, Int32 line)
+    {
+        for (var at = Math.Min(line - 1, _lines.Length) - 1; at >= 0; at--)
+        {
+            if (Array.IndexOf(_lines[at], name) >= 0)
+            {
+                return at + 1;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the nearest line carrying <paramref name="name"/> after <paramref name="line"/>, both
+    /// one-based, or null where there is none.
+    /// </summary>
+    public Int32? NearestAfter(String name, Int32 line)
+    {
+        for (var at = Math.Max(0, line); at < _lines.Length; at++)
+        {
+            if (Array.IndexOf(_lines[at], name) >= 0)
+            {
+                return at + 1;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Gets the names of the lines a subgrid borrows: the parent's lines from the first track of the
     /// area it spans, ending with the line after its last track - which is what lets an item of the
     /// subgrid name a line the page wrote on the outer grid (CSS Grid 2 §8.1).
@@ -499,6 +534,8 @@ internal sealed class GridLineNames
     {
         var lines = new List<List<String>>(span + 1);
 
+        // `from` is the zero-based track the slice starts at, and the slice runs through the line
+        // after its last track - the one an item's end may name.
         for (var at = Math.Max(0, from); at <= from + span && at < _lines.Length; at++)
         {
             lines.Add(new List<String>(_lines[at]));

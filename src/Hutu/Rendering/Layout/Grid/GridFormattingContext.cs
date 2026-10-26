@@ -897,6 +897,17 @@ internal sealed class GridFormattingContext
         var endIndex = end.Resolve(lines);
         var span = 1;
 
+        // `span <name>` reaches the nearest line of that name in the direction of the other side:
+        // the previous one for a start, the next one for an end (CSS Grid 1 §8.3).
+        if (start.Kind == GridLineKind.SpanName && endIndex is { } namedEnd)
+        {
+            startIndex = borrowed?.NearestBefore(start.Name!, namedEnd) ?? Math.Max(1, namedEnd - 1);
+        }
+        else if (end.Kind == GridLineKind.SpanName && startIndex is { } namedStart)
+        {
+            endIndex = borrowed?.NearestAfter(end.Name!, namedStart) ?? Math.Min(lines, namedStart + 1);
+        }
+
         if (start.Kind == GridLineKind.Span)
         {
             span = Math.Max(1, start.Span);

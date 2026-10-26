@@ -264,6 +264,13 @@ internal enum GridLineKind : byte
     /// <summary><c>span N</c>: the item covers a number of tracks from wherever it lands.</summary>
     Span,
 
+    /// <summary>
+    /// <c>span &lt;custom-ident&gt;</c>: the item reaches the nearest line with that name in the
+    /// direction of the other side (CSS Grid 1 §8.3), which the placement resolves once both sides
+    /// and the named lines are known.
+    /// </summary>
+    SpanName,
+
     /// <summary>A named line. Named lines are parsed but not resolved, so they place like <c>auto</c>.</summary>
     Name,
 }
@@ -296,6 +303,9 @@ internal readonly struct GridLine
     public static GridLine At(Int32 index) => new(GridLineKind.Index, index, 1, null);
 
     public static GridLine Spans(Int32 span) => new(GridLineKind.Span, 0, Math.Max(1, span), null);
+
+    public static GridLine SpansNamed(String name, Int32 repeat = 1) =>
+        new(GridLineKind.SpanName, repeat, 1, name);
 
     public static GridLine Named(String name, Int32 repeat = 1) => new(GridLineKind.Name, repeat, 1, name);
 
@@ -337,6 +347,7 @@ internal readonly struct GridLine
     {
         GridLineKind.Index => Index.ToString(),
         GridLineKind.Span => "span " + Span.ToString(),
+        GridLineKind.SpanName => "span " + (Name ?? "auto"),
         GridLineKind.Name => Name ?? "auto",
         _ => "auto",
     };
@@ -962,6 +973,14 @@ internal readonly struct GridStyle
 
         if (span)
         {
+            // `span <custom-ident>` reaches the line of that name rather than a count of tracks; it
+            // is resolved after the other side is known, so the name is kept as a named line and the
+            // number, where the page wrote one, says which of the lines carrying it is meant.
+            if (name is { } spanned)
+            {
+                return GridLine.SpansNamed(spanned, index == 0 ? 1 : index);
+            }
+
             return GridLine.Spans(index > 0 ? index : 1);
         }
 
