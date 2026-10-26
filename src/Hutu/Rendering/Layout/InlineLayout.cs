@@ -1359,6 +1359,14 @@ internal sealed class InlineLayout
                 continue;
             }
 
+            // `unicode-bidi: plaintext` makes an element's own text a paragraph: its direction is read
+            // off the first strong character written there, not off the text around it (P2, P3), so a
+            // run that asks for it is resolved apart from the runs beside it.
+            if (group.Count > 0 && group[^1].Style.PlaintextParagraph != fragment.Style.PlaintextParagraph)
+            {
+                Flush();
+            }
+
             group.Add(fragment);
             joined.Append(fragment.Text);
         }
