@@ -6177,11 +6177,18 @@ internal readonly struct ComputedStyle
         var indentEnd = tag is "blockquote" or "fieldset" ? indent : null;
         var space = block is { } size ? size * fontSize : (Double?)null;
 
+        // A rule centres itself across the column it stands in: its inline margins are auto rather
+        // than nothing, the same way a centred table's are, so a narrow one leaves equal room on both
+        // sides instead of crowding the edge the reading begins at.
+        var (inlineStart, inlineEnd) = tag == "hr"
+            ? (StyleLength.Auto, StyleLength.Auto)
+            : (Pixels(indent), Pixels(indentEnd));
+
         return (
             Pixels(space),
             Pixels(space),
-            Pixels(indent),
-            Pixels(indentEnd));
+            inlineStart,
+            inlineEnd);
     }
 
     private static StyleLength? Pixels(Double? value) =>
