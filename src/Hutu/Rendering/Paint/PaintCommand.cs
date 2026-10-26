@@ -561,11 +561,42 @@ public sealed class PopTransformCommand : PaintCommand
 /// </remarks>
 public sealed class PushLayerCommand : PaintCommand
 {
-    internal PushLayerCommand(Rect bounds, Double alpha)
-        : base(bounds) => Alpha = alpha;
+    internal PushLayerCommand(Rect bounds, Double alpha, BlendMode blend = BlendMode.Normal)
+        : base(bounds)
+    {
+        Alpha = alpha;
+        Blend = blend;
+    }
 
     /// <summary>Gets how strongly the layer is laid down, from nought to one.</summary>
     public Double Alpha { get; }
+
+    /// <summary>Gets how the layer is mixed with what is already drawn beneath it.</summary>
+    public BlendMode Blend { get; }
+}
+
+/// <summary>
+/// The separable and non-separable blend modes <c>mix-blend-mode</c> names (CSS Compositing 1 §5).
+/// </summary>
+public enum BlendMode : Byte
+{
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+    PlusLighter,
 }
 
 /// <summary>Ends the layer the nearest preceding <see cref="PushLayerCommand"/> opened.</summary>

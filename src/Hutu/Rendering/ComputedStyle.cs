@@ -3225,6 +3225,9 @@ internal readonly struct ComputedStyle
         /// <summary>Gets the declared <c>opacity</c>, or null when the box says nothing of its own.</summary>
         internal String? Opacity;
 
+        /// <summary>Gets the declared <c>mix-blend-mode</c>, or null when the box says nothing of its own.</summary>
+        internal String? MixBlendMode;
+
         /// <summary>Gets the declared <c>will-change</c> list, or null where the page wrote nothing.</summary>
         internal String? WillChange;
 
@@ -3414,6 +3417,55 @@ internal readonly struct ComputedStyle
     /// </summary>
     public String? OpacityText =>
         _values.Fused is { } fused ? fused.Opacity : _style.GetPropertyValue("opacity");
+
+    /// <summary>
+    /// Gets the declared <c>mix-blend-mode</c> text, or null/empty when the box carries none. Read as
+    /// text on both style paths, as <c>opacity</c> is: the keyword is what the drawing wants, and there
+    /// is nothing for the style layer to resolve first.
+    /// </summary>
+    public String? MixBlendModeText =>
+        _values.Fused is { } fused ? fused.MixBlendMode : _style.GetPropertyValue("mix-blend-mode");
+
+    /// <summary>
+    /// Gets how the box's own picture is mixed with the backdrop it is drawn over (CSS Compositing 1
+    /// §5). A box that names no mode, or names one this reader does not know, mixes normally.
+    /// </summary>
+    public Paint.BlendMode MixBlendMode
+    {
+        get
+        {
+            var stated = MixBlendModeText?.Trim();
+
+            if (stated is not { Length: > 0 } || stated.Equals("normal", StringComparison.OrdinalIgnoreCase))
+            {
+                return Paint.BlendMode.Normal;
+            }
+
+            return stated.ToLowerInvariant() switch
+            {
+                "multiply" => Paint.BlendMode.Multiply,
+                "screen" => Paint.BlendMode.Screen,
+                "overlay" => Paint.BlendMode.Overlay,
+                "darken" => Paint.BlendMode.Darken,
+                "lighten" => Paint.BlendMode.Lighten,
+                "color-dodge" => Paint.BlendMode.ColorDodge,
+                "color-burn" => Paint.BlendMode.ColorBurn,
+                "hard-light" => Paint.BlendMode.HardLight,
+                "soft-light" => Paint.BlendMode.SoftLight,
+                "difference" => Paint.BlendMode.Difference,
+                "exclusion" => Paint.BlendMode.Exclusion,
+                "hue" => Paint.BlendMode.Hue,
+                "saturation" => Paint.BlendMode.Saturation,
+                "color" => Paint.BlendMode.Color,
+                "luminosity" => Paint.BlendMode.Luminosity,
+                "plus-lighter" => Paint.BlendMode.PlusLighter,
+                _ => Paint.BlendMode.Normal,
+            };
+        }
+    }
+
+    /// <summary>Gets whether the box mixes its picture with the backdrop other than normally.</summary>
+    public Boolean HasMixBlendMode => MixBlendMode != Paint.BlendMode.Normal;
 
     /// <summary>
     /// Gets how strongly the box is laid down, one for a box that asks for nothing less. The number is
@@ -3629,8 +3681,8 @@ internal readonly struct ComputedStyle
             // A shape is a cut the whole of the box's picture has to sit inside, and CSS Masking 1 §5.1
             // gives the box that has one a stacking context of its own the same way opacity does - which is
             // also what keeps anything the box paints from being answered a level above the cut.
-            if (IsTransformed || IsFiltered || IsTransparent || HasClipPath || PreservesThirdDimension ||
-                WillChangeNamesALayer(positioned))
+            if (IsTransformed || IsFiltered || IsTransparent || HasClipPath || HasMixBlendMode ||
+                PreservesThirdDimension || WillChangeNamesALayer(positioned))
             {
                 return true;
             }

@@ -265,6 +265,7 @@ public sealed class SkiaPaintExecutor
                     using (var fade = new SKPaint
                     {
                         Color = SKColors.White.WithAlpha((Byte)Math.Round(layer.Alpha * 255, MidpointRounding.AwayFromZero)),
+                        BlendMode = ToSkBlend(layer.Blend),
                     })
                     {
                         canvas.SaveLayer(fade);
@@ -2491,6 +2492,27 @@ public sealed class SkiaPaintExecutor
     /// first row's middle and b in the second's. Read the other way the two are exchanged, which turns a
     /// clockwise quarter turn into an anti-clockwise one and a skew of one axis into a skew of the other.
     /// </remarks>
+    private static SKBlendMode ToSkBlend(BlendMode blend) => blend switch
+    {
+        BlendMode.Multiply => SKBlendMode.Multiply,
+        BlendMode.Screen => SKBlendMode.Screen,
+        BlendMode.Overlay => SKBlendMode.Overlay,
+        BlendMode.Darken => SKBlendMode.Darken,
+        BlendMode.Lighten => SKBlendMode.Lighten,
+        BlendMode.ColorDodge => SKBlendMode.ColorDodge,
+        BlendMode.ColorBurn => SKBlendMode.ColorBurn,
+        BlendMode.HardLight => SKBlendMode.HardLight,
+        BlendMode.SoftLight => SKBlendMode.SoftLight,
+        BlendMode.Difference => SKBlendMode.Difference,
+        BlendMode.Exclusion => SKBlendMode.Exclusion,
+        BlendMode.Hue => SKBlendMode.Hue,
+        BlendMode.Saturation => SKBlendMode.Saturation,
+        BlendMode.Color => SKBlendMode.Color,
+        BlendMode.Luminosity => SKBlendMode.Luminosity,
+        BlendMode.PlusLighter => SKBlendMode.Plus,
+        _ => SKBlendMode.SrcOver,
+    };
+
     private static SKMatrix ToSkMatrix(Affine m) => new(
         (Single)m.A, (Single)m.C, (Single)m.E,
         (Single)m.B, (Single)m.D, (Single)m.F,

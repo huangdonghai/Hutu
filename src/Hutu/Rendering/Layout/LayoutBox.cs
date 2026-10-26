@@ -127,6 +127,12 @@ internal sealed class LayoutBox
     /// </summary>
     public Double Opacity { get; set; } = 1;
 
+    /// <summary>
+    /// Gets or sets how the box's picture is mixed with the backdrop it is drawn over. A mode other
+    /// than normal also stands the box as a stacking context of its own (CSS Compositing 1 §5.1).
+    /// </summary>
+    public Paint.BlendMode MixBlendMode { get; set; } = Paint.BlendMode.Normal;
+
     /// <summary>Gets whether the box was taken out of normal flow by <c>absolute</c> or <c>fixed</c>.</summary>
     public Boolean IsOutOfFlow => Position is PositionMode.Absolute or PositionMode.Fixed;
 

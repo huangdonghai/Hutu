@@ -451,13 +451,13 @@ internal sealed class Painter
     /// </remarks>
     private void PaintFaded(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? deferred)
     {
-        if (box.Opacity >= 1 || ReferenceEquals(box, _faded))
+        if ((box.Opacity >= 1 && box.MixBlendMode == BlendMode.Normal) || ReferenceEquals(box, _faded))
         {
             PaintBoxContent(box, list, target, deferred);
             return;
         }
 
-        target.Add(new PushLayerCommand(box.BorderBox, box.Opacity));
+        target.Add(new PushLayerCommand(box.BorderBox, box.Opacity, box.MixBlendMode));
         PaintBoxContent(box, list, target, deferred);
         target.Add(new PopLayerCommand(box.BorderBox));
     }

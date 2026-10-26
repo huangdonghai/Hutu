@@ -1193,6 +1193,7 @@ internal sealed record LayoutProfile(
         layout.HasStackingLevel = box.IsItem && position.HasZIndex;
         layout.EstablishesStackingContext = box.Style.EstablishesStackingContext || layout.HasStackingLevel;
         layout.Opacity = box.Style.Opacity;
+        layout.MixBlendMode = box.Style.MixBlendMode;
 
         // A transform (and a motion-path offset transform) changes only how the box is drawn, never
         // where the layout put it, so the matrix is resolved here - once the border box has its size,

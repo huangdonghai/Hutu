@@ -1000,6 +1000,7 @@ internal static class FusedStyleFactory
             Filter = find("filter")?.Value,
             BackdropFilter = find("backdrop-filter")?.Value,
             Opacity = find("opacity")?.Value,
+            MixBlendMode = find("mix-blend-mode")?.Value,
             WillChange = find("will-change")?.Value,
             TransformStyle = find("transform-style")?.Value,
             TransformBox = find("transform-box")?.Value,
