@@ -131,7 +131,8 @@ internal static class BoxModel
         Double basis,
         Double containingWidth,
         Double insets,
-        Double containingHeight = 0)
+        Double containingHeight = 0,
+        Double? marginBasis = null)
     {
         var isBorderBox = IsBorderBox(style);
         Double content;
@@ -149,7 +150,9 @@ internal static class BoxModel
         }
         else
         {
-            content = Math.Max(0, basis - style.Margin.Resolve(containingWidth).Horizontal - insets);
+            // A percentage margin is read against the containing block's inline size, which is not the
+            // width when that block is a column - an orthogonal child still answers to it.
+            content = Math.Max(0, basis - style.Margin.Resolve(marginBasis ?? containingWidth).Horizontal - insets);
         }
 
         if (ContentBound(style.MaxWidth, containingWidth, insets, isBorderBox) is { } maximum && content > maximum)

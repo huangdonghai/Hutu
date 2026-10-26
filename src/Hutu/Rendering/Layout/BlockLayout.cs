@@ -52,8 +52,12 @@ internal sealed class BlockLayout
     {
         var style = box.Style;
         var basisWidth = constraints.AvailableWidth ?? context.ContainingBlock.Width;
+
+        // A percentage padding is read against the containing block's inline size, which is its height
+        // when that block is a column (CSS 2.1, CSS Writing Modes 3).
+        var percentBasis = context.ContainingIsVertical ? context.ContainingBlock.Height : basisWidth;
         var border = BorderOf(box);
-        var padding = style.Padding.Resolve(basisWidth);
+        var padding = style.Padding.Resolve(percentBasis);
         var insets = new Thickness(
             padding.Top + border.Top,
             padding.Right + border.Right,
@@ -62,10 +66,11 @@ internal sealed class BlockLayout
 
         // A width stated as one of the content keywords is settled by what the box holds rather than by
         // the containing block, so it is asked for here, where both are in hand.
+        var marginBasis = context.ContainingIsVertical ? context.ContainingBlock.Height : context.ContainingBlock.Width;
         var (borderBoxWidth, contentWidth) = _engine.ContentSizedWidth(box, basisWidth, context) is { } contentSized
             ? (contentSized, Math.Max(0, contentSized - insets.Horizontal))
             : BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insets.Horizontal,
-                context.ContainingBlock.Height);
+                context.ContainingBlock.Height, marginBasis);
         var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insets.Vertical);
 
@@ -127,7 +132,7 @@ internal sealed class BlockLayout
                     _engine,
                     context,
                     null,
-                    context.ForContainingBlock(new Size(contentWidth, childHeight))));
+                    context.ForContainingBlock(new Size(contentWidth, childHeight), box.Flow.IsVertical)));
         }
 
         // A height the content decides is the content's; a height the ratio suggests is the ratio's,
@@ -158,7 +163,12 @@ internal sealed class BlockLayout
 
         var basisInline = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var basisBlock = constraints.AvailableWidth ?? context.ContainingBlock.Width;
-        var padding = style.Padding.Resolve(basisInline);
+
+        // Percentages are read against the containing block's inline size, not against this box's own:
+        // a vertical element inside a horizontal one resolves its margins against the container's width
+        // (sizing-orthogonal-percentage-margin-001).
+        var percentBasis = context.ContainingIsVertical ? context.ContainingBlock.Height : context.ContainingBlock.Width;
+        var padding = style.Padding.Resolve(percentBasis);
         var insetsInline = padding.Vertical + border.Vertical;
         var insetsBlock = padding.Horizontal + border.Horizontal;
 
@@ -175,7 +185,7 @@ internal sealed class BlockLayout
         // width a row resolves: `ResolveWidth` is where a row subtracts them, and this is the same
         // rule with the axes exchanged. A percentage height still resolves against the whole extent
         // the box was given rather than against what its margins leave, which is also what a row does.
-        var (inlineBefore, inlineAfter) = flow.InlineMargins(style.Margin.Resolve(basisInline));
+        var (inlineBefore, inlineAfter) = flow.InlineMargins(style.Margin.Resolve(percentBasis));
         var childInline = declaredInline ?? Math.Max(0, basisInline - inlineBefore - inlineAfter - insetsInline);
         var childBlock = declaredBlock ?? context.ContainingBlock.Width;
 
@@ -230,7 +240,7 @@ internal sealed class BlockLayout
         var pendingGroup = MarginGroup.Zero;
         var throughStart = CollapsesThroughStart(box, flow, contentInline);
         var throughEnd = CollapsesThroughEnd(box, flow, contentInline);
-        var childContext = context.ForContainingBlock(new Size(basisBlock, contentInline));
+        var childContext = context.ForContainingBlock(new Size(basisBlock, contentInline), containingIsVertical: true);
         var constraints = MeasureConstraints.FitWidth(basisBlock);
         var startEscapes = throughStart;
         var floats = new ColumnFloats(flow, contentInline);
@@ -514,15 +524,16 @@ internal sealed class BlockLayout
         var style = box.Style;
         var flow = box.Flow;
         var basis = context.ContainingBlock.Width;
+        var percentBasis = context.ContainingIsVertical ? context.ContainingBlock.Height : basis;
 
         // A fragment of a broken box draws only the edges it owns: the border and padding on an edge it
         // was cut at belong to the fragment that really has that edge (CSS Break 3 §4.7).
         var border = slice?.Border ?? BorderOf(box);
-        var padding = slice?.Padding ?? style.Padding.Resolve(basis);
+        var padding = slice?.Padding ?? style.Padding.Resolve(percentBasis);
 
         var layout = new LayoutBox(box, KindOf(box))
         {
-            Margin = BoxModel.UsedMargin(style, basis, borderBox.Width),
+            Margin = BoxModel.UsedMargin(style, percentBasis, borderBox.Width),
             Border = border,
             Padding = padding,
             BorderBox = borderBox,
@@ -580,7 +591,7 @@ internal sealed class BlockLayout
                 contentWidth,
                 usedHeight ?? 0);
 
-        var childContext = context.ForContainingBlock(childBox);
+        var childContext = context.ForContainingBlock(childBox, box.Flow.IsVertical);
 
         // A box that holds its descendants - positioned, transformed, filtered, contained - lends the
         // whole subtree its padding box, so an absolute descendant anchors to it rather than to an
@@ -622,7 +633,7 @@ internal sealed class BlockLayout
             // two axes are swapped into.
             var atomic = flow.IsVertical
                 ? context
-                : context.ForContainingBlock(new Rect(contentX, contentY, contentWidth, usedHeight ?? 0));
+                : context.ForContainingBlock(new Rect(contentX, contentY, contentWidth, usedHeight ?? 0), box.Flow.IsVertical);
 
             var inline = new InlineContext(_engine, context, childContext, atomic);
 
@@ -656,7 +667,7 @@ internal sealed class BlockLayout
         var pendingGroup = MarginGroup.Zero;
         var throughTop = CollapsesThroughStart(box, box.Flow, contentWidth);
         var throughBottom = CollapsesThroughEnd(box, box.Flow, contentWidth);
-        var childContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
+        var childContext = context.ForContainingBlock(new Size(contentWidth, contentHeight), box.Flow.IsVertical);
         var constraints = MeasureConstraints.FitWidth(contentWidth);
         var tracks = TracksFor(box, contentWidth, 0);
         var topEscapes = throughTop;

@@ -20,6 +20,26 @@ public sealed class VerticalLayoutTests
     private const String Column = "writing-mode:vertical-rl;width:300px;height:200px;font-size:10px;line-height:1;margin:0";
 
     [Test]
+    public async Task AnOrthogonalChildReadsItsPercentageMarginsAgainstTheContainersInlineSize()
+    {
+        using var view = CreateView(400);
+
+        // The container is horizontal, two hundred wide and one hundred tall. The child runs a column,
+        // but its percentage margins still answer to the containing block's inline size - the width -
+        // so each is twenty and its own inline size is the height left over (CSS 2.1 section 8.3).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:200px;height:100px;font-size:10px;line-height:1;margin:0'>" +
+            "<div style='writing-mode:vertical-lr;margin:10%'>XX</div>" +
+            "</div></body></html>");
+
+        var boxes = Blocks(view, "div").ToList();
+
+        Assert.That(boxes[1].BorderBox.X, Is.EqualTo(20), "a tenth of the container's width");
+        Assert.That(boxes[1].BorderBox.Height, Is.EqualTo(60), "and the inline size is what the margins leave");
+    }
+
+    [Test]
     public async Task ColumnStacksBlockChildrenRightToLeft()
     {
         using var view = CreateView(400);

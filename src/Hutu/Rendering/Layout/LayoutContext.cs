@@ -75,7 +75,8 @@ internal readonly struct LayoutContext
         Rect? referenceBorderBox = null,
         Rect? referencePaddingBox = null,
         CornerRadii? referenceRadii = null,
-        PerspectiveView? perspective = null)
+        PerspectiveView? perspective = null,
+        Boolean containingIsVertical = false)
     {
         ContainingBlock = containingBlock;
         ContainingBlockRect = containingBlockRect;
@@ -92,6 +93,7 @@ internal readonly struct LayoutContext
         ReferencePaddingBox = referencePaddingBox;
         ReferenceRadii = referenceRadii;
         Perspective = perspective;
+        ContainingIsVertical = containingIsVertical;
     }
 
     /// <summary>
@@ -104,6 +106,13 @@ internal readonly struct LayoutContext
 
     /// <summary>Gets the box percentages, auto widths and relative positioning resolve against.</summary>
     public Size ContainingBlock { get; }
+
+    /// <summary>
+    /// Gets whether the containing block itself runs its lines down the page. A percentage margin or
+    /// padding is read against its inline size - the width of a horizontal block, the height of a
+    /// vertical one - even on an orthogonal child (CSS 2.1 section 8.3; CSS Writing Modes 3).
+    /// </summary>
+    public Boolean ContainingIsVertical { get; }
 
     /// <summary>Gets the containing block's rectangle, in document coordinates.</summary>
     public Rect ContainingBlockRect { get; }
@@ -189,7 +198,8 @@ internal readonly struct LayoutContext
         ReferenceBorderBox,
         ReferencePaddingBox,
         ReferenceRadii,
-        Perspective);
+        Perspective,
+        ContainingIsVertical);
 
     /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
@@ -215,7 +225,8 @@ internal readonly struct LayoutContext
         ReferenceBorderBox,
         ReferencePaddingBox,
         ReferenceRadii,
-        Perspective);
+        Perspective,
+        ContainingIsVertical);
 
     /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
@@ -237,7 +248,8 @@ internal readonly struct LayoutContext
         ReferenceBorderBox,
         ReferencePaddingBox,
         ReferenceRadii,
-        Perspective);
+        Perspective,
+        ContainingIsVertical);
 
     /// <summary>Gets the context a box's children see, with its content box as their containing block.</summary>
     /// <remarks>
@@ -246,7 +258,7 @@ internal readonly struct LayoutContext
     /// would shorten only the lines of the container the floats sit in - which is the difference between
     /// a title beside its picture and the same title one <c>div</c> deeper.
     /// </remarks>
-    public LayoutContext ForContainingBlock(Size contentBox) => new(
+    public LayoutContext ForContainingBlock(Size contentBox, Boolean containingIsVertical = false) => new(
         contentBox,
         new Rect(ContainingBlockRect.X, ContainingBlockRect.Y, contentBox.Width, contentBox.Height),
         Viewport,
@@ -261,13 +273,14 @@ internal readonly struct LayoutContext
         ReferenceBorderBox,
         ReferencePaddingBox,
         ReferenceRadii,
-        Perspective);
+        Perspective,
+        containingIsVertical);
 
     /// <summary>
     /// Gets the context a box's children see when the content box's position is known, which is what
     /// positioning needs and a bare size cannot express.
     /// </summary>
-    public LayoutContext ForContainingBlock(Rect contentBox) => new(
+    public LayoutContext ForContainingBlock(Rect contentBox, Boolean containingIsVertical = false) => new(
         new Size(contentBox.Width, contentBox.Height),
         contentBox,
         Viewport,
@@ -282,7 +295,8 @@ internal readonly struct LayoutContext
         ReferenceBorderBox,
         ReferencePaddingBox,
         ReferenceRadii,
-        Perspective);
+        Perspective,
+        containingIsVertical);
 
     /// <summary>
     /// Gets the context a positioned box's children see: the absolute containing block becomes this
@@ -304,7 +318,8 @@ internal readonly struct LayoutContext
         ReferenceBorderBox,
         ReferencePaddingBox,
         ReferenceRadii,
-        Perspective);
+        Perspective,
+        ContainingIsVertical);
 
     /// <summary>
     /// Gets the context a box that captures its descendants hands them: the padding box becomes the frame
@@ -328,7 +343,8 @@ internal readonly struct LayoutContext
         ReferenceBorderBox,
         ReferencePaddingBox,
         ReferenceRadii,
-        Perspective);
+        Perspective,
+        ContainingIsVertical);
 
     /// <summary>
     /// Gets the context with the boxes of the element that establishes it, so a shape an
