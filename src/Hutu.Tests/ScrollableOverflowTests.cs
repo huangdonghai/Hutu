@@ -1,4 +1,5 @@
 using Hutu.Rendering.Layout;
+using Hutu.Rendering.Paint;
 using NUnit.Framework;
 using System;
 using System.Collections.Generic;
@@ -57,6 +58,26 @@ public sealed class ScrollableOverflowTests
             layout.Height,
             Is.EqualTo(400).Within(0.5),
             "and as tall: a document shorter than the window it is read in is scrolled over the whole window");
+    }
+
+    [Test]
+    public async Task TheRootsOverflowIsFixedToTheViewportAndNotToItsOwnBox()
+    {
+        using var view = CreateView();
+
+        // A root that hides its overflow hands that hiding to the viewport (CSS Overflow 3 §3.3), and
+        // the viewport is the window rather than the box the document made - which for a page holding
+        // nothing at all is no height whatever. Cutting the children to that box loses the page.
+        await view.SetHtml(
+            "<html style='overflow:hidden'><body style='margin:0'>" +
+            "<div style='position:absolute;top:0;left:0;width:100px;height:100px;background:green'></div>" +
+            "</body></html>");
+
+        var ink = view.Paint!.Commands.OfType<FillCommand>().Where(command => command.Bounds.Width == 100).ToList();
+
+        Assert.That(view.Paint.Commands.OfType<PushClipCommand>(), Is.Empty,
+            "the root's own box is not a scrollport, so nothing is clipped to it");
+        Assert.That(ink, Is.Not.Empty, "and the box the page stands in is drawn");
     }
 
     [Test]

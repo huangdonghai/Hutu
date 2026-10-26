@@ -412,7 +412,13 @@ internal sealed record LayoutProfile(
 
         // An inline element has no box of its own to clip anything to, and CSS says `overflow` has no
         // effect on one: honouring it would start cutting off the element's own runs.
-        box.ClipsOverflow = box.Kind != LayoutKind.Inline && style.ClipsOverflow;
+        // The root's overflow is not its own to honour either - it is fixed to the viewport instead
+        // (CSS Overflow 3 §3.3), and the viewport is the window the page is drawn into, not the box the
+        // document's own content made, which can be a good deal shorter.
+        var isRoot = box.Source.Element is { } source &&
+            ReferenceEquals(source, source.Owner?.DocumentElement);
+
+        box.ClipsOverflow = box.Kind != LayoutKind.Inline && style.ClipsOverflow && !isRoot;
 
         if (box.Kind == LayoutKind.Inline)
         {
