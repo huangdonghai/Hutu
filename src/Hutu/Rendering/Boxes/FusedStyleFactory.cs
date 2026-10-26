@@ -976,7 +976,8 @@ internal static class FusedStyleFactory
 
             // The clip is the box's own: not inherited, so a box that says nothing is clipped by nothing.
             Clip = ComputedStyle.ResolveClipFused(find("clip"), dimensions, face, parent.Clip),
-            ClipPath = ComputedStyle.ResolveClipPathFused(find("clip-path"), dimensions, face, parent.ClipPath),
+            ClipPath = ComputedStyle.ResolveClipPathFused(
+                find("clip-path"), dimensions, face, parent.ClipPath, element),
             ShapeOutside = ComputedStyle.ResolveShapeOutsideFused(
                 find("shape-outside"), dimensions, face, parent.ShapeOutside),
             ShapeMargin = find("shape-margin")?.RawValue,

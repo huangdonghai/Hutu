@@ -22,6 +22,9 @@ internal enum ClipForm
 
     /// <summary><c>path()</c>, whose own coordinates start at the reference box's top left corner.</summary>
     Path,
+
+    /// <summary><c>shape()</c>, whose commands are resolved against the reference box when it is cut.</summary>
+    Shape,
 }
 
 /// <summary>The box a shape measures itself against, as the page named it.</summary>
@@ -144,6 +147,9 @@ internal sealed partial class ClipPathShape
     /// <summary>Gets the edge of a <c>path()</c>, in the pixels the string itself wrote.</summary>
     public IReadOnlyList<ClipSegment>? Segments { get; set; }
 
+    /// <summary>Gets the commands of a <c>shape()</c>, with their lengths still unresolved.</summary>
+    public IReadOnlyList<ShapeCommand>? ShapeCommands { get; set; }
+
     /// <summary>
     /// Works out what the shape covers on the box it was given, and how the ink is to be cut to it.
     /// </summary>
@@ -157,6 +163,7 @@ internal sealed partial class ClipPathShape
             ClipForm.Rectangle => RectangleOf(reference),
             ClipForm.Ellipse => EllipseOf(reference),
             ClipForm.Polygon => PolygonOf(reference),
+            ClipForm.Shape => ShapeOf(reference),
             _ => PathOf(reference),
         };
     }

@@ -2498,7 +2498,8 @@ internal readonly struct ComputedStyle
         ICssProperty? declared,
         IRenderDimensions dimensions,
         LengthReader.FontSource font,
-        ClipPathShape? parent)
+        ClipPathShape? parent,
+        IElement? element = null)
     {
         if (declared is null)
         {
@@ -2510,7 +2511,7 @@ internal readonly struct ComputedStyle
             return parent;
         }
 
-        return ClipPathShape.Read(declared.RawValue?.CssText, dimensions, font);
+        return ClipPathShape.Read(declared.RawValue?.CssText, dimensions, font, element);
     }
 
     /// <summary>
@@ -4942,7 +4943,7 @@ internal readonly struct ComputedStyle
     public ClipPathShape? ClipPath =>
         _values.Fused is { } fused
             ? fused.ClipPath
-            : ClipPathShape.Read(ClipPathText, _dimensions, FontSourceOf());
+            : ClipPathShape.Read(ClipPathText, _dimensions, FontSourceOf(), _element);
 
     /// <summary>Gets the words a <c>clip-path</c> declaration was written with, or null where it says nothing.</summary>
     public String? ClipPathText => _style.GetPropertyValue("clip-path");

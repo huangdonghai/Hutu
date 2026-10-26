@@ -1,5 +1,6 @@
 using System;
 using AngleSharp.Css;
+using AngleSharp.Dom;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -19,8 +20,12 @@ namespace Hutu.Rendering;
 internal sealed partial class ClipPathShape
 {
     /// <summary>Reads the declaration's text, or null where it states no shape this engine can draw.</summary>
-    public static ClipPathShape? Read(String? text, IRenderDimensions dimensions, LengthReader.FontSource font) =>
-        Read(text, dimensions, font, ClipBox.Border, shapesOnly: false);
+    public static ClipPathShape? Read(
+        String? text,
+        IRenderDimensions dimensions,
+        LengthReader.FontSource font,
+        IElement? element = null) =>
+        Read(text, dimensions, font, ClipBox.Border, shapesOnly: false, element);
 
     /// <summary>
     /// Reads a <c>shape-outside</c> declaration, whose grammar is the shapes above with a different box
@@ -30,20 +35,29 @@ internal sealed partial class ClipPathShape
     /// what the chapter says a fetch that yields nothing leaves: the float area unaffected.
     /// </summary>
     public static ClipPathShape? ReadForFloat(String? text, IRenderDimensions dimensions, LengthReader.FontSource font) =>
-        Read(text, dimensions, font, ClipBox.Margin, shapesOnly: true);
+        Read(text, dimensions, font, ClipBox.Margin, shapesOnly: true, element: null);
 
     private static ClipPathShape? Read(
         String? text,
         IRenderDimensions dimensions,
         LengthReader.FontSource font,
         ClipBox stated,
-        Boolean shapesOnly)
+        Boolean shapesOnly,
+        IElement? element)
     {
         var value = text?.Trim();
 
         if (value is null || value.Length == 0 || Is(value, "none"))
         {
             return null;
+        }
+
+        // An SVG `clipPath` is a shape whose outline lives in the document rather than in the
+        // declaration. A float's grammar has no such reference - there the third alternative is an
+        // image - so only a clip-path asks for one.
+        if (!shapesOnly && value.StartsWith("url(", StringComparison.OrdinalIgnoreCase))
+        {
+            return ReadSvgReference(value, stated, element);
         }
 
         // A box on its own is the whole of the value. Anything else is a shape with an optional box beside
@@ -90,9 +104,80 @@ internal sealed partial class ClipPathShape
             case "path":
                 return ReadPath(body, terms, box);
 
+            case "shape":
+                return ReadShapeFunction(body, terms, box);
+
             default:
                 return null;
         }
+    }
+
+    /// <summary>
+    /// Reads a <c>url("#id")</c> that names an SVG <c>clipPath</c>: the path data of the shapes inside
+    /// it, in the user space the element it clips is measured in. A reference that names nothing, or a
+    /// <c>clipPath</c> holding no shape this reader can follow, is no clip at all.
+    /// </summary>
+    private static ClipPathShape? ReadSvgReference(
+        String value,
+        ClipBox box,
+        IElement? element)
+    {
+        var open = value.IndexOf('(');
+        var close = value.LastIndexOf(')');
+
+        if (open < 0 || close <= open || element?.Owner is not { } document)
+        {
+            return null;
+        }
+
+        var target = Unquote(value[(open + 1)..close].Trim());
+
+        if (target is not { Length: > 1 } || target[0] != '#')
+        {
+            return null;
+        }
+
+        if (document.GetElementById(target[1..]) is not { } clip ||
+            !clip.LocalName.Equals("clipPath", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var segments = new List<ClipSegment>();
+        var evenOdd = false;
+
+        foreach (var child in clip.Children)
+        {
+            if (!child.LocalName.Equals("path", StringComparison.OrdinalIgnoreCase) ||
+                child.GetAttribute("d") is not { Length: > 0 } data ||
+                ReadOutline(data) is not { Count: > 0 } outline)
+            {
+                continue;
+            }
+
+            if (outline[0].Edge != ClipEdge.Begin)
+            {
+                outline.Insert(0, ClipSegment.To(ClipEdge.Begin, 0, 0));
+            }
+
+            segments.AddRange(outline);
+
+            if (child.GetAttribute("clip-rule") is { } rule &&
+                rule.Equals("evenodd", StringComparison.OrdinalIgnoreCase))
+            {
+                evenOdd = true;
+            }
+        }
+
+        return segments.Count == 0
+            ? null
+            : new ClipPathShape
+            {
+                Form = ClipForm.Path,
+                Box = box,
+                EvenOdd = evenOdd,
+                Segments = segments,
+            };
     }
 
     /// <summary>Splits the value into the shape it wrote and the box it named, whichever end the box is on.</summary>
