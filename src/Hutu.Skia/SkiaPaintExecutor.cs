@@ -1814,7 +1814,7 @@ public sealed class SkiaPaintExecutor
             command.Justifies,
             command.Expand,
             command.WordSpacing,
-            command.Flow.SetsTextBackwards);
+            command.Reversed ?? command.Flow.SetsTextBackwards);
 
         if (blob is not null)
         {

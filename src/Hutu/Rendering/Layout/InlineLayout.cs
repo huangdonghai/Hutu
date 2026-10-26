@@ -1128,10 +1128,9 @@ internal sealed class InlineLayout
             // A line whose text runs both ways is drawn in the order the bidi algorithm gives it: the
             // runs are split where their direction changes, and the pieces stand in the line by their
             // levels (UAX #9 L2). A line of one direction is left exactly as the markup wrote it.
-            if (!flow.IsVertical)
-            {
-                BidiOrder(line, flow, container.Style);
-            }
+            // A column is a line like any other - it only runs the other way - and the level a run is
+            // set at says which end of its room its first character stands at there too.
+            BidiOrder(line, flow, container.Style);
 
             // The line box spans the whole inline extent of the content box and only as much of the
             // block one as it needs, so in a row it is the content width and the line's own height,

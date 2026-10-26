@@ -176,7 +176,7 @@ internal static class LayoutDumper
 
         var name = element.LocalName;
 
-        if (element.Id.Length > 0)
+        if (element.Id?.Length > 0)
         {
             name += "#" + element.Id;
         }

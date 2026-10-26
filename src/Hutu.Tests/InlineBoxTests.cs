@@ -631,9 +631,36 @@ public sealed class InlineBoxTests
         "'>" + content + "</p></body></html>";
 
     /// <summary>Gets the same content in a column two hundred pixels long.</summary>
-    private static String Column(String content) =>
+    private static String Column(String content, String attributes = "") =>
         "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:1;" +
-        "writing-mode:vertical-rl;height:200px'>" + content + "</p></body></html>";
+        "writing-mode:vertical-rl;height:200px" + attributes + "'>" + content + "</p></body></html>";
+
+    [Test]
+    public async Task ALatinRunInARightToLeftColumnTurnsToTheNearEnd()
+    {
+        using var view = CreateView();
+
+        // A column of a right-to-left page reads upwards, but the Latin run on it keeps the order its
+        // own letters ask for, so the first of them stands at the top of the room the run was given.
+        await view.SetHtml(Column("Xppp", ";direction:rtl"));
+
+        var command = view.Paint!.Commands.OfType<TextCommand>().Single(run => run.Text == "Xppp");
+
+        Assert.That(command.Reversed, Is.False,
+            "the line is right to left but the run is set at an even level, which is read top to bottom");
+    }
+
+    [Test]
+    public async Task AHebrewRunInARightToLeftColumnIsLeftToTheShaper()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Column("\u05D0\u05D1\u05D2", ";direction:rtl"));
+
+        var command = view.Paint!.Commands.OfType<TextCommand>().Single(run => run.Text == "\u05D0\u05D1\u05D2");
+
+        Assert.That(command.Reversed, Is.False, "a Hebrew run reads upward of its own accord");
+    }
 
     [Test]
     public async Task ABdiReadsItsOwnTextAndIsolatesIt()
