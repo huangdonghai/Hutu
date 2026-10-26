@@ -1186,7 +1186,12 @@ internal sealed record LayoutProfile(
 
         layout.Position = position.Position;
         layout.ZIndex = position.HasZIndex ? position.ZIndex : 0;
-        layout.EstablishesStackingContext = box.Style.EstablishesStackingContext;
+
+        // A z-index applies to a flex or grid item even while the item stays in the flow, where it makes
+        // the item a stacking context of its own that paints at its stated level (CSS Flexbox 1 §5.4,
+        // CSS Grid 1 §9). Every other in-flow box needs a position for the level to mean anything.
+        layout.HasStackingLevel = box.IsItem && position.HasZIndex;
+        layout.EstablishesStackingContext = box.Style.EstablishesStackingContext || layout.HasStackingLevel;
         layout.Opacity = box.Style.Opacity;
 
         // A transform (and a motion-path offset transform) changes only how the box is drawn, never

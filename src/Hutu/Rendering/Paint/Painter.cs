@@ -779,7 +779,24 @@ internal sealed class Painter
         // 3 §4). It is painted just above the container's border and below what the columns hold.
         // The rules a container's gaps ask for, where its own layout worked them out: a flex, grid or
         // grid-lanes container's gaps from its context, a multi-column one's from the columns it made.
+        //
+        // A box that hides its overflow hides the decorations too. Unlike the box's own border and
+        // background, which stay where they are, a decoration belongs to the scrolled content: it travels
+        // with the items and is cut at the padding edge, which is what a grid wider than its scrollport
+        // asks for (grid-gap-decorations-035).
+        var cutsRules = box.ClipsOverflow && box.GapDecorations is { Count: > 0 };
+
+        if (cutsRules)
+        {
+            target.Add(new PushClipCommand(box.PaddingBox, box.PaddingRadii));
+        }
+
         AddGapDecorations(box, style, target);
+
+        if (cutsRules)
+        {
+            target.Add(new PopClipCommand(box.PaddingBox));
+        }
     }
 
     /// <summary>
@@ -903,20 +920,21 @@ internal sealed class Painter
     {
         foreach (var child in box.Children)
         {
-            if (child.Position != PositionMode.Static)
+            if (child.Position != PositionMode.Static || child.HasStackingLevel)
             {
                 // A relatively positioned box is not taken out of the flow - its containing block is the
                 // place it already stands - so every clip between it and the layer reaches it. One taken
                 // right out is clipped along its containing block chain only: the boxes it merely stands in,
                 // being static, hide nothing from it. A box fixed to the viewport is out of the document's
-                // chain altogether. What a box carries is what stood around it where it was found - its own
-                // clip and its own overflow belong to the painting of it, not to the list put back around
-                // it.
+                // chain altogether. A flex or grid item that states a level stays in the flow too, so the
+                // clips between it and its context reach it just as they reach a relatively placed box.
+                // What a box carries is what stood around it where it was found - its own clip and its own
+                // overflow belong to the painting of it, not to the list put back around it.
                 var reached = child.Position switch
                 {
                     PositionMode.Relative => CopiesOf(stack.ActiveClips),
                     PositionMode.Absolute => CopiesOf(stack.ChainClips),
-                    _ => NoClips,
+                    _ => child.HasStackingLevel ? CopiesOf(stack.ActiveClips) : NoClips,
                 };
 
                 var waits = child.ZIndex < 0 ? stack.Below : child.ZIndex == 0 ? stack.Pending : stack.Above;
@@ -1198,7 +1216,9 @@ internal sealed class Painter
 
         foreach (var child in box.Children)
         {
-            if (child.Position == PositionMode.Static)
+            // An item that states a level was gathered by the context above even though it stays in the
+            // flow, so it is painted from that layer rather than by any of the flow's three passes.
+            if (child.Position == PositionMode.Static && !child.HasStackingLevel)
             {
                 stays.Add(child);
             }

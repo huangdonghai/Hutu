@@ -72,12 +72,13 @@ internal static class GridGapBands
                 continue;
             }
 
-            foreach (var (from, to, fromAtBound, toAtBound) in Segments(gap, crossings, breaks, items))
+            foreach (var (from, to, fromAtBound, toAtBound) in Segments(
+                         gap, crossings, breaks, items, visibility, before[index], after[index]))
             {
                 var start = from + Inset(axis, fromAtBound, true, from, crossings, across);
                 var end = to - Inset(axis, toAtBound, false, to, crossings, across);
 
-                if (end > start && Shown(visibility, gap, before[index], after[index], start, end, items))
+                if (end > start)
                 {
                     target.Add(new GapRuleSegment(
                         GapRuleBands.Band(rule, gap.CentreIsX, gap.Centre, start, end),
@@ -186,15 +187,23 @@ internal static class GridGapBands
         GridGapRun gap,
         IReadOnlyList<GridGapRun> crossings,
         GapRuleBreak breaks,
-        IReadOnlyList<Rect> items)
+        IReadOnlyList<Rect> items,
+        GapRuleVisibility visibility,
+        (Double From, Double To) before,
+        (Double From, Double To) after)
     {
         var segments = new List<(Double, Double, Boolean, Boolean)>();
 
         if (breaks == GapRuleBreak.None)
         {
             // Nothing splits the decoration: it runs from one end of the gap to the other, whatever it
-            // crosses - including the items, which are painted over it.
-            segments.Add((gap.From, gap.To, true, true));
+            // crosses - including the items, which are painted over it. Visibility still asks about the
+            // whole of that one segment, since there is nothing smaller to ask about.
+            if (Shown(visibility, gap, before, after, gap.From, gap.To, items))
+            {
+                segments.Add((gap.From, gap.To, true, true));
+            }
+
             return segments;
         }
 
@@ -213,6 +222,11 @@ internal static class GridGapBands
 
         endpoints.Add(gap.To);
 
+        // Visibility is a question about a gap decoration segment, and a segment is what a run of these
+        // junction-to-junction pieces becomes once it is merged. A piece that lies beside nothing is not
+        // part of a segment at all, so it ends the run rather than being swallowed into it - which is what
+        // keeps a decoration from reaching into the empty rows or columns past the last item
+        // (grid-gap-decorations-068).
         var cursor = 0;
 
         while (cursor + 1 < endpoints.Count)
@@ -221,16 +235,19 @@ internal static class GridGapBands
             var end = endpoints[cursor + 1];
             cursor += 2;
 
-            if (Discontiguous(gap, start, end, items))
+            if (!Shown(visibility, gap, before, after, start, end, items) ||
+                Discontiguous(gap, start, end, items))
             {
                 continue;
             }
 
             while (cursor + 1 < endpoints.Count)
             {
+                var candidateStart = endpoints[cursor];
                 var candidate = endpoints[cursor + 1];
 
-                if (Discontiguous(gap, start, candidate, items) ||
+                if (!Shown(visibility, gap, before, after, candidateStart, candidate, items) ||
+                    Discontiguous(gap, start, candidate, items) ||
                     (breaks == GapRuleBreak.Intersection && !Flanked(gap, start, candidate, crossings, items)))
                 {
                     break;

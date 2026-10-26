@@ -206,6 +206,11 @@ internal sealed class GapRuleTerms<T> where T : struct
                     auto ??= new List<T>();
                     section = auto;
                     Expand(section, inner, 1, value);
+
+                    // Everything written after the automatic repeater takes the last gaps, whether it is
+                    // a plain value or a repeater of its own (§4.6). The repeater itself stands for the
+                    // gaps no other value reaches, so it is the last thing that belongs to the middle.
+                    section = trailing;
                 }
                 else
                 {

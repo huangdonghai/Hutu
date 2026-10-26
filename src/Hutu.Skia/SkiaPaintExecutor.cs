@@ -718,21 +718,21 @@ public sealed class SkiaPaintExecutor
         var box = command.Bounds;
         var widths = command.Widths;
 
-        DrawSide(canvas, new Rect(box.X, box.Y, box.Width, widths.Top), command.TopColor);
+        DrawSide(canvas, new Rect(box.X, box.Y, box.Width, widths.Top), command.TopColor, snap: true);
 
         if (widths.Bottom > 0)
         {
-            DrawSide(canvas, new Rect(box.X, box.Bottom - widths.Bottom, box.Width, widths.Bottom), command.BottomColor);
+            DrawSide(canvas, new Rect(box.X, box.Bottom - widths.Bottom, box.Width, widths.Bottom), command.BottomColor, snap: true);
         }
 
         if (widths.Left > 0)
         {
-            DrawSide(canvas, new Rect(box.X, box.Y, widths.Left, box.Height), command.LeftColor);
+            DrawSide(canvas, new Rect(box.X, box.Y, widths.Left, box.Height), command.LeftColor, snap: true);
         }
 
         if (widths.Right > 0)
         {
-            DrawSide(canvas, new Rect(box.Right - widths.Right, box.Y, widths.Right, box.Height), command.RightColor);
+            DrawSide(canvas, new Rect(box.Right - widths.Right, box.Y, widths.Right, box.Height), command.RightColor, snap: true);
         }
     }
 
@@ -1093,7 +1093,7 @@ public sealed class SkiaPaintExecutor
         box.Right - (Single)insets.Right,
         box.Bottom - (Single)insets.Bottom);
 
-    private static void DrawSide(SKCanvas canvas, Rect side, UInt32 color)
+    private static void DrawSide(SKCanvas canvas, Rect side, UInt32 color, Boolean snap = false)
     {
         if (side.Width <= 0 || side.Height <= 0)
         {
@@ -1101,7 +1101,14 @@ public sealed class SkiaPaintExecutor
         }
 
         using var paint = new SKPaint { Color = new SKColor(color), IsAntialias = false };
-        canvas.DrawRect(ToRect(side), paint);
+
+        // A plain side is a background in every way that matters: a browser lays both down as whole
+        // pixels, so a side left at half a pixel and a fill left at the same half pixel have to round
+        // alike. Without this a gap decoration painted as a border side and the same band painted as a
+        // background in its reference part over one pixel column (grid-gap-decorations-052).
+        var area = snap ? SnapToDevice(canvas, ToRect(side)) : ToRect(side);
+
+        canvas.DrawRect(area, paint);
     }
 
     /// <summary>

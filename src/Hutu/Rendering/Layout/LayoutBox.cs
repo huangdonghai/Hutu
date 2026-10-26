@@ -103,6 +103,14 @@ internal sealed class LayoutBox
     /// <summary>Gets or sets the declared stacking level, or zero for an automatic one.</summary>
     public Int32 ZIndex { get; set; }
 
+    /// <summary>
+    /// Gets or sets whether the box joins the stacking order even though it stays in the flow, which is
+    /// what a <c>z-index</c> written on a flex or grid item does: the item is a stacking context of its
+    /// own and paints at its stated level among the positioned boxes of its context, rather than with
+    /// the in-flow content around it (CSS Flexbox 1 §5.4, CSS Grid 1 §9).
+    /// </summary>
+    public Boolean HasStackingLevel { get; set; }
+
     /// <summary>Gets or sets the rule that pins a sticky box to the viewport as the page scrolls.</summary>
     public StickyConstraint? Sticky { get; set; }
 

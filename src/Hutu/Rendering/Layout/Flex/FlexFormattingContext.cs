@@ -789,16 +789,17 @@ internal sealed partial class FlexFormattingContext
             // An item's contribution along the container's main axis is the larger of what its content
             // wants and the size it states, clamped by its own min and max main size, so an item told
             // to be 14 wide contributes 14 however little its content comes to (CSS Flexbox 1 §9.9.3).
-            // Across the axis a stated size is not read here: the item's outer content size is what the
-            // line has to hold, and a definite cross size is honoured when the item is laid out.
+            // Across the axis the item's outer content size is what the line has to hold, but the inline
+            // axis is not always the main one: a column container's inline size is its cross size, and a
+            // stated width is then exactly what the item contributes - a column holding a 6px child is
+            // 6px wide whatever the child's own content comes to.
             var childIntrinsic = _engine.MeasureContentIntrinsic(child, context);
             var margin = child.Style.Margin.Resolve(basis).Horizontal;
 
             var childMin = childIntrinsic.MinContent + margin;
             var childMax = childIntrinsic.MaxContent + margin;
 
-            if (mainIsHorizontal &&
-                BoxModel.SettledInlineExtent(
+            if (BoxModel.SettledInlineExtent(
                     child.Style,
                     basis,
                     InlineInsets(child, basis),
