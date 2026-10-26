@@ -61,8 +61,25 @@ internal readonly record struct StyleRecord(
 /// </summary>
 internal static class ConstraintValidity
 {
+    /// <summary>The elements HTML 4.10.22 counts as form controls that a fieldset can hold down.</summary>
+    private static readonly String[] Controls =
+    {
+        "input", "select", "textarea", "button", "keygen", "optgroup", "option",
+    };
+
     internal static void Apply(IElement element)
     {
+        // `:enabled` and `:disabled` ask about the state HTML gives the element, and the library reads
+        // them off the element's own attribute alone: a fieldset that is disabled still answers
+        // `:enabled`, and a control standing inside one is none the worse for it. HTML makes both
+        // disabled - a control goes with the fieldset it sits in, except under the legend that fieldset
+        // uses to name itself (4.10.22 "a fieldset element that is not disabled").
+        if (StandsDisabled(element))
+        {
+            element.SetPseudoClass("disabled", true);
+            element.SetPseudoClass("enabled", false);
+        }
+
         if (element is not IHtmlInputElement input)
         {
             return;
@@ -73,6 +90,70 @@ internal static class ConstraintValidity
             element.SetPseudoClass("valid", true);
             element.SetPseudoClass("invalid", false);
         }
+    }
+
+    /// <summary>
+    /// Gets whether the element is disabled: a fieldset by its own attribute, and a control by the
+    /// first fieldset above it that does not reach it through the legend that fieldset is labelled by.
+    /// </summary>
+    private static Boolean StandsDisabled(IElement element)
+    {
+        var tag = element.LocalName.ToLowerInvariant();
+
+        if (tag == "fieldset")
+        {
+            return element.HasAttribute("disabled");
+        }
+
+        if (Array.IndexOf(Controls, tag) < 0)
+        {
+            return false;
+        }
+
+        var labelled = false;
+
+        for (var node = element.ParentElement; node is not null; node = node.ParentElement)
+        {
+            var name = node.LocalName.ToLowerInvariant();
+
+            if (name == "legend")
+            {
+                // Only the first legend of a fieldset is its name, and only that one lets its
+                // controls out of the fieldset's hold.
+                var owner = node.ParentElement;
+                labelled = owner is not null &&
+                    owner.LocalName.Equals("fieldset", StringComparison.OrdinalIgnoreCase) &&
+                    Named(node, owner);
+                continue;
+            }
+
+            if (name != "fieldset")
+            {
+                continue;
+            }
+
+            if (node.HasAttribute("disabled") && !labelled)
+            {
+                return true;
+            }
+
+            labelled = false;
+        }
+
+        return false;
+    }
+
+    private static Boolean Named(IElement legend, IElement fieldset)
+    {
+        foreach (var child in fieldset.Children)
+        {
+            if (child.LocalName.Equals("legend", StringComparison.OrdinalIgnoreCase))
+            {
+                return ReferenceEquals(child, legend);
+            }
+        }
+
+        return false;
     }
 }
 
