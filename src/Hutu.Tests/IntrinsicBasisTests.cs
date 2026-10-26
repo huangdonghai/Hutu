@@ -90,20 +90,19 @@ public sealed class IntrinsicBasisTests
     }
 
     /// <summary>
-    /// <c>min()</c>, <c>max()</c> and <c>clamp()</c> do not survive the style layer today: the
-    /// declaration reaches the DOM but AngleSharp drops it, the length reader falls back to
-    /// <c>auto</c>, and the box ends up sized as though nothing had been declared. The flag follows
-    /// what the engine does rather than what CSS asks for, so a box carrying one is basis-free - it
-    /// never consults the width at all.
+    /// A <c>min()</c> written where a length belongs reaches the style layer as a math length: the
+    /// grammar knows the function now, so the declaration survives the parse and the box model is asked
+    /// to resolve it rather than falling back to <c>auto</c>.
     /// </summary>
     /// <remarks>
-    /// A characterisation, not a wish: the day this fails, the style layer has learned to read the
-    /// function. The scan in the box builder already looks inside a math length's arguments and
-    /// should still answer correctly, but the sample pages have to be measured again - until now
-    /// nothing has ever exercised that path.
+    /// This was a characterisation of the gap - "the day this fails, the style layer has learned to read
+    /// the function". That day is 2026-10-26: AngleSharp's calc grammar now takes min(), max() and
+    /// clamp() (fork <c>deps/AngleSharp.Css</c>), so the width is a math length and the box is no longer
+    /// basis-free, since a share inside the function reads the containing block. What the layout makes
+    /// of that length is a later question than what the cascade holds.
     /// </remarks>
     [Test]
-    public async Task AMathFunctionDeclinesToALengthToday()
+    public async Task AMathFunctionReachesTheStyleAsAMathLength()
     {
         using var view = CreateView(800);
         await view.SetHtml(
@@ -113,8 +112,8 @@ public sealed class IntrinsicBasisTests
 
         var box = Boxes(view, "div")[0];
 
-        Assert.That(box.Style.Width.Kind, Is.EqualTo(StyleLengthKind.Auto));
-        Assert.That(box.IntrinsicIgnoresBasis, Is.True);
+        Assert.That(box.Style.Width.Kind, Is.EqualTo(StyleLengthKind.Math));
+        Assert.That(box.IntrinsicIgnoresBasis, Is.False);
     }
 
     /// <summary>
