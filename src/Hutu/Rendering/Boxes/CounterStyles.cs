@@ -164,7 +164,7 @@ internal static class CounterStyles
         // anti-fraud digits for the first three places only - 肆 onward are the plain characters, which
         // is what the corpus shows a browser spelling.
         ["japanese-informal"] = new("一二三四五六七八九", "〇", "マイナス", "十", "百", "千", "万", "億", false, true, false),
-        ["japanese-formal"] = new("壱弐参肆伍陸柒捌玖", "零", "マイナス", "拾", "百", "阡", "萬", "億", true, false, false),
+        ["japanese-formal"] = new("壱弐参四五六七八九", "零", "マイナス", "拾", "百", "阡", "萬", "億", true, false, false),
 
         // The Korean readings: the hangul one spelled out in the alphabet, the two hanja ones in the
         // characters, the formal of those keeping 壹貳參 where the plain reading drops the one.
