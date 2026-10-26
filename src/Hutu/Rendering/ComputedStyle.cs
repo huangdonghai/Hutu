@@ -1350,6 +1350,14 @@ internal readonly struct ComputedStyle
         {
             var dir = current.GetAttribute("dir")?.Trim();
 
+            // A bdi that writes no dir takes auto for its default, so its own text names the direction
+            // rather than the page around it (HTML §4.5.4: "the dir attribute defaults to auto on this
+            // element"). The element is its own paragraph, so the walk stops here.
+            if (dir is null && current.LocalName.Equals("bdi", StringComparison.OrdinalIgnoreCase))
+            {
+                return FirstStrongDirection(current);
+            }
+
             if (String.Equals(dir, "rtl", StringComparison.OrdinalIgnoreCase))
             {
                 return TextDirection.RightToLeft;

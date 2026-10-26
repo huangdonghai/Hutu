@@ -175,6 +175,7 @@ BDO[DIR='rtl']  { direction: rtl; unicode-bidi: isolate-override }
 
 *[DIR='ltr']    { direction: ltr; unicode-bidi: isolate }
 *[DIR='rtl']    { direction: rtl; unicode-bidi: isolate }
+BDI             { unicode-bidi: isolate }
 ";
 
     private ICssStyleSheet? _default;

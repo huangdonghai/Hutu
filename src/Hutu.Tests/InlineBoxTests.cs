@@ -635,6 +635,24 @@ public sealed class InlineBoxTests
         "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:1;" +
         "writing-mode:vertical-rl;height:200px'>" + content + "</p></body></html>";
 
+    [Test]
+    public async Task ABdiReadsItsOwnTextAndIsolatesIt()
+    {
+        using var view = CreateView(300);
+
+        // A hundred-pixel block in a right-to-left page stands against the right edge; its own text
+        // reads left to right because the bdi's direction is its content's, not the page's (HTML §4.5.4,
+        // "the dir attribute defaults to auto on this element").
+        await view.SetHtml(
+            "<html><body style='margin:0;direction:rtl'>" +
+            "<bdi style='display:block;width:100px'>abc</bdi></body></html>");
+
+        Assert.That(
+            Text(view, "abc").BorderBox.X,
+            Is.EqualTo(200),
+            "the bdi's text starts at its box's left edge, where a left-to-right line begins");
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth = 600)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
