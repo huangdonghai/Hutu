@@ -16,12 +16,11 @@ namespace Hutu.Rendering.Boxes;
 /// system at all. One table of names answers all three, so a style spelled here later costs an entry
 /// rather than a change to how the value is read.
 /// <para>
-/// A name that is not here spells no marker, which is the same rule the caller follows for a number a
-/// system cannot hold: an Armenian item marked <c>i.</c> is a page telling its reader something its
-/// author did not say, and no marker is the smaller lie. What is left out is the spoken and additive
-/// family - the Chinese, Japanese and Korean counting words, Hebrew, Armenian, Georgian, Ethiopic -
-/// each of which wants its own symbols and its own arithmetic, and the two kana lists, whose tables
-/// belong in the spec rather than in memory.
+/// Every style the chapter names is spelled here, so a name that answers null is one the chapter does not
+/// know: an unknown counter style is written decimal by the caller, which is what its first step asks for
+/// (§2.2), and a list with no mark beside it would be the larger wrong. The runs of characters are built
+/// from the code point each block starts at rather than typed out, which is what keeps a table from being
+/// one remembered character short - the tests read that answer back as Unicode's own.
 /// </para>
 /// </remarks>
 internal static class CounterStyles
@@ -246,6 +245,82 @@ internal static class CounterStyles
     };
 
     /// <summary>
+    /// The Ethiopic numeral marks: the nine units from <c>፩</c>, the nine tens from <c>፲</c>, and the
+    /// two places a number is marked with. Each digit of a pair has a character of its own, and a nil
+    /// digit has none, so the two runs are consecutive and worth one and ten (CSS Counter Styles 3 §7.2).
+    /// </summary>
+    private const Int32 EthiopicUnit = 0x1369;
+
+    private const Int32 EthiopicTen = 0x1372;
+
+    /// <summary>Gets the mark of a pair standing on an odd place, which is worth a hundred.</summary>
+    private const Char EthiopicHundred = '\u137B';
+
+    /// <summary>Gets the mark of a pair standing on any other place above its first, worth ten thousand.</summary>
+    private const Char EthiopicTenThousand = '\u137C';
+
+    /// <summary>
+    /// Writes a count the Ethiopic way, by the algorithm of CSS Counter Styles 3 §7.2: the digits are
+    /// taken two at a time from the end, each pair is written with its own marks, and the pair's place is
+    /// marked after it - <c>፻</c> on every odd pair, <c>፼</c> on every even one above the first. A pair
+    /// that holds nothing keeps its mark and loses its digits, and so does a pair holding a lone one that
+    /// opens the number or stands on an odd place, which is why 100 is one mark rather than two.
+    /// </summary>
+    private static String Ethiopic(Int32 number)
+    {
+        // The style's own rule, stated first because the rest of the algorithm cannot answer it: a lone
+        // one would be dropped as the group that opens the number, and nothing would be left to write.
+        if (number == 1)
+        {
+            return ((Char)EthiopicUnit).ToString();
+        }
+
+        var groups = new List<Int32>();
+
+        for (var rest = number; rest > 0; rest /= 100)
+        {
+            groups.Add(rest % 100);
+        }
+
+        var result = new StringBuilder();
+
+        // The most significant pair is written first, since the number is read from that end.
+        for (var index = groups.Count - 1; index >= 0; index--)
+        {
+            var group = groups[index];
+
+            var opens = index == groups.Count - 1;
+
+            if (group != 0 && !(group == 1 && (opens || index % 2 == 1)))
+            {
+                if (group >= 10)
+                {
+                    result.Append((Char)(EthiopicTen + group / 10 - 1));
+                }
+
+                if (group % 10 > 0)
+                {
+                    result.Append((Char)(EthiopicUnit + group % 10 - 1));
+                }
+            }
+
+            if (index % 2 == 1)
+            {
+                if (group != 0)
+                {
+                    result.Append(EthiopicHundred);
+                }
+            }
+            else if (index > 0)
+            {
+                result.Append(EthiopicTenThousand);
+            }
+        }
+
+        return result.ToString();
+    }
+
+    /// <summary>
     /// Gets the symbols a built-in symbolic or cyclic style counts with, or null where the style is a
     /// way of writing a number rather than a run of marks. A page that extends one of these takes its
     /// marks from here when it states none of its own (CSS Lists 3 §2.4).
@@ -269,6 +344,12 @@ internal static class CounterStyles
         if (IsString(type) || !IsCounted(type))
         {
             return " ";
+        }
+
+        // The Ethiopic count is followed by a solidus, which is how the chapter's table gives it.
+        if (type.Equals("ethiopic-numeric", StringComparison.OrdinalIgnoreCase))
+        {
+            return "/ ";
         }
 
         // The chapter's table gives the complex CJK styles a suffix of the one character they are read
@@ -364,6 +445,13 @@ internal static class CounterStyles
         if (name.Equals("upper-georgian", StringComparison.OrdinalIgnoreCase))
         {
             return Added(number, GeorgianNumerals, 19999, mtavruli: true);
+        }
+
+        // The style holds the positive counts and nothing else, so a number below its first is written
+        // the way a count beyond an Armenian or Georgian one is: in decimal (CSS Counter Styles 3 §7.2).
+        if (name.Equals("ethiopic-numeric", StringComparison.OrdinalIgnoreCase))
+        {
+            return number >= 1 ? Ethiopic(number) : Decimal(number);
         }
 
         if (type.Equals("hebrew", StringComparison.OrdinalIgnoreCase))

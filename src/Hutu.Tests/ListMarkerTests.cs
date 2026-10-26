@@ -362,14 +362,15 @@ public sealed class ListMarkerTests
             Assert.That(ListMarkers.For("upper-latin", null, 28), Is.EqualTo("AB. "));
             Assert.That(ListMarkers.For("lower-roman", null, 14), Is.EqualTo("xiv. "));
             Assert.That(ListMarkers.For("upper-roman", null, 4), Is.EqualTo("IV. "));
-            Assert.That(ListMarkers.For("lower-roman", null, 0), Is.Null,
-                "there is no roman zero, and no marker is claimed rather than a wrong one");
+            Assert.That(ListMarkers.For("lower-roman", null, 0), Is.EqualTo("0. "),
+                "a roman zero is outside the style's range, so the count is written by its fallback - " +
+                "decimal - while the mark after it stays the one the named style carries (§2.2)");
             Assert.That(ListMarkers.For("decimal", null, -3), Is.EqualTo("-3. "),
                 "a count below one is still a number, signed");
             Assert.That(ListMarkers.For("disc", "url(bullet.png)", 1), Is.Null,
                 "an image marker waits for the painting that can draw one");
-            Assert.That(ListMarkers.For("ethiopic-numeric", null, 1), Is.Null,
-                "a style whose table we do not have claims no marker rather than a wrong one");
+            Assert.That(ListMarkers.For("ethiopic-numeric", null, 1), Is.EqualTo("፩/ "),
+                "the Ethiopian first item, and the solidus its style is read with rather than a period");
         });
     }
 
@@ -411,6 +412,42 @@ public sealed class ListMarkerTests
 
                 return value >= 0 ? value : "〇一二三四五六七八九".IndexOf(digit);
             }
+        }
+    }
+
+    /// <summary>
+    /// Every counter style the chapter names has a table here, so the only name that answers nothing is
+    /// one the chapter does not define - and that one the caller writes in decimal rather than leaving the
+    /// item unmarked (CSS Counter Styles 3 §2.2). A style dropped from these tables would otherwise show
+    /// up as a list of plain numbers on a page that asked for Armenian, which is the mistake this catches.
+    /// </summary>
+    [Test]
+    public void EveryStyleTheChapterNamesIsSpelledHere()
+    {
+        var names = new[]
+        {
+            // §6.1 numeric, §6.2 alphabetic, §6.3 symbolic, §6.4 fixed, §7.1 the CJK readings, §7.2 Ethiopic.
+            "decimal", "decimal-leading-zero", "arabic-indic", "armenian", "upper-armenian",
+            "lower-armenian", "bengali", "cambodian", "khmer", "cjk-decimal", "devanagari",
+            "georgian", "gujarati", "gurmukhi", "hebrew", "kannada", "lao", "malayalam",
+            "mongolian", "myanmar", "oriya", "persian", "lower-roman", "upper-roman", "tamil",
+            "telugu", "thai", "tibetan",
+            "lower-alpha", "lower-latin", "upper-alpha", "upper-latin", "lower-greek",
+            "hiragana", "hiragana-iroha", "katakana", "katakana-iroha",
+            "disc", "circle", "square", "disclosure-open", "disclosure-closed",
+            "cjk-earthly-branch", "cjk-heavenly-stem",
+            "cjk-ideographic", "simp-chinese-informal", "simp-chinese-formal",
+            "trad-chinese-informal", "trad-chinese-formal", "japanese-informal", "japanese-formal",
+            "korean-hangul-formal", "korean-hanja-informal", "korean-hanja-formal",
+            "ethiopic-numeric",
+        };
+
+        foreach (var name in names)
+        {
+            Assert.That(
+                ListMarkers.For(name, null, 5),
+                Is.Not.Null,
+                $"{name} is a style the chapter names, and nothing spells its fifth item");
         }
     }
 
@@ -549,7 +586,7 @@ public sealed class ListMarkerTests
     }
 
     [Test]
-    public void TheFixedListsRunOutAndTheCountCarriesOnInDecimal()
+    public void TheFixedListsRunOutAndTheCountCarriesOnInCjkDecimal()
     {
         Assert.Multiple(() =>
         {
@@ -561,10 +598,11 @@ public sealed class ListMarkerTests
             Assert.That(ListMarkers.For("cjk-earthly-branch", null, 1), Is.EqualTo("子\u3001"));
             Assert.That(ListMarkers.For("cjk-earthly-branch", null, 12), Is.EqualTo("亥\u3001"),
                 "twelve branches, and the twelfth item is the last of them");
-            Assert.That(ListMarkers.For("cjk-earthly-branch", null, 13), Is.EqualTo("13\u3001"),
-                "beyond the list the count falls back to plain decimal, which is what the spec asks for");
+            Assert.That(ListMarkers.For("cjk-earthly-branch", null, 13), Is.EqualTo("一三\u3001"),
+                "beyond the list the count falls back to cjk-decimal, the style the branch run names " +
+                "for the purpose - and the borrowed page draws the thirteenth item that way");
             Assert.That(ListMarkers.For("cjk-heavenly-stem", null, 10), Is.EqualTo("癸\u3001"));
-            Assert.That(ListMarkers.For("cjk-heavenly-stem", null, 11), Is.EqualTo("11\u3001"),
+            Assert.That(ListMarkers.For("cjk-heavenly-stem", null, 11), Is.EqualTo("一一\u3001"),
                 "and the stems run out at ten");
         });
     }
@@ -597,15 +635,15 @@ public sealed class ListMarkerTests
     }
 
     [Test]
-    public async Task AStyleWithNoTableHereMarksNothing()
+    public async Task AStyleNothingHereSpellsCountsInDecimal()
     {
-        // The Ethiopian numeric style needs an algorithm of its own that has to be taken from the spec
-        // rather than written out of memory, so it is absent on purpose: a list without its marks is a
-        // gap, and a wrong mark is a lie.
-        var markers = await Markers("", "<ol style='list-style-type:ethiopic-numeric'><li>one</li></ol>");
+        // A name no style answers for is an unknown counter style, and the chapter's first step writes the
+        // count decimal rather than leaving the item unmarked (§2.2). The Ethiopian numeric style was the
+        // case this stood on until it gained its own algorithm; a name nothing defines takes its place.
+        var markers = await Markers("", "<ol style='list-style-type:no-such-style'><li>one</li></ol>");
 
-        Assert.That(markers, Is.EqualTo(new String?[] { null }),
-            "a style with no table here spells no marker");
+        Assert.That(markers, Is.EqualTo(new String?[] { "1. " }),
+            "the count the page asked for cannot be spelled, so decimal answers for it");
     }
 
     [Test]

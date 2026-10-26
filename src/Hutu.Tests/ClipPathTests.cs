@@ -421,7 +421,9 @@ public sealed class ClipPathTests
             Shaped("#b{clip-path:ellipse(10px)}", Box200x100),
             Shaped("#b{clip-path:url(#clip)}", Box200x100),
             Shaped("#b{clip-path:polygon(0 0, 10px 10px) margin-box extra}", Box200x100),
-            Shaped("#b{clip-path:shape(from 0px 0px, hline by 80px, close)}", Box200x100));
+            Shaped("#b{clip-path:shape()}", Box200x100),
+            Shaped("#b{clip-path:shape(from 0px 0px, hline by)}", Box200x100),
+            Shaped("#b{clip-path:shape(from 0px 0px, hline by 80px, close) border-box extra}", Box200x100));
 
         Assert.Multiple(() =>
         {
@@ -430,7 +432,27 @@ public sealed class ClipPathTests
             Assert.That(refused[2], Is.Null, "and an ellipse has both of them or neither");
             Assert.That(refused[3], Is.Null, "an SVG clipPath is a shape this reader was not given");
             Assert.That(refused[4], Is.Null, "a word the grammar has no place for is no declaration");
-            Assert.That(refused[5], Is.Null, "and a shape from another chapter is not read as nothing");
+            Assert.That(refused[5], Is.Null, "a shape() with no commands at all holds no outline");
+            Assert.That(refused[6], Is.Null, "a command whose distance is missing is not a command");
+            Assert.That(refused[7], Is.Null, "and a shape with a word after its box is no declaration");
+        });
+    }
+
+    /// <summary>
+    /// <c>shape()</c> writes an outline as commands rather than as a list of points, and its distances are
+    /// shares of the reference box like every other basic shape's (CSS Shapes 1 §3.1).
+    /// </summary>
+    [Test]
+    public async Task AShapeOfItsOwnCommandsCutsTheRoomTheyEnclose()
+    {
+        var cut = Only(await Shaped("#b{clip-path:shape(from 10% 20%, hline by 80px, vline by 50px, close)}",
+            Box200x100));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Edges(cut.Bounds), Is.EqualTo((20d, 20d, 80d, 50d)),
+                "the start is ten per cent across and twenty down a 200x100 box, and the two lines run from it");
+            Assert.That(cut.Outline, Has.Count.EqualTo(4), "the two lines, the close, and the begin");
         });
     }
 
