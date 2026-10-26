@@ -380,7 +380,11 @@ internal static class CounterStyles
 
         if (Numerals.TryGetValue(name, out var numerals))
         {
-            return Positional(number, numerals);
+            // `cjk-decimal` counts from zero upward; a negative item is outside its range and falls
+            // back to the decimal style, which is what the borrowed page draws for -1.
+            return name.Equals("cjk-decimal", StringComparison.OrdinalIgnoreCase) && number < 0
+                ? Decimal(number)
+                : Positional(number, numerals);
         }
 
         if (FixedLists.TryGetValue(name, out var list) && number >= 1 && number <= list.Length)
@@ -388,11 +392,14 @@ internal static class CounterStyles
             return list[number - 1].ToString();
         }
 
-        // Past the end of a fixed run the count carries on in decimal; a name nothing answers for here
-        // spells nothing.
-        return FixedLists.ContainsKey(name)
-            ? number.ToString(CultureInfo.InvariantCulture)
-            : null;
+        // Past the end of a fixed run the count carries on in cjk-decimal, the style both runs name as
+        // their fallback; a name nothing answers for here spells nothing.
+        if (FixedLists.ContainsKey(name) && Numerals.TryGetValue("cjk-decimal", out var fallback))
+        {
+            return Positional(number, fallback);
+        }
+
+        return null;
     }
 
     /// <summary>Gets the ten numerals of a script, from the code point of its zero.</summary>
@@ -738,9 +745,11 @@ internal static class CounterStyles
     /// <summary>Writes a number as roman numerals, which have no zero and no symbol past a thousand.</summary>
     private static String? Roman(Int32 number, Boolean upper)
     {
+        // The style's range is 1..3999; outside it the count falls back to decimal, which is the
+        // fallback the built-in style names.
         if (number < 1 || number > 3999)
         {
-            return null;
+            return Decimal(number);
         }
 
         var result = new StringBuilder();

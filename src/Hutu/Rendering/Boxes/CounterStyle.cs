@@ -135,7 +135,14 @@ internal sealed class CounterStyleTable
             return Spelled(inline, number, 0);
         }
 
-        return CounterStyles.Spell(type, number);
+        // A name this table does not know is an invalid style, and an invalid style falls back to
+        // decimal. `none` is the one name that means no marker rather than a fallback (§3.1).
+        if (type.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return CounterStyles.Spell(type, number) ?? CounterStyles.Spell("decimal", number);
     }
 
     /// <summary>Gets the text a marker of that style is followed by.</summary>
@@ -650,12 +657,17 @@ internal sealed class CounterStyleTable
 
     private static String Unquote(String term)
     {
-        if (term.Length < 2 || term[0] is not ('"' or '\'') || term[^1] != term[0])
+        // A descriptor may write its symbol as a quoted string or as a bare identifier; either way a
+        // backslash escape stands for the character it names. `suffix: \3001` is the ideographic comma,
+        // not the six characters the sheet spelled.
+        var quoted = term.Length >= 2 && term[0] is '"' or '\'' && term[^1] == term[0];
+
+        if (!quoted && !term.Contains('\\'))
         {
             return term;
         }
 
-        var body = term[1..^1];
+        var body = quoted ? term[1..^1] : term;
         var result = new StringBuilder(body.Length);
 
         for (var at = 0; at < body.Length; at++)
