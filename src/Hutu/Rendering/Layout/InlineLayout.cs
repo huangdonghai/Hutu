@@ -132,7 +132,7 @@ internal sealed class InlineLayout
 
         // A block that clips its inline overflow may mark the line it cuts short, and a column the page
         // clamps keeps only the lines it asked for and marks the last (CSS Overflow 3 section 3).
-        if (items.Count > 0 && container.Style.LineClamp is { } clamp)
+        if (items.Count > 0 && (container.LineClampOverride ?? container.Style.LineClamp) is { } clamp)
         {
             ClampTo(lines, clamp, maxInline, flow, container.Style.EllipsisText ?? "\u2026", container);
         }

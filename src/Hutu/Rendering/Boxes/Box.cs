@@ -220,6 +220,13 @@ internal sealed class Box
     /// </remarks>
     public Boolean IsItem { get; internal set; }
 
+    /// <summary>
+    /// Gets the line count a <c>-webkit-line-clamp</c> on an ancestor asks this box to keep, or null
+    /// where no ancestor clamps. A clamp on a block whose content is another block belongs to the first
+    /// line the descendant formats, not to the outer block itself (CSS Overflow 3 §5.1).
+    /// </summary>
+    public Int32? LineClampOverride { get; internal set; }
+
     /// <summary>Gets the source text node, or null for an element box.</summary>
     public IText? Source { get; init; }
 

@@ -120,6 +120,11 @@ internal static partial class BoxBuilder
         // same rule: apply it once every box stands.
         TextTransformResolver.Apply(box);
 
+        // A clamp on a block whose content is another block keeps the first lines the descendant
+        // formats, not lines of its own - the legacy `-webkit-box` with a block child is the case that
+        // matters, where the clamp belongs to the child's line boxes.
+        PropagateLineClamp(box);
+
         // Remembered only now that the walk has agreed to describe the document: a build that
         // abstained has proved nothing about the sheets, so the next one starts again.
         state.Keep(index);
@@ -628,6 +633,79 @@ internal static partial class BoxBuilder
                 child.IsItem = true;
             }
         }
+    }
+
+    /// <summary>
+    /// Hands a clamp written on a block to the first line the block's content formats. A block whose
+    /// own content is text formats that text itself, so the clamp already reaches it; a block whose
+    /// content opens with another block - the legacy <c>-webkit-box</c> holding a <c>div</c> is the
+    /// shape the borrowed pages use - has no line of its own to clamp, and the first descendant that
+    /// does is the one that keeps the count.
+    /// </summary>
+    private static void PropagateLineClamp(Box box)
+    {
+        // Only the shape the legacy box takes with one block child is handled here: a box with several
+        // children clamps across all of them, and a block inside an inline box is a line of its own
+        // that the outer plan cannot count, so both are left to the ordinary path.
+        if (box.Style.LineClamp is { } clamp &&
+            box.Children.Count == 1 &&
+            box.Children[0] is { IsBlockLevel: true } only &&
+            !PositionedLayout.IsOutOfFlow(only) &&
+            !HasBlockBelow(only))
+        {
+            if (FirstFormatted(only) is { } target)
+            {
+                target.LineClampOverride ??= clamp;
+            }
+        }
+
+        foreach (var child in box.Children)
+        {
+            PropagateLineClamp(child);
+        }
+    }
+
+    /// <summary>Gets whether a block-level box stands anywhere below a box's inline content.</summary>
+    private static Boolean HasBlockBelow(Box box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.IsBlockLevel || HasBlockBelow(child))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Gets the box whose inline content carries the first line of <paramref name="box"/>, or null
+    /// where the content formats no line at all.
+    /// </summary>
+    private static Box? FirstFormatted(Box box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.Kind is BoxKind.Text or BoxKind.Inline or BoxKind.InlineBlock or
+                BoxKind.LineBreak or BoxKind.Ruby)
+            {
+                return box;
+            }
+        }
+
+        foreach (var child in box.Children)
+        {
+            if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child))
+            {
+                if (FirstFormatted(child) is { } found)
+                {
+                    return found;
+                }
+            }
+        }
+
+        return null;
     }
 
     internal static List<ICssStyleSheet> SheetsOf(IDocument document)
