@@ -1,4 +1,4 @@
-using AngleSharp.Css.Dom;
+﻿using AngleSharp.Css.Dom;
 using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
@@ -1172,7 +1172,7 @@ internal sealed record LayoutProfile(
         // leaving a subtree whose boxes were moved after its matrices were resolved.
         if (position.Position == PositionMode.Relative)
         {
-            var offset = PositionedLayout.RelativeOffset(position, context.ContainingBlock);
+            var offset = PositionedLayout.RelativeOffset(position, context.ContainingBlock, box.Flow);
             borderBox = new Rect(borderBox.X + offset.X, borderBox.Y + offset.Y, borderBox.Width, borderBox.Height);
         }
 

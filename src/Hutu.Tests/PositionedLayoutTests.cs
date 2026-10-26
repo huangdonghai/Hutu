@@ -1,4 +1,4 @@
-using Hutu.Rendering.Layout;
+﻿using Hutu.Rendering.Layout;
 using Hutu.Rendering.Paint;
 using NUnit.Framework;
 using System;
@@ -16,6 +16,37 @@ namespace Hutu.Tests;
 [TestFixture]
 public sealed class PositionedLayoutTests
 {
+    [Test]
+    public async Task ARightToLeftRowKeepsTheRightOffsetOfAnOverconstrainedBox()
+    {
+        using var view = CreateView(300);
+        await view.SetHtml(
+            "<html><body style='margin:0;direction:rtl'>" +
+            "<div id='a' style='position:relative;left:40px;right:40px;width:100px;height:10px'></div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        Assert.That(
+            a.BorderBox.X,
+            Is.EqualTo(160),
+            "the box stands against the right edge at 200 and `right` moves it 40 further left");
+    }
+
+    [Test]
+    public async Task ALeftToRightRowKeepsTheLeftOffsetOfAnOverconstrainedBox()
+    {
+        using var view = CreateView(300);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='a' style='position:relative;left:40px;right:40px;width:100px;height:10px'></div>" +
+            "</body></html>");
+
+        var a = Find(view, "a");
+
+        Assert.That(a.BorderBox.X, Is.EqualTo(40), "the box stands at the left edge and `left` moves it 40 right");
+    }
+
     [Test]
     public async Task RelativeMovesTheBoxButNotItsSiblings()
     {

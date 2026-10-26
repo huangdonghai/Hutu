@@ -1630,7 +1630,7 @@ internal sealed class InlineLayout
 
         if (position.Position == PositionMode.Relative)
         {
-            placement.Shift(item.Node, PositionedLayout.RelativeOffset(position, context.Containing.ContainingBlock));
+            placement.Shift(item.Node, PositionedLayout.RelativeOffset(position, context.Containing.ContainingBlock, item.Node.Flow));
         }
     }
 

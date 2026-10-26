@@ -218,32 +218,34 @@ internal sealed class PositionedLayout
     }
 
     /// <summary>
-    /// Resolves the horizontal offset of a relatively positioned box. Two opposite edges
-    /// over-constrain it; in a left-to-right writing mode the leading edge wins and the other is
-    /// dropped, which is the rule the specification calls for.
+    /// Resolves the offset of a relatively positioned box. Two opposite edges over-constrain one axis,
+    /// and which of them is dropped is the axis's to say: the inline axis keeps the edge its base
+    /// direction begins at, and the block axis the edge the block flow begins at (CSS 2.1 §9.4.3 for a
+    /// row; CSS Writing Modes 3 §7.3-7.4 turn the physical sides into the two axes' starts, so a column
+    /// reading right to left keeps <c>right</c> where a row reading left to right keeps <c>left</c>).
     /// </summary>
-    internal static Offset RelativeOffset(PositionStyle position, Size containingBlock)
+    internal static Offset RelativeOffset(PositionStyle position, Size containingBlock, WritingModeInfo flow)
     {
-        var dx = 0.0;
-        var dy = 0.0;
+        // Which physical pair belongs to which axis turns with the writing mode: in a column the
+        // horizontal sides carry the block flow and the vertical ones the reading direction.
+        var horizontal = flow.IsVertical ? flow.BlockSign : flow.InlineSign;
+        var vertical = flow.IsVertical ? flow.InlineSign : flow.BlockSign;
 
-        if (position.Left.HasValue)
-        {
-            dx = position.Left.Resolve(containingBlock.Width);
-        }
-        else if (position.Right.HasValue)
-        {
-            dx = -position.Right.Resolve(containingBlock.Width);
-        }
+        var dx = horizontal > 0
+            ? position.Left.HasValue
+                ? position.Left.Resolve(containingBlock.Width)
+                : position.Right.HasValue ? -position.Right.Resolve(containingBlock.Width) : 0
+            : position.Right.HasValue
+                ? -position.Right.Resolve(containingBlock.Width)
+                : position.Left.HasValue ? position.Left.Resolve(containingBlock.Width) : 0;
 
-        if (position.Top.HasValue)
-        {
-            dy = position.Top.Resolve(containingBlock.Height);
-        }
-        else if (position.Bottom.HasValue)
-        {
-            dy = -position.Bottom.Resolve(containingBlock.Height);
-        }
+        var dy = vertical > 0
+            ? position.Top.HasValue
+                ? position.Top.Resolve(containingBlock.Height)
+                : position.Bottom.HasValue ? -position.Bottom.Resolve(containingBlock.Height) : 0
+            : position.Bottom.HasValue
+                ? -position.Bottom.Resolve(containingBlock.Height)
+                : position.Top.HasValue ? position.Top.Resolve(containingBlock.Height) : 0;
 
         return new Offset(dx, dy);
     }
