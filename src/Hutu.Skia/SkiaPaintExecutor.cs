@@ -1,4 +1,4 @@
-using Hutu.Rendering;
+﻿using Hutu.Rendering;
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using Hutu.Rendering.Paint;
@@ -1670,7 +1670,7 @@ public sealed class SkiaPaintExecutor
         }
 
         var baselineX = (Single)(command.Bounds.X + command.Baseline);
-        var upward = command.Flow.InlineSign < 0;
+        var upward = command.Flow.TurnsCounterClockwise;
         var turn = SKMatrix.CreateRotationDegrees(
             upward ? -90 : 90,
             baselineX,
@@ -1777,7 +1777,7 @@ public sealed class SkiaPaintExecutor
     private void DrawTurned(SKCanvas canvas, TextCommand command, SKPaint paint)
     {
         var baselineX = (Single)(command.Bounds.X + command.Baseline);
-        var upward = command.Flow.InlineSign < 0;
+        var upward = command.Flow.TurnsCounterClockwise;
         var start = (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y);
 
         canvas.Save();

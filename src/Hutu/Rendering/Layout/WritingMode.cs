@@ -124,6 +124,15 @@ public readonly struct WritingModeInfo
     public Boolean IsVertical => Mode != WritingMode.HorizontalTb;
 
     /// <summary>
+    /// Gets whether a quarter turn of the glyphs goes counter-clockwise. Only <c>sideways-lr</c> turns
+    /// them that way: every other vertical mode turns the characters mixed text sets sideways a quarter
+    /// turn clockwise, whichever way the line reads, so a right-to-left column keeps the same turn a
+    /// left-to-right one does and only its character order changes (CSS Writing Modes 3 §5.1, measured
+    /// in Chrome on the vertical `dir=rtl` pages).
+    /// </summary>
+    public Boolean TurnsCounterClockwise => Mode == WritingMode.SidewaysLr;
+
+    /// <summary>
     /// Gets whether the mode turns every glyph by itself. <c>sideways-rl</c> and <c>sideways-lr</c> do,
     /// whatever <c>text-orientation</c> says.
     /// </summary>
@@ -222,15 +231,15 @@ public readonly struct WritingModeInfo
     /// </summary>
     /// <remarks>
     /// A row's baseline stands below the top edge by the ascent, and its glyphs are not turned. A
-    /// column's glyphs are turned about the baseline: one that reads down the page turns clockwise, so
-    /// its ascent reaches towards the right and the baseline stands the descent in from the left; one
-    /// that reads up the page turns the other way and the ascent reaches left. The side the ascent
-    /// reaches towards is the side the glyphs turn away from, which is why a column measured from the
-    /// *block* start is mirrored for `vertical-lr` too.
+    /// column's glyphs are turned about the baseline: the quarter turn every vertical mode but
+    /// `sideways-lr` makes is clockwise, so the ascent reaches towards the right and the baseline
+    /// stands the descent in from the left; `sideways-lr` turns them the other way and the ascent
+    /// reaches left. The side the ascent reaches towards is the side the glyphs turn away from, so it
+    /// follows the turn rather than the direction the line reads in.
     /// </remarks>
     internal Double BlockOffsetFromLeft(Double blockSize, Double fromBlockStart) =>
         IsVertical
-            ? InlineSign > 0 ? blockSize - fromBlockStart : fromBlockStart
+            ? TurnsCounterClockwise ? fromBlockStart : blockSize - fromBlockStart
             : fromBlockStart;
 
     /// <summary>
