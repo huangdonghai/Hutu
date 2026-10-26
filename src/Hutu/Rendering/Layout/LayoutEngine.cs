@@ -1023,11 +1023,15 @@ internal sealed record LayoutProfile(
                 // marker stands for an item that was simply given that much margin (CSS 2.1 §12.5.1 read
                 // with §9.5, the way Chrome lays it). A column asks for nothing of the kind, because a
                 // float of either side cuts a column's block extent and not the head a marker hangs at.
-                if (around is { } tracks)
+                //
+                // A right-to-left item keeps its marker at its border edge: the room the float leaves is
+                // on the item's inline-end side there, and the marker does not follow the line's shortened
+                // start into it (the gecko 428810 family holds the reference to that).
+                if (around is { } tracks && box.Flow.InlineSign > 0)
                 {
                     var span = tracks.LineSpanAt(standing - metrics.Ascent, metrics.Ascent + metrics.Descent);
 
-                    edge = box.Flow.InlineSign > 0 ? Math.Max(edge, span.Left) : Math.Min(edge, span.Right);
+                    edge = Math.Max(edge, span.Left);
                 }
 
                 var start = box.Flow.InlineSign > 0 ? edge - advance : edge;

@@ -45,7 +45,10 @@ public sealed class MatchParentAlignTests
                 "<div style='direction:ltr;text-align:match-parent;width:100px'>" +
                 "<span id='word'>ab</span></div></div>"));
 
-        Assert.That(Left(view, "word"), Is.EqualTo(90).Within(0.001), "the parent's edge, not the child's");
+        // A block stands against its containing block's inline start, which is the right edge in a
+        // right-to-left page: the hundred-pixel box begins at 500 of the six hundred, and the word the
+        // parent's edge sends right stands ninety pixels inside it (measured in Chrome on this shape).
+        Assert.That(Left(view, "word"), Is.EqualTo(590).Within(0.001), "the parent's edge, not the child's");
     }
 
     [Test]
@@ -89,7 +92,7 @@ public sealed class MatchParentAlignTests
             "<div style='width:100px;font-size:10px;line-height:1'><span id='word'>ab</span></div>" +
             "</body></html>");
 
-        Assert.That(Left(view, "word"), Is.EqualTo(90).Within(0.001), "start along right-to-left lines");
+        Assert.That(Left(view, "word"), Is.EqualTo(590).Within(0.001), "start along right-to-left lines");
     }
 
     /// <summary>Makes a hundred-pixel box of the fixture's one word, aligned as the test asks.</summary>

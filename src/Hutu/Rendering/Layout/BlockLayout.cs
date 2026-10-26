@@ -2501,7 +2501,15 @@ internal sealed class BlockLayout
 
             var size = _engine.Measure(child, childConstraints, passContext);
             var used = BoxModel.UsedMargin(child.Style, contentWidth, size.Width);
-            var rect = new Rect(contentX + used.Left + shift, cursor + pending + drop, size.Width, size.Height);
+
+            // A row that reads right to left begins at its right edge, so a child narrower than the row
+            // stands against that edge and the room left over is on its inline-end side, the left one.
+            // The start margin is the right one there, which is also the margin the over-constrained
+            // equation keeps (CSS 2.1 §10.3.3).
+            var inward = box.Flow.IsVertical || box.Flow.InlineSign > 0
+                ? used.Left + shift
+                : contentWidth - used.Right - size.Width + shift;
+            var rect = new Rect(contentX + inward, cursor + pending + drop, size.Width, size.Height);
 
             parent.Children.Add(_engine.Arrange(child, rect, passContext));
 
