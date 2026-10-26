@@ -6116,8 +6116,26 @@ internal readonly struct ComputedStyle
             // that zeroes its list padding means to take it back - so it is no sheet declaration either,
             // which would read as the page's own and win. Every level of nesting keeps its own, as a
             // browser's sheet gives it.
-            return tag is "ul" or "ol" or "dir" or "menu"
-                ? (null, null, Pixels(40), null)
+            if (tag is "ul" or "ol" or "dir" or "menu")
+            {
+                return (null, null, Pixels(40), null);
+            }
+
+            // A field keeps room inside its own border for the legend to stand in: a little above,
+            // more below, and three quarters of an em along the sides, stated for the flow's axes so a
+            // column turns them round with the rest (WHATWG rendering, measured in Chromium at 0.35em,
+            // 0.625em and 0.75em). A legend takes two pixels beside its own word.
+            if (tag == "fieldset")
+            {
+                return (
+                    Pixels(0.35 * fontSize),
+                    Pixels(0.625 * fontSize),
+                    Pixels(0.75 * fontSize),
+                    Pixels(0.75 * fontSize));
+            }
+
+            return tag == "legend"
+                ? (null, null, Pixels(2), Pixels(2))
                 : default;
         }
 
@@ -6144,7 +6162,7 @@ internal readonly struct ComputedStyle
             "h4" => 1.33,
             "h5" => 1.67,
             "h6" => 2.33,
-            "p" or "blockquote" or "dl" or "dir" or "menu" or "fieldset" or "form" => 1.0,
+            "p" or "blockquote" or "dl" or "dir" or "menu" or "form" => 1.0,
             "pre" => 1.0,
             "hr" => 0.5,
             "ul" or "ol" => IsNested(element) ? (Double?)null : 1.0,
@@ -6153,8 +6171,10 @@ internal readonly struct ComputedStyle
 
         // Only the indentation that is genuinely spacing around content is left as a margin: the
         // definition list's term and the quotation, which no marker depends on.
-        var indent = tag is "dd" or "blockquote" ? 40.0 : (Double?)null;
-        var indentEnd = tag == "blockquote" ? indent : null;
+        // A field stands two pixels off what runs beside it, which is all the margin its sheet keeps:
+        // above and below it there is none at all.
+        var indent = tag is "dd" or "blockquote" ? 40.0 : tag == "fieldset" ? 2.0 : (Double?)null;
+        var indentEnd = tag is "blockquote" or "fieldset" ? indent : null;
         var space = block is { } size ? size * fontSize : (Double?)null;
 
         return (
