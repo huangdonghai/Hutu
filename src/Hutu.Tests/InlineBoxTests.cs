@@ -460,10 +460,26 @@ public sealed class InlineBoxTests
         // began is still standing when the soft hyphen is met, and the mark ends the line above
         // (CSS Text 3 §6.1, and hyphens-out-of-flow-001).
         await view.SetHtml(
-            Document("H<span style='position:absolute'>i</span>­phen.", width: 16));
+            Document("high<span style='position:absolute'>i</span>­way", width: 30));
 
-        Assert.That(Text(view, "-").BorderBox.X, Is.EqualTo(5), "the mark follows the letter the line set");
-        Assert.That(Text(view, "phen.").BorderBox.Y, Is.GreaterThan(10), "and the rest begins the next line");
+        Assert.That(Text(view, "-").BorderBox.X, Is.EqualTo(20), "the mark ends the line the word was cut on");
+        Assert.That(Text(view, "way").BorderBox.Y, Is.GreaterThan(0), "and the rest begins the next line");
+    }
+
+    [Test]
+    public async Task ASoftHyphenBeforeABoxInTheWordKeepsItsBreak()
+    {
+        using var view = CreateView();
+
+        // The room takes "high-wa" but not the last letter, and the letter stands after a box that
+        // left the flow: the line ends at the hyphen the word was written with, and the rest of the
+        // word - the box included - begins the next line (hyphens-out-of-flow-001).
+        await view.SetHtml(Document(
+            "high­wa<span style='position:absolute'>i</span>y", width: 32));
+
+        Assert.That(Text(view, "high-").BorderBox.Width, Is.EqualTo(25), "the mark stands where the word was cut");
+        Assert.That(Text(view, "wa").BorderBox.Y, Is.GreaterThan(0), "the rest of the word begins the next line");
+        Assert.That(Text(view, "y").BorderBox.Y, Is.GreaterThan(0), "with the box that stood inside it");
     }
 
     [Test]

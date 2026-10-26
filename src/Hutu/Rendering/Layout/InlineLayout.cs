@@ -2021,8 +2021,10 @@ internal sealed class InlineLayout
 
             // Only runs of text are kept for the line after a soft hyphen: a box the page puts there
             // is placed where it stands and cannot be handed back, so the hyphen offers no cutting
-            // place past it.
-            if (String.IsNullOrEmpty(item.Text) || item.IsRuby || item.IsReplaced || item.IsAtomic || item.IsOutOfFlow)
+            // place past it. A box that left the flow is placed where it stands and keeps its place
+            // when the line is cut back - it is not on the line, so the word runs on across it.
+            if (!item.IsOutOfFlow &&
+                (String.IsNullOrEmpty(item.Text) || item.IsRuby || item.IsReplaced || item.IsAtomic))
             {
                 breakPoint = null;
                 following = null;
@@ -2033,6 +2035,13 @@ internal sealed class InlineLayout
                 // No room is taken and the cursor does not move, so where the cursor stands when the box
                 // is met is the place it would have had. The fragment carries that much and nothing else.
                 builder.AddOutOfFlow(item.Box, item.Style, item.Inline);
+
+                if (breakPoint is not null && following is not null)
+                {
+                    following.Add(new TailStep(
+                        String.Empty, 0, 0, 0, item.Style, item.Box, flow, item.Inline, OutOfFlow: true));
+                }
+
                 continue;
             }
 
@@ -2381,6 +2390,12 @@ internal sealed class InlineLayout
 
                             foreach (var step in replay)
                             {
+                                if (step.OutOfFlow)
+                                {
+                                    builder.AddOutOfFlow(step.Box, step.Style, step.Inline);
+                                    continue;
+                                }
+
                                 builder.Add(
                                     step.Source, step.Start, step.Length, step.Advance,
                                     step.Style, step.Box, step.Flow, step.Inline);
@@ -4771,7 +4786,8 @@ internal sealed class InlineLayout
         ComputedStyle Style,
         Box Box,
         WritingModeInfo Flow,
-        InlineAncestor? Inline);
+        InlineAncestor? Inline,
+        Boolean OutOfFlow = false);
 
     private sealed class LineBuilder
     {
@@ -5119,14 +5135,22 @@ internal sealed class InlineLayout
                 return true;
             }
 
-            if (_fragments.Count == 0)
+            // A box that left the flow holds none of the line's text, so the question is asked of the
+            // last run the line really carries (the same reason the other look-backs pass such boxes by).
+            TextFragment? last = null;
+
+            for (var index = _fragments.Count - 1; index >= 0; index--)
             {
-                return true;
+                if (_fragments[index].OutOfFlow)
+                {
+                    continue;
+                }
+
+                last = _fragments[index];
+                break;
             }
 
-            var last = _fragments[^1];
-
-            if (last.IsReplaced || last.Atomic is not null || last.Ruby is not null || last.Length <= 0)
+            if (last is not { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null })
             {
                 return true;
             }
@@ -5465,7 +5489,23 @@ internal sealed class InlineLayout
             // invisible character it is, taking nothing and drawing nothing.
             if (hyphen)
             {
-                var last = _fragments.Count > 0 ? _fragments[^1] : null;
+                // The mark stands in the run the word was written in, which is the last run that holds
+                // text of this line: a box that left the flow may stand after it and is not part of the
+                // word (the same reason the look-backs pass such boxes by).
+                TextFragment? last = null;
+                var at = -1;
+
+                for (var index = _fragments.Count - 1; index >= 0; index--)
+                {
+                    if (_fragments[index].OutOfFlow)
+                    {
+                        continue;
+                    }
+
+                    last = _fragments[index];
+                    at = index;
+                    break;
+                }
 
                 if (last is { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null } &&
                     last.Source[last.Start + last.Length - 1] == '­' &&
@@ -5505,7 +5545,6 @@ internal sealed class InlineLayout
                         markDescent += half;
                     }
 
-                    var at = line.Fragments.Count - 1;
                     above[at] = Math.Max(above[at], markAscent);
                     below[at] = Math.Max(below[at], markDescent);
                     ascent = Math.Max(ascent, above[at]);
