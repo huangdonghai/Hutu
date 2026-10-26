@@ -2187,8 +2187,9 @@ internal sealed class GridFormattingContext
         var justify = item.JustifySelf == FlexAlignment.Auto ? grid.JustifyItems : item.JustifySelf;
         var align = item.AlignSelf == FlexAlignment.Auto ? grid.AlignItems : item.AlignSelf;
 
-        var width = ResolveWidth(style, item.Box, areaWidth, insetH, isBorderBox, justify, context);
-        var height = ResolveHeight(style, item.Box, areaHeight, basis, insetV, isBorderBox, align, context);
+        var width = ResolveWidth(style, item.Box, areaWidth, insetH, isBorderBox, justify, context, margin.Horizontal);
+        var height = ResolveHeight(
+            style, item.Box, areaHeight, basis, insetV, isBorderBox, align, context, margin.Vertical);
 
         // A declared height is definite, and so is a stretch: CSS Sizing 3 ��5.2 counts a size that can
         // be resolved from a `stretch` self-alignment as definite, so a percentage inside the item has
@@ -2219,9 +2220,13 @@ internal sealed class GridFormattingContext
         Double insets,
         Boolean isBorderBox,
         FlexAlignment align,
-        LayoutContext context)
+        LayoutContext context,
+        Double margins)
     {
-        var space = Math.Max(0, area);
+        // The area is the item's containing block, and its margins stand inside that block: a stretched
+        // item fills what the margins leave rather than the whole area, which is what makes a grid item
+        // with `margin-left: 10px` end at the area's edge instead of past it (positioned-grid-items-013).
+        var space = Math.Max(0, area - margins);
         Double value;
 
         if (HasWidth(box) && !(style.Width.Kind == StyleLengthKind.Percent && area <= 0))
@@ -2242,8 +2247,14 @@ internal sealed class GridFormattingContext
         else
         {
             // The content intrinsic size sets the item's own declared width aside, which is exactly
-            // what an anonymous wrapper needs: its declared width belongs to the container.
-            value = Math.Min(Math.Max(0, _engine.MeasureContentIntrinsic(box, context).MaxContent), space);
+            // what an anonymous wrapper needs: its declared width belongs to the container. A column's
+            // intrinsic size is measured along its line, which is its height; the width it asks for is
+            // the block size the measure gives, not that inline extent (orthogonal-positioned-grid-items-001).
+            var content = box.Flow.IsVertical
+                ? _engine.Measure(box, MeasureConstraints.Unconstrained, context).Width
+                : _engine.MeasureContentIntrinsic(box, context).MaxContent;
+
+            value = Math.Min(Math.Max(0, content), space);
         }
 
         return BoxModel.ClampWidth(style, value, area, insets);
@@ -2258,9 +2269,10 @@ internal sealed class GridFormattingContext
         Double insets,
         Boolean isBorderBox,
         FlexAlignment align,
-        LayoutContext context)
+        LayoutContext context,
+        Double margins)
     {
-        var space = Math.Max(0, area);
+        var space = Math.Max(0, area - margins);
 
         if (StatesHeight(box) && !(style.Height.Kind == StyleLengthKind.Percent && area <= 0))
         {
@@ -2312,7 +2324,7 @@ internal sealed class GridFormattingContext
         var isBorderBox = BoxModel.IsBorderBox(style);
 
         var justify = style.GridItem.JustifySelf == FlexAlignment.Auto ? justifyItems : style.GridItem.JustifySelf;
-        var width = ResolveWidth(style, box, areaWidth, insetH, isBorderBox, justify, context);
+        var width = ResolveWidth(style, box, areaWidth, insetH, isBorderBox, justify, context, margin.Horizontal);
         var outer = width + margin.Left + margin.Right;
 
         return (margin.Left + Space(justify, areaWidth - outer), width);
