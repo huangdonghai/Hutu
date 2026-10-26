@@ -669,6 +669,8 @@ internal static class FusedStyleFactory
                     ComputedStyle.ResolveClipsOverflowFused(
                         ComputedStyle.ResolveOverflowAxisFused(find("overflow-x"), parent.Overflow.X),
                         ComputedStyle.ResolveOverflowAxisFused(find("overflow-y"), parent.Overflow.Y)),
+                LineClamp = ComputedStyle.ReadLineClamp(
+                    find("-webkit-line-clamp"), find("line-clamp"), find("-webkit-box-orient")),
                 VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign, PresentationalHints.Valign(element)),
                 Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, face, dimensions),
                 Visibility = ComputedStyle.ResolveVisibilityFused(find("visibility"), parent.Visibility),

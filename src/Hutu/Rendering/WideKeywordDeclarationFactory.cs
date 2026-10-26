@@ -53,6 +53,11 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // CSS Overflow's text-overflow, which AngleSharp has no grammar for: the value decides whether
         // a clipped line ends in an ellipsis (or a named string), so the layout reads it as text.
         "text-overflow",
+        // The legacy -webkit- line clamp: a count of lines a box keeps, and the orientation that makes
+        // the box a column of them. AngleSharp has no grammar for either.
+        "-webkit-line-clamp",
+        "-webkit-box-orient",
+        "line-clamp",
         // CSS Sizing 4's aspect ratio, which AngleSharp has no grammar for either: the value is a ratio
         // written "21/9" or "auto 16/9", and the box model reads it as text.
         "aspect-ratio",

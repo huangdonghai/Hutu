@@ -3706,6 +3706,57 @@ internal readonly struct ComputedStyle
     /// <summary>Gets whether the box clips its inline overflow and marks the line it cuts.</summary>
     public Boolean EllipsisOverflow => _values.Text.EllipsisOverflow;
 
+    /// <summary>Gets how many lines the box keeps before clamping, or null where it keeps them all.</summary>
+    public Int32? LineClamp => _values.Text.LineClamp;
+
+    /// <summary>
+    /// Reads the line count the legacy clamp keeps. The box must be a column (a <c>-webkit-box</c>
+    /// whose orientation is vertical) - on any other box the property has nothing to clamp. The
+    /// standard <c>line-clamp</c> is read when the legacy property is absent, and only its plain
+    /// count form: the <c>auto</c> forms clamp by height, which this engine does not do.
+    /// </summary>
+    public static Int32? ReadLineClamp(
+        ICssProperty? legacy, ICssProperty? standard, ICssProperty? orientation)
+    {
+        var orient = orientation?.Value?.Trim();
+
+        // The legacy clamp only means anything on a box authored as a column: without the vertical
+        // orientation the box is not a -webkit-box column at all, and the property does nothing.
+        if (String.IsNullOrEmpty(orient) ||
+            !orient.Contains("vertical", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return Count(legacy?.Value) ?? Count(standard?.Value);
+    }
+
+    private static Int32? Count(String? value)
+    {
+        var text = value?.Trim();
+
+        if (String.IsNullOrEmpty(text))
+        {
+            return null;
+        }
+
+        foreach (var token in text.Split(' ', '\t'))
+        {
+            if (Int32.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out var count) &&
+                count >= 0)
+            {
+                return count;
+            }
+
+            if (!token.Equals("auto", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Gets the string a line the page clips ends in, or null where it asks for no mark: <c>ellipsis</c>
     /// is the horizontal ellipsis (the shaper turns it upright down a column), and a quoted string is

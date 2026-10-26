@@ -452,6 +452,18 @@ public sealed class InlineBoxTests
     }
 
     [Test]
+    public async Task AClampedColumnKeepsOnlyTheLinesItAsksFor()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document(
+            "<p style='-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:pre;line-height:10px'>a\nb\nc</p>"));
+
+        Assert.That(Lines(view).Count(), Is.EqualTo(2), "the third line is not laid out");
+        Assert.That(Text(view, "\u2026").BorderBox.Y, Is.EqualTo(Lines(view).Last().BorderBox.Y), "and the mark ends the second line");
+    }
+
+    [Test]
     public async Task ALineOfAClippedBlockEndsInTheEllipsis()
     {
         using var view = CreateView();

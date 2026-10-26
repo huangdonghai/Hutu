@@ -374,6 +374,12 @@ internal sealed record TextArea
     /// </summary>
     internal Boolean EllipsisOverflow { get; init; }
 
+    /// <summary>
+    /// Gets how many lines a <c>-webkit-box</c> column keeps before its content is clamped, or null
+    /// where it keeps them all (<c>-webkit-line-clamp</c>, CSS Overflow 3).
+    /// </summary>
+    internal Int32? LineClamp { get; init; }
+
     internal String VerticalAlign { get; init; } = CssInitialValues.VerticalAlign;
 
     /// <summary>
