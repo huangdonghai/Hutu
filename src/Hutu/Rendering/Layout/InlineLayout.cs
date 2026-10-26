@@ -2173,6 +2173,7 @@ internal sealed class InlineLayout
             var continuesWord = builder.LastCodePoint is { } prior &&
                 LineBreaks.ContinuesWord(prior, item.Style.WordBreakingRules);
 
+
             foreach (var chunk in TextChunker.Ranges(item.Text!, item.Style.WordBreakingRules, continuesWord))
             {
                 foreach (var run in new OrientedPieces(item.Text!, chunk.Start, chunk.Length, itemFlow))
@@ -4835,8 +4836,24 @@ internal sealed class InlineLayout
         {
             get
             {
-                if (_fragments.Count == 0 ||
-                    _fragments[^1] is not { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null } last)
+                // A box that left the flow holds none of the line's text, so the word runs straight on
+                // across it: the hyphen the line ends on is still the hyphen the line before it wrote.
+                TextFragment? last = null;
+                var wordsBefore = 0;
+
+                for (var index = _fragments.Count - 1; index >= 0; index--)
+                {
+                    if (_fragments[index].OutOfFlow)
+                    {
+                        continue;
+                    }
+
+                    last = _fragments[index];
+                    wordsBefore = index;
+                    break;
+                }
+
+                if (last is not { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null })
                 {
                     return false;
                 }
@@ -4849,7 +4866,7 @@ internal sealed class InlineLayout
                     trailing++;
                 }
 
-                return trailing > 0 && (text.Length > trailing || _fragments.Count > 1);
+                return trailing > 0 && (text.Length > trailing || wordsBefore > 0);
             }
         }
 
@@ -4903,13 +4920,29 @@ internal sealed class InlineLayout
         {
             get
             {
-                if (_fragments.Count == 0 ||
-                    _fragments[^1] is not { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null } last)
+                // A box the page took out of the flow stands in the line's list but is not part of its
+                // text, so the word the line has begun carries straight on across it; a box that holds
+                // text of its own - a replaced picture, a ruby pair, an atomic line - really does end
+                // the word.
+                for (var index = _fragments.Count - 1; index >= 0; index--)
                 {
-                    return null;
+                    var fragment = _fragments[index];
+
+                    if (fragment.OutOfFlow)
+                    {
+                        continue;
+                    }
+
+                    if (fragment.Length == 0 || fragment.IsReplaced || fragment.Ruby is not null ||
+                        fragment.Atomic is not null)
+                    {
+                        return null;
+                    }
+
+                    return TextChunker.CodePointBefore(fragment.Source, fragment.Start + fragment.Length);
                 }
 
-                return TextChunker.CodePointBefore(last.Source, last.Start + last.Length);
+                return null;
             }
         }
 

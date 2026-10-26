@@ -452,6 +452,21 @@ public sealed class InlineBoxTests
     }
 
     [Test]
+    public async Task ASoftHyphenCarriesAcrossABoxThatLeftTheFlow()
+    {
+        using var view = CreateView();
+
+        // The box the page took out of the flow holds none of the line's text, so the word the span
+        // began is still standing when the soft hyphen is met, and the mark ends the line above
+        // (CSS Text 3 §6.1, and hyphens-out-of-flow-001).
+        await view.SetHtml(
+            Document("H<span style='position:absolute'>i</span>­phen.", width: 16));
+
+        Assert.That(Text(view, "-").BorderBox.X, Is.EqualTo(5), "the mark follows the letter the line set");
+        Assert.That(Text(view, "phen.").BorderBox.Y, Is.GreaterThan(10), "and the rest begins the next line");
+    }
+
+    [Test]
     public async Task ASoftHyphenIsUsedWhenTheRestOfTheWordWouldNotFit()
     {
         using var view = CreateView();
