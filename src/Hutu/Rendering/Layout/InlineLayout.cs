@@ -186,6 +186,17 @@ internal sealed class InlineLayout
     {
         if (line.Fragments.Count == 0)
         {
+            // A clamp that ends on a blank line still marks it: the mark is content the clamp adds,
+            // not something the line's own text had room for (webkit-line-clamp-032).
+            if (!force)
+            {
+                return;
+            }
+
+            var blankStyle = container.Style;
+            var blankWidth = MeasureChunk(_measurer, blankStyle, mark, 0, mark.Length, flow);
+
+            line.Fragments.Add(new TextFragment(mark, 0, mark.Length, blankWidth, blankStyle, container, flow, null));
             return;
         }
 
