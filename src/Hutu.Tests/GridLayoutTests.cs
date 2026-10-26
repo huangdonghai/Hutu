@@ -1161,6 +1161,28 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task AnOutOfFlowChildStandsInItsAreaFromTheRightInAnRtlGrid()
+    {
+        using var view = CreateView(400);
+
+        // The columns run right to left, so the second track is the middle band of the content box and
+        // the inline start is its right edge; a child with no offsets of its own is aligned inside the
+        // area its grid-area names (CSS Grid 1 §10.1, CSS Align 3 §5.2).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div dir='rtl' style='display:grid;width:100px;height:50px;position:relative;" +
+            "grid-template-columns:10px 40px 10px;grid-template-rows:5px 20px 5px'>" +
+            "<div id='a' style='position:absolute;grid-area:2/2/3/3;width:10px;height:10px;" +
+            "justify-self:start;align-self:start'></div>" +
+            "</div></body></html>");
+
+        var a = Find(view, "a");
+
+        Assert.That(a.BorderBox.X, Is.EqualTo(80).Within(0.5), "the start edge of the area is its right one");
+        Assert.That(a.BorderBox.Y, Is.EqualTo(5).Within(0.5));
+    }
+
+    [Test]
     public async Task AGapWrittenAsACalcKeepsItsShareAndItsDistance()
     {
         // A calc() that adds a share to a distance keeps both until the box is known (CSS Values 4 §10.9):

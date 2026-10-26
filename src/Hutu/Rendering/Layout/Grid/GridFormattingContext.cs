@@ -204,7 +204,8 @@ internal sealed class GridFormattingContext
                 plan,
                 paddingBox,
                 contentX,
-                contentY);
+                contentY,
+                inlineFromEnd: !box.Flow.IsVertical && box.Flow.IsRightToLeft);
 
             // A container that generates no containing block for the child lends it no area either: the
             // child's place is then the content edges it would have stood against as the sole grid item
@@ -221,11 +222,34 @@ internal sealed class GridFormattingContext
             // which is the one place a grid child's justify-self and align-self reach without the child
             // being a grid item at all (CSS Align 3 ��5.2).
             var item = child.Style.GridItem;
+            var inlineFromEnd = !box.Flow.IsVertical && box.Flow.IsRightToLeft;
             var baselineAtEnd = !box.Flow.IsVertical && !box.Flow.IsRightToLeft;
-            var placed = new StaticStanding(
-                standing,
-                StaticStanding.Resolve(item.JustifySelf, grid.JustifyItems, baselineAtEnd),
-                StaticStanding.Resolve(item.AlignSelf, grid.AlignItems, baselineAtEnd));
+            // A last baseline stands at the end of its axis whatever the text direction is. On the
+            // inline axis the end is then turned over with the start below, where a right-to-left row
+            // reads the other way.
+            var justify = StaticStanding.Resolve(item.JustifySelf, grid.JustifyItems, !box.Flow.IsVertical);
+            var align = StaticStanding.Resolve(item.AlignSelf, grid.AlignItems, !box.Flow.IsVertical);
+
+            // The inline axis of a right-to-left row starts at the right edge, so the start and the end
+            // keyword change places; left and right are physical and keep theirs.
+            if (inlineFromEnd)
+            {
+                justify = justify switch
+                {
+                    FlexAlignment.Start => FlexAlignment.End,
+                    FlexAlignment.End => FlexAlignment.Start,
+                    _ => justify,
+                };
+            }
+
+            // `left` and `right` are physical edges of a horizontal axis; down the page there is no
+            // left or right to stand on, and the box keeps the start edge (CSS Align 3, 5.2).
+            if (!box.Flow.IsVertical && align is FlexAlignment.Left or FlexAlignment.Right)
+            {
+                align = FlexAlignment.Start;
+            }
+
+            var placed = new StaticStanding(standing, justify, align);
 
             parent.Children.Add(
                 _engine.ArrangePositioned(child, new Offset(standing.X, standing.Y), childContext, placed));
@@ -247,7 +271,8 @@ internal sealed class GridFormattingContext
         GridPlan plan,
         Rect paddingBox,
         Double contentX,
-        Double contentY)
+        Double contentY,
+        Boolean inlineFromEnd)
     {
         var contentRight = contentX + plan.ContentWidth;
         var contentBottom = contentY + plan.ContentHeight;
@@ -257,12 +282,23 @@ internal sealed class GridFormattingContext
         var rowStart = LineNumber(item.RowStart, grid, plan.RowLines.Count, horizontal: false, atEnd: false);
         var rowEnd = LineNumber(item.RowEnd, grid, plan.RowLines.Count, horizontal: false, atEnd: true);
 
-        var blockLeft = columnStart is { } left ? LineAt(plan.ColumnLines, left, contentX) : paddingBox.X;
-        var blockRight = columnEnd is { } right ? LineAt(plan.ColumnLines, right, contentX) : paddingBox.Right;
+        var blockLeft = columnStart is { } left
+            ? LineAt(plan.ColumnLines, left, contentX, plan.ContentWidth, inlineFromEnd)
+            : paddingBox.X;
+        var blockRight = columnEnd is { } right
+            ? LineAt(plan.ColumnLines, right, contentX, plan.ContentWidth, inlineFromEnd)
+            : paddingBox.Right;
         var blockTop = rowStart is { } top ? LineAt(plan.RowLines, top, contentY) : paddingBox.Y;
         var blockBottom = rowEnd is { } bottom ? LineAt(plan.RowLines, bottom, contentY) : paddingBox.Bottom;
 
-        var block = Between(blockLeft, blockRight, blockTop, blockBottom);
+        // A line read from the right edge puts the area's start line to the right of its end line,
+        // so the two edges are put in page order before the rect is built.
+        var block = Between(
+            Math.Min(blockLeft, blockRight),
+            Math.Max(blockLeft, blockRight),
+            Math.Min(blockTop, blockBottom),
+            Math.Max(blockTop, blockBottom));
+
 
         // A placement named on no side at all has no area of its own to stand in, and the content edges
         // answer for it; the moment one side is named, the child stands where that area begins.
@@ -300,6 +336,13 @@ internal sealed class GridFormattingContext
     /// </summary>
     private static Double LineAt(List<Double> lines, Int32 line, Double origin) =>
         origin + lines[line - 1];
+
+    /// <summary>
+    /// Gets where a line stands along an axis whose start edge is the far one: the line's offset is
+    /// counted from the right instead of the left, so the first line of the list stands at the extent.
+    /// </summary>
+    private static Double LineAt(List<Double> lines, Int32 line, Double origin, Double extent, Boolean fromEnd) =>
+        fromEnd ? origin + extent - lines[line - 1] : origin + lines[line - 1];
 
 
 
@@ -2115,6 +2158,7 @@ internal sealed class GridFormattingContext
 
         item.OffsetX = areaX + margin.Left + Space(justify, areaWidth - outerX);
         item.OffsetY = areaY + margin.Top + Space(align, areaHeight - outerY);
+
         item.BorderBoxWidth = width;
         item.BorderBoxHeight = height;
     }
