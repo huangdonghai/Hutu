@@ -385,14 +385,15 @@ internal static partial class BoxBuilder
                         }
                         else
                         {
-                            // A scroll container's marker group is a sibling of the container, not a
-                            // child of it (CSS Overflow 5 §4.1), so it is put on the side the page asked
-                            // for around the box it belongs to.
+                            // A scroll container's marker group and its buttons are siblings of the
+                            // container, not children of it (CSS Overflow 5 §4.1, §5.1), so they are
+                            // put on the sides the page asked for around the box they belong to.
                             var markerSide = childBox.Style.ScrollMarkerGroup;
+                            Box? markerGroup = null;
 
                             if (markerSide is not null)
                             {
-                                var markerGroup = GeneratedContent.ScrollMarkerGroup(
+                                markerGroup = GeneratedContent.ScrollMarkerGroup(
                                     childBox,
                                     elementChild,
                                     index,
@@ -406,26 +407,44 @@ internal static partial class BoxBuilder
                                     flow,
                                     variables,
                                     among);
+                            }
 
-                                if (markerGroup is not null)
-                                {
-                                    if (markerSide == "before")
-                                    {
-                                        children.Add(markerGroup);
-                                    }
+                            var (beforeButtons, afterButtons) = GeneratedContent.ScrollButtons(
+                                childBox,
+                                elementChild,
+                                index,
+                                childBox.Style,
+                                childParent,
+                                device,
+                                faces,
+                                state,
+                                images,
+                                parser,
+                                flow,
+                                variables,
+                                among);
 
-                                    children.Add(childBox);
+                            foreach (var button in beforeButtons)
+                            {
+                                children.Add(button);
+                            }
 
-                                    if (markerSide == "after")
-                                    {
-                                        children.Add(markerGroup);
-                                    }
-
-                                    break;
-                                }
+                            if (markerGroup is not null && markerSide == "before")
+                            {
+                                children.Add(markerGroup);
                             }
 
                             children.Add(childBox);
+
+                            foreach (var button in afterButtons)
+                            {
+                                children.Add(button);
+                            }
+
+                            if (markerGroup is not null && markerSide == "after")
+                            {
+                                children.Add(markerGroup);
+                            }
                         }
                     }
 

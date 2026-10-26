@@ -577,26 +577,27 @@ internal sealed class RuleBucketIndex
                 return;
             }
 
-            if (selector.Contains("::scroll-marker", StringComparison.OrdinalIgnoreCase))
+            var scrollMarker = selector.Contains("::scroll-marker", StringComparison.OrdinalIgnoreCase);
+            var scrollButton = selector.Contains("::scroll-button(", StringComparison.OrdinalIgnoreCase);
+
+            if (scrollMarker || scrollButton)
             {
                 var body = css[(open + 1)..close];
 
                 foreach (var rawArm in SplitSelectors(selector))
                 {
                     var arm = rawArm.Trim();
-                    var pseudo = ScrollMarkerPseudo(arm);
 
-                    if (pseudo < 0)
+                    if (!PseudoRange(arm, scrollMarker, out var pseudo, out var length))
                     {
                         continue;
                     }
 
-                    var length = arm.AsSpan(pseudo).StartsWith("::scroll-marker-group", StringComparison.OrdinalIgnoreCase)
-                        ? "::scroll-marker-group".Length
-                        : "::scroll-marker".Length;
-
                     // The selector text keeps the pseudo-element, which is what the pseudo-element
-                    // index reads; the selector it parses for matching is the arm without it.
+                    // index reads; the selector it parses for matching is the arm without it. A
+                    // pseudo-class written after the pseudo-element - `:enabled`, say - belongs to
+                    // the box the pseudo-element makes, so it is taken off with it and the rule is
+                    // read as one for the button.
                     var selectorText = arm[..(pseudo + length)];
                     var stripped = arm[..pseudo].Trim();
 
@@ -625,6 +626,49 @@ internal sealed class RuleBucketIndex
         var group = arm.LastIndexOf("::scroll-marker-group", StringComparison.OrdinalIgnoreCase);
         var marker = arm.LastIndexOf("::scroll-marker", StringComparison.OrdinalIgnoreCase);
         return Math.Max(group, marker);
+    }
+
+    /// <summary>
+    /// Gets where the scroll pseudo-element the arm names begins and how long its name is. A scroll
+    /// marker is named without arguments; a scroll button carries the edge it stands on in parentheses.
+    /// </summary>
+    private static Boolean PseudoRange(String arm, Boolean marker, out Int32 start, out Int32 length)
+    {
+        start = -1;
+        length = 0;
+
+        if (marker)
+        {
+            start = ScrollMarkerPseudo(arm);
+
+            if (start < 0)
+            {
+                return false;
+            }
+
+            length = arm.AsSpan(start).StartsWith("::scroll-marker-group", StringComparison.OrdinalIgnoreCase)
+                ? "::scroll-marker-group".Length
+                : "::scroll-marker".Length;
+            return true;
+        }
+
+        start = arm.LastIndexOf("::scroll-button(", StringComparison.OrdinalIgnoreCase);
+
+        if (start < 0)
+        {
+            return false;
+        }
+
+        var close = arm.IndexOf(')', start + "::scroll-button(".Length);
+
+        if (close < 0)
+        {
+            start = -1;
+            return false;
+        }
+
+        length = close - start + 1;
+        return true;
     }
 
     /// <summary>Finds the brace that closes the block opened at <paramref name="open"/>.</summary>

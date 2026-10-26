@@ -99,6 +99,19 @@ internal sealed class MatchedCascade
         return new MatchedCascade(rules, _inline);
     }
 
+    /// <summary>
+    /// Gets this cascade followed by every rule of another. The arm a page writes for one scroll
+    /// button (`::scroll-button(inline-end)`) is read after the arm it writes for all of them
+    /// (`::scroll-button(*)`), so the narrower arm is the one that wins.
+    /// </summary>
+    internal MatchedCascade WithFollowing(MatchedCascade other)
+    {
+        var rules = new List<MatchedRule>(_rules.Count + other._rules.Count);
+        rules.AddRange(_rules);
+        rules.AddRange(other._rules);
+        return new MatchedCascade(rules, _inline);
+    }
+
     /// <summary>Gets the rules that matched, in the order the cascade applies them.</summary>
     internal IReadOnlyList<ICssStyleRule> Matched
     {

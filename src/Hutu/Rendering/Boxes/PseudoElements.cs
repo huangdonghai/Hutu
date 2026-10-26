@@ -27,6 +27,21 @@ internal enum PseudoArm
 
     /// <summary>The box a scroll container puts its markers in, before or after itself (CSS Overflow 5 §4.1).</summary>
     ScrollMarkerGroup,
+
+    /// <summary>A scroll button at the block-start of the scroll container (CSS Overflow 5 §5.1).</summary>
+    ScrollButtonBlockStart,
+
+    /// <summary>A scroll button at the block-end of the scroll container.</summary>
+    ScrollButtonBlockEnd,
+
+    /// <summary>A scroll button at the inline-start of the scroll container.</summary>
+    ScrollButtonInlineStart,
+
+    /// <summary>A scroll button at the inline-end of the scroll container.</summary>
+    ScrollButtonInlineEnd,
+
+    /// <summary>The <c>::scroll-button(*)</c> arm, which styles every scroll button the box makes.</summary>
+    ScrollButtonAll,
 }
 
 /// <summary>
@@ -60,6 +75,11 @@ internal sealed class PseudoRuleIndex
     private readonly ArmSet _firstLine = new();
     private readonly ArmSet _scrollMarker = new();
     private readonly ArmSet _scrollMarkerGroup = new();
+    private readonly ArmSet _scrollButtonBlockStart = new();
+    private readonly ArmSet _scrollButtonBlockEnd = new();
+    private readonly ArmSet _scrollButtonInlineStart = new();
+    private readonly ArmSet _scrollButtonInlineEnd = new();
+    private readonly ArmSet _scrollButtonAll = new();
 
     /// <summary>
     /// Gets whether no arm anywhere in the sheets is written for either generated-content pseudo-element.
@@ -83,6 +103,12 @@ internal sealed class PseudoRuleIndex
 
     /// <summary>Gets whether any arm anywhere in the sheets is written for a scroll marker group.</summary>
     internal Boolean HasScrollMarkerGroups => _scrollMarkerGroup.Count > 0;
+
+    /// <summary>Gets whether any arm anywhere in the sheets is written for a scroll button.</summary>
+    internal Boolean HasScrollButtons =>
+        _scrollButtonBlockStart.Count > 0 || _scrollButtonBlockEnd.Count > 0 ||
+        _scrollButtonInlineStart.Count > 0 || _scrollButtonInlineEnd.Count > 0 ||
+        _scrollButtonAll.Count > 0;
 
     /// <summary>
     /// Gets whether any arm written for a generated-content pseudo-element asks for a counter.
@@ -276,6 +302,11 @@ internal sealed class PseudoRuleIndex
         PseudoArm.FirstLine => _firstLine,
         PseudoArm.ScrollMarker => _scrollMarker,
         PseudoArm.ScrollMarkerGroup => _scrollMarkerGroup,
+        PseudoArm.ScrollButtonBlockStart => _scrollButtonBlockStart,
+        PseudoArm.ScrollButtonBlockEnd => _scrollButtonBlockEnd,
+        PseudoArm.ScrollButtonInlineStart => _scrollButtonInlineStart,
+        PseudoArm.ScrollButtonInlineEnd => _scrollButtonInlineEnd,
+        PseudoArm.ScrollButtonAll => _scrollButtonAll,
         _ => _marker,
     };
 
@@ -393,6 +424,30 @@ internal sealed class PseudoRuleIndex
             arm = PseudoArm.ScrollMarkerGroup;
             colon = at;
             return true;
+        }
+
+        // A scroll button names where it stands in its parentheses: `block-start`, `block-end`,
+        // `inline-start` or `inline-end`, or `*` for every one of them (CSS Overflow 5 §5.1).
+        if (name.StartsWith("scroll-button(", StringComparison.OrdinalIgnoreCase) && name.EndsWith(')'))
+        {
+            var direction = name["scroll-button(".Length..^1].Trim();
+
+            PseudoArm? button = direction.ToLowerInvariant() switch
+            {
+                "block-start" => PseudoArm.ScrollButtonBlockStart,
+                "block-end" => PseudoArm.ScrollButtonBlockEnd,
+                "inline-start" => PseudoArm.ScrollButtonInlineStart,
+                "inline-end" => PseudoArm.ScrollButtonInlineEnd,
+                "*" => PseudoArm.ScrollButtonAll,
+                _ => null,
+            };
+
+            if (button is { } found)
+            {
+                arm = found;
+                colon = at;
+                return true;
+            }
         }
 
         return false;
@@ -899,6 +954,150 @@ internal static class GeneratedContent
         }
 
         return group;
+    }
+
+    /// <summary>
+    /// Builds the <c>::scroll-button()</c> boxes a scroll container asks for, split into the ones that
+    /// stand before it and the ones that stand after it (CSS Overflow 5 §5.1).
+    /// </summary>
+    /// <remarks>
+    /// A button is a tree-abiding pseudo-element of the scroll container, so it inherits the
+    /// container's text but is a sibling of it in the page's flow. The arms are read in the order the
+    /// buttons stand around the container: the block-start and inline-start ones before it, the
+    /// block-end and inline-end ones after it.
+    /// </remarks>
+    internal static (List<Box> Before, List<Box> After) ScrollButtons(
+        Box scroller,
+        IElement element,
+        RuleBucketIndex index,
+        ComputedStyle style,
+        FusedParent parent,
+        HutuRenderDevice device,
+        FontFaceTable? faces,
+        StyleResolution state,
+        IImageProvider? images,
+        ICssParser? parser,
+        WritingModeInfo flow,
+        VariableScope? variables,
+        CounterEnv? counters)
+    {
+        var before = new List<Box>();
+        var after = new List<Box>();
+
+        if (!index.Pseudo.HasScrollButtons)
+        {
+            return (before, after);
+        }
+
+        var all = index.Pseudo.Cascade(PseudoArm.ScrollButtonAll, element, index.Rules, index.Origins);
+
+        var directions = new (PseudoArm Arm, Boolean Before)[]
+        {
+            (PseudoArm.ScrollButtonBlockStart, true),
+            (PseudoArm.ScrollButtonInlineStart, true),
+            (PseudoArm.ScrollButtonBlockEnd, false),
+            (PseudoArm.ScrollButtonInlineEnd, false),
+        };
+
+        var specifics = new MatchedCascade?[directions.Length];
+        var anySpecific = false;
+
+        for (var i = 0; i < directions.Length; i++)
+        {
+            specifics[i] = index.Pseudo.Cascade(directions[i].Arm, element, index.Rules, index.Origins);
+            anySpecific |= specifics[i] is not null;
+        }
+
+        for (var i = 0; i < directions.Length; i++)
+        {
+            var (arm, standsBefore) = directions[i];
+            var specific = specifics[i];
+            MatchedCascade? cascade;
+
+            if (specific is null)
+            {
+                // A page that names only `::scroll-button(*)` makes the whole set of buttons; one
+                // that names a direction makes only the directions it names, with the star rule
+                // standing under them.
+                if (anySpecific)
+                {
+                    continue;
+                }
+
+                cascade = all;
+            }
+            else
+            {
+                cascade = all is null ? specific : all.WithFollowing(specific);
+            }
+
+            if (cascade is null)
+            {
+                continue;
+            }
+
+            var scope = VariableScope.Open(cascade, variables, parser);
+            var buttonStyle = FusedStyleFactory.Build(
+                element,
+                cascade,
+                parent.Next(style, cascade, scope, state.Tag(element.LocalName), false),
+                device,
+                faces,
+                state.Pool,
+                state.Cache,
+                scope,
+                applies: null,
+                pseudoElement: "::scroll-button");
+
+            if (buttonStyle.IsDisplayNone)
+            {
+                continue;
+            }
+
+            var declared = cascade.Find("display")?.Value;
+            var kind = KindOf(String.IsNullOrWhiteSpace(declared) ? "inline-block" : declared!.Trim(), buttonStyle);
+
+            var button = new Box(kind, buttonStyle)
+            {
+                Element = element,
+                Flow = flow,
+                IsGenerated = true,
+                IsInlineOuter = BoxBuilder.HasInlineOuter(kind, buttonStyle),
+            };
+
+            var chain = CounterEnv.Extend(
+                counters ?? CounterEnv.Empty, cascade, cascade, element, out _);
+            var items = Items(cascade, element, scope, chain, index.Counters);
+            var runs = new List<Box>();
+
+            if (items is not null)
+            {
+                foreach (var item in items)
+                {
+                    if (item.Text is { Length: > 0 } text)
+                    {
+                        runs.Add(Run(text, element, buttonStyle, flow));
+                    }
+                }
+            }
+
+            if (kind is BoxKind.Block or BoxKind.InlineBlock or BoxKind.TableCell)
+            {
+                BoxBuilder.GroupChildren(button, runs);
+            }
+            else if (kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry)
+            {
+                BoxBuilder.GroupChildren(button, runs, true);
+            }
+            else
+            {
+                button.Children.AddRange(runs);
+            }
+
+            (standsBefore ? before : after).Add(button);
+        }
+
+        return (before, after);
     }
 
     private static CounterEnv? Put(
