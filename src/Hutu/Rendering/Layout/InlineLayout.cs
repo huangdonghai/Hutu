@@ -244,9 +244,8 @@ internal sealed class InlineLayout
 
             while (length < fragment.Length)
             {
-                var at = fragment.Start + length;
-                var units = TextClusters.UnitsAt(fragment.Text, at, fragment.Start + fragment.Length);
-                var piece = MeasureChunk(_measurer, fragment.Style, fragment.Text, at, units, fragment.Flow);
+                var units = TextClusters.UnitsAt(fragment.Text, length, fragment.Length);
+                var piece = MeasureChunk(_measurer, fragment.Style, fragment.Text, length, units, fragment.Flow);
 
                 if (width + piece > remaining + 0.001)
                 {
