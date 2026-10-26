@@ -35,6 +35,12 @@ internal sealed partial class FlexFormattingContext
     {
         var style = box.Style;
         var flex = style.Flex;
+
+        // A flex row follows the inline axis and a column the block one, so whether the main axis runs
+        // across the page or down it is the writing mode's answer as much as the direction's. Every
+        // physical size below is read through this, while which gap a rule decorates and which way a
+        // line stacks stay the direction's own (CSS Flexbox 1 §2, §5).
+        var mainIsHorizontal = flex.IsRow != box.Flow.IsVertical;
         var basisWidth = constraints.AvailableWidth ?? context.ContainingBlock.Width;
         var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var padding = style.Padding.Resolve(basisWidth);
@@ -50,45 +56,45 @@ internal sealed partial class FlexFormattingContext
         // A container with a ratio takes its cross size from it (CSS Sizing 4 §4): a flex row whose
         // width is known takes its height from the ratio, and a flex column whose height is known
         // takes its width. The main size is the flex layout's own, and a ratio never settles it.
-        var ratioHeight = flex.IsRow
+        var ratioHeight = mainIsHorizontal
             ? BoxModel.HeightFromRatio(style, contentWidth, null, insetV)
             : null;
 
-        var ratioWidth = flex.IsRow
+        var ratioWidth = mainIsHorizontal
             ? null
             : BoxModel.WidthFromRatio(style, declaredHeight, insetH);
 
         // A column container whose height the page left to the content takes that height from its ratio
         // when its width is known, and a row container whose width was left to the content takes that
         // width from its ratio when its height is known (CSS Sizing 4 §4).
-        var ratioMain = !flex.IsRow
+        var ratioMain = !mainIsHorizontal
             ? BoxModel.MainFromRatio(style, contentWidth, insetV)
             : null;
 
-        var insetMain = flex.IsRow ? insetH : insetV;
-        var insetCross = flex.IsRow ? insetV : insetH;
-        var mainSize = flex.IsRow ? contentWidth : declaredHeight;
-        var crossSize = flex.IsRow ? declaredHeight : contentWidth;
+        var insetMain = mainIsHorizontal ? insetH : insetV;
+        var insetCross = mainIsHorizontal ? insetV : insetH;
+        var mainSize = mainIsHorizontal ? contentWidth : declaredHeight;
+        var crossSize = mainIsHorizontal ? declaredHeight : contentWidth;
 
         var itemContext = context.ForContainingBlock(new Size(contentWidth, declaredHeight ?? 0));
         var plan = Compute(box, flex, mainSize, crossSize, insetMain, insetCross, itemContext);
 
-        var contentMain = flex.IsRow ? contentWidth : declaredHeight ?? plan.ContentMain;
-        var contentCross = flex.IsRow ? declaredHeight ?? plan.ContentCross : contentWidth;
+        var contentMain = mainIsHorizontal ? contentWidth : declaredHeight ?? plan.ContentMain;
+        var contentCross = mainIsHorizontal ? declaredHeight ?? plan.ContentCross : contentWidth;
 
         // The ratio settles the cross size where the page left it to the content, and the content may
         // be taller than it - then the content is what the box comes to (CSS Sizing 4 §4.4).
-        if (flex.IsRow && ratioHeight is { } ratio)
+        if (mainIsHorizontal && ratioHeight is { } ratio)
         {
             contentCross = BoxModel.ContentRaisesTheRatio(style)
                 ? Math.Max(ratio, plan.ContentCross)
                 : ratio;
         }
-        else if (!flex.IsRow && ratioWidth is { } wide)
+        else if (!mainIsHorizontal && ratioWidth is { } wide)
         {
             contentCross = wide;
         }
-        else if (!flex.IsRow && ratioMain is { } fromRatio)
+        else if (!mainIsHorizontal && ratioMain is { } fromRatio)
         {
             // A column container whose height the page left to the content takes that height from its
             // ratio when its width is known: the ratio settles the size the flex layout does not
@@ -96,8 +102,8 @@ internal sealed partial class FlexFormattingContext
             contentMain = fromRatio;
         }
 
-        var width = (flex.IsRow ? contentMain : contentCross) + insetH;
-        var height = (flex.IsRow ? contentCross : contentMain) + insetV;
+        var width = (mainIsHorizontal ? contentMain : contentCross) + insetH;
+        var height = (mainIsHorizontal ? contentCross : contentMain) + insetV;
 
         // Size containment answers both axes from the intrinsic size the page stated, whatever the items
         // want: the box must not change size because of what it holds (CSS Contain 1 §3.1.1, CSS Sizing
@@ -130,6 +136,7 @@ internal sealed partial class FlexFormattingContext
     {
         var style = box.Style;
         var flex = style.Flex;
+        var mainIsHorizontal = flex.IsRow != box.Flow.IsVertical;
         var basis = context.ContainingBlock.Width;
         var padding = style.Padding.Resolve(basis);
         var border = BlockLayout.BorderOf(box);
@@ -154,8 +161,8 @@ internal sealed partial class FlexFormattingContext
         var contentHeight = Math.Max(0, borderBox.Height - insetV);
         var contentX = borderBox.X + border.Left + padding.Left;
         var contentY = borderBox.Y + border.Top + padding.Top;
-        var insetMain = flex.IsRow ? insetH : insetV;
-        var insetCross = flex.IsRow ? insetV : insetH;
+        var insetMain = mainIsHorizontal ? insetH : insetV;
+        var insetCross = mainIsHorizontal ? insetV : insetH;
         var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
         // A container that holds its descendants is what an absolutely positioned child anchors to.
@@ -164,8 +171,8 @@ internal sealed partial class FlexFormattingContext
         var plan = Compute(
             box,
             flex,
-            flex.IsRow ? contentWidth : contentHeight,
-            flex.IsRow ? contentHeight : contentWidth,
+            mainIsHorizontal ? contentWidth : contentHeight,
+            mainIsHorizontal ? contentHeight : contentWidth,
             insetMain,
             insetCross,
             itemContext);
@@ -217,9 +224,10 @@ internal sealed partial class FlexFormattingContext
         }
 
         var isRow = flex.IsRow;
+        var mainIsHorizontal = isRow != flow.IsVertical;
         var reversed = flex.IsReversed;
-        var mainStart = isRow ? contentX : contentY;
-        var crossStart = isRow ? contentY : contentX;
+        var mainStart = mainIsHorizontal ? contentX : contentY;
+        var crossStart = mainIsHorizontal ? contentY : contentX;
         var itemGaps = new List<Gap>();
         var lineGaps = new List<Gap>();
         var laid = new List<List<(Double From, Double To)>>(plan.Lines.Count);
@@ -250,8 +258,8 @@ internal sealed partial class FlexFormattingContext
 
             foreach (var item in line.Items)
             {
-                var main = isRow ? item.OffsetX : item.OffsetY;
-                var size = isRow ? item.BorderBoxWidth : item.BorderBoxHeight;
+                var main = mainIsHorizontal ? item.OffsetX : item.OffsetY;
+                var size = mainIsHorizontal ? item.BorderBoxWidth : item.BorderBoxHeight;
                 var leading = reversed ? item.MarginMainEnd : item.MarginMainStart;
                 var trailing = reversed ? item.MarginMainStart : item.MarginMainEnd;
                 var low = main - leading;
@@ -265,7 +273,8 @@ internal sealed partial class FlexFormattingContext
                     var to = Math.Max(low, previousLow);
 
                     itemGaps.Add(new Gap(
-                        isRow, mainStart + (from + to) / 2, lineStart, lineEnd, startCrossing, endCrossing));
+                        mainIsHorizontal, mainStart + (from + to) / 2, lineStart, lineEnd,
+                        startCrossing, endCrossing));
                     intervals.Add((mainStart + from, mainStart + to));
                 }
 
@@ -276,7 +285,7 @@ internal sealed partial class FlexFormattingContext
             laid.Add(intervals);
         }
 
-        var mainEnd = isRow ? contentX + contentWidth : contentY + contentHeight;
+        var mainEnd = mainIsHorizontal ? contentX + contentWidth : contentY + contentHeight;
         var splits = new List<List<(Double From, Double To)>>(Math.Max(0, plan.Lines.Count - 1));
         var lineCrossings = new List<List<(Double From, Double To)>>(splits.Capacity);
 
@@ -287,7 +296,7 @@ internal sealed partial class FlexFormattingContext
             var from = Math.Min(line.CrossStart + line.CrossSize, next.CrossStart + next.CrossSize);
             var to = Math.Max(line.CrossStart, next.CrossStart);
 
-            lineGaps.Add(new Gap(!isRow, crossStart + (from + to) / 2, mainStart, mainEnd));
+            lineGaps.Add(new Gap(!mainIsHorizontal, crossStart + (from + to) / 2, mainStart, mainEnd));
 
             // A column gap abutting this one from either line above or below is where an intersecting
             // decoration ends and the next one starts, so the two lines' gaps are joined into the
@@ -460,6 +469,7 @@ internal sealed partial class FlexFormattingContext
         LayoutContext context)
     {
         var isRow = flex.IsRow;
+        var mainIsHorizontal = isRow != box.Flow.IsVertical;
         var mainGap = Math.Max(0, isRow ? flex.ColumnGap : flex.RowGap);
         var crossGap = Math.Max(0, isRow ? flex.RowGap : flex.ColumnGap);
 
@@ -472,7 +482,7 @@ internal sealed partial class FlexFormattingContext
             // placed against the container instead.
             if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child))
             {
-                items.Add(CreateItem(child, isRow, mainSize, context, sequence++));
+                items.Add(CreateItem(child, mainIsHorizontal, box.Flow, mainSize, context, sequence++));
             }
         }
 
@@ -486,7 +496,7 @@ internal sealed partial class FlexFormattingContext
 
         foreach (var item in items)
         {
-            item.BaseMain = ResolveBaseMain(item, isRow, mainSize, context);
+            item.BaseMain = ResolveBaseMain(item, mainIsHorizontal, mainSize, context);
 
             if (item.MinMain is null && isRow)
             {
@@ -507,7 +517,7 @@ internal sealed partial class FlexFormattingContext
                     var contentMin = Math.Max(
                         0,
                         _engine.MeasureContentIntrinsic(item.Box, context).MinContent - item.InsetMain);
-                    var declared = DeclaredContentMain(item, isRow, mainSize);
+                    var declared = DeclaredContentMain(item, mainIsHorizontal, mainSize);
                     item.MinMain = declared is { } specified ? Math.Min(specified, contentMin) : contentMin;
                 }
             }
@@ -524,11 +534,11 @@ internal sealed partial class FlexFormattingContext
         }
 
         var contentCross = ResolveCrossSizes(
-            lines, crossSize, crossGap, flex.AlignContent, flex.AlignItems, isRow, context);
+            lines, crossSize, crossGap, flex.AlignContent, flex.AlignItems, mainIsHorizontal, context);
 
         var contentMain = mainSize ?? MaxLineMain(lines);
 
-        Place(lines, flex, contentMain, contentCross, mainGap);
+        Place(lines, flex, box.Flow, contentMain, contentCross, mainGap);
 
         var plan = new FlexPlan
         {
@@ -543,7 +553,8 @@ internal sealed partial class FlexFormattingContext
 
     private FlexItem CreateItem(
         Box child,
-        Boolean isRow,
+        Boolean mainIsHorizontal,
+        WritingModeInfo flow,
         Double? mainSize,
         LayoutContext context,
         Int32 sequence)
@@ -558,8 +569,12 @@ internal sealed partial class FlexFormattingContext
         // border-box size, and a flex item is measured against its own padding and border.
         var padding = style.Padding.Resolve(basis);
         var border = BlockLayout.BorderOf(child);
-        var insetMain = isRow ? padding.Horizontal + border.Horizontal : padding.Vertical + border.Vertical;
-        var insetCross = isRow ? padding.Vertical + border.Vertical : padding.Horizontal + border.Horizontal;
+        var insetMain = mainIsHorizontal
+            ? padding.Horizontal + border.Horizontal
+            : padding.Vertical + border.Vertical;
+        var insetCross = mainIsHorizontal
+            ? padding.Vertical + border.Vertical
+            : padding.Horizontal + border.Horizontal;
 
         var item = new FlexItem
         {
@@ -573,18 +588,18 @@ internal sealed partial class FlexFormattingContext
             AlignSelf = flex.AlignSelf,
             InsetMain = insetMain,
             InsetCross = insetCross,
-            AutoCross = isRow ? !style.Height.HasValue : !style.Width.HasValue,
+            AutoCross = mainIsHorizontal ? !style.Height.HasValue : !style.Width.HasValue,
         };
 
         // Margins are gathered per logical axis, so the direction is applied only when placing.
-        AssignMargins(item, isRow, style.Margin, margin);
+        AssignMargins(item, mainIsHorizontal, flow, style.Margin, margin);
 
         var mainBasis = mainSize ?? 0;
-        var minMain = isRow ? style.MinWidth : style.MinHeight;
-        var maxMain = isRow ? style.MaxWidth : style.MaxHeight;
-        var minCross = isRow ? style.MinHeight : style.MinWidth;
-        var maxCross = isRow ? style.MaxHeight : style.MaxWidth;
-        var crossBasis = context.ContainingBlock.Height;
+        var minMain = mainIsHorizontal ? style.MinWidth : style.MinHeight;
+        var maxMain = mainIsHorizontal ? style.MaxWidth : style.MaxHeight;
+        var minCross = mainIsHorizontal ? style.MinHeight : style.MinWidth;
+        var maxCross = mainIsHorizontal ? style.MaxHeight : style.MaxWidth;
+        var crossBasis = mainIsHorizontal ? context.ContainingBlock.Height : context.ContainingBlock.Width;
 
         item.MinMain = BoxModel.ContentBound(minMain, mainBasis, insetMain, isBorderBox);
         item.MaxMain = BoxModel.ContentBound(maxMain, mainBasis, insetMain, isBorderBox);
@@ -593,29 +608,47 @@ internal sealed partial class FlexFormattingContext
         return item;
     }
 
-    private static void AssignMargins(FlexItem item, Boolean isRow, StyleThickness declared, Thickness resolved)
+    private static void AssignMargins(
+        FlexItem item,
+        Boolean mainIsHorizontal,
+        WritingModeInfo flow,
+        StyleThickness declared,
+        Thickness resolved)
     {
-        if (isRow)
+        // The side a logical start stands on is the writing mode's to say: a row reads rightward under
+        // `direction: rtl`, a column of a right-to-left page runs leftward, and a vertical page's
+        // columns either march rightward or leftward (CSS Writing Modes 3, section 6).
+        Boolean mainFromEnd, crossFromEnd;
+
+        if (mainIsHorizontal)
         {
-            item.MarginMainStart = resolved.Left;
-            item.MarginMainEnd = resolved.Right;
-            item.MarginCrossStart = resolved.Top;
-            item.MarginCrossEnd = resolved.Bottom;
-            item.AutoMarginMainStart = declared.Left.IsAuto;
-            item.AutoMarginMainEnd = declared.Right.IsAuto;
-            item.AutoMarginCrossStart = declared.Top.IsAuto;
-            item.AutoMarginCrossEnd = declared.Bottom.IsAuto;
+            mainFromEnd = flow.InlineSign < 0;
+            crossFromEnd = flow.BlockSign < 0;
+
+            item.MarginMainStart = mainFromEnd ? resolved.Right : resolved.Left;
+            item.MarginMainEnd = mainFromEnd ? resolved.Left : resolved.Right;
+            item.AutoMarginMainStart = mainFromEnd ? declared.Right.IsAuto : declared.Left.IsAuto;
+            item.AutoMarginMainEnd = mainFromEnd ? declared.Left.IsAuto : declared.Right.IsAuto;
+
+            item.MarginCrossStart = crossFromEnd ? resolved.Bottom : resolved.Top;
+            item.MarginCrossEnd = crossFromEnd ? resolved.Top : resolved.Bottom;
+            item.AutoMarginCrossStart = crossFromEnd ? declared.Bottom.IsAuto : declared.Top.IsAuto;
+            item.AutoMarginCrossEnd = crossFromEnd ? declared.Top.IsAuto : declared.Bottom.IsAuto;
         }
         else
         {
-            item.MarginMainStart = resolved.Top;
-            item.MarginMainEnd = resolved.Bottom;
-            item.MarginCrossStart = resolved.Left;
-            item.MarginCrossEnd = resolved.Right;
-            item.AutoMarginMainStart = declared.Top.IsAuto;
-            item.AutoMarginMainEnd = declared.Bottom.IsAuto;
-            item.AutoMarginCrossStart = declared.Left.IsAuto;
-            item.AutoMarginCrossEnd = declared.Right.IsAuto;
+            mainFromEnd = flow.InlineSign < 0;
+            crossFromEnd = flow.BlockSign < 0;
+
+            item.MarginMainStart = mainFromEnd ? resolved.Bottom : resolved.Top;
+            item.MarginMainEnd = mainFromEnd ? resolved.Top : resolved.Bottom;
+            item.AutoMarginMainStart = mainFromEnd ? declared.Bottom.IsAuto : declared.Top.IsAuto;
+            item.AutoMarginMainEnd = mainFromEnd ? declared.Top.IsAuto : declared.Bottom.IsAuto;
+
+            item.MarginCrossStart = crossFromEnd ? resolved.Right : resolved.Left;
+            item.MarginCrossEnd = crossFromEnd ? resolved.Left : resolved.Right;
+            item.AutoMarginCrossStart = crossFromEnd ? declared.Right.IsAuto : declared.Left.IsAuto;
+            item.AutoMarginCrossEnd = crossFromEnd ? declared.Left.IsAuto : declared.Right.IsAuto;
         }
     }
 
@@ -624,7 +657,7 @@ internal sealed partial class FlexFormattingContext
     /// the content. A percentage against an indefinite container falls through to the next source,
     /// which is what makes it behave as <c>auto</c>.
     /// </summary>
-    private Double ResolveBaseMain(FlexItem item, Boolean isRow, Double? mainSize, LayoutContext context)
+    private Double ResolveBaseMain(FlexItem item, Boolean mainIsHorizontal, Double? mainSize, LayoutContext context)
     {
         var style = item.Box.Style;
         var isBorderBox = BoxModel.IsBorderBox(style);
@@ -634,7 +667,7 @@ internal sealed partial class FlexFormattingContext
         // measurement is the one that keeps a declared width out of the answer.
         if (item.BasisIsContent)
         {
-            return isRow
+            return mainIsHorizontal
                 ? Math.Max(0, _engine.MeasureContentIntrinsic(item.Box, context).MaxContent - item.InsetMain)
                 : Math.Max(0, _engine.Measure(item.Box, MeasureConstraints.FitWidth(context.ContainingBlock.Width), context).Height - item.InsetMain);
         }
@@ -645,7 +678,7 @@ internal sealed partial class FlexFormattingContext
             return Math.Max(0, isBorderBox ? resolved - item.InsetMain : resolved);
         }
 
-        return DeclaredContentMain(item, isRow, mainSize) ?? ContentMain(item, isRow, context);
+        return DeclaredContentMain(item, mainIsHorizontal, mainSize) ?? ContentMain(item, mainIsHorizontal, context);
     }
 
     /// <summary>
@@ -653,10 +686,10 @@ internal sealed partial class FlexFormattingContext
     /// against an indefinite container. This is the <c>specified size suggestion</c>, which the
     /// automatic minimum size is built from.
     /// </summary>
-    private static Double? DeclaredContentMain(FlexItem item, Boolean isRow, Double? mainSize)
+    private static Double? DeclaredContentMain(FlexItem item, Boolean mainIsHorizontal, Double? mainSize)
     {
         var style = item.Box.Style;
-        var main = isRow ? style.Width : style.Height;
+        var main = mainIsHorizontal ? style.Width : style.Height;
 
         if (!main.HasValue || (main.Kind == StyleLengthKind.Percent && mainSize is null))
         {
@@ -668,9 +701,9 @@ internal sealed partial class FlexFormattingContext
     }
 
     /// <summary>Measures the content-box main size a flex base size of <c>content</c> asks for.</summary>
-    private Double ContentMain(FlexItem item, Boolean isRow, LayoutContext context)
+    private Double ContentMain(FlexItem item, Boolean mainIsHorizontal, LayoutContext context)
     {
-        if (isRow)
+        if (mainIsHorizontal)
         {
             return Math.Max(0, _engine.MeasureIntrinsic(item.Box, context).MaxContent - item.InsetMain);
         }
@@ -738,6 +771,7 @@ internal sealed partial class FlexFormattingContext
         var flex = style.Flex;
         var basis = context.ContainingBlock.Width;
         var insets = InlineInsets(box, basis);
+        var mainIsHorizontal = flex.IsRow != box.Flow.IsVertical;
         var mainGap = Math.Max(0, flex.IsRow ? flex.ColumnGap : flex.RowGap);
 
         var min = 0.0;
@@ -763,7 +797,7 @@ internal sealed partial class FlexFormattingContext
             var childMin = childIntrinsic.MinContent + margin;
             var childMax = childIntrinsic.MaxContent + margin;
 
-            if (flex.IsRow &&
+            if (mainIsHorizontal &&
                 BoxModel.SettledInlineExtent(
                     child.Style,
                     basis,
@@ -794,7 +828,7 @@ internal sealed partial class FlexFormattingContext
         // `max-content` there is that item's own `max-content` rather than, as the `min` half of the
         // pair would give, its `min-content`. A column holding a short title above a longer subtitle
         // is as wide as the subtitle wants to be, not as wide as one character.
-        max = flex.IsRow ? max : widest;
+        max = mainIsHorizontal ? max : widest;
 
         return new IntrinsicSize(min + insets, max + insets);
     }
@@ -809,9 +843,17 @@ internal sealed partial class FlexFormattingContext
     /// which is what makes a lone item sit in the middle of a row. <c>baseline</c> is approximated by
     /// the start edge: the first baseline of a child is not carried back up to the container.
     /// </remarks>
-    private static void Place(List<FlexLine> lines, FlexStyle flex, Double contentMain, Double contentCross, Double mainGap)
+    private static void Place(
+        List<FlexLine> lines,
+        FlexStyle flex,
+        WritingModeInfo flow,
+        Double contentMain,
+        Double contentCross,
+        Double mainGap)
     {
-        var isRow = flex.IsRow;
+        var mainIsHorizontal = flex.IsRow != flow.IsVertical;
+        var mainSign = flex.IsRow ? flow.InlineSign : flow.BlockSign;
+        var crossSign = flex.IsRow ? flow.BlockSign : flow.InlineSign;
         var reversed = flex.IsReversed;
 
         foreach (var line in lines)
@@ -861,25 +903,29 @@ internal sealed partial class FlexFormattingContext
 
             foreach (var item in items)
             {
-                var cross = lineCross + CrossOffset(item, flex.AlignItems, line.CrossSize - item.OuterCross, line.Baseline);
-                Double x;
-                Double y;
+                // Both coordinates are worked out in the logical frame the algorithm uses - from the
+                // main start and from the line's cross start - and turned over once here where an axis
+                // grows the other way: a right-to-left row, or the columns of a vertical page.
+                var main = Main(reversed, contentMain, cursor, item);
+                var cross = lineCross + CrossOffset(item, flex.AlignItems, line.CrossSize - item.OuterCross, line.Baseline) +
+                    item.MarginCrossStart;
 
-                if (isRow)
+                var mainPhysical = mainSign < 0 ? contentMain - main - item.BorderBoxMain : main;
+                var crossPhysical = crossSign < 0 ? contentCross - cross - item.BorderBoxCross : cross;
+
+                if (mainIsHorizontal)
                 {
-                    x = Main(reversed, contentMain, cursor, item);
-                    y = cross + item.MarginCrossStart;
+                    item.OffsetX = mainPhysical;
+                    item.OffsetY = crossPhysical;
                 }
                 else
                 {
-                    y = Main(reversed, contentMain, cursor, item);
-                    x = cross + item.MarginCrossStart;
+                    item.OffsetX = crossPhysical;
+                    item.OffsetY = mainPhysical;
                 }
 
-                item.OffsetX = x;
-                item.OffsetY = y;
-                item.BorderBoxWidth = isRow ? item.BorderBoxMain : item.BorderBoxCross;
-                item.BorderBoxHeight = isRow ? item.BorderBoxCross : item.BorderBoxMain;
+                item.BorderBoxWidth = mainIsHorizontal ? item.BorderBoxMain : item.BorderBoxCross;
+                item.BorderBoxHeight = mainIsHorizontal ? item.BorderBoxCross : item.BorderBoxMain;
                 cursor += item.OuterMain + mainGap + extra;
             }
         }

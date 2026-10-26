@@ -21,6 +21,64 @@ namespace Hutu.Tests;
 public sealed class FlexLayoutTests
 {
     [Test]
+    public async Task ARowInAVerticalPageStacksDownTheColumn()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='writing-mode:vertical-lr;display:flex;width:100px;height:100px'>" +
+            "<div id='a' style='width:20px;height:30px'></div>" +
+            "<div id='b' style='width:20px;height:30px'></div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.Y, Is.EqualTo(0).Within(0.5),
+            "a row follows the inline axis, which runs down a vertical page");
+        Assert.That(Find(view, "b").BorderBox.Y, Is.EqualTo(30).Within(0.5),
+            "so the second item follows the first down the page");
+        Assert.That(Find(view, "a").BorderBox.X, Is.EqualTo(Find(view, "b").BorderBox.X).Within(0.5),
+            "and both stand in the one column");
+    }
+
+    [Test]
+    public async Task ARowOfARightToLeftPageBeginsAtTheRight()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div dir='rtl' style='display:flex;width:200px;height:20px'>" +
+            "<div id='a' style='width:50px'></div>" +
+            "<div id='b' style='width:50px'></div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.X, Is.EqualTo(150).Within(0.5),
+            "the first item stands at the main start, which is the right edge");
+        Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(100).Within(0.5));
+    }
+
+    [Test]
+    public async Task ACentredLineTakesTheGapOutOfTheFreeSpaceOnce()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;flex-wrap:wrap;gap:10px;align-content:center;" +
+            "width:110px;height:130px'>" +
+            "<div class='i' style='width:50px;height:50px'></div>" +
+            "<div class='i' style='width:50px;height:50px'></div>" +
+            "<div class='i' style='width:50px;height:50px'></div>" +
+            "<div class='i' style='width:50px;height:50px'></div>" +
+            "</div></body></html>");
+
+        var items = Walk(view.Layout!.Root).Where(node => node.Source.Element is { } element &&
+            element.ClassName == "i").ToList();
+
+        Assert.That(items[0].BorderBox.Y, Is.EqualTo(10).Within(0.5),
+            "two lines of fifty and one gap of ten leave twenty, ten above and ten below");
+        Assert.That(items[2].BorderBox.Y, Is.EqualTo(70).Within(0.5),
+            "the second line begins after the first and its gap");
+    }
+
+    [Test]
     public async Task ItemsSitSideBySideAlongTheRow()
     {
         using var view = CreateView(400);

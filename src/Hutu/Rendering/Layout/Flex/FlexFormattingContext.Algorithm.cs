@@ -223,7 +223,7 @@ internal sealed partial class FlexFormattingContext
         Double crossGap,
         FlexAlignment alignContent,
         FlexAlignment alignItems,
-        Boolean isRow,
+        Boolean mainIsHorizontal,
         LayoutContext context)
     {
         if (lines.Count == 0)
@@ -237,12 +237,12 @@ internal sealed partial class FlexFormattingContext
 
             foreach (var item in line.Items)
             {
-                item.UsedCross = NaturalCross(item, isRow, context);
+                item.UsedCross = NaturalCross(item, mainIsHorizontal, context);
                 maximum = Math.Max(maximum, item.OuterCross);
             }
 
             line.CrossSize = maximum;
-            ResolveBaselines(line, alignItems, isRow, context);
+            ResolveBaselines(line, alignItems, mainIsHorizontal, context);
         }
 
         var gaps = lines.Count > 1 ? crossGap * (lines.Count - 1) : 0;
@@ -271,7 +271,11 @@ internal sealed partial class FlexFormattingContext
                 }
             }
 
-            DistributeLines(lines, inner, crossGap, alignContent);
+            // The room the lines share is the whole cross extent: the distribution takes the gaps out
+            // itself, so handing it the extent already less the gaps took them out twice and pulled
+            // every centred or spaced line layout short by half a gap (measured on flex-gap-
+            // decorations-006, where the columns stood 15px left of the reference).
+            DistributeLines(lines, definite, crossGap, alignContent);
             StretchItems(lines, alignItems);
             return definite;
         }
@@ -286,9 +290,9 @@ internal sealed partial class FlexFormattingContext
     /// them, measured from the line's cross start. A line with none of them keeps the zero that
     /// leaves the alignment a start edge, which is what a column's cross axis asks for anyway.
     /// </summary>
-    private void ResolveBaselines(FlexLine line, FlexAlignment alignItems, Boolean isRow, LayoutContext context)
+    private void ResolveBaselines(FlexLine line, FlexAlignment alignItems, Boolean mainIsHorizontal, LayoutContext context)
     {
-        if (!isRow)
+        if (!mainIsHorizontal)
         {
             return;
         }
@@ -346,13 +350,13 @@ internal sealed partial class FlexFormattingContext
     }
 
     /// <summary>Measures the item's content-box cross size, before any stretch is applied.</summary>
-    private Double NaturalCross(FlexItem item, Boolean isRow, LayoutContext context)
+    private Double NaturalCross(FlexItem item, Boolean mainIsHorizontal, LayoutContext context)
     {
         var style = item.Box.Style;
         var isBorderBox = BoxModel.IsBorderBox(style);
         Double cross;
 
-        if (isRow)
+        if (mainIsHorizontal)
         {
             if (IsDefinite(style.Height, context.ContainingBlock.Height))
             {
