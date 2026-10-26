@@ -1,5 +1,6 @@
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using AngleSharp.Dom;
+using AngleSharp.Html.Dom;
 using System;
 using System.Collections.Generic;
 
@@ -50,6 +51,29 @@ internal readonly record struct StyleRecord(
         false => 2,
         _ => 0,
     };
+}
+
+/// <summary>
+/// Gives the controls the HTML specification bars from constraint validation their valid state, which
+/// AngleSharp's own answer does not know about: a button, a reset control, a hidden field or a
+/// read-only one can never suffer from being missing or from a type mismatch (HTML §4.10.21.2), so
+/// <c>:invalid</c> does not match it and <c>:valid</c> does.
+/// </summary>
+internal static class ConstraintValidity
+{
+    internal static void Apply(IElement element)
+    {
+        if (element is not IHtmlInputElement input)
+        {
+            return;
+        }
+
+        if (input.IsReadOnly || input.Type?.ToLowerInvariant() is "hidden" or "reset" or "button")
+        {
+            element.SetPseudoClass("valid", true);
+            element.SetPseudoClass("invalid", false);
+        }
+    }
 }
 
 /// <summary>

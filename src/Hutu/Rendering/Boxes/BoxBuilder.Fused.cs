@@ -149,6 +149,7 @@ internal static partial class BoxBuilder
         // input to a match that a reading gesture can move, and the index holds last build's answer
         // for an element no rule reaches outside of - which is almost all of them - so the walk over
         // every candidate selector is spared for every element whose own marks stand still.
+        ConstraintValidity.Apply(element);
         var marks = StyleRecord.MarksOf(element);
 
         var matchStart = FusedProfile.Stamp(profile);
