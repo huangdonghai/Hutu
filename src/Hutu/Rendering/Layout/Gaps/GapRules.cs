@@ -70,9 +70,16 @@ internal readonly struct GapRuleInset
     /// Gets how far the end moves, given the crossing it stands in. A stated inset moves inwards, so the
     /// join - which runs the decoration on into the crossing - comes back negative.
     /// </summary>
-    public Double Resolve(Double crossing, Double crossingRule) =>
+    /// <param name="joins">
+    /// Whether a decoration of the crossing axis is actually drawn on either side of the crossing this end
+    /// stands at. Where none is, the end dangles: it is a cap, and a cap joins with nothing, so
+    /// <c>overlap-join</c> comes to nothing there (CSS Gaps 1 §3.3).
+    /// </param>
+    public Double Resolve(Double crossing, Double crossingRule, Boolean joins = true) =>
         _join
-            ? -(crossing / 2 + crossingRule / 2)
+            ? joins
+                ? -(crossing / 2 + crossingRule / 2)
+                : 0
             : _length is { } length ? length.Resolve(crossing) : 0;
 }
 

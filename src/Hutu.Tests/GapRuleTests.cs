@@ -684,6 +684,46 @@ public sealed class GapRuleTests
     }
 
     /// <summary>
+    /// An end that stands at a crossing where the other axis draws nothing dangles: it is a cap, and a cap
+    /// joins with nothing, so <c>overlap-join</c> comes to nothing there - the decoration stops at the bound
+    /// of its gap. The end on the other side of the same gap, where a row decoration does stand, still runs
+    /// on into the crossing (CSS Gaps 1 §3.3).
+    /// </summary>
+    [Test]
+    public async Task ADanglingEndJoinsWithNothing()
+    {
+        // The third row holds no items, so no row decoration reaches the crossing its row gap makes; the
+        // first column gap ends there, and beside the second column gap a row decoration never appears at all.
+        using var view = await Render(
+            "<style>#d { display:grid; grid-template:100px 100px 100px / 100px 100px 100px; gap:20px;" +
+            " rule:6px solid; column-rule-color:maroon; row-rule-color:navy;" +
+            " rule-visibility-items:between; rule-inset-junction:overlap-join }</style>" +
+            "<div id='d'><div style='grid-area:1/1'></div><div style='grid-area:1/2'></div>" +
+            "<div style='grid-area:1/3'></div><div style='grid-area:2/1'></div>" +
+            "<div style='grid-area:2/2'></div></div>");
+
+        var columns = Rules(view).Where(rule => rule.Widths.Left > 0).ToList();
+        var rows = Rules(view).Where(rule => rule.Widths.Bottom > 0).ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(columns, Has.Count.EqualTo(2), "both column gaps that two items stand either side of");
+            Assert.That(
+                columns[0].Bounds.Bottom,
+                Is.EqualTo(220).Within(0.01),
+                "the end dangling at the empty crossing stops at the gap's bound, joined by nothing");
+            Assert.That(
+                columns[1].Bounds.Bottom,
+                Is.EqualTo(113).Within(0.01),
+                "the end beside a row decoration runs half the crossing gap and half its rule on");
+            Assert.That(
+                rows[0].Bounds.Right,
+                Is.EqualTo(233).Within(0.01),
+                "and that row decoration meets it, its own end joining the crossing it stands in");
+        });
+    }
+
+    /// <summary>
     /// An axis the page asked to show only between items draws nothing beside an empty column, while
     /// <c>all</c> and <c>around</c> still do (CSS Gaps 1 §3.4).
     /// </summary>

@@ -480,8 +480,17 @@ internal sealed class GridFormattingContext
         var columnRules = rules.Column.MeasuredFromTheEnd(box.Flow.BlockSign < 0);
         var rowRules = rules.Row.MeasuredFromTheEnd(box.Flow.InlineSign < 0);
 
-        GridGapBands.Add(target, columnRules, rowRules, isRow: false, columns, rowCrossings, columnBefore, columnAfter, columnRules.Break, items);
-        GridGapBands.Add(target, rowRules, columnRules, isRow: true, rows, columnCrossings, rowBefore, rowAfter, rowRules.Break, items);
+        // The stretches of both axes are worked out before either is inset, because an end standing at a
+        // crossing joins with the other axis only where that axis is drawn beside it (CSS Gaps 1 §3.3).
+        var columnStretches =
+            GridGapBands.Stretches(columnRules, columns, rowCrossings, columnBefore, columnAfter, items);
+        var rowStretches =
+            GridGapBands.Stretches(rowRules, rows, columnCrossings, rowBefore, rowAfter, items);
+
+        GridGapBands.Add(
+            target, columnRules, rowRules, isRow: false, columns, rowCrossings, columnStretches, rowStretches, items);
+        GridGapBands.Add(
+            target, rowRules, columnRules, isRow: true, rows, columnCrossings, rowStretches, columnStretches, items);
 
         return target.Count > 0 ? target : null;
     }
