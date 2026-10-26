@@ -148,8 +148,21 @@ internal sealed class SkiaFontResolver : IDisposable
             }
         }
 
-        // "sans-serif" is the CSS generic; platforms that do not know the name fall through to the
-        // process default, which is what the initial value of font-family resolves to anyway.
+        // A page that names no family at all is set in the user agent's standard font, and Chromium's
+        // standard font is a serif one: an unset `font-family` computes to "Times New Roman" there, and
+        // `First item` at 16px measures 61.78 - the same as `font-family: serif`, and three pixels four
+        // narrower than the Arial that answers `sans-serif`. Falling through to the process default
+        // rather than to that serif set left every page without a stated family on the wrong face.
+        foreach (var name in StandsFor("serif"))
+        {
+            var serif = SKFontManager.Default.MatchFamily(name, style);
+
+            if (serif is not null)
+            {
+                return serif;
+            }
+        }
+
         return SKFontManager.Default.MatchFamily("sans-serif", style) ?? SKTypeface.Default;
     }
 

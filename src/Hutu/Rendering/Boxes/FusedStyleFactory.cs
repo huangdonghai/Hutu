@@ -44,7 +44,7 @@ internal sealed class FusedParent
     /// asking, not the answer (CSS Color 4 5).
     /// </summary>
     public CssColorValue? Background { get; init; }
-    public String FontFamily { get; init; } = "sans-serif";
+    public String FontFamily { get; init; } = "serif";
     public Double LetterSpacing { get; init; }
     public Double WordSpacing { get; init; }
     public Int32 Weight { get; init; } = 400;

@@ -67,7 +67,7 @@ internal static class CssInitialValues
     /// rarely reached: a computed declaration nearly always carries a font family, which is why the
     /// measured pages never exercise it.
     /// </remarks>
-    internal const String FontFamily = "sans-serif";
+    internal const String FontFamily = "serif";
 
     internal const String FontWeight = "400";
 
