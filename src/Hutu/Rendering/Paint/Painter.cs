@@ -1046,10 +1046,13 @@ internal sealed class Painter
                 continue;
             }
 
-            if (child.EstablishesStackingContext)
+            if (PaintsAsAUnit(child))
             {
                 // A box that forms a context of its own is drawn as one unit where it stands: what it
-                // holds is laid down with its ground, under the layers of the boxes around it.
+                // holds is laid down with its ground, under the layers of the boxes around it. A flex
+                // or grid item is drawn that way too, even without a level of its own: it paints as an
+                // inline-block would, so a sibling that comes after it covers the content it overflows
+                // (CSS Flexbox 1 §5.4, CSS Grid 1 §9).
                 PaintChild(child, list, target, owner);
                 continue;
             }
@@ -1067,7 +1070,7 @@ internal sealed class Painter
         //    a run deep in an early box still lies over the ground of a later one.
         foreach (var child in children)
         {
-            if (Floats(child) || IsReplaced(child) || child.EstablishesStackingContext)
+            if (Floats(child) || IsReplaced(child) || PaintsAsAUnit(child))
             {
                 // A float came with the pass before, drawn with all that hangs on it; a replaced box and a
                 // box that forms a context of its own came with the ground, each as one unit.
@@ -1118,7 +1121,7 @@ internal sealed class Painter
                 continue;
             }
 
-            if (child.EstablishesStackingContext)
+            if (PaintsAsAUnit(child))
             {
                 PaintChild(child, list, target, owner);
                 continue;
@@ -1177,7 +1180,7 @@ internal sealed class Painter
                 continue;
             }
 
-            if (child.EstablishesStackingContext)
+            if (PaintsAsAUnit(child))
             {
                 // It came with the ground as one unit, layer and all.
                 continue;
@@ -1240,7 +1243,16 @@ internal sealed class Painter
         box.Kind is LayoutKind.Image or LayoutKind.Svg or LayoutKind.HorizontalRule
         || box.EstablishesStackingContext;
 
-    private static Boolean Floats(LayoutBox box) => box.Source.Style.Float != FloatSide.None;
+    private static Boolean Floats(LayoutBox box) =>
+        !box.Source.IsItem && box.Source.Style.Float != FloatSide.None;
+
+    /// <summary>
+    /// Gets whether a box paints as one unit where it stands rather than lending its ground and its ink
+    /// to the two passes around it: a box that forms a stacking context, and a flex or grid item, which
+    /// paints the way an inline-block does even without a level of its own (CSS Flexbox 1 §5.4).
+    /// </summary>
+    private static Boolean PaintsAsAUnit(LayoutBox box) =>
+        box.EstablishesStackingContext || (box.Source.IsItem && !IsInlineLevel(box));
 
     /// <summary>
     /// Gets whether a box is drawn by being replaced rather than by saying what is inside it - an image, a
