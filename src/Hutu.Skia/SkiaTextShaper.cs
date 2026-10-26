@@ -58,6 +58,28 @@ internal sealed class SkiaTextShaper : IDisposable
     }
 
     /// <summary>
+    /// Gets whether the shaper reads a run right to left: the direction it takes from the first
+    /// character that names a script, which is the direction it shapes the run in. Characters that
+    /// name no script - a space, a full stop, a bidi control - leave the answer at left to right.
+    /// </summary>
+    public Boolean ReadsRightToLeft(String text)
+    {
+        if (text.Length == 0)
+        {
+            return false;
+        }
+
+        lock (_shapeLock)
+        {
+            _buffer.Reset();
+            _buffer.AddUtf16(text);
+            _buffer.GuessSegmentProperties();
+
+            return _buffer.Direction == Direction.RightToLeft;
+        }
+    }
+
+    /// <summary>
     /// Shapes a run of text the way a column sets it: into the glyphs a font's <c>vert</c> feature
     /// answers for, with where each glyph's baseline goes within the cell the layout gives it.
     /// </summary>

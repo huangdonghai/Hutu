@@ -91,4 +91,17 @@ public interface ITextMeasurer
     /// </remarks>
     Double MeasureBlockExtent(String text, FontStyle style, WritingModeInfo flow) =>
         GetMetrics(style).LineHeight;
+
+    /// <summary>
+    /// Gets whether the backend's shaper reads the text right to left of its own accord, which is the
+    /// direction it shapes a run in when nothing tells it otherwise. The answer comes from the first
+    /// character that names a script, as the shaper itself reads it.
+    /// </summary>
+    /// <remarks>
+    /// The layout resolves a run's direction from the bidi algorithm, and the painter has to reconcile
+    /// that with what the shaper will do: a run whose level the characters do not agree with is drawn
+    /// with its glyphs turned round. The default says the shaper always lays glyphs down as they were
+    /// written, which is right for the measuring fakes and for any backend without a bidi-aware shaper.
+    /// </remarks>
+    Boolean ReadsRightToLeft(String text) => false;
 }

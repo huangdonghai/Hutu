@@ -1120,7 +1120,7 @@ internal sealed class InlineLayout
             // levels (UAX #9 L2). A line of one direction is left exactly as the markup wrote it.
             if (!flow.IsVertical)
             {
-                BidiOrder(line, flow, container.Style.PlaintextParagraph);
+                BidiOrder(line, flow, container.Style);
             }
 
             // The line box spans the whole inline extent of the content box and only as much of the
@@ -1202,16 +1202,19 @@ internal sealed class InlineLayout
     /// direction it is read in: a Latin word inside a right-to-left line keeps its letters in the order
     /// a reader of it expects, and a neutral at the end of such a line is set at the line's own level
     /// (UAX #9 W, N, I). The pieces keep the logical order of the runs - the line places its fragments
-    /// from the edge its own direction begins at, and the shaper turns the glyphs of a run of the other
-    /// direction within its box - so only the boundaries are new.
+    /// from the edge its own direction begins at - and each records the direction the algorithm gave
+    /// it, which the painter turns the glyphs of a run round by where the shaper would not.
     /// </summary>
     /// <remarks>
     /// The levels are resolved over the whole line, not over one fragment at a time: what the strong
     /// text before a space says about it is a question about the line, and the whitespace at the line's
-    /// end is the only whitespace the rules reset (L1). A line that holds no change of direction is left
+    /// end is the only whitespace the rules reset (L1). An element that asks for an embedding sets its
+    /// content at a level of its own, and an override also replaces every character's class with its
+    /// direction (X1-X8); the line is one string by then, so the marks that say so are written around
+    /// each run's text, resolved with it, and dropped. A line that holds no change of direction is left
     /// as the markup wrote it and pays one pass over its classes.
     /// </remarks>
-    private void BidiOrder(Line line, WritingModeInfo flow, Boolean plaintextParagraph)
+    private void BidiOrder(Line line, WritingModeInfo flow, ComputedStyle container)
     {
         var baseLevel = flow.IsRightToLeft ? 1 : 0;
         var changed = false;
@@ -1230,17 +1233,60 @@ internal sealed class InlineLayout
 
             // `unicode-bidi: plaintext` takes the paragraph's direction from the first strong character
             // written on the line, so a line is resolved at the level its own text asks for (P2, P3).
-            var level = plaintextParagraph || group[0].Style.PlaintextParagraph
+            var level = container.PlaintextParagraph || group[0].Style.PlaintextParagraph
                 ? Bidi.ParagraphLevel(text, baseLevel)
                 : baseLevel;
-            var levels = Bidi.Levels(text, level);
-            var offset = 0;
 
-            foreach (var fragment in group)
+            // An element that asks for an embedding sets its content at a level of its own, and an
+            // override also replaces every character's class with its own direction (UAX #9 X1-X8).
+            // The runs were flattened into one string, so the marks that say so are written around
+            // each run's own text here, read back with it, and dropped. The block's own embedding
+            // wraps the whole line.
+            var wrapped = new System.Text.StringBuilder(text.Length + (group.Count * 8) + 4);
+            var starts = new Int32[group.Count];
+            var lineMarks = IsEmbedding(container) ? Controls(container) : default;
+
+            if (lineMarks.Open is { } opening)
             {
+                wrapped.Append(opening);
+            }
+
+            for (var index = 0; index < group.Count; index++)
+            {
+                var fragment = group[index];
+                var marks = new List<(String Open, String Close)>(3);
+
+                foreach (var style in Embeddings(fragment))
+                {
+                    marks.Add(Controls(style));
+                }
+
+                foreach (var (mark, _) in marks)
+                {
+                    wrapped.Append(mark);
+                }
+
+                starts[index] = wrapped.Length;
+                wrapped.Append(fragment.Text);
+
+                for (var at = marks.Count - 1; at >= 0; at--)
+                {
+                    wrapped.Append(marks[at].Close);
+                }
+            }
+
+            if (lineMarks.Close is { } closing)
+            {
+                wrapped.Append(closing);
+            }
+
+            var levels = Bidi.Levels(wrapped.ToString(), level);
+
+            for (var index = 0; index < group.Count; index++)
+            {
+                var fragment = group[index];
                 var own = new Int32[fragment.Length];
-                Array.Copy(levels, offset, own, 0, fragment.Length);
-                offset += fragment.Length;
+                Array.Copy(levels, starts[index], own, 0, fragment.Length);
 
                 var uniform = true;
 
@@ -1255,6 +1301,7 @@ internal sealed class InlineLayout
 
                 if (uniform)
                 {
+                    fragment.RightToLeft = own[0] % 2 == 1;
                     ordered.Add(fragment);
                     continue;
                 }
@@ -1270,7 +1317,10 @@ internal sealed class InlineLayout
                     earned += width;
                     pieces.Add(new TextFragment(
                         fragment.Text, run.Start, run.Length, width,
-                        fragment.Style, fragment.Box, fragment.Flow, fragment.Inline));
+                        fragment.Style, fragment.Box, fragment.Flow, fragment.Inline)
+                    {
+                        RightToLeft = run.Level % 2 == 1,
+                    });
                 }
 
                 if (pieces.Count > 0)
@@ -1323,6 +1373,65 @@ internal sealed class InlineLayout
         line.Fragments.Clear();
         line.Fragments.AddRange(ordered);
     }
+
+    /// <summary>
+    /// Gets the elements around one run that ask for a bidi embedding, from the outermost in. An
+    /// element with no <c>unicode-bidi</c> of its own leaves its content in the embedding it
+    /// inherited. The block container is not here: its own embedding wraps the whole line turn.
+    /// </summary>
+    private static List<ComputedStyle> Embeddings(TextFragment fragment)
+    {
+        var chain = new List<ComputedStyle>(3);
+        var ancestors = new List<InlineAncestor>(3);
+
+        for (var ancestor = fragment.Inline; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            ancestors.Add(ancestor);
+        }
+
+        ancestors.Reverse();
+
+        foreach (var ancestor in ancestors)
+        {
+            if (IsEmbedding(ancestor.Box.Style))
+            {
+                chain.Add(ancestor.Box.Style);
+            }
+        }
+
+        return chain;
+    }
+
+    private static Boolean IsEmbedding(ComputedStyle style) =>
+        style.UnicodeBidiKeyword?.Trim().ToLowerInvariant() is
+            "embed" or "bidi-override" or "isolate" or "isolate-override";
+
+    /// <summary>
+    /// Gets the pair of control characters that put an element's text at the level, and in the
+    /// direction, its <c>unicode-bidi</c> and <c>direction</c> ask for (UAX #9 X1-X8).
+    /// </summary>
+    private static (String Open, String Close) Controls(ComputedStyle style)
+    {
+        var rightToLeft = style.Direction == TextDirection.RightToLeft;
+
+        return style.UnicodeBidiKeyword?.Trim().ToLowerInvariant() switch
+        {
+            "isolate-override" => (
+                Upright(rightToLeft ? 0x2067 : 0x2066) + Upright(rightToLeft ? 0x202E : 0x202D),
+                Upright(0x202C) + Upright(0x2069)),
+            "isolate" => (
+                Upright(rightToLeft ? 0x2067 : 0x2066),
+                Upright(0x2069)),
+            "bidi-override" => (
+                Upright(rightToLeft ? 0x202E : 0x202D),
+                Upright(0x202C)),
+            _ => (
+                Upright(rightToLeft ? 0x202B : 0x202A),
+                Upright(0x202C)),
+        };
+    }
+
+    private static String Upright(Int32 codePoint) => Char.ConvertFromUtf32(codePoint);
 
     /// <summary>
     /// Gets the leading every line would have cut off one of its edges, zero where the block trims no
@@ -1650,16 +1759,27 @@ internal sealed class InlineLayout
             return;
         }
 
+        var text = fragment.Hanging > 0
+            ? fragment.Source.Substring(fragment.Start, fragment.Length - fragment.Hanging)
+            : fragment.Text;
+
+        // The shaper reads a run's direction off the first character that names a script, so a run the
+        // bidi algorithm set at a level the characters do not agree with - a Latin page turned around
+        // by an override, or an override that keeps a right-to-left word left to right - is drawn with
+        // its glyphs mirrored across the run's own room.
+        var backwards = fragment.RightToLeft is { } rightToLeft
+            ? rightToLeft != measurer.ReadsRightToLeft(text)
+            : (Boolean?)null;
+
         var run = new LayoutBox(fragment.Box, LayoutKind.Text)
         {
-            Text = fragment.Hanging > 0
-                ? fragment.Source.Substring(fragment.Start, fragment.Length - fragment.Hanging)
-                : fragment.Text,
+            Text = text,
             Font = fragment.Style.GetFont(),
             Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
             Flow = fragment.Flow,
             Justification = fragment.Justify,
             Justifies = fragment.Expansions,
+            Reversed = backwards,
             BorderBox = flow.Map(contentBox, origin, room, cursor, line.Height),
         };
 
@@ -1753,7 +1873,7 @@ internal sealed class InlineLayout
         // The run was measured as a whole and the line may have been spread since, so the marks follow the
         // spread rather than the plain advances. A backwards run starts at the far end of its room.
         var share = total > 0 ? room / total : 0;
-        var backwards = flow.IsRightToLeft;
+        var backwards = fragment.RightToLeft ?? flow.IsRightToLeft;
         var marks = new List<EmphasisMark>(elements.Count);
         var walk = 0.0;
 
@@ -4058,6 +4178,13 @@ internal sealed class InlineLayout
 
         /// <summary>Gets whether the fragment is a box that left the flow, placed but not drawn here.</summary>
         public Boolean OutOfFlow { get; }
+
+        /// <summary>
+        /// Gets or sets whether the run reads right to left at the level the bidi algorithm gave it, or
+        /// null for a run the algorithm never looked at. It is the direction the text is displayed in,
+        /// which the characters alone do not say when an override asks for the other one.
+        /// </summary>
+        public Boolean? RightToLeft { get; set; }
 
         /// <summary>
         /// Gets the annotation that goes on the block-start side of this fragment's text, or null when

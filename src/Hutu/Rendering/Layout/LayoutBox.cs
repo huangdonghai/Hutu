@@ -167,6 +167,13 @@ internal sealed class LayoutBox
     internal Int32 Justifies { get; set; }
 
     /// <summary>
+    /// Gets or sets whether the run's glyphs are drawn from the far end of its room. The shaper reads a
+    /// run's direction off its characters, and this turns the glyphs round where the level the bidi
+    /// algorithm gave the run says otherwise. Null leaves the answer to the flow.
+    /// </summary>
+    internal Boolean? Reversed { get; set; }
+
+    /// <summary>
     /// Gets or sets the lines to draw across this box's text: the decorating boxes whose decoration
     /// reaches here, from the outermost in - which is also the order they are painted in, so an inner
     /// line lies over an outer one (CSS Text Decoration 4 §5.1). Resolved once the tree is placed, where

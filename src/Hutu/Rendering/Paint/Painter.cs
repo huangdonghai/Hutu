@@ -1543,7 +1543,8 @@ internal sealed class Painter
                 node.Flow,
                 style.LetterSpacing,
                 style.TextStrokeWidth,
-                0));
+                0,
+                reversed: node.Reversed));
         }
 
         foreach (var child in node.Children)
@@ -1644,7 +1645,8 @@ internal sealed class Painter
             style.WordSpacing,
             box.DecorationPlacements,
             style.SkipInk,
-            (line is { Shadow: true } cast ? cast.Style : style).TextShadows));
+            (line is { Shadow: true } cast ? cast.Style : style).TextShadows,
+            box.Reversed));
 
         // The marks the run asked for stand over the text they mark. They carry no lines of their own - a
         // mark is not underlined because the word under it is - and they follow the run, which is where the

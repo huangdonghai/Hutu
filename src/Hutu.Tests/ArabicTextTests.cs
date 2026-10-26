@@ -59,6 +59,21 @@ public sealed class ArabicTextTests
     }
 
     [Test]
+    public void TheShaperReadsArabicRightToLeftAndLatinLeftToRight()
+    {
+        using var measurer = new SkiaTextMeasurer();
+
+        Assume.That(measurer.HasGlyph(new FontStyle("Arial", 24), 'ل'), Is.True, "no system font carries Arabic on this machine");
+
+        Assert.That(measurer.ReadsRightToLeft(Word), Is.True, "a script written right to left is read that way");
+        Assert.That(measurer.ReadsRightToLeft("abc"), Is.False, "and a Latin one is not");
+        Assert.That(
+            measurer.ReadsRightToLeft(".\u00A0\u00A0"),
+            Is.False,
+            "characters that name no script leave the shaper reading forwards");
+    }
+
+    [Test]
     public void ArabicIsMeasuredByItsShapedWidth()
     {
         using var measurer = new SkiaTextMeasurer();

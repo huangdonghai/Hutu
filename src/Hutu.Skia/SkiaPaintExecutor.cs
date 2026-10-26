@@ -1444,7 +1444,7 @@ public sealed class SkiaPaintExecutor
             command.Justifies,
             command.Expand,
             wordSpacing,
-            command.Flow.SetsTextBackwards);
+            command.Reversed ?? command.Flow.SetsTextBackwards);
 
         if (blob is not null)
         {
@@ -1691,7 +1691,7 @@ public sealed class SkiaPaintExecutor
                 command.Justifies,
                 command.Expand,
                 command.WordSpacing,
-                command.Flow.SetsTextBackwards)
+                command.Reversed ?? command.Flow.SetsTextBackwards)
             : _measurer.Blobs.GetRunInk(
                 command.Font,
                 command.Text,
@@ -1700,7 +1700,7 @@ public sealed class SkiaPaintExecutor
                 command.Justifies,
                 command.Expand,
                 command.WordSpacing,
-                command.Flow.SetsTextBackwards);
+                command.Reversed ?? command.Flow.SetsTextBackwards);
 
     /// <summary>Moves a run's boxes into the space the page is drawn in.</summary>
     private static SKRect[] Moved(SKRect[] boxes, Single x, Single y) =>

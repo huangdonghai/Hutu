@@ -624,7 +624,8 @@ public sealed class TextCommand : PaintCommand
         Double wordSpacing = 0,
         IReadOnlyList<DecorationPlacement>? placements = null,
         DecorationSkip skip = DecorationSkip.Auto,
-        IReadOnlyList<Shadow>? shadows = null)
+        IReadOnlyList<Shadow>? shadows = null,
+        Boolean? reversed = null)
         : base(bounds)
     {
         Text = text;
@@ -643,6 +644,7 @@ public sealed class TextCommand : PaintCommand
         Placements = placements ?? Array.Empty<DecorationPlacement>();
         Skip = skip;
         Shadows = shadows ?? Array.Empty<Shadow>();
+        Reversed = reversed;
     }
 
     public String Text { get; }
@@ -726,4 +728,11 @@ public sealed class TextCommand : PaintCommand
     /// is what a box with no <c>text-shadow</c> of its own or above it comes to, draws the text plain.
     /// </summary>
     public IReadOnlyList<Shadow> Shadows { get; }
+
+    /// <summary>
+    /// Gets whether the run's glyphs are drawn from the far end of its bounds, or null to let the flow
+    /// decide. The shaper reads a run's direction off its characters, so a run the bidi algorithm put at
+    /// a level they do not agree with is turned round by the backend instead.
+    /// </summary>
+    public Boolean? Reversed { get; }
 }

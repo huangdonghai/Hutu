@@ -585,6 +585,46 @@ public sealed class InlineBoxTests
             "the two spaces collapse to one and the control character keeps its own room");
     }
 
+    [Test]
+    public async Task ALatinLineTurnedRoundByAnOverrideIsDrawnFromTheFarEnd()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document(
+            "<span style='unicode-bidi:bidi-override;direction:rtl'>abc</span>"));
+
+        var command = view.Paint!.Commands.OfType<TextCommand>().Single(run => run.Text == "abc");
+
+        Assert.That(command.Reversed, Is.True,
+            "the override sets the Latin letters at a right-to-left level, and the shaper would read them the other way");
+    }
+
+    [Test]
+    public async Task AHebrewLineAnOverrideKeepsLeftToRightIsDrawnFromTheFarEnd()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document(
+            "<span dir='rtl' style='unicode-bidi:bidi-override;direction:ltr'>\u05D0\u05D1\u05D2</span>"));
+
+        var command = view.Paint!.Commands.OfType<TextCommand>().Single(run => run.Text == "\u05D0\u05D1\u05D2");
+
+        Assert.That(command.Reversed, Is.True,
+            "the override keeps the Hebrew letters at a left-to-right level, and the shaper would read them right to left");
+    }
+
+    [Test]
+    public async Task APlainRightToLeftLineIsLeftToTheShaper()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<span dir='rtl'>\u05D0\u05D1\u05D2</span>"));
+
+        var command = view.Paint!.Commands.OfType<TextCommand>().Single(run => run.Text == "\u05D0\u05D1\u05D2");
+
+        Assert.That(command.Reversed, Is.False, "a Hebrew run reads right to left of its own accord");
+    }
+
     private static String Document(String content, String lineHeight = "2", Int32 width = 0) =>
         "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:" + lineHeight +
         (width > 0 ? ";width:" + width + "px" : String.Empty) +

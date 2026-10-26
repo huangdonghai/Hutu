@@ -170,11 +170,11 @@ rt              { font-size: 50%; line-height: 1 }
 area, base, basefont, datalist, link, meta, noembed, noframes, param, rp, script, style, template, title { display: none }
 
 /* Begin bidirectionality settings (do not change) */
-BDO[DIR='ltr']  { direction: ltr; unicode-bidi: bidi-override }
-BDO[DIR='rtl']  { direction: rtl; unicode-bidi: bidi-override }
+BDO[DIR='ltr']  { direction: ltr; unicode-bidi: isolate-override }
+BDO[DIR='rtl']  { direction: rtl; unicode-bidi: isolate-override }
 
-*[DIR='ltr']    { direction: ltr; unicode-bidi: embed }
-*[DIR='rtl']    { direction: rtl; unicode-bidi: embed }
+*[DIR='ltr']    { direction: ltr; unicode-bidi: isolate }
+*[DIR='rtl']    { direction: rtl; unicode-bidi: isolate }
 ";
 
     private ICssStyleSheet? _default;

@@ -240,6 +240,13 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     }
 
     /// <summary>
+    /// Gets whether the shaper will read the text right to left, which it works out from the first
+    /// character that names a script. A neutral or a control character names none, so a run of them
+    /// is left to the hand that asked.
+    /// </summary>
+    public Boolean ReadsRightToLeft(String text) => _shaper.ReadsRightToLeft(text);
+
+    /// <summary>
     /// Gets how far one code point advances along the axis it runs on. A column steps by this once per
     /// character, so it is answered from a table rather than by writing the character out as a string
     /// and decomposing that again - the same answer, looked up on a key the column never allocates.
