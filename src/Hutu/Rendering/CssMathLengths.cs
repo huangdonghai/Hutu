@@ -347,10 +347,48 @@ internal static class CssMathLengths
     {
         var trimmed = argument.Trim();
 
-        return trimmed.Length > 6 && trimmed.StartsWith("calc(", StringComparison.OrdinalIgnoreCase) &&
-            trimmed[^1] == ')'
-            ? trimmed[5..^1]
-            : trimmed;
+        if (trimmed.Length > 6 && trimmed.StartsWith("calc(", StringComparison.OrdinalIgnoreCase) &&
+            trimmed[^1] == ')')
+        {
+            return trimmed[5..^1];
+        }
+
+        // A group is the same arithmetic with the function's name left off, and that is how a
+        // bracketed expression inside a math function reaches us. Only a group that holds the whole
+        // argument is taken apart: `(1px) + (2px)` keeps its own terms for the splitter.
+        if (trimmed.Length > 2 && trimmed[0] == '(' && OpensOnce(trimmed))
+        {
+            return trimmed[1..^1];
+        }
+
+        return trimmed;
+    }
+
+    /// <summary>
+    /// Gets whether the parentheses of an argument close only at its last character.
+    /// </summary>
+    private static Boolean OpensOnce(String text)
+    {
+        var depth = 0;
+
+        for (var at = 0; at < text.Length; at++)
+        {
+            if (text[at] == '(')
+            {
+                depth++;
+            }
+            else if (text[at] == ')')
+            {
+                depth--;
+
+                if (depth == 0 && at != text.Length - 1)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return depth == 0;
     }
 
     /// <summary>
