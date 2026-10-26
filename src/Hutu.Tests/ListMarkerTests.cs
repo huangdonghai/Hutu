@@ -819,4 +819,50 @@ public sealed class ListMarkerTests
 
     /// <summary>The laid out tree and the commands it painted.</summary>
     private sealed record Laid(LayoutBox Root, List<PaintCommand> Commands);
+
+    /// <summary>
+    /// The room a list keeps for its markers is stated for the edge its items begin at rather than for
+    /// the left, and it is a padding so the list's own background reaches under them (measured in
+    /// Chromium against the UA sheet's <c>padding-inline-start: 40px</c>).
+    /// </summary>
+    [Test]
+    public async Task ARightToLeftListKeepsItsMarkerRoomAtTheRight()
+    {
+        async Task<Box> List(String body)
+        {
+            using var view = new HutuViewInternal(new FakeTextMeasurer());
+            view.SetViewportSize(900, 600);
+
+            var document = await view.SetHtml("<html><body>" + body + "</body></html>");
+            var tree = BoxBuilder.TryBuildFused(document, new HutuRenderDevice(900, 600), (IImageProvider?)null);
+            var found = new List<Box>();
+
+            void Walk(Box box)
+            {
+                if (box.Element?.LocalName == "ul")
+                {
+                    found.Add(box);
+                }
+
+                foreach (var child in box.Children)
+                {
+                    Walk(child);
+                }
+            }
+
+            Walk(tree!);
+
+            return found[0];
+        }
+
+        var straight = await List("<div dir='ltr'><ul><li>Item</li></ul></div>");
+        var reversed = await List("<div dir='rtl'><ul><li>Item</li></ul></div>");
+
+        Assert.That(straight.Style.Padding.Left.Resolve(0), Is.EqualTo(40),
+            "a left-to-right list keeps the room at the left, where its items begin");
+        Assert.That(reversed.Style.Padding.Right.Resolve(0), Is.EqualTo(40),
+            "a right-to-left one keeps it at the right, which is where its items begin instead");
+        Assert.That(reversed.Style.Padding.Left.Resolve(0), Is.EqualTo(0),
+            "and nothing stands on the edge its items end at");
+    }
 }
