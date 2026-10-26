@@ -1183,6 +1183,28 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task AnOutOfFlowChildStandsInItsAreaDownAVerticalGridPage()
+    {
+        using var view = CreateView(400);
+
+        // A vertical page turns the template around: the rows run across the page (from the right in
+        // vertical-rl) and the columns down it, so align-self moves the child horizontally and
+        // justify-self vertically.
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='writing-mode:vertical-rl;display:grid;width:30px;height:22px;position:relative;" +
+            "grid-template-columns:3px 14px 3px;grid-template-rows:2px 20px 2px'>" +
+            "<div id='a' style='position:absolute;grid-area:2/2/3/3;width:6px;height:8px;" +
+            "align-self:start;justify-self:start'></div>" +
+            "</div></body></html>");
+
+        var a = Find(view, "a");
+
+        Assert.That(a.BorderBox.X, Is.EqualTo(22).Within(0.5), "the block start is the right edge");
+        Assert.That(a.BorderBox.Y, Is.EqualTo(3).Within(0.5), "and the inline start is the top");
+    }
+
+    [Test]
     public async Task AGapWrittenAsACalcKeepsItsShareAndItsDistance()
     {
         // A calc() that adds a share to a distance keeps both until the box is known (CSS Values 4 §10.9):
