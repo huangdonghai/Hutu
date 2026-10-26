@@ -208,7 +208,19 @@ internal sealed class BlockLayout
         }
         else
         {
-            contentBlock = _inline.Measure(box, childInline, flow, new InlineContext(_engine, context)).Block;
+            // The text answers both extents: how wide the band of columns came to, and how far down the
+            // longest one reached. The block children above take the same pair, and reading only the
+            // first left a column of nothing but text as tall as the nothing it was measured against.
+            var text = _inline.Measure(box, childInline, flow, new InlineContext(_engine, context));
+            contentBlock = text.Block;
+
+            // Only a column that stated no length down the page takes one from its text; a declared
+            // length stays what the page said however much further the content runs, or a box that
+            // clips its overflow would be grown past the edge it clips at.
+            if (style.Height.IsAuto)
+            {
+                childInline = Math.Max(childInline, text.Inline);
+            }
         }
 
         var blockSize = BoxModel.ResolveBlockExtent(style, contentBlock, basisBlock, insetsBlock);
