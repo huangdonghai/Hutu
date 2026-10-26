@@ -318,6 +318,14 @@ internal sealed class RuleBucketIndex
     private readonly PseudoRuleIndex _pseudo;
 
     /// <summary>
+    /// For each flattened rule, whether every arm of its selector is written for a pseudo-element.
+    /// Such a rule names no element and is answered only through <see cref="_pseudo"/>; the parser
+    /// keeps a pseudo-element step matching the element it originates, so the element cascade has to
+    /// leave these rules out by itself.
+    /// </summary>
+    private readonly Boolean[] _pseudoOnly;
+
+    /// <summary>
     /// How many elements were answered from the match the last build left, and how many had to be
     /// matched again, since <see cref="ResetMatchCounters"/>. Counted always - a pair of increments
     /// is nothing next to a match - and read only by the probes.
@@ -335,6 +343,7 @@ internal sealed class RuleBucketIndex
         Boolean[] reaches,
         RuleOrigin[] origins,
         PseudoRuleIndex pseudo,
+        Boolean[] pseudoOnly,
         CounterStyleTable counters)
     {
         _rules = rules;
@@ -345,6 +354,7 @@ internal sealed class RuleBucketIndex
         _reaches = reaches;
         _origins = origins;
         _pseudo = pseudo;
+        _pseudoOnly = pseudoOnly;
         _counters = counters;
     }
 
@@ -420,10 +430,12 @@ internal sealed class RuleBucketIndex
         var tagBuckets = new Dictionary<String, List<Int32>>(StringComparer.OrdinalIgnoreCase);
         var unkeyed = new List<Int32>();
         var reaches = new Boolean[flattened.Count];
+        var pseudoOnly = new Boolean[flattened.Count];
 
         for (var i = 0; i < flattened.Count; i++)
         {
             var keys = SelectorKeyExtractor.Extract(flattened[i].Selector);
+            pseudoOnly[i] = PseudoRuleIndex.EveryArmIsWrittenForAPseudoElement(flattened[i].SelectorText);
 
             if (keys is null || keys.Length == 0)
             {
@@ -460,7 +472,7 @@ internal sealed class RuleBucketIndex
 
         return new RuleBucketIndex(
             flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches, origins.ToArray(), PseudoRuleIndex.Build(flattened),
-            CounterStyleTable.Build(styles));
+            pseudoOnly, CounterStyleTable.Build(styles));
     }
 
     /// <summary>
@@ -821,7 +833,7 @@ internal sealed class RuleBucketIndex
 
         var candidates = CollectCandidates(element);
         var inline = InlineOf(element);
-        var matched = MatchedCascade.MatchRules(element, _rules, candidates, _origins);
+        var matched = MatchedCascade.MatchRules(element, _rules, candidates, _origins, _pseudoOnly);
         var key = new CascadeKey(matched, inline?.CssText);
 
         // The match is what the key is built from, so it must run before the lookup; what the lookup

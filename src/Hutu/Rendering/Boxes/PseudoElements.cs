@@ -142,13 +142,71 @@ internal sealed class PseudoRuleIndex
         }
     }
 
+    /// <summary>
+    /// Gets whether every arm of a selector is written for a pseudo-element, so the rule names no
+    /// element of the document and belongs to the element cascade only through the arms read here.
+    /// </summary>
+    /// <remarks>
+    /// The parser keeps a pseudo-element step as a selector that answers a match for the element it
+    /// originates - which is what lets its declarations be asked for the box - so a rule written for
+    /// `::first-letter` would otherwise be read as a rule about the element itself. A selector list is
+    /// left in when any arm is written for the element, because that arm still selects it; reading the
+    /// arms apart is the parser's work and is not repeated here.
+    /// </remarks>
+    internal static Boolean EveryArmIsWrittenForAPseudoElement(String? text)
+    {
+        if (String.IsNullOrEmpty(text))
+        {
+            return false;
+        }
+
+        var arms = 0;
+        var pseudo = 0;
+        var arm = 0;
+
+        for (var i = 0; i <= text.Length; i++)
+        {
+            if (i < text.Length)
+            {
+                var c = text[i];
+
+                if (c is '"' or '\'')
+                {
+                    i = SkipString(text, i);
+                    continue;
+                }
+
+                if (c is '(' or '[')
+                {
+                    i = SkipGroup(text, i);
+                    continue;
+                }
+
+                if (c != ',')
+                {
+                    continue;
+                }
+            }
+
+            arms++;
+
+            if (EndsWithPseudoElement(text, arm, i, out _, out _))
+            {
+                pseudo++;
+            }
+
+            arm = i + 1;
+        }
+
+        return arms > 0 && pseudo == arms;
+    }
+
     private void Take(String text, Int32 start, Int32 end, Int32 order, Boolean counts)
     {
         if (!EndsWithPseudoElement(text, start, end, out var arm, out var colon))
         {
             return;
         }
-
         if (counts && arm is PseudoArm.Before or PseudoArm.After)
         {
             HasCounterContent = true;

@@ -122,11 +122,17 @@ internal sealed class MatchedCascade
     /// The rules that could match it, collected by the caller - the index needs them to key the
     /// result, and collecting them twice would pay for the bucketing twice.
     /// </param>
+    /// <param name="pseudoOnly">
+    /// For each rule, whether every arm of its selector is written for a pseudo-element. Such a rule
+    /// names no element, so it is passed over here: the box it styles is the one the pseudo-element
+    /// index makes, and the parser's own match would otherwise hand its declarations to the element.
+    /// </param>
     internal static List<MatchedRule> MatchRules(
         IElement element,
         List<ICssStyleRule> rules,
         List<Int32> candidates,
-        RuleOrigin[] origins)
+        RuleOrigin[] origins,
+        Boolean[] pseudoOnly)
     {
         var scope = element.Owner?.DocumentElement;
 
@@ -141,6 +147,12 @@ internal sealed class MatchedCascade
         for (var i = 0; i < candidates.Count; i++)
         {
             var index = candidates[i];
+
+            if (pseudoOnly[index])
+            {
+                continue;
+            }
+
             var rule = rules[index];
 
             if (rule.TryMatch(element, scope, out var specificity))
