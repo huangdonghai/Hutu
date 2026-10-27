@@ -450,6 +450,17 @@ internal sealed partial class TableFormattingContext
         var contentHeight = Math.Max(0, height - cell.Insets.Vertical);
         var cellContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
+        // A cell written `position: relative` is displaced by the table rather than by the general path,
+        // because what a share of its offset is a share of is the height the row was *stated* - and the
+        // height the grid ended up making it says nothing about that. A row that named no height gives a
+        // `top: 100%` nothing to be taken from, so the cell stays where the grid laid it instead of
+        // reaching all the way down the content that grew the row; a row that named ten moves the cell
+        // ten, not the hundred its cell made it (CSS 2.1 §10.5 - "if the height of the containing block
+        // is specified explicitly" - which is what the borrowed pages state, in the two directions, as
+        // 010 and 013). The width a share of the horizontal offsets is taken from is the row's span
+        // across the grid, which is the footing a row or a group standing off that grid is given too.
+        var displacement = PartOffset(cell.Box, grid.Width, StatedHeight(grid.Rows[cell.Row].Box, 0.0));
+
         // A positioned cell anchors its own absolutely positioned descendants, the same way a positioned
         // block does: without this they look past the cell to whatever encloses the table.
         if (PositionedLayout.IsPositioned(cell.Box))
@@ -471,7 +482,7 @@ internal sealed partial class TableFormattingContext
             definite |= grid.Rows[row].FilledByTable;
         }
 
-        var layout = _engine.Arrange(cell.Box, rect, cellContext, definite);
+        var layout = _engine.Arrange(cell.Box, rect, cellContext, definite, displacement: displacement);
 
         // The used border replaces whatever the cell's own style asked for: under the collapsing model
         // it is half of a shared line, so the box's border and the one it paints are not the same.

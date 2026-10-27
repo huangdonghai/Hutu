@@ -486,6 +486,57 @@ public sealed class TableLayoutTests
         return Find(view, "moved").BorderBox.Y;
     }
 
+    /// <summary>
+    /// A cell written <c>position: relative</c> with a percentage offset is moved by the table, from the
+    /// height its row was <em>stated</em> rather than the height the grid ended up making it: a share
+    /// needs a whole to be a share of, and a row whose height its content settled has none (CSS 2.1
+    /// §10.5 - "if the height of the containing block is specified explicitly" - read the way the
+    /// borrowed pages put it, in the two directions, as 010 and 013).
+    /// </summary>
+    [Test]
+    public async Task ACellOffsetIsAShareOfTheHeightTheRowWasStated()
+    {
+        // The same page written three times, the row stating nothing, ten, and forty, in each case with
+        // a cell whose content grows the row to a hundred. Measured first: the cell stands off the row by
+        // the stated number, and the row is a hundred tall in all three readings - which is the whole a
+        // reading of the used height would take, moving every one of them a hundred down.
+        var unstated = await Stood("");
+        var ten = await Stood("height:10px;");
+        var forty = await Stood("height:40px;");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(unstated.Cell - unstated.Row, Is.EqualTo(0),
+                "a row that named no height leaves the share nothing to be taken from");
+            Assert.That(ten.Cell - ten.Row, Is.EqualTo(10),
+                "a row stated ten moves the cell ten, not the hundred its own cell made it");
+            Assert.That(forty.Cell - forty.Row, Is.EqualTo(40),
+                "and the move follows what was stated rather than what was used");
+            Assert.That(ten.RowHeight, Is.EqualTo(100),
+                "the row is a hundred tall in every reading, which is the number to avoid");
+        });
+    }
+
+    /// <summary>
+    /// Gets the table with its row stating the given height, and where the row and its offset cell
+    /// landed.
+    /// </summary>
+    private static async Task<(Double Cell, Double Row, Double RowHeight)> Stood(String statedHeight)
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-spacing:0'><tbody>" +
+            $"<tr id='row' style='{statedHeight}'>" +
+            "<td id='cell' style='position:relative;top:100%;padding:0'>" +
+            "<div style='width:100px;height:100px'></div></td></tr></tbody></table></body></html>");
+
+        var cell = Find(view, "cell");
+        var row = Find(view, "row");
+
+        return (cell.BorderBox.Y, row.BorderBox.Y, row.BorderBox.Height);
+    }
+
     [Test]
     public async Task ARowsBorderMeetsTheLinesAboveAndBelowIt()
     {

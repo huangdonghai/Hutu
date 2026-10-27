@@ -1152,6 +1152,12 @@ internal sealed record LayoutProfile(
     /// The lines of the box's own inline content this fragment takes, where the box is a block broken
     /// across its parent's columns (CSS Multicol 3 §3.1). Null takes the whole of its content.
     /// </param>
+    /// <param name="displacement">
+    /// How far a relative box stands off the place the flow gave it, where whoever holds the box worked
+    /// that out itself instead of leaving it to the containing block handed down. A cell of a table is
+    /// the case: its offset is a share of the height the row was <em>stated</em>, and the height the grid
+    /// happened to make it says nothing about that.
+    /// </param>
     internal LayoutBox Arrange(
         Box box,
         Rect borderBox,
@@ -1159,7 +1165,8 @@ internal sealed record LayoutProfile(
         Boolean definiteHeight,
         LineRange? lines = null,
         FragmentSlice? slice = null,
-        InlineStart? start = null)
+        InlineStart? start = null,
+        Offset? displacement = null)
     {
         // An anonymous box borrows its parent's style; honouring the positioning it inherits would
         // displace the wrapper a second time, because the parent's own displacement already took it
@@ -1179,7 +1186,11 @@ internal sealed record LayoutProfile(
         // leaving a subtree whose boxes were moved after its matrices were resolved.
         if (position.Position == PositionMode.Relative)
         {
-            offset = PositionedLayout.RelativeOffset(position, context.ContainingBlock, box.Flow);
+            // Whoever holds the box may have settled the distance already - a table does for its cells,
+            // whose share is of the height the row stated rather than the one the grid made it - and that
+            // answer is taken in place of this one, never added to it.
+            offset = displacement ??
+                PositionedLayout.RelativeOffset(position, context.ContainingBlock, box.Flow);
 
             borderBox = new Rect(borderBox.X + offset.X, borderBox.Y + offset.Y, borderBox.Width, borderBox.Height);
         }
