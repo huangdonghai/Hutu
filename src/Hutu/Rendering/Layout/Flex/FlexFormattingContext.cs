@@ -248,7 +248,14 @@ internal sealed partial class FlexFormattingContext
         for (var lineIndex = 0; lineIndex < plan.Lines.Count; lineIndex++)
         {
             var line = plan.Lines[lineIndex];
-            var lineStart = crossStart + line.CrossStart;
+            // A line is numbered in the container's own cross order, and the decoration list is given out
+            // in that order; `wrap-reverse` lays that order out from the far end of the box, so where a
+            // line stands on the page is read back from the end its lines were measured from. The line
+            // keeps its own thickness, and what it separates along the other axis is unaffected.
+            var stood = flex.IsWrapReversed
+                ? (mainIsHorizontal ? contentHeight : contentWidth) - line.CrossStart - line.CrossSize
+                : line.CrossStart;
+            var lineStart = crossStart + stood;
             var lineEnd = lineStart + line.CrossSize;
             var startCrossing = lineIndex > 0 ? between[lineIndex - 1] : (Double?)null;
             var endCrossing = lineIndex + 1 < plan.Lines.Count ? between[lineIndex] : (Double?)null;
@@ -296,7 +303,16 @@ internal sealed partial class FlexFormattingContext
             var from = Math.Min(line.CrossStart + line.CrossSize, next.CrossStart + next.CrossSize);
             var to = Math.Max(line.CrossStart, next.CrossStart);
 
-            lineGaps.Add(new Gap(!mainIsHorizontal, crossStart + (from + to) / 2, mainStart, mainEnd));
+            // The lines are numbered in the container's own cross order, which `wrap-reverse` lays out
+            // from the far end of the box: the room between two of them then stands on the other side of
+            // the middle, so its place is read back from the end the lines were measured from. The order
+            // itself is left alone, because that is the order the decoration list is given out in and the
+            // list counts from the cross start, which is where the reversed lines still began (CSS Gaps
+            // 1 §4.6).
+            var cross = mainIsHorizontal ? contentHeight : contentWidth;
+            var centre = flex.IsWrapReversed ? cross - ((from + to) / 2) : (from + to) / 2;
+
+            lineGaps.Add(new Gap(!mainIsHorizontal, crossStart + centre, mainStart, mainEnd));
 
             // A column gap abutting this one from either line above or below is where an intersecting
             // decoration ends and the next one starts, so the two lines' gaps are joined into the

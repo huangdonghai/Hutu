@@ -281,6 +281,43 @@ public sealed class GapRuleTests
     }
 
     /// <summary>
+    /// A container that wraps its lines back from the far end keeps the order the lines were made in - and
+    /// so the order the decoration list is given out in - while the room between two of them stands at the
+    /// other end of the box, because the line it separates was laid from that end (§4.6, and the borrowed
+    /// pages written <c>flex-wrap: wrap-reverse</c> beside a list of colours).
+    /// </summary>
+    [Test]
+    public async Task AReversedWrapMovesItsLinesWithoutReorderItsList()
+    {
+        const String Page =
+            "<style>#d { display:flex; flex-wrap:WRAP; gap:10px; width:110px; height:170px;" +
+            " row-rule:10px solid; row-rule-color:red, blue }" +
+            ".i { width:50px; height:50px }</style>" +
+            "<div id='d'><div class='i'></div><div class='i'></div>" +
+            "<div class='i'></div><div class='i'></div>" +
+            "<div class='i'></div><div class='i'></div></div>";
+
+        using var forwardsView = await Render(Page.Replace("WRAP", "wrap"));
+        using var backwardsView = await Render(Page.Replace("WRAP", "wrap-reverse"));
+
+        var forwards = Rules(forwardsView);
+        var backwards = Rules(backwardsView);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(forwards, Has.Count.EqualTo(2), "two gaps between the three lines");
+            Assert.That(forwards[0].Bounds.Y, Is.EqualTo(50).Within(0.5), "the first line ends fifty down");
+            Assert.That(forwards[0].TopColor, Is.EqualTo(0xffff0000u), "and the gap under it takes the first colour");
+            Assert.That(backwards[0].TopColor, Is.EqualTo(0xffff0000u),
+                "the first gap of the list is still the gap under the first line, reversed or not");
+            Assert.That(backwards[0].Bounds.Y, Is.EqualTo(110).Within(0.5),
+                "but that first line was laid from the bottom of the box, so its gap stands there");
+            Assert.That(backwards[1].Bounds.Y, Is.EqualTo(50).Within(0.5),
+                "and the second list entry follows it to the other end");
+        });
+    }
+
+    /// <summary>
     /// A column container separates its items along the block axis, so the rules between them are row
     /// rules and run the line's cross stretch (flex-gap-decorations-058).
     /// </summary>
