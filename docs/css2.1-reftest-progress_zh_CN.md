@@ -172,6 +172,10 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 
 ## 7. 待办 / 下一步
 
+- [ ] **`text-emphasis-position` 的 8 对**（`005d/e/f/g`、`006d/e/f/g`，签名同为 `739 像素 / 首差 51,50`；005 系是"该有号处画白"、006 系是"该白处画了号"，两两镜像）。矩阵已核实：16 个用例全是 `text-orientation: sideways`，`vertical-rl` 那 8 个全通过、`vertical-lr` 这 8 个全失败，且 `over/under` 与 `left/right` 的四种写法结果一致。
+  - **曾猜"是 Side 在 vertical-lr 下换了线的哪一边"，已被实测否证**：把通过的 `005`（rl）和失败的 `005d`（lr）各跑一次 deep-look，两页的布局树、行盒、以及 5 个强调号的坐标**逐字相同**（都在 x=88、同一串 y）。所以号落在哪一边不是差异所在，`StandsAtTheEnd` 这条路径两处都给出一样的结果。
+  - **实测到的唯一差别**：文本 run 的 base 不同 —— rl 是 `base 33.91`、lr 是 `base 41.91`（同一行盒 88x80、同一 font 16）。也就是说 sideways 在 lr 下把基线抬高了 8，接近一个 ascent/descent 的差；应从 `text-orientation: sideways` 与 `vertical-lr` 交汇处的行高/基线算起（CSS Writing Modes 3 §4.2 的 sideways 定义与 §3.2 的行方向），而不是从强调号位置算起。
+  - 同族 `001/001a-c`、`002/002a-c` 是另一种征状（pair 声明 mismatch、我们却画成同一张图），不在这条里。
 - [ ] **`position-relative-010/013`：单元格的百分比偏移仍按 used 高度求解**（deep-look 已核数字，非推测）：
   - 010 —— 偏移在 `<td style="top:100%">`，表格/`tbody`/`tr` 都没声明高度，规范要求移动 **0**；我们把 td 画在 y=149.72（行 used 高 100，被格内那个 100px 的 div 撑出来的），绿块整个落到红块下缘外，20000 像素差。
   - 013 —— 同样偏移在 `<td>`，父 `tr` 声明了 `height:10px`，规范要求移动 **10**；我们同样移动 100（td 在 149.72，格内 div `top:-10px` 落在 144.72），19000 像素差。
