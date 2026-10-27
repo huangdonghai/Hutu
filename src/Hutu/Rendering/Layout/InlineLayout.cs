@@ -1907,27 +1907,36 @@ internal sealed class InlineLayout
         var backwards = fragment.RightToLeft ?? flow.IsRightToLeft;
         var marks = new List<EmphasisMark>(elements.Count);
         var walk = 0.0;
+        var wanted = 0;
 
-        for (var index = 0; index < elements.Count; index++)
+        // The walk goes over every character of the run, not only the marked ones, and charges each what
+        // it takes: a stop, a bracket or a space asks for no mark of its own, but it stands in the way of
+        // the letters after it, and a mark set at the count of the marked characters alone would sit that
+        // many characters too far back (CSS Text Decoration 4 §5.4).
+        for (var position = 0; position < advances.Count; position++)
         {
-            var at = elements[index];
-            var centre = walk + (advances[at] / 2);
+            if (wanted < elements.Count && elements[wanted] == position)
+            {
+                var centre = walk + (advances[position] / 2);
 
-            walk += advances[at];
+                marks.Add(new EmphasisMark(
+                    flow.Map(
+                        contentBox,
+                        backwards
+                            ? origin + room - (centre * share) - (width / 2)
+                            : origin + (centre * share) - (width / 2),
+                        width,
+                        start,
+                        block),
+                    emphasis.Mark!,
+                    flow.BlockOffsetFromLeft(block, ascent),
+                    drawn,
+                    colour));
 
-            marks.Add(new EmphasisMark(
-                flow.Map(
-                    contentBox,
-                    backwards
-                        ? origin + room - (centre * share) - (width / 2)
-                        : origin + (centre * share) - (width / 2),
-                    width,
-                    start,
-                    block),
-                emphasis.Mark!,
-                flow.BlockOffsetFromLeft(block, ascent),
-                drawn,
-                colour));
+                wanted++;
+            }
+
+            walk += advances[position];
         }
 
         return marks;

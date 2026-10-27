@@ -450,6 +450,16 @@ public sealed class VerticalLayoutTests
             Char.ConvertFromUtf32(0x590f) + Char.ConvertFromUtf32(0xFF0C) + Char.ConvertFromUtf32(0x79CB));
 
         Assert.That(run.Marks, Is.Not.Null, "the page asked for marks");
+
+        // Each character of the run is five wide, so the second and third marked letters stand at twelve
+        // and a half and twenty-two and a half along - one stop in between each. Counting only the marked
+        // characters would put them at the second and third place, which is where the stops themselves sit.
+        var centres = run.Marks!.Select(mark => mark.Band.X + (mark.Band.Width / 2)).ToList();
+
+        Assert.That(
+            String.Join(", ", centres),
+            Is.EqualTo("2.5, 12.5, 22.5"),
+            "each mark stands over the letter it marks, with the stop it follows keeping its own room");
         Assert.That(
             run.Marks!.Count,
             Is.EqualTo(3),
