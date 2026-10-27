@@ -170,6 +170,46 @@ public sealed class MulticolStyleTests
     }
 
     /// <summary>
+    /// A spanner cuts a multi-column container into the stretches its columns run through, and a column
+    /// rule belongs to the one its own gap stands in - the container's whole content box would carry the
+    /// rule down across the spanner and the stretch beyond it (CSS Multicol 3 §3.2, CSS Gaps 1 §3.4).
+    /// </summary>
+    [Test]
+    public async Task ASpannerEndsTheRuleAboveIt()
+    {
+        // Two boxes, a spanner, two more: the runs are the first pair of boxes and the last pair, twenty
+        // tall each, so the rule in the gap between the columns stands twice - once per run.
+        const String Page =
+            "<style>#d { columns:2; column-gap:20px; width:200px; padding:0; margin:0; border:0;" +
+            " column-rule:4px solid red }</style>" +
+            "<div id='d'>" +
+            "<div style='height:20px'></div><div style='height:20px'></div>" +
+            "{SPANNER}" +
+            "<div style='height:20px'></div><div style='height:20px'></div></div>";
+
+        using var cut = await Render(Page.Replace(
+            "{SPANNER}", "<div style='column-span:all;height:20px'></div>"));
+        using var whole = await Render(Page.Replace("{SPANNER}", ""));
+
+        var rules = Rules(cut);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rules, Has.Count.EqualTo(2), "one rule in the gap of each run");
+            Assert.That(rules[0].Bounds.Y, Is.EqualTo(0).Within(0.5), "the first stands in the run above the spanner");
+            Assert.That(rules[0].Bounds.Height, Is.EqualTo(20).Within(0.5), "as long as that run and no longer");
+            Assert.That(rules[1].Bounds.Y, Is.EqualTo(40).Within(0.5), "the next begins past the spanner");
+            Assert.That(rules[1].Bounds.Height, Is.EqualTo(20).Within(0.5), "and reaches the foot of its own run");
+
+            // The same page with the spanner taken out is one run of forty, which the rule fills: the
+            // rule is not simply its run's height wherever the container has room, since one unbroken
+            // run reaches the content box the columns were laid across.
+            Assert.That(Rules(whole), Has.Count.EqualTo(1), "one run, one rule");
+            Assert.That(Rules(whole)[0].Bounds.Height, Is.EqualTo(40).Within(0.5), "the whole stretch");
+        });
+    }
+
+    /// <summary>
     /// The lines of inline content run through the same grid: down a column box, on into the next
     /// column, and then into the next row (CSS Multicol 2 §3). The last box keeps two lines, because a
     /// single line left alone at the end of a run is what widows forbid.
