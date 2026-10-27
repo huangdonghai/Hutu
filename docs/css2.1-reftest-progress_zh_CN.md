@@ -7,6 +7,8 @@
 
 ## 1. 当前基线（空载全量，"画对(pair declares)"计数）
 
+> **本表的数字是 2026-10-15 语料清理后那一刻的快照，已经过期。** 最新的读数在 §8（同日早轮）与 §9（同日晚轮）：wpt 由 2259 一路走到 **4157 / 5834**，gecko **1697 / 2471**，单测 **1857**，硬断言 **55**。要看"现在多少分"，读 §9；要复现数字，按 §4 的全量跑法重跑。留旧值在此只为记录那条线的起点。
+
 | 语料 | 基线 | 备注 |
 |---|---:|---|
 | **wpt** | **2259** | 2026-10-15 全量重测（**5835 对**，约 2 分钟）。历史增量：Ahem +95、BFC 下移 +2、%-margin/匿名透明 +3、flow-root +2、list-item 计数器 +12、min/max-applies-to 族 +33；**语料清理后**（见 §1.1），比率 38% |
@@ -173,10 +175,12 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 ## 7. 待办 / 下一步
 
 - [ ] **表格部分（及其后代）的强制断点要传播到表格本身**（`wpt/css-break/table/break-{after,before}-table-cell{,-child}.html`，4 对同一签名 `10000 像素 / 首差 58,50`）。页面自己写了注释：`<!-- Should be propagated to the outer table. -->`；表格写 `break-after: avoid`、某个 cell（或 cell 里的子 div）写 `break-after: column`，两栏容器里表格就该断、绿方块只占一栏高 —— 我们不断，于是绿铺满两栏。依据：CSS Break 3 §3.1.1 子→父传播（"a break-after value on a last in-flow child box is propagated to its container"，并注明"except in layout modes which define more specific rules"）+ §6 断点在兄弟之间而非盒与其容器之间。**已核实的落点**：`TableFormattingContext` 全文件不读 `Breaks.After/Before`（grep 证实），块路径只有 `BlockLayout.HoldsForcedBreak`（:910，看直接子）与 `IsForcedBreakCarrier`（:1118，只为"裸 wrapper"往下看一层孙）两处，表格不是裸 wrapper，所以 cell 上的断点谁也看不见。切片真正取数的地方是 `BlockLayout:1254/1284/1285/1302`（用 `breaks.Before/After` 造 `FragmentChild`），`Fragmentainer.Forced/Combine`（:240/:256）已现成。**注意**：这是通用传播规则的一个缺口，同一处改动很可能连带影响 `css-break/table` 其余 34 对与 `CSS2/pagination`；改完要跑 `css-break`+`CSS2/pagination`+`css-multicol` 三个模块，并按老规矩做全量失败集比对。
-- [ ] **`text-emphasis-position` 的 8 对**（`005d/e/f/g`、`006d/e/f/g`，签名同为 `739 像素 / 首差 51,50`；005 系是"该有号处画白"、006 系是"该白处画了号"，两两镜像）。矩阵已核实：16 个用例全是 `text-orientation: sideways`，`vertical-rl` 那 8 个全通过、`vertical-lr` 这 8 个全失败，且 `over/under` 与 `left/right` 的四种写法结果一致。
-  - **曾猜"是 Side 在 vertical-lr 下换了线的哪一边"，已被实测否证**：把通过的 `005`（rl）和失败的 `005d`（lr）各跑一次 deep-look，两页的布局树、行盒、以及 5 个强调号的坐标**逐字相同**（都在 x=88、同一串 y）。所以号落在哪一边不是差异所在，`StandsAtTheEnd` 这条路径两处都给出一样的结果。
-  - **实测到的差别已定位到"符号预留带被算进了正文的横向居中"**：参考页（拿 `rt` 冒充符号，故两边符号都在 x=88）里每个正文 run 是 `ruby 8,… 80x16 … base 33.91`，而我们的是 `text 8,49.72 88x80 … base 41.91` —— 同一行盒 88x80、同一 font 16，**我们的 run 宽 88（把 8px 的符号带当成正文可占的宽度）**，参考页的正文只有 80 宽、符号带在 80 之外；8px 之差正是 `41.91 - 33.91`，而 diff 像素全部落在 x=40..62 那条 22px 的字形带里（y=50..56）。也就是说：符号该另占的一条边，我们在算正文跨线方向位置时没有扣除。rl 那 8 对通过，只是因为它预留的边正好与另一处补偿对上（下一步先把 rl 的 run 宽度也打出来对比，再决定改预留还是改基线）。落点在预留 `InlineLayout.cs:5636-5644`（`marks.StandsAtTheEnd(fragment.Flow)` 决定往哪边留）与 run 的块轴定位；**别照"sideways 抬高基线"去改**，那条已被这次的数字否证。
-  - 同族 `001/001a-c`、`002/002a-c` 是另一种征状（pair 声明 mismatch、我们却画成同一张图），不在这条里。
+- [x] **`text-emphasis-position` 的 8 对已收**（`005d/e/f/g`、`006d/e/f/g`，签名同为 `739 像素 / 首差 51,50`；005 系"该有号处画白"、006 系"该白处画了号"，两两镜像）。矩阵核实过：16 例全带 `text-orientation: sideways`，`vertical-rl` 那 8 例原本全通过、`vertical-lr` 这 8 例全失败。
+  - **两条被否证的猜测留此备查**：(a) "Side 在 vertical-lr 下换了线的哪一边"——把通过的 005（rl）与失败的 005d（lr）各跑一次 deep-look，两页布局树、行盒、5 个符号坐标逐字相同（都在 x=88）；(b) "sideways 抬高基线"——两页 base 分别 33.91 与 41.91，差的 8 恰是符号带 `font/2`，与 sideways 无关。当时还以为是"预留带被算进正文的横向居中"，那也是误读：run 宽 88 vs 参考页 80 的差在参考页里是由 5 个 ruby 基各自占位造成的，与本症无关。
+  - **真根因（`a98bc0ef` 已修）**：符号预留带按"线的哪一头"扣，而不是按"符号站在哪一边"扣。`vertical-rl` 与 `vertical-lr` 的转向是同一个（顺时针 90°；只有 `sideways-lr` 这个模式名才逆转），差别只在列往哪边走，所以正文"向右够出的那份"在两个模式里都是 ascent。符号在 `right` 时永远该从 ascent 扣——但在 `vertical-lr` 下 block-end 恰好吃掉同一条右边缘，旧代码 `marks.StandsAtTheEnd(flow)` 于是把它当作 under、从 descent 扣，共享基线落进符号带内部（`base 41.91` 而非 `33.91`），字形压在自己那串圈上。rl 那 8 例通过，是两处错处正好相消。
+  - **改法**：新增 `TextEmphasis.KeepsItsStripOnTheAscentSide(flow)`——横排仍只看 `over/under`（横排里 `left/right` 本就不说话），竖排只看物理的 `Side` 配 `flow.TurnsCounterClockwise`；预留处 `src/Hutu/Rendering/Layout/InlineLayout.cs:5652` 换用它，符号的实际绘制位置（`Marks` 里那句 `StandsAtTheEnd`）不动，因为它原本就画对。单测 `AMarkedColumnKeepsItsStripOnTheSideTheMarksStand` 把 rl 与 lr 成对量（尺子是另一个模式，不是从带子上读出的数），并核 `right -> base 17`、`left -> base 22`、列宽 45、两条带分别在 x=40 与 x=0。
+  - 门禁：`css-text-decor` 模块 111 -> **119**；全量 wpt 4149 -> **4157**、gecko 1697 持平，失败集 0 回退。集合里唯二的差异是 `css-ruby/ruby-align-002`（负载抖动，单跑 2/2）与一条 `could not be drawn`（`WideKeywordDeclarationFactory._cache` 的并发 race，见下一条；该页本来就列在旧的失败清单里，单独跑 `css-sizing` 通过）。单测 1856 -> **1857**、硬断言 55 全绿。
+  - **这一族的残账（征状各不同，别混进上面那条）**：`001/001a-c`、`002/002a-c`（pair 声明 mismatch、我们却画成同一张图）；`text-combine-emphasis`（同为"画成同一张图"）；`text-emphasis-punctuation-1/2`（680 / 1380 像素，标点该不该有号）；`text-emphasis-ruby-001/002`（984 / 1651 像素，带 ruby 的基）；`text-emphasis-style-property-016a~020a`（20~220 像素的小字号形状与颜色）。要继续清这族，按"skip: auto 的标点集合"与"ruby 基上的符号"分两批。
 - [ ] **`position-relative-010/013`：单元格的百分比偏移仍按 used 高度求解**（deep-look 已核数字，非推测）：
   - 010 —— 偏移在 `<td style="top:100%">`，表格/`tbody`/`tr` 都没声明高度，规范要求移动 **0**；我们把 td 画在 y=149.72（行 used 高 100，被格内那个 100px 的 div 撑出来的），绿块整个落到红块下缘外，20000 像素差。
   - 013 —— 同样偏移在 `<td>`，父 `tr` 声明了 `height:10px`，规范要求移动 **10**；我们同样移动 100（td 在 149.72，格内 div `top:-10px` 落在 144.72），19000 像素差。
@@ -222,3 +226,20 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 1. **别用 `git checkout <sha>` 做验证**：会进入游离 HEAD，之后的 commit 就落在分支之外。本轮确实把 `main` 弄丢过 2 个提交，靠确认父链后 `git merge --ff-only` 修回。验证基线请开 worktree，或结束前一定 `git checkout <branch>`。
 2. **bisect 谓词必须只针对目标症状**：第一次写成"golden 全绿"，而区间内另一条 golden 也红着，于是每个提交都判 bad、归因错到无关的 multicol 提交。改成只匹配 `mixed-flow` 后才拿到正确答案。
 3. 顺带：`HUTU_CONFORMANCE_UPDATE=1` 会重写 golden 且把该次运行报成 skipped——只为读 diff 而跑它，也会真的改动 baseline 文件，跑完必须核对 `git status`。
+
+## 9. 2026-10-27 后半轮：spanning cell、表部分相对偏移、单元格百分比、竖排强调号
+
+基线（当天全量，`HUTU_SCORE_LISTED=9999`，取整轮起点）：**wpt 4115 / 5834、gecko 1694 / 2471**；本轮结束时 **wpt 4157、gecko 1697**，失败清单 2482 → **2451**。单测 **1857 passed / 0 failed**（另有 2 个 `[Explicit]`），硬断言 **55 passed / 0 failed / 1 skipped**。
+
+| commit | 做了什么 | 依据与取证 |
+|---|---|---|
+| `0a55ff65` | 跨行列的格子按自己那根轴的室宽来撑 | §17.5 与 `colspan` 在竖排下的轴置换；先量后写，改动只作用于跨格 |
+| `7df557e8` | 表部分（组/行）写 `position: relative` 时真的平移自己 | CSS Positioned 3 §6.2 把表部分按块框处理；`-absolute-child` 那 8 页要的是"行内绝对子元素跟着走"，故用 `MoveWithContent`；并给 LayoutBox 补 `Position`，否则几何对、绿色仍被红色盖住。16 对翻绿 |
+| `7a63e476` | 表部分的百分比偏移按**声明高**求解 | CSS 2.1 §10.5 + 页面自己的 assert `resolves against the specified parent height (not the used height)`。上一版读 used 高，让两页"因错而通过"；改后 011/012 只差一条 10 高的带子 |
+| `fa84e87d` | 中文读数里"十"的"一"何时省 | §7.1.1.3 字面会把 10011 也省掉，gecko 参考页写 `一万零一十一`；两簇语料的合取证据是"个位为空或本组为首组才省"。+3 |
+| `5b04a64b` | 中文的省略规则不再顺带决定日文/韩文 | 规范按语言给三条；`UnderTenThousand` 原为共用一条判据。语料暂覆盖不到日韩这类值，先把策略字段留出来 |
+| `a98bc0ef` | 竖排强调号的预留带改按**符号站的哪一边**扣 | CSS Text Decoration 4 §5.2 + Writing Modes 3 §5.1：两个竖排模式转向相同（都顺时针 90°，只有 `sideways-lr` 模式逆转），所以"向右够出"恒为 ascent；旧代码读 block-end，在 `vertical-lr` 下 block-end 恰好吃掉右边缘，基线落进带内（base 41.91 而非 33.91）。css-text-decor 111 → 119、wpt 4149 → 4157 |
+
+**这一轮的流程教训（新增两条）**
+1. **写文档要用 .NET 显式 UTF-8 API**：PowerShell 的 `Get-Content`/`Set-Content` 默认按 ANSI(GBK) 解码，把整篇中文文档读成乱码再写回去，一次就毁掉 165 行。规程：`[System.IO.File]::ReadAllLines($path, (New-Object System.Text.UTF8Encoding($false)))` 读、`WriteAllLines` 写，脚本本身保持纯 ASCII；改完立刻 `git diff --stat` 看行数是否与预期一致（这次是 165/163，一眼可见）。恢复只用 `git checkout -- <file>`，且要先确认该文件在本次损坏之外没有别的工作树改动。
+2. **一次改动只留一份快照**：把每次全量结果复制成 `build/score-after-<特征>.md`，比对脚本只取"失败行"（`- \`path\` - ` 带说明的那种），不要取通过清单——第一版脚本把通过项也收进集合，得出"0 新增 0 修复"的假象。
