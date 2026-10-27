@@ -1310,6 +1310,10 @@ public sealed class SkiaPaintExecutor
         var origin = alongLine ? 0f : (Single)command.Bounds.X;
         var sign = alongLine ? 1f : -1f;
 
+        // Which way a line's band is laid from the edge it stands on: away from the text,
+        // which is downward along a row and outward across a column.
+        var grow = alongLine ? 1 : -1;
+
         for (var drawn = 0; drawn < command.Decorations.Count; drawn++)
         {
             var decoration = command.Decorations[drawn];
@@ -1343,38 +1347,59 @@ public sealed class SkiaPaintExecutor
             };
             var blocked = skips ? across : Array.Empty<SKRect>();
 
+            // Where the run's baseline stands on the axis its lines are measured along, in the same
+            // coordinates as those lines: a row counts down from the page's top edge, a column across
+            // from the box's own left one, and `from` is handed over in the local terms of each.
+            // It is the row the line was averaged onto rather than the run's own baseline, which is what
+            // the offset was counted from - and a run lifted out of that row by `vertical-align` leaves
+            // the line standing on the row it was measured with.
+            var text = origin + stood;
+
             if (!through && decoration.Underline)
             {
                 // The face gives the line its zero position; text-underline-offset moves it outward
                 // from there, and text-decoration-thickness replaces the face's own width
-                // (CSS Text Decoration 4 §2.4, §2.8).
+                // (CSS Text Decoration 4 §2.4, §2.8). The line's own position is the edge it was measured
+                // to, and the band it is drawn with grows away from the text it stands under - which is
+                // what lets a page thicken a line and have it cover the room on the far side of that edge
+                // rather than the room between the edge and the letters it already left behind.
+                var at = text + (sign * (
+                    (placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset))
+                    + (decoration.UnderlineOffset ?? 0)));
+
                 DrawLine(
                     canvas,
                     paint,
                     command,
-                    (Single)(origin + stood + (sign * (
-                        (placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset))
-                        + (decoration.UnderlineOffset ?? 0)))),
+                    (Single)at,
                     Thickness(decoration.Thickness, placed?.UnderlineThickness ?? metrics.UnderlineThickness),
                     decoration.Shape,
                     alongLine,
                     pulls,
                     pushes,
-                    blocked);
+                    blocked,
+                    // An underline stands under its text and thickens away from it: downward along a
+                    // row, and out to the side it was measured to down a column. Which side that is
+                    // follows the direction the offset was counted in, so it is the same sign as that
+                    // one rather than the answer to where the line landed - a page that sets a negative
+                    // <c>text-underline-offset</c> still asks for an underline (§2.4).
+                    grow);
             }
 
             // The face says where its overline goes; a face that will not is answered with the top of
             // its own em box, which is the only other height the line could be taken from.
             if (!through && decoration.Overline)
             {
+                var at = text - (sign * (placed?.OverlineOffset
+                    ?? (metrics.OverlineOffset > 0
+                        ? Math.Abs(metrics.OverlineOffset)
+                        : metrics.Ascent)));
+
                 DrawLine(
                     canvas,
                     paint,
                     command,
-                    (Single)(origin + stood - (sign * (placed?.OverlineOffset
-                        ?? (metrics.OverlineOffset > 0
-                            ? Math.Abs(metrics.OverlineOffset)
-                            : metrics.Ascent)))),
+                    (Single)at,
                     Thickness(
                         decoration.Thickness,
                         placed?.OverlineThickness
@@ -1385,7 +1410,10 @@ public sealed class SkiaPaintExecutor
                     alongLine,
                     pulls,
                     pushes,
-                    blocked);
+                    blocked,
+                    // An overline stands over its text and thickens away from it, the other way from
+                    // its underline (§2.4).
+                    -grow);
             }
 
             // A line-through is left to the run it crosses: §2.5 has its position recomputed wherever the
@@ -1402,7 +1430,10 @@ public sealed class SkiaPaintExecutor
                     alongLine,
                     pulls,
                     pushes,
-                    blocked);
+                    blocked,
+                    // A line-through is drawn across the letters it crosses, so a thicker one covers
+                    // more of them rather than sliding off the text to one side (§2.5).
+                    0);
             }
         }
     }
@@ -1482,6 +1513,10 @@ public sealed class SkiaPaintExecutor
     /// Whether the run reads along a line, so the decoration runs with it, or down a column, so the
     /// decoration runs beside the text it decorates.
     /// </param>
+    /// <param name="grow">
+    /// Which way the band extends from <paramref name="at"/>: away from the text it stands off, or
+    /// <c>0</c> to have the position fall in the middle of it.
+    /// </param>
     private static void DrawLine(
         SKCanvas canvas,
         SKPaint paint,
@@ -1492,11 +1527,16 @@ public sealed class SkiaPaintExecutor
         Boolean alongLine,
         Double trimStart,
         Double trimEnd,
-        SKRect[] ink)
+        SKRect[] ink,
+        Int32 grow = 1)
     {
         var height = (Single)thickness;
         var start = (Single)(alongLine ? command.Bounds.X : command.Bounds.Y);
         var end = (Single)(alongLine ? command.Bounds.Right : command.Bounds.Bottom);
+
+        // Where the band is asked to stand off the edge rather than hang from it, the edge is its far
+        // side; a line-through is struck through the middle of the text it crosses.
+        at -= grow < 0 ? height : grow == 0 ? height / 2 : 0;
 
         // The distance the decorating box asked for is counted from the edge its text begins reading at,
         // which for a row written right-to-left is the far one, and a negative distance runs the line past
