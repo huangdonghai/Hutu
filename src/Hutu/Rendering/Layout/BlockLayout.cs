@@ -911,14 +911,74 @@ internal sealed class BlockLayout
     {
         foreach (var child in EffectiveMembers(box.Children, contentWidth))
         {
-            if (child.Style.Breaks.Before is BreakValue.Column or BreakValue.Page ||
-                child.Style.Breaks.After is BreakValue.Column or BreakValue.Page)
+            var (before, after) = BoundaryBreaks(child);
+
+            if (before is BreakValue.Column or BreakValue.Page ||
+                after is BreakValue.Column or BreakValue.Page)
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Gets the break values a member of a fragmentainer answers with: the box's own, together with any
+    /// forced break written inside a table it holds.
+    /// </summary>
+    /// <remarks>
+    /// A table is laid on its own grid and a column cannot end between its parts, so a break the page
+    /// wrote on a cell - or on a box standing in one - has nowhere inside the table to fall. It keeps the
+    /// side it was written for, because that side names the edge of the uncuttable box the break can
+    /// stand at (CSS Break 3 §3.1, and the borrowed pages' own comment: "Should be propagated to the
+    /// outer table"). A bare wrapper is not read this way, because the slicer takes those apart into the
+    /// container's own members - which is what keeps a break written inside one falling where it was
+    /// written rather than at the wrapper's edge.
+    /// </remarks>
+    private static (BreakValue Before, BreakValue After) BoundaryBreaks(Box child)
+    {
+        var before = child.Style.Breaks.Before;
+        var after = child.Style.Breaks.After;
+
+        if (child.Kind != BoxKind.Table)
+        {
+            return (before, after);
+        }
+
+        foreach (var part in TableParts(child))
+        {
+            var breaks = part.Style.Breaks;
+
+            // Only a forced break travels out; an avoid written inside the table is a wish about a break
+            // point the table itself decides, and reaching the container with it would let a cell refuse
+            // the break its own table asks for.
+            if (Fragmentainer.Forced(breaks.Before))
+            {
+                before = Fragmentainer.Combine(before, breaks.Before);
+            }
+
+            if (Fragmentainer.Forced(breaks.After))
+            {
+                after = Fragmentainer.Combine(after, breaks.After);
+            }
+        }
+
+        return (before, after);
+    }
+
+    /// <summary>Every box below this one, however deep, in the order the page wrote them.</summary>
+    private static IEnumerable<Box> TableParts(Box box)
+    {
+        foreach (var child in box.Children)
+        {
+            yield return child;
+
+            foreach (var deeper in TableParts(child))
+            {
+                yield return deeper;
+            }
+        }
     }
 
     /// <summary>
@@ -1232,6 +1292,7 @@ internal sealed class BlockLayout
                 CollapsedEnd(child, box.Flow, share),
                 used.Left);
             var breaks = child.Style.Breaks;
+            var (before, after) = BoundaryBreaks(child);
 
             // A child that can be broken contributes one piece per line of its own, so the column ends
             // between two of them (CSS Multicol 3 §3.1). The lines are those the plan makes at the width
@@ -1251,7 +1312,8 @@ internal sealed class BlockLayout
                         child,
                         size,
                         margin,
-                        new FragmentChild(size.Height + margin.Top + margin.Bottom, breaks.Before, breaks.After, breaks.Inside),
+                        new FragmentChild(
+                            size.Height + margin.Top + margin.Bottom, before, after, breaks.Inside),
                         -1,
                         last: true));
 
@@ -1299,7 +1361,7 @@ internal sealed class BlockLayout
                 child,
                 size,
                 margin,
-                new FragmentChild(size.Height + margin.Top + margin.Bottom, breaks.Before, breaks.After, breaks.Inside),
+                new FragmentChild(size.Height + margin.Top + margin.Bottom, before, after, breaks.Inside),
                 -1,
                 last: true));
         }
