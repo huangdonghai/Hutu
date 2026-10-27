@@ -38,8 +38,6 @@ internal static class MulticolRules
         }
 
         var step = width + multi.Gap;
-        var columnHeight = multi.Wraps && multi.Height is { } stated ? stated : crossRoom;
-        var rowStep = columnHeight + multi.RowGap;
         var start = along ? content.Y : content.X;
         var segments = new List<GapRuleSegment>();
 
@@ -50,6 +48,19 @@ internal static class MulticolRules
 
         foreach (var run in runs)
         {
+            // A column box is as tall as the row of them the container holds: the stated height where
+            // the columns wrap, the whole content box where they do not and the container was not cut,
+            // and - where a spanner did cut the container into more than one stretch - the run its own
+            // columns stand in. A rule that took the container's whole cross size in that last case would
+            // run down through the spanner and the stretches beyond it, which is what the borrowed pages
+            // with `column-span: all` measure (CSS Multicol 3 §3.2, CSS Gaps 1 §3.4).
+            var columnHeight = multi.Wraps && multi.Height is { } box && box > 0
+                ? box
+                : runs.Count > 1
+                    ? Math.Max(0, run.To - run.From)
+                    : crossRoom;
+            var rowStep = columnHeight + multi.RowGap;
+
             var rows = multi.Wraps && multi.Height is { } tall && tall > 0 && rowStep > 0
                 ? Math.Max(1, (Int32)Math.Floor((run.To - run.From + multi.RowGap) / rowStep))
                 : 1;
