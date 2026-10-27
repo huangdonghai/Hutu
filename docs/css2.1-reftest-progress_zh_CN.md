@@ -172,6 +172,30 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 
 ## 7. 待办 / 下一步
 
-- [ ] `wpt/css-lists` marker 定位族：deep-look 代表例 → 定位根因 → 修复 → 全量门禁 → commit。
-- [ ] `wpt/CSS2/normal-flow` 纯几何批次。
+- [ ] **block-in-inline 拆分（CSS 2.1 §9.2.1.1）**：一次拿下 `CSS2/visuren` 的 6 对（`emptyspan-1..4`、`split-inner-inline-1/2`、`whitespace-present-1a`）以及 `percent-height-1`，签名全部同源。已用 deep-look 取证：`emptyspan-1` 我们现在把带边框的外层 inline 画成一个框（`border 8,8 784x27.72`）并把内层 block 塞进去；Chrome/规范是把 inline 拆成块前段与块后段两个匿名 inline（参考页正是 `block` 在前、空 `span` 在后）。引擎目前没有匿名 inline 机制（`src/Hutu/Rendering/Layout/InlineLayout.cs` 只做行内测量，拆分要动盒树形），属架构级改动。
+- [ ] **`calc-size()`（CSS Values 5）**：整目录 `wpt/css-values/calc-size` 16 对里 14 对失败，其中 `min-max-sizes-001..006` 六对签名完全一致（6000 像素、首个差异同在 48,50）。仓库内零实现（`rg calc-size src` 无命中）。落点已查明：`StyleLength` 需新增 kind（可复用 `StyleMathFunction.Sum` 那套"保留各项单位、布局期才求值"的机制），求值口在 `LayoutEngine.ContentSizedWidth`（`src/Hutu/Rendering/Layout/LayoutEngine.cs:1586`，`fit-content` 已在此实现）。关键语义：`calc-size(auto, size + 80px)` 要对 min-content 与 max-content **各自**求表达式（100→180 与 40→120），再走 `fit-content` 夹成 100；且 intrinsic 要继续向外传播。
+- [ ] **竖排表格轴置换**：`gecko/writing-mode/tables` 16 对全灭，其中 14 对同一根因（vlr/vrl 成对且像素数完全一致）。`fixed-table-layout-025-vlr` 已取证：表格 100px 高、三格各 `padding:25px 50px`、中格 `height:50%`，Chrome 得 100×100；我们画成 `table 300x100` 且三格横向排在 x=8/108/208 —— 即 vertical-lr 下仍按横排表的"行内=水平"推进。§17.5.2.1 的列宽分配在竖排里要换成块轴。
+- [ ] `wpt/css-gaps/grid` 剩 58（含 fragmentation 28）、`css-gaps/flex` 44：gap 装饰族。已收的部分见 §8；残余多是 ±0.5px 子像素取整交替（deep-look 量过 `flex-gap-decorations-040`：band 中心我们 75.75/158.25/240.75/323.25，参考 76.25/157.75/…，单根因收益低），以及 `justify-content` 分布空间计入 gap 的尺寸（CSS Gaps 1 §2.1"Such additional space increases the size of the corresponding gaps"）—— flex 侧已按实际摆放算 gap，残余要先确认是谁在取整。
 - [ ] （较后）margin-collapsing 负边距 self-collapse 与测量感知 min/max-height 族。
+- [ ] 两个 `[Explicit]` 让开的单测：`:focus`（AngleSharp `HtmlElement.DoFocus` 空实现）与孤立代理项转义（AngleSharp 解析阶段丢弃声明）。等依赖能满足时摘掉。
+
+---
+
+## 8. 2026-10-27 一轮：gap 端点、计数器、绘制趟、`:link`、固定表宽
+
+基线（同一天，全量，`HUTU_SCORE_LISTED=9999`）：**wpt 4129 / 5834、gecko 1697 / 2471**；findings 由 2482 降到 **2479**。单测 **1852 passed / 0 failed**（另有 2 个 `[Explicit]`），硬断言 **55 passed / 0 failed**。
+
+| commit | 做了什么 | 依据与取证 |
+|---|---|---|
+| `fa24e308` | gap 装饰：悬空端点按 cap 处理，不再 overlap-join | CSS Gaps 1 §3.3；Chrome `IsCapIntersection`/`HasCrossGapSegment`（fork 里读到的原文）。wpt +11、0 回归 |
+| `cf9109cd` | 实现 `ethiopic-numeric`；并修正 4 条过期断言 | §7.2 算法 + 语料 38 值逐字节比对（直接解析页面实体，不手抄）。`cjk-earthly-branch` 13+ → `一三、` 由 WPT `css3-counter-styles-202` 的 assert 与 ref 双重确认 |
+| `0e75a56f` | flex/grid item 回到 inline 遍绘制；定位的 inline 进它自己的层 | Flexbox 1 §4.3"paint exactly the same as inline blocks"+ Grid 1 §9；第二项修掉 `contain-layout-018`/`contain-paint-025` 的**假通过**（HEAD 上 `FAIL` 文字压根没进绘制列表） |
+| `8b11975b` | `:link` 承认 `href=""` | Selectors 4 §8.2；AngleSharp `IsLink()` 要求 href 非空，故在 Hutu 侧注册 `IPseudoClassSelectorFactory`（放在 `WithCss()` 之前，令 fork 的强制状态包装包在我们之上）。顺带按"只收静态布局"的政策移除 1 对靠 `onload` 改 DOM 的语料，并给导入器补上 `\son[a-z]+=` 规则 |
+| `b25c2cd0` | 更新 `mixed-flow` golden | 段落边距 `17.92→16`（Chrome `html.css` 用 `1__qem`，有 doctype 即 `1em`）＋ item 进 ink 遍导致的绘制序，逐行核过 |
+| `65b6b3d7` | 2 个 AngleSharp 依赖的红改 `[Explicit]` | 见 §7 末条 |
+| `33e746f6` + `a6dbc9f9` | 固定布局表格听声明宽度 | §17.5.2.1 vs §17.5.2.2：`Math.Max(width, minContent)` 那个下限属自动算法。实测 fixed→25、auto→42；+4 对（`contain-paint-cell-001/002`、`contain-paint-table-001`、`flexbox_table-fixed-layout`）|
+
+**这一轮学到的两条流程教训**
+1. **别用 `git checkout <sha>` 做验证**：会进入游离 HEAD，之后的 commit 就落在分支之外。本轮确实把 `main` 弄丢过 2 个提交，靠确认父链后 `git merge --ff-only` 修回。验证基线请开 worktree，或结束前一定 `git checkout <branch>`。
+2. **bisect 谓词必须只针对目标症状**：第一次写成"golden 全绿"，而区间内另一条 golden 也红着，于是每个提交都判 bad、归因错到无关的 multicol 提交。改成只匹配 `mixed-flow` 后才拿到正确答案。
+3. 顺带：`HUTU_CONFORMANCE_UPDATE=1` 会重写 golden 且把该次运行报成 skipped——只为读 diff 而跑它，也会真的改动 baseline 文件，跑完必须核对 `git status`。
