@@ -1938,6 +1938,17 @@ internal readonly struct ComputedStyle
             return value;
         }
 
+        // A sum written in `calc()` is folded here as well, and folded against the same footing a bare
+        // share of it would take. The general reader cannot answer for it: it settles a percentage on the
+        // size the page is drawn across and an `em` on the device's own font, and neither is the size
+        // this property's percentage is a share of, so a page writing `calc(50% + 4px)` where the text is
+        // set at eight pixels came to hundreds of pixels rather than the eight it asks for.
+        if (!String.IsNullOrWhiteSpace(text) &&
+            CssMathLengths.EvaluateSum(text, argument => DecorationTerm(argument, font, dimensions)) is { } sum)
+        {
+            return sum;
+        }
+
         return TryReadLengthValue(declared, RenderMode.Horizontal, font, dimensions, out var pixels) ? pixels : null;
     }
 

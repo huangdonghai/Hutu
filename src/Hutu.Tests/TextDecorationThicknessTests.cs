@@ -75,6 +75,30 @@ public sealed class TextDecorationThicknessTests
     }
 
     /// <summary>
+    /// A length of a decoration written in <c>calc()</c> answers to the same footing the property gives a
+    /// bare value of the same unit: a percentage of the size the text is set at, and an <c>em</c> of that
+    /// size too - so <c>calc(50% + 20px)</c> on text set at forty pixels is forty pixels wide, the same
+    /// line as <c>40px</c> writes (CSS Text Decoration 4 §2.4). Settling the sum the way the box model's
+    /// reader does instead - a share of the window the page is drawn across, an <c>em</c> of the device's
+    /// own font - turns a eight-pixel line into a band of hundreds.
+    /// </summary>
+    [Test]
+    public async Task ASumInADecorationLengthKeepsTheUnitsThePropertyGivesThem()
+    {
+        var stated = await Rows("underline", "40px");
+        var share = await Rows("underline", "calc(50% + 20px)");
+        var distance = await Rows("underline", "calc(0.5em + 20px)");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(share, Is.EqualTo(stated),
+                "a half of the text's size added to twenty pixels is the forty pixels the line asked for");
+            Assert.That(distance, Is.EqualTo(stated),
+                "and an em means this text's em, the same forty");
+        });
+    }
+
+    /// <summary>
     /// Gets the first and last page row that carry the line's ink, for one kind of line set at the given
     /// thickness.
     /// </summary>
