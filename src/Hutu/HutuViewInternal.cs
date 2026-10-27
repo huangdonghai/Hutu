@@ -674,9 +674,16 @@ public sealed class HutuViewInternal : IDisposable
         // The pseudo-element names go the other way, after the CSS services and in place of the default:
         // exactly one factory is asked for, so the one that knows ::marker has to be the only one
         // registered. See HutuPseudoElementSelectorFactory for why the name cannot be left out.
+        //
+        // The link pseudo-classes go before the CSS services and in place of the default, which is the
+        // other reason there is exactly one factory of that kind to ask for: the CSS services wrap the one
+        // they find in the wrapper that carries the forced states, so a factory added alongside the
+        // borrowed one would leave the wrapper reading the wrong side of the pair. See
+        // HutuLinkPseudoClassSelectorFactory for what the link family has to answer differently.
         var configuration = Configuration.Default
             .With(_uaProvider = new UserAgentStyleSheetProvider())
             .With((Object)new WideKeywordDeclarationFactory())
+            .WithOnly<IPseudoClassSelectorFactory>(new HutuLinkPseudoClassSelectorFactory())
             .WithCss()
             .WithOnly<IPseudoElementSelectorFactory>(new HutuPseudoElementSelectorFactory())
             .WithRenderDevice(_renderDevice);

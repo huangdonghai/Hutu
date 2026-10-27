@@ -47,6 +47,12 @@ internal static class ImportFilters
         ("script", new(@"<script\b", Options)),
         ("a wait for script", new(@"reftest-wait", Options)),
         ("testharness", new(@"testharness", Options)),
+        // A handler written on the element is the same thing as a script: the page reaches for the
+        // browser to change what the markup says, and what a pair then compares is the state that
+        // change leaves behind rather than the state the document was written in. The reference for
+        // such a page is drawn after the handler has run, so an engine that runs no script is scored
+        // against a picture it was never given the way to reach.
+        ("a handler on the element", new(@"\son[a-z]+\s*=", Options)),
         ("a nested document", new(@"<iframe\b", Options)),
         ("a canvas", new(@"<canvas\b", Options)),
         ("vector drawing", new(@"<svg\b", Options)),
