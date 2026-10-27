@@ -446,7 +446,7 @@ public sealed class SkiaPaintExecutor
     /// <summary>Moves one edge onto the device pixel it is nearest to, read back into the box's own
     /// coordinates through the scale and the move that carry it there.</summary>
     private static Single SnapEdge(Single at, Single scale, Single move) =>
-        scale == 0 ? at : (Single)((Math.Round(at * scale + move) - move) / scale);
+        scale == 0 ? at : (Single)((RoundEdge(at * scale + move) - move) / scale);
 
     /// <summary>Builds a rectangle from edges that may have crossed over a negative scale.</summary>
     private static SKRect Edges(Single left, Single top, Single right, Single bottom) => new(
@@ -459,10 +459,20 @@ public sealed class SkiaPaintExecutor
 
     /// <summary>Moves each edge of an area onto the whole pixel it is nearest to.</summary>
     private static SKRect Snap(SKRect rect) => new(
-        (Single)Math.Round(rect.Left),
-        (Single)Math.Round(rect.Top),
-        (Single)Math.Round(rect.Right),
-        (Single)Math.Round(rect.Bottom));
+        RoundEdge(rect.Left),
+        RoundEdge(rect.Top),
+        RoundEdge(rect.Right),
+        RoundEdge(rect.Bottom));
+
+    /// <summary>
+    /// Moves a coordinate onto the pixel it falls between by taking the further one, which is the way
+    /// the rest of this file snaps - a band laid half a pixel out of a whole one gains its far edge
+    /// rather than losing it, and a fill and a border side standing at the same half pixel round alike
+    /// (CSS will not say which of the two a half pixel belongs to; this is the answer the engine gives
+    /// everywhere else).
+    /// </summary>
+    private static Single RoundEdge(Single at) =>
+        (Single)Math.Round(at, MidpointRounding.AwayFromZero);
 
     /// <summary>
     /// Draws one shadow of a box, which is the same operation read from the two opposite ends: an outer one

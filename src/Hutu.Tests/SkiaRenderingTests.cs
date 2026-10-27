@@ -1,4 +1,4 @@
-using Hutu.Rendering.Layout;
+﻿using Hutu.Rendering.Layout;
 using Hutu.Rendering.Paint;
 using Hutu.Skia;
 using NUnit.Framework;
@@ -361,6 +361,38 @@ public sealed class SkiaRenderingTests
 
         Assert.That(bitmap.GetPixel(10, 5), Is.EqualTo(SKColors.White), "the row above the tile stays white");
         Assert.That(bitmap.GetPixel(10, 6), Is.EqualTo(SKColors.Red), "the tile takes the whole row its edge is nearest to");
+    }
+
+    /// <summary>
+    /// A decoration line stands half a pixel out on either side of the whole ones where the gap it
+    /// decorates begins at an odd offset, and each of those edges takes the pixel it is nearest to -
+    /// which keeps the line as wide as the page asked for, and is how a fill standing at the same half
+    /// pixel already rounds. Rounding the nearest down instead would take a pixel off the rule at both
+    /// ends wherever its gap happened to land, and a rule of five would come out four across
+    /// (CSS Gaps 1 §3).
+    /// </summary>
+    [Test]
+    public async Task ARuleStandingHalfAPixelOutKeepsTheWidthItWasGiven()
+    {
+        // Two cells of forty-five with a ten between them in a hundred of room: the gap runs from
+        // forty-five to fifty-five, and a rule of five set in the middle of it stands from forty-seven
+        // and a half to fifty-two and a half, so it inks the five columns between.
+        using var picture = await Picture(
+            "<div style='display:flex;gap:10px;width:100px;" +
+            "column-rule:5px solid gold'>" +
+            "<div style='width:45px;height:40px'></div>" +
+            "<div style='width:45px;height:40px'></div></div>");
+
+        Assert.Multiple(() =>
+        {
+            for (var column = 48; column <= 52; column++)
+            {
+                Assert.That(picture.GetPixel(column, 20).Blue, Is.LessThan(100), $"column {column} is ruled");
+            }
+
+            Assert.That(picture.GetPixel(47, 20), Is.EqualTo(SKColors.White), "the pixel before the rule's edge");
+            Assert.That(picture.GetPixel(53, 20), Is.EqualTo(SKColors.White), "and the one past its far edge");
+        });
     }
 
     [Test]
