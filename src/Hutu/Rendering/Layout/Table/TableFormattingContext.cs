@@ -235,15 +235,17 @@ internal sealed partial class TableFormattingContext
         Box? groupBox = null;
         LayoutBox? group = null;
         // A row group that is moved takes its rows with it, so a row's own displacement is the group's
-        // plus whatever the row states. Each is resolved against the table's content box, which is the
-        // part's containing block, and so is the share a percentage offset names.
+        // plus whatever the row states.
         Offset groupShift = Offset.Zero;
         Offset rowShift = Offset.Zero;
-        // What a percentage offset on a part is a share of: the height the table stated. A table whose
-        // height the rows settled has no such whole to be a share of, and the share then says nothing
-        // rather than reaching all the way down the grid it grew to (CSS 2.1 §10.5, read the way
-        // position-relative-008 does for a row written `top: 100%` inside a table that never named one).
-        var percentHeight = build.Box.Style.Height.HasValue ? grid.Height : 0.0;
+        // What a percentage offset on a part is a share of is the height its containing block *stated*:
+        // a group's is the table's, a row's is the group around it or the table where it stands outside
+        // one. A part whose row or group or table is only as tall as the rows happen to make has no such
+        // whole to be a share of, and the offset then says nothing rather than reaching all the way down
+        // the grid it grew to (CSS 2.1 §10.5 - "if the height of the containing block is specified
+        // explicitly" - which is what the borrowed pages state in their own asserts: the same `top: 100%`
+        // resolves to a row's ten pixels and not to the hundred the row was grown to by its content).
+        var tableHeight = StatedHeight(build.Box, 0.0);
 
         foreach (var row in grid.Rows)
         {
@@ -274,7 +276,7 @@ internal sealed partial class TableFormattingContext
                         Position = groupBox.Style.Position.Position,
                     };
 
-                groupShift = PartOffset(groupBox, grid.Width, percentHeight);
+                groupShift = PartOffset(groupBox, grid.Width, tableHeight);
 
                 if (group is not null)
                 {
@@ -288,7 +290,7 @@ internal sealed partial class TableFormattingContext
                 Position = row.Box.Style.Position.Position,
             };
 
-            var own = PartOffset(row.Box, grid.Width, percentHeight);
+            var own = PartOffset(row.Box, grid.Width, group is null ? tableHeight : StatedHeight(groupBox, 0.0));
             rowShift = new Offset(groupShift.X + own.X, groupShift.Y + own.Y);
 
             if (group is null)
@@ -360,7 +362,7 @@ internal sealed partial class TableFormattingContext
     /// flow is a place inside the group's box (CSS Positioned 3 §6.2, which puts a table part on the same
     /// footing as a block box; §6.3 that a relative offset is a displacement of the box and its content).
     /// </summary>
-    private static Offset PartOffset(Box? part, Double width, Double height)
+    private static Offset PartOffset(Box? part, Double width, Double? height)
     {
         if (part is null || !PositionedLayout.IsPositioned(part) ||
             part.Style.Position.Position != PositionMode.Relative)
@@ -368,7 +370,27 @@ internal sealed partial class TableFormattingContext
             return Offset.Zero;
         }
 
-        return PositionedLayout.RelativeOffset(part.Style.Position, new Size(width, height), part.Flow);
+        return PositionedLayout.RelativeOffset(part.Style.Position, new Size(width, height ?? 0.0), part.Flow);
+    }
+
+    /// <summary>
+    /// Gets the height a part stated in its own style, or nothing where it left the height to its rows.
+    /// A share named in per cent is read against that number rather than against the height the rows
+    /// came to, so the question is only ever what the page wrote; a per cent is not an answer here, since
+    /// the whole it would be a share of is the very height being asked for.
+    /// </summary>
+    private static Double? StatedHeight(Box? part, Double basis)
+    {
+        if (part is null)
+        {
+            return null;
+        }
+
+        var height = part.Style.Height.HasValue ? part.Style.Height : part.HintedHeight;
+
+        return height is { HasValue: true } stated && stated.Kind != StyleLengthKind.Percent
+            ? Math.Max(0, stated.Resolve(basis))
+            : (Double?)null;
     }
 
     /// <summary>
