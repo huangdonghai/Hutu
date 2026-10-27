@@ -488,6 +488,14 @@ internal sealed partial class TableFormattingContext
     /// Resolves the width of the table's content box. A declared width wins, subject to the columns'
     /// minimum; an automatic width shrinks to fit, which is what makes a table without a width only
     /// as wide as its content.
+    /// <para>
+    /// The floor is the automatic algorithm's, and the fixed one says otherwise: a table laid out fixed
+    /// takes the width it declared, its remaining columns dividing "the remaining horizontal table space"
+    /// and "cells in subsequent rows do not affect column widths" (CSS 2.1 §17.5.2.1). What a cell holds
+    /// is then content that overflows the column it stands in, to be hidden or left standing by that
+    /// column's own overflow - not a reason for the table to grow. A fixed table asked to be narrower than
+    /// its words are wide is narrow, and its words are cut.
+    /// </para>
     /// </summary>
     private static Double ResolveContentWidth(
         ComputedStyle style,
@@ -502,7 +510,7 @@ internal sealed partial class TableFormattingContext
 
         if (declared is { } width)
         {
-            content = Math.Max(width, minContent);
+            content = build.Style.Fixed ? width : Math.Max(width, minContent);
         }
         else if (constraints.AvailableWidth is { } available)
         {
