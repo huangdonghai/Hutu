@@ -397,6 +397,47 @@ public sealed class TableLayoutTests
         Assert.That(Painted(view, "b").Widths.Right, Is.EqualTo(0).Within(0.01), "the second group declared nothing");
     }
 
+    /// <summary>
+    /// A table laid out fixed keeps the width it asked for even when its words are wider: the columns it
+    /// declares divide that width, the rest are given what is left of it, and content that does not fit
+    /// overflows the column it stands in rather than pushing the table out (CSS 2.1 §17.5.2.1). The
+    /// automatic algorithm answers the other way, and the two must not be confused - the floor the auto
+    /// one reads from its columns' minimums is what once made a fixed table grow to its words.
+    /// </summary>
+    [Test]
+    public async Task AFixedTableKeepsTheWidthItDeclared()
+    {
+        using var fixedView = CreateView(400);
+        await fixedView.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table id='t' style='table-layout:fixed;border-spacing:0;width:25px'>" +
+            "<tr><td id='a'>PASSFAIL</td></tr></table>" +
+            "</body></html>");
+
+        using var autoView = CreateView(400);
+        await autoView.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table id='t' style='table-layout:auto;border-spacing:0;width:25px'>" +
+            "<tr><td id='a'>PASSFAIL</td></tr></table>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                Find(fixedView, "t").BorderBox.Width,
+                Is.EqualTo(25).Within(0.5),
+                "eight letters of five pixels each do not widen a fixed table past what it was given");
+            Assert.That(
+                Find(fixedView, "a").BorderBox.Width,
+                Is.EqualTo(25).Within(0.5),
+                "and its one column takes the whole of it");
+            Assert.That(
+                Find(autoView, "t").BorderBox.Width,
+                Is.GreaterThan(25),
+                "the same table laid out automatic is as wide as its column minimum, words included");
+        });
+    }
+
     private static BorderCommand Painted(HutuViewInternal view, String id)
     {
         var box = Find(view, id);
