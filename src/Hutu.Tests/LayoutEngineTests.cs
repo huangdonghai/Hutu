@@ -311,6 +311,46 @@ public sealed class LayoutEngineTests
         Assert.That(Find(view, "p")!.BorderBox.Y, Is.EqualTo(16).Within(0.5), "max(body 8, paragraph 16)");
     }
 
+    /// <summary>
+    /// What keeps a line from being a phantom one is a decoration standing along the axis the line runs
+    /// on, and it is asked edge by edge: nothing written across the line makes the line exist, and two
+    /// values along it that add up to nothing still give the inline box a room of its own. The borrowed
+    /// pages write both halves of the distinction, and the second is what a sum of the two edges misses
+    /// (CSS Inline 3 §2.3, corrected in w3c/csswg-drafts#9344 to the inline axis only).
+    /// </summary>
+    [Test]
+    public async Task APhantomLineAnswersToTheInlineAxisEdgeByEdge()
+    {
+        // The same run of collapsible white space between two empty inline boxes, five ways, over a
+        // paragraph whose top margin folds with the body's whenever the line does not exist: sixteen
+        // where it is phantom and twenty-four where the line stands.
+        var blockAxis = await Stood("<span style='padding-top:1px'></span><span style='padding-bottom:1px'></span>");
+        var inlineAxis = await Stood("<span style='padding-left:1px'></span>");
+        var cancelling = await Stood(
+            "<span style='margin-left:1px;margin-right:-1px'></span>" +
+            "<span style='margin-left:-1px;margin-right:1px'></span>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(blockAxis, Is.EqualTo(16),
+                "padding across the line leaves the line a phantom one, so the margins fold through it");
+            Assert.That(inlineAxis, Is.EqualTo(24),
+                "padding along the line gives the box a room of its own, which the line keeps");
+            Assert.That(cancelling, Is.EqualTo(24),
+                "and two inline-axis margins that add up to nothing still stand on either side of it");
+        });
+    }
+
+    /// <summary>Gets where a paragraph's top edge lands under the given pair of inline boxes.</summary>
+    private static async Task<Double> Stood(String boxes)
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:8px'>" + boxes + " <p id='p' style='margin:16px 0'>x</p></body></html>");
+
+        return Find(view, "p")!.BorderBox.Y;
+    }
+
     [Test]
     public async Task ASizeContainedFlexFillsTheWidthAndAsksItsContentForNothing()
     {

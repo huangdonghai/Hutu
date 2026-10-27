@@ -3464,7 +3464,7 @@ internal sealed class BlockLayout
     /// <summary>
     /// Gets whether an inline-level box puts something on its line that makes the line exist: text that
     /// is not collapsible white space, a break, a replaced box, or an inline box with margins, padding,
-    /// borders, or content of its own (CSS 2.1 §9.4.2).
+    /// borders, or content of its own (CSS Inline 3 §2.3, CSS 2.1 §9.4.2).
     /// </summary>
     private static Boolean LeavesALine(Box box, WritingModeInfo flow, Double basis)
     {
@@ -3489,9 +3489,19 @@ internal sealed class BlockLayout
         var padding = box.Style.Padding.Resolve(basis);
         var border = BorderOf(box);
 
-        if (margin.Horizontal != 0 || margin.Vertical != 0 ||
-            padding.Horizontal != 0 || padding.Vertical != 0 ||
-            border.Horizontal != 0 || border.Vertical != 0)
+        // What puts a box on its line is a decoration standing along the axis the line runs on, and it is
+        // asked edge by edge: two inline-axis values that cancel out - a margin written `1px` on one side
+        // and `-1px` on the other - still give the box an inline extent of its own, while a block-axis
+        // value, however large, does not make the line exist and leaves it a phantom one whose margins
+        // collapse through (CSS Inline 3 §2.3, corrected in w3c/csswg-drafts#9344 to count the inline
+        // axis only; the borrowed pages write both halves of that distinction).
+        var (marginStart, marginEnd) = flow.InlineMargins(margin);
+        var (paddingStart, paddingEnd) = flow.InlineMargins(padding);
+        var (borderStart, borderEnd) = flow.InlineMargins(border);
+
+        if (marginStart != 0 || marginEnd != 0 ||
+            paddingStart != 0 || paddingEnd != 0 ||
+            borderStart != 0 || borderEnd != 0)
         {
             return true;
         }
