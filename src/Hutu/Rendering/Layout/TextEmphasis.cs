@@ -234,12 +234,43 @@ internal readonly struct TextEmphasis
             written = Value(Declared(find, "text-emphasis"));
         }
 
-        foreach (var token in Words(written))
+        var tokens = Words(written);
+
+        // The grammar takes the fill and the shape in either order (§5.1's `[ [ filled | open ] ||
+        // <shape> ]`), so the fill is read across the whole value before any shape is answered for: a
+        // page writing `circle open` asks for the open circle, and one reading the shape first would
+        // take the glyph for the filled one the keyword stands in for when nothing says otherwise. A
+        // quoted token is a string rather than a keyword, whatever it says, and is left out of this.
+        foreach (var token in tokens)
+        {
+            if (IsQuoted(token))
+            {
+                continue;
+            }
+
+            if (token.Equals("filled", StringComparison.OrdinalIgnoreCase))
+            {
+                filled = true;
+            }
+            else if (token.Equals("open", StringComparison.OrdinalIgnoreCase))
+            {
+                filled = false;
+            }
+        }
+
+        foreach (var token in tokens)
         {
             var word = Unquote(token);
 
             if (word.Length == 0)
             {
+                continue;
+            }
+
+            // A string is drawn as it was written, since that is what a page naming a mark means.
+            if (IsQuoted(token))
+            {
+                mark = word;
                 continue;
             }
 
@@ -249,21 +280,16 @@ internal readonly struct TextEmphasis
                 continue;
             }
 
-            if (word.Equals("filled", StringComparison.OrdinalIgnoreCase))
+            // The fill was already taken; a shape word names which glyph, and nothing else here is one.
+            if (word.Equals("filled", StringComparison.OrdinalIgnoreCase) ||
+                word.Equals("open", StringComparison.OrdinalIgnoreCase))
             {
-                filled = true;
+                continue;
             }
-            else if (word.Equals("open", StringComparison.OrdinalIgnoreCase))
-            {
-                filled = false;
-            }
-            else if (Glyph(word, filled) is { } drawn)
+
+            if (Glyph(word, filled) is { } drawn)
             {
                 shape = drawn;
-            }
-            else if (IsQuoted(token))
-            {
-                mark = word;
             }
             else if (BackgroundLayerParser.ParseColor(token) is { } argb)
             {

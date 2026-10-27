@@ -336,6 +336,46 @@ public sealed class VerticalLayoutTests
     }
 
     /// <summary>
+    /// The fill and the shape of <c>text-emphasis-style</c> answer to the value as a whole rather than to
+    /// the order the two words were written in: <c>dot open</c> asks for the same open dot as
+    /// <c>open dot</c> does, and a quoted token is a string the page wants drawn - never the keyword it
+    /// happens to spell (CSS Text Decoration 4 §5.1's <c>[ [ filled | open ] || &lt;shape&gt; ]</c>, and
+    /// the borrowed pages that write each pair both ways).
+    /// </summary>
+    [Test]
+    public async Task TheFillOfAStyleAnswersWhicheverSideTheShapeWasWritten()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0;font-size:10px;line-height:4;text-emphasis-style:open dot'>aa</p>" +
+            "<p style='margin:0;font-size:10px;line-height:4;text-emphasis-style:dot open'>ab</p>" +
+            "<p style='margin:0;font-size:10px;line-height:4;text-emphasis-style:circle open'>ac</p>" +
+            "<p style='margin:0;font-size:10px;line-height:4;text-emphasis-style:\"filled\"'>ad</p></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                Text(view, "ab").Marks![0].Text,
+                Is.EqualTo(Text(view, "aa").Marks![0].Text),
+                "the shape reads the fill that was written beside it, whichever side it stood on");
+            Assert.That(
+                Text(view, "aa").Marks![0].Text,
+                Is.EqualTo(Char.ConvertFromUtf32(0x25E6)),
+                "and an open dot is the white one, not the bullet a filled dot draws");
+            Assert.That(
+                Text(view, "ac").Marks![0].Text,
+                Is.EqualTo(Char.ConvertFromUtf32(0x25CB)),
+                "the same holds for the next shape the pages write both ways");
+            Assert.That(
+                Text(view, "ad").Marks![0].Text,
+                Is.EqualTo("filled"),
+                "a quoted token is the string the page wants drawn, not the keyword it spells");
+        });
+    }
+
+    /// <summary>
     /// The two halves of <c>text-emphasis-position</c> answer different flows: a line puts its marks on
     /// the edge <c>over</c> or <c>under</c> names, whatever side stands beside them, and a column reads
     /// only the side - which a value that names none still gives it, because the initial value of the
