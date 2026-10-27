@@ -3,6 +3,8 @@ using Hutu.Skia;
 using NUnit.Framework;
 using SkiaSharp;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Hutu.Tests;
@@ -83,6 +85,34 @@ public sealed class PaintOrderTests
         Assert.That(Pixel(drawn, 150, 50), Is.Not.EqualTo(Red), "nothing reaches beside the box");
     }
 
+    /// <summary>
+    /// An inline element that states a level under `relative` joins the levels the context gathers, the
+    /// negative ones reaching under the ground of every block they stand in (CSS 2.1 §Appendix E, step 5
+    /// for the negative level and step 3 for the inline content). The box is built while the line is laid
+    /// out rather than arranged after it, so it has to carry the position and the level itself - or the
+    /// walk that gathers the levels never sees one, and the two flow passes then leave the box for a layer
+    /// that was never made: the page draws the element's ground and its letters nowhere at all.
+    /// </summary>
+    [Test]
+    public async Task APlacedInlineJoinsTheLevelItsOwnStates()
+    {
+        var negative = await Order(
+            "<div style='display:inline;background:#00ff00'>xx" +
+            "<span style='position:relative;z-index:-1;background:#ff0000'>y</span></div>");
+
+        var level = await Order(
+            "<div style='display:inline;background:#00ff00'>xx" +
+            "<span style='position:relative;background:#ff0000'>y</span></div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(negative, Is.EqualTo(new[] { "red", "text y", "green", "text xx" }),
+                "the negative level is laid down first, whole, under the ground it stands in");
+            Assert.That(level, Is.EqualTo(new[] { "green", "text xx", "red", "text y" }),
+                "at the automatic level the same box waits for the inline pass and paints over the ground");
+        });
+    }
+
     private static async Task<SKBitmap> Paint(String body)
     {
         using var view = new HutuViewInternal(new SkiaTextMeasurer());
@@ -99,6 +129,28 @@ public sealed class PaintOrderTests
         using var image = surface.Snapshot();
 
         return SKBitmap.FromImage(image);
+    }
+
+    /// <summary>
+    /// The commands a page paints with, named in the order they are laid down: the ground of either box
+    /// by its colour and each run of letters by what it says. The order is the rule being read here, and
+    /// it is read from the list rather than from a pixel, because a pixel cannot tell a box painted under
+    /// a ground from a box that was never painted at all.
+    /// </summary>
+    private static async Task<List<String>> Order(String body)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(300, 300);
+        await view.SetHtml(
+            $"<html><body style='margin:0;font-size:60px'>{body}</body></html>");
+
+        return view.Paint!.Commands.Select(command => command switch
+        {
+            FillCommand { Color: 0xFF00FF00 } => "green",
+            FillCommand { Color: 0xFFFF0000 } => "red",
+            TextCommand text => $"text {text.Text}",
+            _ => command.GetType().Name,
+        }).ToList();
     }
 
     private static SKColor Pixel(SKBitmap bitmap, Int32 x, Int32 y) => bitmap.GetPixel(x, y);

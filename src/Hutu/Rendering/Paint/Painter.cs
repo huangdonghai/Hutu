@@ -1077,13 +1077,18 @@ internal sealed class Painter
                 continue;
             }
 
-            if (PaintsAsAUnit(child))
+            // An item paints as an atomic inline does, and an atomic inline comes with the ink rather than
+            // with the ground: this pass would put what it holds ahead of the text of every block that was
+            // written before it (CSS Flexbox 1 §4.3, CSS Grid 1 §9).
+            if (IsItem(child))
+            {
+                continue;
+            }
+
+            if (child.EstablishesStackingContext)
             {
                 // A box that forms a context of its own is drawn as one unit where it stands: what it
-                // holds is laid down with its ground, under the layers of the boxes around it. A flex
-                // or grid item is drawn that way too, even without a level of its own: it paints as an
-                // inline-block would, so a sibling that comes after it covers the content it overflows
-                // (CSS Flexbox 1 §5.4, CSS Grid 1 §9).
+                // holds is laid down with its ground, under the layers of the boxes around it.
                 PaintChild(child, list, target, owner);
                 continue;
             }
@@ -1097,20 +1102,34 @@ internal sealed class Painter
             PaintChild(child, list, target, owner);
         }
 
-        // 3. The ink: the lines this box's text stands on, and the same pass over the blocks below it, so
-        //    a run deep in an early box still lies over the ground of a later one.
+        // 3. The ink: the lines this box's text stands on, the items, and the same pass over the blocks
+        //    below it, so a run deep in an early box still lies over the ground of a later one.
         foreach (var child in children)
         {
-            if (Floats(child) || IsReplaced(child) || PaintsAsAUnit(child))
+            if (Floats(child) || IsReplaced(child))
             {
-                // A float came with the pass before, drawn with all that hangs on it; a replaced box and a
-                // box that forms a context of its own came with the ground, each as one unit.
+                // A float came with the pass before, drawn with all that hangs on it; a replaced box came
+                // with the ground, its picture being its ground.
                 continue;
             }
 
             if (IsInlineLevel(child))
             {
                 PaintChild(child, list, target, owner);
+                continue;
+            }
+
+            if (IsItem(child))
+            {
+                // Drawn complete where it stands, the way an atomic inline is: what the item holds belongs
+                // with its own ground, so a sibling that comes after it covers the content it overflows.
+                PaintChild(child, list, target, owner);
+                continue;
+            }
+
+            if (child.EstablishesStackingContext)
+            {
+                // It came with the ground as one unit, layer and all.
                 continue;
             }
 
@@ -1153,7 +1172,13 @@ internal sealed class Painter
                 continue;
             }
 
-            if (PaintsAsAUnit(child))
+            if (IsItem(child))
+            {
+                // Its ground comes with its ink, the way an atomic inline's does.
+                continue;
+            }
+
+            if (child.EstablishesStackingContext)
             {
                 PaintChild(child, list, target, owner);
                 continue;
@@ -1213,7 +1238,15 @@ internal sealed class Painter
                 continue;
             }
 
-            if (PaintsAsAUnit(child))
+            if (IsItem(child))
+            {
+                // An item is drawn complete here, with its own ground: it paints as an atomic inline does,
+                // which this is the pass for.
+                PaintChild(child, list, target, owner);
+                continue;
+            }
+
+            if (child.EstablishesStackingContext)
             {
                 // It came with the ground as one unit, layer and all.
                 continue;
@@ -1277,15 +1310,16 @@ internal sealed class Painter
         || box.EstablishesStackingContext;
 
     private static Boolean Floats(LayoutBox box) =>
-        !box.Source.IsItem && box.Source.Style.Float != FloatSide.None;
+        !IsItem(box) && box.Source.Style.Float != FloatSide.None;
 
     /// <summary>
-    /// Gets whether a box paints as one unit where it stands rather than lending its ground and its ink
-    /// to the two passes around it: a box that forms a stacking context, and a flex or grid item, which
-    /// paints the way an inline-block does even without a level of its own (CSS Flexbox 1 §5.4).
+    /// Gets whether a box is an item of a flex or grid container. One paints as an atomic inline-level box
+    /// does - as one unit, at the place the inline-level pass reaches it - whether or not it carries a
+    /// stacking level of its own (CSS Flexbox 1 §4.3, CSS Grid 1 §9). Its own ground travels with it for
+    /// the same reason: what overflows an item is covered by the item that comes after it, not the other
+    /// way round.
     /// </summary>
-    private static Boolean PaintsAsAUnit(LayoutBox box) =>
-        box.EstablishesStackingContext || (box.Source.IsItem && !IsInlineLevel(box));
+    private static Boolean IsItem(LayoutBox box) => box.Source.IsItem;
 
     /// <summary>
     /// Gets whether a box is drawn by being replaced rather than by saying what is inside it - an image, a
@@ -1299,7 +1333,7 @@ internal sealed class Painter
 
     /// <summary>
     /// Gets whether the ink pass has anything to lay inside a box: a mark of its own, a line, a replaced
-    /// or atomic box, a float nested below, or the same answer further down.
+    /// or atomic box, an item, a float nested below, or the same answer further down.
     /// </summary>
     private static Boolean HasInk(LayoutBox box, DeferredStack? owner)
     {
@@ -1310,7 +1344,7 @@ internal sealed class Painter
 
         foreach (var child in Standing(box, owner))
         {
-            if (IsInlineLevel(child) || Floats(child))
+            if (IsInlineLevel(child) || Floats(child) || IsItem(child))
             {
                 return true;
             }

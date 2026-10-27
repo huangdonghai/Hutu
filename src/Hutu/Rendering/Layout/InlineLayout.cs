@@ -1578,6 +1578,20 @@ internal sealed class InlineLayout
             Opacity = ancestor.Box.Style.Opacity,
         };
 
+        // A relatively placed inline keeps the place the line gave it and is drawn where its offset puts
+        // it, which is what the pass that closes the box does. It carries the same answer as a block does,
+        // because the layer it belongs to comes from the position and the level rather than from the kind
+        // of box: an inline that states a level under `relative` is painted with the levels around it, not
+        // with the lines the text stands on (CSS 2.1 §Appendix E). Only `relative` is written here: a box
+        // that leaves the flow altogether is gathered by the positioning pass rather than by the line.
+        var stated = ancestor.Box.Style.Position;
+
+        if (stated.Position == PositionMode.Relative)
+        {
+            item.Node.Position = PositionMode.Relative;
+            item.Node.ZIndex = stated.HasZIndex ? stated.ZIndex : 0;
+        }
+
         // Everything opened before this one on the line encloses it, so the box just inside it - or the
         // line itself when this is the outermost - is where its box belongs.
         var index = open.IndexOf(item);
