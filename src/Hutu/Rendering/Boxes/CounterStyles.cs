@@ -740,12 +740,18 @@ internal static class CounterStyles
         if (tens > 0)
         {
             // The one of a ten goes missing at the head of the number - 十二 and 十万 rather than
-            // 一十二 and 一十万 - and, in the plain Chinese readings, wherever a ten stands on its own
-            // within its group: 一万零十 is ten thousand and ten, where 一万零一十一 would be read back
+            // 一十二 and 一十万. The Chinese readings drop it wherever a ten stands on its own within
+            // its group as well: 一万零十 is ten thousand and ten, where 一万零一十一 would be read back
             // as a different number. What both have is nothing but the ten standing in the group, so
             // that is the question asked - the empty ones place, not the front of the number.
-            var leading = result.Length == 0 && tens == 1 && !style.Formal &&
-                (atStart || units == 0);
+            //
+            // The wider reading is held to the Chinese family, which is the one the borrowed pages speak
+            // for. Japanese and Korean are told to drop the one in front of any digit marker but only
+            // where that one is not the group's first digit (§7.1.1.3 again), which is a different
+            // question from this one and has no value in the corpus to answer it; 一千零五 and 千百
+            // would both move if the two were settled by the same line.
+            var alone = atStart || (units == 0 && style.WritesZero);
+            var leading = result.Length == 0 && tens == 1 && !style.Formal && alone;
 
             if (!leading)
             {
