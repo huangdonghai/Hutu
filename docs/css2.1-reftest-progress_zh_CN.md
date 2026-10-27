@@ -174,13 +174,16 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 
 ## 7. 待办 / 下一步
 
-- [ ] **表格部分（及其后代）的强制断点要传播到表格本身**（`wpt/css-break/table/break-{after,before}-table-cell{,-child}.html`，4 对同一签名 `10000 像素 / 首差 58,50`）。页面自己写了注释：`<!-- Should be propagated to the outer table. -->`；表格写 `break-after: avoid`、某个 cell（或 cell 里的子 div）写 `break-after: column`，两栏容器里表格就该断、绿方块只占一栏高 —— 我们不断，于是绿铺满两栏。依据：CSS Break 3 §3.1.1 子→父传播（"a break-after value on a last in-flow child box is propagated to its container"，并注明"except in layout modes which define more specific rules"）+ §6 断点在兄弟之间而非盒与其容器之间。**已核实的落点**：`TableFormattingContext` 全文件不读 `Breaks.After/Before`（grep 证实），块路径只有 `BlockLayout.HoldsForcedBreak`（:910，看直接子）与 `IsForcedBreakCarrier`（:1118，只为"裸 wrapper"往下看一层孙）两处，表格不是裸 wrapper，所以 cell 上的断点谁也看不见。切片真正取数的地方是 `BlockLayout:1254/1284/1285/1302`（用 `breaks.Before/After` 造 `FragmentChild`），`Fragmentainer.Forced/Combine`（:240/:256）已现成。**注意**：这是通用传播规则的一个缺口，同一处改动很可能连带影响 `css-break/table` 其余 34 对与 `CSS2/pagination`；改完要跑 `css-break`+`CSS2/pagination`+`css-multicol` 三个模块，并按老规矩做全量失败集比对。
+- [x] **表格部分（及其后代）的强制断点已传播到表格边界**（`aaf85ea9` + 单测 `594457e2`；`wpt/css-break/table/break-{after,before}-table-cell{,-child}.html`，4 对同签名 `10000 像素 / 首差 58,50`）。规则：栏无法在表格的零件之间结束，所以写在 cell（或 cell 里的子盒）上的强制断点在表格内部无处可落，就归到表格自己的边界，并保持它原本那一侧（`break-after` 出在表格的后面）。与 `avoid` 的冲突由现成的 `Fragmentainer.Combine` 裁决（强制 > avoid）；表内的 `avoid` **不**外传，因为它说的是表格自己决定的那个断点。裸 wrapper 不走这条路——切片器早已把 wrapper 拆进容器的成员里（那正是"断点落在它被写下的位置"的机制）。
+  - 落点：`BlockLayout.HoldsForcedBreak`（决定"要不要走多栏"）与 `MulticolChildren` 里造 `FragmentChild` 的两处（决定"断在哪"），共用新的 `BoundaryBreaks(child)` 读表格整棵子树。
+  - 门禁：`css-break` 模块 86 → **90**（其 204 对内）；全量 wpt 4160 → **4164**、gecko 1697 持平，失败集 0 回退。单测 1857 → **1858**。测试按"同一页写两遍（有/无 cell 上的断点）求差"，且在修复的父提交上验过会红（症状正是 after 留在栏首而不是进下一栏）。
+  - **这一族剩下的**：`css-break/table` 还有 36 对红，签名分三堆——`table-*-paint-*`（12 对，跨栏的绘制与边框在边界上的绘制）、`table-fragmentation-001/002*-print`（8 对，分页时表格分片与 `@page` 尺寸）、`repeated-section/*`（约 10 对，重复表头/表尾与内嵌多栏）。它们要的是"表格真的跨 fragmentainer 切片"这个能力，不是这条传播规则；`TableFormattingContext` 目前完全不读 `Breaks.*`，也不接 fragmentainer 的分片接口。另：`specified-block-size-007`、`table-border-007/008`、`sections-and-captions-mixed-order`、`table-caption-and-cells*` 也在这族里，症状各异，别当一条打。
 - [x] **`text-emphasis-position` 的 8 对已收**（`005d/e/f/g`、`006d/e/f/g`，签名同为 `739 像素 / 首差 51,50`；005 系"该有号处画白"、006 系"该白处画了号"，两两镜像）。矩阵核实过：16 例全带 `text-orientation: sideways`，`vertical-rl` 那 8 例原本全通过、`vertical-lr` 这 8 例全失败。
   - **两条被否证的猜测留此备查**：(a) "Side 在 vertical-lr 下换了线的哪一边"——把通过的 005（rl）与失败的 005d（lr）各跑一次 deep-look，两页布局树、行盒、5 个符号坐标逐字相同（都在 x=88）；(b) "sideways 抬高基线"——两页 base 分别 33.91 与 41.91，差的 8 恰是符号带 `font/2`，与 sideways 无关。当时还以为是"预留带被算进正文的横向居中"，那也是误读：run 宽 88 vs 参考页 80 的差在参考页里是由 5 个 ruby 基各自占位造成的，与本症无关。
   - **真根因（`a98bc0ef` 已修）**：符号预留带按"线的哪一头"扣，而不是按"符号站在哪一边"扣。`vertical-rl` 与 `vertical-lr` 的转向是同一个（顺时针 90°；只有 `sideways-lr` 这个模式名才逆转），差别只在列往哪边走，所以正文"向右够出的那份"在两个模式里都是 ascent。符号在 `right` 时永远该从 ascent 扣——但在 `vertical-lr` 下 block-end 恰好吃掉同一条右边缘，旧代码 `marks.StandsAtTheEnd(flow)` 于是把它当作 under、从 descent 扣，共享基线落进符号带内部（`base 41.91` 而非 `33.91`），字形压在自己那串圈上。rl 那 8 例通过，是两处错处正好相消。
   - **改法**：新增 `TextEmphasis.KeepsItsStripOnTheAscentSide(flow)`——横排仍只看 `over/under`（横排里 `left/right` 本就不说话），竖排只看物理的 `Side` 配 `flow.TurnsCounterClockwise`；预留处 `src/Hutu/Rendering/Layout/InlineLayout.cs:5652` 换用它，符号的实际绘制位置（`Marks` 里那句 `StandsAtTheEnd`）不动，因为它原本就画对。单测 `AMarkedColumnKeepsItsStripOnTheSideTheMarksStand` 把 rl 与 lr 成对量（尺子是另一个模式，不是从带子上读出的数），并核 `right -> base 17`、`left -> base 22`、列宽 45、两条带分别在 x=40 与 x=0。
   - 门禁：`css-text-decor` 模块 111 -> **119**；全量 wpt 4149 -> **4157**、gecko 1697 持平，失败集 0 回退。集合里唯二的差异是 `css-ruby/ruby-align-002`（负载抖动，单跑 2/2）与一条 `could not be drawn`（`WideKeywordDeclarationFactory._cache` 的并发 race，见下一条；该页本来就列在旧的失败清单里，单独跑 `css-sizing` 通过）。单测 1856 -> **1857**、硬断言 55 全绿。
-  - **这一族的残账（征状各不同，别混进上面那条）**：`001/001a-c`、`002/002a-c`（pair 声明 mismatch、我们却画成同一张图）；`text-combine-emphasis`（同为"画成同一张图"）；`text-emphasis-punctuation-1/2`（680 / 1380 像素，标点该不该有号）；`text-emphasis-ruby-001/002`（984 / 1651 像素，带 ruby 的基）；`text-emphasis-style-property-016a~020a`（20~220 像素的小字号形状与颜色）。要继续清这族，按"skip: auto 的标点集合"与"ruby 基上的符号"分两批。
+  - **这一族剩下的（截至 `be6c1a29`，只有 3 对）**：`text-emphasis-ruby-001/002`（984 / 1651 像素，符号要画在 ruby 之外——参考页用嵌套 `<ruby>` 把符号垫到读音的外侧，我们的符号带与读音带打架）；`text-combine-emphasis`（pair 声明 mismatch、我们画成同一张图）。原先记在这里的 `001/001a-c`、`002/002a-c`、`punctuation-1/2`、`016a~020a` 已随 `a98bc0ef` / `84044961` / `be6c1a29` 三处修复翻绿（前两组是被"预留带按哪一边扣"与"未标记字符照付宽度"顺带修掉的）。
 - [ ] **`position-relative-010/013`：单元格的百分比偏移仍按 used 高度求解**（deep-look 已核数字，非推测）：
   - 010 —— 偏移在 `<td style="top:100%">`，表格/`tbody`/`tr` 都没声明高度，规范要求移动 **0**；我们把 td 画在 y=149.72（行 used 高 100，被格内那个 100px 的 div 撑出来的），绿块整个落到红块下缘外，20000 像素差。
   - 013 —— 同样偏移在 `<td>`，父 `tr` 声明了 `height:10px`，规范要求移动 **10**；我们同样移动 100（td 在 149.72，格内 div `top:-10px` 落在 144.72），19000 像素差。
@@ -243,3 +246,16 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 **这一轮的流程教训（新增两条）**
 1. **写文档要用 .NET 显式 UTF-8 API**：PowerShell 的 `Get-Content`/`Set-Content` 默认按 ANSI(GBK) 解码，把整篇中文文档读成乱码再写回去，一次就毁掉 165 行。规程：`[System.IO.File]::ReadAllLines($path, (New-Object System.Text.UTF8Encoding($false)))` 读、`WriteAllLines` 写，脚本本身保持纯 ASCII；改完立刻 `git diff --stat` 看行数是否与预期一致（这次是 165/163，一眼可见）。恢复只用 `git checkout -- <file>`，且要先确认该文件在本次损坏之外没有别的工作树改动。
 2. **一次改动只留一份快照**：把每次全量结果复制成 `build/score-after-<特征>.md`，比对脚本只取"失败行"（`- \`path\` - ` 带说明的那种），不要取通过清单——第一版脚本把通过项也收进集合，得出"0 新增 0 修复"的假象。
+
+## 10. 2026-10-28 凌晨：强调号的走位、表格的强制断点、符号样式的词序
+
+起点是 §9 结束时的 **wpt 4157 / 5834、gecko 1697 / 2471**（失败清单 2451）；现在 **wpt 4169、gecko 1697**，失败清单 **2439**。单测 **1859 passed / 0 failed**（另 2 个 `[Explicit]`），硬断言 **55 passed / 0 failed / 1 skipped**。
+
+| commit | 做了什么 | 依据与取证 |
+|---|---|---|
+| `84044961` | 不被加符号的字符在走位里照付自己的宽度 | CSS Text Decoration 4 §5.4：`skip` 只是"这个字符不画号"，不是"这个字符不存在"。旧的循环从"上一个被标记的字符"跳到"下一个"，只累加了被标记者的 advance，于是括号、句号、空格全被抹掉宽度，它们后面的号整串往回偏。先量后写：`Abc (def)` 里第二个号本应落在 `d`（x=41.42 那一档），旧代码把它落在空格上。已有的中文那句单测只核"有几个号"，所以它一直是绿的、却没看见位置错了——现在补上中心点 `2.5, 12.5, 22.5`。punctuation-1/2 两对翻绿，css-text-decor 119 → 121 |
+| `aaf85ea9` | 表格内部的强制断点推到表格边界 | CSS Break 3 §3.1/§6 + 页面自己的注释 `Should be propagated to the outer table`。栏不能在表格零件之间结束，故 cell（或 cell 内子盒）上的 `break-after: column` 归到表格的后面；`avoid` 与强制的冲突由现成的 `Fragmentainer.Combine` 裁决。表内的 `avoid` 不外传；裸 wrapper 不走这条路（切片器早已把它拆开）。4 对同签名翻绿，`css-break` 模块 86 → 90 |
+| `594457e2` | 钉住上面那条的单测 | 同一页写两遍（差别只有 cell 上那个断点），差值就是规则本身 |
+| `be6c1a29` | `text-emphasis-style` 的 filled/open 按整个值读，不看词序 | §5.1 的 `[ [ filled | open ] || <shape> ]` 两种顺序都合法；旧读法一遇到形状词就立刻按"当前默认填充"取字形，`circle open` 于是取了填充圆，后面那句 `open` 无处可改。**带引号的 token 不参与这一轮分类**（语料里有 `text-emphasis-style: 'V'`，若在去引号之后再判词，会被当成默认填充、丢掉符号本身）。5 对翻绿，css-text-decor 121 → 126、wpt 4164 → 4169，失败集 0 回退；单测 1859 |
+
+**这条验证手法记一下（有用，且有坑）**：要证明一条新单测真的钉住了修复，最好的办法是在**修复的父提交**上跑它、看它变红。这次先试 `create_worktree`（ref 指到父提交）——失败：worktree 里 `deps/AngleSharp` 子模块没初始化、且 vendored fork 的引用路径不同，整个依赖图编译不出来。可行的替代是在主仓里 `git checkout <parent> -- <那一个引擎文件>`，只跑这一条测试，看完红之后 `git checkout HEAD -- <同一文件>` 还原，并用 `Get-FileHash` 比对还原后的文件与动手前的备份（这次 `identical: True`）。红线要落在症状本身（after 留在栏首而不是进下一栏），不是编译错误或无关的失败。
