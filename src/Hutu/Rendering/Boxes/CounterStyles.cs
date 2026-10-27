@@ -739,7 +739,13 @@ internal static class CounterStyles
 
         if (tens > 0)
         {
-            var leading = result.Length == 0 && atStart && tens == 1 && !style.Formal;
+            // The one of a ten goes missing at the head of the number - 十二 and 十万 rather than
+            // 一十二 and 一十万 - and, in the plain Chinese readings, wherever a ten stands on its own
+            // within its group: 一万零十 is ten thousand and ten, where 一万零一十一 would be read back
+            // as a different number. What both have is nothing but the ten standing in the group, so
+            // that is the question asked - the empty ones place, not the front of the number.
+            var leading = result.Length == 0 && tens == 1 && !style.Formal &&
+                (atStart || units == 0);
 
             if (!leading)
             {
