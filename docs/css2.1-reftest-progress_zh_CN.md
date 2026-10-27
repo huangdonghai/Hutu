@@ -248,7 +248,7 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 
 ## 10. 2026-10-28 凌晨：强调号的走位、表格的强制断点、符号样式的词序
 
-起点是 §9 结束时的 **wpt 4157 / 5834、gecko 1694 / 2471**（失败清单 2451）；现在 **wpt 4176、gecko 1697**，失败清单 **2432**。单测 **1865 passed / 0 failed**（另 2 个 `[Explicit]`），硬断言 **55 passed / 0 failed / 1 skipped**。
+起点是 §9 结束时的 **wpt 4157 / 5834、gecko 1694 / 2471**（失败清单 2451）；现在 **wpt 4188、gecko 1704**，失败清单 **2413**。单测 **1867 passed / 0 failed**（另 2 个 `[Explicit]`），硬断言 **55 passed / 0 failed / 1 skipped**。
 
 | commit | 做了什么 | 依据与取证 |
 |---|---|---|
@@ -260,5 +260,12 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 | `28d9e04e` | 单元格的百分比偏移按**行所声明的高**求解 | CSS 2.1 §10.5，010 要 0、013 要 10，旧行为两种都移 100（行的 used 高，被格内 100px div 撑出来的）。走"表格侧自算位移"那条（§7 的候选 b），`LayoutEngine.Arrange` 增可选 `Offset? displacement`，表格传 `PartOffset(cell.Box, grid.Width, StatedHeight(row.Box, 0))`，通用路径**取用不相加**，因此只平移一次。没有把声明高塞进格子 CB（那会连带改格内子元素百分比高度的 `definite` 判定）。css-position 37→39、wpt 4169→4173，`css-tables`(84) 与 `CSS2/tables`(7) 作闸门读数不动。单测同一页写三遍（行不声明/10/40）取差，回退后红在 100 |
 | `47e076db` | 装饰线从它所站的那条边**朝背向文字的一侧**生长；line-through 居中 | CSS Text Decoration 4 §2.4/§2.5。旧代码对所有线型都从位置线向正方向画带，于是加粗一条线遮住的是"位置线与文字之间"的空，而不是位置线之外——借来的页面正是拿"把线加粗到超过整个盒子、要求盒子被盖满"来考的。竖排下"朝外"就是偏移本身被计入的那个符号，所以判据取轴向符号而不是"线落在基线哪一侧"（第一版这样写，把 `text-underline-offset` 为负的下划线翻成了压在文字上的带，一页 gecko skip-ink 因此两图画成一张）。实测（Segoe UI 40px）：underline 4px→行 60..63、24px→60..83（头不动）；overline 4px→10..12、24px→0..12（尾不动）；line-through 4px→44..47、24px→34..57（两头各外扩 10，对称）。+2 对（thickness-linethrough-001、-overline-001），另 thickness-vertical-001 从 1600 像素降到 **20**（只剩末行 1 条抗锯齿边，子像素问题，已记档未打）。3 条单测读真实墨迹的上下缘，并把"细线自己的边"当尺子；在无修复版本上验红（line-through 两头都不长、overline 朝文字方向长） |
 | `5a2bc1d8` | 装饰长度里的 `calc()` 按该属性自己的单位折叠 | §2.4/§2.8：这两个性质的百分号是"文字所设尺寸的份额"。旧读法只给 min/max/clamp 走这个基准，`calc(50% + 4px)` 落到通用长度读法——百分比按**绘制宽度**、`em` 按**设备字号**——于是 8px 文字上的 8px 线变成 404px 的杠。补一条 `EvaluateSum` 通道复用同一个 `DecorationTerm`。单测把同一条线写三遍（定值/百分号/`em`）要求画出同一条带；无修复时百分号得 200px 杠、`em` 短 12px。+1 对（thickness-calc），另 text-underline-offset-calc 从 1684 降到 **80** 像素（已是抗锯齿级） |
+| `ccf88bb8` | `flex-wrap: wrap-reverse` 把行搬到箱子另一端，但色表仍按流内行序发 | CSS Gaps 1 §4.6。取证靠参考页自己把缝画在哪一行：`flex-gap-decorations-multi-value-wrap-reverse-uneven-lines-ref.html` 用 6 个绝对定位 `.col-gap` 把 (top,color) 写死，对照实测（探针读 `BorderCommand` 的 y 与颜色）——流内第几行不变、它在页面上的位置要跟着翻。旧代码两半都错在"用行的逻辑交叉位置"：行缝中心与 item 缝的跨轴范围都从 `CrossStart` 起算，`wrap-reverse` 下排布把它们挪到了另一端，缝却没挪。css-gaps 163 → **166**、wpt 4176 → 4179；同族另 3 页从 6400/7140/2660 像素降到 5300/6140/2460（更接近、仍红，剩的是分片容器如何共享行） |
+| `619e8017` | 半个像素的边一律**取更远的那个像素**，与本文件里填充的做法统一 | 同一个 `SkiaPaintExecutor` 里两套答案：`Whole()`（裁剪路径/多边形）用 `AwayFromZero`，而 `Snap`/`SnapEdge`（边框一边、gap 装饰条、滚动裁剪矩形）用默认 `ToEven`。取较近偏下时，一条落在奇偶错位缝中间的 5px 装饰条两头各掉 1px、变成 4px 宽。语料是硬证据：`css-gaps/flex` 040~046 与 `grid/081` 的参考页用**作者手写的分数偏移**画规则，期望的是"取更远"；`gecko/pixel-rounding/*-5` 那族（边线站在半像素上）同向受益。wpt 4179 → **4188**、gecko 1697 → **1704**（css-gaps 166 → 175、pixel-rounding 34 → 40），`css-multicol`(105) 与 `css-borders`(37) 作闸门读数不动，失败集 **17 修复 / 0 真回退** |
 
 **这条验证手法记一下（有用，且有坑）**：要证明一条新单测真的钉住了修复，最好的办法是在**修复的父提交**上跑它、看它变红。这次先试 `create_worktree`（ref 指到父提交）——失败：worktree 里 `deps/AngleSharp` 子模块没初始化、且 vendored fork 的引用路径不同，整个依赖图编译不出来。可行的替代是在主仓里 `git checkout <parent> -- <那一个引擎文件>`，只跑这一条测试，看完红之后 `git checkout HEAD -- <同一文件>` 还原，并用 `Get-FileHash` 比对还原后的文件与动手前的备份（这次 `identical: True`）。红线要落在症状本身（after 留在栏首而不是进下一栏），不是编译错误或无关的失败。
+
+**这一轮的取证教训（三条，都是我自己踩的）**
+1. **别在同一批里跑两个 `dotnet`**：两个 test/build 进程共用同一棵 `obj/bin`，彼此的输出会互相覆盖。我就这样拿到过一次"基线读数"——同一条探针在串行的两次运行里给出 4 列和 5 列，先前那次 5 列其实是另一个进程留下的 DLL 的结果。规矩：量基线必须独占一次构建，且核对自己的改动确实被换出去了（`rg` 一眼看源码里那个符号在不在）。
+2. **`git stash` 与 `File.Copy` 都保留旧 mtime**：还原源码后 MSBuild 认为"不必重编"，于是 `--no-build` 跑的是上一个版本的 DLL，读数完全相反。还原之后要 touch 源文件（`(Get-Item x).LastWriteTime = Get-Date`）或直接 `dotnet build`，并用 `Get-FileHash` 确认内容与动手前一致。
+3. **写断言要挑真正能区分的通道**：我给"金色装饰条"写的第一版是 `Red > 128`，而白底 `#ffffff` 的 Red 也是 255——这条断言在有无修复时都通过，等于没钉住任何东西。金色是 `#ffd700`，该看的是 Blue。凡是"红/绿/白"三态的像素断言，先问一句：把待测物换成空白，这条断言还成立吗？
