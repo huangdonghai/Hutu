@@ -172,7 +172,12 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 
 ## 7. 待办 / 下一步
 
-- [ ] **`position-relative-010/011/012/013`：还差最后 1000 像素**（已核：012 的差 19000→1000、011 换了形态，都还没翻绿；010/013 未受影响，仍是 20000/19000）。表部分（`thead`/`tbody`/`tfoot`/`tr`）现在按 containing block **声明**的高度求百分比、未声明则不生效（CSS 2.1 §10.5，即这几页 assert 的原话），`008/009` 保持通过。剩下这 4 页各差一条 10 高的横带：偏移写在 `<td>`（010）或格内那个 `top:-10px` 的 div 上，走的是通用块路径 `LayoutEngine.Arrange`（`src/Hutu/Rendering/Layout/LayoutEngine.cs:1181`，拿 `context.ContainingBlock` 当基准），而格子的 CB 高度目前用的是行**用出来的**高度。**下一步**：先用 deep-look 把这三层（row 的 grid 位、td 的 rect、格内 div 各自落在哪）逐个数字核出来再改，别照猜下定语；候选是把行的声明高送进单元格 CB，或让单元格自己算偏移并阻止通用路二次平移。前者会牵动格内百分比解析（`definite` 那套），改完必须过表格全家族门禁。
+- [ ] **`position-relative-010/013`：单元格的百分比偏移仍按 used 高度求解**（deep-look 已核数字，非推测）：
+  - 010 —— 偏移在 `<td style="top:100%">`，表格/`tbody`/`tr` 都没声明高度，规范要求移动 **0**；我们把 td 画在 y=149.72（行 used 高 100，被格内那个 100px 的 div 撑出来的），绿块整个落到红块下缘外，20000 像素差。
+  - 013 —— 同样偏移在 `<td>`，父 `tr` 声明了 `height:10px`，规范要求移动 **10**；我们同样移动 100（td 在 149.72，格内 div `top:-10px` 落在 144.72），19000 像素差。
+  - 表部分（`thead`/`tbody`/`tfoot`/`tr`）这一半已按**声明高**修好（`7a63e476`）：012 从 19000→1000、011 位移改对（行现走 10 而不是 100），两页各差一条 10 高的横带、暂未翻绿；`008/009` 保持通过，全量 0 回退（`css-ruby/ruby-align-002` 那次是负载抖动，单独跑 2/2 且页内无表格/无 relative）。
+  - **落点**：单元格走通用块路径 `LayoutEngine.Arrange`（`src/Hutu/Rendering/Layout/LayoutEngine.cs:1181`），基准是 `context.ContainingBlock`，而格子 CB 在 `TableFormattingContext.ArrangeCell:429` 用 `contentHeight`（行 used 高 − 内缩）塞进去 —— 于是百分比读到 used 值。
+  - **两条候选与代价**：(a) 把父部分的声明高送进格子 CB —— 会同时改变格内**子元素**百分比高度的解析基准（`definite` 那套），牵连整族表格页；(b) 在表格侧自算格子偏移、并阻止通用路径二次平移 —— 需要给 cell 的 Box 传一个"偏移已应用"的记号，否则位移两次。两条都要跑 `CSS2/tables`+`css-tables`+`css-position` 三个模块做门禁；建议先 (b)，它不改任何既有百分比语义。
 - [x] **"Drop ones"（`fa84e87d` 已收）**：中文书写式里"十"的那个"一"何时省。规范 §7.1.1.3 的字面（"any group with a value between ten and nineteen"）会把 `10011` 也省掉，而 gecko 参考页写作 `一万零一十一` —— 两簇语料合起来的证据是**问"十在本组里是不是孤零零"**：组内个位为空（或本组是首组）才省。据此 11 → `十一`、10010 → `一万零十`、100000 → `十万`、10011 → `一万零一十一`、11111 → `一万一千一百一十一` 全对。门禁：1852 单测 / 55 硬断言全绿，全量 0 回退、+3（两簇 informal + `stretch-input-in-column`）。
   - **残留（下一步）**：规范其实按语言给了三条不同的省略规则 —— 中文只看 10..19 的组，日文/韩文是"任何数字标记前那个不是组内首位的 1 都省"。现在 `UnderTenThousand` 三种语言共用一条判据，靠 `Short`/`WritesZero` 间接区分；`Counting` 该加一个显式的省略策略字段，把日文/韩文那条真正实现出来，而不是让中文的规则顺带决定它们。语料目前覆盖不到日文/韩文的这类值，所以这次没暴露。
   - 走过的弯路留此备查：(a) 把条件改成"该段读法的起始" → wpt +2、gecko −2；(b) 想拿 Chrome 伪元素的 `getComputedStyle(::before).content` 取证不可行，Chrome 不消解 `counter()`，直接返回字面量。要实测走 `build/_chromecheck` 的逐像素校验。
