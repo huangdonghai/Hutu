@@ -157,6 +157,80 @@ public sealed class TableLayoutTests
         Assert.That(b.BorderBox.X - a.BorderBox.Right, Is.EqualTo(10).Within(0.5));
     }
 
+    /// <summary>
+    /// A cell that spans over the room between two columns or two rows covers exactly that room and no
+    /// other: it reaches from the edge of the first track it stands in to the edge of the last, so it
+    /// grows by the distance between them on its own axis only (CSS 2.1 §17.5.0.1). Read on both axes,
+    /// the single number <c>border-spacing</c> is written with gives a cell across two columns a width no
+    /// row of the table occupies - which is what a page stating <c>0 2px</c> exposes, since its columns
+    /// have no room between them while its rows have two pixels.
+    /// </summary>
+    [Test]
+    public async Task ASpanningCellReachesFromFirstTrackToLast()
+    {
+        // Two cells side by side give the width of both columns together with the room between them, and
+        // two cells above each other give the height of both rows with theirs - the rulers the spanning
+        // cells are measured against on their own axes.
+        foreach (var spacing in new[] { "0 2px", "2px 0" })
+        {
+            using var view = CreateView(400);
+            await view.SetHtml(
+                "<html><body style='margin:0'>" +
+                $"<table style='border-collapse:separate;border-spacing:{spacing}'>" +
+                "<tr><td id='a'>A</td><td id='b'>B</td></tr>" +
+                "<tr><td id='across' colspan='2'>C</td></tr>" +
+                "<tr><td id='down' rowspan='2'>D</td><td id='e'>E</td></tr>" +
+                "<tr><td id='f'>F</td></tr></table>" +
+                "</body></html>");
+
+            var a = Find(view, "a");
+            var b = Find(view, "b");
+            var across = Find(view, "across");
+            var down = Find(view, "down");
+            var e = Find(view, "e");
+            var f = Find(view, "f");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    across.BorderBox.Width,
+                    Is.EqualTo(b.BorderBox.Right - a.BorderBox.X).Within(0.5),
+                    $"{spacing}: the cell across both columns reaches the far edge of the second");
+                Assert.That(
+                    down.BorderBox.Height,
+                    Is.EqualTo(f.BorderBox.Bottom - e.BorderBox.Y).Within(0.5),
+                    $"{spacing}: and the cell down both rows reaches the bottom of the second");
+            });
+        }
+    }
+
+    /// <summary>
+    /// The two numbers <c>border-spacing</c> is written with belong to different axes: the room stated for
+    /// the rows separates rows and nothing else, so two columns written with no room between them still
+    /// stand side by side while the second row sits two pixels below the first.
+    /// </summary>
+    [Test]
+    public async Task EachSpacingNumberSeparatesItsOwnAxis()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:separate;border-spacing:0 2px'>" +
+            "<tr><td id='a'>A</td><td id='b'>B</td></tr>" +
+            "<tr><td id='c'>C</td><td id='d'>D</td></tr>" +
+            "</table></body></html>");
+
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+        var c = Find(view, "c");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(b.BorderBox.X - a.BorderBox.Right, Is.EqualTo(0).Within(0.5), "no room between columns");
+            Assert.That(c.BorderBox.Y - a.BorderBox.Bottom, Is.EqualTo(2).Within(0.5), "two pixels between rows");
+        });
+    }
+
     [Test]
     public async Task ACellWithoutARowGetsAnAnonymousRow()
     {

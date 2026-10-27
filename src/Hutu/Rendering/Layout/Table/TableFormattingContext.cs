@@ -225,6 +225,12 @@ internal sealed partial class TableFormattingContext
     {
         var grid = build.Grid;
         var spacing = build.Style.Collapse ? 0.0 : build.Style.VerticalSpacing;
+        // The room between two columns and the room between two rows are two different numbers, and a
+        // cell that spans over one of them grows across that one only: `border-spacing: 0 2px` leaves the
+        // width of a colspan alone while it adds to a rowspan. Reading the vertical distance on both axes
+        // made a cell across two columns as wide as the columns plus a row gap, which is a box no row of
+        // the table occupies (§17.5.0.1).
+        var inlineSpacing = build.Style.Collapse ? 0.0 : build.Style.HorizontalSpacing;
         Box? groupBox = null;
         LayoutBox? group = null;
 
@@ -295,7 +301,7 @@ internal sealed partial class TableFormattingContext
 
             foreach (var cell in row.Cells)
             {
-                rowLayout.Children.Add(ArrangeCell(build, cell, gridX, gridY, spacing, rowContext));
+                rowLayout.Children.Add(ArrangeCell(build, cell, gridX, gridY, inlineSpacing, spacing, rowContext));
             }
         }
     }
@@ -317,13 +323,14 @@ internal sealed partial class TableFormattingContext
         TableCellInfo cell,
         Double gridX,
         Double gridY,
+        Double inlineSpacing,
         Double spacing,
         LayoutContext context)
     {
         var grid = build.Grid;
         var x = gridX + grid.ColumnX[cell.Column];
         var y = gridY + grid.Rows[cell.Row].Y;
-        var width = ColumnSpanWidth(grid, cell, spacing);
+        var width = ColumnSpanWidth(grid, cell, inlineSpacing);
         var height = RowSpanHeight(grid, cell, spacing);
         var rect = new Rect(x, y, width, height);
 
