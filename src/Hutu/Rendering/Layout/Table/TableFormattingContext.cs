@@ -1,6 +1,7 @@
 using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
+using AngleSharp.Css.Dom;
 
 namespace Hutu.Rendering.Layout;
 
@@ -233,18 +234,47 @@ internal sealed partial class TableFormattingContext
         var inlineSpacing = build.Style.Collapse ? 0.0 : build.Style.HorizontalSpacing;
         Box? groupBox = null;
         LayoutBox? group = null;
+        // A row group that is moved takes its rows with it, so a row's own displacement is the group's
+        // plus whatever the row states. Each is resolved against the table's content box, which is the
+        // part's containing block, and so is the share a percentage offset names.
+        Offset groupShift = Offset.Zero;
+        Offset rowShift = Offset.Zero;
+        // What a percentage offset on a part is a share of: the height the table stated. A table whose
+        // height the rows settled has no such whole to be a share of, and the share then says nothing
+        // rather than reaching all the way down the grid it grew to (CSS 2.1 §10.5, read the way
+        // position-relative-008 does for a row written `top: 100%` inside a table that never named one).
+        var percentHeight = build.Box.Style.Height.HasValue ? grid.Height : 0.0;
 
         foreach (var row in grid.Rows)
         {
             if (!ReferenceEquals(row.Group, groupBox))
             {
+                if (group is not null)
+                {
+                    // The rows this group has taken were moved already, and a group's box was grown from
+                    // their unshifted places: the group's own ground moves on its own terms, or the
+                    // background would slide out from under the content it belongs to.
+                    group.BorderBox = new Rect(
+                        group.BorderBox.X + groupShift.X,
+                        group.BorderBox.Y + groupShift.Y,
+                        group.BorderBox.Width,
+                        group.BorderBox.Height);
+                }
+
                 groupBox = row.Group;
                 group = groupBox is null
                     ? null
                     : new LayoutBox(groupBox, LayoutKind.TableRowGroup)
                     {
                         BorderBox = new Rect(gridX, gridY + row.Y, grid.Width, row.Height),
+                        // The part says its own position, as every other box built by the engine does: a
+                        // row group standing `relative` is drawn among the positioned descendants rather
+                        // than with the in-flow content, which is what puts its ground over the marker a
+                        // page leaves showing underneath it.
+                        Position = groupBox.Style.Position.Position,
                     };
+
+                groupShift = PartOffset(groupBox, grid.Width, percentHeight);
 
                 if (group is not null)
                 {
@@ -255,7 +285,11 @@ internal sealed partial class TableFormattingContext
             var rowLayout = new LayoutBox(row.Box, LayoutKind.TableRow)
             {
                 BorderBox = new Rect(gridX, gridY + row.Y, grid.Width, row.Height),
+                Position = row.Box.Style.Position.Position,
             };
+
+            var own = PartOffset(row.Box, grid.Width, percentHeight);
+            rowShift = new Offset(groupShift.X + own.X, groupShift.Y + own.Y);
 
             if (group is null)
             {
@@ -303,6 +337,62 @@ internal sealed partial class TableFormattingContext
             {
                 rowLayout.Children.Add(ArrangeCell(build, cell, gridX, gridY, inlineSpacing, spacing, rowContext));
             }
+
+            // The row is moved whole, content and all, once it has been placed: what stands inside a row
+            // that stepped out of its grid place steps along with it, an absolutely positioned descendant
+            // included - its containing block is this row's border box as the row is actually drawn.
+            MoveWithContent(rowLayout, rowShift);
+        }
+
+        if (group is not null)
+        {
+            group.BorderBox = new Rect(
+                group.BorderBox.X + groupShift.X,
+                group.BorderBox.Y + groupShift.Y,
+                group.BorderBox.Width,
+                group.BorderBox.Height);
+        }
+    }
+
+    /// <summary>
+    /// Gets the distance a table part that states a relative offset is moved by: a row group carries its
+    /// own, and the rows inside it carry that distance as well as theirs, because a row's place in the
+    /// flow is a place inside the group's box (CSS Positioned 3 §6.2, which puts a table part on the same
+    /// footing as a block box; §6.3 that a relative offset is a displacement of the box and its content).
+    /// </summary>
+    private static Offset PartOffset(Box? part, Double width, Double height)
+    {
+        if (part is null || !PositionedLayout.IsPositioned(part) ||
+            part.Style.Position.Position != PositionMode.Relative)
+        {
+            return Offset.Zero;
+        }
+
+        return PositionedLayout.RelativeOffset(part.Style.Position, new Size(width, height), part.Flow);
+    }
+
+    /// <summary>
+    /// Moves a box and everything it holds. Unlike the shift that aligns a cell's content, this one takes
+    /// the out-of-flow descendants with it: an absolutely positioned box standing inside a row that moved
+    /// was placed against that row's own offset, so the two move together - leaving it behind would keep
+    /// it pinned to where the row would have stood.
+    /// </summary>
+    private static void MoveWithContent(LayoutBox box, Offset shift)
+    {
+        if (shift.X == 0 && shift.Y == 0)
+        {
+            return;
+        }
+
+        box.BorderBox = new Rect(
+            box.BorderBox.X + shift.X,
+            box.BorderBox.Y + shift.Y,
+            box.BorderBox.Width,
+            box.BorderBox.Height);
+
+        foreach (var child in box.Children)
+        {
+            MoveWithContent(child, shift);
         }
     }
 

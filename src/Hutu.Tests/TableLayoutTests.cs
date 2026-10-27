@@ -249,6 +249,83 @@ public sealed class TableLayoutTests
         Assert.That(a.BorderBox.Height, Is.EqualTo(10).Within(0.5));
     }
 
+    /// <summary>
+    /// A table part that stands `relative` is displaced the way a block is, and carries its rows and
+    /// their content with it (CSS Positioned 3 §6.2 treats a table part as the block box the property
+    /// applies to). The borrowed suite checks this by leaving a marker where the part would otherwise
+    /// cover it: unmoved, the marker shows through. The measure here is the same page written twice,
+    /// the part standing and not standing, so the ruler is the place the grid gave the part itself
+    /// rather than a number read off where the table happens to land.
+    /// </summary>
+    [Test]
+    public async Task ARowGroupStandsOffThePlaceItsRowsWereLaidIn()
+    {
+        var still = await Head(Offset: "");
+        var moved = await Head(Offset: "top:100px");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(moved.Part - still.Part, Is.EqualTo(100).Within(0.5),
+                "the group is drawn a hundred below the place its rows were laid in");
+            Assert.That(moved.Cell - moved.Part, Is.EqualTo(still.Cell - still.Part).Within(0.5),
+                "and the cell came along, rather than being left in the grid's place");
+            Assert.That(moved.Next - still.Next, Is.EqualTo(0).Within(0.5),
+                "while the group beside it, which states nothing, stays where the grid put it");
+        });
+    }
+
+    /// <summary>
+    /// The same two-group table, with what the row group, its cell and the group after it landed on.
+    /// </summary>
+    private static async Task<(Double Part, Double Cell, Double Next)> Head(String Offset)
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:collapse'>" +
+            $"<thead id='head' style='position:relative;{Offset}'><tr><td id='a'>A</td></tr></thead>" +
+            "<tbody id='body'><tr><td id='b'>B</td></tr></tbody>" +
+            "</table>" +
+            "</body></html>");
+
+        return (Find(view, "head").BorderBox.Y, Find(view, "a").BorderBox.Y, Find(view, "body").BorderBox.Y);
+    }
+
+    /// <summary>
+    /// A part's own height is what a percentage offset on it is a share of, so one written `100%` says
+    /// nothing until the table states its height (CSS 2.1 §10.5, read the way the suite's
+    /// `top: 100%` rows do): a table whose height the rows settled has no whole for the share to be a
+    /// share <em>of</em>, and reaching all the way down the grid it grew to would move the row off the
+    /// page.
+    /// </summary>
+    [Test]
+    public async Task APartOffsetSaysNothingUntilTheTableStatesAHeight()
+    {
+        using var unstated = CreateView(400);
+        await unstated.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-spacing:0'><tbody id='part' style='position:relative;top:100%'>" +
+            "<tr><td id='a'>A</td></tr></tbody></table></body></html>");
+
+        using var stated = CreateView(400);
+        await stated.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-spacing:0;height:200px'>" +
+            "<tbody id='part' style='position:relative;top:100%'><tr><td id='a'>A</td></tr></tbody>" +
+            "</table></body></html>");
+
+        var settled = Find(unstated, "part");
+        var named = Find(stated, "part");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(settled.BorderBox.Y, Is.EqualTo(0).Within(0.5),
+                "the table that named no height leaves the share unresolved, so the part is not moved");
+            Assert.That(named.BorderBox.Y, Is.GreaterThan(0),
+                "the same offset resolves against the height the table stated");
+        });
+    }
+
     [Test]
     public async Task AColumnSpanningCellStretchesItsColumns()
     {
