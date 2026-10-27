@@ -376,6 +376,61 @@ public sealed class VerticalLayoutTests
     }
 
     /// <summary>
+    /// The strip a marked column keeps for its marks is taken from the side they physically stand on
+    /// rather than the edge of the line the writing mode happens to call the end. The ascent of a turned
+    /// glyph reaches to its right whichever way the columns march, so marks standing to the right ask for
+    /// that ascent in <c>vertical-lr</c> as much as in <c>vertical-rl</c> - even though the right edge is
+    /// where a left-to-right page of columns ends - and the baseline, which the drawing reads off the box,
+    /// stands the same distance in from the same edge in the two modes. Taking the strip from the other
+    /// side leaves the baseline eight pixels down the band the marks were kept for, which is what put the
+    /// text of a marked column over its own emphasis marks (CSS Text Decoration 4 §5.2, CSS Writing
+    /// Modes 3 §5.1).
+    /// </summary>
+    [Test]
+    public async Task AMarkedColumnKeepsItsStripOnTheSideTheMarksStand()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<p style='margin:0;font-size:10px;line-height:4;writing-mode:vertical-rl;" +
+            "text-emphasis:filled dot;text-emphasis-position:right'>aa</p>" +
+            "<p style='margin:0;font-size:10px;line-height:4;writing-mode:vertical-lr;" +
+            "text-emphasis:filled dot;text-emphasis-position:right'>bb</p>" +
+            "<p style='margin:0;font-size:10px;line-height:4;writing-mode:vertical-rl;" +
+            "text-emphasis:filled dot;text-emphasis-position:left'>cc</p>" +
+            "<p style='margin:0;font-size:10px;line-height:4;writing-mode:vertical-lr;" +
+            "text-emphasis:filled dot;text-emphasis-position:left'>dd</p></body></html>");
+
+        // Forty for the line the page asked for and five more for the strip the marks stand in; the
+        // glyphs reach twenty-three across from the side the marks leave, so a column marked to the
+        // right stands its baseline seventeen in from the left edge and one marked to the left
+        // twenty-two.
+        var rightInRightwardsColumns = Text(view, "aa");
+        var rightInLeftwardsColumns = Text(view, "bb");
+        var leftInRightwardsColumns = Text(view, "cc");
+        var leftInLeftwardsColumns = Text(view, "dd");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rightInLeftwardsColumns.Baseline, Is.EqualTo(rightInRightwardsColumns.Baseline),
+                "the way the columns march says nothing about which side the marks stand on");
+            Assert.That(leftInLeftwardsColumns.Baseline, Is.EqualTo(leftInRightwardsColumns.Baseline),
+                "and it says nothing about the other side either");
+            Assert.That(rightInRightwardsColumns.Baseline, Is.EqualTo(17),
+                "the strip stands in what the glyphs reach to the right, so the baseline is the descent in");
+            Assert.That(leftInRightwardsColumns.Baseline, Is.EqualTo(22),
+                "a strip kept to the left leaves the baseline at the ascent the text itself asked for");
+            Assert.That(rightInRightwardsColumns.BorderBox.Width, Is.EqualTo(45),
+                "the column is as wide as the line it was asked for plus the strip");
+            Assert.That(rightInRightwardsColumns.Marks![0].Band.X, Is.EqualTo(40),
+                "marks standing to the right fill the strip on that side");
+            Assert.That(leftInRightwardsColumns.Marks![0].Band.X, Is.EqualTo(0),
+                "marks standing to the left fill the strip on theirs");
+        });
+    }
+
+    /// <summary>
     /// What nothing was said about leaves every stop of a CJK sentence unmarked, wide or narrow: the
     /// marks stand over the letters and the digits, and no mark stands over <c>。</c> or <c>，</c>
     /// (CSS Text Decoration 4 §5.4.1, as text-emphasis-punctuation-2 draws it).

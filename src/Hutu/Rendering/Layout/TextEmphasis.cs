@@ -123,6 +123,25 @@ internal readonly struct TextEmphasis
     }
 
     /// <summary>
+    /// Gets which side of the shared baseline the strip the marks stand in is taken from, which is the
+    /// side the marks physically stand on rather than the edge the value names. The room a turned glyph
+    /// reaches to its right is the one counted as its ascent - and the two vertical modes agree on that
+    /// turn, differing only in which way their columns march - so a mark standing to the right asks for
+    /// the ascent whether the page reads leftward or rightward. Getting this wrong leaves the baseline
+    /// the width of the strip inside the band the marks were kept for (CSS Text Decoration 4 §5.2, CSS
+    /// Writing Modes 3 §5.1 and §5.2).
+    /// </summary>
+    internal Boolean KeepsItsStripOnTheAscentSide(WritingModeInfo flow)
+    {
+        if (!flow.IsVertical)
+        {
+            return Edge == EmphasisEdge.Start;
+        }
+
+        return Side == EmphasisSide.Right ? !flow.TurnsCounterClockwise : flow.TurnsCounterClockwise;
+    }
+
+    /// <summary>
     /// Gets whether a character of the run is left unmarked. A space is never marked unless the page
     /// asked for every character, and what nothing was said about leaves the punctuation and the symbols
     /// alone beside it - which is what a CJK sentence's references show: the marks stand over the

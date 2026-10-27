@@ -5639,15 +5639,23 @@ internal sealed class InlineLayout
                     // line grows by the strip they stand in, which is their own size, on the side the page
                     // named (CSS Text Decoration 4 §5.2). A base carrying its own reading is marked
                     // through that reading instead, so it is asked for nothing here.
+                    //
+                    // The side is the physical one the marks stand on rather than the edge the writing
+                    // mode calls the end. The ascent of a turned glyph reaches to its right in both the
+                    // vertical modes - they differ only in which way their columns march - so a mark to
+                    // the right asks for the ascent even in a left-to-right page, whose columns end on
+                    // that same right edge. Reserving the strip on the other side leaves the shared
+                    // baseline the width of the band inside the band, which is why a marked column drew
+                    // its glyphs over its own circles.
                     var strip = Math.Max(1, fragment.Style.GetFont().Size / 2);
 
-                    if (marks.StandsAtTheEnd(fragment.Flow))
+                    if (marks.KeepsItsStripOnTheAscentSide(fragment.Flow))
                     {
-                        fragmentDescent += strip;
+                        fragmentAscent += strip;
                     }
                     else
                     {
-                        fragmentAscent += strip;
+                        fragmentDescent += strip;
                     }
                 }
 
