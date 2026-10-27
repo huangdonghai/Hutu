@@ -248,7 +248,7 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 
 ## 10. 2026-10-28 凌晨：强调号的走位、表格的强制断点、符号样式的词序
 
-起点是 §9 结束时的 **wpt 4157 / 5834、gecko 1694 / 2471**（失败清单 2451）；现在 **wpt 4173、gecko 1697**，失败清单 **2437**。单测 **1861 passed / 0 failed**（另 2 个 `[Explicit]`），硬断言 **55 passed / 0 failed / 1 skipped**。
+起点是 §9 结束时的 **wpt 4157 / 5834、gecko 1694 / 2471**（失败清单 2451）；现在 **wpt 4176、gecko 1697**，失败清单 **2432**。单测 **1865 passed / 0 failed**（另 2 个 `[Explicit]`），硬断言 **55 passed / 0 failed / 1 skipped**。
 
 | commit | 做了什么 | 依据与取证 |
 |---|---|---|
@@ -258,5 +258,7 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 | `be6c1a29` | `text-emphasis-style` 的 filled/open 按整个值读，不看词序 | §5.1 的 `[ [ filled | open ] || <shape> ]` 两种顺序都合法；旧读法一遇到形状词就立刻按"当前默认填充"取字形，`circle open` 于是取了填充圆，后面那句 `open` 无处可改。**带引号的 token 不参与这一轮分类**（语料里有 `text-emphasis-style: 'V'`，若在去引号之后再判词，会被当成默认填充、丢掉符号本身）。5 对翻绿，css-text-decor 121 → 126、wpt 4164 → 4169，失败集 0 回退；单测 1859 |
 | `7f1a51e7` | 格子的内容对齐按"流内占位"量剩余空间，而不是按"绘制位置" | CSS 2.1 §9.4.3：相对偏移只挪绘制、不挪占位。旧代码用子盒当前 `BorderBox` 量 free，于是把偏移当成"内容不够高"的证据先移一半（(100−90)/2=5），通用路径再按声明移 10 → 净 −5。新增 `LayoutBox.RelativeDisplacement`，在**两个**平移入口都记录（`LayoutEngine.Arrange`、`PositionedLayout.Translate`——后者是 inline 分片的移动口），对齐时减回。单独把 011/012 带绿（css-position 35→37）。单测把同一格写三遍（无偏移/上 10/下 10）取差，回退后红在 ±5 |
 | `28d9e04e` | 单元格的百分比偏移按**行所声明的高**求解 | CSS 2.1 §10.5，010 要 0、013 要 10，旧行为两种都移 100（行的 used 高，被格内 100px div 撑出来的）。走"表格侧自算位移"那条（§7 的候选 b），`LayoutEngine.Arrange` 增可选 `Offset? displacement`，表格传 `PartOffset(cell.Box, grid.Width, StatedHeight(row.Box, 0))`，通用路径**取用不相加**，因此只平移一次。没有把声明高塞进格子 CB（那会连带改格内子元素百分比高度的 `definite` 判定）。css-position 37→39、wpt 4169→4173，`css-tables`(84) 与 `CSS2/tables`(7) 作闸门读数不动。单测同一页写三遍（行不声明/10/40）取差，回退后红在 100 |
+| `47e076db` | 装饰线从它所站的那条边**朝背向文字的一侧**生长；line-through 居中 | CSS Text Decoration 4 §2.4/§2.5。旧代码对所有线型都从位置线向正方向画带，于是加粗一条线遮住的是"位置线与文字之间"的空，而不是位置线之外——借来的页面正是拿"把线加粗到超过整个盒子、要求盒子被盖满"来考的。竖排下"朝外"就是偏移本身被计入的那个符号，所以判据取轴向符号而不是"线落在基线哪一侧"（第一版这样写，把 `text-underline-offset` 为负的下划线翻成了压在文字上的带，一页 gecko skip-ink 因此两图画成一张）。实测（Segoe UI 40px）：underline 4px→行 60..63、24px→60..83（头不动）；overline 4px→10..12、24px→0..12（尾不动）；line-through 4px→44..47、24px→34..57（两头各外扩 10，对称）。+2 对（thickness-linethrough-001、-overline-001），另 thickness-vertical-001 从 1600 像素降到 **20**（只剩末行 1 条抗锯齿边，子像素问题，已记档未打）。3 条单测读真实墨迹的上下缘，并把"细线自己的边"当尺子；在无修复版本上验红（line-through 两头都不长、overline 朝文字方向长） |
+| `5a2bc1d8` | 装饰长度里的 `calc()` 按该属性自己的单位折叠 | §2.4/§2.8：这两个性质的百分号是"文字所设尺寸的份额"。旧读法只给 min/max/clamp 走这个基准，`calc(50% + 4px)` 落到通用长度读法——百分比按**绘制宽度**、`em` 按**设备字号**——于是 8px 文字上的 8px 线变成 404px 的杠。补一条 `EvaluateSum` 通道复用同一个 `DecorationTerm`。单测把同一条线写三遍（定值/百分号/`em`）要求画出同一条带；无修复时百分号得 200px 杠、`em` 短 12px。+1 对（thickness-calc），另 text-underline-offset-calc 从 1684 降到 **80** 像素（已是抗锯齿级） |
 
 **这条验证手法记一下（有用，且有坑）**：要证明一条新单测真的钉住了修复，最好的办法是在**修复的父提交**上跑它、看它变红。这次先试 `create_worktree`（ref 指到父提交）——失败：worktree 里 `deps/AngleSharp` 子模块没初始化、且 vendored fork 的引用路径不同，整个依赖图编译不出来。可行的替代是在主仓里 `git checkout <parent> -- <那一个引擎文件>`，只跑这一条测试，看完红之后 `git checkout HEAD -- <同一文件>` 还原，并用 `Get-FileHash` 比对还原后的文件与动手前的备份（这次 `identical: True`）。红线要落在症状本身（after 留在栏首而不是进下一栏），不是编译错误或无关的失败。
