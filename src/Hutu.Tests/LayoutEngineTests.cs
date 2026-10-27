@@ -505,6 +505,52 @@ public sealed class LayoutEngineTests
         });
     }
 
+    /// <summary>
+    /// A column cannot end between a table's parts, so a forced break written on a cell - or on a box
+    /// standing in one - has nowhere inside the table to fall and belongs to the edge of the table it
+    /// stands in: a <c>break-after</c> inside the table breaks after the whole table, keeping the side
+    /// the page wrote it on (CSS Break 3 §3.1, and the borrowed pages' own comment, "Should be
+    /// propagated to the outer table").
+    /// </summary>
+    [Test]
+    public async Task AForcedBreakInsideATableStandsAtTheTablesEdge()
+    {
+        // The same fragmentainer written twice, the only difference being the break on the first cell.
+        // Measured rather than guessed: a table is a hundred tall and the box after it a hundred, in a
+        // column of a hundred, so the one that propagates begins the column beside the table.
+        using var forced = CreateView(400);
+        await forced.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='columns:1;column-gap:0;column-fill:auto;width:100px;height:200px'>" +
+            "<div id='table' style='height:100px;width:100%;display:table;break-after:avoid'>" +
+            "<div style='display:table-cell;break-after:column'></div>" +
+            "<div style='display:table-cell'></div></div>" +
+            "<div id='after' style='height:100px'></div>" +
+            "</div></body></html>");
+
+        using var plain = CreateView(400);
+        await plain.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='columns:1;column-gap:0;column-fill:auto;width:100px;height:200px'>" +
+            "<div id='table' style='height:100px;width:100%;display:table;break-after:avoid'>" +
+            "<div style='display:table-cell'></div>" +
+            "<div style='display:table-cell'></div></div>" +
+            "<div id='after' style='height:100px'></div>" +
+            "</div></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ById(plain, "after").BorderBox.X, Is.EqualTo(0),
+                "with nothing forcing, the box after the table stacks below it in the one column");
+            Assert.That(ById(forced, "after").BorderBox.X, Is.EqualTo(100),
+                "a break written on a cell begins the column after the table it stands in");
+            Assert.That(ById(forced, "after").BorderBox.Y, Is.EqualTo(0),
+                "at the head of that column, where the table's own avoid has no say");
+            Assert.That(AnyBoxById(forced, "table").BorderBox.Width, Is.EqualTo(100),
+                "and the table itself is not cut - it stays the whole of the column it was laid in");
+        });
+    }
+
     [Test]
     public async Task ATextIndentPercentageReadsTheElementsOwnContentBox()
     {
@@ -624,6 +670,15 @@ public sealed class LayoutEngineTests
 
     private static LayoutBox ById(HutuViewInternal view, String id) =>
         FindAll(view, "div").First(box => box.Source.Element?.GetAttribute("id") == id);
+
+    /// <summary>
+    /// Finds the one box standing for the element with this id, whichever kind of box the element's
+    /// display makes: a <c>display: table</c> div is a table box rather than a block, and the id is the
+    /// same either way.
+    /// </summary>
+    private static LayoutBox AnyBoxById(HutuViewInternal view, String id) =>
+        Walk(view.Layout!.Root!).First(
+            box => String.Equals(box.Source.Element?.GetAttribute("id"), id, StringComparison.OrdinalIgnoreCase));
 
     private static IEnumerable<LayoutBox> FindAll(HutuViewInternal view, String tag)
     {
