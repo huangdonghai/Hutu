@@ -503,6 +503,13 @@ internal sealed partial class TableFormattingContext
     /// A box that left the flow is none of this method's business: it is measured against its own
     /// containing block rather than stacked with the cell's content, so it neither says how tall that
     /// content is nor moves when it is aligned. Only the in-flow children are counted and shifted.
+    /// <para>
+    /// What is counted is where each child stood in the flow rather than where it is drawn. A child set
+    /// <c>position: relative</c> keeps the room it had and steps out of it (CSS 2.1 §9.4.3), so a cell
+    /// holding one hundred pixels of content that was moved ten up still holds one hundred pixels of
+    /// content - and reading the moved place would leave the alignment to charge the same move a second
+    /// time, which is how a cell asked to stand at the top of its row came to sit half a move off it.
+    /// </para>
     /// </remarks>
     private static void AlignContent(LayoutBox cell, CellVerticalAlignment align, Double contentHeight)
     {
@@ -521,7 +528,9 @@ internal sealed partial class TableFormattingContext
                 continue;
             }
 
-            bottom = Math.Max(bottom, child.BorderBox.Bottom + child.Margin.Bottom);
+            bottom = Math.Max(
+                bottom,
+                child.BorderBox.Bottom - child.RelativeDisplacement.Y + child.Margin.Bottom);
         }
 
         var used = bottom - top;

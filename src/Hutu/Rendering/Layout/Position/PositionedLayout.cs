@@ -200,6 +200,11 @@ internal sealed class PositionedLayout
             return;
         }
 
+        // The box says where it stood off the flow, as a relative box arranged by the engine does: this
+        // is the road an inline element's fragments are moved by, and a container that stacks what it
+        // holds asks the same question of them.
+        box.RelativeDisplacement = offset;
+
         Shift(box, offset.X, offset.Y);
     }
 

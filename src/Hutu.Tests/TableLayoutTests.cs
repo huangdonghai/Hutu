@@ -437,6 +437,55 @@ public sealed class TableLayoutTests
         Assert.That(line.BorderBox.Y - cell.BorderBox.Y, Is.EqualTo(26).Within(0.5), "(60 - 10) / 2, plus the room above the content");
     }
 
+    /// <summary>
+    /// A cell centres its content on the place that content stood in the flow, not on the place a
+    /// relative offset draws it: such an offset moves what is painted and leaves the room held where it
+    /// was (CSS 2.1 §9.4.3), so a cell that took the moved place to work out the slack would shift the
+    /// content away from the middle it was asked for and then move it again - charging the same
+    /// displacement twice, and leaving the content half a move off where the alignment put it.
+    /// </summary>
+    [Test]
+    public async Task ACellAlignsItsContentByThePlaceItStoodInTheFlow()
+    {
+        // The same cell written three times, the only difference being its own offset, in a row made a
+        // hundred tall by the cell beside it. Measured first: the plain content stands twenty down - the
+        // middle of the forty pixels the row leaves over its sixty - and each offset moves it exactly
+        // what it states.
+        var standing = await Content("");
+        var up = await Content("top:-10px;");
+        var down = await Content("top:10px;");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(up - standing, Is.EqualTo(-10).Within(0.5),
+                "a box moved ten up stands ten above where the alignment put it, not twenty");
+            Assert.That(down - standing, Is.EqualTo(10).Within(0.5),
+                "and the same holds for a box moved down");
+            Assert.That(standing, Is.EqualTo(20).Within(0.5),
+                "which is the middle of the room the row leaves, where the alignment alone puts it");
+        });
+    }
+
+    /// <summary>
+    /// Gets where the sixty-pixel box of a middle-aligned cell lands, given what the box itself writes
+    /// for an offset. The room the row leaves does not depend on that: a relative box keeps the place it
+    /// had, so the three readings differ by the offsets alone.
+    /// </summary>
+    private static async Task<Double> Content(String offset)
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:separate;border-spacing:0'><tr>" +
+            "<td id='cell' style='padding:0;vertical-align:middle'>" +
+            $"<div id='moved' style='position:relative;{offset}width:100px;height:60px'></div></td>" +
+            "<td style='padding:0'><div style='width:20px;height:100px'></div></td>" +
+            "</tr></table></body></html>");
+
+        return Find(view, "moved").BorderBox.Y;
+    }
+
     [Test]
     public async Task ARowsBorderMeetsTheLinesAboveAndBelowIt()
     {

@@ -96,6 +96,14 @@ internal sealed class LayoutBox
 
     public Rect BorderBox { get; set; }
 
+    /// <summary>
+    /// Gets or sets how far the box stands off the place the flow gave it, which is the displacement its
+    /// own <c>position: relative</c> offsets add: what is drawn moves, the room it holds does not
+    /// (CSS 2.1 §9.4.3). A box that aligns or stacks its children asks where they stood to work out how
+    /// much room is left, and reading that off the displaced boxes would charge the move twice.
+    /// </summary>
+    public Offset RelativeDisplacement { get; set; }
+
     /// <summary>Gets or sets how the box is positioned, which decides whether it joins the stacking
     /// order and whether it took part in normal flow at all.</summary>
     public PositionMode Position { get; set; }

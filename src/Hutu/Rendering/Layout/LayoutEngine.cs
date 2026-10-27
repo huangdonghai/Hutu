@@ -1170,6 +1170,7 @@ internal sealed record LayoutProfile(
         }
 
         var position = box.Style.Position;
+        var offset = Offset.Zero;
 
         // A relative box keeps the place it had in flow: its own box and everything inside it are laid
         // out where the flow put them, then drawn where the offset says. Taking the offset in before the
@@ -1178,13 +1179,20 @@ internal sealed record LayoutProfile(
         // leaving a subtree whose boxes were moved after its matrices were resolved.
         if (position.Position == PositionMode.Relative)
         {
-            var offset = PositionedLayout.RelativeOffset(position, context.ContainingBlock, box.Flow);
+            offset = PositionedLayout.RelativeOffset(position, context.ContainingBlock, box.Flow);
+
             borderBox = new Rect(borderBox.X + offset.X, borderBox.Y + offset.Y, borderBox.Width, borderBox.Height);
         }
 
         var layout = ArrangeCore(box, borderBox, context, definiteHeight, lines, slice, start);
 
         layout.Position = position.Position;
+
+        // The move is noted on the box as well as taken into its rectangle, because a container that
+        // stacks or aligns what it holds asks where that content stood in the flow - and reading the
+        // displaced place would count the move twice.
+        layout.RelativeDisplacement = offset;
+
         layout.ZIndex = position.HasZIndex ? position.ZIndex : 0;
 
         // A z-index applies to a flex or grid item even while the item stays in the flow, where it makes
