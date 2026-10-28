@@ -87,7 +87,7 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 2. 读代表例的 test/ref，精确反推规则。
 3. `HUTU_SCORE_LOOK=<子串>` 驱动 `LooksAtOnePairClosely` 做单对 deep-look：输出两侧布局树 + diff map，拿到**确切几何**再动手。
 4. 改代码 → 加/改单测（`src/Hutu.Tests`）→ `dotnet test src/Hutu.Tests`。
-5. **回归门禁（用户明确指示，2026-10 起，覆盖旧的"空载全量"口径）**：只用**固定样本 60 条**——`$env:HUTU_SCORE_LIMIT='60'` 跑 `TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay`（约 6 秒，每个语料各画前 60 页，结果确定），与基线（gecko 54/60、wpt 45/60）比对，不得回退、0 画不出。**不要再跑全量计分**（13930 pair / 27940 html，约半小时，太慢）。目标族净正用 `HUTU_SCORE_LOOK` deep-look 逐对确认。也不要把 `StopsAtTheTenthFinding` 的 findings 当回归基线（队首样本，非确定）。
+5. **回归门禁（用户明确指示，2026-10-28 起：没有"60 固定样本"这一说了）**：一律跑**全量基线**，并且比的不是分数而是**失败集合**——改动前后各跑一次 `TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay`（`HUTU_SCORE_LISTED=9999`，实测约 2 分钟 / 8306 对），把两份 `build/reftest-score.md` 的 finding 路径取差集，`修复 N / 回退 M` 一起报，**M 必须为 0**，否则逐条解释。脚本 `build/_scorediff/diffscore.ps1`（读上一份基线的 CSV 与当前报告，按目录归类修复项）。跑前先确认 `dotnet build` 真的成功了——`--no-build` 配上失败的构建 = 读上一个版本的 DLL，今天的假"基线读数"就是这么来的。
 6. 语义化 `fix(css):` / `feat(css):` 单独 commit。**永不主动 push**（远端推送由用户触发）。
 7. 门禁不过（净负或平局）→ `git checkout` 回退到干净基线，WIP 存 stash 备查，如实汇报。
 
@@ -292,3 +292,47 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 - **css-text 的 98 对按根因分簇**：`text-autospace` **10 对**（整条属性未注册，Chrome：表意/非表意边界各 1/8 em，参考页用 `margin:5px@40px` 伪造）、`text-fit` 10 对（未实现，逐行缩字号）、南亚脚本断行 8 对（Thai/Khmer/Lao/Myanmar/Javanese 无断点，`LineBreaks.cs:339` 全部落到 AL）、`white-space: break-spaces`+U+3000 9 对、`overflow-wrap: anywhere/break-word` 8 对；`white-space` 总数 23 但分属六种机制，不能当一条打。
 - **`float-in-rtl-slr`（10 对）**：Chrome 已测明 `sideways-lr` 下 `float:left/right` 的"线左/线右"要相对 vertical-rl/lr **翻转**（`FloatsAtTheInlineStart` 少一个 `TurnsCounterClockwise` 因子；`FloatSideOf` 要同步改成由它反推），但整族**还要**"列里的浮动侵入后续兄弟的行盒"——`FloatBand`/`LineRoom` 只按 x 轴写死，列路径用局部的 `ColumnFloats`，`TracksFor` 的注释也明说列被有意排除。两者同做才有 10 对的净收益，属一刀大改。
 - **gap 装饰的 fragmentation 家族（flex 30 + grid 28 + subgrid 18 + multicol 16 = 92 对）**：同源于"分片容器里的 flex/grid 不被切片"。`flex-gap-decorations-fragmentation-003` 的探针显示 flex 容器整块 174x114 停在 30 高的列里，参考页按 4 列手画规则；这是 §7 里"多栏 + spanner 无网格算术"同级的架构缺口。
+
+## 12. 2026-10-28 下午轮：浮动的"上下文"、marker 钉在哪条边、以及一串不换行空格
+
+起点是当天上午的 **wpt 4219 / 5834、gecko 1706 / 2471**（失败清单 2380，含 1 对"画不出来"）；本轮结束时 **wpt 4221、gecko 1734**，失败清单 **2350**，**修复 30 对、回退 0 对**。单测 **1870 → 1877**，硬断言 **55 passed / 0 failed / 1 skipped**。
+
+| commit | 做了什么 | 依据与取证 |
+|---|---|---|
+| `672c69b6` | 容器持有自己的浮动时，**同时**读上下文里的浮动；浮动只被"对面那个真会压到的浮动"往下推；RTL 按**结束边**量；outside marker 改成"钉 border 边 + 按浮动的侵入量平移"，且盒子自己持有的浮动不推它自己的 marker；`.NET` 把 U+00A0 当空白导致整段文字被丢；浮动自己是 BFC 根，摆放时把 band 密封 | 全部先量 Chrome 再动代码，见下 |
+
+**这一族的形状**：`gecko/bugs/428810-*` 33 对里 26 对红，每对都是**正好 36 像素**＝一个 6×6 的圆点。动手前它是全库最大的"近失同质簇"，也是 §11 两份备忘录都没点到的地方（`gecko/bugs` 那份按 N 相同聚类命中了它，但把它记成"一个函数"——实际是四处独立缺陷叠在一起）。
+
+**取证工具（新增三件，都在 `build/` 下，gitignored）**
+
+| 工具 | 回答什么问题 |
+|---|---|
+| `build/_ink` | 真实 Chrome 把 test / ref 各画一遍，打印"非白像素包围盒 + 像素数 + 两图差异数"——一对页面里只有一个圆点时，它就是"浏览器把 marker 放在哪儿"的数字 |
+| `build/_query` | 在 Chrome 里跑一段 JS，把 `getBoundingClientRect` / `Range.getClientRects` 的真实几何读出来（内浮动到底落在 y=10 还是 y=20，行又在哪） |
+| `build/_engineink` | 同一个问题问我们自己的引擎，输出与 `_ink` 同格式，可逐行对读 |
+
+先量后写的一条硬结论：**marker 的落点不是"行的起点"**。Chrome 在 14 个合成页上拟合出来的公式是
+`marker 外缘 = border 边 + max(0, 浮动边 − content 边)`，并且**盒子自己持有的浮动不参与**（`m-inner15-text` 里文字让到浮动右侧，圆点仍停在盒子起始边）——旧代码写成 `max(border, 浮动边)`，差的就是 border/padding 那一段，正是 `-insets` 那 7 对。
+
+**四处根因，逐条记一下（下次别重复侦察）**
+
+1. **上下文丢了**：`FloatBand.cs` 顶部注释本来就写着"容器一旦持有浮动，就只把自家浮动传给子节点"。CSS 2.1 §9.5 要的是同一个 BFC 里所有浮动排成同一趟：新浮动要躲开上下文的浮动（内浮动 Chrome 放 y=20，我们放 y=10 压在外浮图上），后面的行也要同时被两批缩短。改法是给 `FloatTracks` 加 `_aroundLeft/_aroundRight` + `Hold()`，查询全读两批、`Absorb` 只上交自己持有的——否则祖先的浮动会在每一层被重复平移一次。`FloatTrack` 顺带记下 `Owner`，marker 用它排除"盒子里自己的浮动"（按元素祖先链判）。
+2. **"放得下"的参照物**：`Place` 原来判 `x + width <= right`，而 `right` 里混进了**容器自己的边**。§9.5.1 把浮动钉在包含块边上、只要求它别压到别的浮动，所以比容器还宽的浮动应当溢出而不是下潜——`other-float-outside-rule-3-left/-right` 就是这一条（Chrome：425 宽留在 y=0，不潜到 y=300）。新增 `FarEdgeAt` 只看对面的浮动。
+3. **RTL 的边**：band 只带 `Left`，而 RTL 盒子的左边要等宽度定完才知道（§10.3.3 里宽度正是待解量）；结束边却可以直接算：父盒结束边 − 子 margin-right − border − padding。给 `FloatBand` 加 `End`，`Room` 的 reversed 分支与 `FormattingRoot` 都改读它，`StandBeside` 的帧平移也按 End 走。这一步单独修好了 15 个 RTL 对里的绝大多数。
+4. **`.NET` 的空白≠CSS 的空白**：`BoxBuilder.GroupChildren` 用 `String.IsNullOrWhiteSpace` 判断"这段文字是否可见"，而 .NET 把 U+00A0、U+3000 等都算空白，CSS Text 3 §4 明确它们不可折叠、不可裁、要测量。于是"块级浮动兄弟 + 5 个 nbsp"的整段内容被当空白丢掉，行盒根本不存在（2a/3a 那 8 对就卡在这）。换成 `TextChunker.IsCollapsible`。
+
+**顺带**：`428810` 修好后同一提交连带收掉 `413840-ltr-offsets`、`CSS2/floats/overhanging-float-paint-order`、`css-flexbox/css-box-justify-content`；`370525-rowspan-1b`（§7 记的并发工厂缓存那条"画不出来"）本轮两次全量都没再复现，先记为偶发，不当已修。
+
+**这一轮的三个自己的坑（都值一条记录）**
+
+1. **`--no-build` 会替你保守一个谎言**：中途一次 `apply_patch` 让编译失败，但我仍用 `--no-build` 跑了记分——跑的是**上一个 DLL**，于是把一次真实的"回退 0"读成"回退 3"，又反过来把一次修复读成没修。规矩：每次改完引擎，先看 `dotnet build` 成功，再记分；归因实验也一样。
+2. **读子集报告不能按行号 skip**：`reftest-score.md` 是"每个语料一段"，我用 `Select-Object -Skip 2 -First 2` 取"wpt 段"，实际取到的是"gecko: 0 of 0"那一段，于是追了一整轮**根本不存在的回归**（`grid-margins-no-collapse-002`）。要么按 `^## ` 分段取，要么直接 grep 页名。
+3. **备份点要晚于本轮所有已落地的修改**：我做属性归因时把 5 个引擎文件复制到 `.tmp/round-backup`，之后又补了一处（浮动密封），恢复备份时它被悄悄吃掉——是新写的单测 `AFloatingBoxTakesNoRoomOutOfItsOwnLines` 把它抓回来的。备份/回退做完一定要 `git diff` 对一遍，或干脆用 `git stash` + 立即恢复。
+
+**下一步的候选（按"对数 ÷ 工作量"排，来自本轮 4 个只读 Subagent 的备忘录，全部未落地）**
+
+- **marker 家族连坐**：`wpt/css-lists/list-and-{flex,grid}-001`、`css-pseudo/marker-text-decoration-skip-ink`、`gecko/list-item/bullet-space-1`、`179596-1a/1b`、`507187-1` 都是同一个圆点的签名（36–38 像素）。`gecko/bugs` 备忘录把这族算 32 对，本轮收了 29。
+- **一次一行的廉价项**：`:default` 只应命中表单默认按钮（4 对，改 `deps/AngleSharp/.../ElementExtensions.cs:360`）；`border-collapse: collapse` 时表格自己的 padding 不生效（4 对，`TableFormattingContext.Grid.cs:110`）；`rowspan="0"`＝到行组末尾（2 对，`:821`）；`text-combine-upright` 在 sideways 模式不该生效（2 对，三处构造点加一个 `IsSidewaysMode` 门）；`text-orientation: initial` 被当成继承（1 对，`ComputedStyle.cs:4547`）。
+- **成块但边界清楚的**：`initial-letter` 竖排 raise/sink 只看 `box.Top` 不看 `Sink`（8 对，`FirstLetter.cs:298`）；ruby A2（标注不影响行高，CSS Ruby 1 §3.6）+ A1（`ruby-overhang: spaces` 没注册，AngleSharp 丢值）合计 31 对；表格 cell 基线对齐**根本没实现**（7 对，`TableFormattingContext.cs:525` 只有 middle/bottom）；根元素 `position:absolute` 与 canvas 背景传递（10 对，`LayoutEngine.cs:121`、`Painter.cs:156`）。
+- **别当"一族"打的**：`css-anchor-position` 53 对里 30 对需要 `anchor()`/`anchor-size()`，是架构缺口；表格跨 fragmentainer（26）与 gap 装饰分片（92）同属"分片容器不切 flex/grid/表格"；`gecko/bugs` 227 对里 **80 对依赖 JS**（占该族 35%，按语料政策属"该退役"而不是"该修"）——这条需要用户单独拍板。
+- **工具口径**：`build/_scorediff/{diffscore,nearmiss,analyze}.ps1` 分别做"失败集差集""近失清单（≤200 像素）""按目录聚类"。近失清单是本轮选目标的主要输入，值得每轮重生成。

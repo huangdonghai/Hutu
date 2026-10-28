@@ -68,6 +68,8 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 >
 > 要可靠对比，用**固定样本**：全量检测加 `HUTU_SCORE_LIMIT=N`（每个语料只画前 N 页，确定性），
 > 或者直接跑全量。要确认某一条到底修没修，用 `HUTU_PROBE_PAGE` 看布局树，那是一对一的确定答案。
+>
+> （2026-10-28 更正：固定样本那条口径已经废掉，回归判据是**全量基线的失败集差**，见 §4 末。）
 
 ---
 
@@ -91,33 +93,36 @@ dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `HUTU_SCORE_LIMIT` | 0（不限） | 每个语料最多画几页。**冒烟用，也是唯一可靠的回归对比基线**，见下 |
+| `HUTU_SCORE_LIMIT` | 0（不限） | 每个语料最多画几页。**只用于冒烟**：几分钟的改动用它先看一眼可以，判回归不行——它看不见的那几页正是被改动碰到的那些 |
 | `HUTU_SCORE_ONLY` | 空 | 只画路径里含这段文字的页面，比如 `css-text/white-space/tab`。改一个模块时用它秒级计分，不必每次都跑全量 |
 | `HUTU_SCORE_FINDINGS` | 10 | 只影响快速检测 |
 
-### 回归对比：用固定样本，别用快速检测
+### 回归对比：跑全量，比失败集合（2026-10-28 起，覆盖旧的"固定 60 样本"口径）
 
-判断"这次改动是修好了还是弄坏了"，要用**确定性样本**：
+判断"这次改动是修好了还是弄坏了"，跑**整份语料**，然后把改动前后的**失败路径集合取差**：
 
 ```powershell
-$env:HUTU_SCORE_LIMIT='60'
+cd d:/_git0/Hutu
+$env:HUTU_SCORE_LISTED='9999'          # 让报告把每条 finding 都列出来，两份报告才可比
 dotnet test src/Hutu.Conformance.Tests/Hutu.Conformance.Tests.csproj `
   --filter 'FullyQualifiedName~TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay' --no-build
 ```
 
-它画每个语料的前 60 页，**结果每次完全一致**（不依赖并行时序），6 秒跑完，
-比快速检测只慢 3 秒却多覆盖 4 倍页面。日常迭代建议用它，快速检测留给"随手看十条"。
+本机实测约 2 分钟（8306 对 / 16612 个 html，半机并行）。差集脚本 `build/_scorediff/diffscore.ps1`
+打印 `FIXED / NEW`：回退必须为 0，否则逐条解释——**通过数是聚合量，看不出"修了 A 弄坏了 B"**，
+而失败集合的差能看出来。报告按语料分节，读它要按 `^## ` 分段取，不要按行号 skip。
 
-**当前基线**（2026-10-14，13,928 对语料的队首 120 页）：
+**当前基线**（2026-10-28 下午，本轮结束时）：
 
 ```
-gecko: 60 pairs — 48 通过 (80%)，12 不一致
-wpt:  60 pairs — 29 通过 (48%)，31 不一致
-合计: 120 pairs — 77 通过 (64%)
+gecko: 1734 / 2471 通过 (70%)，737 不一致
+wpt:   4221 / 5834 通过 (72%)，1613 不一致
+合计失败清单 2350 对
 ```
 
-改完引擎跑一遍：**通过数往上走就是修好了，往下走就是弄坏了**。看通过数而不是 finding 条数——
-条数会随提前停止而漂移（见上一节那个坑），通过数不会。
+> **前提是 Ahem 已装到系统**（见 §2），否则 `css-text` 一族整族偏低。
+> 另一条：**`--no-build` 只在构建成功后可信**。构建失败还跑 `--no-build`，读的是上一个版本的 DLL，
+> 会得出与真相相反的读数（本轮就在这里绕了一圈）。
 
 **两个自动刹车**（都是为了后台跑的安全）：
 - 单页绘制超时 **5 秒**（`ReftestRunner.Limit`）。实测均值约 0.11 秒/页，5 秒已是正常值 50 倍。
