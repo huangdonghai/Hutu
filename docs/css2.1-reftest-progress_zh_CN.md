@@ -276,3 +276,19 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 1. **别在同一批里跑两个 `dotnet`**：两个 test/build 进程共用同一棵 `obj/bin`，彼此的输出会互相覆盖。我就这样拿到过一次"基线读数"——同一条探针在串行的两次运行里给出 4 列和 5 列，先前那次 5 列其实是另一个进程留下的 DLL 的结果。规矩：量基线必须独占一次构建，且核对自己的改动确实被换出去了（`rg` 一眼看源码里那个符号在不在）。
 2. **`git stash` 与 `File.Copy` 都保留旧 mtime**：还原源码后 MSBuild 认为"不必重编"，于是 `--no-build` 跑的是上一个版本的 DLL，读数完全相反。还原之后要 touch 源文件（`(Get-Item x).LastWriteTime = Get-Date`）或直接 `dotnet build`，并用 `Get-FileHash` 确认内容与动手前一致。
 3. **写断言要挑真正能区分的通道**：我给"金色装饰条"写的第一版是 `Red > 128`，而白底 `#ffffff` 的 Red 也是 255——这条断言在有无修复时都通过，等于没钉住任何东西。金色是 `#ffd700`，该看的是 Blue。凡是"红/绿/白"三态的像素断言，先问一句：把待测物换成空白，这条断言还成立吗？
+
+## 11. 2026-10-28 上午：内联级绝对定位的静态位置，以及两族待做的侦察结论
+
+起点是 §10 之后的 **wpt 4200 / gecko 1705**（`901f84a3` 的读数）。本轮只落了一刀：
+
+| commit | 做了什么 | 依据与取证 |
+|---|---|---|
+| `2612678b` | 指定 display 为内联级的绝对定位盒挂在**线盒插入点**上，不再站在容器起始角 | CSS Position 3 §3.1 的静态位置 + Chrome 实测（2026-10-28，100x60 相对容器、20x10 子盒）：`text-align` 左/中/右把**空行**的插入点放在 0/50/100（注意中线是 50 而不是"20 宽盒居中"的 40——绝对定位盒不给行加宽）；`direction: rtl` 的裸容器挂在 80（右缘起点、盒向左伸）；`float:left 30` 先缩短行，插入点 30；rtl + float:left 得 80、rtl + float:right 得 50；`display:block` 的绝对盒在 center 下仍是 0。词法上要看**页面写的 display**（AngleSharp 计算值仍是 inline，引擎在 `BoxBuilder` 里自行 blockify），`inline-block`/`inline-flex` 同属内联级。落点两处：块路径 `BlockLayout.StaticLineOf`（新增 `StaticLine` 结构 + `PositionedLayout.Horizontal` 的 `Anchor`），行内路径 `InlineLayout.Place`（并给 `Held` 带上同一个锚，`position-absolute-in-inline` 那族走的就是 Hold）。竖排的插入点沿 y 走，本刀只回答横排（守卫在两条入口）。
+| 读数 | wpt 4200 → **4219**、gecko 1705 → **1706**（+21/−0） | 九页 `inline-level-absolute-in-block-level-context-001..012` 全收，另带 `gecko/bugs/363637-1`、`first-line/469227-2`、`CSS2/positioning/auto-position-rtl-child-viewport-scrollbar`、`grid-gutters-014`、`preserve3d-button`、五页 css-variables、两页 `nth-child-of-*`。唯一"丢"的是已知 flaky `gecko/bugs/370525-rowspan-1b`，它这次是**画不出**（§7 的并发工厂缓存异常），不是图差。单测 **1870 全绿**；新测试在父提交引擎上红在六个实测位置（100/50/0/0/0/50）。 |
+
+**两个子 agent 的侦察结论（只读、未落地，留给后续）**
+
+- **ruby-overhang 族（18 对）**：`ruby-overhang` **完全没读**，AngleSharp 只认 `auto|start|end|none`（`deps/AngleSharp.Css/.../Map.cs:829`，`spaces` 直接丢），引擎侧零命中。基准宽度在 `InlineLayout.cs:2447`（另有 intrinsic 孪生 674-676）取 `max(基准, 标注)`；标注高度被**加进行升部**（5634-5643、2450/2459）——这正是 `ruby-overhang-none` 基准字低 8px 的全部原因（CSS Ruby 1 §3.6：标注不影响行高）。最小改法：①注册 `spaces` 并按"标注宽 − 两侧可溢出空白"缩短基准；②去掉 `+= annotation.Block`，标注画在行盒上沿之外（1755/1764/1788 同步）。`ruby-align` 同样未读（居中硬编码）。
+- **css-text 的 98 对按根因分簇**：`text-autospace` **10 对**（整条属性未注册，Chrome：表意/非表意边界各 1/8 em，参考页用 `margin:5px@40px` 伪造）、`text-fit` 10 对（未实现，逐行缩字号）、南亚脚本断行 8 对（Thai/Khmer/Lao/Myanmar/Javanese 无断点，`LineBreaks.cs:339` 全部落到 AL）、`white-space: break-spaces`+U+3000 9 对、`overflow-wrap: anywhere/break-word` 8 对；`white-space` 总数 23 但分属六种机制，不能当一条打。
+- **`float-in-rtl-slr`（10 对）**：Chrome 已测明 `sideways-lr` 下 `float:left/right` 的"线左/线右"要相对 vertical-rl/lr **翻转**（`FloatsAtTheInlineStart` 少一个 `TurnsCounterClockwise` 因子；`FloatSideOf` 要同步改成由它反推），但整族**还要**"列里的浮动侵入后续兄弟的行盒"——`FloatBand`/`LineRoom` 只按 x 轴写死，列路径用局部的 `ColumnFloats`，`TracksFor` 的注释也明说列被有意排除。两者同做才有 10 对的净收益，属一刀大改。
+- **gap 装饰的 fragmentation 家族（flex 30 + grid 28 + subgrid 18 + multicol 16 = 92 对）**：同源于"分片容器里的 flex/grid 不被切片"。`flex-gap-decorations-fragmentation-003` 的探针显示 flex 容器整块 174x114 停在 30 高的列里，参考页按 4 列手画规则；这是 §7 里"多栏 + spanner 无网格算术"同级的架构缺口。
