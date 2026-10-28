@@ -336,3 +336,21 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 - **成块但边界清楚的**：`initial-letter` 竖排 raise/sink 只看 `box.Top` 不看 `Sink`（8 对，`FirstLetter.cs:298`）；ruby A2（标注不影响行高，CSS Ruby 1 §3.6）+ A1（`ruby-overhang: spaces` 没注册，AngleSharp 丢值）合计 31 对；表格 cell 基线对齐**根本没实现**（7 对，`TableFormattingContext.cs:525` 只有 middle/bottom）；根元素 `position:absolute` 与 canvas 背景传递（10 对，`LayoutEngine.cs:121`、`Painter.cs:156`）。
 - **别当"一族"打的**：`css-anchor-position` 53 对里 30 对需要 `anchor()`/`anchor-size()`，是架构缺口；表格跨 fragmentainer（26）与 gap 装饰分片（92）同属"分片容器不切 flex/grid/表格"；`gecko/bugs` 227 对里 **80 对依赖 JS**（占该族 35%，按语料政策属"该退役"而不是"该修"）——这条需要用户单独拍板。
 - **工具口径**：`build/_scorediff/{diffscore,nearmiss,analyze}.ps1` 分别做"失败集差集""近失清单（≤200 像素）""按目录聚类"。近失清单是本轮选目标的主要输入，值得每轮重生成。
+
+
+## 13. 2026-10-28 傍晚轮：把"一条小规则"扫掉七条
+
+起点 **wpt 4226 / gecko 1739**（失败集 2350）；本轮结束 **wpt 4231 / gecko 1741，失败集 2333**，两刀合计 **+28 修复 / 0 回退**。单测 1877 → **1885**，硬断言 55 全绿。（第一刀 `ab853ba7`，第二刀 `5718c0f1`。）
+
+| 规则 | 依据 | 对数 |
+|---|---|---:|
+| `:default`＝表单里树序第一个提交控件；checkbox/radio 看 `checked`、option 看 `selected`，reset/普通按钮永不算，disabled 不影响 | Selectors 4 §8.1 + HTML §4.10.13；Chrome 探针两组共 20 个控件定案 | +6 |
+| `border-collapse: collapse` 下**表格自己没有 padding**（cell 的仍生效） | CSS 2.1 §17.6.1；ref 页写死 `<div 100x100>` | +4 |
+| 空表格的**声明宽**要算进 shrink-to-fit 的 preferred size；但**不是最小宽**（flex item 的 automatic minimum 读的是那对值） | §17.5.2.2 先读声明宽，CSS Tables 3 §4 + Flexbox 1 §4.5 说明声明宽不是 min-width | +4（并修掉 5 条自家回退） |
+| `rowspan="0"`＝本行组余下的所有行（无组则到表尾） | HTML §4.9.11；ref 页直接写成 `rowspan="4"` / `rowspan="2"` | +2 |
+| sideways 模式下 `text-combine-upright` 无效 | CSS Writing Modes 3 §5.1；ref 页直接删掉该属性 | +2 |
+| `text-orientation: initial` 复位成 `mixed`（不是继承父级） | CSS Writing Modes 3 §5.1；**两条样式路径都要改**（ComputedStyle.DeclaredTextOrientation 与 ResolveTextOrientationFused） | +1 |
+
+**教训（这次踩得很典型）**：同一条"读值"规则在引擎里往往有**两套解析器**——fused 快速路径与普通 ComputedStyle。只改一处时测试仍然全绿（探针页走另一条路），全量里也只收一半。改任何"关键字 → 语义"的映射，先 `rg` 同名解析函数，确认两条路径都覆盖。
+
+另一个：把"声明宽"塞进 MeasureIntrinsic 的第一版同时抬高了 **min-content** 且解析了百分比，一次踩坏 5 条 css-flexbox/gecko 用例；全量差集立刻报出来，收窄成"只抬 max-content、跳过百分比与 ReadsContainingBlock"后归零。**内在尺寸的两个半（min/max）必须分别论证**，不能一起抬。
