@@ -540,6 +540,7 @@ internal readonly struct GridStyle
     {
         var autoFlow = ReadAutoFlow(source);
         var place = ReadPlaceItems(source);
+        var placeContent = ReadPlaceContent(source);
 
         var alignItems = Alignment(source, "align-items", CssInitialValues.AlignItemsGrid);
         var justifyItems = Alignment(source, "justify-items", CssInitialValues.JustifyItemsGrid);
@@ -571,8 +572,12 @@ internal readonly struct GridStyle
             ReadAutoTrack(source, "grid-auto-rows"),
             autoFlow.Column,
             autoFlow.Dense,
-            Alignment(source, "justify-content", CssInitialValues.JustifyContentGrid),
-            Alignment(source, "align-content", CssInitialValues.AlignContent),
+            Alignment(source, "justify-content", placeContent.Justify == FlexAlignment.Auto
+                ? CssInitialValues.JustifyContentGrid
+                : placeContent.Justify),
+            Alignment(source, "align-content", placeContent.Align == FlexAlignment.Auto
+                ? CssInitialValues.AlignContent
+                : placeContent.Align),
             justifyItems == FlexAlignment.Auto
                 ? (place.Justify == FlexAlignment.Auto ? FlexAlignment.Stretch : place.Justify)
                 : justifyItems,
@@ -709,6 +714,55 @@ internal readonly struct GridStyle
     public static GridLine Placement(ComputedStyle style, String name) => ReadLine(Fetch(style, name));
 
     /// <summary>
+    /// Reads <c>place-content</c> as a fallback for the two <c>*-content</c> longhands, the way
+    /// <see cref="ReadPlaceItems"/> reads its shorthand: one value applies to both axes and two are
+    /// align then justify, which is why a <c>place-content: start</c> grid leaves the free space where
+    /// it is rather than stretching it into its <c>auto</c> tracks (CSS Box Alignment 3 §5.1,
+    /// CSS Grid 1 §6.3).
+    /// </summary>
+    private static (FlexAlignment Align, FlexAlignment Justify) ReadPlaceContent(Source source)
+    {
+        // Read the same way as `place-items`: the older path has the shorthand's own text, while the
+        // fused cascade hands the two longhands over and leaves the axis the page did not write present
+        // but empty - which is what one value of the shorthand looks like from there.
+        if (source.Style is { } style)
+        {
+            var text = FlexStyle.Text(style, "place-content");
+
+            if (text.Length == 0)
+            {
+                return (FlexAlignment.Auto, FlexAlignment.Auto);
+            }
+
+            return Split(text);
+        }
+
+        var alignContent = Alignment(source, "align-content", CssInitialValues.AlignContent);
+        var justifyContent = Alignment(source, "justify-content", CssInitialValues.JustifyContentGrid);
+
+        if (alignContent != FlexAlignment.Auto && justifyContent == FlexAlignment.Auto && source.IsEmpty("justify-content"))
+        {
+            justifyContent = alignContent;
+        }
+
+        if (justifyContent != FlexAlignment.Auto && alignContent == FlexAlignment.Auto && source.IsEmpty("align-content"))
+        {
+            alignContent = justifyContent;
+        }
+
+        return (alignContent, justifyContent);
+    }
+
+    /// <summary>Splits one <c>place-*</c> value into the two axes it names, align first.</summary>
+    private static (FlexAlignment Align, FlexAlignment Justify) Split(String text)
+    {
+        var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var align = FlexStyle.ParseAlignment(parts[0], FlexAlignment.Auto);
+
+        return (align, parts.Length > 1 ? FlexStyle.ParseAlignment(parts[1], FlexAlignment.Auto) : align);
+    }
+
+    /// <summary>
     /// Reads <c>place-items</c> as a fallback for the two <c>*-items</c> longhands. The shorthand is
     /// read from its text because AngleSharp.Css does not register it, so it never reaches the
     /// longhands; one value applies to both axes, two are align then justify.
@@ -726,18 +780,7 @@ internal readonly struct GridStyle
         {
             var text = FlexStyle.Text(style, "place-items");
 
-            if (text.Length == 0)
-            {
-                return (FlexAlignment.Auto, FlexAlignment.Auto);
-            }
-
-            var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var align = FlexStyle.ParseAlignment(parts[0], FlexAlignment.Auto);
-            var justify = parts.Length > 1
-                ? FlexStyle.ParseAlignment(parts[1], FlexAlignment.Auto)
-                : align;
-
-            return (align, justify);
+            return text.Length == 0 ? (FlexAlignment.Auto, FlexAlignment.Auto) : Split(text);
         }
 
         var alignItems = Alignment(source, "align-items", CssInitialValues.AlignItemsGrid);

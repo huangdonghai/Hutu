@@ -954,6 +954,32 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task PlaceContentStartLeavesTheFreeSpaceWhereItIs()
+    {
+        using var view = CreateView(400);
+
+        // One value of `place-content` stands for both axes, and `start` on the inline axis means the
+        // `auto` tracks keep the size their content asks for instead of sharing out what the container
+        // left over (CSS Box Alignment 3 §5.1, CSS Grid 1 §6.3, §10.3).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;place-content:start;width:400px;height:100px;" +
+            "grid-template-columns:repeat(3,auto);gap:20px'>" +
+            "<div id='a' style='width:40px;height:10px'></div>" +
+            "<div id='b' style='width:50px;height:10px'></div>" +
+            "<div id='c' style='width:60px;height:10px'></div>" +
+            "</div></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "a").BorderBox.X, Is.EqualTo(0).Within(0.5));
+            Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(60).Within(0.5), "each track is as wide as its item");
+            Assert.That(Find(view, "c").BorderBox.X, Is.EqualTo(130).Within(0.5));
+            Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(40).Within(0.5), "and none took the leftover");
+        });
+    }
+
+    [Test]
     public async Task ASubgridsItemRaisesTheTrackItStandsIn()
     {
         using var view = CreateView(400);
