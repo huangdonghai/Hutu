@@ -365,6 +365,46 @@ public sealed class FlexLayoutTests
     }
 
     [Test]
+    public async Task AStretchedItemTakesItsMainSizeFromTheRatio()
+    {
+        using var view = CreateView(400);
+
+        // A row with a definite height stretches the item to that height, and the width it left to auto
+        // comes back from the ratio rather than staying at the content's nothing (CSS Sizing 4 §5.1).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:inline-flex;height:100px'>" +
+            "<div id='item' style='aspect-ratio:1/1'></div>" +
+            "</div></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "item").BorderBox.Width, Is.EqualTo(100).Within(0.5));
+            Assert.That(Find(view, "item").BorderBox.Height, Is.EqualTo(100).Within(0.5));
+        });
+    }
+
+    [Test]
+    public async Task AColumnItemTakesItsWidthFromTheRatio()
+    {
+        using var view = CreateView(400);
+
+        // A column's inline size is its cross size, and the item's height floor is ninety: the width
+        // follows the ratio and the item's padding is added around it (CSS Sizing 4 §5.1).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;flex-direction:column;float:left'>" +
+            "<div id='item' style='min-height:90px;aspect-ratio:1/1;padding:5px;background:green'></div>" +
+            "</div></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "item").BorderBox.Width, Is.EqualTo(100).Within(0.5));
+            Assert.That(Find(view, "item").BorderBox.Height, Is.EqualTo(100).Within(0.5));
+        });
+    }
+
+    [Test]
     public async Task AColumnStacksTheItemsVertically()
     {
         using var view = CreateView(400);

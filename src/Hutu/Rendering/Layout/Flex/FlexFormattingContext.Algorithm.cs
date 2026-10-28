@@ -363,6 +363,14 @@ internal sealed partial class FlexFormattingContext
                 var resolved = style.Height.Resolve(context.ContainingBlock.Height);
                 cross = isBorderBox ? resolved - item.InsetCross : resolved;
             }
+            else if (style.AspectRatio is { Value: > 0 } &&
+                BoxModel.HeightFromRatio(style, item.UsedMain, null, item.InsetCross) is { } fromRatio)
+            {
+                // The main size is settled and the cross was left to the ratio: the height is the
+                // width over the ratio, which is what makes an item with `aspect-ratio: 1/1` as tall
+                // as it is wide (CSS Sizing 4 §5.1).
+                cross = fromRatio;
+            }
             else
             {
                 // The used main size is a content size, so the available width that produces it is
@@ -385,6 +393,15 @@ internal sealed partial class FlexFormattingContext
         {
             var resolved = style.Width.Resolve(context.ContainingBlock.Width);
             cross = isBorderBox ? resolved - item.InsetCross : resolved;
+        }
+        else if (style.AspectRatio is { Value: > 0 } &&
+            BoxModel.WidthFromRatio(
+                style,
+                isBorderBox ? item.UsedMain + item.InsetMain : item.UsedMain,
+                item.InsetCross) is { } fromRatio)
+        {
+            // A column's cross size follows its main size through the ratio in the same way.
+            cross = fromRatio;
         }
         else if (item.Box.Flow.IsVertical)
         {

@@ -653,6 +653,8 @@ internal sealed partial class FlexFormattingContext
         var contentCross = ResolveCrossSizes(
             lines, crossSize, crossGap, flex.AlignContent, flex.AlignItems, mainIsHorizontal, context);
 
+        ApplyRatios(lines, mainIsHorizontal, flex.AlignItems, mainGap);
+
         var contentMain = mainSize ?? MaxLineMain(lines);
 
         Place(lines, flex, box.Flow, contentMain, contentCross, mainGap);
@@ -944,9 +946,120 @@ internal sealed partial class FlexFormattingContext
     }
 
     /// <summary>
-    /// The sizes the container's items want, with the container's own declared width set aside. It is
-    /// what a basis of <c>content</c> asks for, and what the automatic minimum size of a flex item is
-    /// built from - a content size suggestion is the size of the content and nothing else
+    /// Lets an item's aspect ratio settle the main size it left to auto once the cross size is known:
+    /// a stretched item takes the line's cross size, and the ratio turns that into a main size
+    /// (CSS Sizing 4 §5.1). The line's main size is restated so the container can follow.
+    /// </summary>
+    private static void ApplyRatios(
+        List<FlexLine> lines, Boolean mainIsHorizontal, FlexAlignment alignItems, Double mainGap)
+    {
+        foreach (var line in lines)
+        {
+            var changed = false;
+
+            foreach (var item in line.Items)
+            {
+                var style = item.Box.Style;
+
+                if (style.AspectRatio is not { Value: > 0 } ||
+                    !(mainIsHorizontal ? style.Width.IsAuto : style.Height.IsAuto) ||
+                    !(item.Basis.IsAuto || item.BasisIsContent))
+                {
+                    continue;
+                }
+
+                var align = item.AlignSelf == FlexAlignment.Auto ? alignItems : item.AlignSelf;
+                var stretched = align is FlexAlignment.Stretch or FlexAlignment.Normal &&
+                    item.AutoCross && !item.AutoMarginCrossStart && !item.AutoMarginCrossEnd;
+                var crossDeclared = !(mainIsHorizontal ? style.Height.IsAuto : style.Width.IsAuto);
+
+                if (!stretched && !crossDeclared)
+                {
+                    continue;
+                }
+
+                var main = mainIsHorizontal
+                    ? BoxModel.WidthFromRatio(
+                        style,
+                        BoxModel.IsBorderBox(style)
+                            ? item.UsedCross + item.InsetCross
+                            : item.UsedCross,
+                        item.InsetMain)
+                    : BoxModel.MainFromRatio(style, item.UsedCross, item.InsetMain);
+
+                if (main is { } fromRatio)
+                {
+                    item.UsedMain = item.ClampMain(fromRatio);
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                var used = 0.0;
+
+                foreach (var item in line.Items)
+                {
+                    used += item.OuterMain;
+                }
+
+                line.MainSize = used + (line.Items.Count > 1 ? mainGap * (line.Items.Count - 1) : 0);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the cross size the container's own declarations settle, which is the size a stretched item
+    /// receives: the height of a row (CSS Flexbox 1 §9.4). Null where the container left it to the
+    /// content, or where the cross axis is the horizontal one.
+    /// </summary>
+    private static Double? ContainerContentCross(
+        FlexStyle flex, Box box, ComputedStyle style, Double basis, LayoutContext context)
+    {
+        if (flex.IsRow == box.Flow.IsVertical)
+        {
+            return null;
+        }
+
+        var insets = style.Padding.Resolve(basis).Vertical + BlockLayout.BorderOf(box).Vertical;
+
+        return BoxModel.DeclaredHeight(style, context.ContainingBlock.Height, insets);
+    }
+
+    /// <summary>
+    /// Gets the main size an item states for itself in a column - its declared height, or the floor
+    /// `min-height` sets - as a content size. Null where the main is left to the content.
+    /// </summary>
+    private static Double? MainContent(Box child, LayoutContext context, Double basis)
+    {
+        var style = child.Style;
+        var insets = style.Padding.Resolve(basis).Vertical + BlockLayout.BorderOf(child).Vertical;
+
+        if (BoxModel.DeclaredHeight(style, context.ContainingBlock.Height, insets) is { } declared)
+        {
+            return declared;
+        }
+
+        return BoxModel.ContentBound(
+            style.MinHeight, context.ContainingBlock.Height, insets, BoxModel.IsBorderBox(style)) is { } floor
+                ? floor
+                : null;
+    }
+
+    /// <summary>Gets whether an item asks to fill its line's cross axis.</summary>
+    private static Boolean Stretches(Box child, FlexAlignment alignItems)
+    {
+        var align = child.Style.Flex.AlignSelf == FlexAlignment.Auto
+            ? alignItems
+            : child.Style.Flex.AlignSelf;
+
+        return align is FlexAlignment.Stretch or FlexAlignment.Normal;
+    }
+
+    /// <summary>
+    /// Gets the sizes a box's content wants once its own declared width is set aside. It is what a
+    /// basis of <c>content</c> asks for, and what the automatic minimum size of a flex item is built
+    /// from - a content size suggestion is the size of the content and nothing else
     /// (CSS Flexbox 1 §4.5), so the declared width must not be consulted here.
     /// </summary>
     public IntrinsicSize MeasureContentIntrinsic(Box box, LayoutContext context)
@@ -978,10 +1091,49 @@ internal sealed partial class FlexFormattingContext
             // stated width is then exactly what the item contributes - a column holding a 6px child is
             // 6px wide whatever the child's own content comes to.
             var childIntrinsic = _engine.MeasureContentIntrinsic(child, context);
-            var margin = child.Style.Margin.Resolve(basis).Horizontal;
+            var childMargins = child.Style.Margin.Resolve(basis);
+            var margin = childMargins.Horizontal;
 
             var childMin = childIntrinsic.MinContent + margin;
             var childMax = childIntrinsic.MaxContent + margin;
+
+            if (mainIsHorizontal &&
+                Stretches(child, flex.AlignItems) &&
+                child.Style.Width.IsAuto &&
+                ContainerContentCross(flex, box, style, basis, context) is { } lineCross &&
+                lineCross > childMargins.Vertical &&
+                BoxModel.WidthFromRatio(
+                    child.Style,
+                    BoxModel.IsBorderBox(child.Style)
+                        ? lineCross - childMargins.Vertical
+                        : lineCross - childMargins.Vertical -
+                            (child.Style.Padding.Resolve(basis).Vertical + BlockLayout.BorderOf(child).Vertical),
+                    InlineInsets(child, basis)) is { } fromRatio)
+            {
+                // The item's cross size is the line's - it stretches to it - and its main size was
+                // left to the ratio, so the width the container has to hold is the one the ratio
+                // gives from that height (CSS Sizing 4 §5.1).
+                childMin = fromRatio + InlineInsets(child, basis) + margin;
+                childMax = childMin;
+            }
+            else if (!mainIsHorizontal &&
+                child.Style.Width.IsAuto &&
+                child.Style.AspectRatio is { Value: > 0 } &&
+                MainContent(child, context, basis) is { } childMain)
+            {
+                // A column's inline size is its cross size, and an item whose width the page left out
+                // takes it from its main size through the ratio - so the column has to be as wide as
+                // that width (CSS Sizing 4 §5.1).
+                var childInsetV = child.Style.Padding.Resolve(basis).Vertical + BlockLayout.BorderOf(child).Vertical;
+                var childInsetH = InlineInsets(child, basis);
+                var widthArg = BoxModel.IsBorderBox(child.Style) ? childMain + childInsetV : childMain;
+
+                if (BoxModel.WidthFromRatio(child.Style, widthArg, childInsetH) is { } ratioWidth)
+                {
+                    childMin = ratioWidth + childInsetH + margin;
+                    childMax = childMin;
+                }
+            }
 
             if (BoxModel.SettledInlineExtent(
                     child.Style,
