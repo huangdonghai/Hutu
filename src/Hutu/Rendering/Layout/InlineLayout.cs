@@ -3309,8 +3309,60 @@ internal sealed class InlineLayout
         // way: a box in a column stands on a line of its own frame, and the line here would be measuring
         // a baseline from an edge the box does not have one against. A box that holds blocks has no line
         // of its own to stand on either, and falls back to its end edge.
-        if (flow.IsVertical != box.Flow.IsVertical || HasBlockChildren(box) || box.Children.Count == 0)
+        if (flow.IsVertical != box.Flow.IsVertical)
         {
+            return flow.BlockExtent(size.Width, size.Height);
+        }
+
+        // A flex or grid container has no line box of its own, but its first item does, and that item's
+        // baseline is the container's: the item may be aligned to the start, the middle or the end of
+        // the container's cross axis, and the container moves its baseline with it. Chrome places a
+        // marker beside a list item that opens with an inline-flex on that baseline, not on the
+        // container's end edge (CSS Flexbox 1 §8.5, CSS Grid 1 §11.1). A container that contains its
+        // contents speaks only for its own box: the contents do not reach the line it stands on.
+        if (!box.Flow.IsVertical && box.Kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry)
+        {
+            var flexPadding = box.Style.Padding.Resolve(basis);
+            var flexBorder = BlockLayout.BorderOf(box);
+            var contentBlock = Math.Max(0, size.Height - flexPadding.Vertical - flexBorder.Vertical);
+
+            if (box.Style.Contain is not { Stated: true } && contentBlock > 0)
+            {
+                var container = context.Engine.Arrange(
+                    box, new Rect(0, 0, size.Width, size.Height), context.Atomic);
+                var first = FirstLineOfContainer(container);
+
+                if (first is { } line)
+                {
+                    return BlockStartBaseline(
+                        line, container.RelativeDisplacement, box.Flow, flow.BlockExtent(size.Width, size.Height));
+                }
+            }
+
+            return flow.BlockExtent(size.Width, size.Height);
+        }
+
+        if (HasBlockChildren(box) || box.Children.Count == 0)
+        {
+            // A block child carries its own lines, and the last of them is the one CSS 2.1 §10.8.1
+            // answers with: it may stand inside the child, three levels down, so it cannot be read from
+            // the box's own inline content. The box is laid out for the question and the answer thrown
+            // away - in an engine of its own, so the out-of-flow children the trial places are not
+            // placed a second time when the box is arranged for real. A box whose overflow is clipped
+            // has its content taken out of the question: §10.8.1 gives it the bottom margin edge.
+            if (!box.Style.ClipsOverflow)
+            {
+                var probe = new LayoutEngine(_measurer);
+                var arranged = probe.Arrange(
+                    box, new Rect(0, 0, size.Width, size.Height), context.Atomic);
+
+                if (LastLineInFlow(arranged, arranged.RelativeDisplacement) is { } found)
+                {
+                    return BlockStartBaseline(
+                        found.Line, found.Displacement, flow, flow.BlockExtent(size.Width, size.Height));
+                }
+            }
+
             return flow.BlockExtent(size.Width, size.Height);
         }
 
@@ -3362,6 +3414,141 @@ internal sealed class InlineLayout
         return false;
     }
 
+    /// <summary>
+    /// Gets the line a flex or grid container stands on for its baseline: the first line an item of the
+    /// container makes, read from the block-start edge of the container inward, and within one line the
+    /// item at the main-start edge. A wrapping container may put the line its markup wrote first at the
+    /// far edge - <c>wrap-reverse</c> does - and the line a browser reads first is still the one nearest
+    /// the block-start edge, so the marker and the line the container stands on take their baseline from
+    /// that line (CSS Flexbox 1 §8.5).
+    /// </summary>
+    private static LayoutBox? FirstLineOfContainer(LayoutBox container)
+    {
+        var flex = container.Source.Style.Flex;
+        var row = flex.IsRow;
+        var flow = container.Flow;
+        var rtl = container.Flow.IsRightToLeft;
+        var reverse = row
+            ? flex.Direction == FlexDirection.RowReverse
+            : flex.Direction == FlexDirection.ColumnReverse;
+        LayoutBox? best = null;
+        var bestBlock = Double.PositiveInfinity;
+        var bestMain = Double.PositiveInfinity;
+        var bestX = Double.PositiveInfinity;
+
+        void Walk(LayoutBox node)
+        {
+            if (node.Kind == LayoutKind.Line)
+            {
+                var box = node.BorderBox;
+
+                // The box the line stands beside reads first from its own block-start edge inward: the
+                // top of a row, the right or left of a column. Within one line the item at the main-start
+                // edge speaks for it, and the leftmost line settles the case where two wrap-reversed
+                // lines share both coordinates (CSS Flexbox 1 §8.5).
+                var block = flow.IsVertical ? (flow.BlockSign < 0 ? -box.X : box.X) : box.Y;
+                var main = row ? (rtl ? -box.X : box.X) : box.Y;
+
+                if (reverse)
+                {
+                    main = -main;
+                }
+
+                if (block < bestBlock - 0.01 ||
+                    (Math.Abs(block - bestBlock) <= 0.01 &&
+                        (main < bestMain - 0.01 ||
+                            (Math.Abs(main - bestMain) <= 0.01 && box.X < bestX))))
+                {
+                    best = node;
+                    bestBlock = block;
+                    bestMain = main;
+                    bestX = box.X;
+                }
+
+                return;
+            }
+
+            foreach (var child in node.Children)
+            {
+                if (child.IsOutOfFlow || child.Source.Style.Float != FloatSide.None)
+                {
+                    continue;
+                }
+
+                Walk(child);
+            }
+        }
+
+        Walk(container);
+
+        return best;
+    }
+
+    /// <summary>
+    /// Gets the last line box in the box's normal flow, searching its own last children before those
+    /// nested inside them, together with how far relative positioning moved the line on the way down.
+    /// A box that left the flow - or a float, which takes no place in the lines - carries no line of
+    /// this box with it, so its subtree is passed by.
+    /// </summary>
+    private static (LayoutBox Line, Offset Displacement)? LastLineInFlow(LayoutBox box, Offset carried)
+    {
+        if (box.Kind == LayoutKind.Line)
+        {
+            // A line box standing only to say where an out-of-flow box would have gone is not a line
+            // of the box's normal flow, and its baseline is not the box's: §10.8.1 asks for the last
+            // line the content formed, and content that left the flow forms none.
+            var inFlow = false;
+
+            foreach (var child in box.Children)
+            {
+                if (!child.IsOutOfFlow && child.Source.Style.Float == FloatSide.None)
+                {
+                    inFlow = true;
+                    break;
+                }
+            }
+
+            return inFlow || box.Children.Count == 0 ? (box, carried) : null;
+        }
+
+        for (var index = box.Children.Count - 1; index >= 0; index--)
+        {
+            var child = box.Children[index];
+
+            if (child.IsOutOfFlow || child.Source.Style.Float != FloatSide.None)
+            {
+                continue;
+            }
+
+            var shift = new Offset(
+                carried.X + child.RelativeDisplacement.X,
+                carried.Y + child.RelativeDisplacement.Y);
+
+            if (LastLineInFlow(child, shift) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets how far a line's baseline stands from the block-start edge of the box that holds it, which
+    /// is the form an inline-block's baseline has to take: a row measures it down from the top, and a
+    /// column from the right or the left, whichever edge its block axis begins at. The line's place is
+    /// read before relative positioning moved it, which is what <paramref name="displacement"/> puts
+    /// back (CSS 2.1 §9.4.3).
+    /// </summary>
+    private static Double BlockStartBaseline(
+        LayoutBox line, Offset displacement, WritingModeInfo flow, Double blockSize)
+    {
+        var baseline = flow.IsVertical
+            ? line.BorderBox.X - displacement.X + line.Baseline
+            : line.BorderBox.Y - displacement.Y + line.Baseline;
+
+        return flow.BlockSign < 0 ? blockSize - baseline : baseline;
+    }
     /// <summary>Gets the padding and border a box adds along its own inline axis.</summary>
     /// <remarks>
     /// A box whose text runs down a column borders its content above and below rather than to either
@@ -5760,6 +5947,8 @@ internal sealed class InlineLayout
             // box's alignment is worked out from it once the line knows how far it reached.
             var above = new Double[line.Fragments.Count];
             var below = new Double[line.Fragments.Count];
+            var runAscent = Double.NegativeInfinity;
+            var runDescent = Double.NegativeInfinity;
             var inFlow = false;
 
             for (var position = 0; position < line.Fragments.Count; position++)
@@ -5848,6 +6037,8 @@ internal sealed class InlineLayout
 
                 above[position] = fragmentAscent;
                 below[position] = fragmentDescent;
+                runAscent = Math.Max(runAscent, fragmentAscent);
+                runDescent = Math.Max(runDescent, fragmentDescent);
                 ascent = Math.Max(ascent, fragmentAscent);
                 descent = Math.Max(descent, fragmentDescent);
             }
@@ -5910,8 +6101,8 @@ internal sealed class InlineLayout
             // raised by `super`, or aligned to the `top` of the line, lifts the height the line takes,
             // and a lowered one reaches below it. The reference each alignment is taken against is the
             // line as it was gathered above, before any box on it was moved.
-            var reach = ascent;
-            var depth = descent;
+            var alignedReach = Double.NegativeInfinity;
+            var alignedDepth = Double.NegativeInfinity;
             Dictionary<InlineAncestor, Double>? bands = null;
 
             if (inFlow)
@@ -5920,11 +6111,17 @@ internal sealed class InlineLayout
                 {
                     var fragment = line.Fragments[position];
 
-                    if (fragment.OutOfFlow ||
-                        (IsBaseline(fragment.Style) && fragment.Inline?.AnyAlignment != true))
+                    if (fragment.OutOfFlow)
+                    {
+                        continue;
+                    }
+
+                    if (IsBaseline(fragment.Style) && fragment.Inline?.AnyAlignment != true)
                     {
                         // Nothing asks for this box to stand anywhere but on the baseline the line
-                        // shares, and the extents gathered above counted it there already.
+                        // shares, so it stays where the gathering above put it.
+                        alignedReach = Math.Max(alignedReach, above[position]);
+                        alignedDepth = Math.Max(alignedDepth, below[position]);
                         continue;
                     }
 
@@ -5973,14 +6170,28 @@ internal sealed class InlineLayout
                         }
                     }
 
-                    if (running == 0)
-                    {
-                        continue;
-                    }
-
                     fragment.BaselineShift = running;
-                    reach = Math.Max(reach, above[position] - running);
-                    depth = Math.Max(depth, below[position] + running);
+                    alignedReach = Math.Max(alignedReach, above[position] - running);
+                    alignedDepth = Math.Max(alignedDepth, below[position] + running);
+                }
+            }
+
+            // The line box is grown from the boxes as they end up standing, not from where they stood
+            // before <c>vertical-align</c> moved them (CSS 2.1 §10.8.1). A box aligned to the top of the
+            // line hangs its whole height below that edge, so the reach and depth gathered above are the
+            // reference the alignment was measured against, not the line's final extent.
+            if (!Double.IsNegativeInfinity(alignedReach))
+            {
+                // A run of text still reaches as far as its face does even when `vertical-align` lifts
+                // it, which is the room the line keeps under a superscript; a box that stands on its
+                // own baseline is measured only where the alignment leaves it.
+                ascent = Math.Max(alignedReach, runAscent);
+                descent = Math.Max(alignedDepth, runDescent);
+
+                if (strut is { } band)
+                {
+                    ascent = Math.Max(ascent, band.Ascent);
+                    descent = Math.Max(descent, band.Descent);
                 }
             }
 
@@ -6050,14 +6261,12 @@ internal sealed class InlineLayout
                     below[at] = Math.Max(below[at], markDescent);
                     ascent = Math.Max(ascent, above[at]);
                     descent = Math.Max(descent, below[at]);
-                    reach = Math.Max(reach, ascent);
-                    depth = Math.Max(depth, descent);
                 }
             }
 
             line.BandShifts = bands;
-            line.Ascent = reach;
-            line.Height = reach + depth;
+            line.Ascent = ascent;
+            line.Height = ascent + descent;
 
             var hanging = HangingTrail(measurer);
             line.Hanging = hanging;

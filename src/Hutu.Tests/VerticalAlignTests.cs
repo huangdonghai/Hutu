@@ -151,6 +151,22 @@ public sealed class VerticalAlignTests
     }
 
     [Test]
+    public async Task ATopAlignedBoxDoesNotKeepTheBaselineRoomItWasMeasuredFrom()
+    {
+        using var view = CreateView();
+
+        // Two boxes of the same height, one standing on its bottom edge and one on a line ten pixels
+        // down: both are aligned to the line's top, so the line is thirty tall. The room the second
+        // one reached below its own baseline before it was moved is not part of that line.
+        await view.SetHtml(Document(
+            "<span style='display:inline-block;width:5px;height:30px'></span>" +
+            "<span style='display:inline-block;vertical-align:top;width:5px;height:30px'>" +
+            "<div style='font-size:10px;line-height:10px'>x</div></span>"));
+
+        Assert.That(Lines(view).First().BorderBox.Height, Is.EqualTo(30));
+    }
+
+    [Test]
     public async Task AnAlignedBoxCarriesTheTextInsideItAlong()
     {
         using var view = CreateView();

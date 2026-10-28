@@ -1099,7 +1099,7 @@ internal sealed record LayoutProfile(
     /// Gets the first line the box reaches, searching its own lines before those of anything nested in
     /// it - which is the line a marker is drawn level with.
     /// </summary>
-    private static LayoutBox? FirstLine(LayoutBox box)
+    internal static LayoutBox? FirstLine(LayoutBox box)
     {
         if (box.Kind == LayoutKind.Line)
         {
@@ -1109,6 +1109,37 @@ internal sealed record LayoutProfile(
         foreach (var child in box.Children)
         {
             if (FirstLine(child) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the last line box in the box's normal flow, searching its own last children before those
+    /// nested inside them, which is the line an inline-block's baseline is read from (CSS 2.1 §10.8.1).
+    /// A box that left the flow - or a float, which takes no place in the lines - carries no line of
+    /// this box with it, so its subtree is passed by.
+    /// </summary>
+    internal static LayoutBox? LastLine(LayoutBox box)
+    {
+        if (box.Kind == LayoutKind.Line)
+        {
+            return box;
+        }
+
+        for (var index = box.Children.Count - 1; index >= 0; index--)
+        {
+            var child = box.Children[index];
+
+            if (child.IsOutOfFlow || child.Source.Style.Float != FloatSide.None)
+            {
+                continue;
+            }
+
+            if (LastLine(child) is { } found)
             {
                 return found;
             }

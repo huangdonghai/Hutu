@@ -625,6 +625,45 @@ public sealed class InlineBoxTests
         Assert.That(command.Reversed, Is.False, "a Hebrew run reads right to left of its own accord");
     }
 
+    [Test]
+    public async Task AnInlineBlockWithABlockChildStandsOnItsLastLinesBaseline()
+    {
+        using var view = CreateView();
+
+        // The block child carries the line the box stands on, and that line is three levels down: the
+        // inline-block's baseline is the child's text, not the bottom edge the box happens to reach
+        // (CSS 2.1 §10.8.1). The twenty-pixel child still reaches past the ten-pixel line, so only the
+        // baseline tells the two answers apart: the line stays at the font's eight.
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='font-size:10px;line-height:1'>a<span id='box' style='display:inline-block'>" +
+            "<div style='height:20px;font-size:10px;line-height:10px'>b</div></span></div></body></html>");
+
+        var box = view.Document!.GetElementById("box")!;
+
+        Assert.That(Lines(view).First().Baseline, Is.EqualTo(8), "the line reaches only the child's text");
+        Assert.That(view.GetElementBounds(box)!.Value.Y, Is.EqualTo(0), "and the box stands on that baseline");
+    }
+
+    [Test]
+    public async Task AnInlineBlockThatClipsItsOverflowStandsOnItsBottomEdge()
+    {
+        using var view = CreateView();
+
+        // A box that hides what leaves it has no line of its own to stand on: §10.8.1 sends it to the
+        // bottom margin edge, so the text beside it keeps the line's own eight-pixel baseline.
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='font-size:10px;line-height:1'>a<span id='box' style='display:inline-block;overflow:hidden'>" +
+            "<div style='height:20px;font-size:10px;line-height:10px'>b</div></span></div></body></html>");
+
+        var box = view.Document!.GetElementById("box")!;
+        var bounds = view.GetElementBounds(box)!.Value;
+
+        Assert.That(Lines(view).First().Baseline, Is.EqualTo(20), "the box's bottom edge is its baseline");
+        Assert.That(bounds.Y + bounds.Height, Is.EqualTo(20), "and that edge sits on the line's baseline");
+    }
+
     private static String Document(String content, String lineHeight = "2", Int32 width = 0) =>
         "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:" + lineHeight +
         (width > 0 ? ";width:" + width + "px" : String.Empty) +

@@ -297,6 +297,34 @@ public sealed class ListMarkerTests
     }
 
     [Test]
+    public async Task AnItemThatOpensWithAnInlineFlexIsMarkedOnItsFirstItemsLine()
+    {
+        var laid = await LaidOut(
+            "",
+            "<ul><li><div style='display:inline-flex;height:50px;align-items:flex-end'>" +
+            "<span style='line-height:20px'>deep</span></div></li></ul>");
+
+        var item = Marked(laid.Root);
+        var textLine = Find(
+            laid.Root,
+            box => box.Kind == LayoutKind.Line && box.Children.Exists(child => child.Text == "deep"));
+        var anonymous = FirstLine(laid.Root);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(textLine, Is.Not.Null, "the item's text stands on a line");
+            Assert.That(
+                item.MarkerBounds!.Value.Y + item.MarkerBaseline,
+                Is.EqualTo(textLine!.BorderBox.Y + textLine.Baseline).Within(0.5),
+                "the marker follows the first item's baseline through the inline-flex");
+            Assert.That(
+                anonymous.BorderBox.Y + anonymous.Baseline,
+                Is.EqualTo(textLine.BorderBox.Y + textLine.Baseline).Within(0.5),
+                "and the line the inline-flex stands on takes that same baseline");
+        });
+    }
+
+    [Test]
     public async Task APaintedListCarriesItsMarkersAsText()
     {
         var laid = await LaidOut("", "<ul><li>one</li><li>two</li></ul>");
