@@ -18,8 +18,21 @@ internal enum FlexAlignment : byte
 {
     /// <summary>Not set: a flex item defers to its container, a container defers to its initial value.</summary>
     Auto,
+    /// <summary>
+    /// The start edge of the container's own axis: the inline start under <c>justify-content</c>, the
+    /// block start under <c>align-content</c>, and never the main start a reversed flex direction
+    /// moves (CSS Box Alignment 3 §5.2).
+    /// </summary>
     Start,
+    /// <summary>The end edge of the container's own axis, the counterpart of <see cref="Start"/>.</summary>
     End,
+    /// <summary>
+    /// The start edge of the flex container's main axis, which a reversed direction does move: the
+    /// <c>flex-start</c> keyword (CSS Flexbox 1 §8.2).
+    /// </summary>
+    FlexStart,
+    /// <summary>The end edge of the main axis, the <c>flex-end</c> keyword.</summary>
+    FlexEnd,
     Center,
     SpaceBetween,
     SpaceAround,
@@ -166,13 +179,12 @@ internal readonly struct FlexStyle
     internal static FlexStyle Read(ComputedStyle style)
     {
         var (rowGap, columnGap) = ReadGaps(style);
-        var justify = ReadAlignment(style, "justify-content", CssInitialValues.JustifyContent);
         var (grow, shrink, basis, basisIsContent) = ReadFlexLonghands(style);
 
         return new FlexStyle(
             ReadDirection(style),
             ReadWrap(style),
-            Justify(justify, Text(style, "justify-content")),
+            ReadAlignment(style, "justify-content", CssInitialValues.JustifyContent),
             ReadAlignment(style, "align-items", CssInitialValues.AlignItems),
             ReadAlignment(style, "align-content", CssInitialValues.AlignContent),
             rowGap,
@@ -243,8 +255,6 @@ internal readonly struct FlexStyle
         StyleLength? inheritedBasis = null)
     {
         var (rowGap, columnGap) = ReadGapsFused(find, font, dimensions);
-        var justify = ReadAlignmentFused(find("justify-content"), CssInitialValues.JustifyContent);
-
         var grow = ReadNumberFused(find("flex-grow"), 0);
         var shrink = ReadNumberFused(find("flex-shrink"), 1);
         var basis = ReadBasisFused(find("flex-basis"), font, dimensions, inheritedBasis);
@@ -264,7 +274,7 @@ internal readonly struct FlexStyle
         return new FlexStyle(
             ReadDirectionFused(find("flex-direction")),
             ReadWrapFused(find("flex-wrap")),
-            Justify(justify, Text(find("justify-content"))),
+            ReadAlignmentFused(find("justify-content"), CssInitialValues.JustifyContent),
             ReadAlignmentFused(find("align-items"), CssInitialValues.AlignItems),
             ReadAlignmentFused(find("align-content"), CssInitialValues.AlignContent),
             rowGap,
@@ -368,14 +378,19 @@ internal readonly struct FlexStyle
     /// <summary>Reads one of the alignment longhands from the element's own cascaded declaration.</summary>
     internal static FlexAlignment ReadAlignmentFused(ICssProperty? declared, FlexAlignment fallback)
     {
-        if (declared?.RawValue is CssConstantValue<FlexContentMode> constant && Map(constant.Value) is var mapped &&
-            mapped != FlexAlignment.Auto)
+        // The written keyword is read first: the parsed constant cannot tell `start` from `flex-start`
+        // or `left` from either of them, and a reversed flex direction can (CSS Box Alignment 3 §5.2).
+        var text = Text(declared);
+
+        if (text.Length > 0)
         {
-            return mapped;
+            return Parse(text, fallback);
         }
 
-        var text = Text(declared);
-        return text.Length == 0 ? fallback : Parse(text, fallback);
+        return declared?.RawValue is CssConstantValue<FlexContentMode> constant && Map(constant.Value) is var mapped &&
+            mapped != FlexAlignment.Auto
+                ? mapped
+                : fallback;
     }
 
     private static StyleLength ReadBasisFused(
@@ -476,6 +491,17 @@ internal readonly struct FlexStyle
     /// </summary>
     internal static FlexAlignment ReadAlignment(ComputedStyle style, String name, FlexAlignment fallback)
     {
+        // The text is read before the parsed constant because the constant folds every keyword with
+        // the same meaning onto one value: AngleSharp has no `flex-start` beside `start`, and no
+        // `left` beside `start` either, and a reversed flex direction tells those apart (CSS Box
+        // Alignment 3 §5.2, CSS Flexbox 1 §8.2).
+        var text = Text(style, name);
+
+        if (text.Length > 0)
+        {
+            return Parse(text, fallback);
+        }
+
         if (style.RawValue(name) is CssConstantValue<FlexContentMode> constant)
         {
             var mapped = Map(constant.Value);
@@ -486,8 +512,7 @@ internal readonly struct FlexStyle
             }
         }
 
-        var text = Text(style, name);
-        return text.Length == 0 ? fallback : Parse(text, fallback);
+        return fallback;
     }
 
     private static FlexAlignment Map(FlexContentMode mode) => mode switch
@@ -532,8 +557,10 @@ internal readonly struct FlexStyle
 
     private static FlexAlignment ParseKeyword(String text, FlexAlignment fallback) => text switch
     {
-        "flex-start" or "start" or "self-start" => FlexAlignment.Start,
-        "flex-end" or "end" or "self-end" => FlexAlignment.End,
+        "flex-start" => FlexAlignment.FlexStart,
+        "flex-end" => FlexAlignment.FlexEnd,
+        "start" or "self-start" => FlexAlignment.Start,
+        "end" or "self-end" => FlexAlignment.End,
         // The two physical spellings name the left and the right edge of the area rather than its start
         // and end along an axis. Writing modes and right-to-left tracks are not carried apart from one
         // another here, so the edge each names is the edge the box is placed against.
@@ -579,18 +606,6 @@ internal readonly struct FlexStyle
     /// </summary>
     private static Boolean OmittedBasis(ICssProperty? declared) =>
         declared is not null && String.IsNullOrWhiteSpace(declared.Value);
-
-    /// <summary>
-    /// The physical keywords <c>justify-content</c> takes beside the alignment ones: <c>right</c>
-    /// justifies at the right edge and <c>left</c> at the left one, which in a page that reads
-    /// left-to-right is the end and the start.
-    /// </summary>
-    private static FlexAlignment Justify(FlexAlignment read, String text) => text switch
-    {
-        "right" => FlexAlignment.End,
-        "left" => FlexAlignment.Start,
-        _ => read,
-    };
 
     /// <summary>
     /// Reads a plain number. The initial values of <c>flex-grow</c>, <c>flex-shrink</c> and

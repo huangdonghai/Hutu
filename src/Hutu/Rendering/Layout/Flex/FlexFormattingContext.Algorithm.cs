@@ -411,7 +411,7 @@ internal sealed partial class FlexFormattingContext
 
         switch (alignContent)
         {
-            case FlexAlignment.End:
+            case FlexAlignment.End or FlexAlignment.FlexEnd or FlexAlignment.Right:
                 offset = free;
                 break;
 

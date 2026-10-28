@@ -291,6 +291,44 @@ public sealed class FlexLayoutTests
     }
 
     [Test]
+    public async Task AReversedRowStillStartsAtTheLeftForStart()
+    {
+        using var view = CreateView(400);
+
+        // `start` names the container's inline-start edge, which a reversed row does not move; only
+        // `flex-start` follows the main axis to the right (CSS Box Alignment 3 §5.2, CSS Flexbox 1 §8.2).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;flex-direction:row-reverse;justify-content:start;width:300px'>" +
+            "<div id='a' style='width:100px'></div>" +
+            "<div id='b' style='width:100px'></div>" +
+            "</div>" +
+            "</body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.X, Is.EqualTo(100).Within(0.5));
+        Assert.That(Find(view, "b").BorderBox.X, Is.EqualTo(0).Within(0.5), "the group is packed to the left");
+    }
+
+    [Test]
+    public async Task RightInAColumnPacksAtTheStartItCannotReach()
+    {
+        using var view = CreateView(400);
+
+        // A column's main axis has no left or right, so `right` behaves as `start` - the top, even when
+        // the column stacks upwards (CSS Box Alignment 3 §5.2).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;flex-direction:column-reverse;justify-content:right;height:300px;width:100px'>" +
+            "<div id='a' style='height:100px'></div>" +
+            "<div id='b' style='height:100px'></div>" +
+            "</div>" +
+            "</body></html>");
+
+        Assert.That(Find(view, "a").BorderBox.Y, Is.EqualTo(100).Within(0.5));
+        Assert.That(Find(view, "b").BorderBox.Y, Is.EqualTo(0).Within(0.5), "the group is packed to the top");
+    }
+
+    [Test]
     public async Task AColumnStacksTheItemsVertically()
     {
         using var view = CreateView(400);

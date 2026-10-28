@@ -914,7 +914,8 @@ internal sealed partial class FlexFormattingContext
             }
             else
             {
-                (offset, extra) = Justify(flex.JustifyContent, free, items.Count);
+                (offset, extra) = Justify(
+                    flex.JustifyContent, free, items.Count, reversed, mainIsHorizontal, mainSign);
             }
 
             var lineCross = flex.IsWrapReversed
@@ -980,7 +981,6 @@ internal sealed partial class FlexFormattingContext
         }
     }
 
-    /// <summary>Splits the free main-axis space according to <c>justify-content</c>.</summary>
     /// <summary>
     /// Gets where the line's first item starts and how much goes between the items, by the
     /// <c>justify-content</c> keyword the container states.
@@ -993,21 +993,41 @@ internal sealed partial class FlexFormattingContext
     /// and <c>flex-end</c> are not among them: a centred line's items "overflow equally in both
     /// directions" when the leftover space is negative, and an end-packed line keeps its last item's
     /// edge on the line's end edge, which puts the overflow on the start side.
+    /// <para>
+    /// <c>start</c>, <c>end</c>, <c>left</c> and <c>right</c> name edges of the container rather than of
+    /// the main axis, which is why a reversed flex direction does not move them: the flow's first item
+    /// only reaches the container's start edge when the free space is put in front of it. The two
+    /// physical keywords stand for the block-start edge when the main axis is not horizontal, since an
+    /// edge the axis never reaches cannot pack along it (CSS Box Alignment 3 §5.2).
+    /// </para>
     /// </remarks>
-    private static (Double Offset, Double Extra) Justify(FlexAlignment justify, Double free, Int32 count)
+    private static (Double Offset, Double Extra) Justify(
+        FlexAlignment justify, Double free, Int32 count, Boolean reversed, Boolean mainIsHorizontal, Int32 mainSign)
     {
         if (free < 0)
         {
             justify = justify switch
             {
-                FlexAlignment.SpaceBetween or FlexAlignment.SpaceAround or FlexAlignment.SpaceEvenly => FlexAlignment.Start,
+                FlexAlignment.SpaceBetween or FlexAlignment.SpaceAround or FlexAlignment.SpaceEvenly =>
+                    FlexAlignment.FlexStart,
                 _ => justify,
             };
         }
 
+        // The offset that packs the flow's first item against the container's start edge, and the one
+        // that packs it against the end edge. A reversed direction puts the first item at the end, so
+        // the free space has to go in front of it to bring the line back to the start.
+        var start = reversed ? free : 0.0;
+        var end = free - start;
+        var left = mainIsHorizontal ? (mainSign > 0 ? start : end) : start;
+
         return justify switch
         {
-            FlexAlignment.End or FlexAlignment.Right => (free, 0.0),
+            FlexAlignment.Start => (start, 0.0),
+            FlexAlignment.End => (end, 0.0),
+            FlexAlignment.FlexEnd => (free, 0.0),
+            FlexAlignment.Left => (left, 0.0),
+            FlexAlignment.Right => (mainIsHorizontal ? free - left : start, 0.0),
             FlexAlignment.Center => (free / 2, 0.0),
             FlexAlignment.SpaceBetween when count > 1 => (0.0, free / (count - 1)),
             FlexAlignment.SpaceAround when count > 0 => (free / count / 2, free / count),
@@ -1049,7 +1069,7 @@ internal sealed partial class FlexFormattingContext
         // its end.
         return align switch
         {
-            FlexAlignment.End => space,
+            FlexAlignment.End or FlexAlignment.FlexEnd => space,
             FlexAlignment.Center => space / 2,
             _ => 0,
         };

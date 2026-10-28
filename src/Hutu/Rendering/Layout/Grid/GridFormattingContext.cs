@@ -360,8 +360,8 @@ internal sealed class GridFormattingContext
         fromEnd
             ? align switch
             {
-                FlexAlignment.Start => FlexAlignment.End,
-                FlexAlignment.End => FlexAlignment.Start,
+                FlexAlignment.Start or FlexAlignment.FlexStart => FlexAlignment.End,
+                FlexAlignment.End or FlexAlignment.FlexEnd => FlexAlignment.Start,
                 _ => align,
             }
             : align;
@@ -2331,7 +2331,7 @@ internal sealed class GridFormattingContext
     private static Double Space(FlexAlignment align, Double free) => align switch
     {
         FlexAlignment.Center => Math.Max(0, free) / 2,
-        FlexAlignment.End or FlexAlignment.Right => Math.Max(0, free),
+        FlexAlignment.End or FlexAlignment.FlexEnd or FlexAlignment.Right => Math.Max(0, free),
         _ => 0.0,
     };
 
@@ -2511,7 +2511,7 @@ internal sealed class GridFormattingContext
 
         return align switch
         {
-            FlexAlignment.End => (space, 0.0),
+            FlexAlignment.End or FlexAlignment.FlexEnd or FlexAlignment.Right => (space, 0.0),
             FlexAlignment.Center => (space / 2, 0.0),
             FlexAlignment.SpaceBetween when count > 1 => (0.0, space / (count - 1)),
             FlexAlignment.SpaceAround when count > 0 => (space / count / 2, space / count),

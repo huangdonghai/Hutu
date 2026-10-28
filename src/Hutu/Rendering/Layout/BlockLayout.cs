@@ -3276,7 +3276,7 @@ internal sealed class BlockLayout
         var shift = box.Style.AlignContent switch
         {
             FlexAlignment.Center or FlexAlignment.SpaceAround or FlexAlignment.SpaceEvenly => free / 2,
-            FlexAlignment.End or FlexAlignment.Right => free,
+            FlexAlignment.End or FlexAlignment.FlexEnd or FlexAlignment.Right => free,
             _ => 0.0,
         };
 

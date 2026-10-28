@@ -113,7 +113,7 @@ internal static class CssInitialValues
     // `normal`, and what `normal` behaves as is not the same in each. `justify-content` is flex's
     // `flex-start` but grid's `stretch`; `align-items` is flex's `stretch` but grid's `auto`, which
     // grid then reads as stretch for the axes it applies to.
-    internal const FlexAlignment JustifyContent = FlexAlignment.Start;
+    internal const FlexAlignment JustifyContent = FlexAlignment.FlexStart;
 
     internal const FlexAlignment JustifyContentGrid = FlexAlignment.Stretch;
 

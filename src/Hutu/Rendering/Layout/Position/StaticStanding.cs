@@ -49,7 +49,7 @@ internal readonly struct StaticStanding
         (self == FlexAlignment.Auto ? container : self) switch
         {
             FlexAlignment.Center => FlexAlignment.Center,
-            FlexAlignment.End => FlexAlignment.End,
+            FlexAlignment.End or FlexAlignment.FlexEnd => FlexAlignment.End,
             FlexAlignment.LastBaseline when baselineAtEnd => FlexAlignment.End,
             FlexAlignment.Left => FlexAlignment.Left,
             FlexAlignment.Right => FlexAlignment.Right,
@@ -65,7 +65,7 @@ internal readonly struct StaticStanding
     public static Double Stand(FlexAlignment align, Double slack) => align switch
     {
         FlexAlignment.Center => slack / 2,
-        FlexAlignment.End or FlexAlignment.Right => slack,
+        FlexAlignment.End or FlexAlignment.FlexEnd or FlexAlignment.Right => slack,
         _ => 0,
     };
 }
