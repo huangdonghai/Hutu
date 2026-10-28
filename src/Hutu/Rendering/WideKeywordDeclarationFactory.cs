@@ -3,6 +3,7 @@ using AngleSharp.Css.Dom;
 using AngleSharp.Css.Parser;
 using AngleSharp.Text;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace Hutu.Rendering;
@@ -33,7 +34,13 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
     /// the wrapper we put around them is not, and would otherwise be re-allocated on every declaration
     /// of a property that recurs all over a page. Caching the wrapped result keeps that work to once.
     /// </summary>
-    private readonly Dictionary<String, DeclarationInfo> _cache = new(StringComparer.OrdinalIgnoreCase);
+    /// <remarks>
+    /// Concurrent because one configuration can outlive one document: the reftest harness draws pages on
+    /// several threads at once through the same services, and a plain <see cref="Dictionary{TKey,TValue}"/>
+    /// written from two of them is corrupted rather than merely slow - the next reader throws
+    /// <see cref="InvalidOperationException"/> out of the middle of a parse.
+    /// </remarks>
+    private readonly ConcurrentDictionary<String, DeclarationInfo> _cache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The properties AngleSharp has no grammar for, kept whole as text for a reader to interpret. Each is
