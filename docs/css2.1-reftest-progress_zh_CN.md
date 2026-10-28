@@ -397,3 +397,20 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 - `gecko/table-anonymous-boxes`（约 20 对）与 `gecko/bugs` 里的非 JS 部分。
 - flex 的 `aspect-ratio` 尺寸转移（6 对：`aspect-ratio-intrinsic-size-003/008/009/010`、`flex-item-transferred-sizes-padding-*`），需要在主轴解析之后把 cross 的确定尺寸转回主轴。
 - `@supports`/条件颜色族尚未系统排查（本轮之前的子 agent 因额度中断）。
+
+## 16. 2026-10-28 后半夜轮：aspect-ratio 的跨轴传递，与 @supports 的读法
+
+起点 **wpt 4287 / gecko 1746**（失败集 2272）；本轮结束 **wpt 4304 / gecko 1746，失败集 2255**：相对 2313 基线 **修复 58 对、回退 0**。单元测试 1903 → **1910**，全绿。
+
+| commit | 做了什么 | 依据与取证 |
+|---|---|---|
+| `a5a3955b` | flex item 的 `aspect-ratio` 跨轴传递：主轴 auto 而 cross 已定（自身声明或被 line 拉伸）时，主轴由 cross 反推；列向则由主轴推出 cross；容器的 intrinsic 主轴也算这条传递（row 看容器确定的 cross 高，column 看 item 声明或 `min-height` 兜住的主轴） | CSS Sizing 4 §5.1；`aspect-ratio-intrinsic-size-003/008/009/010` + `flex-item-transferred-sizes-padding-{content,border}-sizing` 6 对全绿 |
+| `f716c133` | `@supports` 的四条读法：未知函数是 `<general-enclosed>`（值 false，而不是"读不出来"，所以 `@supports not unknown()` 为 true）；补 `font-format()` / `font-tech()`；`or(` / `and(` 是 function token，不是关键字；把 `::placeholder`、`::file-selector-button`、`::details-content`、`::-webkit-slider-thumb`、`::-webkit-slider-runnable-track` 登记进伪元素工厂 | CSS Conditional 4 §3.1、CSS Syntax 3 §4.3.9；每条都用 `CSS.supports()` 在 Chrome 上量过（`not (not(foo: baz))`=true、`font-format(opentype)`=true、`font-format("opentype")`=false、`((background-color:red) or(background-color:green))`=false）。9 对 `at-supports-*` 转绿 |
+
+**deps 是 submodule，改动要分三步**：先在子模块里 commit，再在父仓 `git add deps/... && git commit` 记 gitlink。**绝对不要在父仓用 `git stash`**——这次 `git stash push -- deps src` 报"无改动可存"（deps 是子模块、src 恰好干净），紧接着的 `git stash pop` 就把仓库里一条**陈年的 devel stash** 弹进工作树，把 `GridFormattingContext.cs` 撞成 unmerged。用 `git reset --hard HEAD` 复位（自己的都已 commit），子模块里的工作不受影响，两条旧 stash 也还在列表里。要验证"某条 deps 测试是不是我改坏的"，就在子模块内部 `git -C deps/... stash push -u` / `pop`。
+
+**记下来免得重复侦察**：`AngleSharp.Css.Tests` 里 `CssLetterSpacingNormalLegal`、`CssWordSpacingNormalLegal`、`CssInitialLetterInvalid`、`CssSheetWithUnquotedUrlContainingCurlyBrace`、`ValueKeepsTheSemicolonsInsideTheGroupsItOpens` 这 5 条在借来的 deps 里**本来就红**。本轮改写了其中一条 deps 测试 `SupportsNegationNeedsWhitespaceBeforeItsCondition`：它原来断言 `@supports (not(foo: baz))` 整条规则被丢弃，而规范和 Chrome 都是"规则留下、条件为 false"（因为 `not (not(...))` 要为 true）。
+
+**剩下的 `@supports` 尾巴（5 对）**都属"这个位置不许出现这条 at-rule"：`at-supports-content-001` / `at-media-content-001`（条件块里的 `@namespace` 不该登记，而**未声明的前缀应当只作废那一条规则**——我们在匹配期才解析前缀，解析器无从知道命名空间表，需要在收集样式规则时按表校验 selector 里的 `prefix|`）、`at-supports-045`（`@supports` 之后再出 `@import`/`@namespace` 要作废后续）、`at-supports-namespace-002`（`selector()` 里的前缀只在有效 `@namespace` 之后可用）、`at-supports-048`（样式规则嵌套里的 `@supports`）。`selector(:is(:foo,.a))` 要为 false：Chrome 用的是"严格选择器校验"，而 `:is/:where/:has` 是**函数型**伪类，不在工厂表里——试过一次在 `selector()` 里扫未知伪类，`at-supports-selector-picker` 立刻红，已回退；正解是给核心解析器加一个 strict 开关。
+
+**近失（≤120 像素）还剩 88 对**，但绝大多数是 1–2 像素的圆角/装饰抗锯齿（如 `contain-paint-clip-017/018` 只差 1 像素的 #fcfaf9/#fcfdfc），另有 8 对是 `line-breaking`/`word-break` 的小语种断行（Javanese/Thai/Lao），需要真正的 UAX #14 断行表，都在结构化缺口一档。
