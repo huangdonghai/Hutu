@@ -354,3 +354,21 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 **教训（这次踩得很典型）**：同一条"读值"规则在引擎里往往有**两套解析器**——fused 快速路径与普通 ComputedStyle。只改一处时测试仍然全绿（探针页走另一条路），全量里也只收一半。改任何"关键字 → 语义"的映射，先 `rg` 同名解析函数，确认两条路径都覆盖。
 
 另一个：把"声明宽"塞进 MeasureIntrinsic 的第一版同时抬高了 **min-content** 且解析了百分比，一次踩坏 5 条 css-flexbox/gecko 用例；全量差集立刻报出来，收窄成"只抬 max-content、跳过百分比与 ReadsContainingBlock"后归零。**内在尺寸的两个半（min/max）必须分别论证**，不能一起抬。
+## 14. 2026-10-28 晚轮：ruby 不占行、emphasis 只落墨，以及一圈小规则
+
+起点 **wpt 4231 / gecko 1741**（失败集 2333）；本轮结束 **wpt 4246 / gecko 1746，失败集 2313**：相对起点 **修复 20 对、回退 0**，相对上一份 2325 基线是 **12 修复 / 0 回退**。单测 1896 → **1897**，全绿。
+
+| commit | 做了什么 | 依据与取法 |
+|---|---|---|
+| `34154a6a` | ruby 标注**不把行撑高**，只有超出 base 的 `line-height` 已经给出的 leading 时才加高；base 按自己的行高取 band，基线在 band 内测量；`ruby-overhang: spaces/auto` 覆盖表意空格、制表、不换行空格、对开括号的一半与全角中点的四分之一；emphasis 标记改为**纯墨迹**，站在文字内容边外，不占行；竖排 emphasis 按物理左右取边 | CSS Ruby 1 §3.6、CSS Text Decoration 3 §3.3；全部先在 Chrome 探针上量过（`ruby` 的 `rt` 紧贴内容边，`line-height: 5` 也不会被 annotation 撑开） |
+| `5fa9d323`、`f0066f0b`、`bf86851c`、`77b4d711`、`47e4baff` | body 的 `overflow` 在根不裁剪、不含 containment 且 body 自己也不 containment 时交给 viewport；方形 outline 外扩时保持直角；`WideKeywordDeclarationFactory` 的声明缓存改为 `ConcurrentDictionary`；`@namespace` 写在规则之后时只丢这一条，后面的规则继续解析；ruby base 的基线在它自己的 band 内测量 | CSS Overflow 3 §3.3、CSS Contain 1 §2；CSS UI 4 §2.2；CSS Namespaces 3 §3。outline 与 overflow 的判定都用 Chrome/引擎对照页验过 |
+
+**这一轮最贵的一课（0.69 像素）**：给 ruby base 从"整行盒"改成"自己的 band"时，只改了 `BorderBox` 的高度和位置，`Baseline` 却仍从 **line.Height** 起算。带 ruby 的参考页里行高 80、band 80，看起来没事；可五条 80 像素行里混入 fallback 字体后，行盒是 80.69，base 的 band 仍是 80，基线于是整体下移 0.69 像素。全量立刻红 **58 对** text-emphasis / ruby-overhang 对照——每一对都是"test 画了颜色、ref 在同一像素是白的"。教训：**band 一旦小于 line，基线也必须换算到 band 自己的坐标里**；`flow.BlockOffsetFromLeft(band, baseline - bandTop)` 才是对的。另一个操作教训：只跑 `--no-build` 的旧 DLL 时，这种 0.69 的差异会被误读成上一轮的问题，改完引擎必须先 build 再记分。
+
+**单元测试跟着语义走**：旧的 `EmphasisMarksTheTextWithoutTakingRoom` / `AMarkedColumnKeepsItsStripOnTheSideTheMarksStand` 写的是"标记占一条 strip、行因此变高/变宽"，那是我们旧实现的行为，不是规范也不是 Chrome。这轮把它们改成"行高仍是 40、标记落在内容边外的 5 像素里"，并新增 `NamespaceRuleTests` 盯住"错位的 `@namespace` 不拖死整张表"。
+
+**下一步（失败集 2313，按便宜程度排）**：
+- **95 对 ≤120 像素的近似失败**仍然是最便宜的一批，优先按目录聚类。
+- `@supports` / 条件颜色族（`#ffffff → #008000`、`10000 pixels differ first at 8,50`）。
+- text-emphasis 竖排 `005d–g / 006d–g`（约 70–120 像素）。
+- ruby 的 tab / 竖排 overhang；`gecko/table-anonymous-boxes`；`gecko/bugs` 中非 JS 的部分。
