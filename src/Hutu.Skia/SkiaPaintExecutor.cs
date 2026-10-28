@@ -1031,10 +1031,15 @@ public sealed class SkiaPaintExecutor
     /// <summary>
     /// Gets the corner radii of an outline standing <paramref name="distance"/> out from the border box,
     /// so that a rounded outline runs parallel to the border it surrounds. The radii grow by being
-    /// shrunk with a negative inset; a corner that is square has nothing to grow and stays square.
+    /// shrunk with a negative inset; a corner that is square has nothing to grow and stays square, which
+    /// the shrink alone does not say - a square corner shrunk by minus two would come out as a corner
+    /// rounded by two, and the outline's four sharp corners would be painted with a small curve in them
+    /// while the border they were compared against was mitred.
     /// </summary>
     private static CornerRadii Grow(CornerRadii radii, Double distance) =>
-        radii.Shrink(new Thickness(-distance, -distance, -distance, -distance));
+        radii.IsZero
+            ? CornerRadii.None
+            : radii.Shrink(new Thickness(-distance, -distance, -distance, -distance));
 
     private static SKRect Inflate(SKRect box, Double distance) => new(
         box.Left - (Single)distance,
