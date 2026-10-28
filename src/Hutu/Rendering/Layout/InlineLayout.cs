@@ -1777,18 +1777,25 @@ internal sealed class InlineLayout
             var metrics = measurer.GetMetrics(fragment.Style.GetFont());
             var baseline = line.Ascent + fragment.BaselineShift;
 
+            // The base keeps the band its own line-height asks for rather than the whole line box: a
+            // line grown by the reading - or by a taller neighbour - leaves the base in the band around
+            // the shared baseline, which is where its own leading puts it and where the reading, standing
+            // just past its content edge, no longer covers it.
+            var band = Math.Min(line.Height, LineBoxHeight(measurer, fragment.Style, fragment.Style.GetFont()));
+            var bandTop = baseline - metrics.Ascent - ((band - metrics.Ascent - metrics.Descent) / 2);
+
             Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Text)
             {
                 Text = fragment.Text,
                 Font = fragment.Style.GetFont(),
-                Baseline = flow.BlockOffsetFromLeft(line.Height, baseline),
+                Baseline = flow.BlockOffsetFromLeft(band, baseline - bandTop),
                 Flow = fragment.Flow,
                 BorderBox = flow.Map(
                     contentBox,
                     origin + RubyAligned(fragment.Box.Style.RubyAlign, fragment.Width, fragment.BaseWidth),
                     fragment.BaseWidth,
-                    cursor,
-                    line.Height),
+                    cursor + bandTop,
+                    band),
             });
 
             Attach(open, lineBox, AnnotationBox(
@@ -3461,14 +3468,21 @@ internal sealed class InlineLayout
     /// Gets how tall a line of text set in the given style is - the band the words it carries stand in,
     /// which is the line height the style asks for and the font's own height where it asks for none.
     /// </summary>
-    private Double LineBoxHeight(ComputedStyle style, FontStyle font)
+    private Double LineBoxHeight(ComputedStyle style, FontStyle font) =>
+        LineBoxHeight(_measurer, style, font);
+
+    /// <summary>
+    /// Gets how tall a line of text set in the given style is - the band the words it carries stand in,
+    /// which is the line height the style asks for and the font's own height where it asks for none.
+    /// </summary>
+    private static Double LineBoxHeight(ITextMeasurer measurer, ComputedStyle style, FontStyle font)
     {
         if (style.LineHeight is { } stated)
         {
             return stated;
         }
 
-        var metrics = _measurer.GetMetrics(font);
+        var metrics = measurer.GetMetrics(font);
 
         return metrics.Ascent + metrics.Descent;
     }

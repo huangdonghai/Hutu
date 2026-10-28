@@ -218,9 +218,9 @@ public sealed class VerticalLayoutTests
     [Test]
     public async Task RubyBaseSharesTheColumnLineOfTheCharactersAroundIt()
     {
-        // The reading adds a strip at the block-start end of the line, and the base keeps the rest -
-        // but the rest is centred on the band, so the base is drawn on the very line its neighbours
-        // stand on rather than half a reading off it.
+        // The reading adds a strip at the block-start end of the line, and the base stays where it would
+        // have been without one: against the block-end edge, on the very line its neighbours stand on
+        // rather than half a reading off it.
         using var view = CreateView(400);
 
         await view.SetHtml(
@@ -233,8 +233,8 @@ public sealed class VerticalLayoutTests
         var after = Text(view, "秋");
         var annotation = Text(view, "なつ");
 
-        Assert.That(Centre(baseText), Is.EqualTo(Centre(before)).Within(0.01), "the base is on the line the character before it stands on");
-        Assert.That(Centre(baseText), Is.EqualTo(Centre(after)).Within(0.01), "and on the one the character after it stands on");
+        Assert.That(baseText.BorderBox.X, Is.EqualTo(before.BorderBox.X).Within(0.01), "the base keeps the block-end edge the character before it stands against");
+        Assert.That(baseText.BorderBox.X, Is.EqualTo(after.BorderBox.X).Within(0.01), "and the edge the character after it stands against");
         Assert.That(Centre(annotation), Is.GreaterThan(Centre(baseText)), "the reading is set on the block-start side of the base");
     }
 
@@ -307,10 +307,9 @@ public sealed class VerticalLayoutTests
     }
 
     /// <summary>
-    /// <c>text-emphasis</c> marks each character of a run at half the size of the text, and — like the
-    /// reading it is drawn in the manner of — the marks take a strip of the line: the line grows by the
-    /// strip on the side the page named, which is what keeps a mark inside the line it belongs to
-    /// (CSS Text Decoration 4 §5.2).
+    /// <c>text-emphasis</c> marks each character of a run at half the size of the text, and the marks are
+    /// paint rather than content: they stand just outside the text's content edge and take no room in the
+    /// line, which keeps the height the page asked for (CSS Text Decoration 3 §3.3, as Chrome draws it).
     /// </summary>
     [Test]
     public async Task EmphasisMarksTheTextWithoutTakingRoom()
@@ -331,7 +330,14 @@ public sealed class VerticalLayoutTests
             Assert.That(run.Marks[0].Font.Size, Is.EqualTo(5), "half the size of the text it marks");
             Assert.That(run.Marks[0].Band.Height, Is.EqualTo(5), "a strip its own size");
             Assert.That(run.Marks[0].Baseline, Is.InRange(1, 6), "and the glyph set solid inside it");
-            Assert.That(run.BorderBox.Height, Is.EqualTo(45), "the line gains the strip the marks stand in");
+            Assert.That(
+                run.Marks[0].Band.Y,
+                Is.EqualTo(10),
+                "the mark stands just above the text, in the leading the line already has");
+            Assert.That(
+                run.BorderBox.Height,
+                Is.EqualTo(40),
+                "the line keeps the height the page asked for; the mark takes nothing from it");
         });
     }
 
@@ -402,29 +408,29 @@ public sealed class VerticalLayoutTests
         {
             Assert.That(
                 line.Marks![0].Band.Y,
-                Is.EqualTo(line.BorderBox.Y),
-                "the marks stand at the block-start edge, where over puts them and right says nothing");
+                Is.EqualTo(10),
+                "the over edge puts the marks just above the text, whatever side stands beside them");
             Assert.That(
                 column.Marks![0].Band.X,
-                Is.EqualTo(column.BorderBox.Right - 5),
-                "the marks stand to the right, the side the value named, and not to the left under would have put them");
+                Is.EqualTo(25),
+                "the marks stand just past the right of the text, the side the value named, and not to the left under would have put them");
             Assert.That(
                 unnamed.Marks![0].Band.X,
-                Is.EqualTo(unnamed.BorderBox.Right - 5),
+                Is.EqualTo(25),
                 "a column takes the side the initial value names when the page wrote only an edge");
         });
     }
 
     /// <summary>
-    /// The strip a marked column keeps for its marks is taken from the side they physically stand on
-    /// rather than the edge of the line the writing mode happens to call the end. The ascent of a turned
-    /// glyph reaches to its right whichever way the columns march, so marks standing to the right ask for
-    /// that ascent in <c>vertical-lr</c> as much as in <c>vertical-rl</c> - even though the right edge is
-    /// where a left-to-right page of columns ends - and the baseline, which the drawing reads off the box,
-    /// stands the same distance in from the same edge in the two modes. Taking the strip from the other
-    /// side leaves the baseline eight pixels down the band the marks were kept for, which is what put the
-    /// text of a marked column over its own emphasis marks (CSS Text Decoration 4 §5.2, CSS Writing
-    /// Modes 3 §5.1).
+    /// The marks of a marked column stand just outside the text on the side the page named, and they take
+    /// no room: the strip the page reads is the line's own, so the column is as wide as the line-height it
+    /// asked for. The strip is taken from the side the marks physically stand on rather than the edge of
+    /// the line the writing mode happens to call the end. The ascent of a turned glyph reaches to its
+    /// right whichever way the columns march, so marks standing to the right ask for that ascent in
+    /// <c>vertical-lr</c> as much as in <c>vertical-rl</c> - even though the right edge is where a
+    /// left-to-right page of columns ends - and the baseline, which the drawing reads off the box, stands
+    /// at the descent in from the left in the two modes (CSS Text Decoration 4 §5.2, CSS Writing Modes 3
+    /// §5.1).
     /// </summary>
     [Test]
     public async Task AMarkedColumnKeepsItsStripOnTheSideTheMarksStand()
@@ -442,10 +448,11 @@ public sealed class VerticalLayoutTests
             "<p style='margin:0;font-size:10px;line-height:4;writing-mode:vertical-lr;" +
             "text-emphasis:filled dot;text-emphasis-position:left'>dd</p></body></html>");
 
-        // Forty for the line the page asked for and five more for the strip the marks stand in; the
-        // glyphs reach twenty-three across from the side the marks leave, so a column marked to the
-        // right stands its baseline seventeen in from the left edge and one marked to the left
-        // twenty-two.
+        // Forty for the line the page asked for; the marks take nothing from it and stand just outside
+        // the text. The glyphs are ten wide in the middle of that line, so their content band runs fifteen
+        // to twenty-five across: a column marked to the right puts the strip at twenty-five and one marked
+        // to the left at ten. The baseline reads from the left edge in both modes, the descent in, which
+        // is seventeen.
         var rightInRightwardsColumns = Text(view, "aa");
         var rightInLeftwardsColumns = Text(view, "bb");
         var leftInRightwardsColumns = Text(view, "cc");
@@ -458,15 +465,15 @@ public sealed class VerticalLayoutTests
             Assert.That(leftInLeftwardsColumns.Baseline, Is.EqualTo(leftInRightwardsColumns.Baseline),
                 "and it says nothing about the other side either");
             Assert.That(rightInRightwardsColumns.Baseline, Is.EqualTo(17),
-                "the strip stands in what the glyphs reach to the right, so the baseline is the descent in");
-            Assert.That(leftInRightwardsColumns.Baseline, Is.EqualTo(22),
-                "a strip kept to the left leaves the baseline at the ascent the text itself asked for");
-            Assert.That(rightInRightwardsColumns.BorderBox.Width, Is.EqualTo(45),
-                "the column is as wide as the line it was asked for plus the strip");
-            Assert.That(rightInRightwardsColumns.Marks![0].Band.X, Is.EqualTo(40),
-                "marks standing to the right fill the strip on that side");
-            Assert.That(leftInRightwardsColumns.Marks![0].Band.X, Is.EqualTo(0),
-                "marks standing to the left fill the strip on theirs");
+                "the baseline is the descent in from the left edge");
+            Assert.That(leftInRightwardsColumns.Baseline, Is.EqualTo(17),
+                "a mark to the left does not move the text it marks");
+            Assert.That(rightInRightwardsColumns.BorderBox.Width, Is.EqualTo(40),
+                "the column is as wide as the line it was asked for; the marks take no room");
+            Assert.That(rightInRightwardsColumns.Marks![0].Band.X, Is.EqualTo(25),
+                "marks standing to the right fill the room just past the content edge on that side");
+            Assert.That(leftInRightwardsColumns.Marks![0].Band.X, Is.EqualTo(10),
+                "marks standing to the left fill the room just before it on theirs");
         });
     }
 
