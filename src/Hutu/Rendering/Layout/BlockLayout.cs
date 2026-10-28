@@ -682,6 +682,9 @@ internal sealed class BlockLayout
         var childContext = context.ForContainingBlock(new Size(contentWidth, contentHeight), box.Flow.IsVertical);
         var constraints = MeasureConstraints.FitWidth(contentWidth);
         var tracks = TracksFor(box, contentWidth, 0);
+
+        StandBeside(tracks, box, contentWidth, context.Floats, 0, 0);
+
         var topEscapes = throughTop;
 
         // How deep the floats this container holds directly reach, margin boxes included. The
@@ -762,7 +765,7 @@ internal sealed class BlockLayout
             // so the band is answered per child rather than by the one context the container shares.
             var (shift, room, drop, band) = FormattingRoot(
                 child,
-                BandFor(child, tracks, context.Floats, cursor + pending, margin.Left, 0, 0, contentWidth),
+                BandFor(child, tracks, context.Floats, cursor + pending, margin.Left, margin.Right, 0, 0, contentWidth),
                 contentWidth);
 
             var passContext = childContext.WithFloats(band);
@@ -801,6 +804,7 @@ internal sealed class BlockLayout
                 var childPadding = child.Style.Padding.Resolve(contentWidth);
 
                 tracks ??= new FloatTracks(0, contentWidth);
+                StandBeside(tracks, box, contentWidth, context.Floats, 0, 0);
                 tracks.Absorb(
                     held,
                     usedMargin.Left + shift + childBorder.Left + childPadding.Left,
@@ -1604,6 +1608,7 @@ internal sealed class BlockLayout
             context.Floats,
             contentY,
             contentX + margin.Left,
+            margin.Right,
             contentX,
             contentY,
             share);
@@ -2106,6 +2111,7 @@ internal sealed class BlockLayout
         FloatBand? inherited,
         Double top,
         Double left,
+        Double right,
         Double contentX,
         Double contentY,
         Double basis)
@@ -2126,6 +2132,12 @@ internal sealed class BlockLayout
         var originY = (own is null ? inherited!.OriginY + top - contentY : top) + border.Top + padding.Top;
         var originLeft = (own is null ? inherited!.Left + left - contentX : left) + border.Left + padding.Left;
 
+        // Where the child's content box ends: a row that reads right to left stands against this box's
+        // inline-end edge, so it is that edge less the child's own trailing margin, border and padding -
+        // and not the child's left edge plus a width, which is what the constraint equation has still to
+        // settle (CSS 2.1 §10.3.3).
+        var originEnd = (own is null ? inherited!.End : contentX + basis) - right - border.Right - padding.Right;
+
         // Nothing that ended above this box can narrow a line inside it: the floats in a band are placed
         // at or below the content they were met after, so once the deepest of them is level with the
         // box's own content top, the box and everything stacked in it reads at full width. Without this
@@ -2136,7 +2148,7 @@ internal sealed class BlockLayout
             return null;
         }
 
-        return new FloatBand(tracks, originY, originLeft);
+        return new FloatBand(tracks, originY, originLeft, originEnd);
     }
 
     /// <summary>
@@ -2187,7 +2199,13 @@ internal sealed class BlockLayout
         // A right-to-left row's content begins at its right edge, so the room a formatting root is
         // given and the distance it is shifted from that edge are read the other way round.
         var reversed = child.Flow.InlineSign < 0;
-        var contentRight = band.Left + contentWidth;
+
+        // The edge the row ends at, which is where a right-to-left box stands and where a float on that
+        // side intrudes. The container's width is not what reaches here: a box given an extent of its own
+        // stands against the end edge with it, and adding a size to the other edge put a padded formatting
+        // root on the wrong side of the float it was stepping clear of (CSS 2.1 §10.3.3).
+        var contentRight = reversed ? band.End : band.Left + contentWidth;
+
         var shift = Math.Max(0, reversed
             ? contentRight + padding.Right + border.Right - right
             : left - (band.Left - padding.Left - border.Left));
@@ -2312,6 +2330,70 @@ internal sealed class BlockLayout
     }
 
     /// <summary>
+    /// Gives a container that holds floats of its own the floats of the context it stands in as well,
+    /// moved by the distance between the two frames.
+    /// </summary>
+    /// <remarks>
+    /// The context's floats are what CSS 2.1 §9.5 makes a float step clear of, and they narrow the lines of
+    /// every box in that context - so a list item with a floated thumbnail beside a floated picture has to
+    /// read both, and a container that holds a float is not exempt from the ones above it. The measuring
+    /// pass counts from each box's own content corner and pays the distance here; the arranging pass works
+    /// in document coordinates from end to end and pays nothing, which is why both callers hand in the
+    /// corner their own tracks are opened at.
+    /// </remarks>
+    /// <param name="contentWidth">
+    /// The container's own content width, which is what tells the end edge from the start one in a row that
+    /// reads right to left. There the start edge is what the constraint equation has still to settle, while
+    /// the end edge is known from the parent's edge and the container's trailing margin (§10.3.3) - and
+    /// paying the start edge moved the context's floats to the wrong side of the box, which let a float of
+    /// its own stand on top of them.
+    /// </param>
+    private static void StandBeside(
+        FloatTracks? tracks,
+        Box container,
+        Double contentWidth,
+        FloatBand? around,
+        Double contentX,
+        Double contentY)
+    {
+        if (tracks is { } floated && around is { } band)
+        {
+            var againstEnd = !container.Flow.IsVertical && container.Flow.InlineSign < 0;
+            var dx = againstEnd
+                ? contentX + contentWidth - band.End
+                : contentX - band.Left;
+
+            floated.Hold(band.Tracks, dx, contentY - band.OriginY);
+        }
+    }
+
+    /// <summary>
+    /// Gets where a child's content corner stands along the inline axis, in the frame its parent's floats
+    /// are written in.
+    /// </summary>
+    /// <remarks>
+    /// A row that reads right to left begins at the parent's end edge, so a child is measured back from
+    /// there with its own trailing margin and its border box, and it is the start margin that the
+    /// over-constrained equation gives up (CSS 2.1 §10.3.3). The arranging pass stands the box at this same
+    /// place when it builds the rectangle; the measuring pass owes the floats the distance.
+    /// </remarks>
+    private static Double InlineCorner(
+        Box container,
+        Double contentWidth,
+        Double borderBoxWidth,
+        Thickness margin,
+        Thickness border,
+        Thickness padding,
+        Double shift)
+    {
+        var inward = container.Flow.IsVertical || container.Flow.InlineSign > 0
+            ? margin.Left + shift
+            : contentWidth - margin.Right - borderBoxWidth + shift;
+
+        return inward + border.Left + padding.Left;
+    }
+
+    /// <summary>
     /// Sizes a float against the room its edge leaves and reserves that room in the tracks. Both
     /// phases call this with the same numbers, so the width the arranging phase reads out of the
     /// measurement cache is the one the container's height was answered from.
@@ -2327,6 +2409,13 @@ internal sealed class BlockLayout
         var margin = style.Margin.Resolve(contentWidth);
         var y = tracks.ClearBelow(style.Clear, top);
         var (freeLeft, freeRight) = tracks.FreeSpanAt(y, 0);
+
+        // A floating box is the root of a block formatting context of its own (CSS 2.1 §9.5), so nothing
+        // outside it narrows what it lays out: the room its edge leaves sizes the box - asked above, as the
+        // free span - and its own lines are shortened only by the floats it holds. The band stops here, which
+        // also keeps the float from reading the track it has just reserved in its parent: a room taken out of
+        // its own line box by itself is not a rule anywhere in the specification.
+        childContext = childContext.WithFloats(null);
 
         // A float with a declared width is measured against the container it sits in, so a percentage
         // inside it resolves against the containing block rather than against the room a neighbour
@@ -2346,7 +2435,8 @@ internal sealed class BlockLayout
             size.Height,
             margin,
             y,
-            StandsClear(child.Style, contentWidth));
+            StandsClear(child.Style, contentWidth),
+            child);
 
         return (box, size);
     }
@@ -2489,6 +2579,12 @@ internal sealed class BlockLayout
         var throughTop = CollapsesThroughStart(box, box.Flow, contentWidth);
         var constraints = MeasureConstraints.FitWidth(contentWidth);
         var tracks = TracksFor(box, contentWidth, contentX);
+
+        // The arranging pass counts from the page's own corner, so the distance between this container's
+        // frame and its context's is paid by handing in the corner its tracks are opened at: in document
+        // coordinates the two are the same place, and the context's floats come in where they stand.
+        StandBeside(tracks, box, contentWidth, context.Floats, contentX, contentY);
+
         var topEscapes = throughTop;
 
         foreach (var child in box.Children)
@@ -2510,7 +2606,10 @@ internal sealed class BlockLayout
                 // into a float's - so the float's outer edge starts below the strip, at the place
                 // the next box in flow would have taken.
                 var placed = PlaceFloat(child, floats, cursor + pending, contentWidth, context);
-                parent.Children.Add(_engine.Arrange(child, placed.BorderBox, context));
+
+                // The same seal the measuring pass put on the box, so that the two phases answer with the
+                // same numbers: a float's content is arranged without the band it was placed beside.
+                parent.Children.Add(_engine.Arrange(child, placed.BorderBox, context.WithFloats(null)));
                 continue;
             }
 
@@ -2583,7 +2682,13 @@ internal sealed class BlockLayout
                 // margin. Standing it at the cursor either way puts it at the parent's edge in the
                 // second case too: a `margin-top` box that opens a grid item sat 24 pixels above
                 // where a browser draws it.
-                var rect0 = new Rect(contentX + used0.Left, cursor + pending, size0.Width, size0.Height);
+                // The same edge the ordinary path stands a child at: a box with nothing in its own height
+                // is still a box in the row, and a row that reads right to left begins at its end edge, so
+                // the start margin alone put an empty item at the wrong side of the page (CSS 2.1 §10.3.3).
+                var inward0 = box.Flow.IsVertical || box.Flow.InlineSign > 0
+                    ? used0.Left
+                    : contentWidth - used0.Right - size0.Width;
+                var rect0 = new Rect(contentX + inward0, cursor + pending, size0.Width, size0.Height);
                 parent.Children.Add(_engine.Arrange(child, rect0, context));
                 continue;
             }
@@ -2594,7 +2699,7 @@ internal sealed class BlockLayout
                 child,
                 BandFor(
                     child, tracks, context.Floats,
-                    cursor + pending, contentX + margin.Left, contentX, contentY, contentWidth),
+                    cursor + pending, contentX + margin.Left, margin.Right, contentX, contentY, contentWidth),
                 contentWidth);
 
             var passContext = context.WithFloats(band);
@@ -2641,6 +2746,7 @@ internal sealed class BlockLayout
             if (!EstablishesContext(child) && _engine.FloatsOf(child) is { } held)
             {
                 tracks ??= new FloatTracks(contentX, contentX + contentWidth);
+                StandBeside(tracks, box, contentWidth, context.Floats, contentX, contentY);
                 tracks.Absorb(held, 0, 0);
             }
 
@@ -2698,7 +2804,7 @@ internal sealed class BlockLayout
                 // it left without drawing it a second time.
                 if (start is null)
                 {
-                    parent.Children.Add(_engine.Arrange(child, placed.BorderBox, context));
+                    parent.Children.Add(_engine.Arrange(child, placed.BorderBox, context.WithFloats(null)));
                 }
 
                 continue;
@@ -2713,7 +2819,8 @@ internal sealed class BlockLayout
         }
 
         var margin = host.Style.Margin.Resolve(contentWidth);
-        var band = BandFor(host, tracks, context.Floats, contentY, contentX, contentX, contentY, contentWidth);
+        var band = BandFor(
+            host, tracks, context.Floats, contentY, contentX, margin.Right, contentX, contentY, contentWidth);
         var hostContext = context.WithFloats(start is null ? band : null);
         var hostRect = new Rect(
             contentX + margin.Left,

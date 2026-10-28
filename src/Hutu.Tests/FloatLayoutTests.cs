@@ -608,6 +608,169 @@ public sealed class FloatLayoutTests
             "the inline-block too wide for the room beside the float stands below it");
     }
 
+    /// <summary>
+    /// A float steps clear of the floats of its context, not only of the ones its own box holds: CSS 2.1
+    /// §9.5 puts every float of one formatting context in the same run, and a container that holds a float
+    /// is still in the context above it. Measured in Chrome against <c>gecko/bugs/428810-2a-ltr</c>, where
+    /// a hundred-pixel float stands in the row above and a fifteen-pixel one is held by the box below it:
+    /// the lower float is put <em>under</em> the upper, at the height the upper one leaves, and the text
+    /// beside it then has the room the lower float spares - which is where the bullet of that item hangs.
+    /// </summary>
+    [Test]
+    public async Task AFloatStepsClearOfAFloatItOnlyStandsBeside()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div style='height:10px'>" +
+            "<div style='float:left;width:100px;height:20px'></div>" +
+            "</div>" +
+            "<div style='margin-left:40px;width:70px'>" +
+            "<div id='under' style='float:left;width:15px;height:20px'></div>" +
+            "</div>"));
+
+        // The upper float reaches twenty down and spans the whole left of the row; standing at the container's
+        // own left edge would lay the lower float on top of it, so it begins where the upper one ends.
+        Assert.That(
+            Bounds(view, "under"),
+            Is.EqualTo(new Rect(40, 20, 15, 20)),
+            "a float of the context blocks a float that is not its own neighbour");
+    }
+
+    /// <summary>
+    /// A float is the root of a block formatting context of its own (CSS 2.1 §9.5), so the room it leaves
+    /// for others is not a room taken out of its own lines - and the track it just reserved in its parent
+    /// is not a float standing beside it. Chrome was measured on the reference of
+    /// <c>wpt/css-grid/grid-model/grid-margins-no-collapse-002</c>: a left float with a vertical margin, then
+    /// a floated paragraph clearing it, puts its single line at the top of its own box rather than at the
+    /// bottom of a band cut by itself.
+    /// </summary>
+    [Test]
+    public async Task AFloatingBoxTakesNoRoomOutOfItsOwnLines()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='root' style='float:left;width:200px'>" +
+            "<div style='float:left;width:60px;height:20px;margin:20px 0'></div>" +
+            "<div><p id='cleared' style='float:left;clear:both;margin:0'>AB</p></div>" +
+            "</div>"));
+
+        var paragraph = Bounds(view, "cleared");
+
+        Assert.Multiple(() =>
+        {
+            // The clear carries it past the float above - sixty down: twenty of margin, twenty of the float,
+            // twenty of margin again - and its own line then stands at the head of its own box.
+            Assert.That(paragraph.Y, Is.EqualTo(60), "the cleared float stands below the one it refuses");
+            Assert.That(paragraph.Height, Is.EqualTo(10), "and holds one line of its own, not a band");
+        });
+    }
+
+    /// <summary>
+    /// What pushes a float down is another float it would really stand on, and not the edge of the block it
+    /// was put in: CSS 2.1 §9.5.1 pins its outer edge against the containing block and a float wider than
+    /// that block simply overflows, the way a browser lets one overflow. Measured in Chrome on
+    /// <c>gecko/floats/other-float-outside-rule-3-left</c>, where a four-hundred-and-twenty-five pixel float
+    /// is held by a four-hundred pixel block beside a fifty pixel float on the far side that it never
+    /// touches: it stays at the top of the block.
+    /// </summary>
+    [Test]
+    public async Task AFloatWiderThanItsBlockOverflowsRatherThanDropping()
+    {
+        using var view = CreateView(560);
+
+        await view.SetHtml(Page(
+            "<div style='float:left;width:500px;height:500px'>" +
+            "<div style='float:right;width:50px;height:300px'></div>" +
+            "<div style='margin-right:100px'>" +
+            "<div id='wide' style='float:left;width:425px;height:10px'></div>" +
+            "</div>" +
+            "</div>"));
+
+        Assert.That(
+            Bounds(view, "wide"),
+            Is.EqualTo(new Rect(0, 0, 425, 10)),
+            "the float is pinned to the block's left edge and overflows it, because the far float is beyond it");
+    }
+
+    /// <summary>
+    /// A row that reads right to left begins at the block's <em>end</em> edge, so a float standing on that
+    /// side shortens its lines from there - and the edge has to be the one that is known before the row is
+    /// measured, since the inline size is what the constraint equation has still to settle (§10.3.3).
+    /// Chrome on <c>gecko/bugs/428810-1a-rtl</c> puts a line that cannot fit beside a right float under it,
+    /// exactly as the left-to-right mirror does.
+    /// </summary>
+    [Test]
+    public async Task ARightToLeftLineStandsClearOfAFloatAtItsEndEdge()
+    {
+        using var view = CreateView(800);
+
+        // The direction belongs to the row the boxes stand in, not to the box that reads that way: a block is
+        // placed by its containing block's row, which is what the borrowed page sets on its root.
+        await view.SetHtml(Page(
+            "<div dir='rtl'>" +
+            "<div style='height:10px'>" +
+            "<div style='float:right;width:100px;height:20px'></div>" +
+            "</div>" +
+            "<div id='row' style='margin-right:40px;width:70px'>ABCDEFGH</div>" +
+            "</div>"));
+
+        // Forty of the row's seventy pixels are taken by the float, and forty letters of text are twenty, so
+        // the line has nowhere to stand beside it and goes under: the row begins ten down and its first line
+        // lands below the float that ends at twenty.
+        var row = Bounds(view, "row");
+        var line = Walk(view.Layout!.Root).Single(box => box.Kind == LayoutKind.Line);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                $"{row.X},{row.Y} {row.Width}x{row.Height}",
+                Is.EqualTo("690,10 70x20"),
+                "the row stands against the end edge of a page that reads right to left");
+            Assert.That(
+                $"{line.BorderBox.X},{line.BorderBox.Y} {line.BorderBox.Width}x{line.BorderBox.Height}",
+                Is.EqualTo("690,20 70x10"),
+                "and its line drops below the float at its end edge rather than spilling over it");
+        });
+    }
+
+    /// <summary>
+    /// White space the line rules may collapse away leaves no trace between two blocks, but a no-break space
+    /// is not white space to those rules (CSS Text 3 §4): it is measured, never folded into a neighbour and
+    /// never trimmed from either end of a line. A run of them beside a floated child is content and holds a
+    /// line of its own, which is what the borrowed <c>428810</c> family rests on.
+    /// </summary>
+    [Test]
+    public async Task ANoBreakSpaceRunBesideAFloatedChildHoldsALine()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div style='width:200px'>" +
+            "<div id='held' style='float:left;width:50px;height:20px'></div>" +
+            "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" +
+            "</div>"));
+
+        // Five no-break spaces are five characters of five pixels each, on one line, standing beside the
+        // float; the document's own list of spaces would have folded them away with the run.
+        var lines = Walk(view.Layout!.Root).Where(box => box.Kind == LayoutKind.Line).ToList();
+        var text = Walk(view.Layout!.Root).Single(box => box.Kind == LayoutKind.Text);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines, Has.Count.EqualTo(1), "the run of no-break spaces is content, not a blank");
+            Assert.That(
+                $"{lines[0].BorderBox.X},{lines[0].BorderBox.Y} {lines[0].BorderBox.Width}x{lines[0].BorderBox.Height}",
+                Is.EqualTo("50,0 150x10"),
+                "the line stands beside the float and takes the room the float leaves");
+            Assert.That(
+                $"{text.BorderBox.X},{text.BorderBox.Y} {text.BorderBox.Width}x{text.BorderBox.Height}",
+                Is.EqualTo("50,0 25x10"),
+                "five of them are five characters, measured and kept");
+        });
+    }
+
     private static Rect Bounds(HutuViewInternal view, String id)
     {
         var element = view.Document!.GetElementById(id);

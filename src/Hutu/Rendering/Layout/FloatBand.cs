@@ -28,11 +28,12 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 internal sealed class FloatBand
 {
-    public FloatBand(FloatTracks tracks, Double originY, Double left)
+    public FloatBand(FloatTracks tracks, Double originY, Double left, Double end)
     {
         Tracks = tracks;
         OriginY = originY;
         Left = left;
+        End = end;
     }
 
     /// <summary>Gets the floats the lines of this block stand aside for.</summary>
@@ -43,6 +44,20 @@ internal sealed class FloatBand
 
     /// <summary>Gets where the block's content box begins, along the axis the floats are pinned to.</summary>
     public Double Left { get; }
+
+    /// <summary>
+    /// Gets where the block's content box ends along the axis the floats are pinned to, written in the same
+    /// frame as <see cref="Left"/>.
+    /// </summary>
+    /// <remarks>
+    /// A row that reads right to left begins at this edge, so this is the edge its lines are shortened from
+    /// and the one a float standing on that side intrudes upon. It is kept rather than rebuilt from
+    /// <see cref="Left"/> and the block's own inline size because the size is what is left over at the end
+    /// of the row's constraint equation (CSS 2.1 §10.3.3), not an input to where the row begins: a box given
+    /// a width in a right-to-left row stands against this edge, and adding a size to the other edge put it
+    /// on the wrong side of the float.
+    /// </remarks>
+    public Double End { get; }
 
     /// <summary>
     /// Gets how far a line standing <paramref name="top"/> down from the block's content box, and taking
@@ -62,10 +77,11 @@ internal sealed class FloatBand
         // The inset is measured from the edge the line begins at, which is the right edge of a
         // right-to-left row: the line box and every run on it are placed from there, so handing back
         // the distance from the physical left puts a right float's lines on its wrong side.
-        var begin = reversed ? Left + maxInline - right : left - Left;
+        var begin = reversed ? End - right : left - Left;
+
         inset = Math.Max(0, begin);
 
-        var room = Math.Min(maxInline, reversed ? Left + maxInline - left : right - Left) - inset;
+        var room = Math.Min(maxInline, reversed ? End - left : right - Left) - inset;
 
         return room > 0 ? room : 0;
     }

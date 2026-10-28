@@ -678,7 +678,13 @@ internal static partial class BoxBuilder
                 var item = children[index];
                 run.Add(item);
 
-                if (item.Kind != BoxKind.Text || !String.IsNullOrWhiteSpace(item.Text))
+                // White space the line rules collapse away leaves no trace, but a no-break space is not
+                // among them: CSS Text 3 §4 keeps U+00A0 and the other space separators as content that is
+                // measured, is never folded into a neighbour and is never trimmed from either end of a line.
+                // The document's own notion of white space counts those as blanks, and a run of five of them
+                // beside a floated child was dropped with the blanks instead of laid out as a line.
+                if (item.Kind != BoxKind.Text ||
+                    (item.Text.Length > 0 && !TextChunker.IsCollapsible(item.Text)))
                 {
                     hasVisible = true;
                 }

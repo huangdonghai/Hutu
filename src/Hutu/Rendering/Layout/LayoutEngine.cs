@@ -1030,14 +1030,25 @@ internal sealed record LayoutProfile(
                 // with §9.5, the way Chrome lays it). A column asks for nothing of the kind, because a
                 // float of either side cuts a column's block extent and not the head a marker hangs at.
                 //
-                // A right-to-left item keeps its marker at its border edge: the room the float leaves is
-                // on the item's inline-end side there, and the marker does not follow the line's shortened
-                // start into it (the gecko 428810 family holds the reference to that).
-                if (around is { } tracks && box.Flow.InlineSign > 0)
+                // Two things about that room are measured against the browser rather than assumed, both of
+                // them from the gecko 428810 family. What moves the marker is how far the float reaches past
+                // where the item's text would begin, and the marker is carried by that distance from the edge
+                // it is fixed to - the border edge, not the content edge - so an item with a border and
+                // padding moves its marker by the float's reach less its own insets, not to the float's edge.
+                // And a float the item holds itself narrows the item's lines but is not a float the item
+                // stands beside, so it leaves the marker where the item's own edge puts it. A row that reads
+                // right to left is answered the same way from its other edge, since there the room a float
+                // leaves is on the item's inline-end side.
+                if (around is { } tracks)
                 {
-                    var span = tracks.LineSpanAt(standing - metrics.Ascent, metrics.Ascent + metrics.Descent);
+                    var span = tracks.LineSpanAt(
+                        standing - metrics.Ascent,
+                        metrics.Ascent + metrics.Descent,
+                        box.Source);
 
-                    edge = Math.Max(edge, span.Left);
+                    edge = box.Flow.InlineSign > 0
+                        ? box.BorderBox.X + Math.Max(0, span.Left - content.X)
+                        : box.BorderBox.Right - Math.Max(0, content.Right - span.Right);
                 }
 
                 var start = box.Flow.InlineSign > 0 ? edge - advance : edge;

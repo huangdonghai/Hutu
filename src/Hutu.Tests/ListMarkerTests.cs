@@ -166,6 +166,68 @@ public sealed class ListMarkerTests
         });
     }
 
+    /// <summary>
+    /// A float does not move an outside marker to its own edge: it carries the marker by how far it reaches
+    /// past where the item's text begins. CSS 2.1 §12.5.1 fixes the marker to the <em>border</em> edge of the
+    /// item and §9.5 pushes the line out of the float's way, and the two add up to the border edge plus the
+    /// reach - which is what Chrome was measured at on the borrowed <c>428810-*-insets</c> pages, where an
+    /// item carrying a border and padding hung its bullet a padding's width short of the float's edge.
+    /// </summary>
+    [Test]
+    public async Task AMarkerIsCarriedByHowFarAFloatReachesPastItsText()
+    {
+        var laid = await LaidOut("",
+            "<body style='margin:0'><div style='float:left;width:60px;height:60px'></div>" +
+            "<div style='display:list-item;list-style:square;border-left:16px solid;padding-left:8px'></div></body>");
+        var item = Marked(laid.Root);
+
+        // The item's border box begins at the page's edge and its content twenty-four in, so the
+        // sixty-pixel float reaches thirty-six past the text and carries the marker that far from the edge
+        // the marker is fixed to.
+        Assert.Multiple(() =>
+        {
+            Assert.That(item.ContentBox.X, Is.EqualTo(24), "the insets stand between the border edge and the text");
+            Assert.That(
+                item.MarkerBounds!.Value.Right,
+                Is.EqualTo(36).Within(0.5),
+                "the marker is carried by the float's reach, not to the float's own edge");
+        });
+    }
+
+    /// <summary>
+    /// A float the item holds itself is not a float the item stands beside: it narrows the item's lines, but
+    /// the marker hanging outside the item stays where the item's own edge puts it. Measured in Chrome on
+    /// <c>gecko/bugs/428810-2a-ltr</c> and its thumbnail-bearing siblings, where an item with a floated child
+    /// of its own hung its bullet exactly where the same item without one hung it.
+    /// </summary>
+    [Test]
+    public async Task AFloatTheItemHoldsLeavesItsOwnMarkerAlone()
+    {
+        var plain = await LaidOut("",
+            "<body style='margin:0'><div style='margin-left:40px;width:70px;display:list-item;" +
+            "list-style:square'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</div></body>");
+        var holding = await LaidOut("",
+            "<body style='margin:0'><div style='margin-left:40px;width:70px;display:list-item;" +
+            "list-style:square'><div style='float:left;width:15px;height:20px'></div>" +
+            "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</div></body>");
+
+        var without = Marked(plain.Root).MarkerBounds!.Value;
+        var carried = Marked(holding.Root).MarkerBounds!.Value;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                $"{carried.Right},{carried.Y} {carried.Width}x{carried.Height}",
+                Is.EqualTo($"{without.Right},{without.Y} {without.Width}x{without.Height}"),
+                "the item's own float leaves its marker at the item's own edge");
+
+            // The line the marker stands on is the one the float moved: the text begins past the float the
+            // item holds, while the bullet stays behind it.
+            Assert.That(FirstLine(holding.Root).BorderBox.X, Is.EqualTo(55),
+                "the item's line begins beside the float it holds");
+        });
+    }
+
     [Test]
     public async Task AListKeepsRoomAtTheEdgeItsItemsBeginAt()    {
         var laid = await LaidOut("", "<ul><li>one</li></ul>");
