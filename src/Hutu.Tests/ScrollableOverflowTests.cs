@@ -81,6 +81,54 @@ public sealed class ScrollableOverflowTests
     }
 
     [Test]
+    public async Task TheBodysOverflowIsHandedToTheViewport()
+    {
+        using var view = CreateView();
+
+        // With the root saying nothing about its overflow, the body's is the one the viewport takes, and
+        // the element it came from keeps a used value of visible - so the body's own small box does not cut
+        // the page it holds (CSS Overflow 3 §3.3).
+        await view.SetHtml(
+            "<html><body style='margin:0;overflow:hidden;width:30px;height:30px'>" +
+            "<div style='width:100px;height:100px;background:green'></div>" +
+            "</body></html>");
+
+        Assert.That(Box(view, "body").ClipsOverflow, Is.False, "the body handed its clipping over");
+        Assert.That(view.Paint!.Commands.OfType<PushClipCommand>(), Is.Empty, "and nothing clips the page to it");
+    }
+
+    [Test]
+    public async Task AContainedBodyKeepsItsOwnOverflow()
+    {
+        using var view = CreateView();
+
+        // Containment on the body stops the handover, so what it says about its overflow applies to its
+        // own box again (CSS Contain 1 §2).
+        await view.SetHtml(
+            "<html><body style='margin:0;overflow:hidden;contain:layout;width:30px;height:30px'>" +
+            "<div style='width:100px;height:100px;background:green'></div>" +
+            "</body></html>");
+
+        Assert.That(Box(view, "body").ClipsOverflow, Is.True, "the body clips its own overflow");
+        Assert.That(view.Paint!.Commands.OfType<PushClipCommand>(), Is.Not.Empty, "and the page is cut to it");
+    }
+
+    [Test]
+    public async Task AContainedRootStopsTheBodyFromHandingItsOverflowOver()
+    {
+        using var view = CreateView();
+
+        // Containment on the root is enough to stop the special handling of the body, even where the body
+        // itself contains nothing (CSS Overflow 3 §3.3 and CSS Contain 1 §2).
+        await view.SetHtml(
+            "<html style='contain:layout'><body style='margin:0;overflow:hidden;width:30px;height:30px'>" +
+            "<div style='width:100px;height:100px;background:green'></div>" +
+            "</body></html>");
+
+        Assert.That(Box(view, "body").ClipsOverflow, Is.True, "the body's overflow is its own again");
+    }
+
+    [Test]
     public async Task TheOffsetOfAColumnPageCountsFromItsRightEdge()
     {
         using var view = CreateView();

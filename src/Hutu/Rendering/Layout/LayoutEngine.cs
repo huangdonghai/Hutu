@@ -63,6 +63,12 @@ internal sealed class LayoutEngine
     /// </summary>
     private readonly Dictionary<Box, FloatTracks> _floats = new();
 
+    /// <summary>
+    /// Whether the document element hands its overflow to the viewport itself, which is the condition
+    /// under which the body may hand its own over instead (CSS Overflow 3 §3.3).
+    /// </summary>
+    private Boolean _rootTakesOverflow;
+
     /// <summary>The engine the assertion measures against, made on first use.</summary>
     private LayoutEngine? _reference;
 
@@ -373,12 +379,29 @@ internal sealed record LayoutProfile(
     /// </remarks>
     private void ResolveDecorations(LayoutBox box)
     {
+        // The document element's own overflow is answered before the walk, because the body's used
+        // overflow depends on it: a root that clips - or that contains anything, which stops the handover
+        // just the same (CSS Contain 1 §2) - keeps the body's clipping for the body, and a root that does
+        // not hands its own to the viewport, which then also takes the body's and leaves the body itself
+        // visible (CSS Overflow 3 §3.3).
+        var rootStyle = box.Source.Style;
+
+        _rootTakesOverflow = !rootStyle.ClipsOverflow && !rootStyle.Contain.Stated;
+
         ResolveDecorations(box, null, null, null);
 
         // The inset a decorating box asked for is counted along the whole of the text it decorates, which
         // is only known once every run carries the lines reaching it.
         ResolveInsets(box);
     }
+
+    /// <summary>
+    /// Gets whether an element is the body the document element stands over, which is the one whose
+    /// <c>overflow</c> the viewport may take instead of leaving it to the element.
+    /// </summary>
+    private static Boolean IsBodyOfRoot(AngleSharp.Dom.IElement element) =>
+        element.LocalName.Equals("body", StringComparison.OrdinalIgnoreCase) &&
+        element.ParentElement is { } parent && ReferenceEquals(parent, element.Owner?.DocumentElement);
 
     private void ResolveDecorations(LayoutBox box, List<DecorationSource>? around) =>
         ResolveDecorations(box, around, null, null);
@@ -418,7 +441,15 @@ internal sealed record LayoutProfile(
         var isRoot = box.Source.Element is { } source &&
             ReferenceEquals(source, source.Owner?.DocumentElement);
 
-        box.ClipsOverflow = box.Kind != LayoutKind.Inline && style.ClipsOverflow && !isRoot;
+        // The body's overflow is not its own either where the root clips nothing: the viewport takes it
+        // instead, and the element it came from keeps the visible value it had before it was handed over
+        // (CSS Overflow 3 §3.3). A body that contains anything keeps its overflow to itself - the handover
+        // is off the moment the element asks not to be reached into (CSS Contain 1 §2).
+        var isBody = _rootTakesOverflow && !style.Contain.Stated &&
+            !style.Display.Equals("none", StringComparison.OrdinalIgnoreCase) &&
+            box.Source.Element is { } body && IsBodyOfRoot(body);
+
+        box.ClipsOverflow = box.Kind != LayoutKind.Inline && style.ClipsOverflow && !isRoot && !isBody;
 
         if (box.Kind == LayoutKind.Inline)
         {
