@@ -48,15 +48,32 @@ internal sealed partial class FlexFormattingContext
         var insetH = padding.Horizontal + border.Horizontal;
         var insetV = padding.Vertical + border.Vertical;
 
-        var (_, contentWidth) = _engine.ContentSizedWidth(box, basisWidth, context) is { } contentSized
-            ? (contentSized, Math.Max(0, contentSized - insetH))
-            : BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insetH);
+        Double contentWidth;
+        var widthFromContent = false;
+
+        if (_engine.ContentSizedWidth(box, basisWidth, context) is { } contentSized)
+        {
+            contentWidth = Math.Max(0, contentSized - insetH);
+        }
+        else if (box.Flow.IsVertical && style.Width.IsAuto)
+        {
+            // A vertical box's physical width is its block size, and a block size left to auto comes
+            // out of the content rather than filling the containing block (CSS 2.1 §10.6.3, CSS Writing
+            // Modes 3 §6). The flex layout is that content, and its cross size is the width: the
+            // container is measured against the room it was offered, and the lines settle it below.
+            contentWidth = Math.Max(0, basisWidth - insetH);
+            widthFromContent = true;
+        }
+        else
+        {
+            (_, contentWidth) = BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insetH);
+        }
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insetV);
 
         // A container with a ratio takes its cross size from it (CSS Sizing 4 §4): a flex row whose
         // width is known takes its height from the ratio, and a flex column whose height is known
         // takes its width. The main size is the flex layout's own, and a ratio never settles it.
-        var ratioHeight = mainIsHorizontal
+        var ratioHeight = mainIsHorizontal && !widthFromContent
             ? BoxModel.HeightFromRatio(style, contentWidth, null, insetV)
             : null;
 
@@ -64,23 +81,38 @@ internal sealed partial class FlexFormattingContext
             ? null
             : BoxModel.WidthFromRatio(style, declaredHeight, insetH);
 
+        if (ratioWidth is { } ratioFixed)
+        {
+            // A ratio with a definite block size settles the width the page left to auto.
+            contentWidth = ratioFixed;
+            widthFromContent = false;
+        }
+
         // A column container whose height the page left to the content takes that height from its ratio
         // when its width is known, and a row container whose width was left to the content takes that
         // width from its ratio when its height is known (CSS Sizing 4 §4).
-        var ratioMain = !mainIsHorizontal
+        var ratioMain = !mainIsHorizontal && !widthFromContent
             ? BoxModel.MainFromRatio(style, contentWidth, insetV)
             : null;
 
         var insetMain = mainIsHorizontal ? insetH : insetV;
         var insetCross = mainIsHorizontal ? insetV : insetH;
-        var mainSize = mainIsHorizontal ? contentWidth : declaredHeight;
-        var crossSize = mainIsHorizontal ? declaredHeight : contentWidth;
+        var mainSize = mainIsHorizontal
+            ? (widthFromContent ? null : contentWidth)
+            : declaredHeight;
+        var crossSize = mainIsHorizontal
+            ? declaredHeight
+            : (widthFromContent ? null : contentWidth);
 
         var itemContext = context.ForContainingBlock(new Size(contentWidth, declaredHeight ?? 0));
         var plan = Compute(box, flex, mainSize, crossSize, insetMain, insetCross, itemContext);
 
-        var contentMain = mainIsHorizontal ? contentWidth : declaredHeight ?? plan.ContentMain;
-        var contentCross = mainIsHorizontal ? declaredHeight ?? plan.ContentCross : contentWidth;
+        var contentMain = mainIsHorizontal
+            ? (widthFromContent ? plan.ContentMain : contentWidth)
+            : declaredHeight ?? plan.ContentMain;
+        var contentCross = mainIsHorizontal
+            ? declaredHeight ?? plan.ContentCross
+            : (widthFromContent ? plan.ContentCross : contentWidth);
 
         // The ratio settles the cross size where the page left it to the content, and the content may
         // be taller than it - then the content is what the box comes to (CSS Sizing 4 §4.4).

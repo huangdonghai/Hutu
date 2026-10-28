@@ -386,6 +386,19 @@ internal sealed partial class FlexFormattingContext
             var resolved = style.Width.Resolve(context.ContainingBlock.Width);
             cross = isBorderBox ? resolved - item.InsetCross : resolved;
         }
+        else if (item.Box.Flow.IsVertical)
+        {
+            // The cross axis runs across the page while the item's own lines run down it: the size
+            // asked for is its block size, which a vertical box takes from its content rather than
+            // from the containing block (CSS 2.1 §10.6.3, CSS Writing Modes 3 §6). Its inline size is
+            // the main size the line just gave it, so that is the height handed over.
+            var available = item.UsedMain + item.InsetMain + item.MarginMainStart + item.MarginMainEnd;
+            var constraints = MeasureConstraints
+                .FitWidth(context.ContainingBlock.Width)
+                .WithHeight(available);
+
+            cross = _engine.Measure(item.Box, constraints, context).Width - item.InsetCross;
+        }
         else
         {
             cross = _engine.MeasureIntrinsic(item.Box, context).MaxContent - item.InsetCross;
