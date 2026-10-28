@@ -650,7 +650,9 @@ internal sealed class GridFormattingContext
                 definiteWidth,
                 itemContext,
                 out minContentWidth,
-                keptColumns);
+                keptColumns,
+                namedColumns ?? grid.ColumnLines,
+                namedRows ?? grid.RowLines);
         }
 
         var totalWidth = Total(columnTracks, gapX);
@@ -1266,12 +1268,14 @@ internal sealed class GridFormattingContext
         Boolean definite,
         LayoutContext context,
         out Double minTotal,
-        IReadOnlyList<GridTrackSize>? kept = null)
+        IReadOnlyList<GridTrackSize>? kept = null,
+        GridLineNames? columnNames = null,
+        GridLineNames? rowNames = null)
     {
         var tracks = Build(grid.Columns, grid.AutoColumn, used, basis, gap, kept);
 
         Initialize(tracks, basis);
-        ContributeWidths(tracks, items, context, grid);
+        ContributeWidths(tracks, items, context, grid, gap, columnNames, rowNames);
 
         // The base sizes before any growth are the tracks' minima - a fixed length, or the largest
         // min-content contribution for an intrinsic minimum - so their sum is the grid's min-content.
@@ -1421,83 +1425,224 @@ internal sealed class GridFormattingContext
     /// Gathers what each column has to hold. An item with a declared width contributes that width
     /// instead of its content, and the margins come too, because a track holds an outer box.
     /// </summary>
-    private void ContributeWidths(List<Track> tracks, List<GridCell> items, LayoutContext context, GridStyle grid)
+    private void ContributeWidths(
+        List<Track> tracks,
+        List<GridCell> items,
+        LayoutContext context,
+        GridStyle grid,
+        Double columnGap,
+        GridLineNames? columnNames = null,
+        GridLineNames? rowNames = null)
     {
         var basis = context.ContainingBlock.Width;
+        var asking = new List<GridCell>(items.Count);
 
         foreach (var item in items)
         {
-            var style = item.Box.Style;
-            var margin = style.Margin.Resolve(basis).Horizontal;
-            var padding = style.Padding.Resolve(basis);
-            var insetH = padding.Horizontal + BlockLayout.BorderOf(item.Box).Horizontal;
-            var isBorderBox = BoxModel.IsBorderBox(style);
-            Double? declared = null;
-
-            // An item whose width is a percentage contributes as `auto` to the sizing of a track it stands
-            // in (CSS Grid 1 ��12.4): the percentage is a share of the area that track gives it, so it
-            // cannot be what decides that area (��6.6). Charging it to the container - which is all `basis`
-            // can be before the tracks are known - made a `width: 100%` item inside a `repeat(2, 1fr)`
-            // grid ask for the whole grid, and two 110px tracks were laid into a 110px container.
-            if (HasWidth(item.Box) && style.Width.Kind != StyleLengthKind.Percent)
+            // A subgrid borrows its parent's tracks, so nothing inside it is sized on its own account:
+            // it is the items of the grid within, each standing in one of the tracks the container
+            // spans, whose demands raise those tracks, and the container's own margins and insets stand
+            // at the two ends of the span (CSS Grid 2 §8.1). Measuring the container as though it owned
+            // its tracks hands the parent a number no item asked for, which is how a subgrid beside an
+            // `auto` track came to squeeze the tracks its own items stand in.
+            if (BorrowedWidths(item, context, basis, columnGap, columnNames, rowNames) is { } borrowed)
             {
-                var width = Math.Max(0, style.Width.Resolve(basis));
-                declared = isBorderBox ? width : width + insetH;
-            }
-
-            if (declared is { } fixedWidth)
-            {
-                item.MinWidth = fixedWidth + margin;
-                item.MaxWidth = item.MinWidth;
+                asking.AddRange(borrowed);
                 continue;
             }
 
-            // An item with an aspect ratio and a block size its rows have already settled has a definite
-            // inline size: the ratio carries one axis to the other (CSS Grid 1 ��6.6, CSS Sizing 4 ��4), and
-            // the columns are sized from it. Only a fixed track has a size before the rows are sized, so
-            // only a span of fixed tracks answers here - every other row waits for its content.
-            if (!HasWidth(item.Box) && style.AspectRatio is { } ratio && FixedRows(grid, item) is { } blockSize)
-            {
-                // The ratio is asked of the block size the item *has*, which is the height it states where
-                // that height is a length or a share of the settled row, and the whole row otherwise.
-                var height = style.Height;
-                var block = height.Kind switch
-                {
-                    StyleLengthKind.Percent => Math.Max(0, height.Value * blockSize),
-                    StyleLengthKind.Pixels => Math.Max(0, height.Value),
-                    _ => blockSize,
-                };
-                var inline = Math.Max(0, block * ratio.Value);
-                item.MinWidth = inline + margin;
-                item.MaxWidth = item.MinWidth;
-                continue;
-            }
-
-            // The content intrinsic size is what the item needs once its own declared width is set
-            // aside, which is the right question here for every item - and the only right one for an
-            // anonymous wrapper, whose declared width belongs to the container.
-            var intrinsic = _engine.MeasureContentIntrinsic(item.Box, context);
-            var minimum = (BoxModel.ContentBound(style.MinWidth, basis, insetH, isBorderBox) ?? 0) + insetH;
-
-            // CSS Grid 4.5, like Flexbox 4.5: an item whose inline overflow is a scroll axis has an
-            // automatic minimum size of zero - its content scrolls, so it sets no floor - while an
-            // explicit min-width still applies. This is what lets a `col-span-full overflow:hidden`
-            // carousel shrink to its track instead of inflating the whole grid's min-content.
-            var contentMin = item.Box.Style.ScrollsInline ? 0 : intrinsic.MinContent;
-
-            var minContribution = Math.Max(contentMin, minimum) + margin;
-            var maxContribution = Math.Max(intrinsic.MaxContent, minimum) + margin;
-
-            if (BoxModel.ContentBound(style.MaxWidth, basis, insetH, isBorderBox) is { } cap)
-            {
-                maxContribution = Math.Min(maxContribution, cap + margin);
-            }
-
-            item.MinWidth = minContribution;
-            item.MaxWidth = Math.Max(minContribution, maxContribution);
+            var demand = ColumnDemand(item, context, grid, basis);
+            item.MinWidth = demand.Min;
+            item.MaxWidth = demand.Max;
+            asking.Add(item);
         }
 
-        Contribute(tracks, items, true);
+        Contribute(tracks, asking, true);
+    }
+
+    /// <summary>
+    /// Gets what one item asks of the columns it stands in, outer box included: a declared width is the
+    /// item's say rather than its content's, an aspect ratio with a block size its rows have settled
+    /// carries one axis to the other, and otherwise it is what the content wants with the item's own
+    /// <c>min-width</c> and <c>max-width</c> as the floor and the ceiling. The pair is what a subgrid
+    /// hands on to the tracks it borrows, so both questions are asked of the same answer.
+    /// </summary>
+    /// <remarks>
+    /// An item whose width is a percentage contributes as <c>auto</c> to the sizing of a track it stands
+    /// in (CSS Grid 1 §12.4): the percentage is a share of the area that track gives it, so it cannot be
+    /// what decides that area (§6.6). Charging it to the container - which is all <c>basis</c> can be
+    /// before the tracks are known - made a <c>width: 100%</c> item inside a <c>repeat(2, 1fr)</c> grid
+    /// ask for the whole grid, and two 110px tracks were laid into a 110px container.
+    /// <para>
+    /// The content intrinsic size is what the item needs once its own declared width is set aside, which
+    /// is the right question here for every item - and the only right one for an anonymous wrapper, whose
+    /// declared width belongs to the container. An item whose inline overflow is a scroll axis has no
+    /// content floor of its own, while an explicit min-width still applies (CSS Grid 1 §4.5): that is
+    /// what lets a <c>col-span-full overflow:hidden</c> carousel shrink to its track instead of
+    /// inflating the whole grid's min-content.
+    /// </para>
+    /// </remarks>
+    private (Double Min, Double Max) ColumnDemand(
+        GridCell item, LayoutContext context, GridStyle grid, Double basis)
+    {
+        var style = item.Box.Style;
+        var margin = style.Margin.Resolve(basis).Horizontal;
+        var padding = style.Padding.Resolve(basis);
+        var insetH = padding.Horizontal + BlockLayout.BorderOf(item.Box).Horizontal;
+        var isBorderBox = BoxModel.IsBorderBox(style);
+
+        if (HasWidth(item.Box) && style.Width.Kind != StyleLengthKind.Percent)
+        {
+            var width = Math.Max(0, style.Width.Resolve(basis));
+            var declared = (isBorderBox ? width : width + insetH) + margin;
+
+            return (declared, declared);
+        }
+
+        // An item with an aspect ratio and a block size its rows have already settled has a definite
+        // inline size: the ratio carries one axis to the other (CSS Grid 1 §6.6, CSS Sizing 4 §4), and
+        // the columns are sized from it. Only a fixed track has a size before the rows are sized, so
+        // only a span of fixed tracks answers here - every other row waits for its content. The ratio is
+        // asked of the block size the item *has*, which is the height it states where that height is a
+        // length or a share of the settled row, and the whole row otherwise.
+        if (!HasWidth(item.Box) && style.AspectRatio is { } ratio && FixedRows(grid, item) is { } blockSize)
+        {
+            var height = style.Height;
+            var block = height.Kind switch
+            {
+                StyleLengthKind.Percent => Math.Max(0, height.Value * blockSize),
+                StyleLengthKind.Pixels => Math.Max(0, height.Value),
+                _ => blockSize,
+            };
+            var inline = Math.Max(0, block * ratio.Value) + margin;
+
+            return (inline, inline);
+        }
+
+        var intrinsic = _engine.MeasureContentIntrinsic(item.Box, context);
+        var minimum = (BoxModel.ContentBound(style.MinWidth, basis, insetH, isBorderBox) ?? 0) + insetH;
+        var contentMin = style.ScrollsInline ? 0 : intrinsic.MinContent;
+
+        var min = Math.Max(contentMin, minimum) + margin;
+        var max = Math.Max(intrinsic.MaxContent, minimum) + margin;
+
+        if (BoxModel.ContentBound(style.MaxWidth, basis, insetH, isBorderBox) is { } cap)
+        {
+            max = Math.Min(max, cap + margin);
+        }
+
+        return (min, Math.Max(min, max));
+    }
+    /// <summary>
+    /// Gets what the items of a column subgrid ask of the parent's tracks they stand in. The rows a
+    /// subgrid borrows are the parent's to size, and what it asks of them is what its own items ask of
+    /// the tracks they stand in, each grown by the room the subgrid's gutter and its own padding take at
+    /// the edges they press on; its own width belongs to the area the parent gave it, not to the tracks
+    /// (CSS Grid 2 §8.1). Null where the item is not a subgrid along the column axis, or holds nothing.
+    /// </summary>
+    /// <remarks>
+    /// An item of the subgrid that is itself a subgrid along this axis is asked as a whole, the way any
+    /// other item is: what a subgrid two levels down wants is its own parent's business before it is
+    /// this grid's.
+    /// </remarks>
+    private List<GridCell>? BorrowedWidths(
+        GridCell cell,
+        LayoutContext context,
+        Double basis,
+        Double columnGap,
+        GridLineNames? columnNames,
+        GridLineNames? rowNames)
+    {
+        var box = cell.Box;
+
+        if (box.Kind != BoxKind.Grid || !box.Style.Grid.ColumnsSubgrid)
+        {
+            return null;
+        }
+
+        var grid = box.Style.Grid;
+        var inner = new List<GridCell>();
+
+        foreach (var child in box.Children)
+        {
+            if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child))
+            {
+                inner.Add(Create(child));
+            }
+        }
+
+        if (inner.Count == 0)
+        {
+            return null;
+        }
+
+        var gap = grid.ColumnGapStated ? grid.ColumnGapAgainst(basis) : columnGap;
+        var padding = box.Style.Padding.Resolve(basis);
+        var margin = box.Style.Margin.Resolve(basis);
+        var border = BlockLayout.BorderOf(box);
+        var before = margin.Left + border.Left + padding.Left;
+        var after = margin.Right + border.Right + padding.Right;
+        var columns = Math.Max(1, cell.ColumnSpan);
+        var rows = grid.RowsSubgrid
+            ? Math.Max(1, cell.RowSpan)
+            : grid.Rows.ExplicitCount(basis, grid.RowGapAgainst(basis));
+
+        // The lines a subgrid's items name are the parent's for the tracks it borrows, with the names the
+        // subgrid wrote itself hung on the same lines (CSS Grid 2 §8.1).
+        var namedColumns = grid.ColumnsSubgrid
+            ? GridLineNames.Merged(columnNames?.Slice(cell.Column, cell.ColumnSpan), grid.ColumnLines)
+            : grid.ColumnLines;
+        var namedRows = grid.RowsSubgrid
+            ? GridLineNames.Merged(rowNames?.Slice(cell.Row, cell.RowSpan), grid.RowLines)
+            : grid.RowLines;
+
+        foreach (var item in inner)
+        {
+            ResolveAxis(item, true, columns, grid, namedColumns);
+            ResolveAxis(item, false, rows, grid, namedRows);
+        }
+
+        Place(inner, grid, columns, rows);
+
+        var cells = new List<GridCell>(inner.Count);
+
+        foreach (var item in inner)
+        {
+            var first = item.Column;
+            var span = Math.Min(item.ColumnSpan, columns - first);
+
+            if (span <= 0 || first < 0)
+            {
+                continue;
+            }
+
+            var demand = ColumnDemand(item, context, grid, basis);
+            var extra = (span - 1) * (columnGap - gap);
+
+            for (var index = first; index < first + span; index++)
+            {
+                if (columns == 1)
+                {
+                    extra += before + after;
+                    continue;
+                }
+
+                extra += index switch
+                {
+                    0 => before + gap / 2 - columnGap / 2,
+                    var last when last == columns - 1 => after + gap / 2 - columnGap / 2,
+                    _ => gap - columnGap,
+                };
+            }
+
+            item.Column = cell.Column + first;
+            item.ColumnSpan = span;
+            item.MinWidth = Math.Max(0, demand.Min + extra);
+            item.MaxWidth = Math.Max(0, demand.Max + extra);
+            cells.Add(item);
+        }
+
+        return cells;
     }
 
     /// <summary>

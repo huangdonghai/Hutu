@@ -954,6 +954,33 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task ASubgridsItemRaisesTheTrackItStandsIn()
+    {
+        using var view = CreateView(400);
+
+        // Where the parent leaves its columns to the content, it is the items of the subgrid that are
+        // that content: each raises the borrowed track it stands in, so an `auto` column beside a
+        // subgrid is as wide as what the subgrid sets in it rather than being squeezed to nothing
+        // (CSS Grid 2 §8.1).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:inline-grid;grid-template-columns:repeat(3,auto);gap:20px'>" +
+            "<div id='a' style='height:10px'></div>" +
+            "<div id='s' style='grid-column:2 / 4;display:grid;grid-template-columns:subgrid'>" +
+            "<div id='e' style='width:50px;height:10px'></div>" +
+            "<div id='f' style='width:60px;height:10px'></div>" +
+            "</div></div>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "e").BorderBox.X, Is.EqualTo(20).Within(0.5), "the first item on the parent's second column");
+            Assert.That(Find(view, "f").BorderBox.X, Is.EqualTo(90).Within(0.5), "and the next past the parent's gutter");
+            Assert.That(Find(view, "f").BorderBox.Right, Is.EqualTo(150).Within(0.5), "so the wrapper reaches both items and both gutters");
+        });
+    }
+
+    [Test]
     public async Task AnAbsolutePathChildOfAnUnpositionedGridStandsInItsContentBox()
     {
         using var view = CreateView(400);
