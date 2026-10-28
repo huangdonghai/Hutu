@@ -12,6 +12,27 @@ using System.Globalization;
 namespace Hutu.Rendering;
 
 /// <summary>
+/// How a ruby base and its reading are set within the column they share (CSS Ruby 1 §4.3).
+/// </summary>
+internal enum RubyAlign
+{
+    /// <summary>Extra room is shared out around the content, half of it on each end.</summary>
+    SpaceAround,
+
+    /// <summary>Extra room goes between the characters, none of it at either end.</summary>
+    SpaceBetween,
+
+    /// <summary>The content begins at the start of the column.</summary>
+    Start,
+
+    /// <summary>The content stands in the middle of the column.</summary>
+    Center,
+
+    /// <summary>The content ends at the end of the column.</summary>
+    End,
+}
+
+/// <summary>
 /// Strongly-typed access to the CSS values the layout engine needs.
 /// </summary>
 /// <remarks>
@@ -3221,6 +3242,12 @@ internal readonly struct ComputedStyle
         internal ICssValue? ShapeMargin;
         internal CursorKind Cursor;
         internal RubyPosition Ruby;
+
+        /// <summary>Gets how far a reading may hang over the text beside its pair (CSS Ruby 1 §5.1).</summary>
+        internal RubyOverhangMode RubyOverhang;
+
+        /// <summary>Gets how a ruby base and its reading are set within their column (CSS Ruby 1 §4.3).</summary>
+        internal RubyAlign RubyAlign;
         internal CssColorValue OutlineColor = CssColorValue.Black;
         internal BackgroundClip BackgroundClip;
 
@@ -4125,6 +4152,8 @@ internal readonly struct ComputedStyle
             mine.Orientation == theirs.Orientation &&
             mine.CombinesUpright == theirs.CombinesUpright &&
             mine.Ruby == theirs.Ruby &&
+            mine.RubyOverhang == theirs.RubyOverhang &&
+            mine.RubyAlign == theirs.RubyAlign &&
             mine.Cursor == theirs.Cursor &&
             mine.Transform == theirs.Transform &&
             mine.TextStrokeWidth == theirs.TextStrokeWidth &&
@@ -4638,6 +4667,67 @@ internal readonly struct ComputedStyle
     /// which is the one distinction the layout of a pair has to make.
     /// </summary>
     public Boolean HasRubyUnder => RubyPosition == RubyPosition.Under;
+
+    /// <summary>
+    /// Gets how far the reading of a ruby pair may hang over the text beside it (CSS Ruby 1 §5.1).
+    /// </summary>
+    /// <remarks>
+    /// The two values the current specification gives are <c>auto</c>, where the user agent decides,
+    /// and <c>spaces</c>, where only the spaces beside the pair may be covered. <c>none</c> is the
+    /// legacy spelling of <c>spaces</c>, and is read as the same thing.
+    /// </remarks>
+    public RubyOverhangMode RubyOverhang => _values.Fused is { } fused
+        ? fused.RubyOverhang
+        : ReadKeyword("ruby-overhang")?.ToLowerInvariant() switch
+        {
+            "spaces" or "none" => RubyOverhangMode.Spaces,
+            _ => RubyOverhangMode.Auto,
+        };
+
+    /// <summary>
+    /// Gets how a ruby base and its reading are set within the column they share (CSS Ruby 1 §4.3).
+    /// </summary>
+    public RubyAlign RubyAlign => _values.Fused is { } fused
+        ? fused.RubyAlign
+        : ReadKeyword("ruby-align")?.ToLowerInvariant() switch
+        {
+            "start" => RubyAlign.Start,
+            "center" => RubyAlign.Center,
+            "end" => RubyAlign.End,
+            "space-between" => RubyAlign.SpaceBetween,
+            _ => RubyAlign.SpaceAround,
+        };
+
+    /// <summary>
+    /// Resolves the ruby alignment from the element's own cascaded declaration, for the fused path.
+    /// </summary>
+    public static RubyAlign ResolveRubyAlignFused(ICssProperty? declared, RubyAlign inherited) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            null or "" or "inherit" => inherited,
+            "start" => RubyAlign.Start,
+            "center" => RubyAlign.Center,
+            "end" => RubyAlign.End,
+            "space-between" => RubyAlign.SpaceBetween,
+            _ => RubyAlign.SpaceAround,
+        };
+
+    /// <summary>
+    /// Resolves the ruby overhang from the element's own cascaded declaration, for the fused path.
+    /// </summary>
+    /// <remarks>
+    /// The property is inherited, so a declaration the element does not make leaves the ancestor's
+    /// answer standing; the CSS-wide keywords are read the way inheritance and the first value say.
+    /// <c>none</c> is the legacy spelling of <c>spaces</c> and means the same thing.
+    /// </remarks>
+    public static RubyOverhangMode ResolveRubyOverhangFused(ICssProperty? declared, RubyOverhangMode inherited) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            null or "" => inherited,
+            "inherit" => inherited,
+            "spaces" or "none" => RubyOverhangMode.Spaces,
+            _ => RubyOverhangMode.Auto,
+        };
 
     /// <summary>
     /// Gets the colour text is painted in.

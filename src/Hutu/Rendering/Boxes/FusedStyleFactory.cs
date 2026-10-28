@@ -321,6 +321,18 @@ internal sealed class FusedParent
     /// </summary>
     public RubyPosition Ruby { get; init; } = RubyPosition.Over;
 
+    /// <summary>
+    /// How far a reading may hang over the text beside its pair, which <c>ruby-overhang</c> states on
+    /// an ancestor as often as on the pair itself and carries down like any other inherited property.
+    /// </summary>
+    public RubyOverhangMode RubyOverhang { get; init; } = RubyOverhangMode.Auto;
+
+    /// <summary>
+    /// How a ruby base and its reading are set within their column, also inherited from the pair's
+    /// ancestors unless the element states one of its own.
+    /// </summary>
+    public RubyAlign RubyAlign { get; init; }
+
     public TextOrientation? Orientation { get; init; }
     public Boolean? CombinesUpright { get; init; }
     public CursorKind Cursor { get; init; }
@@ -443,6 +455,8 @@ internal sealed class FusedParent
         Variables = variables,
         Tag = tag,
         Ruby = style.RubyPosition,
+        RubyOverhang = style.RubyOverhang,
+        RubyAlign = style.RubyAlign,
         Orientation = style.DeclaredTextOrientation,
         CombinesUpright = style.DeclaredTextCombineUpright,
         Cursor = style.Cursor,
@@ -990,6 +1004,9 @@ internal static class FusedStyleFactory
             ShapeMargin = find("shape-margin")?.RawValue,
             Cursor = ComputedStyle.ResolveCursorFused(element, find("cursor"), parent.Cursor),
             Ruby = ComputedStyle.ResolveRubyPositionFused(find("ruby-position"), parent.Ruby),
+            RubyOverhang = ComputedStyle.ResolveRubyOverhangFused(
+                find("ruby-overhang"), parent.RubyOverhang),
+            RubyAlign = ComputedStyle.ResolveRubyAlignFused(find("ruby-align"), parent.RubyAlign),
             OutlineColor = ComputedStyle.ResolveOutlineColorFused(find("outline-color"), color),
             BackgroundClip = ComputedStyle.ResolveBackgroundClipFused(find("background-clip"), find("-webkit-background-clip")),
 

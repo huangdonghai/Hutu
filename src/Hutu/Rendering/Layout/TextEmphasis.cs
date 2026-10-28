@@ -138,7 +138,7 @@ internal readonly struct TextEmphasis
             return Edge == EmphasisEdge.Start;
         }
 
-        return Side == EmphasisSide.Right ? !flow.TurnsCounterClockwise : flow.TurnsCounterClockwise;
+        return Side == EmphasisSide.Right ? flow.StartsAtTheRight : !flow.StartsAtTheRight;
     }
 
     /// <summary>

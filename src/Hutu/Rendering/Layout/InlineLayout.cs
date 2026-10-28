@@ -609,8 +609,10 @@ internal sealed class InlineLayout
         // it brings with it is charged to the run that enters it, wherever in the stream that is.
         var open = new List<OpenInline>();
 
-        foreach (var item in items)
+        for (var position = 0; position < items.Count; position++)
         {
+            var item = items[position];
+
             if (item.IsBreak)
             {
                 minContent = Math.Max(minContent, unbreakable);
@@ -671,9 +673,10 @@ internal sealed class InlineLayout
             // them needs and offers no break opportunity inside itself.
             if (item.IsRuby)
             {
-                var extent = Math.Max(
-                    Measure(item.Style, item.Text!, flow),
-                    Measure(item.AnnotationStyle, item.AnnotationText!, flow));
+                var baseWidth = Measure(item.Style, item.Text!, flow);
+                var annotationWidth = Measure(item.AnnotationStyle, item.AnnotationText!, flow);
+                var (beforeRoom, afterRoom) = OverhangRoom(items, position);
+                var extent = RubyExtent(item, baseWidth, annotationWidth, beforeRoom, afterRoom);
 
                 maxContent += trailing + extent;
                 trailing = 0;
@@ -1767,35 +1770,25 @@ internal sealed class InlineLayout
 
         if (fragment.Ruby is { } annotation)
         {
-            // The annotation takes a strip at one end of the line's block extent and the base keeps
-            // the rest, which is the end away from the reading. Along the inline axis the two share the
-            // room the wider of them asked for, each centred in it, which is what stops a long reading
-            // from hanging off one side.
-            var baseBlock = line.Height - annotation.Block;
-
-            // An upright character in a column is drawn centred in its box, so a base drawn that way
-            // has to be boxed centred on the band as well - boxed against the far end it would sit half
-            // a reading off the column line its neighbours stand on. A base that is turned, or set in a
-            // line, is drawn from the line's shared baseline instead, and the end away from the reading
-            // is where that baseline puts it.
-            var baseOffset = fragment.Flow.IsVertical && fragment.Flow.Orientation == TextOrientation.Upright
-                ? cursor + (annotation.Block / 2)
-                : cursor + (annotation.Under ? 0 : annotation.Block);
+            // An annotation does not make the line taller: the line box is the base's, exactly as if
+            // the pair were a plain inline and the reading were not there (CSS Ruby 1 §3.6). The
+            // reading is laid over the base's content edge, which the shared baseline fixes, and it
+            // only grows the line when it reaches past the leading the line already has (Build).
+            var metrics = measurer.GetMetrics(fragment.Style.GetFont());
+            var baseline = line.Ascent + fragment.BaselineShift;
 
             Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Text)
             {
                 Text = fragment.Text,
                 Font = fragment.Style.GetFont(),
-                Baseline = flow.BlockOffsetFromLeft(
-                    baseBlock,
-                    line.Ascent + fragment.BaselineShift - (annotation.Under ? 0 : annotation.Block)),
+                Baseline = flow.BlockOffsetFromLeft(line.Height, baseline),
                 Flow = fragment.Flow,
                 BorderBox = flow.Map(
                     contentBox,
-                    origin + ((fragment.Width - fragment.BaseWidth) / 2),
+                    origin + RubyAligned(fragment.Box.Style.RubyAlign, fragment.Width, fragment.BaseWidth),
                     fragment.BaseWidth,
-                    baseOffset,
-                    baseBlock),
+                    cursor,
+                    line.Height),
             });
 
             Attach(open, lineBox, AnnotationBox(
@@ -1804,7 +1797,10 @@ internal sealed class InlineLayout
                 flow,
                 origin,
                 fragment.Width,
-                cursor + (annotation.Under ? line.Height - annotation.Block : 0)));
+                cursor + (annotation.Under
+                    ? baseline + metrics.Descent
+                    : baseline - metrics.Ascent - annotation.Block),
+                fragment.Box.Style.RubyAlign));
 
             return;
         }
@@ -1888,7 +1884,16 @@ internal sealed class InlineLayout
         var width = measurer.MeasureAdvance(emphasis.Mark!, drawn, flow);
         var spacing = fragment.Style.LetterSpacing;
         var words = fragment.Style.WordSpacing;
-        var start = cursor + (emphasis.StandsAtTheEnd(flow) ? line.Height - block : 0);
+        var face = measurer.GetMetrics(font);
+        var baseline = line.Ascent + fragment.BaselineShift;
+
+        // A mark stands just outside the text it marks - above the content edge for a mark on the
+        // ascent side, below it for one on the descent side - and takes no room in the line: it may
+        // reach into the line above or below, which is the author's business to leave room for
+        // (CSS Text Decoration 3 §3.3, measured against Chrome).
+        var start = cursor + (emphasis.KeepsItsStripOnTheAscentSide(fragment.Flow)
+            ? baseline - face.Ascent - block
+            : baseline + face.Descent);
         var colour = emphasis.HasColor ? emphasis.Color : ComputedStyle.ToArgb(fragment.Style.Color);
         var elements = new List<Int32>();
         var advances = new List<Double>();
@@ -2006,7 +2011,8 @@ internal sealed class InlineLayout
         WritingModeInfo flow,
         Double origin,
         Double room,
-        Double cursor)
+        Double cursor,
+        RubyAlign align)
     {
         return new LayoutBox(annotation.Box, LayoutKind.Text)
         {
@@ -2017,7 +2023,7 @@ internal sealed class InlineLayout
             Baseline = flow.BlockOffsetFromLeft(annotation.Block, annotation.Ascent),
             BorderBox = flow.Map(
                 contentBox,
-                origin + ((room - annotation.Width) / 2),
+                origin + RubyAligned(align, room, annotation.Width),
                 annotation.Width,
                 cursor,
                 annotation.Block),
@@ -2338,8 +2344,10 @@ internal sealed class InlineLayout
             following = null;
         }
 
-        foreach (var item in items)
+        for (var index = 0; index < items.Count; index++)
         {
+            var item = items[index];
+
             if (item.IsBreak)
             {
                 NextLine(forced: true);
@@ -2463,10 +2471,11 @@ internal sealed class InlineLayout
                 var baseFlow = ResolveOrientation(item.Text!, rubyFlow);
                 var annotation = MeasureAnnotation(item);
                 var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
-                var extent = Math.Max(baseWidth, annotation.Width);
+                var (before, after) = OverhangRoom(items, index);
+                var extent = RubyExtent(item, baseWidth, annotation.Width, before, after);
 
                 var band = room.Height;
-                room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()) + annotation.Block);
+                room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()));
 
                 if (room.Room > 0 && builder.ExtentFor(item.Inline) + extent > room.Room &&
                     item.Style.WrapsLines)
@@ -2475,7 +2484,7 @@ internal sealed class InlineLayout
                     {
                         room.Restore(band);
                         NextLine();
-                        room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()) + annotation.Block);
+                        room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()));
                     }
                     else if (room.Shortened)
                     {
@@ -3493,6 +3502,158 @@ internal sealed class InlineLayout
             item.AnnotationBox!,
             ResolveOrientation(text, flow));
     }
+
+    /// <summary>
+    /// Gets how far a reading may hang past its pair on each side: the room the text standing
+    /// directly beside the pair gives up (CSS Ruby 1 §5.1).
+    /// </summary>
+    private (Double Before, Double After) OverhangRoom(List<InlineItem> items, Int32 index) =>
+        (Spaces(items, index - 1, fromEnd: true), Spaces(items, index + 1, fromEnd: false));
+
+    /// <summary>
+    /// Measures the run of spaces a neighbour ends or begins with. A neighbour that is not a run of
+    /// text, or one whose edge is not a space, gives up nothing.
+    /// </summary>
+    private Double Spaces(List<InlineItem> items, Int32 at, Boolean fromEnd)
+    {
+        var room = 0.0;
+
+        for (var index = at; index >= 0 && index < items.Count; index += fromEnd ? -1 : 1)
+        {
+            var item = items[index];
+
+            if (item.IsRuby || item.IsReplaced || item.IsAtomic || item.IsBreak || item.IsOutOfFlow ||
+                String.IsNullOrEmpty(item.Text))
+            {
+                break;
+            }
+
+            var text = item.Text!;
+            var count = 0;
+
+            if (fromEnd)
+            {
+                while (count < text.Length && IsOverhangSpace(text[text.Length - 1 - count]))
+                {
+                    count++;
+                }
+            }
+            else
+            {
+                while (count < text.Length && IsOverhangSpace(text[count]))
+                {
+                    count++;
+                }
+            }
+
+            if (count == 0)
+            {
+                // A fullwidth punctuation mark beside the pair gives up part of its advance even
+                // though it is not a space (CSS Ruby 1 §5.1). Only the mark directly beside the pair
+                // counts: one standing past a space is not what the reading would cover.
+                if (room == 0)
+                {
+                    room += PunctuationRoom(item, fromEnd ? text[^1] : text[0], fromEnd);
+                }
+
+                break;
+            }
+
+            var run = fromEnd ? text[^count..] : text[..count];
+            room += Measure(item.Style, run, item.Box.Flow);
+
+            if (count < text.Length)
+            {
+                break;
+            }
+        }
+
+        return room;
+    }
+
+    /// <summary>
+    /// Gets whether a character is one a reading may hang over. CSS Ruby 1 §5.1 names preserved white
+    /// space, no-break space and the other space separators - and, of punctuation, only part of the
+    /// advance. The pages beside a pair use the ideographic space, a space separator like the rest.
+    /// </summary>
+    private static Boolean IsOverhangSpace(Char character) =>
+        character == '\t' || Char.GetUnicodeCategory(character) == UnicodeCategory.SpaceSeparator;
+
+    /// <summary>
+    /// Gets the room a reading may take out of the punctuation beside its pair: half of a fullwidth
+    /// opening or closing punctuation mark on the side that faces the pair, and a quarter of a fullwidth
+    /// middle dot on either side (CSS Ruby 1 §5.1).
+    /// </summary>
+    private Double PunctuationRoom(InlineItem item, Char character, Boolean fromEnd)
+    {
+        var category = Char.GetUnicodeCategory(character);
+        var share = category switch
+        {
+            UnicodeCategory.OpenPunctuation => fromEnd ? 0 : 0.5,
+            UnicodeCategory.ClosePunctuation => fromEnd ? 0.5 : 0,
+            UnicodeCategory.OtherPunctuation when character == '\u30FB' => 0.25,
+            _ => 0,
+        };
+
+        if (share == 0)
+        {
+            return 0;
+        }
+
+        // Only the fullwidth forms give room: a narrow parenthesis is a letter the reading must not
+        // cover, however the pair is set.
+        var advance = Measure(item.Style, character.ToString(), item.Box.Flow);
+
+        return advance >= item.Style.GetFont().Size * 0.9 ? advance * share : 0;
+    }
+
+    /// <summary>
+    /// Gets the room a ruby pair takes along the line: the wider of its base and its reading, less
+    /// what the reading may hang over the text beside it (CSS Ruby 1 §5.1).
+    /// </summary>
+    private static Double RubyExtent(
+        InlineItem item,
+        Double baseWidth,
+        Double annotationWidth,
+        Double before,
+        Double after)
+    {
+        var excess = annotationWidth - baseWidth;
+
+        if (excess <= 0)
+        {
+            return baseWidth;
+        }
+
+        var align = item.Box.Style.RubyAlign;
+
+        if (item.Box.Style.RubyOverhang == RubyOverhangMode.Spaces)
+        {
+            // A reading may cover the spaces beside it and no further: once those run out, the pair
+            // grows by what is left on that side. Which side it hangs from is `ruby-align`'s business.
+            return align switch
+            {
+                RubyAlign.Start => baseWidth + Math.Max(0, excess - after),
+                RubyAlign.End => baseWidth + Math.Max(0, excess - before),
+                _ => baseWidth + Math.Max(0, (excess / 2) - before) + Math.Max(0, (excess / 2) - after),
+            };
+        }
+
+        // What `auto` allows is the user agent's choice. Chrome lets a reading hang half an em past
+        // its base in total - a quarter of it on each side - whatever stands beside it.
+        return Math.Max(baseWidth, annotationWidth - (item.Style.GetFont().Size / 2));
+    }
+
+    /// <summary>
+    /// Gets where a box narrower than its ruby column stands in it, which is what <c>ruby-align</c>
+    /// says (CSS Ruby 1 §4.3).
+    /// </summary>
+    private static Double RubyAligned(RubyAlign align, Double extent, Double width) => align switch
+    {
+        RubyAlign.Start or RubyAlign.SpaceBetween => 0,
+        RubyAlign.End => extent - width,
+        _ => (extent - width) / 2,
+    };
 
     /// <summary>
     /// Measures a range of text the way a column advances it. Upright text advances by its em box
@@ -5647,45 +5808,28 @@ internal sealed class InlineLayout
                     fragmentDescent += halfLeading;
                 }
 
-                // An annotation stands over its base, on the block-start side, so it lifts the baseline
-                // the whole line shares by its own extent instead of making the base taller. One asked
-                // for `under` takes its room from the other side of the baseline and leaves it where it
-                // would have been.
+                // An annotation stands over its base, on the block-start side, but it does not make the
+                // line taller than the base's own line-height does (CSS Ruby 1 §3.6): the leading the
+                // line already has is where a reading is meant to sit. Only a reading that reaches
+                // past that leading - the distance from the base's content edge to the line box's edge -
+                // adds the difference, so that stacked lines do not overlap.
                 if (fragment.Ruby is { } annotation)
                 {
                     if (annotation.Under)
                     {
-                        fragmentDescent += annotation.Block;
+                        fragmentDescent += Math.Max(0, annotation.Block - (fragmentDescent - metrics.Descent));
                     }
                     else
                     {
-                        fragmentAscent += annotation.Block;
+                        fragmentAscent += Math.Max(0, annotation.Block - (fragmentAscent - metrics.Ascent));
                     }
                 }
-                else if (fragment.Style.Emphasis is { IsSet: true } marks)
+                else if (fragment.Style.Emphasis is { IsSet: true })
                 {
-                    // Marks are drawn in the manner of a reading, and they take the room one would: the
-                    // line grows by the strip they stand in, which is their own size, on the side the page
-                    // named (CSS Text Decoration 4 §5.2). A base carrying its own reading is marked
-                    // through that reading instead, so it is asked for nothing here.
-                    //
-                    // The side is the physical one the marks stand on rather than the edge the writing
-                    // mode calls the end. The ascent of a turned glyph reaches to its right in both the
-                    // vertical modes - they differ only in which way their columns march - so a mark to
-                    // the right asks for the ascent even in a left-to-right page, whose columns end on
-                    // that same right edge. Reserving the strip on the other side leaves the shared
-                    // baseline the width of the band inside the band, which is why a marked column drew
-                    // its glyphs over its own circles.
-                    var strip = Math.Max(1, fragment.Style.GetFont().Size / 2);
-
-                    if (marks.KeepsItsStripOnTheAscentSide(fragment.Flow))
-                    {
-                        fragmentAscent += strip;
-                    }
-                    else
-                    {
-                        fragmentDescent += strip;
-                    }
+                    // Marks are drawn in the manner of a reading, but they take no room of their own:
+                    // the line keeps the height its text asks for and the marks stand outside it
+                    // (CSS Text Decoration 3 §3.3). A page that wants room for them leaves it with
+                    // line-height or padding, as the tests beside a reading do.
                 }
 
                 above[position] = fragmentAscent;
