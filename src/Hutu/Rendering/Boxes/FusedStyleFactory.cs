@@ -1214,7 +1214,16 @@ internal static class FusedStyleFactory
             ? direction == TextDirection.LeftToRight
                 ? WritingModeInfo.Horizontal
                 : new WritingModeInfo(mode, TextOrientation.Mixed, false, direction)
-            : new WritingModeInfo(mode, orientation ?? TextOrientation.Mixed, combine ?? false, direction);
+            : new WritingModeInfo(
+                mode,
+                orientation ?? TextOrientation.Mixed,
+
+                // Each sideways mode turns every glyph by itself, so there is no upright run left for
+                // `text-combine-upright` to make: the property has no effect there (CSS Writing Modes 3
+                // §5.1). Measured in Chrome on wpt's text-combine-upright-sideways-001 and -002, whose
+                // reference pages simply drop the property.
+                mode is WritingMode.SidewaysRl or WritingMode.SidewaysLr ? false : combine ?? false,
+                direction);
 
     /// <summary>Reads the ends a <c>text-box-trim</c> value names.</summary>
     private static TextBoxTrim Trim(String? value) => value?.Trim().ToLowerInvariant() switch

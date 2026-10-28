@@ -1049,6 +1049,82 @@ public sealed class VerticalLayoutTests
         return view;
     }
 
+    /// <summary>
+    /// Vertically-set Latin characters stand one per line box, so a run of six of them is six boxes down a
+    /// column; sideways-set ones turn with the column and lie along it, so the same run is one long box.
+    /// That difference is how the orientation a run was given can be read off the geometry, without asking
+    /// the resolver.
+    /// </summary>
+    private static Double ColumnRun(HutuViewInternal view, String text) =>
+        Text(view, text).BorderBox.Height;
+
+    /// <summary>
+    /// <c>text-orientation: initial</c> asks for the property's initial value, which is <c>mixed</c> - not
+    /// "the value my parent came to". Read as a declaration this reader did not know, an arm written to
+    /// start over kept the <c>upright</c> its parent asked for, and the Latin run it held stood one
+    /// character per line rather than lying along the column (CSS Writing Modes 3 §5.1). Measured in Chrome
+    /// on wpt's <c>text-orientation-initial</c>.
+    /// </summary>
+    [Test]
+    public async Task TheInitialOrientationKeywordStartsOverRatherThanInheriting()
+    {
+        using var view = CreateView(400);
+
+        // Six upright characters at a ten-pixel font take sixty pixels of column; the same six set
+        // sideways along the column take thirty, one character's advance each.
+        await view.SetHtml(
+            "<html><body style='margin:0;font-size:10px;line-height:1'>" +
+            "<div style='writing-mode:vertical-rl;text-orientation:upright'>vertical</div>" +
+            "</body></html>");
+
+        var upright = ColumnRun(view, "vertical");
+
+        await view.SetHtml(
+            "<html><body style='margin:0;font-size:10px;line-height:1'>" +
+            "<div style='writing-mode:vertical-rl;text-orientation:upright'>" +
+            "<div style='text-orientation:initial'>vertical</div>" +
+            "</div>" +
+            "</body></html>");
+
+        var reset = ColumnRun(view, "vertical");
+
+        Assert.That(
+            upright > reset,
+            Is.True,
+            $"an upright run stands one character per box ({upright}) while the reset one lies along the column ({reset})");
+    }
+
+    /// <summary>
+    /// A sideways mode turns every glyph by itself, so there is no upright run left for
+    /// <c>text-combine-upright</c> to make: the property has no effect there (CSS Writing Modes 3 §5.1),
+    /// and the run is set exactly as it would be without it. Measured in Chrome on wpt's
+    /// <c>text-combine-upright-sideways-001</c> and <c>-002</c>, whose reference pages drop the property.
+    /// </summary>
+    [Test]
+    public async Task CombiningUprightHasNoEffectInASidewaysMode()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0;font-size:10px;line-height:1'>" +
+            "<div style='writing-mode:sideways-rl'>AB1234CD</div>" +
+            "</body></html>");
+
+        var plain = ColumnRun(view, "AB1234CD");
+
+        await view.SetHtml(
+            "<html><body style='margin:0;font-size:10px;line-height:1'>" +
+            "<div style='writing-mode:sideways-rl'>AB<span style='text-combine-upright:all'>1234</span>CD</div>" +
+            "</body></html>");
+
+        var combined = Text(view, "1234").BorderBox.Height;
+
+        Assert.That(
+            combined,
+            Is.EqualTo(20),
+            $"the four digits keep their own advances ({plain} for the whole run) rather than being compressed into one em");
+    }
+
     private static IEnumerable<LayoutBox> Blocks(HutuViewInternal view, String tag)
     {
         var root = view.Layout?.Root;

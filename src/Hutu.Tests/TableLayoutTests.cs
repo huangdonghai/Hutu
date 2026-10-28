@@ -788,6 +788,50 @@ public sealed class TableLayoutTests
         return view;
     }
 
+    /// <summary>
+    /// <c>rowspan="0"</c> does not mean "no rows" and it does not mean one: HTML §4.9.11 reads it as the
+    /// rest of the row group the cell stands in, or the rest of the table where it stands in no group. The
+    /// reference pages state the number it comes to directly (<c>rowspan="4"</c> for four rows), so a cell
+    /// read as spanning one made its text spill into the rows below it.
+    /// </summary>
+    [Test]
+    public async Task AZeroRowSpanReachesTheEndOfItsGroup()
+    {
+        using var view = CreateView(600);
+
+        // The same table written twice, once with the zero and once with the number the reference page
+        // states for it: the two have to come to the same geometry, whatever the font's line height is.
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-collapse:separate;border-spacing:0'>" +
+            "<tr><td id='zeroWhole' rowspan='0'>A</td></tr><tr><td>B</td></tr><tr><td>C</td></tr>" +
+            "</table>" +
+            "<table style='border-collapse:separate;border-spacing:0'>" +
+            "<tr><td id='threeWhole' rowspan='3'>A</td></tr><tr><td>B</td></tr><tr><td>C</td></tr>" +
+            "</table>" +
+            "<table style='border-collapse:separate;border-spacing:0'>" +
+            "<tbody><tr><td id='zeroGroup' rowspan='0'>D</td></tr><tr><td>E</td></tr></tbody>" +
+            "<tbody><tr><td>F</td></tr></tbody>" +
+            "</table>" +
+            "<table style='border-collapse:separate;border-spacing:0'>" +
+            "<tbody><tr><td id='twoGroup' rowspan='2'>D</td></tr><tr><td>E</td></tr></tbody>" +
+            "<tbody><tr><td>F</td></tr></tbody>" +
+            "</table>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                $"{Find(view, "zeroWhole").BorderBox.Height}x{Find(view, "zeroWhole").BorderBox.Width}",
+                Is.EqualTo($"{Find(view, "threeWhole").BorderBox.Height}x{Find(view, "threeWhole").BorderBox.Width}"),
+                "a zero span in no group reaches the table's last row, which is the span of three");
+            Assert.That(
+                $"{Find(view, "zeroGroup").BorderBox.Height}x{Find(view, "zeroGroup").BorderBox.Width}",
+                Is.EqualTo($"{Find(view, "twoGroup").BorderBox.Height}x{Find(view, "twoGroup").BorderBox.Width}"),
+                "and inside a group it stops at that group's last row rather than running into the next group");
+        });
+    }
+
     private static LayoutBox Find(HutuViewInternal view, String id)
     {
         var root = view.Layout?.Root;

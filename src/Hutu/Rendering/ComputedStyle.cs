@@ -1431,6 +1431,11 @@ internal readonly struct ComputedStyle
             "mixed" => TextOrientation.Mixed,
             "upright" => TextOrientation.Upright,
             "sideways" => TextOrientation.Sideways,
+
+            // The initial keyword names the initial value, which is mixed - not "whatever the parent
+            // asked for". Read as an unknown declaration it left an arm that asked to start over with the
+            // ancestor's upright, and the run it held was never turned (CSS Writing Modes 3 §5.1).
+            "initial" => TextOrientation.Mixed,
             _ => declared is null ? parent : null,
         };
 
@@ -4551,6 +4556,11 @@ internal readonly struct ComputedStyle
             "mixed" => TextOrientation.Mixed,
             "upright" => TextOrientation.Upright,
             "sideways" => TextOrientation.Sideways,
+
+            // The initial keyword names the initial value, which is mixed - not "whatever the parent
+            // asked for". Read as an unknown declaration, an arm that asked to start over kept the
+            // ancestor's upright, and the run it held was never turned sideways (CSS Writing Modes 3 §5.1).
+            "initial" => TextOrientation.Mixed,
             _ => null,
         };
 

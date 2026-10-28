@@ -326,6 +326,15 @@ internal sealed partial class TableFormattingContext
                 // A span reaches at most to the table's last column, and never shortens to nothing.
                 columnSpan = Math.Max(1, Math.Min(columnSpan, columns));
 
+                // A zero rowspan is not "no rows": HTML §4.9.11 reads it as the rest of the row group the
+                // cell stands in (and the rest of the table where it stands in none), which is the number
+                // the reference pages state directly. Read as a span of one it made the cell's text spill
+                // into the rows below it, which is what wpt's zero-rowspan-001 and -002 draw.
+                if (ZeroSpan(child, "rowspan"))
+                {
+                    rowSpan = RestOfGroup(source, r, source[r].Group);
+                }
+
                 while (Occupied(occupied, r, column, columnSpan, rowSpan))
                 {
                     column++;
@@ -817,6 +826,41 @@ internal sealed partial class TableFormattingContext
         }
 
         return (Span(element, "colspan"), Span(element, "rowspan"));
+    }
+
+    /// <summary>
+    /// Gets whether the attribute was written as a zero, which HTML gives its own meaning to rather than
+    /// treating it as the attribute being absent.
+    /// </summary>
+    private static Boolean ZeroSpan(Box cell, String name)
+    {
+        var text = cell.Element?.GetAttribute(name);
+
+        return text is not null &&
+            Int32.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) &&
+            value == 0;
+    }
+
+    /// <summary>
+    /// Gets how many rows are left in the group a cell stands in, counting the cell's own row: the span a
+    /// <c>rowspan="0"</c> asks for (HTML §4.9.11), and the rows of the whole table where the cell stands in
+    /// no group.
+    /// </summary>
+    private static Int32 RestOfGroup(List<(Box Box, Box? Group)> source, Int32 row, Box? group)
+    {
+        var last = row;
+
+        for (var index = row; index < source.Count; index++)
+        {
+            if (!ReferenceEquals(source[index].Group, group))
+            {
+                break;
+            }
+
+            last = index;
+        }
+
+        return last - row + 1;
     }
 
     private static Int32 Span(IElement element, String name)

@@ -326,10 +326,14 @@ internal static partial class BoxBuilder
                 : new WritingModeInfo(Layout.WritingMode.HorizontalTb, TextOrientation.Mixed, false, direction);
         }
 
+        // Each sideways mode turns every glyph by itself, so there is no upright run left for
+        // `text-combine-upright` to make and the property has no effect there (CSS Writing Modes 3 §5.1).
+        var sideways = mode is Layout.WritingMode.SidewaysRl or Layout.WritingMode.SidewaysLr;
+
         return new WritingModeInfo(
             mode,
             style.DeclaredTextOrientation ?? inherited.Orientation,
-            style.DeclaredTextCombineUpright ?? inherited.CombinesUpright,
+            !sideways && (style.DeclaredTextCombineUpright ?? inherited.CombinesUpright),
             direction);
     }
 
