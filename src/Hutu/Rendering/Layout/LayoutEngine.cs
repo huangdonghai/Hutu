@@ -1359,8 +1359,9 @@ internal sealed record LayoutProfile(
         Box box,
         Offset staticPosition,
         LayoutContext context,
-        StaticStanding? standing = null) =>
-        _positioned.Arrange(box, staticPosition, context, standing);
+        StaticStanding? standing = null,
+        StaticLine? line = null) =>
+        _positioned.Arrange(box, staticPosition, context, standing, line);
 
     /// <summary>Produces the geometry of a measured box inside the given border box.</summary>
     private LayoutBox ArrangeCore(

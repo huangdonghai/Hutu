@@ -1310,6 +1310,57 @@ public sealed class PositionedLayoutTests
     }
 
     /// <summary>
+    /// An out-of-flow box whose specified display was inline-level hangs from the insertion point the
+    /// line box would have given it, not from the container's start corner.
+    /// </summary>
+    /// <remarks>
+    /// Measured in Chrome on 2026-10-28 with a 100x60 relative container, a 20x10 absolute child
+    /// written <c>display: inline</c> and no offsets on the child: text-align moves an empty line's
+    /// insertion point (0 / 50 / 100 for left / center / right), the box grows rightwards from it in
+    /// a left-to-right line and leftwards in a right-to-left one (80 for a bare right-to-left
+    /// container), and the floats standing at that offset shorten the line first (a 30px left float
+    /// puts the point at 30; in a right-to-left container the point is the right edge of what the
+    /// float left, so the box stands at 80 with a left float and at 50 with a right one). A
+    /// <c>display: block</c> box keeps the container's start corner whatever the alignment asks (0).
+    /// </remarks>
+    [Test]
+    public async Task AnInlineLevelFlownBoxHangsFromTheInsertionPointItsLineWouldHave()
+    {
+        const String abs = "display:inline;position:absolute;width:20px;height:10px";
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<div id='c1' style='position:relative;width:100px;height:60px;text-align:left'><div id='a1' style='{abs}'></div></div>" +
+            $"<div id='c2' style='position:relative;width:100px;height:60px;text-align:center'><div id='a2' style='{abs}'></div></div>" +
+            $"<div id='c3' style='position:relative;width:100px;height:60px;text-align:right'><div id='a3' style='{abs}'></div></div>" +
+            $"<div id='c4' style='position:relative;width:100px;height:60px;direction:rtl'><div id='a4' style='{abs}'></div></div>" +
+            $"<div id='c5' style='position:relative;width:100px;height:60px;direction:rtl;text-align:center'><div id='a5' style='{abs}'></div></div>" +
+            $"<div id='c6' style='position:relative;width:100px;height:60px'><div style='float:left;width:30px;height:30px'></div><div id='a6' style='{abs}'></div></div>" +
+            $"<div id='c7' style='position:relative;width:100px;height:60px'><div style='float:right;width:30px;height:30px'></div><div id='a7' style='{abs}'></div></div>" +
+            $"<div id='c8' style='position:relative;width:100px;height:60px;direction:rtl'><div style='float:left;width:30px;height:30px'></div><div id='a8' style='{abs}'></div></div>" +
+            $"<div id='c9' style='position:relative;width:100px;height:60px;direction:rtl'><div style='float:right;width:30px;height:30px'></div><div id='a9' style='{abs}'></div></div>" +
+            "<div id='c10' style='position:relative;width:100px;height:60px;text-align:center'><div id='a10' style='display:block;position:absolute;width:20px;height:10px'></div></div>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(StandsAt(view, "c1", "a1"), Is.EqualTo(0), "a left-to-right line begins at its start edge");
+            Assert.That(StandsAt(view, "c2", "a2"), Is.EqualTo(50), "an empty line's insertion point is its middle under center");
+            Assert.That(StandsAt(view, "c3", "a3"), Is.EqualTo(100), "and its far edge under right");
+            Assert.That(StandsAt(view, "c4", "a4"), Is.EqualTo(80), "a right-to-left line begins at the right, and the box hangs leftwards");
+            Assert.That(StandsAt(view, "c5", "a5"), Is.EqualTo(30), "the middle of a right-to-left line is where the box's right edge stands");
+            Assert.That(StandsAt(view, "c6", "a6"), Is.EqualTo(30), "the 30px float shortens the line before the point is chosen");
+            Assert.That(StandsAt(view, "c7", "a7"), Is.EqualTo(0), "a right float leaves the start of the line where it was");
+            Assert.That(StandsAt(view, "c8", "a8"), Is.EqualTo(80), "a right-to-left line begins past the left float");
+            Assert.That(StandsAt(view, "c9", "a9"), Is.EqualTo(50), "and past the right float at the other end");
+            Assert.That(StandsAt(view, "c10", "a10"), Is.EqualTo(0), "a block-level display keeps the container's start corner");
+        });
+    }
+
+    private static Double StandsAt(HutuViewInternal view, String container, String child) =>
+        Find(view, child).BorderBox.X - Find(view, container).BorderBox.X;
+
+    /// <summary>
     /// The same fallback where the box stands inside one that holds it, which is the case the
     /// containing block makes rather than the flow.
     /// </summary>

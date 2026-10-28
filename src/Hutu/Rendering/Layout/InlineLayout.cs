@@ -1672,6 +1672,24 @@ internal sealed class InlineLayout
             var stood = flow.Map(contentBox, origin, 0, cursor, 0);
             var against = context.Absolute ?? context.Containing;
 
+            // Where the box hangs from is the line's own business as well: an inline-level box grows
+            // from the insertion point along the way the line reads, while a block-level one keeps the
+            // content's start edge whatever the line's alignment did - measured in Chrome, where
+            // `text-align: center` on a 100px container puts a 20px `display: inline` absolute box at
+            // 50 but a `display: block` one at 0, and a right-to-left line hangs the inline-level box
+            // leftwards from its insertion point. A column's insertion point runs down the page and
+            // this anchor is written along x, so only a row is answered here.
+            StaticLine? hang = null;
+
+            if (!flow.IsVertical)
+            {
+                var at = fragment.Box.Style.Display.StartsWith("inline", StringComparison.OrdinalIgnoreCase)
+                    ? stood.X
+                    : flow.InlineSign > 0 ? contentBox.X : contentBox.Right;
+
+                hang = new StaticLine(at, at, 0, flow.InlineSign);
+            }
+
             // An inline element the run sits inside answers for the box when it is the nearest one
             // positioned - which the line cannot settle on its own, since the rectangle is drawn over
             // every fragment of that element (CSS Positioned Layout 3 2.1).
@@ -1682,12 +1700,13 @@ internal sealed class InlineLayout
                 Attach(open, lineBox, context.Engine.ArrangePositioned(
                     fragment.Box,
                     new Offset(stood.X, stood.Y),
-                    against));
+                    against,
+                    line: hang));
             }
             else
             {
                 var (owner, index) = Standing(open, lineBox);
-                placement.Hold(fragment.Box, anchor, owner, index, against, new Offset(stood.X, stood.Y));
+                placement.Hold(fragment.Box, anchor, owner, index, against, new Offset(stood.X, stood.Y), hang);
             }
 
             return;
@@ -3087,14 +3106,14 @@ internal sealed class InlineLayout
         /// How many boxes already stood in <paramref name="owner"/> when the line came to this one, which
         /// is where it goes again so that the line reads in the order it was built in.
         /// </param>
-        public void Hold(Box box, InlineAncestor anchor, LayoutBox owner, Int32 index, LayoutContext against, Offset stood) =>
-            _held.Add(new Held(box, anchor, owner, index, against, stood, null));
+        public void Hold(Box box, InlineAncestor anchor, LayoutBox owner, Int32 index, LayoutContext against, Offset stood, StaticLine? line = null) =>
+            _held.Add(new Held(box, anchor, owner, index, against, stood, null, line));
 
         /// <summary>Holds an atomic inline box, with the frame the line gave it.</summary>
         /// <inheritdoc cref="Hold(Box, InlineAncestor, LayoutBox, Int32, LayoutContext, Offset)" path="/param[@name='against']"/>
         /// <inheritdoc cref="Hold(Box, InlineAncestor, LayoutBox, Int32, LayoutContext, Offset)" path="/param[@name='index']"/>
         public void Hold(Box box, InlineAncestor anchor, LayoutBox owner, Int32 index, LayoutContext against, Rect frame) =>
-            _held.Add(new Held(box, anchor, owner, index, against, default, frame));
+            _held.Add(new Held(box, anchor, owner, index, against, default, frame, null));
 
         /// <summary>Places every box that was held, then moves the fragments their offsets displace.</summary>
         public void Finish(WritingModeInfo flow)
@@ -3111,7 +3130,7 @@ internal sealed class InlineLayout
                     : held.Against.WithAbsoluteContainingBlock(frame);
                 var node = held.Frame is { } area
                     ? _engine.Arrange(held.Box, area, against)
-                    : _engine.ArrangePositioned(held.Box, held.Stood, against);
+                    : _engine.ArrangePositioned(held.Box, held.Stood, against, line: held.Line);
 
                 // The siblings placed while the box waited are not the ones it stood among, so the place it
                 // was counted at moves along by the boxes already put back into that owner.
@@ -3162,7 +3181,8 @@ internal sealed class InlineLayout
             Int32 Index,
             LayoutContext Against,
             Offset Stood,
-            Rect? Frame);
+            Rect? Frame,
+            StaticLine? Line);
     }
 
     /// <summary>What one step between two chains of inline elements did to the elements it left and entered.</summary>
@@ -3949,7 +3969,7 @@ internal sealed class InlineLayout
     /// <c>left</c> and <c>right</c> are physical and do not; the initial value is <c>start</c>, so an
     /// unaligned right-to-left line sits against its right edge.
     /// </remarks>
-    private static Double AlignmentOffset(String textAlign, Double maxInline, Double used, WritingModeInfo flow)
+    internal static Double AlignmentOffset(String textAlign, Double maxInline, Double used, WritingModeInfo flow)
     {
         if (maxInline <= used)
         {

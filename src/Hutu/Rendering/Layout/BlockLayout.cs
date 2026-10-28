@@ -2048,6 +2048,44 @@ internal sealed class BlockLayout
     private static Boolean IsFloat(Box child) => child.Style.Float != FloatSide.None;
 
     /// <summary>
+    /// Gets the line an inline-level out-of-flow box would have joined, or null when its specified
+    /// display was block-level - which stands at the container's own start corner instead.
+    /// </summary>
+    /// <remarks>
+    /// A box that left the flow is blockified before it generates a box, but the place it would have
+    /// had is still read off the display the page wrote: measured in Chrome, `display: inline`,
+    /// `inline-block` and `inline-flex` absolutely positioned boxes all hang from a line's insertion
+    /// point (shifted by text-align, shortened by the floats standing at that offset), while a
+    /// `display: block` one stands at the container's start whatever the alignment says. A column's
+    /// line runs down the page and this anchor is written along x, so only a row is answered here.
+    /// </remarks>
+    private static StaticLine? StaticLineOf(
+        Box container,
+        Box child,
+        FloatTracks? tracks,
+        Double contentX,
+        Double contentWidth,
+        Double top)
+    {
+        if (container.Flow.IsVertical ||
+            !child.Style.Display.StartsWith("inline", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var (left, right) = tracks is { } floats
+            ? floats.FreeSpanAt(top, 0)
+            : (contentX, contentX + contentWidth);
+
+        // The box adds no width to the line, so the insertion point stands wherever an empty line's
+        // content would: at the line's start, its middle or its far end.
+        var alignment = InlineLayout.AlignmentOffset(
+            container.Style.TextAlign, Math.Max(0, right - left), 0, container.Flow);
+
+        return new StaticLine(left, right, alignment, container.Flow.InlineSign);
+    }
+
+    /// <summary>
     /// Gets the band a child's line boxes stand in: the container's own floats, or the ones it inherited
     /// when nothing in it floats, with the child's content corner placed inside them.
     /// </summary>
@@ -2522,7 +2560,8 @@ internal sealed class BlockLayout
                 parent.Children.Add(_engine.ArrangePositioned(
                     child,
                     new Offset(contentX, cursor + pending),
-                    context));
+                    context,
+                    line: StaticLineOf(box, child, tracks, contentX, contentWidth, cursor + pending)));
 
                 continue;
             }

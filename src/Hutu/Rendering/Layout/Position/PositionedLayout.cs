@@ -131,7 +131,8 @@ internal sealed class PositionedLayout
         Box box,
         Offset staticPosition,
         LayoutContext context,
-        StaticStanding? standing = null)
+        StaticStanding? standing = null,
+        StaticLine? line = null)
     {
         var position = box.Style.Position;
 
@@ -180,7 +181,7 @@ internal sealed class PositionedLayout
         }
 
         var (width, x) = Horizontal(
-            position, style, containingBlock, staticPosition.X, measured.Width, margin, insetWidth, standing, intrinsicWidth);
+            position, style, containingBlock, staticPosition.X, measured.Width, margin, insetWidth, standing, intrinsicWidth, line);
         var (height, y) = Vertical(
             position, style, containingBlock, staticPosition.Y, measured.Height, margin, insetHeight, standing, intrinsicHeight);
 
@@ -344,7 +345,8 @@ internal sealed class PositionedLayout
         Thickness margin,
         Double insets,
         StaticStanding? standing,
-        Double? intrinsicWidth = null)
+        Double? intrinsicWidth = null,
+        StaticLine? line = null)
     {
         var hasLeft = position.Left.HasValue;
         var hasRight = position.Right.HasValue;
@@ -392,9 +394,15 @@ internal sealed class PositionedLayout
             // Neither edge is set, so the box stands where the container left it - moved along the area
             // it was lent by the alignment it asks for, since a box with no offsets of its own is aligned
             // within that area rather than dropped at its start (CSS Align 3 §5.2).
-            x = staticX + margin.Left + (standing is { } area
-                ? StaticStanding.Stand(area.Horizontal, area.Area.Width - width - margin.Horizontal)
-                : 0);
+            //
+            // A box whose specified display was inline-level hangs from the insertion point its line
+            // would have given it instead - after the floats shortened the line and shifted by the
+            // line's alignment - and grows from there the way the line reads.
+            x = line is { } hang
+                ? hang.Anchor(width, margin)
+                : staticX + margin.Left + (standing is { } area
+                    ? StaticStanding.Stand(area.Horizontal, area.Area.Width - width - margin.Horizontal)
+                    : 0);
         }
 
         return (width, x);
