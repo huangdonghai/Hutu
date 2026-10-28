@@ -372,3 +372,28 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 - `@supports` / 条件颜色族（`#ffffff → #008000`、`10000 pixels differ first at 8,50`）。
 - text-emphasis 竖排 `005d–g / 006d–g`（约 70–120 像素）。
 - ruby 的 tab / 竖排 overhang；`gecko/table-anonymous-boxes`；`gecko/bugs` 中非 JS 的部分。
+
+## 15. 2026-10-28 深夜轮：真正的基线、justify-content 的四种边、内容关键字与竖排 flex
+
+起点 **wpt 4246 / gecko 1746**（失败集 2313）；本轮结束 **wpt 4287 / gecko 1746，失败集 2272**：**修复 41 对、回退 0**。单元测试 1898 → **1903**，全绿。
+
+| commit | 做了什么 | 依据与取舍 |
+|---|---|---|
+| `b0d435c7` | 有块级子元素的 inline-block 取**正常流最后一行**的基线：在独立引擎里试排一次，再按相对位移还原，避免溢出子元素被排两遍；`overflow` 裁剪的盒子仍回到底边；inline-flex/grid 容器取**块起始边最近、行内主起始边优先**的那条 flex 行；行盒高度改为按 `vertical-align` 之后的盒子重新求并集，文字 run 仍保留字体自身的上下沿 | CSS 2.1 §10.8.1，CSS Flexbox 1 §8.5；Chrome 探针逐页核对（`wrap-reverse` 时取物理上边那行，column-reverse 时取主轴起点那项） |
+| `90e30027` | `justify-content` 把 `flex-start/flex-end`、`start/end`、`left/right` 分成四组语义：前两者随反向主轴移动，`start/end` 指容器自己的行内/块起始边，`left/right` 是物理边且主轴不平行时退化为 `start`；AngleSharp 的 `FlexContentMode` 无法区分，改为先读声明文本 | CSS Box Alignment 3 §5.2，CSS Flexbox 1 §8.2；8 对 `flexbox_justifycontent-*` 全绿 |
+| `9dc6b947` | 竖排 flex 容器的 `width:auto` 是**块尺寸**，由内容决定而不是填满包含块；竖排 flex item 的 cross 尺寸用 `Measure` 的物理宽而不是 inline 的 max-content | CSS 2.1 §10.6.3，CSS Writing Modes 3 §6；6 对 `css-flexbox-row*` 与 `css-flexbox-test1` 连带修好 7 对 |
+| `336e4ddc` | `min/max-*: min-content/max-content/fit-content` 真正参与 flex item 的尺寸约束：按长手名命的物理轴取内容尺寸；同一盒子的关键字不能反过来限制它自己要问的测量；min 大于 max 时 min 胜；竖向 item 的内容主尺寸按夹紧后的 cross 宽测 | CSS Sizing 3 §5.2，CSS 2.1 §10.4；6 对全绿 |
+| `a616b5df` | 列向 flex item 的自动最小尺寸：主轴是块轴时取内容堆叠出的高度（列向嵌套容器取自己项目组成的那一行，表格/网格/替换元素暂不设底），没有声明块尺寸的盒子直接用测量结果 | CSS Flexbox 1 §4.5；4 对 `flex-minimum-height-flex-items-*` 全绿，过程中修掉 11 个回退（关键是“自己的主轴是块轴”不能写成“是 column”，否则把 grid-gap 参考页里的 flex 行也当成列） |
+
+**这一轮的两条方法教训**
+
+1. **“最后一行”不能靠 `HasBlockChildren` 一票否决**：这只说明盒子有块级子元素，不说明它没有自己的行。改为试排一次取最后一行之后，`multi-line-vert-001/002`、`single-item-001a/b`、`list-and-block-in-inline` 一起转绿；试排必须放在**独立引擎**里，否则绝对定位子元素会被登记两次、相对位移也会被算进基线。
+2. **行盒是“对齐之后”的并集，不是“对齐之前”的并集**：旧实现把对齐前的 ascent/descent 当作下限保留，`vertical-align: top` 的块因此把对齐前的下半截也算进行高。改成按 shift 之后的盒子重算后，`1156021-text-indent-percent` 与 `static-inside-inline-block` 回绿；但文字 run 仍要保留字体自身的上下沿（上标那一课）。
+
+**当前还剩下的近失清单（≤120 像素，88 对）**里，值得下一轮先看的：
+
+- `css-text-decor/text-decoration-inset-*` 族（约 12 对，8 到 982 像素）与竖排 underline/overline 的 1 像素级边缘（`text-decoration-thickness-vertical-001`、`text-underline-offset-vertical-003`）。
+- `css-lists/counters-scope-001/004`：嵌套作用域里的 `counter-reset` 泄漏到了兄弟（期望兄弟读祖先的 1，我们读 3）。
+- `gecko/table-anonymous-boxes`（约 20 对）与 `gecko/bugs` 里的非 JS 部分。
+- flex 的 `aspect-ratio` 尺寸转移（6 对：`aspect-ratio-intrinsic-size-003/008/009/010`、`flex-item-transferred-sizes-padding-*`），需要在主轴解析之后把 cross 的确定尺寸转回主轴。
+- `@supports`/条件颜色族尚未系统排查（本轮之前的子 agent 因额度中断）。
