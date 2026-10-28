@@ -87,8 +87,22 @@ internal sealed class InlineLayout
     /// </remarks>
     private readonly Dictionary<LinePlanKey, List<Line>> _plans = new();
 
+    /// <summary>
+    /// The baselines worked out by laying a box out for the question, held by the box and the size it
+    /// was asked at. A box inside a box is asked once per level, and each answer lays its own
+    /// children out for theirs, so without this a deeply nested chain of inline-blocks costs the
+    /// whole subtree again at every step down it.
+    /// </summary>
+    private readonly Dictionary<BaselineKey, Double> _baselines = new();
+
+    private readonly record struct BaselineKey(Box Box, Double Width, Double Height, Double Basis, Double ContainingWidth, Double ContainingHeight);
+
     /// <summary>Drops the plans, which belong to one layout pass as the engine's own caches do.</summary>
-    internal void ResetPlanCache() => _plans.Clear();
+    internal void ResetPlanCache()
+    {
+        _plans.Clear();
+        _baselines.Clear();
+    }
 
     /// <summary>
     /// Gets the lines the container's inline content is broken into at this extent, making them the
@@ -3304,6 +3318,25 @@ internal sealed class InlineLayout
     /// </para>
     /// </remarks>
     private Double InlineBlockBaseline(Box box, Size size, Double basis, WritingModeInfo flow, InlineContext context)
+    {
+        // Answering the question can mean laying the box out, so the answer is kept for the rest of the
+        // pass: a chain of boxes inside boxes would otherwise pay for the whole subtree again at every
+        // step down it.
+        var key = new BaselineKey(
+            box, size.Width, size.Height, basis,
+            context.Atomic.ContainingBlock.Width, context.Atomic.ContainingBlock.Height);
+
+        if (_baselines.TryGetValue(key, out var held))
+        {
+            return held;
+        }
+
+        var answer = MeasureInlineBlockBaseline(box, size, basis, flow, context);
+        _baselines[key] = answer;
+        return answer;
+    }
+
+    private Double MeasureInlineBlockBaseline(Box box, Size size, Double basis, WritingModeInfo flow, InlineContext context)
     {
         // The box's baseline can only be carried to the line it stands on while the two are set the same
         // way: a box in a column stands on a line of its own frame, and the line here would be measuring
