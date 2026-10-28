@@ -649,11 +649,60 @@ internal sealed partial class FlexFormattingContext
         var maxCross = mainIsHorizontal ? style.MaxHeight : style.MaxWidth;
         var crossBasis = mainIsHorizontal ? context.ContainingBlock.Height : context.ContainingBlock.Width;
 
-        item.MinMain = BoxModel.ContentBound(minMain, mainBasis, insetMain, isBorderBox);
-        item.MaxMain = BoxModel.ContentBound(maxMain, mainBasis, insetMain, isBorderBox);
-        item.MinCross = BoxModel.ContentBound(minCross, crossBasis, insetCross, isBorderBox);
-        item.MaxCross = BoxModel.ContentBound(maxCross, crossBasis, insetCross, isBorderBox);
+        item.MinMain = Constraint(minMain, child, mainIsHorizontal, mainBasis, insetMain, isBorderBox, context);
+        item.MaxMain = Constraint(maxMain, child, mainIsHorizontal, mainBasis, insetMain, isBorderBox, context);
+        item.MinCross = Constraint(minCross, child, !mainIsHorizontal, crossBasis, insetCross, isBorderBox, context);
+        item.MaxCross = Constraint(maxCross, child, !mainIsHorizontal, crossBasis, insetCross, isBorderBox, context);
         return item;
+    }
+
+    /// <summary>
+    /// Resolves one of the min/max longhands around a flex item, reading a content keyword as the
+    /// content's own size on the physical axis the longhand bounds (CSS Sizing 3 §5.2). The inline
+    /// answer is the min-content or max-content measure; the block answer is what the box's content
+    /// comes to across its lines, which is the band of columns a vertical box needs or the height a
+    /// horizontal one stacks up.
+    /// </summary>
+    private Double? Constraint(
+        StyleLength stated,
+        Box box,
+        Boolean horizontal,
+        Double basis,
+        Double insets,
+        Boolean isBorderBox,
+        LayoutContext context)
+    {
+        if (!stated.IsContentSized)
+        {
+            return BoxModel.ContentBound(stated, basis, insets, isBorderBox);
+        }
+
+        Double content;
+
+        if (horizontal == !box.Flow.IsVertical)
+        {
+            var intrinsic = _engine.MeasureContentIntrinsicUnbounded(box, context);
+            content = stated.Kind switch
+            {
+                StyleLengthKind.MinContent => intrinsic.MinContent,
+                StyleLengthKind.FitContent => Math.Min(
+                    intrinsic.MaxContent, Math.Max(intrinsic.MinContent, basis)),
+                _ => intrinsic.MaxContent,
+            };
+        }
+        else
+        {
+            // The block extent is measured with no inline room to fill, so the answer is the extent
+            // the content itself asks for rather than the one the containing block would give it.
+            var measured = _engine.Measure(
+                box,
+                MeasureConstraints.FitWidth(context.ContainingBlock.Width).WithHeight(0),
+                context);
+
+            content = horizontal ? measured.Width - insets : measured.Height - insets;
+        }
+
+        return Math.Max(0, content);
     }
 
     private static void AssignMargins(
@@ -761,6 +810,20 @@ internal sealed partial class FlexFormattingContext
         }
 
         var available = context.ContainingBlock.Width;
+
+        // The height a column item's content comes to depends on how wide it is, and the width it will
+        // be given is its cross size: a ceiling there stacks the content instead of spreading it out,
+        // and the main size has to be measured at that width (CSS Flexbox 1 §9.2.3).
+        if (item.MaxCross is { } ceiling)
+        {
+            available = Math.Min(available, ceiling + item.InsetCross);
+        }
+
+        if (item.MinCross is { } floor)
+        {
+            available = Math.Max(available, floor + item.InsetCross);
+        }
+
         var size = _engine.Measure(item.Box, MeasureConstraints.FitWidth(available), context);
         return Math.Max(0, size.Height - item.InsetMain);
     }

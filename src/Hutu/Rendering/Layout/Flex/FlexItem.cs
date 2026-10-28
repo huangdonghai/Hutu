@@ -108,14 +108,16 @@ internal sealed class FlexItem
 
     private static Double Clamp(Double value, Double? min, Double? max)
     {
-        if (min is { } lower && value < lower)
-        {
-            value = lower;
-        }
-
         if (max is { } upper && value > upper)
         {
             value = upper;
+        }
+
+        // A minimum beats a maximum when the two cross: the used size is at least the minimum even
+        // when the box also states a smaller maximum (CSS 2.1 §10.4).
+        if (min is { } lower && value < lower)
+        {
+            value = lower;
         }
 
         return value;

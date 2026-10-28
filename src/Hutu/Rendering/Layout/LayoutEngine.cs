@@ -1603,6 +1603,20 @@ internal sealed record LayoutProfile(
 
         Double? BorderBound(StyleLength length)
         {
+            if (length.IsContentSized)
+            {
+                // The keyword names the box's own content size, so the bound is the measurement just
+                // taken rather than a length: `min-width: max-content` floors the contribution at the
+                // box's max-content size, which is how a child's constraint widens the min-content of
+                // the box that holds it (CSS Sizing 3 §5.2).
+                return length.Kind switch
+                {
+                    StyleLengthKind.MinContent => size.MinContent,
+                    StyleLengthKind.MaxContent => size.MaxContent,
+                    _ => Math.Clamp(basis + insets, size.MinContent, size.MaxContent),
+                };
+            }
+
             if (!length.HasValue ||
                 (length.ReadsContainingBlock && context.BasisIsHypothetical) ||
                 (length.ReadsContainingBlock && basis <= 0))
@@ -1648,6 +1662,25 @@ internal sealed record LayoutProfile(
         var size = MeasureIntrinsicUncached(box, context, content: true);
         _contentIntrinsic[key] = size;
         return size;
+    }
+
+    /// <summary>
+    /// Measures what a box's content wants, with no min or max of the box's own applied - the size a
+    /// content keyword on that same box asks about, which would otherwise answer itself. A caller that
+    /// needs the box bounded asks <see cref="MeasureContentIntrinsic"/> instead.
+    /// </summary>
+    internal IntrinsicSize MeasureContentIntrinsicUnbounded(Box box, LayoutContext context)
+    {
+        context = context.WithHypotheticalBasis();
+
+        return box.Kind switch
+        {
+            BoxKind.Flex => _flex.MeasureContentIntrinsic(box, context),
+            BoxKind.Grid => _grid.MeasureIntrinsic(box, context),
+            BoxKind.Masonry => _masonry.MeasureIntrinsic(box, context),
+            BoxKind.Table => _table.MeasureIntrinsic(box, context),
+            _ => _block.MeasureContentIntrinsic(box, context),
+        };
     }
 
     private Size MeasureCore(Box box, MeasureConstraints constraints, LayoutContext context)
