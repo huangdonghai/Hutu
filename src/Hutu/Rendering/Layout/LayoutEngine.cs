@@ -1665,6 +1665,14 @@ internal sealed record LayoutProfile(
     }
 
     /// <summary>
+    /// Gets how far a box's block-level content stacks, with the box's own declared block size set
+    /// aside - the block-axis counterpart of the content intrinsic size, which is what the automatic
+    /// minimum size of a flex item asks when its main axis is the block one (CSS Flexbox 1 §4.5).
+    /// </summary>
+    internal Double MeasureBlockContentHeight(Box box, Double inlineExtent, LayoutContext context) =>
+        _block.MeasureBlockChildren(box, inlineExtent, 0, context);
+
+    /// <summary>
     /// Measures what a box's content wants, with no min or max of the box's own applied - the size a
     /// content keyword on that same box asks about, which would otherwise answer itself. A caller that
     /// needs the box bounded asks <see cref="MeasureContentIntrinsic"/> instead.

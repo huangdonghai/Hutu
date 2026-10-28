@@ -672,7 +672,7 @@ internal sealed class BlockLayout
     /// accounted for in the collapsed top or bottom the box reports up and down the stack, which
     /// <see cref="CollapsedTop"/> and <see cref="CollapsedBottom"/> compute on the same rules.
     /// </remarks>
-    private Double MeasureBlockChildren(Box box, Double contentWidth, Double contentHeight, LayoutContext context)
+    internal Double MeasureBlockChildren(Box box, Double contentWidth, Double contentHeight, LayoutContext context)
     {
         var cursor = 0.0;
         var pending = 0.0;

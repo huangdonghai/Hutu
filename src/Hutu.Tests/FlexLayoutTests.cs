@@ -329,6 +329,42 @@ public sealed class FlexLayoutTests
     }
 
     [Test]
+    public async Task AColumnItemDoesNotShrinkBelowItsContent()
+    {
+        using var view = CreateView(400);
+
+        // A column's automatic minimum size is the height its content stacks to, so a zero-basis item
+        // with a hundred-pixel child keeps that height even inside a container that states none
+        // (CSS Flexbox 1 §4.5).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;flex-direction:column;height:0;width:100px'>" +
+            "<div id='item' style='flex:0 1 0px'><div style='height:100px'></div></div>" +
+            "</div></body></html>");
+
+        Assert.That(Find(view, "item").BorderBox.Height, Is.EqualTo(100).Within(0.5));
+    }
+
+    [Test]
+    public async Task AColumnItemReportsItsItemsRatherThanTheHeightItStates()
+    {
+        using var view = CreateView(400);
+
+        // The inner column says five hundred pixels, but its content is two fifty-pixel items: the
+        // automatic minimum is the smaller of the two, and the outer column is a hundred tall
+        // (CSS Flexbox 1 §4.5).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex;flex-direction:column;width:200px'>" +
+            "<div id='item' style='display:flex;flex-direction:column;flex:1 1 0px;height:500px;width:100px'>" +
+            "<div style='flex:1 0 0px'><div style='height:50px'></div></div>" +
+            "<div style='flex:1 0 0px'><div style='height:50px'></div></div>" +
+            "</div></div></body></html>");
+
+        Assert.That(Find(view, "item").BorderBox.Height, Is.EqualTo(100).Within(0.5));
+    }
+
+    [Test]
     public async Task AColumnStacksTheItemsVertically()
     {
         using var view = CreateView(400);

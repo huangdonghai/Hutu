@@ -546,17 +546,17 @@ internal sealed partial class FlexFormattingContext
         {
             item.BaseMain = ResolveBaseMain(item, mainIsHorizontal, mainSize, context);
 
-            if (item.MinMain is null && isRow)
+            if (item.MinMain is null)
             {
                 // CSS Flexbox 4.5: an item whose main-axis overflow is a scroll axis has an automatic
                 // minimum size of zero - its content scrolls, so it sets no floor - which is what lets a
                 // `flex-grow` item shrink below a wide (scrolling) child instead of ballooning the page.
                 // `visible` and `clip` are not scroll axes, so they keep the content-based floor.
-                if (item.Box.Style.ScrollsInline)
+                if (isRow ? item.Box.Style.ScrollsInline : item.Box.Style.ScrollsBlock)
                 {
                     item.MinMain = 0;
                 }
-                else
+                else if (isRow)
                 {
                     // The automatic minimum size keeps a flex item from shrinking below its content, but it
                     // is the *smaller* of the content suggestion and the declared size, so a `width: 200px`
@@ -567,6 +567,75 @@ internal sealed partial class FlexFormattingContext
                         _engine.MeasureContentIntrinsic(item.Box, context).MinContent - item.InsetMain);
                     var declared = DeclaredContentMain(item, mainIsHorizontal, mainSize);
                     item.MinMain = declared is { } specified ? Math.Min(specified, contentMin) : contentMin;
+                }
+                else
+                {
+                    // A column's main axis is the block one, so the floor is the size the content stacks
+                    // to at the cross size the item will be given - a percentage child resolves against
+                    // the item's own height, and the inner column of a nested flex container reports the
+                    // sum of its items rather than the height it happens to ask for.
+                    var room = item.Box.Flow.IsVertical
+                        ? context.ContainingBlock.Height
+                        : context.ContainingBlock.Width;
+
+                    if (item.MaxCross is { } ceiling)
+                    {
+                        room = Math.Min(room, ceiling + item.InsetCross);
+                    }
+
+                    if (item.MinCross is { } floor)
+                    {
+                        room = Math.Max(room, floor + item.InsetCross);
+                    }
+
+                    Double? floorOfContent;
+                    var blockIsAuto = item.Box.Flow.IsVertical
+                        ? item.Box.Style.Width.IsAuto
+                        : item.Box.Style.Height.IsAuto;
+
+                    if (blockIsAuto)
+                    {
+                        // The box states no block size, so the one it lays its content out at is already
+                        // the content's own: the measurement says it without asking again.
+                        var size = _engine.Measure(item.Box, MeasureConstraints.FitWidth(room), context);
+                        floorOfContent = item.Box.Flow.IsVertical
+                            ? size.Width - item.InsetMain
+                            : size.Height - item.InsetMain;
+                    }
+                    else if (item.Box.Kind == BoxKind.Flex &&
+                        item.Box.Style.Flex.IsRow == item.Box.Flow.IsVertical)
+                    {
+                        // The item's own main axis is the block one: its content's main size is the
+                        // line its own items make, not the height it states (CSS Flexbox 1 §4.5).
+                        var column = Compute(
+                            item.Box,
+                            item.Box.Style.Flex,
+                            null,
+                            room,
+                            item.InsetMain,
+                            item.InsetCross,
+                            context.ForContainingBlock(new Size(room, 0)));
+
+                        floorOfContent = column.ContentMain;
+                    }
+                    else if (item.Box.Kind is BoxKind.Table or BoxKind.Grid or BoxKind.Masonry ||
+                        item.Box.IsReplaced)
+                    {
+                        // A table, a grid or a replaced box sizes its content by rules of its own; the
+                        // block axis is left without a floor rather than given a wrong one.
+                        floorOfContent = null;
+                    }
+                    else
+                    {
+                        floorOfContent = _engine.MeasureBlockContentHeight(item.Box, room, context);
+                    }
+
+                    if (floorOfContent is { } contentMin)
+                    {
+                        contentMin = Math.Max(0, contentMin);
+                        var declared = DeclaredContentMain(item, mainIsHorizontal, mainSize);
+                        item.MinMain = declared is { } stated ? Math.Min(stated, contentMin) : contentMin;
+                    }
                 }
             }
 
