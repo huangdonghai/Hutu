@@ -430,6 +430,66 @@ public sealed class ElementStateTests
             "and a cursor the page wrote on the link is what is asked for instead");
     }
 
+    /// <summary>
+    /// <c>:default</c> names the one element a group offers when nothing was chosen, and a form offers
+    /// exactly one submit button: the first in its tree, wherever it stands and even when it is disabled
+    /// (Selectors 4 §8.1 with HTML §4.10.13). A checkbox or a radio box is default by its own
+    /// <c>checked</c> attribute and a reset or plain button never submits a form, so none of them ever is
+    /// the form's default. Measured in Chrome over the gecko 348809 family, which draws each of these
+    /// answers as a colour.
+    /// </summary>
+    [Test]
+    public async Task OnlyTheFirstSubmitButtonOfAFormIsItsDefault()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body><form>" +
+            "<input id='a' type='submit'><input id='b' type='submit'>" +
+            "<input id='c' type='checkbox' checked><input id='d' type='checkbox'>" +
+            "<input id='e' checked>" +
+            "<button id='f' type='reset'></button><button id='g'></button>" +
+            "<select><option id='h' selected></option><option id='i'></option></select>" +
+            "<fieldset><input id='j' type='image'></fieldset>" +
+            "</form></body></html>");
+
+        var matched = view.Document!.QuerySelectorAll(":default");
+        var ids = new List<String>();
+
+        foreach (var element in matched)
+        {
+            ids.Add(element.Id);
+        }
+
+        Assert.That(ids, Is.EqualTo(new[] { "a", "c", "h" }),
+            "the first button that submits the form, the box marked checked, and the option marked selected");
+    }
+
+    /// <summary>
+    /// The rule reaches the painter the same way: a second submit button is left out of an arm written for
+    /// <c>:default</c>, so the text that follows it keeps the colour the plain rule gives it.
+    /// </summary>
+    [Test]
+    public async Task ASecondSubmitButtonDoesNotWearTheDefaultColour()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><style>" +
+            "span { color: #ff0000 } :default + span { color: #00ff00 }" +
+            "input { display: none }" +
+            "</style><form>" +
+            "<input type='submit'><span>first</span>" +
+            "<input type='submit'><span>second</span>" +
+            "</form></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(PaintedColour(view, "first"), Is.EqualTo(0xFF00FF00u), "the button the form submits by default");
+            Assert.That(PaintedColour(view, "second"), Is.EqualTo(0xFFFF0000u), "and the one behind it is nothing special");
+        });
+    }
+
     private static HutuViewInternal CreateView()
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

@@ -107,11 +107,16 @@ internal sealed partial class TableFormattingContext
     {
         var style = table.Style;
         var tableStyle = style.Table;
-        var padding = style.Padding.Resolve(basis);
 
         // Under the collapsing model the table's own border is folded into the outermost grid lines,
         // so it must not be added to the table box as well; the cells paint it instead.
         var border = tableStyle.Collapse ? Thickness.Zero : BlockLayout.BorderOf(table);
+
+        // The same model takes the table's padding away with it (CSS 2.1 §17.6.1: "the table ... has no
+        // padding" once the borders collapse), and it is the padding of the table box that goes: a cell
+        // keeps its own. The width and height the author stated are therefore the grid's, plus whatever
+        // the collapsed border adds, with nothing inset between the two.
+        var padding = tableStyle.Collapse ? Thickness.Zero : style.Padding.Resolve(basis);
 
         var build = new TableBuild
         {

@@ -97,6 +97,26 @@ internal sealed partial class TableFormattingContext
         var min = build.Grid.SumMinimum() + spacingTotal + build.InsetsH;
         var max = build.Grid.SumMaximum() + spacingTotal + build.InsetsH;
 
+        // A width the author stated is part of what the table brings to a box that shrinks to fit, as the
+        // preferred size it would rather be: a table with no cells is still as wide as it was told (CSS 2.1
+        // §17.5.2.2, and §17.5.3 under the collapsed model, where the table keeps no padding of its own to
+        // make the difference up). Asked by the columns alone such a table is nothing, and the float holding
+        // one collapses with it - which is what wpt's collapsing-border-model-013 and -014 hold to.
+        //
+        // Only the preferred size is raised, never the narrowest one: the automatic minimum of an item is
+        // read off this pair (CSS Flexbox 1 §4.5, §9.9.1) and a stated width is not a min-width there
+        // (wpt's table-as-item-specified-width holds to exactly that). And a percentage is left out, since
+        // the width it would resolve against is the very width being asked about - CSS Tables 3 §4 puts
+        // such a table at its preferred width instead, which the columns already answer.
+        var stated = box.Style.Width;
+
+        if (stated.HasValue && stated.Kind != StyleLengthKind.Percent && !stated.ReadsContainingBlock)
+        {
+            max = Math.Max(max, BoxModel.IsBorderBox(box.Style)
+                ? Math.Max(0, stated.Resolve(basis))
+                : stated.Resolve(basis) + build.InsetsH);
+        }
+
         return new IntrinsicSize(min, Math.Max(min, max));
     }
 

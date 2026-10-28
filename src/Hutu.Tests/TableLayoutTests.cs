@@ -698,6 +698,89 @@ public sealed class TableLayoutTests
                               Math.Abs(command.Bounds.Y - box.BorderBox.Y) < 0.01);
     }
 
+    /// <summary>
+    /// The collapsing border model takes the table's own padding away (CSS 2.1 §17.6.1: in that model the
+    /// table has no padding), while the separating model keeps it - and it is the table box that loses it,
+    /// not the cells, which are padded as the page says. What the author stated as the table's width and
+    /// height is therefore the grid's, with nothing inset between the two.
+    /// </summary>
+    [Test]
+    public async Task ACollapsedTableKeepsNoPaddingOfItsOwn()
+    {
+        using var view = CreateView(600);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table id='collapsed' style='border-collapse:collapse;width:100px;height:100px;padding:100px'></table>" +
+            "<table id='separated' style='border-collapse:separate;border-spacing:0;" +
+            "width:100px;height:100px;padding:100px'></table>" +
+            "</body></html>");
+
+        var collapsed = Find(view, "collapsed").BorderBox;
+        var separated = Find(view, "separated").BorderBox;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                $"{collapsed.Width}x{collapsed.Height}",
+                Is.EqualTo("100x100"),
+                "the collapsing model leaves the stated box standing as the grid's own box");
+            Assert.That(
+                $"{separated.Width}x{separated.Height}",
+                Is.EqualTo("300x300"),
+                "the separating model still pays the padding around it");
+        });
+    }
+
+    /// <summary>
+    /// A table with nothing in it is still as wide as it was told to be, and that width is what a box
+    /// shrinking to fit its content gets (CSS 2.1 §17.5.2.2 reads the stated width before the columns, and
+    /// §17.5.3 leaves the collapsed table no padding to make the difference up with). Asked from the
+    /// columns alone an empty table is nothing, and the float holding one vanished with it - which is what
+    /// wpt's <c>collapsing-border-model-013/-014</c> hold to.
+    /// </summary>
+    [Test]
+    public async Task AnEmptyTableCarriesItsStatedWidthIntoABoxThatShrinksToFit()
+    {
+        using var view = CreateView(600);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div id='wrap' style='float:left'>" +
+            "<table style='border-collapse:collapse;width:100px;height:100px;padding:100px'></table>" +
+            "</div>" +
+            "</body></html>");
+
+        Assert.That(
+            Find(view, "wrap").BorderBox.Width,
+            Is.EqualTo(100),
+            "the float takes the width the table inside it was told to be");
+    }
+
+    /// <summary>
+    /// That stated width is a preference and not a floor, though: the narrowest a table can be is still
+    /// what its columns need, and a flex item's automatic minimum is read off that (CSS Tables 3 §4 with
+    /// Flexbox 1 §4.5). A table told to be five hundred wide and given a hundred-pixel flex basis is a
+    /// hundred wide - which is what wpt's <c>table-as-item-specified-width</c> holds to.
+    /// </summary>
+    [Test]
+    public async Task ATablesStatedWidthIsNotAlsoItsMinimum()
+    {
+        using var view = CreateView(600);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:flex'>" +
+            "<div id='item' style='display:table;width:500px;height:100px;flex:0 0 100px'></div>" +
+            "</div>" +
+            "</body></html>");
+
+        Assert.That(
+            Find(view, "item").BorderBox.Width,
+            Is.EqualTo(100),
+            "the basis the container states wins over the width the item prefers");
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
