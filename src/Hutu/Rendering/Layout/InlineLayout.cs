@@ -1360,13 +1360,29 @@ internal sealed class InlineLayout
                 {
                     var width = MeasureChunk(_measurer, fragment.Style, fragment.Text, run.Start, run.Length, fragment.Flow);
                     earned += width;
+
                     pieces.Add(new TextFragment(
                         fragment.Text, run.Start, run.Length, width,
                         fragment.Style, fragment.Box, fragment.Flow, fragment.Inline)
                     {
                         RightToLeft = run.Level % 2 == 1,
                         Level = run.Level,
+                        Trims = MaskOf(fragment.Trims, run.Start, run.Length, false),
+                        AutoSpaces = MaskOf(fragment.AutoSpaces, run.Start, run.Length, true),
+                        AutoSpaceRoom = fragment.AutoSpaceRoom,
                     });
+                }
+
+                // The room a merge folded into the run stands between two pieces of it, and the pieces
+                // are boxes of their own now: the room is the gap after the piece it follows, and the
+                // mask no longer draws it (the piece was given the slice with its trailing mark cleared).
+                for (var at = 1; at < runs.Count; at++)
+                {
+                    if (SpacedBefore(fragment, runs[at].Start))
+                    {
+                        pieces[at - 1].Width += fragment.AutoSpaceRoom;
+                        earned += fragment.AutoSpaceRoom;
+                    }
                 }
 
                 if (pieces.Count > 0)
@@ -3866,7 +3882,8 @@ internal sealed class InlineLayout
         Double BoundaryDelta,
         String? Mask,
         Double Room,
-        Double RetroDelta);
+        Double RetroDelta,
+        Boolean Inside);
 
     /// <summary>
     /// Gets the room the property adds between the characters inside a range. Only characters with
@@ -3951,11 +3968,22 @@ internal sealed class InlineLayout
 
         var boundary = 0.0;
         var retro = 0.0;
+        var inside = false;
         Char[]? mask = null;
+        var end = start + length;
 
-        // A range that begins with a mark or a selector continues the character before it: there is no
-        // boundary between the two, whatever stands on either side of the pair.
-        if (previous is { } last && !TextClusters.Continues(source, start))
+        // A range that begins with a mark or a selector continues the character before it, so the
+        // boundary is not between the two runs but after the character this one completes: the pair
+        // the property reads stands between the base before and the first character of this range
+        // that begins one of its own.
+        var pairAt = start;
+
+        while (pairAt < end && TextClusters.Continues(source, pairAt))
+        {
+            pairAt += TextClusters.UnitsAt(source, pairAt, end);
+        }
+
+        if (previous is { } last && pairAt < end)
         {
             var room = RoomBetween(
                 measurer,
@@ -3963,11 +3991,12 @@ internal sealed class InlineLayout
                 value,
                 last.CodePoint,
                 last.Flow,
-                TextChunker.CodePointAt(source, start),
+                TextChunker.CodePointAt(source, pairAt),
                 flow,
                 space);
 
             if (value.Replace &&
+                pairAt == start &&
                 last.CodePoint == ' ' &&
                 last.Before != 0 &&
                 RoomBetween(
@@ -3976,7 +4005,7 @@ internal sealed class InlineLayout
                     value,
                     last.Before,
                     last.Flow,
-                    TextChunker.CodePointAt(source, start),
+                    TextChunker.CodePointAt(source, pairAt),
                     flow,
                     space) is var replaced and > 0)
             {
@@ -3984,15 +4013,28 @@ internal sealed class InlineLayout
                 // the room the boundary is worth and gives up its own.
                 retro = measurer.MeasureWidth(" ", last.Style.GetFont()) - replaced;
             }
-            else
+            else if (room > 0)
             {
                 boundary = room;
+
+                if (pairAt > start)
+                {
+                    // The room stands after the character this range completes, inside the run it is
+                    // drawn with rather than in the gap before it.
+                    inside = true;
+
+                    if (wantMask)
+                    {
+                        // The character this range completes is the cluster its first units make, so
+                        // the room is marked on that cluster - the one the range opens with.
+                        (mask ??= new Char[length])[0] = AutoSpaceAfter;
+                    }
+                }
             }
         }
 
         if (wantMask)
         {
-            var end = start + length;
 
             // A space that opens the range is a boundary the caller may keep between two runs; a
             // replace value takes its room, so the space stands in the cell the boundary is worth
@@ -4037,7 +4079,7 @@ internal sealed class InlineLayout
             }
         }
 
-        return new AutoSpaceStep(boundary, MaskOf(mask), space, retro);
+        return new AutoSpaceStep(boundary, MaskOf(mask), space, retro, inside);
     }
 
     /// <summary>
@@ -4315,6 +4357,60 @@ internal sealed class InlineLayout
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Gets the part of a mask one range of the text covers, or null where the range marks nothing.
+    /// </summary>
+    /// <param name="clearBoundary">
+    /// Whether the code on the range's last character is taken out. A boundary at the end of a piece
+    /// stands between it and the piece after it, which is a gap between boxes rather than a mask.
+    /// </param>
+    private static String? MaskOf(String? mask, Int32 start, Int32 length, Boolean clearBoundary)
+    {
+        if (mask is null || start < 0 || length <= 0 || start + length > mask.Length)
+        {
+            return null;
+        }
+
+        var chars = mask.Substring(start, length).ToCharArray();
+
+        if (clearBoundary)
+        {
+            var at = chars.Length - 1;
+
+            while (at > 0 && Char.IsLowSurrogate(chars[at]))
+            {
+                at--;
+            }
+
+            if (chars[at] == AutoSpaceAfter)
+            {
+                chars[at] = '\0';
+            }
+        }
+
+        return MaskOf(chars);
+    }
+
+    /// <summary>
+    /// Gets whether the character before a place in a fragment is one a spaced boundary follows.
+    /// </summary>
+    private static Boolean SpacedBefore(TextFragment fragment, Int32 at)
+    {
+        if (fragment.AutoSpaces is not { } mask || at <= 0)
+        {
+            return false;
+        }
+
+        var index = at - 1;
+
+        while (index > 0 && Char.IsLowSurrogate(fragment.Text[index]))
+        {
+            index--;
+        }
+
+        return index < mask.Length && mask[index] == AutoSpaceAfter;
     }
 
     private static Char CodeOf(PunctuationClass kind) => kind switch
@@ -6883,7 +6979,14 @@ internal sealed class InlineLayout
             // carry it too, because one run draws both pieces.
             if (auto.BoundaryDelta != 0)
             {
-                WidenLast(auto.BoundaryDelta);
+                if (auto.Inside)
+                {
+                    width += auto.BoundaryDelta;
+                }
+                else
+                {
+                    WidenLast(auto.BoundaryDelta);
+                }
             }
 
             Enter(inline);
@@ -6931,7 +7034,7 @@ internal sealed class InlineLayout
                     // The two pieces are drawn as one run, so the room the boundary added is not a gap
                     // between boxes any more: it rides in the merged run's mask, on the last character
                     // of the piece the run already held.
-                    if (auto.BoundaryDelta != 0)
+                    if (auto.BoundaryDelta != 0 && !auto.Inside)
                     {
                         MarkLastBoundary(last, before);
                     }
