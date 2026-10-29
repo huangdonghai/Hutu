@@ -6,7 +6,6 @@
     "date: when the engine starts drawing the pair the same, the test fails and says so."
   ],
   "tests": {
-    "form/unclosed-dialog.html": "fail: the reader's own sheet has dialog{display:block} but not dialog:not([open]){display:none}, so a dialog that was never opened is painted",
-    "text-spacing-trim-selftest/trim-all-vrl.html": "fail: the upright cell of the middle dot · in vertical text sits ~1px off its equivalent hand-built reference (44 px along the column); the same difference shows in the borrowed trim-all vertical pairs"
+    "form/unclosed-dialog.html": "fail: the reader's own sheet has dialog{display:block} but not dialog:not([open]){display:none}, so a dialog that was never opened is painted"
   }
 }

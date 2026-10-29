@@ -682,7 +682,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
             }
             else
             {
-                AddMappedText(placements, cell.Font, cell.Text, centre, baseline, (Single)reached, (Single)shift);
+                AddMappedText(placements, cell.Font, cell.Text, centre, baseline, (Single)reached);
             }
 
             inline += step;
@@ -698,7 +698,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
         placements.Add(new Placement(font, [glyph], [new SKPoint(x, y)], [cell]));
 
     private void AddMappedText(
-        List<Placement> placements, SKFont font, String text, Single x, Single y, Single cell, Single shift = 0)
+        List<Placement> placements, SKFont font, String text, Single x, Single y, Single cell)
     {
         if (text.Length == 0)
         {
@@ -706,7 +706,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
         }
 
         var glyphs = font.GetGlyphs(text);
-        var positions = font.GetGlyphPositions(text, new SKPoint(x, y + shift));
+        var positions = font.GetGlyphPositions(text, new SKPoint(x, y));
         var cells = new Single[positions.Length];
 
         // Each of the glyphs the mapping made owns the room from where it stands to the next one down,
