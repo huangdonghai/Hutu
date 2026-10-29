@@ -954,6 +954,64 @@ public sealed class GridLayoutTests
     }
 
     [Test]
+    public async Task ASubgridsBottomEdgePressesTheLastRowItBorrows()
+    {
+        using var view = CreateView(400);
+
+        // The subgrid's content stops two rows short of the last row it borrows, and Chrome still puts
+        // the whole 40-pixel border into that last row, leaving the two rows between at nothing: the
+        // container's edge belongs to the track at the end of the span rather than being shared back
+        // over the rows it did not reach (CSS Grid 2 §8.1, measured against Chrome on
+        // wpt/css-grid/subgrid/grid-gap-002).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:grid;place-content:start;width:60px;" +
+            "grid-template-columns:repeat(2,auto);grid-template-rows:repeat(6,auto)'>" +
+            "<div id='head' style='grid-column:1;grid-row:2'></div>" +
+            "<div id='tail' style='grid-column:1;grid-row:6'></div>" +
+            "<div id='s' style='grid-column:2;grid-row:2 / span 5;display:grid;" +
+            "grid-template-rows:subgrid;grid-template-columns:auto;row-gap:10px;" +
+            "border-bottom:40px solid blue'>" +
+            "<div id='c' style='height:24px'></div><div id='d' style='height:24px'></div>" +
+            "</div></div></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "head").BorderBox.Height, Is.EqualTo(29).Within(0.5), "the row beside the first item");
+            Assert.That(Find(view, "d").BorderBox.Y, Is.EqualTo(34).Within(0.5), "the subgrid's own gutter stands between its items");
+            Assert.That(Find(view, "s").BorderBox.Height, Is.EqualTo(103).Within(0.5), "content, gutter and the edge it presses");
+            Assert.That(Find(view, "tail").BorderBox.Y, Is.EqualTo(63).Within(0.5));
+            Assert.That(Find(view, "tail").BorderBox.Height, Is.EqualTo(40).Within(0.5), "and the last borrowed row holds the whole border");
+        });
+    }
+
+    [Test]
+    public async Task ASubgridReachesItsOwnEdgesIntoTheParentTracksAtTheEnds()
+    {
+        using var view = CreateView(400);
+
+        // Nothing stands in the last borrowed row, but the subgrid's own 30-pixel border still has to
+        // be held somewhere: the track at that end takes it whole, without a share of the gutter,
+        // because an edge is not a line between two tracks (CSS Grid 2 §8.1, measured against Chrome).
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='display:inline-grid;grid-template-columns:repeat(5,auto);" +
+            "grid-template-rows:repeat(2,auto)'>" +
+            "<div id='p' style='grid-column:1;grid-row:1;width:10px;height:5px'></div>" +
+            "<div id='s' style='grid-column:2 / span 4;grid-row:1;display:grid;" +
+            "grid-template-columns:subgrid;grid-template-rows:auto;border-right:30px solid blue'>" +
+            "<div id='a' style='grid-column:2;width:20px;height:5px'></div>" +
+            "</div></div></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "s").BorderBox.X, Is.EqualTo(10).Within(0.5));
+            Assert.That(Find(view, "s").BorderBox.Width, Is.EqualTo(50).Within(0.5), "20 of content and 30 of edge");
+            Assert.That(Find(view, "a").BorderBox.X, Is.EqualTo(10).Within(0.5), "the item keeps the column it stands in");
+        });
+    }
+
+    [Test]
     public async Task PlaceContentStartLeavesTheFreeSpaceWhereItIs()
     {
         using var view = CreateView(400);

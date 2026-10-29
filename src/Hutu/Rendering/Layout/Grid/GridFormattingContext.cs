@@ -1605,6 +1605,8 @@ internal sealed class GridFormattingContext
         Place(inner, grid, columns, rows);
 
         var cells = new List<GridCell>(inner.Count);
+        var reachesFirst = false;
+        var reachesLast = false;
 
         foreach (var item in inner)
         {
@@ -1615,6 +1617,9 @@ internal sealed class GridFormattingContext
             {
                 continue;
             }
+
+            reachesFirst = reachesFirst || first == 0;
+            reachesLast = reachesLast || first + span > columns - 1;
 
             var demand = ColumnDemand(item, context, grid, basis);
             var extra = (span - 1) * (columnGap - gap);
@@ -1642,7 +1647,57 @@ internal sealed class GridFormattingContext
             cells.Add(item);
         }
 
+        // The container's own edges press on the tracks at the ends of the span whether or not one of
+        // its items stands there, and they take no half-gutter: an edge stands at the container's
+        // boundary rather than between two of its tracks (CSS Grid 2 §8.1).
+        if (columns == 1)
+        {
+            if (!reachesFirst && before + after > 0)
+            {
+                cells.Add(Edge(cell.Box, cell.Column, before + after, true));
+            }
+        }
+        else
+        {
+            if (!reachesFirst && before > 0)
+            {
+                cells.Add(Edge(cell.Box, cell.Column, before, true));
+            }
+
+            if (!reachesLast && after > 0)
+            {
+                cells.Add(Edge(cell.Box, cell.Column + columns - 1, after, true));
+            }
+        }
+
         return cells;
+    }
+
+    /// <summary>
+    /// Gets the stand-in item one of a subgrid's own edges puts on a track of the parent: the edge's
+    /// room and nothing of content, so it raises that one track and no more.
+    /// </summary>
+    private static GridCell Edge(Box box, Int32 track, Double edge, Boolean horizontal)
+    {
+        var room = Math.Max(0, edge);
+        var cell = new GridCell { Box = box };
+
+        if (horizontal)
+        {
+            cell.Column = track;
+            cell.ColumnSpan = 1;
+            cell.MinWidth = room;
+            cell.MaxWidth = room;
+        }
+        else
+        {
+            cell.Row = track;
+            cell.RowSpan = 1;
+            cell.MinHeight = room;
+            cell.MaxHeight = room;
+        }
+
+        return cell;
     }
 
     /// <summary>
@@ -1854,6 +1909,8 @@ internal sealed class GridFormattingContext
             : SizeColumns(grid, inner, Used(inner, true), room, step, definite: true, context, out _);
 
         var cells = new List<GridCell>(inner.Count);
+        var reachesFirst = false;
+        var reachesLast = false;
 
         foreach (var cell in inner)
         {
@@ -1864,6 +1921,9 @@ internal sealed class GridFormattingContext
             {
                 continue;
             }
+
+            reachesFirst = reachesFirst || first == 0;
+            reachesLast = reachesLast || first + span > rows - 1;
 
             var areaWidth = Span(tracks, cell.Column, cell.ColumnSpan, step);
 
@@ -1899,6 +1959,34 @@ internal sealed class GridFormattingContext
             cell.MinHeight = Math.Max(0, cell.MinHeight + extra);
             cell.MaxHeight = Math.Max(0, cell.MaxHeight + extra);
             cells.Add(cell);
+        }
+
+        // The container's own edges press on the tracks at the ends of the span whether or not one of
+        // its items stands there: a subgrid's border and padding is room the parent has to make
+        // somewhere, and the row at that end is where the chapter leaves it (CSS Grid 2 §8.1). Measured
+        // against Chrome on a `border-bottom-width: 40px` subgrid of five borrowed rows whose content
+        // stopped two rows short of the last: the parent's last row came out 40 tall and the two
+        // between it and the content stayed at nothing - the edge is not shared out backwards over the
+        // rows, and it takes no half-gutter, because it stands at the container's boundary rather than
+        // between two of its tracks.
+        if (rows == 1)
+        {
+            if (!reachesFirst && before + after > 0)
+            {
+                cells.Add(Edge(item.Box, item.Row, before + after, false));
+            }
+        }
+        else
+        {
+            if (!reachesFirst && before > 0)
+            {
+                cells.Add(Edge(item.Box, item.Row, before, false));
+            }
+
+            if (!reachesLast && after > 0)
+            {
+                cells.Add(Edge(item.Box, item.Row + rows - 1, after, false));
+            }
         }
 
         return cells;
