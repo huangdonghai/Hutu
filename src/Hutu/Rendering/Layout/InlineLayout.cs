@@ -1841,6 +1841,7 @@ internal sealed class InlineLayout
         var run = new LayoutBox(fragment.Box, LayoutKind.Text)
         {
             Text = text,
+            Trims = fragment.Trims is { } trims && text.Length <= trims.Length ? trims[..text.Length] : null,
             Font = fragment.Style.GetFont(),
             Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
             Flow = fragment.Flow,
@@ -2336,7 +2337,7 @@ internal sealed class InlineLayout
         // float standing where the indent reaches leaves the line to start where the float ends, not
         // that far past it. A negative indent hangs out of the box and is never pulled back in.
         var leading = indent > 0 ? Math.Max(0, indent - room.Inset) : indent;
-        var builder = new LineBuilder(strut, leading, flow.IsVertical);
+        var builder = new LineBuilder(strut, leading, flow.IsVertical, _measurer, startsParagraph: true);
 
         // The place the line could be cut back to at a soft hyphen, and the steps it has taken since:
         // they begin the next line when the run after the hyphen turns out not to fit.
@@ -2360,7 +2361,7 @@ internal sealed class InlineLayout
         void NextLine(Boolean forced = false, Boolean hyphenate = false)
         {
             Close(builder, forced, hyphenate);
-            builder = new LineBuilder(strut, carried, flow.IsVertical);
+            builder = new LineBuilder(strut, carried, flow.IsVertical, _measurer, startsParagraph: forced);
             breakPoint = null;
             following = null;
         }
@@ -2553,6 +2554,8 @@ internal sealed class InlineLayout
                         ? WhiteSpaceWidth(item.Style, strut, run.Source, run.Start, run.Length, builder.Width, itemFlow)
                         : piece.Width;
 
+                    var runTrim = builder.PreviewTrim(run.Source, run.Start, run.Length, item.Style, itemFlow);
+
                     // White space a line begins with is not drawn, but only where the mode collapses it:
                     // `pre`, `pre-wrap` and `break-spaces` keep it, so a line that begins with one
                     // begins with it (and `break-spaces` makes it take room, which is what wraps the
@@ -2600,7 +2603,8 @@ internal sealed class InlineLayout
                         (letters || (emergency && item.Style.WrapsLongWords && width > room.Room));
 
                     var steps = (stepsSpaces || stepsWord) && room.Room > 0 &&
-                        builder.ExtentFor(item.Inline) + width > room.Room && item.Style.WrapsLines;
+                        builder.ExtentFor(item.Inline) + width - runTrim.BoundaryDelta - runTrim.RetroDelta > room.Room &&
+                        item.Style.WrapsLines;
 
                     var end = run.Start + run.Length;
                     var at = run.Start;
@@ -2654,6 +2658,8 @@ internal sealed class InlineLayout
                                 ? WhiteSpaceWidth(item.Style, strut, run.Source, at, taken, builder.Width, itemFlow)
                                 : Measure(item.Style, run.Source, at, taken, itemFlow);
 
+                        var trim = builder.PreviewTrim(run.Source, at, taken, item.Style, itemFlow);
+
                         // Where the break may be taken. The mode's own licence stands after a space it keeps,
                         // whichever piece that space was written in; the tailorable ones stand inside a word
                         // they were asked about, and for a word the script breaks between letters only between
@@ -2676,10 +2682,16 @@ internal sealed class InlineLayout
                         // of the line above with the end of it. A run that opens with the space itself is the
                         // mode's own case - every character of it takes room where it stands. Where the value
                         // gives the break as an opportunity of its own, the line is filled to its end edge.
-                        var asks = at == run.Start && !spaces && !letters &&
+                        var asks = (at == run.Start && !spaces && !letters &&
                             !TextChunker.IsBreakSpace(run.Source[run.Start])
                             ? width + trailed + mark
-                            : advance;
+                            : advance) - trim.BoundaryDelta;
+
+                        // A closing punctuation that ends the line may give up its trailing half. The
+                        // breaker keeps it on the line where that half is what fails to fit; the line
+                        // close takes the room off for real.
+                        var endGrace = EndGrace(
+                            _measurer, item.Style, run.Source, at, taken, itemFlow);
 
                         // A soft hyphen is the one opportunity a line takes even when it has no room at
                         // all: the word has nowhere else to go, and the mark is drawn where the page put
@@ -2736,7 +2748,7 @@ internal sealed class InlineLayout
                         if (breakPoint is { } point && !breaks && builder.HasContent && !inRuby &&
                             advance > 0 && !String.IsNullOrEmpty(item.Text) && item.Style.WrapsLines &&
                             (!spaces || (item.Style.WrapsInsideSpaces && followed)) &&
-                            builder.ExtentFor(item.Inline) + advance > room.Room)
+                            builder.ExtentFor(item.Inline) + advance - trim.BoundaryDelta - trim.RetroDelta - endGrace > room.Room)
                         {
                             var replay = following ?? new List<TailStep>();
 
@@ -2760,7 +2772,8 @@ internal sealed class InlineLayout
                         }
 
                         if (breaks && (room.Room > 0 || hyphen) &&
-                            builder.ExtentFor(item.Inline) + asks > room.Room && item.Style.WrapsLines)
+                            builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - endGrace > room.Room &&
+                            item.Style.WrapsLines)
                         {
                             // The mark a break draws is part of the line it ends: a shortened line that
                             // cannot hold it moves down first, the way any line too small for its content
@@ -2777,7 +2790,7 @@ internal sealed class InlineLayout
                                 }
                             }
 
-                            if (builder.ExtentFor(item.Inline) + asks > room.Room)
+                            if (builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - endGrace > room.Room)
                             {
                                 if (builder.HasContent)
                                 {
@@ -2791,7 +2804,7 @@ internal sealed class InlineLayout
                                     // or no floats are left - the long word beside the floated picture goes
                                     // below it rather than overflowing the room the float left, which is
                                     // the specification's own example of the rule.
-                                    room.Drop(builder.ExtentFor(item.Inline) + asks);
+                                    room.Drop(builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - endGrace);
                                 }
                             }
                         }
@@ -3663,7 +3676,347 @@ internal sealed class InlineLayout
             ? MeasureColumn(source, start, length, style.GetFont(), style.FontSize, flow, measurer)
             : measurer.MeasureWidth(source.Substring(start, length), style.GetFont()))
         + (style.LetterSpacing * SpacingUnits(source, start, length, flow))
-        + (style.WordSpacing * TextChunker.WordSeparators(source, start, length));
+        + (style.WordSpacing * TextChunker.WordSeparators(source, start, length))
+        - TrimWithin(measurer, style, source, start, length, flow);
+
+    /// <summary>The codes a trimmed character wears in a fragment's trim mask.</summary>
+    private const Char TrimOpening = '\u0001';
+
+    private const Char TrimClosing = '\u0002';
+    private const Char TrimMiddle = '\u0003';
+
+    /// <summary>
+    /// The previous character a line has already set, with everything the collapse rules ask of it:
+    /// its class, whether it is still full-width, the size it stands at, the value its own style
+    /// computed, and whether it was already trimmed.
+    /// </summary>
+    private readonly record struct PreviousText(
+        TrimNeighbor Neighbor,
+        ComputedStyle Style,
+        Int32 CodePoint,
+        Boolean Trimmed,
+        WritingModeInfo Flow);
+
+    /// <summary>
+    /// What one range of text contributes to a line's trims: the mask to draw with, the room the
+    /// first character gives up because of where the line put it, and the room the character before
+    /// the range gives up because this range begins with a punctuation beside it.
+    /// </summary>
+    private readonly record struct TrimStep(
+        String? Mask,
+        Double BoundaryDelta,
+        Double RetroDelta,
+        Char RetroCode);
+
+    /// <summary>
+    /// Gets the room the punctuation inside a range gives up for its neighbors. Only characters with
+    /// both neighbors inside the range are counted: the two ends belong to whatever stands beside
+    /// them on the line, which the line builder settles when it knows what that is.
+    /// </summary>
+    private static Double TrimWithin(
+        ITextMeasurer measurer,
+        ComputedStyle style,
+        String source,
+        Int32 start,
+        Int32 length,
+        WritingModeInfo flow)
+    {
+        var value = style.TextSpacingTrim;
+
+        if (length <= 0 ||
+            TextSpacingTrim.HasExclusiveFeature(style.ResolvedFont.Features) ||
+            (!value.All && !value.Adjacent))
+        {
+            return 0;
+        }
+
+        var total = 0.0;
+        var end = start + length;
+
+        for (var index = start; index < end;)
+        {
+            var codePoint = TextChunker.CodePointAt(source, index);
+            var take = Char.IsSurrogatePair(source, index) ? 2 : 1;
+
+            if (!TextSpacingTrim.IsCandidate(codePoint))
+            {
+                index += take;
+                continue;
+            }
+
+            var kind = KindOf(style, codePoint);
+
+            if (kind != PunctuationClass.None && IsFullwidthPunctuation(measurer, style, codePoint))
+            {
+                var trimmed = value.All;
+
+                if (!trimmed && value.Adjacent)
+                {
+                    if (kind == PunctuationClass.Opening && index > start)
+                    {
+                        trimmed = TextSpacingTrim.TrimsOpening(
+                            NeighborOf(measurer, style, CodePointBefore(source, index)),
+                            style.FontSize);
+                    }
+                    else if (kind == PunctuationClass.Closing && index + take < end)
+                    {
+                        trimmed = TextSpacingTrim.TrimsClosing(
+                            NeighborOf(measurer, style, TextChunker.CodePointAt(source, index + take)),
+                            style.FontSize);
+                    }
+                }
+
+                if (trimmed)
+                {
+                    total += TrimDelta(measurer, style, codePoint, flow);
+                }
+            }
+
+            index += take;
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// Plans the trims of one range the line is about to add: the mask it will draw with, the room
+    /// its first character gives up at the line's start or beside the character already standing
+    /// there, and the room the previous character gives up because this range begins beside it.
+    /// </summary>
+    private static TrimStep PlanTrim(
+        ITextMeasurer measurer,
+        String source,
+        Int32 start,
+        Int32 length,
+        ComputedStyle style,
+        WritingModeInfo flow,
+        PreviousText? previous,
+        Boolean lineEmpty,
+        Boolean startsParagraph,
+        Boolean wantMask)
+    {
+        if (length <= 0)
+        {
+            return default;
+        }
+
+        var value = style.TextSpacingTrim;
+        Char[]? mask = null;
+        var boundary = 0.0;
+        var enabled = !TextSpacingTrim.HasExclusiveFeature(style.ResolvedFont.Features);
+
+        // The first character stands where the range cannot see a neighbor: at the line's start, or
+        // beside what the line already holds. A value that trims everywhere already takes its room
+        // in the measurement, so only the positioned modes are read here.
+        var firstCodePoint = TextChunker.CodePointAt(source, start);
+        var firstKind = TextSpacingTrim.IsCandidate(firstCodePoint)
+            ? KindOf(style, firstCodePoint)
+            : PunctuationClass.None;
+
+        if (enabled &&
+            !value.All &&
+            firstKind != PunctuationClass.None &&
+            IsFullwidthPunctuation(measurer, style, firstCodePoint))
+        {
+            var trimmed = lineEmpty
+                ? TextSpacingTrim.TrimsAtLineStart(value, firstKind, startsParagraph)
+                : value.Adjacent &&
+                  firstKind == PunctuationClass.Opening &&
+                  previous is { } left &&
+                  TextSpacingTrim.TrimsOpening(left.Neighbor, style.FontSize);
+
+            if (trimmed)
+            {
+                if (wantMask)
+                {
+                    (mask ??= new Char[length])[0] = CodeOf(firstKind);
+                }
+
+                boundary = TrimDelta(measurer, style, firstCodePoint, flow);
+            }
+        }
+
+        var retro = 0.0;
+        var retroCode = '\0';
+
+        if (!lineEmpty &&
+            previous is { Trimmed: false, Neighbor.Class: PunctuationClass.Closing } lastText)
+        {
+            var previousValue = lastText.Style.TextSpacingTrim;
+            var previousEnabled =
+                !TextSpacingTrim.HasExclusiveFeature(lastText.Style.ResolvedFont.Features) &&
+                (previousValue.All || previousValue.Adjacent);
+
+            if (previousEnabled &&
+                IsFullwidthPunctuation(measurer, lastText.Style, lastText.CodePoint) &&
+                TextSpacingTrim.TrimsClosing(
+                    NeighborOf(measurer, style, firstCodePoint),
+                    lastText.Style.FontSize))
+            {
+                retro = TrimDelta(measurer, lastText.Style, lastText.CodePoint, lastText.Flow);
+                retroCode = TrimClosing;
+            }
+        }
+
+        if (enabled && wantMask)
+        {
+            var end = start + length;
+
+            for (var index = start; index < end;)
+            {
+                var codePoint = TextChunker.CodePointAt(source, index);
+                var take = Char.IsSurrogatePair(source, index) ? 2 : 1;
+
+                if (!TextSpacingTrim.IsCandidate(codePoint))
+                {
+                    index += take;
+                    continue;
+                }
+
+                var kind = KindOf(style, codePoint);
+
+                if (kind != PunctuationClass.None && IsFullwidthPunctuation(measurer, style, codePoint))
+                {
+                    var trimmed = value.All;
+
+                    if (!trimmed && value.Adjacent)
+                    {
+                        if (kind == PunctuationClass.Opening && index > start)
+                        {
+                            trimmed = TextSpacingTrim.TrimsOpening(
+                                NeighborOf(measurer, style, CodePointBefore(source, index)),
+                                style.FontSize);
+                        }
+                        else if (kind == PunctuationClass.Closing && index + take < end)
+                        {
+                            trimmed = TextSpacingTrim.TrimsClosing(
+                                NeighborOf(measurer, style, TextChunker.CodePointAt(source, index + take)),
+                                style.FontSize);
+                        }
+                    }
+
+                    if (trimmed)
+                    {
+                        (mask ??= new Char[length])[index - start] = CodeOf(kind);
+                    }
+                }
+
+                index += take;
+            }
+        }
+
+        return new TrimStep(MaskOf(mask), boundary, retro, retroCode);
+    }
+
+    private static String? MaskOf(Char[]? mask)
+    {
+        if (mask is null)
+        {
+            return null;
+        }
+
+        foreach (var code in mask)
+        {
+            if (code != '\0')
+            {
+                return new String(mask);
+            }
+        }
+
+        return null;
+    }
+
+    private static Char CodeOf(PunctuationClass kind) => kind switch
+    {
+        PunctuationClass.Opening => TrimOpening,
+        PunctuationClass.Closing => TrimClosing,
+        PunctuationClass.Middle => TrimMiddle,
+        _ => '\0',
+    };
+
+    private static PunctuationClass KindOf(ComputedStyle style, Int32 codePoint) =>
+        TextSpacingTrim.Classify(codePoint, TextSpacingTrim.LanguageOf(style.Language));
+
+    /// <summary>Gets what the collapse rules need to know about one character standing beside another.</summary>
+    private static TrimNeighbor NeighborOf(
+        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint) =>
+        new(
+            KindOf(style, codePoint),
+            codePoint == 0x3000,
+            KindOf(style, codePoint) == PunctuationClass.Closing &&
+                IsFullwidthPunctuation(measurer, style, codePoint),
+            style.FontSize);
+
+    /// <summary>
+    /// Gets whether the character still advances by the fullwidth one. A glyph the font already sets
+    /// proportionally is simultaneously full- and half-width, and the property leaves it alone.
+    /// </summary>
+    private static Boolean IsFullwidthPunctuation(
+        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint)
+    {
+        if (TextSpacingTrim.HasExclusiveFeature(style.ResolvedFont.Features))
+        {
+            return false;
+        }
+
+        var fullwidth = measurer.MeasureWidth("\u6C34", style.GetFont());
+
+        if (fullwidth <= 0)
+        {
+            fullwidth = style.FontSize;
+        }
+
+        return TextSpacingTrim.IsFullwidth(
+            measurer.MeasureWidth(Char.ConvertFromUtf32(codePoint), style.GetFont()),
+            fullwidth);
+    }
+
+    /// <summary>Gets the room one trimmed character gives up along the line or column it is set on.</summary>
+    private static Double TrimDelta(
+        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint, WritingModeInfo flow) =>
+        flow.IsVertical
+            ? style.FontSize / 2
+            : measurer.MeasureWidth(Char.ConvertFromUtf32(codePoint), style.GetFont()) / 2;
+
+    /// <summary>
+    /// Gets the room a closing punctuation can give up if it ends the line. The breaker keeps such a
+    /// character on the line where only its trailing half fails to fit; the line's close takes the
+    /// room off for real. <c>trim-end</c> always has this room; <c>allow-end</c> has it because the
+    /// line does not otherwise fit.
+    /// </summary>
+    private static Double EndGrace(
+        ITextMeasurer measurer,
+        ComputedStyle style,
+        String source,
+        Int32 at,
+        Int32 taken,
+        WritingModeInfo flow)
+    {
+        if (taken <= 0)
+        {
+            return 0;
+        }
+
+        var codePoint = CodePointBefore(source, at + taken);
+        var kind = KindOf(style, codePoint);
+        var value = style.TextSpacingTrim;
+
+        if (kind != PunctuationClass.Closing ||
+            value.All ||
+            value.End == SpacingTrimEnd.Space ||
+            TextSpacingTrim.HasExclusiveFeature(style.ResolvedFont.Features) ||
+            !IsFullwidthPunctuation(measurer, style, codePoint))
+        {
+            return 0;
+        }
+
+        return TrimDelta(measurer, style, codePoint, flow);
+    }
+
+    private static Int32 CodePointBefore(String text, Int32 index) =>
+        index >= 2 && Char.IsSurrogatePair(text, index - 2)
+            ? Char.ConvertToUtf32(text[index - 2], text[index - 1])
+            : text[index - 1];
 
     /// <summary>
     /// Gets how many times the run's letter spacing is charged along a line, where the glyphs are set
@@ -4019,13 +4372,15 @@ internal sealed class InlineLayout
         var spacing = (style.LetterSpacing * SpacingUnits(run.Source, run.Start, run.Length, flow)) +
             (style.WordSpacing * TextChunker.WordSeparators(run.Source, run.Start, run.Length));
 
+        var width = flow.IsVertical
+            ? run.Advance(font, _measurer, style.FontSize, flow) + spacing
+            : _measurer.MeasureWidth(run.Source.Substring(run.Start, run.Length), font) + spacing;
+
         return new MeasuredRun(
             run.Source,
             run.Start,
             run.Length,
-            flow.IsVertical
-                ? run.Advance(font, _measurer, style.FontSize, flow) + spacing
-                : _measurer.MeasureWidth(run.Source.Substring(run.Start, run.Length), font) + spacing,
+            width - TrimWithin(_measurer, style, run.Source, run.Start, run.Length, flow),
             PinOrientation(flow, run),
             TextChunker.IsCollapsible(run.Source, run.Start, run.Length));
     }
@@ -4462,11 +4817,16 @@ internal sealed class InlineLayout
             // character nor a string holding it is made afresh to ask for it. It is walked by code point,
             // because one character of the text is one cell of the column however many of the string's
             // characters it takes to write it.
+            var verticalWidth = font.AsksForVerticalWidth;
+
             for (var index = Start; index < Start + Length;)
             {
-                total += Math.Max(
-                    measurer.MeasureAdvance(TextChunker.CodePointAt(Source, index), font, flow),
-                    fontSize);
+                var codePoint = TextChunker.CodePointAt(Source, index);
+                var advance = verticalWidth
+                    ? measurer.MeasureUprightAdvance(codePoint, font)
+                    : measurer.MeasureAdvance(codePoint, font, flow);
+
+                total += verticalWidth && advance > 0 ? advance : Math.Max(advance, fontSize);
 
                 index += TextChunker.UnitsAt(Source, index);
             }
@@ -4710,6 +5070,14 @@ internal sealed class InlineLayout
         }
 
         public Double Width { get; set; }
+
+        /// <summary>
+        /// Gets or sets the characters the line set half-width, one code per UTF-16 unit of the
+        /// fragment's text: <c>'\0'</c> for a character the property left alone, <c>'\1'</c> for a
+        /// trimmed opening punctuation, <c>'\2'</c> for a closing one and <c>'\3'</c> for a middle dot.
+        /// Null when the run has nothing to trim (CSS Text 4 §8.5).
+        /// </summary>
+        public String? Trims { get; set; }
 
         /// <summary>
         /// Gets the width the fragment was measured at, before any justified room was folded into it, or
@@ -5537,20 +5905,37 @@ internal sealed class InlineLayout
         /// out having used, so the run that would not have fitted without it is carried to the next
         /// line - which is what an indented first line does to the text on it.
         /// </param>
-        public LineBuilder(ComputedStyle strut, Double indent, Boolean vertical)
+        public LineBuilder(
+            ComputedStyle strut,
+            Double indent,
+            Boolean vertical,
+            ITextMeasurer measurer,
+            Boolean startsParagraph)
         {
             _fallback = strut;
             _indent = indent;
             _vertical = vertical;
+            _measurer = measurer;
+            _startsParagraph = startsParagraph;
             Width = indent;
         }
 
-        public LineBuilder(ComputedStyle fallback, HashSet<InlineAncestor>? carried, Boolean vertical)
+        public LineBuilder(
+            ComputedStyle fallback,
+            HashSet<InlineAncestor>? carried,
+            Boolean vertical,
+            ITextMeasurer measurer,
+            Boolean startsParagraph)
         {
             _fallback = fallback;
             _carried = carried;
             _vertical = vertical;
+            _measurer = measurer;
+            _startsParagraph = startsParagraph;
         }
+
+        private readonly ITextMeasurer _measurer;
+        private readonly Boolean _startsParagraph;
 
         /// <summary>
         /// Gets the extent the line takes as it is being built, which is what the wrap test is made
@@ -5624,6 +6009,7 @@ internal sealed class InlineLayout
             _fragments.Count,
             _fragments.Count > 0 ? _fragments[^1].Length : 0,
             _fragments.Count > 0 ? _fragments[^1].Width : 0,
+            _fragments.Count > 0 ? _fragments[^1].Trims : null,
             Width,
             _open.ToArray());
 
@@ -5644,6 +6030,7 @@ internal sealed class InlineLayout
                 var last = _fragments[^1];
                 last.Length = at.Length;
                 last.Width = at.RunWidth;
+                last.Trims = at.RunTrims;
             }
 
             Width = at.Width;
@@ -5656,6 +6043,7 @@ internal sealed class InlineLayout
             Int32 Fragments,
             Int32 Length,
             Double RunWidth,
+            String? RunTrims,
             Double Width,
             OpenInline[] Open);
 
@@ -5763,6 +6151,136 @@ internal sealed class InlineLayout
             Width += atomic.InlineSize;
         }
 
+        /// <summary>
+        /// Gets the last character the line has already set, or null where the line holds nothing or
+        /// a box that is not text stands between it and what comes next.
+        /// </summary>
+        private PreviousText? Previous
+        {
+            get
+            {
+                for (var index = _fragments.Count - 1; index >= 0; index--)
+                {
+                    var fragment = _fragments[index];
+
+                    if (fragment.OutOfFlow)
+                    {
+                        continue;
+                    }
+
+                    if (fragment.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    if (fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null)
+                    {
+                        return null;
+                    }
+
+                    var codePoint = CodePointBefore(fragment.Source, fragment.Start + fragment.Length);
+                    var last = fragment.Length - 1;
+                    var trimmed = fragment.Trims is { } trims &&
+                        last < trims.Length &&
+                        trims[last] != '\0';
+
+                    return new PreviousText(
+                        NeighborOf(_measurer, fragment.Style, codePoint),
+                        fragment.Style,
+                        codePoint,
+                        trimmed,
+                        fragment.Flow);
+                }
+
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Gets what adding this range would trim, without adding it: the caller asks before it tests
+        /// whether the range fits, and the answer has to be the one the add will take.
+        /// </summary>
+        public TrimStep PreviewTrim(
+            String source,
+            Int32 start,
+            Int32 length,
+            ComputedStyle style,
+            WritingModeInfo flow) =>
+            PlanTrim(
+                _measurer,
+                source,
+                start,
+                length,
+                style,
+                flow,
+                Previous,
+                !HasContent,
+                _startsParagraph,
+                wantMask: false);
+
+        /// <summary>
+        /// Takes the room a trimmed character gives up off the last run the line holds, and marks it
+        /// in the run's mask. The caller has already found that this character begins the collapse.
+        /// </summary>
+        private void TrimLast(Double delta, Char code)
+        {
+            for (var index = _fragments.Count - 1; index >= 0; index--)
+            {
+                var fragment = _fragments[index];
+
+                if (fragment.OutOfFlow)
+                {
+                    continue;
+                }
+
+                if (fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null)
+                {
+                    return;
+                }
+
+                if (fragment.Length == 0)
+                {
+                    continue;
+                }
+
+                var last = fragment.Length - 1;
+                var chars = (fragment.Trims ?? new String('\0', fragment.Length)).ToCharArray();
+
+                if (last >= chars.Length || chars[last] != '\0')
+                {
+                    return;
+                }
+
+                chars[last] = code;
+                fragment.Trims = MaskOf(chars);
+                fragment.Width -= delta;
+                Width -= delta;
+                return;
+            }
+        }
+
+        private static String? Concat(String? left, Int32 leftLength, String? right, Int32 rightLength)
+        {
+            if (left is null && right is null)
+            {
+                return null;
+            }
+
+            var chars = new Char[leftLength + rightLength];
+
+            if (left is not null)
+            {
+                left.CopyTo(0, chars, 0, Math.Min(leftLength, left.Length));
+            }
+
+            if (right is not null)
+            {
+                right.CopyTo(0, chars, leftLength, Math.Min(rightLength, right.Length));
+            }
+
+            return MaskOf(chars);
+        }
+
         public void Add(
             String source,
             Int32 start,
@@ -5790,6 +6308,25 @@ internal sealed class InlineLayout
             {
                 return;
             }
+
+            var trim = PlanTrim(
+                _measurer,
+                source,
+                start,
+                length,
+                style,
+                flow,
+                Previous,
+                !HasContent,
+                _startsParagraph,
+                wantMask: true);
+
+            if (trim.RetroDelta != 0)
+            {
+                TrimLast(trim.RetroDelta, trim.RetroCode);
+            }
+
+            width -= trim.BoundaryDelta;
 
             Enter(inline);
 
@@ -5820,6 +6357,8 @@ internal sealed class InlineLayout
                     // pieces come from two strings is the one case that still has to be written out: a
                     // box with more than one text child, and one merge per element rather than one per
                     // character.
+                    var before = last.Length;
+
                     if (drawn is null && ReferenceEquals(last.Source, source) && last.Start + last.Length == start)
                     {
                         last.Length += length;
@@ -5829,6 +6368,7 @@ internal sealed class InlineLayout
                         last.MergeInto(last.Text + (drawn ?? source.Substring(start, length)));
                     }
 
+                    last.Trims = Concat(last.Trims, before, trim.Mask, length);
                     last.Width += width;
                     last.FromTab = drawn is not null;
                     Width += width;
@@ -5836,7 +6376,10 @@ internal sealed class InlineLayout
                 }
             }
 
-            var added = new TextFragment(source, start, length, width, style, box, flow, inline);
+            var added = new TextFragment(source, start, length, width, style, box, flow, inline)
+            {
+                Trims = trim.Mask,
+            };
 
             if (drawn is not null)
             {
@@ -6303,6 +6846,7 @@ internal sealed class InlineLayout
 
             var hanging = HangingTrail(measurer);
             line.Hanging = hanging;
+            used -= TrimLineEnd(measurer, maxInline, used, hanging);
             line.Used = used - hanging;
             line.Indent = _indent;
             line.Governing = Governing(line.Fragments.Count > 0 ? line.Fragments[0] : null);
@@ -6345,6 +6889,75 @@ internal sealed class InlineLayout
                 : first.Atomic is not null || first.IsReplaced
                     ? _fallback ?? first.Style
                     : first.Style;
+
+        /// <summary>
+        /// Takes the room a closing punctuation gives up at the end of the line. <c>trim-end</c> always
+        /// takes it; <c>allow-end</c> only where the line would not otherwise fit. The room of the last
+        /// visible character is what changes; its ink does not move, because the blank it gives up lies
+        /// after it (CSS Text 4 §8.5.2).
+        /// </summary>
+        private Double TrimLineEnd(
+            ITextMeasurer measurer, Double maxInline, Double used, Double hanging)
+        {
+            for (var index = _fragments.Count - 1; index >= 0; index--)
+            {
+                var fragment = _fragments[index];
+
+                if (fragment.OutOfFlow)
+                {
+                    continue;
+                }
+
+                if (fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null)
+                {
+                    return 0;
+                }
+
+                var visible = fragment.Length - fragment.Hanging;
+
+                if (visible <= 0)
+                {
+                    continue;
+                }
+
+                var codePoint = CodePointBefore(fragment.Source, fragment.Start + visible);
+                var kind = KindOf(fragment.Style, codePoint);
+                var value = fragment.Style.TextSpacingTrim;
+
+                if (kind == PunctuationClass.None ||
+                    value.All ||
+                    TextSpacingTrim.HasExclusiveFeature(fragment.Style.ResolvedFont.Features) ||
+                    !IsFullwidthPunctuation(measurer, fragment.Style, codePoint))
+                {
+                    return 0;
+                }
+
+                var overflows = used - hanging > maxInline - _indent;
+
+                if (!TextSpacingTrim.TrimsAtLineEnd(value, kind, overflows))
+                {
+                    return 0;
+                }
+
+                var at = visible - 1;
+                var chars = (fragment.Trims ?? new String('\0', fragment.Length)).ToCharArray();
+
+                if (at >= chars.Length || chars[at] != '\0')
+                {
+                    return 0;
+                }
+
+                chars[at] = TrimClosing;
+                fragment.Trims = MaskOf(chars);
+
+                var delta = TrimDelta(measurer, fragment.Style, codePoint, fragment.Flow);
+                fragment.Width -= delta;
+
+                return delta;
+            }
+
+            return 0;
+        }
 
         /// <summary>
         /// Gets the width of the white space the line trails into where its mode hangs it, marking each

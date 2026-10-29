@@ -309,6 +309,13 @@ internal sealed record FontArea
     internal Double? Adjust { get; init; }
 
     /// <summary>
+    /// Gets the <c>font-variant-east-asian</c> value the element inherits or states, or null where it
+    /// states none. Only <c>proportional-width</c> is acted on; the value is kept whole so a later
+    /// reader can see the variants beside it.
+    /// </summary>
+    internal String? EastAsianVariant { get; init; }
+
+    /// <summary>
     /// Gets the OpenType features <c>font-feature-settings</c> asks for, as <c>tag=value</c> entries
     /// separated by commas, or null where the element asks for none (CSS Fonts 4 §6.4).
     /// </summary>
@@ -363,6 +370,12 @@ internal sealed record TextArea
 
     /// <summary>Gets where the room of a justified line may be put: between words, between characters, or both.</summary>
     internal String TextJustify { get; init; } = CssInitialValues.TextJustify;
+
+    /// <summary>
+    /// Gets how fullwidth punctuation is set at the line's edges and between adjacent punctuation
+    /// (CSS Text 4 §8.5), resolved to the three positions the property controls.
+    /// </summary>
+    internal TextSpacingTrimValue TextSpacingTrim { get; init; } = TextSpacingTrimValue.Initial;
 
     /// <summary>
     /// Gets the line-breaking style the block's text asks for: <c>auto</c>, <c>balance</c>,

@@ -588,7 +588,8 @@ internal sealed class TextSelector
                 : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow)
                     + (spacing * CharactersThrough(ordinals, index))
                     + (words * PlacesBefore(wordPlaces, index))
-                    + (justification * PlacesBefore(points, index));
+                    + (justification * PlacesBefore(points, index))
+                    - TrimBefore(run, text, index);
         }
 
         _prefixes[run] = prefix;
@@ -628,8 +629,50 @@ internal sealed class TextSelector
         }
 
         var codePoint = TextChunker.CodePointAt(text, index - 1);
-        var advance = _measurer.MeasureAdvance(codePoint, run.Font, run.Flow);
+        var upright = run.Flow.IsUpright(codePoint);
+        var verticalWidth = run.Font.AsksForVerticalWidth;
+        var advance = upright && verticalWidth
+            ? _measurer.MeasureUprightAdvance(codePoint, run.Font)
+            : _measurer.MeasureAdvance(codePoint, run.Font, run.Flow);
+        var step = upright
+            ? verticalWidth && advance > 0
+                ? advance
+                : Math.Max(advance, run.Font.Size)
+            : advance;
 
-        return run.Flow.IsUpright(codePoint) ? Math.Max(advance, run.Font.Size) : advance;
+        if (run.Trims is { } trims && index - 1 < trims.Length && trims[index - 1] != '\0')
+        {
+            step -= run.Font.Size / 2;
+        }
+
+        return step;
+    }
+
+    /// <summary>
+    /// Gets how much room the trimmed characters before a boundary gave up. The measurement below is
+    /// of the untouched text; the line set some of it half-width, and a caret has to stand where the
+    /// line put it.
+    /// </summary>
+    private Double TrimBefore(LayoutBox run, String text, Int32 index)
+    {
+        if (run.Trims is not { } trims)
+        {
+            return 0;
+        }
+
+        var total = 0.0;
+
+        for (var at = 0; at < index && at < trims.Length; at++)
+        {
+            if (trims[at] == '\0' || Char.IsLowSurrogate(text[at]))
+            {
+                continue;
+            }
+
+            total += _measurer.MeasureAdvance(
+                TextChunker.CodePointAt(text, at), run.Font, run.Flow) / 2;
+        }
+
+        return total;
     }
 }

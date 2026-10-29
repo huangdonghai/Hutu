@@ -91,6 +91,9 @@ internal static class CssInitialValues
     /// </summary>
     internal const String TextJustify = "auto";
 
+    /// <summary>The initial <c>text-spacing-trim</c>, which spaces the line's edges and trims adjacent punctuation.</summary>
+    internal const String TextSpacingTrim = "normal";
+
     internal const Double LetterSpacing = 0;
 
     /// <summary>The initial <c>word-spacing</c>, which is <c>normal</c>: no room added between words.</summary>

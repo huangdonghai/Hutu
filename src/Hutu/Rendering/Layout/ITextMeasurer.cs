@@ -81,6 +81,17 @@ public interface ITextMeasurer
         MeasureAdvance(Char.ConvertFromUtf32(codePoint), style, flow);
 
     /// <summary>
+    /// Gets how far an upright character advances down a column, where a face's vertical metrics or a
+    /// vertical width feature make the step differ from the width it takes along a line.
+    /// </summary>
+    /// <remarks>
+    /// The default is the width along a line, which is what the engine steps upright text by when the
+    /// face says nothing else. A backend whose shaper reports a vertical advance overrides this.
+    /// </remarks>
+    Double MeasureUprightAdvance(Int32 codePoint, FontStyle style) =>
+        MeasureWidth(Char.ConvertFromUtf32(codePoint), style);
+
+    /// <summary>
     /// Gets the extent the text occupies along the block axis: the height of a horizontal line, or the
     /// width of a vertical column.
     /// </summary>

@@ -163,6 +163,12 @@ internal sealed class LayoutBox
     /// <summary>Gets the text of a text node, or null for anything else.</summary>
     public String? Text { get; set; }
 
+    /// <summary>
+    /// Gets or sets which characters of <see cref="Text"/> the line set half-width, one code per
+    /// UTF-16 unit; null when the run has nothing to trim (CSS Text 4 §8.5).
+    /// </summary>
+    internal String? Trims { get; set; }
+
     /// <summary>Gets the resolved font of a text node.</summary>
     public FontStyle Font { get; set; }
 

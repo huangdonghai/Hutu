@@ -1745,7 +1745,8 @@ internal sealed class Painter
             box.DecorationPlacements,
             style.SkipInk,
             (line is { Shadow: true } cast ? cast.Style : style).TextShadows,
-            box.Reversed));
+            box.Reversed,
+            box.Trims));
 
         // The marks the run asked for stand over the text they mark. They carry no lines of their own - a
         // mark is not underlined because the word under it is - and they follow the run, which is where the

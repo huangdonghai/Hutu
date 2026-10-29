@@ -24,6 +24,33 @@ public readonly struct FontStyle : IEquatable<FontStyle>
         IsItalic = italic;
         Adjust = adjust;
         Features = String.IsNullOrWhiteSpace(features) ? null : features;
+
+        var featuresText = Features;
+        AsksForVerticalWidth = featuresText is not null && (Has("vhal") || Has("vpal"));
+
+        Boolean Has(String tag)
+        {
+            foreach (var part in featuresText!.Split(','))
+            {
+                var text = part.Trim();
+                var equals = text.IndexOf('=');
+                var name = (equals < 0 ? text : text[..equals]).Trim();
+                var value = 1;
+
+                if (equals >= 0 &&
+                    !Int32.TryParse(text[(equals + 1)..].Trim(), out value))
+                {
+                    value = 0;
+                }
+
+                if (value != 0 && name.Equals(tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
     /// <summary>Gets the CSS family list, e.g. <c>"Helvetica Neue", Arial, sans-serif</c>.</summary>
@@ -84,6 +111,12 @@ public readonly struct FontStyle : IEquatable<FontStyle>
     /// tell two values apart, and one that can parses it once for its own table.
     /// </remarks>
     public String? Features { get; }
+
+    /// <summary>
+    /// Gets whether the features ask for the font's vertical width forms (<c>vhal</c> or
+    /// <c>vpal</c>), which change how far an upright character advances down a column.
+    /// </summary>
+    public Boolean AsksForVerticalWidth { get; }
 
     public Boolean Equals(FontStyle other) =>
         String.Equals(Family, other.Family, StringComparison.Ordinal) &&

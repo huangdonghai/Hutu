@@ -41,6 +41,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     /// of repeated text then costs a table of the characters it actually uses.
     /// </summary>
     private readonly ConcurrentDictionary<CodePointAdvanceKey, Double> _advances = new();
+    private readonly ConcurrentDictionary<CodePointAdvanceKey, Double> _uprightAdvances = new();
 
     /// <summary>The x-height of a face as a share of its size, which is what font-size-adjust divides by.</summary>
     private readonly ConcurrentDictionary<AspectKey, Double> _aspects = new();
@@ -270,6 +271,28 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     }
 
     /// <summary>
+    /// Gets how far an upright character advances down a column, which the face's vertical metrics -
+    /// or a vertical width feature such as <c>vhal</c> - can make smaller than the width it takes along
+    /// a line.
+    /// </summary>
+    public Double MeasureUprightAdvance(Int32 codePoint, FontStyle style) =>
+        _uprightAdvances.GetOrAdd(
+            new CodePointAdvanceKey(style, codePoint),
+            _ => MeasureUpright(codePoint, style));
+
+    private Double MeasureUpright(Int32 codePoint, FontStyle style)
+    {
+        var text = Char.ConvertFromUtf32(codePoint);
+        var font = GetFont(style, codePoint);
+        var vertical = _shaper.ShapeVertical(font, text, style.Features);
+        var advance = Math.Abs(vertical.Advance);
+
+        return vertical.Succeeded && advance > 0
+            ? advance
+            : MeasureWidth(text, style);
+    }
+
+    /// <summary>
     /// Lets go of every answer measured or drawn before a fetched face landed: the font, metrics,
     /// decomposition, cell and advance tables, and the drawn blobs built from them.
     /// </summary>
@@ -292,6 +315,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         _decompositions.Clear();
         _uprightCells.Clear();
         _advances.Clear();
+        _uprightAdvances.Clear();
         _aspects.Clear();
         _blobs.Clear();
     }
@@ -314,6 +338,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         _decompositions.Clear();
         _uprightCells.Clear();
         _advances.Clear();
+        _uprightAdvances.Clear();
         _aspects.Clear();
         _blobs.Dispose();
         _shaper.Dispose();
@@ -367,6 +392,10 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         runs.Add(new SkiaTextRun(font, text, _shaper.Shape(font, text, features)));
     }
 
+    /// <summary>Gets the style without the features that change a glyph's advance.</summary>
+    private static FontStyle WithoutFeatures(FontStyle style) =>
+        new(style.Family, style.Size, style.Weight, style.IsItalic, style.Adjust);
+
     private List<UprightCell> DecomposeUprightInto(String text, FontStyle style)
     {
         var cells = new List<UprightCell>(text.Length);
@@ -386,7 +415,19 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             var font = GetFont(style, codePoint);
             var vertical = _shaper.ShapeVertical(font, characterText, style.Features);
             var hasOrigin = vertical.Succeeded && vertical.Glyphs.Length == 1;
-            var advance = MeasureWidth(characterText, style);
+            var verticalAdvance = Math.Abs(vertical.Advance);
+            var exact = style.AsksForVerticalWidth &&
+                vertical.Succeeded &&
+                verticalAdvance > 0;
+            var horizontal = MeasureWidth(characterText, style);
+            var advance = exact ? verticalAdvance : horizontal;
+
+            // The cell is centred across the column by the character's own width, not by a width
+            // feature: halt and vhal change how far the glyph advances, not where it stands across
+            // the column (CSS Writing Modes 3 §5.1).
+            var centreWidth = style.Features is null
+                ? horizontal
+                : MeasureWidth(characterText, WithoutFeatures(style));
 
             // The form the font substitutes for the character is drawn by id, because it need not
             // stand for one a document could name. The cell is still centred by the character's own
@@ -400,8 +441,9 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                     drawByGlyph: true,
                     vertical.Points[0].Y,
                     advance,
-                    advance,
-                    start));
+                    centreWidth,
+                    start,
+                    exactAdvance: exact));
                 continue;
             }
 
@@ -415,7 +457,9 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                 var replacementFont = GetFont(style, replacement);
                 var replacementRun = _shaper.ShapeVertical(replacementFont, replacementText, style.Features);
                 var replacementHasOrigin = replacementRun.Succeeded && replacementRun.Glyphs.Length == 1;
-                var centreWidth = MeasureWidth(replacementText, style);
+                var replacementCentre = style.Features is null
+                    ? MeasureWidth(replacementText, style)
+                    : MeasureWidth(replacementText, WithoutFeatures(style));
 
                 cells.Add(new UprightCell(
                     replacementFont,
@@ -424,8 +468,9 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                     drawByGlyph: false,
                     replacementHasOrigin ? replacementRun.Points[0].Y : null,
                     advance,
-                    centreWidth,
-                    start));
+                    replacementCentre,
+                    start,
+                    exactAdvance: exact));
                 continue;
             }
 
@@ -438,8 +483,9 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                 drawByGlyph: false,
                 hasOrigin ? vertical.Points[0].Y : null,
                 advance,
-                advance,
-                start));
+                centreWidth,
+                start,
+                exactAdvance: exact));
         }
 
         return cells;
@@ -462,7 +508,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             return null;
         }
 
-        var face = _resolver.ResolveFallback(style, codepoint);
+        var face = _resolver.ResolveListed(style, codepoint) ??
+            _resolver.ResolveFallback(style, codepoint);
 
         // The font is cached by typeface rather than by character, so two characters the same face
         // carries share one font and the run they sit in is not needlessly split between them.
@@ -752,7 +799,8 @@ internal readonly struct UprightCell
         Single? baselineOffset,
         Double advance,
         Double centreWidth,
-        Int32 index)
+        Int32 index,
+        Boolean exactAdvance = false)
     {
         Font = font;
         Glyph = glyph;
@@ -762,6 +810,7 @@ internal readonly struct UprightCell
         Advance = advance;
         CentreWidth = centreWidth;
         Index = index;
+        ExactAdvance = exactAdvance;
     }
 
     /// <summary>Gets the font the cell is drawn with, after the fallback and the substitution.</summary>
@@ -784,6 +833,12 @@ internal readonly struct UprightCell
 
     /// <summary>Gets the advance the layout gave the character along the column, before the em floor and the spacing.</summary>
     public Double Advance { get; }
+
+    /// <summary>
+    /// Gets whether <see cref="Advance"/> is the font's own vertical advance, which the em floor must
+    /// not raise: a vertical width feature may set a fullwidth character to half an em down a column.
+    /// </summary>
+    public Boolean ExactAdvance { get; }
 
     /// <summary>Gets the width the cell is centred across the column by.</summary>
     public Double CentreWidth { get; }

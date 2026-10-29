@@ -215,6 +215,12 @@ internal sealed class FusedParent
     public WritingMode WritingMode { get; init; } = WritingMode.HorizontalTb;
 
     /// <summary>
+    /// Gets how the parent's fullwidth punctuation is spaced, which the text below it inherits unless
+    /// it writes a value of its own (CSS Text 4 §8.5).
+    /// </summary>
+    public TextSpacingTrimValue TextSpacingTrim { get; init; } = TextSpacingTrimValue.Initial;
+
+    /// <summary>
     /// Gets the parent's <c>unicode-bidi</c>. Inherited like the direction it governs, so a page that
     /// asks for plaintext paragraphs once does not have to ask again on every block below it.
     /// </summary>
@@ -450,6 +456,7 @@ internal sealed class FusedParent
         Direction = style.Direction,
         Language = style.Language,
         WritingMode = style.WritingMode,
+        TextSpacingTrim = style.TextSpacingTrim,
         UnicodeBidi = style.UnicodeBidiKeyword,
 
         // The areas, not the values above, are what a child's cached font and text are keyed on: one
@@ -599,13 +606,18 @@ internal static class FusedStyleFactory
             // alone has nothing to measure them against.
             var adjust = ComputedStyle.ResolveFontSizeAdjustFused(find("font-size-adjust"), parent.FontAdjust);
 
+            var variant = ComputedStyle.ResolveFontVariantFused(
+                find("font-variant-east-asian"), parent.Font?.EastAsianVariant);
+            var features = ComputedStyle.ApplyEastAsianVariant(
+                ComputedStyle.ResolveFontFeaturesFused(
+                    find("font-feature-settings"), parent.Font?.Features),
+                variant);
+
             // A font-relative unit is measured against the size the face is really drawn at, so the
             // adjustment travels into the font a length is read with (font-size-adjust-order-001).
             face = new LengthReader.FontSource(
                 new Hutu.Rendering.Layout.FontStyle(
-                    family, size, weight, italic, adjust,
-                    ComputedStyle.ResolveFontFeaturesFused(
-                        find("font-feature-settings"), parent.Font?.Features)));
+                    family, size, weight, italic, adjust, features));
 
             var letterHit = find("letter-spacing");
             var wordHit = find("word-spacing");
@@ -632,8 +644,8 @@ internal static class FusedStyleFactory
                 LineHeight = ComputedStyle.ResolveLineHeightFused(
                     find("line-height"), parent.LineHeightHit, face, parent.LineHeight, dimensions),
                 Adjust = adjust,
-                Features = ComputedStyle.ResolveFontFeaturesFused(
-                    find("font-feature-settings"), parent.Font?.Features),
+                EastAsianVariant = variant,
+                Features = features,
             };
 
             font = pool is null ? built : pool.Font(built);
@@ -676,6 +688,9 @@ internal static class FusedStyleFactory
             var (tabLength, tabUnits) = ComputedStyle.ResolveTabSizeFused(
                 find("tab-size"), parent.TabLength, parent.TabUnits, face, dimensions);
 
+            var textSpacingTrim = ComputedStyle.ResolveTextSpacingTrim(
+                find("text-spacing-trim")?.Value, parent.TextSpacingTrim);
+
             var built = new TextArea
             {
                 // A text field holds the text it was given: its spaces and its line breaks stand
@@ -696,6 +711,7 @@ internal static class FusedStyleFactory
                 Align = all,
                 AlignLast = last,
                 TextJustify = ComputedStyle.ResolveTextJustifyFused(find("text-justify"), parent.TextJustify),
+                TextSpacingTrim = textSpacingTrim,
                 WrapStyle = ComputedStyle.TextWrapStyle(
                     find("text-wrap-style")?.Value,
                     find("text-wrap")?.Value,

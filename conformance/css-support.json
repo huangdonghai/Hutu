@@ -71,6 +71,8 @@
     "text-emphasis-style": "modelled: the shape or string each marked character takes, and whether it is filled or open",
     "text-emphasis-color": "modelled: the colour the marks are drawn in, or the box's ink where none is named",
     "text-emphasis-position": "modelled: the edge of the line the marks stand against; a line reads over and under and a column reads right and left, which its initial value names",
-    "text-emphasis-skip": "modelled: which characters go unmarked; `auto` leaves the spaces and the narrow punctuation alone"
+    "text-emphasis-skip": "modelled: which characters go unmarked; `auto` leaves the spaces and the narrow punctuation alone",
+    "text-spacing-trim": "modelled: the three positions, trim-all and trim-both, the language conventions that place a fullwidth colon or dot, and the half-width advance and ink shift at the line's edges and between neighbors",
+    "font-variant-east-asian": "partial: proportional-width adds the palt and vpal features; the other variants are read but not applied"
   }
 }

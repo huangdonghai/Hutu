@@ -37,6 +37,7 @@ internal sealed class SkiaFontResolver : IDisposable
     /// </remarks>
     private readonly ConcurrentDictionary<String, SKTypeface> _fetched = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<FallbackKey, Fallback> _fallbacks = new();
+    private readonly ConcurrentDictionary<ListedKey, Fallback> _familyFallbacks = new();
     private readonly List<(String Name, String Path)> _files = new(FontFiles.All());
 
     public SKTypeface Resolve(FontStyle style) =>
@@ -56,6 +57,74 @@ internal sealed class SkiaFontResolver : IDisposable
         _fallbacks.GetOrAdd(
             new FallbackKey(codepoint, style.Weight, style.IsItalic),
             _ => FindFallback(codepoint, style)).Typeface;
+
+    /// <summary>
+    /// Gets the typeface another family in the list carries the character with. CSS Fonts 3 §5.2 has
+    /// the agent look through the families the page named before it looks for one of its own, so a
+    /// list such as "Arial, Noto Sans CJK" is a promise about where the CJK text comes from - and the
+    /// features the style asks for travel with that face.
+    /// </summary>
+    public SKTypeface? ResolveListed(FontStyle style, Int32 codepoint)
+    {
+        // A fetched family is asked before the cache: it may have landed after an earlier answer was
+        // worked out, and the fetched faces are owned by the dictionary that holds them.
+        foreach (var family in FontStyle.Split(style.Family))
+        {
+            if (_fetched.TryGetValue(FontStyle.Unquote(family), out var fetched) &&
+                fetched.GetGlyph(codepoint) != 0)
+            {
+                return fetched;
+            }
+        }
+
+        return _familyFallbacks.GetOrAdd(
+            new ListedKey(style.Family, codepoint, style.Weight, style.IsItalic),
+            _ => FindListed(style, codepoint)).Typeface;
+    }
+
+    private Fallback FindListed(FontStyle style, Int32 codepoint)
+    {
+        var slant = CreateStyle(style.Weight, style.IsItalic);
+
+        foreach (var family in FontStyle.Split(style.Family))
+        {
+            var name = FontStyle.Unquote(family);
+
+            if (_fetched.ContainsKey(name))
+            {
+                continue;
+            }
+
+            foreach (var stand in StandsFor(name))
+            {
+                var match = SKFontManager.Default.MatchFamily(stand, slant);
+
+                if (match is null)
+                {
+                    continue;
+                }
+
+                if (match.GetGlyph(codepoint) != 0)
+                {
+                    return new Fallback(match);
+                }
+
+                match.Dispose();
+            }
+
+            if (Named(name) is { } named)
+            {
+                if (named.GetGlyph(codepoint) != 0)
+                {
+                    return new Fallback(named);
+                }
+
+                named.Dispose();
+            }
+        }
+
+        return default;
+    }
 
     /// <summary>
     /// Raised when a fetched family lands, so the answers that were computed while it was still on the
@@ -358,6 +427,13 @@ internal sealed class SkiaFontResolver : IDisposable
 
         _fallbacks.Clear();
 
+        foreach (var fallback in _familyFallbacks.Values)
+        {
+            fallback.Typeface?.Dispose();
+        }
+
+        _familyFallbacks.Clear();
+
         foreach (var fetched in _fetched.Values)
         {
             fetched.Dispose();
@@ -439,6 +515,45 @@ internal sealed class SkiaFontResolver : IDisposable
     /// when there is none. A value type is what lets a miss be cached, since the dictionary refuses a
     /// null entry.
     /// </summary>
+    /// <summary>The families a character was looked for in, and the style it was looked for at.</summary>
+    private readonly struct ListedKey : IEquatable<ListedKey>
+    {
+        private readonly String _family;
+
+        public ListedKey(String family, Int32 codepoint, Int32 weight, Boolean italic)
+        {
+            _family = family;
+            Codepoint = codepoint;
+            Weight = weight;
+            Italic = italic;
+        }
+
+        public Int32 Codepoint { get; }
+
+        public Int32 Weight { get; }
+
+        public Boolean Italic { get; }
+
+        public Boolean Equals(ListedKey other) =>
+            String.Equals(_family, other._family, StringComparison.Ordinal) &&
+            Codepoint == other.Codepoint &&
+            Weight == other.Weight &&
+            Italic == other.Italic;
+
+        public override Boolean Equals(Object? obj) => obj is ListedKey other && Equals(other);
+
+        public override Int32 GetHashCode()
+        {
+            unchecked
+            {
+                var hash = StringComparer.Ordinal.GetHashCode(_family ?? String.Empty);
+                hash = (hash * 397) ^ Codepoint;
+                hash = (hash * 397) ^ Weight;
+                return (hash * 397) ^ (Italic ? 1 : 0);
+            }
+        }
+    }
+
     private readonly struct Fallback
     {
         public Fallback(SKTypeface typeface) => Typeface = typeface;

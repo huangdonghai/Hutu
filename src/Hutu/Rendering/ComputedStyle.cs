@@ -192,7 +192,7 @@ internal readonly struct ComputedStyle
     private static readonly String[] FontNames =
         {
             "font-size", "font-family", "font-weight", "font-style", "letter-spacing", "word-spacing",
-            "line-height", "font-feature-settings",
+            "line-height", "font-feature-settings", "font-variant-east-asian",
         };
 
     /// <summary>
@@ -207,6 +207,7 @@ internal readonly struct ComputedStyle
         {
             "white-space", "text-align", "text-align-last", "text-justify", "vertical-align",
             "text-indent", "visibility", "overflow-wrap", "word-wrap", "word-break", "line-break",
+            "text-spacing-trim",
         };
 
     /// <summary>
@@ -242,6 +243,12 @@ internal readonly struct ComputedStyle
         // and line height resolve their em against this size, and reading the property instead would
         // read the area being built.
         var size = ResolveFontSize();
+        var variant = ResolveFontVariant(
+            Keyword("font-variant-east-asian", "normal"),
+            parent?.ResolvedFont.EastAsianVariant);
+        var features = ApplyEastAsianVariant(
+            ReadFontFeatures(Keyword("font-feature-settings", "normal")),
+            variant);
 
         var font = new FontArea
         {
@@ -252,7 +259,8 @@ internal readonly struct ComputedStyle
             LetterSpacing = Length("letter-spacing", RenderMode.Horizontal, new LengthReader.FontSource(size), CssInitialValues.LetterSpacing),
             WordSpacing = Length("word-spacing", RenderMode.Horizontal, new LengthReader.FontSource(size), CssInitialValues.WordSpacing),
             LineHeight = ResolveLineHeight(size),
-            Features = ReadFontFeatures(Keyword("font-feature-settings", "normal")),
+            EastAsianVariant = variant,
+            Features = features,
         };
 
         _values.Font = pool is null ? font : pool.Font(font);
@@ -305,6 +313,9 @@ internal readonly struct ComputedStyle
             Align = align,
             AlignLast = alignLast,
             TextJustify = Keyword("text-justify", CssInitialValues.TextJustify),
+            TextSpacingTrim = ResolveTextSpacingTrim(
+                Keyword("text-spacing-trim", CssInitialValues.TextSpacingTrim),
+                parent?.TextSpacingTrim ?? TextSpacingTrimValue.Initial),
             VerticalAlign = Keyword("vertical-align", CssInitialValues.VerticalAlign),
             Indent = ReadLength("text-indent", RenderMode.Horizontal, StyleLength.Zero),
             Visibility = Keyword("visibility", CssInitialValues.Visibility),
@@ -3865,6 +3876,9 @@ internal readonly struct ComputedStyle
     /// <summary>Gets the text a soft-hyphen break draws at the end of its line (CSS Text 4 §6.2).</summary>
     public String HyphenateCharacter => _values.Text.HyphenateCharacter;
 
+    /// <summary>Gets how fullwidth punctuation is set at the line's edges and between neighbors (CSS Text 4 §8.5).</summary>
+    public TextSpacingTrimValue TextSpacingTrim => _values.Text.TextSpacingTrim;
+
     /// <summary>Gets the value <c>text-overflow</c> came to (CSS Overflow 3 §3).</summary>
     public String TextOverflow => _values.Text.TextOverflow;
 
@@ -4147,6 +4161,136 @@ internal readonly struct ComputedStyle
         }
 
         return ReadFontFeatures(text);
+    }
+
+    /// <summary>
+    /// Reads <c>font-variant-east-asian</c> into the value the font area carries. Only
+    /// <c>proportional-width</c> is acted on; the rest of the value travels for a later reader.
+    /// </summary>
+    public static String? ResolveFontVariantFused(ICssProperty? declared, String? inherited)
+    {
+        if (declared is null || IsInherit(declared))
+        {
+            return inherited;
+        }
+
+        var text = declared.Value?.Trim();
+
+        if (String.IsNullOrEmpty(text) ||
+            text.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert-layer", StringComparison.OrdinalIgnoreCase))
+        {
+            return inherited;
+        }
+
+        return text.Equals("normal", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("initial", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : text;
+    }
+
+    /// <summary>Reads <c>font-variant-east-asian</c> from the render-tree path's computed declaration.</summary>
+    public static String? ResolveFontVariant(String? declared, String? inherited)
+    {
+        if (String.IsNullOrWhiteSpace(declared))
+        {
+            return inherited;
+        }
+
+        var text = declared!.Trim();
+
+        if (text.Equals("inherit", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert-layer", StringComparison.OrdinalIgnoreCase))
+        {
+            return inherited;
+        }
+
+        return text.Equals("normal", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("initial", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : text;
+    }
+
+    /// <summary>
+    /// Adds the features <c>font-variant-east-asian: proportional-width</c> stands for to the feature
+    /// list the shaper is handed. <c>palt</c> and <c>vpal</c> are the horizontal and vertical forms;
+    /// both travel because the run's writing mode is read later. A tag the page already names keeps
+    /// the value the page gave it.
+    /// </summary>
+    public static String? ApplyEastAsianVariant(String? features, String? variant)
+    {
+        if (variant is null || !HasWord(variant, "proportional-width"))
+        {
+            return features;
+        }
+
+        var add = new List<String>(2);
+
+        if (!NamesFeature(features, "palt"))
+        {
+            add.Add("palt=1");
+        }
+
+        if (!NamesFeature(features, "vpal"))
+        {
+            add.Add("vpal=1");
+        }
+
+        if (add.Count == 0)
+        {
+            return features;
+        }
+
+        return String.IsNullOrEmpty(features)
+            ? String.Join(',', add)
+            : features + "," + String.Join(',', add);
+    }
+
+    /// <summary>
+    /// Resolves <c>text-spacing-trim</c>: a value this property does not take leaves the inherited one
+    /// standing, which is what a declaration the parser kept as raw text still deserves.
+    /// </summary>
+    public static TextSpacingTrimValue ResolveTextSpacingTrim(
+        String? declared,
+        TextSpacingTrimValue inherited) =>
+        TextSpacingTrimValue.TryParse(declared, inherited, out var value) ? value : inherited;
+
+    private static Boolean HasWord(String value, String word)
+    {
+        foreach (var part in value.Split((Char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (part.Equals(word, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static Boolean NamesFeature(String? features, String tag)
+    {
+        if (String.IsNullOrEmpty(features))
+        {
+            return false;
+        }
+
+        foreach (var part in features!.Split(','))
+        {
+            var text = part.Trim();
+            var equals = text.IndexOf('=');
+            var name = (equals < 0 ? text : text[..equals]).Trim();
+
+            if (name.Equals(tag, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

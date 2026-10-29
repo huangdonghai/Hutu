@@ -656,10 +656,12 @@ public sealed class TextCommand : PaintCommand
         IReadOnlyList<DecorationPlacement>? placements = null,
         DecorationSkip skip = DecorationSkip.Auto,
         IReadOnlyList<Shadow>? shadows = null,
-        Boolean? reversed = null)
+        Boolean? reversed = null,
+        String? trims = null)
         : base(bounds)
     {
         Text = text;
+        Trims = trims;
         Baseline = baseline;
         Font = font;
         Color = color;
@@ -679,6 +681,13 @@ public sealed class TextCommand : PaintCommand
     }
 
     public String Text { get; }
+
+    /// <summary>
+    /// Gets which characters of <see cref="Text"/> were set half-width, one code per UTF-16 unit:
+    /// <c>'\0'</c> untouched, <c>'\1'</c> opening, <c>'\2'</c> closing, <c>'\3'</c> middle dot.
+    /// Null when the run has nothing to trim (CSS Text 4 §8.5).
+    /// </summary>
+    public String? Trims { get; }
 
     /// <summary>
     /// Gets the distance from the block-start edge of <see cref="PaintCommand.Bounds"/> to the
