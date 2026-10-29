@@ -205,6 +205,13 @@ internal sealed class FusedParent
 
     public StyleLength Indent { get; init; } = StyleLength.Zero;
     public TextDirection Direction { get; init; } = TextDirection.LeftToRight;
+
+    /// <summary>
+    /// Gets the language the parent's text is written in, or null where it names none. HTML inherits
+    /// <c>lang</c> to the text below it, so this is the value a child that writes none of its own reads.
+    /// </summary>
+    public String? Language { get; init; }
+
     public WritingMode WritingMode { get; init; } = WritingMode.HorizontalTb;
 
     /// <summary>
@@ -441,6 +448,7 @@ internal sealed class FusedParent
         Collapses = style.Table.Collapse,
         Indent = style.CascadedTextIndent,
         Direction = style.Direction,
+        Language = style.Language,
         WritingMode = style.WritingMode,
         UnicodeBidi = style.UnicodeBidiKeyword,
 
@@ -727,6 +735,14 @@ internal static class FusedStyleFactory
         // read a third time below.
         var writingMode = ComputedStyle.ResolveWritingModeFused(find("writing-mode"), parent.WritingMode);
         var direction = ComputedStyle.ResolveDirectionFused(element, find("direction"), parent.Direction);
+
+        // HTML gives the text below an element the language it names, and an element that writes an
+        // empty one says the language is unknown rather than handing the ancestor's answer down.
+        var declaredLanguage = element.GetAttribute("lang");
+        var language = declaredLanguage is null
+            ? parent.Language
+            : declaredLanguage.Trim() is { Length: > 0 } tag ? tag : null;
+
         var orientation = ComputedStyle.ResolveTextOrientationFused(find("text-orientation"), parent.Orientation);
         var combine = ComputedStyle.ResolveTextCombineFused(find("text-combine-upright"), parent.CombinesUpright);
         var flow = Flow(writingMode, direction, orientation, combine);
@@ -970,6 +986,7 @@ internal static class FusedStyleFactory
         {
             WritingMode = writingMode,
             Direction = direction,
+            Language = language,
 
             // Inherited like the direction it decides the reading of, except where the element writes a
             // keyword of its own - which the UA sheet does for every element that carries a `dir`.

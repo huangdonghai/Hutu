@@ -3195,6 +3195,13 @@ internal readonly struct ComputedStyle
         internal TextDirection Direction = TextDirection.LeftToRight;
 
         /// <summary>
+        /// Gets the language the element's text is written in, or null where neither it nor any
+        /// ancestor names one. Inherited like the direction, and read by the features that follow the
+        /// language's own conventions rather than the document's.
+        /// </summary>
+        internal String? Language;
+
+        /// <summary>
         /// Gets the declared <c>unicode-bidi</c>, or null where the page wrote none. Only its
         /// <c>plaintext</c> value is read, for the direction a paragraph takes from its own text.
         /// </summary>
@@ -4690,6 +4697,33 @@ internal readonly struct ComputedStyle
             if (String.Equals(dir, "ltr", StringComparison.OrdinalIgnoreCase))
             {
                 return TextDirection.LeftToRight;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the language the element's text is written in, or null where neither it nor any ancestor
+    /// names one. HTML's <c>lang</c> inherits to the text below it; an element that writes an empty
+    /// value says the language is unknown rather than handing the ancestor's answer down.
+    /// </summary>
+    public String? Language => _values.Fused is { } fused ? fused.Language : LanguageAttribute();
+
+    /// <summary>
+    /// Gets the language the nearest <c>lang</c> attribute names, or null when the element and its
+    /// ancestors carry none. An empty attribute stops the walk: its language is unknown, and the text
+    /// under it inherits that unknown rather than the last named language above.
+    /// </summary>
+    private String? LanguageAttribute()
+    {
+        for (var element = _element; element is not null; element = element.ParentElement)
+        {
+            var lang = element.GetAttribute("lang");
+
+            if (lang is not null)
+            {
+                return lang.Trim() is { Length: > 0 } tag ? tag : null;
             }
         }
 
