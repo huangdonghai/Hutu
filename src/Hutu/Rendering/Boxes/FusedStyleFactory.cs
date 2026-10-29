@@ -577,7 +577,8 @@ internal static class FusedStyleFactory
             // matched alike, at the same size, under the same inherited font and the same authored
             // line-height.
             face = new LengthReader.FontSource(
-                new Hutu.Rendering.Layout.FontStyle(font.Family, font.Size, font.Weight, font.Italic, font.Adjust));
+                new Hutu.Rendering.Layout.FontStyle(
+                    font.Family, font.Size, font.Weight, font.Italic, font.Adjust, font.Features));
         }
         else
         {
@@ -593,7 +594,10 @@ internal static class FusedStyleFactory
             // A font-relative unit is measured against the size the face is really drawn at, so the
             // adjustment travels into the font a length is read with (font-size-adjust-order-001).
             face = new LengthReader.FontSource(
-                new Hutu.Rendering.Layout.FontStyle(family, size, weight, italic, adjust));
+                new Hutu.Rendering.Layout.FontStyle(
+                    family, size, weight, italic, adjust,
+                    ComputedStyle.ResolveFontFeaturesFused(
+                        find("font-feature-settings"), parent.Font?.Features)));
 
             var letterHit = find("letter-spacing");
             var wordHit = find("word-spacing");
@@ -620,6 +624,8 @@ internal static class FusedStyleFactory
                 LineHeight = ComputedStyle.ResolveLineHeightFused(
                     find("line-height"), parent.LineHeightHit, face, parent.LineHeight, dimensions),
                 Adjust = adjust,
+                Features = ComputedStyle.ResolveFontFeaturesFused(
+                    find("font-feature-settings"), parent.Font?.Features),
             };
 
             font = pool is null ? built : pool.Font(built);

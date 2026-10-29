@@ -231,7 +231,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
             var words = Slice(separators, offset, run.Text.Length);
 
             var clusters = (letterSpacing != 0 || justification != 0 || wordSpacing != 0) && run.Shaped.Succeeded
-                ? _measurer.Shaper.ShapeClusters(run.Font, run.Text)
+                ? _measurer.Shaper.ShapeClusters(run.Font, run.Text, style.Features)
                 : null;
 
             if (clusters is { Length: > 0 } && clusters.Length != run.Shaped.Glyphs.Length)

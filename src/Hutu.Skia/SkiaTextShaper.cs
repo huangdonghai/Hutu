@@ -3,6 +3,7 @@ using SkiaSharp;
 using SkiaSharp.HarfBuzz;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using HarfBuzzBuffer = HarfBuzzSharp.Buffer;
 
@@ -30,6 +31,16 @@ internal sealed class SkiaTextShaper : IDisposable
     private readonly ConcurrentDictionary<IntPtr, SKShaper> _shapers = new();
     private readonly ConcurrentDictionary<ShapedRunKey, ShapedRun> _runs = new();
 
+    // A face reached through HarfBuzz rather than through Skia's shaper, which is what the runs that
+    // name their own features are set with: Skia's shaper takes no feature list, and the library's own
+    // font does (CSS Fonts 4 §6.4). Kept per typeface because a face is expensive to open and the
+    // scale - the one thing that changes per run - is set on it before every shaping.
+    private readonly ConcurrentDictionary<IntPtr, HarfBuzzFace> _faces = new();
+
+    // The features a value names, parsed once. A page that asks for the same list on every line of a
+    // paragraph pays for the parse once.
+    private readonly ConcurrentDictionary<String, Feature[]> _featureLists = new();
+
     // HarfBuzz shapes into a buffer rather than out of one, so a buffer is reused for every request;
     // it is not thread safe, which the lock and the cache between them make irrelevant.
     private readonly HarfBuzzBuffer _buffer = new();
@@ -45,7 +56,20 @@ internal sealed class SkiaTextShaper : IDisposable
     /// The answer is kept per face, size and text. The positions are lengths rather than fractions,
     /// which is why the size is part of the key.
     /// </remarks>
-    public ShapedRun Shape(SKFont font, String text)
+    public ShapedRun Shape(SKFont font, String text) => Shape(font, text, null);
+
+    /// <summary>
+    /// Shapes a run of text the way a face sets it when the page asks for OpenType features:
+    /// <paramref name="features"/> is the resolved <c>font-feature-settings</c>, and a run that asks
+    /// for none is shaped by Skia's shaper as it always was.
+    /// </summary>
+    /// <remarks>
+    /// Two shapers, because the two answer differently: Skia's reads the script and the direction from
+    /// the text alone and takes no feature list, and HarfBuzz's font takes one. A run with features is
+    /// therefore shaped through the library directly - the glyphs and positions come back in the same
+    /// frame, which is why the one <see cref="ShapedRun"/> serves both.
+    /// </remarks>
+    public ShapedRun Shape(SKFont font, String text, String? features)
     {
         if (font.Typeface is not { } typeface || text.Length == 0)
         {
@@ -53,8 +77,8 @@ internal sealed class SkiaTextShaper : IDisposable
         }
 
         return _runs.GetOrAdd(
-            new ShapedRunKey(typeface.Handle, font.Size, text, Vertical: false),
-            _ => ShapeRun(font, text));
+            new ShapedRunKey(typeface.Handle, font.Size, text, Vertical: false, features),
+            _ => ShapeRun(font, text, features));
     }
 
     /// <summary>
@@ -91,7 +115,10 @@ internal sealed class SkiaTextShaper : IDisposable
     /// measures that step as an em or as its own box. The advance is the run's natural step down the
     /// column; the layout steps a column by its own arithmetic and does not read it.
     /// </remarks>
-    public ShapedRun ShapeVertical(SKFont font, String text)
+    public ShapedRun ShapeVertical(SKFont font, String text) => ShapeVertical(font, text, null);
+
+    /// <summary>Shapes a run down a column, with the features the page asked for where it asked for any.</summary>
+    public ShapedRun ShapeVertical(SKFont font, String text, String? features)
     {
         if (font.Typeface is not { } typeface || text.Length == 0)
         {
@@ -99,8 +126,8 @@ internal sealed class SkiaTextShaper : IDisposable
         }
 
         return _runs.GetOrAdd(
-            new ShapedRunKey(typeface.Handle, font.Size, text, Vertical: true),
-            _ => ShapeVerticalRun(font, text));
+            new ShapedRunKey(typeface.Handle, font.Size, text, Vertical: true, features),
+            _ => ShapeVerticalRun(font, text, features));
     }
 
     /// <summary>
@@ -114,7 +141,10 @@ internal sealed class SkiaTextShaper : IDisposable
     /// the buffer is what says whether two glyphs stood together in one character - a ligature, a tone
     /// mark, an ideograph of the extension planes - which is the fact the spacing has to fall by.
     /// </remarks>
-    public Int32[] ShapeClusters(SKFont font, String text)
+    public Int32[] ShapeClusters(SKFont font, String text) => ShapeClusters(font, text, null);
+
+    /// <summary>Gets the glyphs' places in the text, shaped the way the page's features ask.</summary>
+    public Int32[] ShapeClusters(SKFont font, String text, String? features)
     {
         if (font.Typeface is not { } typeface || text.Length == 0)
         {
@@ -129,7 +159,7 @@ internal sealed class SkiaTextShaper : IDisposable
                 _buffer.AddUtf16(text);
                 _buffer.GuessSegmentProperties();
 
-                Shaper(typeface).Shape(_buffer, font);
+                ShapeBuffer(font, features);
 
                 var infos = _buffer.GlyphInfos;
                 var clusters = new Int32[infos.Length];
@@ -152,8 +182,13 @@ internal sealed class SkiaTextShaper : IDisposable
         }
     }
 
-    private ShapedRun ShapeRun(SKFont font, String text)
+    private ShapedRun ShapeRun(SKFont font, String text, String? features)
     {
+        if (!String.IsNullOrEmpty(features))
+        {
+            return ShapeWithFeatures(font, text, features!, vertical: false);
+        }
+
         try
         {
             SKShaper.Result result;
@@ -186,8 +221,13 @@ internal sealed class SkiaTextShaper : IDisposable
         }
     }
 
-    private ShapedRun ShapeVerticalRun(SKFont font, String text)
+    private ShapedRun ShapeVerticalRun(SKFont font, String text, String? features)
     {
+        if (!String.IsNullOrEmpty(features))
+        {
+            return ShapeWithFeatures(font, text, features!, vertical: true);
+        }
+
         try
         {
             lock (_shapeLock)
@@ -249,7 +289,14 @@ internal sealed class SkiaTextShaper : IDisposable
             shaper.Dispose();
         }
 
+        foreach (var face in _faces.Values)
+        {
+            face.Dispose();
+        }
+
         _shapers.Clear();
+        _faces.Clear();
+        _featureLists.Clear();
         _runs.Clear();
         _buffer.Dispose();
     }
@@ -257,17 +304,230 @@ internal sealed class SkiaTextShaper : IDisposable
     private SKShaper Shaper(SKTypeface typeface) =>
         _shapers.GetOrAdd(typeface.Handle, _ => new SKShaper(typeface));
 
+    /// <summary>
+    /// Shapes the buffer with the page's features where it asked for any, and with Skia's shaper where
+    /// it did not. The faces that answer are interchangeable - both set the same glyphs at the same
+    /// places - so one buffer serves either.
+    /// </summary>
+    private Boolean ShapeBuffer(SKFont font, String? features)
+    {
+        if (String.IsNullOrEmpty(features))
+        {
+            Shaper(font.Typeface!).Shape(_buffer, font);
+
+            return true;
+        }
+
+        var face = HarfBuzzFont(font.Typeface!);
+
+        if (face is null)
+        {
+            Shaper(font.Typeface!).Shape(_buffer, font);
+
+            return false;
+        }
+
+        var scale = ScaleOf(font.Size);
+        face.SetScale(scale, scale);
+        face.Shape(_buffer, FeatureList(features!));
+
+        return true;
+    }
+
+    /// <summary>
+    /// Shapes a run through the library's own font, which is the one path that takes a feature list.
+    /// </summary>
+    /// <remarks>
+    /// The positions come back in the same frame Skia's shaper answers in - offsets from the pen along
+    /// the baseline, and the advance the run takes - once the fixed-point steps the library counts in
+    /// are divided out. Measured against Skia's shaper with no features, the two agree glyph for glyph
+    /// and pixel for pixel, which is what lets a page ask for a feature on one line and not the next.
+    /// </remarks>
+    private ShapedRun ShapeWithFeatures(SKFont font, String text, String features, Boolean vertical)
+    {
+        if (font.Typeface is not { } typeface)
+        {
+            return ShapedRun.None;
+        }
+
+        try
+        {
+            lock (_shapeLock)
+            {
+                _buffer.Reset();
+                _buffer.AddUtf16(text);
+
+                if (vertical)
+                {
+                    _buffer.Direction = Direction.TopToBottom;
+                }
+
+                _buffer.GuessSegmentProperties();
+
+                var scale = ScaleOf(font.Size);
+                var face = HarfBuzzFont(typeface);
+                face!.SetScale(scale, scale);
+                face.Shape(_buffer, FeatureList(features));
+
+                var infos = _buffer.GlyphInfos;
+                var positions = _buffer.GlyphPositions;
+
+                if (infos.Length == 0)
+                {
+                    return ShapedRun.None;
+                }
+
+                var glyphs = new UInt16[infos.Length];
+                var points = new SKPoint[infos.Length];
+                var advance = 0f;
+
+                for (var index = 0; index < infos.Length; index++)
+                {
+                    glyphs[index] = (UInt16)infos[index].Codepoint;
+
+                    if (vertical)
+                    {
+                        // The same reading of a column's origin the Skia path takes: the offset is a
+                        // share of the step, which is what makes it independent of the scale asked for.
+                        var step = Math.Abs(positions[index].YAdvance);
+
+                        points[index] = new SKPoint(
+                            positions[index].XOffset / FixedPoint,
+                            step <= 0 ? 0 : -(Single)positions[index].YOffset * font.Size / step);
+
+                        advance += positions[index].YAdvance / FixedPoint;
+                    }
+                    else
+                    {
+                        points[index] = new SKPoint(
+                            positions[index].XOffset / FixedPoint,
+                            positions[index].YOffset / FixedPoint);
+
+                        advance += positions[index].XAdvance / FixedPoint;
+                    }
+                }
+
+                return new ShapedRun(glyphs, points, advance, true);
+            }
+        }
+        catch (Exception exception)
+        {
+            Debug.WriteLine($"Shaping '{text}' with {features} for {typeface.FamilyName} failed: {exception}");
+
+            return ShapedRun.None;
+        }
+    }
+
+    /// <summary>
+    /// Gets the library's font for a face, opened from the same data Skia holds. Nothing is opened
+    /// twice: a page's features all reach the one face its text is set in.
+    /// </summary>
+    private HarfBuzzSharp.Font? HarfBuzzFont(SKTypeface typeface)
+    {
+        if (_faces.TryGetValue(typeface.Handle, out var known))
+        {
+            return known.Font;
+        }
+
+        var stream = typeface.OpenStream(out var index);
+
+        if (stream is null)
+        {
+            // A face the platform holds without data of its own - some system fonts - cannot be
+            // opened a second time, and the run is then shaped without its features rather than lost.
+            return null;
+        }
+
+        using (stream)
+        {
+            var blob = stream.ToHarfBuzzBlob();
+            var face = new Face(blob, index);
+            var font = new HarfBuzzSharp.Font(face);
+            var opened = new HarfBuzzFace(blob, face, font);
+            var kept = _faces.GetOrAdd(typeface.Handle, opened);
+
+            if (!ReferenceEquals(kept, opened))
+            {
+                opened.Dispose();
+            }
+
+            return kept.Font;
+        }
+    }
+
+    private Feature[] FeatureList(String features) => _featureLists.GetOrAdd(features, ParseFeatures);
+
+    private static Feature[] ParseFeatures(String features)
+    {
+        var list = new List<Feature>();
+
+        foreach (var entry in features.Split(','))
+        {
+            var at = entry.IndexOf('=');
+
+            if (at <= 0 ||
+                !UInt32.TryParse(entry[(at + 1)..], out var value))
+            {
+                continue;
+            }
+
+            try
+            {
+                list.Add(new Feature(Tag.Parse(entry[..at]), value));
+            }
+            catch (Exception)
+            {
+                // A tag the library will not take names no feature, and the entries around it stand.
+            }
+        }
+
+        return list.ToArray();
+    }
+
+    private static Int32 ScaleOf(Single size) => Math.Max(1, (Int32)Math.Round(size * FixedPoint));
+
+    /// <summary>The steps the library counts a position in: sixty-four to the pixel.</summary>
+    private const Single FixedPoint = 64f;
+
+    /// <summary>
+    /// A face held open through the library: the blob it was read from and the face over it, kept
+    /// alive for as long as the font made from them is in use.
+    /// </summary>
+    private sealed class HarfBuzzFace : IDisposable
+    {
+        private readonly Blob _blob;
+        private readonly Face _face;
+
+        public HarfBuzzFace(Blob blob, Face face, HarfBuzzSharp.Font font)
+        {
+            _blob = blob;
+            _face = face;
+            Font = font;
+        }
+
+        public HarfBuzzSharp.Font Font { get; }
+
+        public void Dispose()
+        {
+            Font.Dispose();
+            _face.Dispose();
+            _blob.Dispose();
+        }
+    }
+
     /// <summary>The face, size, text and direction a shaped run was taken from, which is what makes it reusable.</summary>
     private readonly struct ShapedRunKey : IEquatable<ShapedRunKey>
     {
         private readonly String _text;
+        private readonly String? _features;
 
-        public ShapedRunKey(IntPtr typeface, Single size, String text, Boolean Vertical)
+        public ShapedRunKey(IntPtr typeface, Single size, String text, Boolean Vertical, String? features)
         {
             Typeface = typeface;
             Size = size;
             _text = text;
             this.Vertical = Vertical;
+            _features = String.IsNullOrEmpty(features) ? null : features;
         }
 
         public IntPtr Typeface { get; }
@@ -280,7 +540,8 @@ internal sealed class SkiaTextShaper : IDisposable
             Typeface == other.Typeface &&
             Size.Equals(other.Size) &&
             Vertical == other.Vertical &&
-            String.Equals(_text, other._text, StringComparison.Ordinal);
+            String.Equals(_text, other._text, StringComparison.Ordinal) &&
+            String.Equals(_features, other._features, StringComparison.Ordinal);
 
         public override Boolean Equals(Object? obj) => obj is ShapedRunKey other && Equals(other);
 
@@ -291,6 +552,7 @@ internal sealed class SkiaTextShaper : IDisposable
                 var hash = Typeface.GetHashCode();
                 hash = (hash * 397) ^ Size.GetHashCode();
                 hash = (hash * 397) ^ (Vertical ? 1 : 0);
+                hash = (hash * 397) ^ (_features is null ? 0 : StringComparer.Ordinal.GetHashCode(_features));
                 return (hash * 397) ^ StringComparer.Ordinal.GetHashCode(_text);
             }
         }

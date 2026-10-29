@@ -192,7 +192,7 @@ internal readonly struct ComputedStyle
     private static readonly String[] FontNames =
         {
             "font-size", "font-family", "font-weight", "font-style", "letter-spacing", "word-spacing",
-            "line-height",
+            "line-height", "font-feature-settings",
         };
 
     /// <summary>
@@ -252,6 +252,7 @@ internal readonly struct ComputedStyle
             LetterSpacing = Length("letter-spacing", RenderMode.Horizontal, new LengthReader.FontSource(size), CssInitialValues.LetterSpacing),
             WordSpacing = Length("word-spacing", RenderMode.Horizontal, new LengthReader.FontSource(size), CssInitialValues.WordSpacing),
             LineHeight = ResolveLineHeight(size),
+            Features = ReadFontFeatures(Keyword("font-feature-settings", "normal")),
         };
 
         _values.Font = pool is null ? font : pool.Font(font);
@@ -4017,6 +4018,128 @@ internal readonly struct ComputedStyle
         }
 
         return value;
+    }
+
+    /// <summary>
+    /// Reads <c>font-feature-settings</c> into the canonical form the backends key their shaped runs
+    /// by: <c>tag=value</c> entries separated by commas, or null where nothing is asked for.
+    /// </summary>
+    /// <remarks>
+    /// The value is a list of <c>&lt;string&gt; [ on | off | &lt;integer&gt; ]</c> entries, and a name
+    /// written without one means <c>on</c> (CSS Fonts 4 §6.4). A tag longer than four characters names
+    /// no OpenType feature and is dropped rather than passed on, which is what a browser does with a
+    /// declaration it cannot use: the entry says nothing, and the rest of the list still stands.
+    /// </remarks>
+    public static String? ReadFontFeatures(String? declared)
+    {
+        if (String.IsNullOrWhiteSpace(declared))
+        {
+            return null;
+        }
+
+        var value = declared!.Trim();
+
+        if (value.Equals("normal", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("initial", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("revert", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("revert-layer", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("inherit", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var entries = new List<String>();
+
+        foreach (var part in value.Split(','))
+        {
+            var text = part.Trim();
+
+            if (text.Length == 0)
+            {
+                continue;
+            }
+
+            // The tag is a string - quoted, in every spelling the property allows - and the weight
+            // beside it is what is left once the tag is taken off.
+            String tag;
+            Int32 after;
+
+            if (text[0] is '"' or '\'')
+            {
+                var close = text.IndexOf(text[0], 1);
+
+                if (close < 0)
+                {
+                    continue;
+                }
+
+                tag = text.Substring(1, close - 1);
+                after = close + 1;
+            }
+            else
+            {
+                var space = text.IndexOf(' ');
+                tag = space < 0 ? text : text[..space];
+                after = space < 0 ? text.Length : space;
+            }
+
+            if (tag.Length is < 1 or > 4)
+            {
+                continue;
+            }
+
+            var rest = text[after..].Trim();
+            var weight = 1u;
+
+            if (rest.Length > 0)
+            {
+                if (rest.Equals("on", StringComparison.OrdinalIgnoreCase))
+                {
+                    weight = 1;
+                }
+                else if (rest.Equals("off", StringComparison.OrdinalIgnoreCase))
+                {
+                    weight = 0;
+                }
+                else if (Int32.TryParse(rest, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) && number >= 0)
+                {
+                    weight = (UInt32)number;
+                }
+                else
+                {
+                    continue;
+                }
+            }
+
+            entries.Add(tag + "=" + weight.ToString(CultureInfo.InvariantCulture));
+        }
+
+        return entries.Count == 0 ? null : String.Join(",", entries);
+    }
+
+    /// <summary>
+    /// Reads <c>font-feature-settings</c> from an element's own declaration for the fused path, where
+    /// a miss or a value that inherits takes the parent's resolved answer.
+    /// </summary>
+    public static String? ResolveFontFeaturesFused(ICssProperty? declared, String? inherited)
+    {
+        if (declared is null || IsInherit(declared))
+        {
+            return inherited;
+        }
+
+        var text = declared.Value?.Trim();
+
+        if (String.IsNullOrEmpty(text) ||
+            text.Equals("unset", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("revert-layer", StringComparison.OrdinalIgnoreCase))
+        {
+            return inherited;
+        }
+
+        return ReadFontFeatures(text);
     }
 
     /// <summary>

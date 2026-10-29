@@ -307,6 +307,16 @@ internal sealed record FontArea
 
     /// <summary>Gets the <c>font-size-adjust</c> factor, or null where the face keeps its own size.</summary>
     internal Double? Adjust { get; init; }
+
+    /// <summary>
+    /// Gets the OpenType features <c>font-feature-settings</c> asks for, as <c>tag=value</c> entries
+    /// separated by commas, or null where the element asks for none (CSS Fonts 4 §6.4).
+    /// </summary>
+    /// <remarks>
+    /// Inherited with the rest of the area. It belongs to the font rather than to the text because a
+    /// feature changes the shapes a face makes, which is a question about the face.
+    /// </remarks>
+    internal String? Features { get; init; }
 }
 
 /// <summary>

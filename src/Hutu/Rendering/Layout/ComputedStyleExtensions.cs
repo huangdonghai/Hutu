@@ -4,5 +4,11 @@ namespace Hutu.Rendering.Layout;
 internal static class ComputedStyleExtensions
 {
     public static FontStyle GetFont(this ComputedStyle style) =>
-        new(style.FontFamily, style.FontSize, style.FontWeight, style.IsItalic, style.ResolvedFont.Adjust);
+        new(
+            style.FontFamily,
+            style.FontSize,
+            style.FontWeight,
+            style.IsItalic,
+            style.ResolvedFont.Adjust,
+            style.ResolvedFont.Features);
 }

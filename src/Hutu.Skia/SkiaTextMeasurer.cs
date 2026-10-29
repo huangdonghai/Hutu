@@ -335,7 +335,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             {
                 if (index > start)
                 {
-                    AddRun(runs, font, text.Substring(start, index - start));
+                    AddRun(runs, font, text.Substring(start, index - start), style.Features);
                 }
 
                 font = fallback;
@@ -345,7 +345,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             {
                 if (index > start)
                 {
-                    AddRun(runs, font, text.Substring(start, index - start));
+                    AddRun(runs, font, text.Substring(start, index - start), style.Features);
                 }
 
                 font = primary;
@@ -355,16 +355,16 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             index += WidthAt(text, index);
         }
 
-        AddRun(runs, font, text.Substring(start));
+        AddRun(runs, font, text.Substring(start), style.Features);
 
         return runs;
     }
 
-    private void AddRun(List<SkiaTextRun> runs, SKFont font, String text)
+    private void AddRun(List<SkiaTextRun> runs, SKFont font, String text, String? features)
     {
         // Every stretch is shaped, whatever script it carries: the width a run is measured to is the
         // width of the glyphs it will be drawn with, so the two sides of the engine read one answer.
-        runs.Add(new SkiaTextRun(font, text, _shaper.Shape(font, text)));
+        runs.Add(new SkiaTextRun(font, text, _shaper.Shape(font, text, features)));
     }
 
     private List<UprightCell> DecomposeUprightInto(String text, FontStyle style)
@@ -384,7 +384,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             position += length;
 
             var font = GetFont(style, codePoint);
-            var vertical = _shaper.ShapeVertical(font, characterText);
+            var vertical = _shaper.ShapeVertical(font, characterText, style.Features);
             var hasOrigin = vertical.Succeeded && vertical.Glyphs.Length == 1;
             var advance = MeasureWidth(characterText, style);
 
@@ -413,7 +413,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             {
                 var replacementText = replacement.ToString();
                 var replacementFont = GetFont(style, replacement);
-                var replacementRun = _shaper.ShapeVertical(replacementFont, replacementText);
+                var replacementRun = _shaper.ShapeVertical(replacementFont, replacementText, style.Features);
                 var replacementHasOrigin = replacementRun.Succeeded && replacementRun.Glyphs.Length == 1;
                 var centreWidth = MeasureWidth(replacementText, style);
 

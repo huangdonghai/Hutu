@@ -10,13 +10,20 @@ namespace Hutu.Rendering.Layout;
 /// </summary>
 public readonly struct FontStyle : IEquatable<FontStyle>
 {
-    public FontStyle(String family, Double size, Int32 weight = 400, Boolean italic = false, Double? adjust = null)
+    public FontStyle(
+        String family,
+        Double size,
+        Int32 weight = 400,
+        Boolean italic = false,
+        Double? adjust = null,
+        String? features = null)
     {
         Family = String.IsNullOrWhiteSpace(family) ? "sans-serif" : family;
         Size = size;
         Weight = weight;
         IsItalic = italic;
         Adjust = adjust;
+        Features = String.IsNullOrWhiteSpace(features) ? null : features;
     }
 
     /// <summary>Gets the CSS family list, e.g. <c>"Helvetica Neue", Arial, sans-serif</c>.</summary>
@@ -66,12 +73,25 @@ public readonly struct FontStyle : IEquatable<FontStyle>
     /// </summary>
     public Double? Adjust { get; }
 
+    /// <summary>
+    /// Gets the OpenType features <c>font-feature-settings</c> asks this text to be set with, written
+    /// the way the property was resolved - <c>tag=value</c> entries separated by commas - or null
+    /// where it asks for none (CSS Fonts 4 §6.4).
+    /// </summary>
+    /// <remarks>
+    /// Kept as the property's own text rather than as parsed tags because this type is the key every
+    /// backend caches its fonts and shaped runs under: a backend that cannot read a value still has to
+    /// tell two values apart, and one that can parses it once for its own table.
+    /// </remarks>
+    public String? Features { get; }
+
     public Boolean Equals(FontStyle other) =>
         String.Equals(Family, other.Family, StringComparison.Ordinal) &&
         Size.Equals(other.Size) &&
         Weight == other.Weight &&
         IsItalic == other.IsItalic &&
-        Nullable.Equals(Adjust, other.Adjust);
+        Nullable.Equals(Adjust, other.Adjust) &&
+        String.Equals(Features, other.Features, StringComparison.Ordinal);
 
     public override Boolean Equals(Object? obj) => obj is FontStyle other && Equals(other);
 
@@ -84,6 +104,7 @@ public readonly struct FontStyle : IEquatable<FontStyle>
             hash = (hash * 397) ^ Adjust.GetHashCode();
             hash = (hash * 397) ^ Weight;
             hash = (hash * 397) ^ (IsItalic ? 1 : 0);
+            hash = (hash * 397) ^ (Features is null ? 0 : StringComparer.Ordinal.GetHashCode(Features));
             return hash;
         }
     }
