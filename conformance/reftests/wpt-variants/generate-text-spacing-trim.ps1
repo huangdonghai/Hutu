@@ -127,6 +127,15 @@ foreach ($stem in $tests) {
         $body = Localized $body
         $refBody = Localized $refBody
 
+        # The trim-all test states no value upstream, while its reference draws the trim-all picture.
+        # The derived page states the value its reference answers.
+        if ($stem -eq 'text-spacing-trim-trim-all-001') {
+            $body = [regex]::Replace(
+                $body,
+                '(?m)^#container\s*\{',
+                "#container {`r`n  text-spacing-trim: trim-all;")
+        }
+
         [System.IO.File]::WriteAllText((Join-Path $dst ($name + '.html')), $body, $utf8)
         [System.IO.File]::WriteAllText((Join-Path $dst ($name + '-ref.html')), $refBody, $utf8)
         $written += 2

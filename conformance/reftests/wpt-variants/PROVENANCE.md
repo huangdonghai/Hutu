@@ -28,7 +28,9 @@ The upstream references state their line-start marks with nested rules (`.trim-s
 This engine's parser reads a nested rule that begins with a type selector as a declaration, so the script
 writes those rules out flat (`.trim-start ps, .trim-start ls { … }`) before the pages are used; without
 that the `<ps>`/`<ls>` spans would never be styled. The script also makes the suite's root-absolute font
-addresses relative for every page, static ones included.
+addresses relative for every page, static ones included. The upstream `trim-all` test states no
+`text-spacing-trim` at all while its reference draws the trim-all picture, so the derived test page adds
+`text-spacing-trim: trim-all` to the container its reference answers for.
 
 ## css-text/text-autospace
 
