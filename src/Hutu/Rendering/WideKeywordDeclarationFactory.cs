@@ -75,6 +75,11 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // are kept as text and read by the block layout.
         "text-box-trim",
         "text-box-edge",
+        // CSS Fonts 4 §6.4's feature list, which AngleSharp has no grammar for at all: without this the
+        // declaration is dropped at the parse and a page asking a face to be set with a feature - the
+        // text-spacing-trim references reach their picture through `halt` - is drawn without it. The
+        // font area reads the list as text and hands it to the shaper.
+        "font-feature-settings",
         // CSS Fragmentation 3's break values, which AngleSharp's grammar predates (recto, verso and the
         // avoid-page / avoid-column refinements are dropped without this). The fragmentation reader keeps
         // each value as text.
