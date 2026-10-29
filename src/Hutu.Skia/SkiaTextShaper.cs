@@ -380,6 +380,7 @@ internal sealed class SkiaTextShaper : IDisposable
                 var glyphs = new UInt16[infos.Length];
                 var points = new SKPoint[infos.Length];
                 var advance = 0f;
+                var walked = 0f;
 
                 for (var index = 0; index < infos.Length; index++)
                 {
@@ -399,11 +400,16 @@ internal sealed class SkiaTextShaper : IDisposable
                     }
                     else
                     {
+                        // Where the glyph stands in the run, and not where the face moved it to: the
+                        // library answers an offset from the pen for each glyph, while the shape this
+                        // type is read as carries the place itself - the pen walked along the run.
+                        // Read as an offset, every glyph of a run would be drawn on its first.
                         points[index] = new SKPoint(
-                            positions[index].XOffset / FixedPoint,
+                            walked + (positions[index].XOffset / FixedPoint),
                             positions[index].YOffset / FixedPoint);
 
-                        advance += positions[index].XAdvance / FixedPoint;
+                        walked += positions[index].XAdvance / FixedPoint;
+                        advance = walked;
                     }
                 }
 

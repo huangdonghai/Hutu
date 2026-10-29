@@ -66,6 +66,42 @@ public sealed class FontFeatureShapingTests
     }
 
     [Test]
+    public void EveryGlyphOfAShapedRunKeepsItsPlace()
+    {
+        // A run shaped with features is built from the library's own positions, which are offsets from
+        // the pen rather than the places the pen walked to. Read as the latter, every glyph of a run
+        // lands on the first - which is what two half-width brackets drawn on top of each other look
+        // like: one bracket, in the room of two.
+        using var measurer = new SkiaTextMeasurer();
+        using var typeface = SKTypeface.FromFile(SubsetFont());
+
+        if (typeface is null)
+        {
+            Assert.Ignore("the subset face the corpus brings could not be opened");
+            return;
+        }
+
+        measurer.Fonts.Register("halt-font", typeface);
+
+        // The features the corpus's references ask for, both of them: a face is free to answer `halt`
+        // alone with glyphs it offsets, and the pair a reference writes asks for the vertical half
+        // width beside it as well.
+        var run = measurer.Decompose("（（", new FontStyle("halt-font", 20, features: "halt=1,vhal=1")).Single();
+
+        Assert.Multiple(() =>
+        {
+            // Where the first glyph stands is the face's own business - a half-width bracket carries an
+            // offset the pen is moved by - but the step from one to the next is the advance, and the two
+            // of them share out the run rather than sitting on top of each other.
+            Assert.That(
+                run.Shaped.Points[1].X - run.Shaped.Points[0].X,
+                Is.EqualTo(10).Within(0.5),
+                "the second glyph stands a half em past the first");
+            Assert.That(run.Advance, Is.EqualTo(20).Within(0.5), "and the run is the two of them together");
+        });
+    }
+
+    [Test]
     public void AFeatureOfTheSameTagTurnedOffLeavesTheWidthAlone()
     {
         using var measurer = new SkiaTextMeasurer();
