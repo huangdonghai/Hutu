@@ -1056,7 +1056,22 @@ public sealed class HutuViewInternal : IDisposable
     /// second pass that makes the two agree, and it is why fonts are fetched before images rather than
     /// with them: a picture that arrives late moves the boxes below it, a font moves every character.
     /// </remarks>
-    public async Task PrefetchFontsAsync(CancellationToken cancellationToken)
+    public async Task PrefetchFontsAsync(CancellationToken cancellationToken) =>
+        await PrefetchFontsAsync(null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Fetches the faces the document links to that are fixed - a file beside the page, or the bytes a
+    /// <c>data:</c> URL carries - and leaves the rest for the host to ask for.
+    /// </summary>
+    /// <remarks>
+    /// A drawing that has to come to the same pixels on every machine cannot wait on a network: the same
+    /// rule the images are fetched under, and the reason a corpus can keep a page that names a remote
+    /// face and still be compared.
+    /// </remarks>
+    public async Task PrefetchLocalFontsAsync(CancellationToken cancellationToken) =>
+        await PrefetchFontsAsync(IsLocal, cancellationToken).ConfigureAwait(false);
+
+    private async Task PrefetchFontsAsync(Func<String, Boolean>? shouldFetch, CancellationToken cancellationToken)
     {
         if (_fontLoader is null || Document is null)
         {
@@ -1064,6 +1079,11 @@ public sealed class HutuViewInternal : IDisposable
         }
 
         IReadOnlyList<FontRequest> faces = FontFaceTable.From(Document).Requests();
+
+        if (shouldFetch is not null)
+        {
+            faces = faces.Where(face => shouldFetch(face.Url)).ToList();
+        }
 
         if (faces.Count == 0)
         {
@@ -1075,6 +1095,12 @@ public sealed class HutuViewInternal : IDisposable
         await _fontLoader
             .LoadAsync(faces, (url, token) => FetchResourceAsync(requesters, url, token), cancellationToken)
             .ConfigureAwait(false);
+
+        // The box tree in hand was measured against the faces the page had before its own arrived, and
+        // a build over the same document and the same viewport is the fast path that reuses it - the
+        // one answer a font makes wrong on every line at once. Everything above the measurer is
+        // dropped so the build that follows measures again.
+        _pipeline.Invalidate();
 
         UpdateRenderTree();
     }

@@ -35,7 +35,16 @@ internal sealed class EngineReader : IDisposable
     {
         _typefaces = text as SkiaTextMeasurer;
         _images = images;
-        _view = new HutuViewInternal(text, images);
+
+        // The faces a page links to are part of the page: a borrowed reftest reaches Ahem and the CJK
+        // subsets by `@font-face`, and without a loader those declarations are made and never answered,
+        // so the page is drawn in whichever face the platform falls back to and a pair that asks a face
+        // to do something is measured in a font nobody named. The fixed-metrics reader asks for no
+        // typefaces at all, and is given no loader for the same reason.
+        _view = new HutuViewInternal(
+            text,
+            images,
+            text is SkiaTextMeasurer measurer ? new SkiaFontLoader(measurer) : null);
         _view.SetViewportSize(width, height);
     }
 
@@ -90,7 +99,11 @@ internal sealed class EngineReader : IDisposable
 
         // A reftest that reaches a picture through a file beside the page draws it; one that would
         // reach it over the network does not, because a drawing has to come to the same pixels on every
-        // machine. A reader built on fixed metrics has no loader at all, so this is a no-op there.
+        // machine. A reader built on fixed metrics has no loader at all, so these are a no-op there.
+        //
+        // The faces come first: a font changes every line of the page, an image only the boxes below
+        // it, so a picture fetched before the face it was measured beside would be laid out twice.
+        await _view.PrefetchLocalFontsAsync(default);
         await _view.PrefetchLocalImagesAsync(default);
     }
 
