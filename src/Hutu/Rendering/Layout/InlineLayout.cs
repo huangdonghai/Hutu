@@ -623,6 +623,11 @@ internal sealed class InlineLayout
         // it brings with it is charged to the run that enters it, wherever in the stream that is.
         var open = new List<OpenInline>();
 
+        // The last character the stream drew, carried across the chunks of one element and across the
+        // edges between them: a boundary the property widens asks for its room on the one line the
+        // content needs, wherever the two characters happened to be written.
+        var previous = -1;
+
         for (var position = 0; position < items.Count; position++)
         {
             var item = items[position];
@@ -639,6 +644,7 @@ internal sealed class InlineLayout
                 trailing = 0;
                 sawContent = false;
                 unbreakable = 0;
+                previous = -1;
                 continue;
             }
 
@@ -664,6 +670,7 @@ internal sealed class InlineLayout
                 trailing = 0;
                 unbreakable += extent;
                 sawContent = true;
+                previous = -1;
                 continue;
             }
 
@@ -679,6 +686,7 @@ internal sealed class InlineLayout
                 trailing = 0;
                 unbreakable += extent;
                 sawContent = true;
+                previous = -1;
                 minContent = Math.Max(minContent, intrinsic.MinContent + start + end);
                 continue;
             }
@@ -696,6 +704,7 @@ internal sealed class InlineLayout
                 trailing = 0;
                 unbreakable += extent;
                 sawContent = true;
+                previous = -1;
                 continue;
             }
 
@@ -835,13 +844,22 @@ internal sealed class InlineLayout
                     maxContent += trailing + width;
                     trailing = 0;
                     sawContent = true;
+                    previous = TextClusters.BaseBefore(source, chunk.Start + chunk.Length);
                     continue;
                 }
 
                 // Something the line draws follows whatever space was held back, so the space between
                 // the two runs is room the content asks for after all - and room inside the piece, where
                 // the style offers no break for it to be left at.
+                if (!space && previous >= 0)
+                {
+                    maxContent += AutoSpaceBetween(
+                        _measurer, item.Style, previous, TextChunker.CodePointAt(source, chunk.Start), flow);
+                }
+
                 maxContent += trailing + width;
+
+                previous = TextClusters.BaseBefore(source, chunk.Start + chunk.Length);
 
                 if (!item.Style.WrapsLines)
                 {
@@ -1328,6 +1346,7 @@ internal sealed class InlineLayout
                 if (uniform)
                 {
                     fragment.RightToLeft = own[0] % 2 == 1;
+                    fragment.Level = own[0];
                     ordered.Add(fragment);
                     continue;
                 }
@@ -1346,6 +1365,7 @@ internal sealed class InlineLayout
                         fragment.Style, fragment.Box, fragment.Flow, fragment.Inline)
                     {
                         RightToLeft = run.Level % 2 == 1,
+                        Level = run.Level,
                     });
                 }
 
@@ -1399,13 +1419,64 @@ internal sealed class InlineLayout
 
         Flush();
 
-        if (!changed)
+        if (changed)
+        {
+            line.Fragments.Clear();
+            line.Fragments.AddRange(ordered);
+        }
+
+        // A column mirrors its inline axis along the column, where the same reversal already stands:
+        // what is left to order is a line's runs.
+        if (!flow.IsVertical)
+        {
+            Reorder(line, baseLevel);
+        }
+    }
+
+    /// <summary>
+    /// Puts the line's runs in the order they are drawn in (UAX #9 L2). The flow lays a right-to-left
+    /// line from its right edge, which is the paragraph-level reversal L2 makes - so the runs are
+    /// handed over that way round, and the reversal cancels the mirror.
+    /// </summary>
+    /// <remarks>
+    /// Only a line whose every run knows its level is put through this: a box that is not text has a
+    /// level the line has not asked for, and moving the runs around it would guess.
+    /// </remarks>
+    private static void Reorder(Line line, Int32 baseLevel)
+    {
+        if (line.Fragments.Count < 2)
         {
             return;
         }
 
+        var levels = new Int32[line.Fragments.Count];
+
+        for (var index = 0; index < levels.Length; index++)
+        {
+            if (line.Fragments[index].Level < 0)
+            {
+                return;
+            }
+
+            levels[index] = line.Fragments[index].Level;
+        }
+
+        var visual = Bidi.VisualOrder(levels);
+
+        if (baseLevel == 1)
+        {
+            Array.Reverse(visual);
+        }
+
+        var reordered = new List<TextFragment>(visual.Length);
+
+        foreach (var at in visual)
+        {
+            reordered.Add(line.Fragments[at]);
+        }
+
         line.Fragments.Clear();
-        line.Fragments.AddRange(ordered);
+        line.Fragments.AddRange(reordered);
     }
 
     /// <summary>
@@ -2543,7 +2614,6 @@ internal sealed class InlineLayout
             // not open one, and the chunker is told so (UAX14 LB20a).
             var continuesWord = builder.LastCodePoint is { } prior &&
                 LineBreaks.ContinuesWord(prior, item.Style.WordBreakingRules);
-
 
             foreach (var chunk in TextChunker.Ranges(item.Text!, item.Style.WordBreakingRules, continuesWord))
             {
@@ -4081,6 +4151,25 @@ internal sealed class InlineLayout
     }
 
     /// <summary>
+    /// Gets the room one autospaced boundary asks for, where the two characters stand side by side on
+    /// the one line the content needs.
+    /// </summary>
+    private static Double AutoSpaceBetween(
+        ITextMeasurer measurer, ComputedStyle style, Int32 left, Int32 right, WritingModeInfo flow)
+    {
+        var value = style.TextAutospace;
+
+        if (value.Off)
+        {
+            return 0;
+        }
+
+        var space = AutoSpaceWidth(measurer, style, flow);
+
+        return space <= 0 ? 0 : RoomBetween(measurer, style, value, left, flow, right, flow, space);
+    }
+
+    /// <summary>
     /// Plans the trims of one range the line is about to add: the mask it will draw with, the room
     /// its first character gives up at the line's start or beside the character already standing
     /// there, and the room the previous character gives up because this range begins beside it.
@@ -5303,6 +5392,12 @@ internal sealed class InlineLayout
         /// which the characters alone do not say when an override asks for the other one.
         /// </summary>
         public Boolean? RightToLeft { get; set; }
+
+        /// <summary>
+        /// Gets or sets the bidi embedding level the run was resolved at, or -1 where it was never
+        /// asked for - a box that is not text has no level of its own.
+        /// </summary>
+        public Int32 Level { get; set; } = -1;
 
         /// <summary>
         /// Gets the annotation that goes on the block-start side of this fragment's text, or null when

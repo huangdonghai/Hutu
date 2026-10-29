@@ -2,6 +2,7 @@ using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace Hutu.Tests;
 
@@ -65,6 +66,42 @@ public sealed class BidiTests
         Assert.That(levels[4], Is.EqualTo(2), "the digits follow the Latin text they stand after");
         Assert.That(levels, Is.All.EqualTo(2), "the whole line is one left-to-right island");
         Assert.That(Order(levels), Is.EqualTo(new[] { 0, 1, 2, 3, 4, 5, 6 }));
+    }
+
+    [Test]
+    public async Task ARightToLeftParagraphDrawsItsLeftToRightRunsInOrder()
+    {
+        // Three runs of the same island in a right-to-left paragraph: the characters are all level 2,
+        // so L2 reverses nothing and the line reads left to right, standing at the right edge. The
+        // runs are inline boxes of their own, which is what the layout has to keep in that order.
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0;font-size:10px'><div dir='rtl' style='text-autospace:no-autospace'>" +
+            "\u56FD\u56FD<span>XX</span>\u56FD</div></body></html>");
+
+        var runs = Walk(view.Layout!.Root)
+            .Where(node => node.Kind == LayoutKind.Text)
+            .OrderBy(node => node.BorderBox.X)
+            .Select(node => node.Text)
+            .ToArray();
+
+        Assert.That(runs, Is.EqualTo(new[] { "\u56FD\u56FD", "XX", "\u56FD" }),
+            "the island reads in its logical order, at the right edge of the paragraph");
+    }
+
+    private static System.Collections.Generic.IEnumerable<LayoutBox> Walk(LayoutBox node)
+    {
+        yield return node;
+
+        foreach (var child in node.Children)
+        {
+            foreach (var descendant in Walk(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 
     private static Int32[] Order(Int32[] levels) => Bidi.VisualOrder(levels);
