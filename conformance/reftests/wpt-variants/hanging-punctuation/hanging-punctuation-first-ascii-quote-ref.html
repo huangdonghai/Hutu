@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<meta charset="UTF-8">
+<title>CSS Reference</title>
+<link rel="stylesheet" href="/fonts/ahem.css">
+<style>
+    body { font-family: 'Ahem'; color:green }
+    /* The upstream reference measures each quote with the script below and sets `text-indent` to its
+       width; Ahem's every glyph is one em, so both are the 16px the initial size makes of one. */
+    .hang { margin:1em; text-indent:-16px }
+</style>
+<div class="hang" id="ref1">"This should hang.</div>
+<div class="hang" id="ref2">'This should hang.</div>

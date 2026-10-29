@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html class="halt htb" lang="zh-hant">
+<meta charset="utf-8">
+<link rel="help" href="https://drafts.csswg.org/css-text-4/#text-spacing-trim-property">
+<link rel="match" href="text-spacing-trim-quote-001-halt-htb-zh-hant-ref.html">
+
+
+
+
+
+
+
+
+
+
+<style>
+@font-face {
+  font-family: halt-font;
+  src: url('/fonts/noto/cjk/NotoSansCJKjp-Regular-subset-halt.otf');
+}
+@font-face {
+  font-family: chws-font;
+  src: url('/fonts/noto/cjk/NotoSansCJKjp-Regular-subset-chws.otf');
+}
+#container {
+  font-family: halt-font;
+  font-size: 20px;
+}
+.chws #container {
+  font-family: chws-font;
+}
+.vrl {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+}
+</style>
+<div id="container">
+  <div>国）‘（国</div>
+  <div>国）“（国</div>
+  <div>国）’（国</div>
+  <div>国）”（国</div>
+</div>
