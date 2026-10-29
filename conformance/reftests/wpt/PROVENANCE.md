@@ -21,3 +21,19 @@ in the gecko tree. This engine runs no script, and a pair whose picture a script
 here as the document before it ran: both sides show the same untouched page, so the comparison
 answers nothing about the feature the test was written for. What is left is static layout, and
 every pair in it is a claim the engine is given the way to reach.
+
+## The text-autospace references
+
+The `css-text/text-autospace` references state the room the property adds with margins. Two changes
+were made to them so that the margins are the ones the pair means:
+
+- Five references wrote that room as `calc(1em / 8)`; the fraction is now spelled `0.125em`, the
+  same length. A `calc()` length folds its `em` against the root font size rather than the
+  element's, which is a gap of its own and is not what these pairs are about.
+- Two references (`text-autospace-zh-001-ref`, `text-autospace-vs-001-ref`) declared their `span`
+  rule inside the rule of its parent, which is CSS Nesting; the rule is written as a child rule of
+  that parent instead. The cascade does not resolve a nested rule whose selector does not begin
+  with `&` yet.
+
+Nothing else in a text-autospace page is touched.
+
