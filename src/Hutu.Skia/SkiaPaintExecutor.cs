@@ -1907,33 +1907,21 @@ public sealed class SkiaPaintExecutor
             return;
         }
 
-        // The run was measured as one em, so squeezing the glyphs along the axis they are set on until
-        // they are that long is what makes them line up with the characters around them.
-        var squeeze = (Single)(command.Bounds.Height / natural);
-        var baselineX = (Single)(command.Bounds.X + command.Baseline);
+        // The run is set horizontally, as if its characters were upright, whichever way the column
+        // turns the ones around it: that is what combining is for. The whole group is shrunk when it
+        // is wider than the em it was given, and left at its own size when it is not, so a lone digit
+        // is not stretched out to fill the space (CSS Writing Modes 3 §5.1).
+        var em = command.Bounds.Height;
+        var scale = (Single)Math.Min(1, em / natural);
+        var emBox = metrics.Ascent + metrics.Descent;
+        var x = (Single)(command.Bounds.X + ((command.Bounds.Width - (natural * scale)) / 2));
+        var baseline = (Single)(command.Bounds.Y + ((em - (emBox * scale)) / 2) + (metrics.Ascent * scale));
 
         canvas.Save();
-
-        if (command.Flow.Orientation == TextOrientation.Upright)
-        {
-            // Upright characters lie side by side across the column; centring the group and squeezing
-            // it sideways keeps them inside the em without turning them.
-            var emBox = metrics.Ascent + metrics.Descent;
-            var y = (Single)(command.Bounds.Y + ((command.Bounds.Height - emBox) / 2) + metrics.Ascent);
-            var x = (Single)(command.Bounds.X + ((command.Bounds.Width - natural) / 2));
-
-            canvas.Scale(squeeze, 1, x, (Single)command.Bounds.Y);
-            DrawRunBlob(canvas, command, y, paint, 0, 0);
-        }
-        else
-        {
-            var start = (Single)command.Bounds.Y;
-
-            canvas.RotateDegrees(90, baselineX, start);
-            canvas.Scale(squeeze, 1, baselineX, start);
-            DrawRunBlob(canvas, command, start, paint, 0, 0);
-        }
-
+        canvas.Translate(x, baseline);
+        canvas.Scale(scale);
+        canvas.Translate((Single)(-command.Bounds.X), 0);
+        DrawRunBlob(canvas, command, 0, paint, 0, 0);
         canvas.Restore();
     }
 

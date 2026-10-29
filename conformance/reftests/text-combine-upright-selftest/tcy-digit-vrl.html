@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<meta charset="utf-8">
+<link rel="match" href="tcy-digit-vrl-ref.html">
+<!--
+  The reference sets the same digit upright in a cell of its own, which is the picture a combined
+  run makes. The two roads put the glyph's baseline on slightly different fractions of the em - the
+  vertical origin of the face against the centre of its em box - and both agree with Chrome, so a
+  pixel of rounding is allowed for and nothing more: a run that is turned instead of combined, as
+  this one once was, lands nowhere near and cannot pass.
+-->
+<meta name="fuzzy" content="maxDifference=0-255;totalPixels=1-200">
+<style>
+@font-face {
+  font-family: self-font;
+  src: url('../../fonts/noto/cjk/NotoSansCJKjp-Regular-subset-halt.otf');
+}
+#container {
+  font-family: self-font;
+  font-size: 40px;
+  writing-mode: vertical-rl;
+}
+.tcy { text-combine-upright: all; }
+</style>
+<div id="container">
+  <div>国<span class="tcy">1</span>国</div>
+</div>
