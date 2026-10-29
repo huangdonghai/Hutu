@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<meta charset="utf-8">
+<link rel="match" href="lines-htb-ref.html">
+<style>
+@font-face {
+  font-family: self-font;
+  src: url('../../fonts/noto/cjk/NotoSansCJKjp-Regular-subset-halt.otf');
+}
+#container {
+  font-family: self-font;
+  font-size: 20px;
+}
+.a { inline-size: 4em; text-spacing-trim: trim-start; }
+.b { inline-size: 4em; text-spacing-trim: space-first; }
+.c { inline-size: 3.6em; text-spacing-trim: trim-start; }
+.d { inline-size: 10em; text-spacing-trim: trim-end; }
+</style>
+<div id="container">
+  <div class="a">（国国国（国国国（国</div>
+  <div class="b">（国国国（国</div>
+  <div class="b">（国<br>（国</div>
+  <div class="c">国国国）国</div>
+  <div class="d">国国国）</div>
+</div>
