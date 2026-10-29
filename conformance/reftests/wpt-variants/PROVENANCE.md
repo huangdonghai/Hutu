@@ -24,6 +24,12 @@ attributes written on an `<html>` element, and a copy of the reference carrying 
 that declares no variant is copied as it stands. Written by `generate-text-spacing-trim.ps1` beside this
 file, which reads the checkout named above.
 
+The upstream references state their line-start marks with nested rules (`.trim-start { ps, ls { … } }`).
+This engine's parser reads a nested rule that begins with a type selector as a declaration, so the script
+writes those rules out flat (`.trim-start ps, .trim-start ls { … }`) before the pages are used; without
+that the `<ps>`/`<ls>` spans would never be styled. The script also makes the suite's root-absolute font
+addresses relative for every page, static ones included.
+
 ## css-text/text-autospace
 
 `text-autospace-dynamic-001` toggles a class that turns autospacing off and on, and

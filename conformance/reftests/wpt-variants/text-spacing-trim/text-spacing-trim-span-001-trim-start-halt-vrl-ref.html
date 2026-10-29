@@ -19,12 +19,8 @@
 halt {
   font-feature-settings: 'halt' 1, 'vhal' 1;
 }
-.trim-start {
-  ps, ls { font-feature-settings: 'halt' 1, 'vhal' 1; }
-}
-.space-first {
-  ls { font-feature-settings: 'halt' 1, 'vhal' 1; }
-}
+.trim-start ps, .trim-start ls { font-feature-settings: 'halt' 1, 'vhal' 1; }
+.space-first ls { font-feature-settings: 'halt' 1, 'vhal' 1; }
 </style>
 <div id="container">
   <div>国）<halt>（国</halt></div>

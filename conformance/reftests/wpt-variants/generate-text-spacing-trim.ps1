@@ -4,10 +4,33 @@
 # turns that query into classes on the root element. This engine runs no script, so every one of those
 # tests would render the default state whatever variant it was written for. Here the same attributes are
 # written into the page itself: one page per variant, and a reference beside it carrying the same ones.
+#
+# The references also carry nested type-selector rules (`.trim-start { ps, ls { … } }`), which this
+# engine's parser reads as declarations; those are written out flat so the line-start marks apply.
 
 $src = 'D:\_git0\Hutu\build\wpt\css\css-text\text-spacing-trim'
 $dst = 'D:\_git0\Hutu\conformance\reftests\wpt-variants\text-spacing-trim'
 $utf8 = [System.Text.UTF8Encoding]::new($false)
+
+# The suite reaches its fonts by an address from its root; a page written into the corpus reaches them
+# by a relative one, the way every other borrowed page here does.
+function Localized([string] $html) {
+    return $html.Replace('"/fonts/', '"../../../fonts/').Replace("'/fonts/", "'../../../fonts/").Replace('(/fonts/', '(../../../fonts/')
+}
+
+# This engine's CSS parser drops a nested rule that begins with a type selector - `ps, ls { … }` inside
+# a class rule is read as a declaration, not a rule - while the upstream reference states its line-start
+# marks that way. Written flat, the same rules mean what they say and the spans are styled.
+function Flattened([string] $html) {
+    $html = [regex]::Replace(
+        $html,
+        '\.trim-start\s*\{\s*ps,\s*ls\s*\{([^}]*)\}\s*\}',
+        '.trim-start ps, .trim-start ls {$1}')
+    return [regex]::Replace(
+        $html,
+        '\.space-first\s*\{\s*ls\s*\{([^}]*)\}\s*\}',
+        '.space-first ls {$1}')
+}
 
 $tests = @(
     'text-spacing-trim-001',
@@ -43,9 +66,10 @@ foreach ($stem in $tests) {
     $variants = [regex]::Matches($testHtml, '<meta name="variant" content="(?<v>[^"]+)"')
 
     if ($variants.Count -eq 0) {
-        # A page that asks for no variant is already static: it is copied as it stands.
-        [System.IO.File]::WriteAllText((Join-Path $dst ($stem + '.html')), $testHtml, $utf8)
-        [System.IO.File]::WriteAllText((Join-Path $dst $refHref), $refHtml, $utf8)
+        # A page that asks for no variant is already static: it is copied as it stands, with the two
+        # rewrites every page in this folder gets - its fonts reached relatively, its references flat.
+        [System.IO.File]::WriteAllText((Join-Path $dst ($stem + '.html')), (Localized $testHtml), $utf8)
+        [System.IO.File]::WriteAllText((Join-Path $dst $refHref), (Flattened (Localized $refHtml)), $utf8)
         $written += 2
         Write-Host "static: $stem"
         continue
@@ -99,10 +123,9 @@ foreach ($stem in $tests) {
         $refBody = $refBody -replace '<script[^>]*variant-feature\.js"></script>', ''
         $refBody = $refBody -replace '<!DOCTYPE html>', "<!DOCTYPE html>`r`n$tag"
 
-        # The suite reaches its fonts by an address from its root; a page written into the corpus
-        # reaches them by a relative one, the way every other borrowed page here does.
-        $body = $body.Replace('"/fonts/', '"../../../fonts/').Replace("'/fonts/", "'../../../fonts/").Replace('(/fonts/', '(../../../fonts/')
-        $refBody = $refBody.Replace('"/fonts/', '"../../../fonts/').Replace("'/fonts/", "'../../../fonts/").Replace('(/fonts/', '(../../../fonts/')
+        $refBody = Flattened $refBody
+        $body = Localized $body
+        $refBody = Localized $refBody
 
         [System.IO.File]::WriteAllText((Join-Path $dst ($name + '.html')), $body, $utf8)
         [System.IO.File]::WriteAllText((Join-Path $dst ($name + '-ref.html')), $refBody, $utf8)
