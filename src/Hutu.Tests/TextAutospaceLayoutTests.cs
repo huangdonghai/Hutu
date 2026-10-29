@@ -126,6 +126,18 @@ public sealed class TextAutospaceLayoutTests
     }
 
     [Test]
+    public async Task ASelectorStandingOnTheIdeographKeepsTheBoundary()
+    {
+        using var view = CreateView();
+
+        // The supplementary selector continues the ideograph, so the letter beside the two is still
+        // one the property sets apart - the boundary stands after the character the selector completes.
+        await view.SetHtml(Document("<p style='margin:0;font-size:10px'>国0A</p>"));
+
+        Assert.That(Text(view, "国0A").BorderBox.Width, Is.EqualTo(20 + Room).Within(0.001));
+    }
+
+    [Test]
     public async Task ReplaceTakesThePlaceOfTheSpaceItFinds()
     {
         using var view = CreateView();
