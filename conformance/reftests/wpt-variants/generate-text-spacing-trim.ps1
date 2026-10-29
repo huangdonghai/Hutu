@@ -99,6 +99,11 @@ foreach ($stem in $tests) {
         $refBody = $refBody -replace '<script[^>]*variant-feature\.js"></script>', ''
         $refBody = $refBody -replace '<!DOCTYPE html>', "<!DOCTYPE html>`r`n$tag"
 
+        # The suite reaches its fonts by an address from its root; a page written into the corpus
+        # reaches them by a relative one, the way every other borrowed page here does.
+        $body = $body.Replace('"/fonts/', '"../../../fonts/').Replace("'/fonts/", "'../../../fonts/").Replace('(/fonts/', '(../../../fonts/')
+        $refBody = $refBody.Replace('"/fonts/', '"../../../fonts/').Replace("'/fonts/", "'../../../fonts/").Replace('(/fonts/', '(../../../fonts/')
+
         [System.IO.File]::WriteAllText((Join-Path $dst ($name + '.html')), $body, $utf8)
         [System.IO.File]::WriteAllText((Join-Path $dst ($name + '-ref.html')), $refBody, $utf8)
         $written += 2

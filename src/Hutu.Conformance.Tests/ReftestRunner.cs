@@ -65,31 +65,9 @@ internal static class ReftestRunner
     {
         using var engine = EngineReader.WithTypefaces(Width, Height);
 
-        await engine.LoadAsync(Served(await File.ReadAllTextAsync(page)), new Uri(page).AbsoluteUri);
+        await engine.LoadAsync(await File.ReadAllTextAsync(page), new Uri(page).AbsoluteUri);
 
         return engine.Render(Width, Height);
-    }
-
-    /// <summary>
-    /// Rewrites the addresses a borrowed page reaches the suite's own resources by, which are written
-    /// from the suite's root - <c>/fonts/ahem.css</c> - and resolve against the drive root when the page
-    /// is opened from disk instead of being served.
-    /// </summary>
-    /// <remarks>
-    /// A page that asks for Ahem and is handed the machine's fallback face instead is not the page the
-    /// corpus wrote: its widths are whatever the platform feels like, and a pair about a feature is then
-    /// measured in fonts nobody named. The fonts the checkout carries are the ones the suite serves, so
-    /// pointing <c>/fonts/</c> at that folder is the whole of what a server would have done.
-    /// </remarks>
-    private static String Served(String html)
-    {
-        var fonts = Path.Combine(Corpus.Root, "conformance", "fonts");
-        var root = new Uri(fonts + Path.DirectorySeparatorChar).AbsoluteUri;
-
-        return html
-            .Replace("\"/fonts/", "\"" + root, StringComparison.OrdinalIgnoreCase)
-            .Replace("'/fonts/", "'" + root, StringComparison.OrdinalIgnoreCase)
-            .Replace("(/fonts/", "(" + root, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

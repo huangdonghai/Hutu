@@ -2,7 +2,8 @@
 
 These pages are written out from upstream reftests that drive themselves with a script, so they are
 derived rather than copied: what was taken is the test's markup and its reference, and what was done to
-it is the one thing the script did.
+it is the one thing the script did - and, as in the corpus beside this one, the font addresses the
+suite writes from its root are made relative to `conformance/fonts`.
 
 - Source: https://github.com/web-platform-tests/wpt (github.com/web-platform-tests/wpt)
 - Revision: 2f57f45d21482f94b36123dfcec77ae7ab859bc1

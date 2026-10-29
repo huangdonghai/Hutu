@@ -2,8 +2,8 @@
 
 Upstream reftests reach their fonts by an address from the suite's root - `/fonts/ahem.css`,
 `/fonts/noto/cjk/NotoSansCJKjp-Regular-subset-halt.otf` - because the suite is served rather than
-opened from disk. `ReftestRunner.Served` points that address at this folder, so the files here are
-what those pages are drawn with.
+opened from disk. Every borrowed page has that address rewritten to a relative one that lands here,
+so a page opened straight from a file system reaches the same faces a served page would.
 
 They are taken from the same upstream revision as the corpora beside them:
 
