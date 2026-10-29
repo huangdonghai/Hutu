@@ -207,7 +207,7 @@ internal readonly struct ComputedStyle
         {
             "white-space", "text-align", "text-align-last", "text-justify", "vertical-align",
             "text-indent", "visibility", "overflow-wrap", "word-wrap", "word-break", "line-break",
-            "text-spacing-trim",
+            "text-spacing-trim", "text-autospace",
         };
 
     /// <summary>
@@ -316,6 +316,11 @@ internal readonly struct ComputedStyle
             TextSpacingTrim = ResolveTextSpacingTrim(
                 Keyword("text-spacing-trim", CssInitialValues.TextSpacingTrim),
                 parent?.TextSpacingTrim ?? TextSpacingTrimValue.Initial),
+            TextAutospace = ResolveTextAutospace(
+                ReadKeyword("text-autospace") is { } declaredAutospace
+                    ? declaredAutospace
+                    : KeepsTextAsWritten(_element?.LocalName) ? "no-autospace" : null,
+                parent?.TextAutospace ?? TextAutospaceValue.Initial),
             VerticalAlign = Keyword("vertical-align", CssInitialValues.VerticalAlign),
             Indent = ReadLength("text-indent", RenderMode.Horizontal, StyleLength.Zero),
             Visibility = Keyword("visibility", CssInitialValues.Visibility),
@@ -3879,6 +3884,9 @@ internal readonly struct ComputedStyle
     /// <summary>Gets how fullwidth punctuation is set at the line's edges and between neighbors (CSS Text 4 §8.5).</summary>
     public TextSpacingTrimValue TextSpacingTrim => _values.Text.TextSpacingTrim;
 
+    /// <summary>Gets which neighbours of an ideograph the line widens before (CSS Text 4 §8.4).</summary>
+    public TextAutospaceValue TextAutospace => _values.Text.TextAutospace;
+
     /// <summary>Gets the value <c>text-overflow</c> came to (CSS Overflow 3 §3).</summary>
     public String TextOverflow => _values.Text.TextOverflow;
 
@@ -4257,6 +4265,23 @@ internal readonly struct ComputedStyle
         String? declared,
         TextSpacingTrimValue inherited) =>
         TextSpacingTrimValue.TryParse(declared, inherited, out var value) ? value : inherited;
+
+    /// <summary>
+    /// Resolves <c>text-autospace</c>: a value this property does not take leaves the inherited one
+    /// standing, which is what a declaration the parser kept as raw text still deserves.
+    /// </summary>
+    public static TextAutospaceValue ResolveTextAutospace(
+        String? declared,
+        TextAutospaceValue inherited) =>
+        TextAutospaceValue.TryParse(declared, inherited, out var value) ? value : inherited;
+
+    /// <summary>
+    /// Gets whether the element's text is kept as written, without the inter-script spacing. The
+    /// default stylesheet the specification hands the source-like elements states it, but a property
+    /// kept as raw text is not read back from that sheet, so the default is answered here.
+    /// </summary>
+    internal static Boolean KeepsTextAsWritten(String? localName) =>
+        localName is "pre" or "tt" or "code" or "kbd" or "samp";
 
     private static Boolean HasWord(String value, String word)
     {
@@ -4678,7 +4703,8 @@ internal readonly struct ComputedStyle
 
     /// <summary>Gets whether a length is relative to the font size, which the cascade cannot resolve.</summary>
     internal static Boolean IsFontRelative(CssLengthValue.Unit unit) =>
-        unit is CssLengthValue.Unit.Em or CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch or CssLengthValue.Unit.Percent;
+        unit is CssLengthValue.Unit.Em or CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch or
+            CssLengthValue.Unit.Ic or CssLengthValue.Unit.Percent;
 
     /// <summary>
     /// Resolves a relative <c>font-size</c> against the parent's font. A percentage is a share of its
@@ -4708,6 +4734,7 @@ internal readonly struct ComputedStyle
         {
             CssLengthValue.Unit.Em => value.Value * reference,
             CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch => value.Value * reference * 0.5,
+            CssLengthValue.Unit.Ic => value.Value * reference,
             _ => value.Value * 0.01 * reference,
         };
     }

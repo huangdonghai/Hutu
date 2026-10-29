@@ -14,4 +14,10 @@ internal interface IFontMetricSource
 
     /// <summary>Gets how far the font's zero advances, in pixels, or null when nothing was there to measure.</summary>
     Double? ZeroAdvance(FontStyle font);
+
+    /// <summary>
+    /// Gets how far a typical ideograph - the water character, U+6C34 - advances in the font, which is
+    /// the <c>ic</c> unit, or null when nothing was there to measure.
+    /// </summary>
+    Double? IcAdvance(FontStyle font);
 }

@@ -144,6 +144,14 @@ internal sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
     }
 
     /// <inheritdoc />
+    public Double? IcAdvance(FontStyle font)
+    {
+        var width = Text?.MeasureWidth("\u6C34", font) ?? 0;
+
+        return width > 0 ? width : null;
+    }
+
+    /// <inheritdoc />
     public Boolean IsInterlaced => false;
 
     /// <inheritdoc />

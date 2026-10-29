@@ -99,6 +99,7 @@ internal static class SvgSerializer
         return unit.Equals("em", StringComparison.OrdinalIgnoreCase) ||
                unit.Equals("ex", StringComparison.OrdinalIgnoreCase) ||
                unit.Equals("ch", StringComparison.OrdinalIgnoreCase) ||
+               unit.Equals("ic", StringComparison.OrdinalIgnoreCase) ||
                unit.Equals("rem", StringComparison.OrdinalIgnoreCase);
     }
 

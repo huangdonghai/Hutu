@@ -21,6 +21,12 @@ namespace Hutu.Skia;
 /// </remarks>
 internal sealed class SkiaTextBlobCache : IDisposable
 {
+    /// <summary>The code an autospaced boundary wears on the character it follows.</summary>
+    private const Char AutoSpaceAfter = '\u0001';
+
+    /// <summary>The code a space a boundary replaces wears instead of the character before it.</summary>
+    private const Char AutoSpaceReplace = '\u0002';
+
     private readonly SkiaTextMeasurer _measurer;
     private readonly ConcurrentDictionary<TextBlobKey, TextBlob> _blobs = new();
 
@@ -65,8 +71,10 @@ internal sealed class SkiaTextBlobCache : IDisposable
         String expand = "auto",
         Double wordSpacing = 0,
         Boolean reverse = false,
-        String? trims = null) =>
-        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims).Ink;
+        String? trims = null,
+        String? autoSpaces = null,
+        Double autoSpace = 0) =>
+        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims, autoSpaces, autoSpace).Ink;
 
     /// <summary>Gets the ink of a column's glyphs, in the space the column's blob is positioned in.</summary>
     public SKRect[] GetColumnInk(
@@ -78,8 +86,10 @@ internal sealed class SkiaTextBlobCache : IDisposable
         String expand = "auto",
         Double wordSpacing = 0,
         Boolean reverse = false,
-        String? trims = null) =>
-        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims).Ink;
+        String? trims = null,
+        String? autoSpaces = null,
+        Double autoSpace = 0) =>
+        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims, autoSpaces, autoSpace).Ink;
 
     public SKTextBlob? GetRunBlob(
         FontStyle style,
@@ -90,8 +100,10 @@ internal sealed class SkiaTextBlobCache : IDisposable
         String expand = "auto",
         Double wordSpacing = 0,
         Boolean reverse = false,
-        String? trims = null) =>
-        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims).Blob;
+        String? trims = null,
+        String? autoSpaces = null,
+        Double autoSpace = 0) =>
+        GetBlob(BlobKind.Run, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims, autoSpaces, autoSpace).Blob;
 
     /// <summary>
     /// Gets the blob a column of upright characters is drawn as, with its glyphs positioned relative
@@ -117,8 +129,10 @@ internal sealed class SkiaTextBlobCache : IDisposable
         String expand = "auto",
         Double wordSpacing = 0,
         Boolean reverse = false,
-        String? trims = null) =>
-        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims).Blob;
+        String? trims = null,
+        String? autoSpaces = null,
+        Double autoSpace = 0) =>
+        GetBlob(BlobKind.Column, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims, autoSpaces, autoSpace).Blob;
 
     /// <summary>
     /// Gets the blob a run or column is drawn as.
@@ -138,7 +152,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
         String expand,
         Double wordSpacing,
         Boolean reverse,
-        String? trims)
+        String? trims,
+        String? autoSpaces,
+        Double autoSpace)
     {
         // A mask of zeros says nothing: keeping it would only split the cache by a string that can
         // never change an answer.
@@ -147,8 +163,14 @@ internal sealed class SkiaTextBlobCache : IDisposable
             trims = null;
         }
 
+        if (autoSpaces is not null && (autoSpace <= 0 || !HasTrims(autoSpaces)))
+        {
+            autoSpaces = null;
+        }
+
         var key = new TextBlobKey(
-            kind, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims);
+            kind, style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse,
+            trims, autoSpaces);
 
         lock (_gate)
         {
@@ -159,8 +181,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
             var ink = new List<SKRect>();
             var blob = kind == BlobKind.Run
-                ? BuildRunBlob(style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims, ink)
-                : BuildColumnBlob(style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims, ink);
+                ? BuildRunBlob(style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims, autoSpaces, autoSpace, ink)
+                : BuildColumnBlob(style, text, letterSpacing, justification, justifies, expand, wordSpacing, reverse, trims, autoSpaces, autoSpace, ink);
             var built = new TextBlob(blob, [.. ink]);
             _blobs[key] = built;
             return built;
@@ -215,6 +237,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double wordSpacing,
         Boolean reverse,
         String? trims,
+        String? autoSpaces,
+        Double autoSpace,
         List<SKRect> ink)
     {
         using var builder = new SKTextBlobBuilder();
@@ -228,6 +252,11 @@ internal sealed class SkiaTextBlobCache : IDisposable
             trims = null;
         }
 
+        if (autoSpaces is not null && (autoSpaces.Length != text.Length || HasBidiControls(text)))
+        {
+            autoSpaces = null;
+        }
+
         // The places the line still owes a share to, paid out in the order the text runs: a stretch
         // takes as many as it holds and the rest go to the stretches after it.
         var owing = justifies;
@@ -236,6 +265,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
             ? Array.Empty<Int32>()
             : TextClusters.WordSeparatorPlaces(text);
         var offset = 0;
+        var spaced = false;
 
         foreach (var run in _measurer.Decompose(text, style))
         {
@@ -250,8 +280,10 @@ internal sealed class SkiaTextBlobCache : IDisposable
             owing -= places;
             var words = Slice(separators, offset, run.Text.Length);
             var runTrims = SliceTrims(trims, offset, run.Text.Length);
+            var runAuto = SliceTrims(autoSpaces, offset, run.Text.Length);
 
-            var clusters = (letterSpacing != 0 || justification != 0 || wordSpacing != 0 || runTrims is not null) &&
+            var clusters = (letterSpacing != 0 || justification != 0 || wordSpacing != 0 ||
+                runTrims is not null || runAuto is not null) &&
                 run.Shaped.Succeeded
                     ? _measurer.Shaper.ShapeClusters(run.Font, run.Text, style.Features)
                     : null;
@@ -266,10 +298,22 @@ internal sealed class SkiaTextBlobCache : IDisposable
             var trimmed = run.Shaped.Succeeded
                 ? AddShaped(
                     placements, run, pen, letterSpacing, justification, places, ends,
-                    wordSpacing, words, clusters, runTrims)
-                : AddMapped(placements, run, pen, letterSpacing, wordSpacing, words, runTrims);
+                    wordSpacing, words, clusters, runTrims, runAuto, autoSpace, spaced)
+                : AddMapped(placements, run, pen, letterSpacing, wordSpacing, words, runTrims, runAuto, autoSpace, spaced);
 
             offset += run.Text.Length;
+
+            // A boundary the stretch before ends with stands between two fonts, where this stretch
+            // begins: the mask is read again from where the next one starts.
+            var at = offset - 1;
+
+            while (at > 0 && Char.IsLowSurrogate(text[at]))
+            {
+                at--;
+            }
+
+            spaced = autoSpaces is not null && at >= 0 && at < autoSpaces.Length &&
+                autoSpaces[at] == AutoSpaceAfter;
 
             pen += (Single)(run.Advance + (letterSpacing * characters) + (justification * places) +
                 (wordSpacing * words.Length) - trimmed);
@@ -324,7 +368,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
         return points.Length < justifies ? [.. points, text.Length - 1] : points;
     }
 
-    /// <summary>Gets whether a trim mask changes any character's room.</summary>
+    /// <summary>Gets whether a mask changes any character's room.</summary>
     private static Boolean HasTrims(String trims)
     {
         foreach (var code in trims)
@@ -438,7 +482,10 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double wordSpacing,
         Int32[] words,
         Int32[]? clusters,
-        String? trims)
+        String? trims,
+        String? autoSpaces,
+        Double autoSpace,
+        Boolean spaced)
     {
         var glyphs = run.Shaped.Glyphs;
         var points = run.Shaped.Points;
@@ -464,6 +511,12 @@ internal sealed class SkiaTextBlobCache : IDisposable
         var clusterDelta = 0.0;
         var clusterShift = 0f;
         var clusterCode = '\0';
+
+        // A spaced boundary adds its room where it stands, and a space a boundary replaces hands its
+        // own advance back and takes that room instead. Both are counted before the cluster they
+        // stand ahead of, so every glyph after them lands where the line put it.
+        var autoBefore = spaced ? autoSpace : 0.0;
+        var previousCharacter = -1;
 
         // The pen walks the text in the order the glyphs are drawn in, which is the order the writing
         // runs: a right-to-left run's characters count backwards from where they stand in the string, so
@@ -511,6 +564,20 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 clusterCode = trims is not null && character >= 0 && character < trims.Length
                     ? trims[character]
                     : '\0';
+
+                if (autoSpaces is not null && previousCharacter is >= 0 && previousCharacter < autoSpaces.Length &&
+                    autoSpaces[previousCharacter] == AutoSpaceAfter)
+                {
+                    autoBefore += autoSpace;
+                }
+
+                if (autoSpaces is not null && character >= 0 && character < autoSpaces.Length &&
+                    autoSpaces[character] == AutoSpaceReplace)
+                {
+                    autoBefore -= ClusterAdvance(points, clusters, run.Shaped.Advance, index, count) - autoSpace;
+                }
+
+                previousCharacter = character;
                 clusterDelta = 0;
                 clusterShift = 0;
 
@@ -527,7 +594,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
             }
 
             var cell = pen + points[index].X +
-                (Single)((letterSpacing * crossed) + (justification * spread) + (wordSpacing * paid)) -
+                (Single)((letterSpacing * crossed) + (justification * spread) + (wordSpacing * paid)) +
+                (Single)autoBefore -
                 (Single)trimBefore;
 
             positions[index] = new SKPoint(cell + clusterShift, points[index].Y);
@@ -539,7 +607,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
         placements.Add(new Placement(run.Font, glyphs, positions, cells));
 
-        return trimBefore + (clusterCode != '\0' ? clusterDelta : 0);
+        return trimBefore - autoBefore + (clusterCode != '\0' ? clusterDelta : 0);
     }
 
     /// <summary>
@@ -553,7 +621,10 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double letterSpacing,
         Double wordSpacing,
         Int32[] words,
-        String? trims)
+        String? trims,
+        String? autoSpaces,
+        Double autoSpace,
+        Boolean spaced)
     {
         if (run.Text.Length == 0)
         {
@@ -565,6 +636,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
         var cells = new Single[positions.Length];
         var crossed = 0;
         var trimBefore = 0.0;
+        var autoBefore = spaced ? autoSpace : 0.0;
 
         for (var index = 0; index < positions.Length; index++)
         {
@@ -585,14 +657,30 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 _ => 0,
             };
 
+            if (autoSpaces is not null && index > 0 && index - 1 < autoSpaces.Length &&
+                autoSpaces[index - 1] == AutoSpaceAfter)
+            {
+                autoBefore += autoSpace;
+            }
+
+            if (autoSpaces is not null && index < autoSpaces.Length && autoSpaces[index] == AutoSpaceReplace)
+            {
+                var advance = index + 1 < positions.Length
+                    ? positions[index + 1].X - positions[index].X
+                    : (Double)run.Font.Size / 2;
+
+                autoBefore -= advance - autoSpace;
+            }
+
             cells[index] = positions[index].X;
-            positions[index].X += (Single)((letterSpacing * index) + (wordSpacing * crossed) - trimBefore + shift);
+            positions[index].X += (Single)((letterSpacing * index) + (wordSpacing * crossed) +
+                autoBefore - trimBefore + shift);
             trimBefore += delta;
         }
 
         placements.Add(new Placement(run.Font, glyphs, positions, cells));
 
-        return trimBefore;
+        return trimBefore - autoBefore;
     }
 
     /// <summary>
@@ -615,6 +703,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
         Double wordSpacing,
         Boolean reverse,
         String? trims,
+        String? autoSpaces,
+        Double autoSpace,
         List<SKRect> ink)
     {
         var metrics = _measurer.GetMetrics(style);
@@ -650,6 +740,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
             }
 
             var code = trims is not null && cell.Index < trims.Length ? trims[cell.Index] : '\0';
+            var autoCode = autoSpaces is not null && cell.Index < autoSpaces.Length ? autoSpaces[cell.Index] : '\0';
             var delta = style.Size / 2;
             var emStep = cell.ExactAdvance ? cell.Advance : Math.Max(cell.Advance, style.Size);
             var step = emStep + letterSpacing;
@@ -664,6 +755,17 @@ internal sealed class SkiaTextBlobCache : IDisposable
                     '\u0003' => -delta / 2,
                     _ => 0,
                 };
+            }
+
+            // The room a boundary adds goes after the cell it follows, and a space the boundary
+            // replaces stands in its own cell for the room instead of for its own advance.
+            if (autoCode == AutoSpaceReplace)
+            {
+                step = autoSpace + letterSpacing;
+            }
+            else if (autoCode == AutoSpaceAfter)
+            {
+                step += autoSpace;
             }
 
             reached = inline + (justification * crossed) + (wordSpacing * paid);
@@ -853,6 +955,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
         private readonly String _text;
         private readonly String? _trims;
 
+        private readonly String? _autoSpaces;
+
         public TextBlobKey(
             BlobKind kind,
             FontStyle style,
@@ -863,12 +967,14 @@ internal sealed class SkiaTextBlobCache : IDisposable
             String expand,
             Double wordSpacing,
             Boolean reversed,
-            String? trims)
+            String? trims,
+            String? autoSpaces)
         {
             Kind = kind;
             Style = style;
             _text = text;
             _trims = trims;
+            _autoSpaces = autoSpaces;
             Spacing = spacing;
             Justification = justification;
             Justifies = justifies;
@@ -907,7 +1013,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
             WordSpacing.Equals(other.WordSpacing) &&
             String.Equals(Expand, other.Expand, StringComparison.OrdinalIgnoreCase) &&
             String.Equals(_text, other._text, StringComparison.Ordinal) &&
-            String.Equals(_trims, other._trims, StringComparison.Ordinal);
+            String.Equals(_trims, other._trims, StringComparison.Ordinal) &&
+            String.Equals(_autoSpaces, other._autoSpaces, StringComparison.Ordinal);
 
         public override Boolean Equals(Object? obj) => obj is TextBlobKey other && Equals(other);
 
@@ -924,7 +1031,8 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 hash = (hash * 397) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(Expand);
                 hash = (hash * 397) ^ WordSpacing.GetHashCode();
                 hash = (hash * 397) ^ StringComparer.Ordinal.GetHashCode(_text);
-                return _trims is null ? hash : (hash * 397) ^ StringComparer.Ordinal.GetHashCode(_trims);
+                hash = _trims is null ? hash : (hash * 397) ^ StringComparer.Ordinal.GetHashCode(_trims);
+                return _autoSpaces is null ? hash : (hash * 397) ^ StringComparer.Ordinal.GetHashCode(_autoSpaces);
             }
         }
     }

@@ -1842,6 +1842,10 @@ internal sealed class InlineLayout
         {
             Text = text,
             Trims = fragment.Trims is { } trims && text.Length <= trims.Length ? trims[..text.Length] : null,
+            AutoSpaces = fragment.AutoSpaces is { } spaces && text.Length <= spaces.Length
+                ? spaces[..text.Length]
+                : null,
+            AutoSpaceRoom = fragment.AutoSpaceRoom,
             Font = fragment.Style.GetFont(),
             Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
             Flow = fragment.Flow,
@@ -2555,6 +2559,7 @@ internal sealed class InlineLayout
                         : piece.Width;
 
                     var runTrim = builder.PreviewTrim(run.Source, run.Start, run.Length, item.Style, itemFlow);
+                    var runAuto = builder.PreviewAutoSpace(run.Source, run.Start, run.Length, item.Style, itemFlow);
 
                     // White space a line begins with is not drawn, but only where the mode collapses it:
                     // `pre`, `pre-wrap` and `break-spaces` keep it, so a line that begins with one
@@ -2603,7 +2608,7 @@ internal sealed class InlineLayout
                         (letters || (emergency && item.Style.WrapsLongWords && width > room.Room));
 
                     var steps = (stepsSpaces || stepsWord) && room.Room > 0 &&
-                        builder.ExtentFor(item.Inline) + width - runTrim.BoundaryDelta - runTrim.RetroDelta > room.Room &&
+                        builder.ExtentFor(item.Inline) + width + runAuto.BoundaryDelta - runAuto.RetroDelta - runTrim.BoundaryDelta - runTrim.RetroDelta > room.Room &&
                         item.Style.WrapsLines;
 
                     var end = run.Start + run.Length;
@@ -2659,6 +2664,7 @@ internal sealed class InlineLayout
                                 : Measure(item.Style, run.Source, at, taken, itemFlow);
 
                         var trim = builder.PreviewTrim(run.Source, at, taken, item.Style, itemFlow);
+                        var auto = builder.PreviewAutoSpace(run.Source, at, taken, item.Style, itemFlow);
 
                         // Where the break may be taken. The mode's own licence stands after a space it keeps,
                         // whichever piece that space was written in; the tailorable ones stand inside a word
@@ -2685,7 +2691,7 @@ internal sealed class InlineLayout
                         var asks = (at == run.Start && !spaces && !letters &&
                             !TextChunker.IsBreakSpace(run.Source[run.Start])
                             ? width + trailed + mark
-                            : advance) - trim.BoundaryDelta;
+                            : advance) - trim.BoundaryDelta + auto.BoundaryDelta - auto.RetroDelta;
 
                         // A closing punctuation that ends the line may give up its trailing half. The
                         // breaker keeps it on the line where that half is what fails to fit; the line
@@ -2748,7 +2754,7 @@ internal sealed class InlineLayout
                         if (breakPoint is { } point && !breaks && builder.HasContent && !inRuby &&
                             advance > 0 && !String.IsNullOrEmpty(item.Text) && item.Style.WrapsLines &&
                             (!spaces || (item.Style.WrapsInsideSpaces && followed)) &&
-                            builder.ExtentFor(item.Inline) + advance - trim.BoundaryDelta - trim.RetroDelta - endGrace > room.Room)
+                            builder.ExtentFor(item.Inline) + advance + auto.BoundaryDelta - auto.RetroDelta - trim.BoundaryDelta - trim.RetroDelta - endGrace > room.Room)
                         {
                             var replay = following ?? new List<TailStep>();
 
@@ -3677,6 +3683,7 @@ internal sealed class InlineLayout
             : measurer.MeasureWidth(source.Substring(start, length), style.GetFont()))
         + (style.LetterSpacing * SpacingUnits(source, start, length, flow))
         + (style.WordSpacing * TextChunker.WordSeparators(source, start, length))
+        + AutoSpaceWithin(measurer, style, source, start, length, flow)
         - TrimWithin(measurer, style, source, start, length, flow);
 
     /// <summary>The codes a trimmed character wears in a fragment's trim mask.</summary>
@@ -3695,7 +3702,8 @@ internal sealed class InlineLayout
         ComputedStyle Style,
         Int32 CodePoint,
         Boolean Trimmed,
-        WritingModeInfo Flow);
+        WritingModeInfo Flow,
+        Int32 Before);
 
     /// <summary>
     /// What one range of text contributes to a line's trims: the mask to draw with, the room the
@@ -3776,6 +3784,300 @@ internal sealed class InlineLayout
         }
 
         return total;
+    }
+
+    /// <summary>The codes an autospaced boundary wears in a fragment's autospace mask.</summary>
+    private const Char AutoSpaceAfter = '\u0001';
+
+    private const Char AutoSpaceReplace = '\u0002';
+
+    /// <summary>What one range of text contributes to a line's autospacing.</summary>
+    private readonly record struct AutoSpaceStep(
+        Double BoundaryDelta,
+        String? Mask,
+        Double Room,
+        Double RetroDelta);
+
+    /// <summary>
+    /// Gets the room the property adds between the characters inside a range. Only characters with
+    /// both neighbors inside the range are counted: the two ends belong to whatever stands beside
+    /// them on the line, which the line builder settles when it knows what that is.
+    /// </summary>
+    private static Double AutoSpaceWithin(
+        ITextMeasurer measurer,
+        ComputedStyle style,
+        String source,
+        Int32 start,
+        Int32 length,
+        WritingModeInfo flow)
+    {
+        var value = style.TextAutospace;
+
+        if (value.Off || length <= 0)
+        {
+            return 0;
+        }
+
+        var space = AutoSpaceWidth(measurer, style, flow);
+
+        if (space <= 0)
+        {
+            return 0;
+        }
+
+        var total = 0.0;
+        var end = start + length;
+
+        for (var index = start; index < end;)
+        {
+            // Stepped by cluster: a base with the marks and selectors that stand on it is one
+            // character, and a boundary falls between characters rather than inside one.
+            var next = index + TextClusters.UnitsAt(source, index, end);
+
+            if (next < end)
+            {
+                total += PairRoom(measurer, style, value, source, index, next, end, flow, space, out _);
+            }
+
+            index = next;
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// Plans the autospacing of one range the line is about to add: the room the boundary with the
+    /// character already standing on the line adds, and the mask the run draws with.
+    /// </summary>
+    /// <remarks>
+    /// A boundary's room is added to the room the range was measured at, and no mask is needed for it:
+    /// the fragments stand side by side on the line, so the room between them is a gap the boxes
+    /// already leave. It is the boundaries inside one run that need the mask, because a run's glyphs
+    /// are set one after another by its own shaping.
+    /// </remarks>
+    private static AutoSpaceStep PlanAutoSpace(
+        ITextMeasurer measurer,
+        String source,
+        Int32 start,
+        Int32 length,
+        ComputedStyle style,
+        WritingModeInfo flow,
+        PreviousText? previous,
+        Boolean wantMask)
+    {
+        var value = style.TextAutospace;
+
+        if (value.Off || length <= 0)
+        {
+            return default;
+        }
+
+        var space = AutoSpaceWidth(measurer, style, flow);
+
+        if (space <= 0)
+        {
+            return default;
+        }
+
+        var boundary = 0.0;
+        var retro = 0.0;
+        Char[]? mask = null;
+
+        // A range that begins with a mark or a selector continues the character before it: there is no
+        // boundary between the two, whatever stands on either side of the pair.
+        if (previous is { } last && !TextClusters.Continues(source, start))
+        {
+            var room = RoomBetween(
+                measurer,
+                style,
+                value,
+                last.CodePoint,
+                last.Flow,
+                TextChunker.CodePointAt(source, start),
+                flow,
+                space);
+
+            if (value.Replace &&
+                last.CodePoint == ' ' &&
+                last.Before != 0 &&
+                RoomBetween(
+                    measurer,
+                    style,
+                    value,
+                    last.Before,
+                    last.Flow,
+                    TextChunker.CodePointAt(source, start),
+                    flow,
+                    space) is var replaced and > 0)
+            {
+                // The space the run before this one ends with is where the boundary stands: it takes
+                // the room the boundary is worth and gives up its own.
+                retro = measurer.MeasureWidth(" ", last.Style.GetFont()) - replaced;
+            }
+            else
+            {
+                boundary = room;
+            }
+        }
+
+        if (wantMask)
+        {
+            var end = start + length;
+
+            // A space that opens the range is a boundary the caller may keep between two runs; a
+            // replace value takes its room, so the space stands in the cell the boundary is worth
+            // rather than its own.
+            var first = TextChunker.UnitsAt(source, start);
+
+            if (value.Replace && start < end && source[start] == ' ' && start + first < end &&
+                previous is { } spaced &&
+                RoomBetween(
+                    measurer,
+                    style,
+                    value,
+                    spaced.CodePoint,
+                    spaced.Flow,
+                    TextChunker.CodePointAt(source, start + first),
+                    flow,
+                    space) is var replaced and > 0)
+            {
+                (mask ??= new Char[length])[0] = AutoSpaceReplace;
+                boundary -= measurer.MeasureWidth(" ", style.GetFont()) - replaced;
+            }
+
+            for (var index = start; index < end;)
+            {
+                var next = index + TextClusters.UnitsAt(source, index, end);
+
+                if (next < end)
+                {
+                    PairRoom(measurer, style, value, source, index, next, end, flow, space, out var code);
+
+                    if (code == AutoSpaceAfter)
+                    {
+                        (mask ??= new Char[length])[index - start] = code;
+                    }
+                    else if (code == AutoSpaceReplace)
+                    {
+                        (mask ??= new Char[length])[next - start] = code;
+                    }
+                }
+
+                index = next;
+            }
+        }
+
+        return new AutoSpaceStep(boundary, MaskOf(mask), space, retro);
+    }
+
+    /// <summary>
+    /// Gets the room one pair of neighboring characters adds, and the mask code that draws it:
+    /// <see cref="AutoSpaceAfter"/> on the left character, or <see cref="AutoSpaceReplace"/> on the
+    /// space a <c>replace</c> value takes the place of.
+    /// </summary>
+    private static Double PairRoom(
+        ITextMeasurer measurer,
+        ComputedStyle style,
+        TextAutospaceValue value,
+        String source,
+        Int32 leftAt,
+        Int32 rightAt,
+        Int32 end,
+        WritingModeInfo flow,
+        Double space,
+        out Char code)
+    {
+        code = '\0';
+
+        var room = RoomBetween(
+            measurer,
+            style,
+            value,
+            TextChunker.CodePointAt(source, leftAt),
+            flow,
+            TextChunker.CodePointAt(source, rightAt),
+            flow,
+            space);
+
+        if (room > 0)
+        {
+            code = AutoSpaceAfter;
+            return room;
+        }
+
+        if (value.Replace && source[rightAt] == ' ' && rightAt + 1 < end)
+        {
+            var replaced = RoomBetween(
+                measurer,
+                style,
+                value,
+                TextChunker.CodePointAt(source, leftAt),
+                flow,
+                TextChunker.CodePointAt(source, rightAt + 1),
+                flow,
+                space);
+
+            if (replaced > 0)
+            {
+                code = AutoSpaceReplace;
+                return replaced - measurer.MeasureWidth(" ", style.GetFont());
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Gets whether the property separates this pair of characters: the classes it names, or the
+    /// no-break space the language's typography puts around a punctuation.
+    /// </summary>
+    /// <summary>
+    /// Gets the room one boundary between two characters adds: the eighth of the CJK advance the
+    /// property names, or the width of the no-break space the language's typography puts beside a
+    /// punctuation.
+    /// </summary>
+    private static Double RoomBetween(
+        ITextMeasurer measurer,
+        ComputedStyle style,
+        TextAutospaceValue value,
+        Int32 left,
+        WritingModeInfo leftFlow,
+        Int32 right,
+        WritingModeInfo rightFlow,
+        Double space)
+    {
+        if (TextAutospace.ShouldSpace(
+            value,
+            TextAutospace.ClassOf(left, IsSetUpright(leftFlow, left)),
+            TextAutospace.ClassOf(right, IsSetUpright(rightFlow, right))))
+        {
+            return space;
+        }
+
+        return TextAutospace.Punctuation(value, style.Language, right) == PunctuationSpace.Before ||
+               TextAutospace.Punctuation(value, style.Language, left) == PunctuationSpace.After
+            ? measurer.MeasureWidth("\u202F", style.GetFont())
+            : 0;
+    }
+
+    /// <summary>
+    /// Gets whether a character is set upright by the column it stands in, by
+    /// <c>text-orientation: upright</c> or by <c>text-combine-upright</c> - neither of which is a
+    /// neighbor the property spaces (CSS Text 4 §8.4).
+    /// </summary>
+    private static Boolean IsSetUpright(WritingModeInfo flow, Int32 codePoint) =>
+        flow.IsVertical && (flow.CombinesUpright || flow.IsUpright(codePoint));
+
+    /// <summary>Gets the room one boundary is widened by: an eighth of the font's CJK advance.</summary>
+    private static Double AutoSpaceWidth(
+        ITextMeasurer measurer, ComputedStyle style, WritingModeInfo flow)
+    {
+        var font = style.GetFont();
+        var ideograph = flow.IsVertical
+            ? measurer.MeasureUprightAdvance(0x6C34, font)
+            : measurer.MeasureWidth("\u6C34", font);
+
+        return ideograph > 0 ? ideograph * TextAutospace.SpaceFraction : 0;
     }
 
     /// <summary>
@@ -4380,7 +4682,8 @@ internal sealed class InlineLayout
             run.Source,
             run.Start,
             run.Length,
-            width - TrimWithin(_measurer, style, run.Source, run.Start, run.Length, flow),
+            width + AutoSpaceWithin(_measurer, style, run.Source, run.Start, run.Length, flow) -
+                TrimWithin(_measurer, style, run.Source, run.Start, run.Length, flow),
             PinOrientation(flow, run),
             TextChunker.IsCollapsible(run.Source, run.Start, run.Length));
     }
@@ -5078,6 +5381,19 @@ internal sealed class InlineLayout
         /// Null when the run has nothing to trim (CSS Text 4 §8.5).
         /// </summary>
         public String? Trims { get; set; }
+
+        /// <summary>
+        /// Gets or sets which boundaries of the fragment the property widened, one code per UTF-16
+        /// unit: <c>'\1'</c> when a space follows the unit, <c>'\2'</c> when the unit is a space the
+        /// boundary takes the place of; null when the fragment spaces nothing (CSS Text 4 §8.4).
+        /// </summary>
+        public String? AutoSpaces { get; set; }
+
+        /// <summary>
+        /// Gets or sets the room one spaced boundary of the fragment adds, which is the eighth of the
+        /// font's ideograph advance the layout measured.
+        /// </summary>
+        public Double AutoSpaceRoom { get; set; }
 
         /// <summary>
         /// Gets the width the fragment was measured at, before any justified room was folded into it, or
@@ -6010,6 +6326,7 @@ internal sealed class InlineLayout
             _fragments.Count > 0 ? _fragments[^1].Length : 0,
             _fragments.Count > 0 ? _fragments[^1].Width : 0,
             _fragments.Count > 0 ? _fragments[^1].Trims : null,
+            _fragments.Count > 0 ? _fragments[^1].AutoSpaces : null,
             Width,
             _open.ToArray());
 
@@ -6031,6 +6348,7 @@ internal sealed class InlineLayout
                 last.Length = at.Length;
                 last.Width = at.RunWidth;
                 last.Trims = at.RunTrims;
+                last.AutoSpaces = at.RunAutoSpaces;
             }
 
             Width = at.Width;
@@ -6044,6 +6362,7 @@ internal sealed class InlineLayout
             Int32 Length,
             Double RunWidth,
             String? RunTrims,
+            String? RunAutoSpaces,
             Double Width,
             OpenInline[] Open);
 
@@ -6178,7 +6497,13 @@ internal sealed class InlineLayout
                         return null;
                     }
 
-                    var codePoint = CodePointBefore(fragment.Source, fragment.Start + fragment.Length);
+                    var codePoint = TextClusters.BaseBefore(
+                        fragment.Source, fragment.Start + fragment.Length);
+                    var stop = fragment.Start + fragment.Length;
+                    var take = stop >= 2 && Char.IsSurrogatePair(fragment.Source, stop - 2) ? 2 : 1;
+                    var before = fragment.Length > take
+                        ? CodePointBefore(fragment.Source, stop - take)
+                        : 0;
                     var last = fragment.Length - 1;
                     var trimmed = fragment.Trims is { } trims &&
                         last < trims.Length &&
@@ -6189,7 +6514,8 @@ internal sealed class InlineLayout
                         fragment.Style,
                         codePoint,
                         trimmed,
-                        fragment.Flow);
+                        fragment.Flow,
+                        before);
                 }
 
                 return null;
@@ -6216,6 +6542,26 @@ internal sealed class InlineLayout
                 Previous,
                 !HasContent,
                 _startsParagraph,
+                wantMask: false);
+
+        /// <summary>
+        /// Gets what adding this range would space, without adding it: the caller asks before it tests
+        /// whether the range fits, and the answer has to be the one the add will take.
+        /// </summary>
+        public AutoSpaceStep PreviewAutoSpace(
+            String source,
+            Int32 start,
+            Int32 length,
+            ComputedStyle style,
+            WritingModeInfo flow) =>
+            PlanAutoSpace(
+                _measurer,
+                source,
+                start,
+                length,
+                style,
+                flow,
+                Previous,
                 wantMask: false);
 
         /// <summary>
@@ -6257,6 +6603,99 @@ internal sealed class InlineLayout
                 Width -= delta;
                 return;
             }
+        }
+
+        /// <summary>
+        /// Widens the last run the line holds by the room a boundary to the run arriving after it
+        /// adds, which is where the gap between the two is drawn from.
+        /// </summary>
+        private void WidenLast(Double delta)
+        {
+            for (var index = _fragments.Count - 1; index >= 0; index--)
+            {
+                var fragment = _fragments[index];
+
+                if (fragment.OutOfFlow || fragment.Length == 0)
+                {
+                    continue;
+                }
+
+                fragment.Width += delta;
+                Width += delta;
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Takes the room a replaced space gives up off the last run the line holds, and marks the
+        /// space, so the drawing gives it the boundary's room instead of its own.
+        /// </summary>
+        private void ReplaceLastSpace(Double delta)
+        {
+            for (var index = _fragments.Count - 1; index >= 0; index--)
+            {
+                var fragment = _fragments[index];
+
+                if (fragment.OutOfFlow)
+                {
+                    continue;
+                }
+
+                if (fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null)
+                {
+                    return;
+                }
+
+                if (fragment.Length == 0)
+                {
+                    continue;
+                }
+
+                var text = fragment.Text;
+                var at = fragment.Length - 1;
+
+                while (at > 0 && Char.IsLowSurrogate(text[at]))
+                {
+                    at--;
+                }
+
+                var chars = (fragment.AutoSpaces ?? new String('\0', fragment.Length)).ToCharArray();
+
+                if (at >= chars.Length || chars[at] != '\0')
+                {
+                    return;
+                }
+
+                chars[at] = AutoSpaceReplace;
+                fragment.AutoSpaces = MaskOf(chars);
+                fragment.Width -= delta;
+                Width -= delta;
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Marks the last character the line holds as one a spaced boundary follows, which is what the
+        /// merged run needs to draw the room the boundary between its pieces added.
+        /// </summary>
+        private static void MarkLastBoundary(TextFragment fragment, Int32 before)
+        {
+            var text = fragment.Text;
+            var at = Math.Max(0, before - 1);
+
+            while (at > 0 && Char.IsLowSurrogate(text[at]))
+            {
+                at--;
+            }
+
+            var chars = (fragment.AutoSpaces ?? new String('\0', text.Length)).ToCharArray();
+
+            if (at < chars.Length)
+            {
+                chars[at] = AutoSpaceAfter;
+            }
+
+            fragment.AutoSpaces = MaskOf(chars);
         }
 
         private static String? Concat(String? left, Int32 leftLength, String? right, Int32 rightLength)
@@ -6328,6 +6767,30 @@ internal sealed class InlineLayout
 
             width -= trim.BoundaryDelta;
 
+            var auto = PlanAutoSpace(
+                _measurer,
+                source,
+                start,
+                length,
+                style,
+                flow,
+                Previous,
+                wantMask: true);
+
+            if (auto.RetroDelta != 0)
+            {
+                ReplaceLastSpace(auto.RetroDelta);
+            }
+
+            // The room of a boundary stands between the run already on the line and the one arriving,
+            // so it widens the run behind it: the cursor that places the new run is the sum of the
+            // rooms before it. A merge into that run is the same edit, and there the mask has to
+            // carry it too, because one run draws both pieces.
+            if (auto.BoundaryDelta != 0)
+            {
+                WidenLast(auto.BoundaryDelta);
+            }
+
             Enter(inline);
 
             // A tab draws nothing: the room it took was the line running on to a stop, not a glyph, so
@@ -6369,6 +6832,16 @@ internal sealed class InlineLayout
                     }
 
                     last.Trims = Concat(last.Trims, before, trim.Mask, length);
+
+                    // The two pieces are drawn as one run, so the room the boundary added is not a gap
+                    // between boxes any more: it rides in the merged run's mask, on the last character
+                    // of the piece the run already held.
+                    if (auto.BoundaryDelta != 0)
+                    {
+                        MarkLastBoundary(last, before);
+                    }
+
+                    last.AutoSpaces = Concat(last.AutoSpaces, before, auto.Mask, length);
                     last.Width += width;
                     last.FromTab = drawn is not null;
                     Width += width;
@@ -6379,6 +6852,8 @@ internal sealed class InlineLayout
             var added = new TextFragment(source, start, length, width, style, box, flow, inline)
             {
                 Trims = trim.Mask,
+                AutoSpaces = auto.Mask,
+                AutoSpaceRoom = auto.Room,
             };
 
             if (drawn is not null)

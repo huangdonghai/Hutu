@@ -221,6 +221,12 @@ internal sealed class FusedParent
     public TextSpacingTrimValue TextSpacingTrim { get; init; } = TextSpacingTrimValue.Initial;
 
     /// <summary>
+    /// Gets how the parent's text is spaced against its ideographs, which the text below it inherits
+    /// unless it writes a value of its own (CSS Text 4 §8.4).
+    /// </summary>
+    public TextAutospaceValue TextAutospace { get; init; } = TextAutospaceValue.Initial;
+
+    /// <summary>
     /// Gets the parent's <c>unicode-bidi</c>. Inherited like the direction it governs, so a page that
     /// asks for plaintext paragraphs once does not have to ask again on every block below it.
     /// </summary>
@@ -457,6 +463,7 @@ internal sealed class FusedParent
         Language = style.Language,
         WritingMode = style.WritingMode,
         TextSpacingTrim = style.TextSpacingTrim,
+        TextAutospace = style.TextAutospace,
         UnicodeBidi = style.UnicodeBidiKeyword,
 
         // The areas, not the values above, are what a child's cached font and text are keyed on: one
@@ -691,6 +698,15 @@ internal static class FusedStyleFactory
             var textSpacingTrim = ComputedStyle.ResolveTextSpacingTrim(
                 find("text-spacing-trim")?.Value, parent.TextSpacingTrim);
 
+            var declaredAutospace = find("text-autospace")?.Value;
+
+            if (declaredAutospace is null && ComputedStyle.KeepsTextAsWritten(element.LocalName))
+            {
+                declaredAutospace = "no-autospace";
+            }
+
+            var textAutospace = ComputedStyle.ResolveTextAutospace(declaredAutospace, parent.TextAutospace);
+
             var built = new TextArea
             {
                 // A text field holds the text it was given: its spaces and its line breaks stand
@@ -712,6 +728,7 @@ internal static class FusedStyleFactory
                 AlignLast = last,
                 TextJustify = ComputedStyle.ResolveTextJustifyFused(find("text-justify"), parent.TextJustify),
                 TextSpacingTrim = textSpacingTrim,
+                TextAutospace = textAutospace,
                 WrapStyle = ComputedStyle.TextWrapStyle(
                     find("text-wrap-style")?.Value,
                     find("text-wrap")?.Value,

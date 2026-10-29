@@ -657,11 +657,15 @@ public sealed class TextCommand : PaintCommand
         DecorationSkip skip = DecorationSkip.Auto,
         IReadOnlyList<Shadow>? shadows = null,
         Boolean? reversed = null,
-        String? trims = null)
+        String? trims = null,
+        String? autoSpaces = null,
+        Double autoSpace = 0)
         : base(bounds)
     {
         Text = text;
         Trims = trims;
+        AutoSpaces = autoSpaces;
+        AutoSpaceRoom = autoSpace;
         Baseline = baseline;
         Font = font;
         Color = color;
@@ -688,6 +692,16 @@ public sealed class TextCommand : PaintCommand
     /// Null when the run has nothing to trim (CSS Text 4 §8.5).
     /// </summary>
     public String? Trims { get; }
+
+    /// <summary>
+    /// Gets which boundaries of <see cref="Text"/> the property widened, one code per UTF-16 unit:
+    /// <c>''</c> when a space follows the unit, <c>''</c> when the unit is a space the boundary
+    /// takes the place of. Null when the run spaces nothing (CSS Text 4 §8.4).
+    /// </summary>
+    public String? AutoSpaces { get; }
+
+    /// <summary>Gets the room one widened boundary adds, in pixels.</summary>
+    public Double AutoSpaceRoom { get; }
 
     /// <summary>
     /// Gets the distance from the block-start edge of <see cref="PaintCommand.Bounds"/> to the

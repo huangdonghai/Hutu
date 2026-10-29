@@ -38,6 +38,33 @@ public static class TextClusters
     }
 
     /// <summary>Gets whether the character at an index is one the character before it is drawn with.</summary>
+    internal static Boolean Continues(String text, Int32 index) => Joins(text, index);
+
+    /// <summary>
+    /// Gets the base character of the cluster that ends at a position, which is the character a
+    /// boundary there stands beside - not the mark that happens to be its last piece.
+    /// </summary>
+    public static Int32 BaseBefore(String text, Int32 stop)
+    {
+        if (stop <= 0 || stop > text.Length)
+        {
+            return 0;
+        }
+
+        var at = stop;
+
+        do
+        {
+            at -= at >= 2 && Char.IsLowSurrogate(text[at - 1]) ? 2 : 1;
+        }
+        while (at > 0 && Joins(text, at));
+
+        return Char.IsHighSurrogate(text[at]) && at + 1 < text.Length
+            ? Char.ConvertToUtf32(text[at], text[at + 1])
+            : text[at];
+    }
+
+    /// <summary>Gets whether the character at an index is one the character before it is drawn with.</summary>
     private static Boolean Joins(String text, Int32 index)
     {
         // A mark - the accent written after the letter it stands on, the vowel sign that joins the
@@ -54,8 +81,11 @@ public static class TextClusters
             : text[index];
 
         // The zero-width joiners make an emoji of several, and a variation selector picks the glyph of
-        // the character before it; neither stands on a line of its own.
-        return codePoint is 0x200C or 0x200D or 0xFE0E or 0xFE0F;
+        // the character before it; neither stands on a line of its own. Every selector of both blocks
+        // does, not only the two that pick between a text and an emoji presentation.
+        return codePoint is 0x200C or 0x200D or
+            >= 0xFE00 and <= 0xFE0F or
+            >= 0xE0100 and <= 0xE01EF;
     }
 
     /// <summary>Gets how many characters the range of the text is made of.</summary>

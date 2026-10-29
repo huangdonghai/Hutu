@@ -109,7 +109,7 @@ public sealed class VerticalLayoutTests
 
         await view.SetHtml(
             "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:200px;height:200px;margin:0;font-size:10px;line-height:1'>" +
-            "<p style='margin:0'>あA</p>" +
+            "<p style='margin:0;text-autospace:no-autospace'>あA</p>" +
             "</div></body></html>");
 
         var cjk = Text(view, "あ");
@@ -534,7 +534,7 @@ public sealed class VerticalLayoutTests
         using var view = CreateView(400);
 
         await view.SetHtml(
-            "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:1;text-orientation:sideways'>あA</p></body></html>");
+            "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:1;text-orientation:sideways;text-autospace:no-autospace'>あA</p></body></html>");
 
         var line = Lines(view).Single();
 

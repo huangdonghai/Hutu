@@ -94,6 +94,9 @@ internal static class CssInitialValues
     /// <summary>The initial <c>text-spacing-trim</c>, which spaces the line's edges and trims adjacent punctuation.</summary>
     internal const String TextSpacingTrim = "normal";
 
+    /// <summary>The initial <c>text-autospace</c>, which widens a boundary between an ideograph and a letter or a digit.</summary>
+    internal const String TextAutospace = "normal";
+
     internal const Double LetterSpacing = 0;
 
     /// <summary>The initial <c>word-spacing</c>, which is <c>normal</c>: no room added between words.</summary>

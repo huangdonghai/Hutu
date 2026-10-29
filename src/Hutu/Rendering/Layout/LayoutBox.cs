@@ -169,6 +169,15 @@ internal sealed class LayoutBox
     /// </summary>
     internal String? Trims { get; set; }
 
+    /// <summary>
+    /// Gets or sets which boundaries of <see cref="Text"/> the property widened, one code per UTF-16
+    /// unit; null when the run spaces nothing (CSS Text 4 §8.4).
+    /// </summary>
+    internal String? AutoSpaces { get; set; }
+
+    /// <summary>Gets or sets the room one spaced boundary of <see cref="Text"/> adds, in pixels.</summary>
+    internal Double AutoSpaceRoom { get; set; }
+
     /// <summary>Gets the resolved font of a text node.</summary>
     public FontStyle Font { get; set; }
 

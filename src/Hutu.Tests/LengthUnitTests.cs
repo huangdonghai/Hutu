@@ -198,6 +198,28 @@ public sealed class LengthUnitTests
             "a plain number is a multiple of the size - read as a length it has no unit to convert");
     }
 
+    [Test]
+    public async Task IcIsTheAdvanceOfAnIdeograph()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<div style='width:100px;height:10px;font-size:20px;padding-left:0.125ic'></div>"));
+
+        // The fake face advances every character by five pixels, so an ic is five and an eighth is
+        // five eighths - not the half em ex and ch are read as.
+        Assert.That(Box(view, "div").Padding.Left, Is.EqualTo(0.625).Within(0.001));
+    }
+
+    [Test]
+    public async Task AnIcFontSizeIsRelativeToTheParentAdvance()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<div style='font-size:2ic'>x</div>"));
+
+        Assert.That(TextFontSize(view, "x"), Is.EqualTo(10).Within(0.01), "two ic of the parent's face");
+    }
+
     private static Double OneLineHeight(HutuViewInternal view) =>
         Walk(view).First(node => node.Kind == LayoutKind.Line).BorderBox.Height;
 

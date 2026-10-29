@@ -124,7 +124,7 @@ public sealed class LetterSpacingTests
         // the two characters they stand for, and not by the three units that spell them out.
         var text = Char.ConvertFromUtf32(0x20000) + "x";
 
-        await view.SetHtml(Document("<p style='letter-spacing:2px'>" + text + "</p>"));
+        await view.SetHtml(Document("<p style='letter-spacing:2px;text-autospace:no-autospace'>" + text + "</p>"));
 
         Assert.That(
             Text(view, text).BorderBox.Width,

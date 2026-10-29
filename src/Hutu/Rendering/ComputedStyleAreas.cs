@@ -378,6 +378,12 @@ internal sealed record TextArea
     internal TextSpacingTrimValue TextSpacingTrim { get; init; } = TextSpacingTrimValue.Initial;
 
     /// <summary>
+    /// Gets which neighbours of an ideograph the line widens before, and whether an existing space
+    /// between them is replaced (CSS Text 4 §8.4).
+    /// </summary>
+    internal TextAutospaceValue TextAutospace { get; init; } = TextAutospaceValue.Initial;
+
+    /// <summary>
     /// Gets the line-breaking style the block's text asks for: <c>auto</c>, <c>balance</c>,
     /// <c>stable</c> or <c>pretty</c> (CSS Text 4 §5). Only <c>balance</c> has an answer here.
     /// </summary>

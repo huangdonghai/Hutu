@@ -353,7 +353,7 @@ internal static class LengthReader
     /// </remarks>
     public static Double ToPixel(CssLengthValue value, RenderMode mode, IRenderDimensions dimensions, FontSource font)
     {
-        if (value.Type is CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch &&
+        if (value.Type is CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch or CssLengthValue.Unit.Ic &&
             FaceMeasure(value.Type, dimensions, font) is { } measure)
         {
             return value.Value * measure;
@@ -363,6 +363,7 @@ internal static class LengthReader
         {
             CssLengthValue.Unit.Em => value.Value * Reference(font, dimensions),
             CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch => value.Value * Reference(font, dimensions) * 0.5,
+            CssLengthValue.Unit.Ic => value.Value * Reference(font, dimensions),
             _ => value.ToPixel(dimensions, mode),
         };
     }
@@ -374,14 +375,19 @@ internal static class LengthReader
     /// </summary>
     internal static Double? FaceMeasure(CssLengthValue.Unit unit, IRenderDimensions dimensions, FontSource font)
     {
-        if (unit is not (CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch) ||
+        if (unit is not (CssLengthValue.Unit.Ex or CssLengthValue.Unit.Ch or CssLengthValue.Unit.Ic) ||
             dimensions is not IFontMetricSource metrics ||
             font.Font is not { } face)
         {
             return null;
         }
 
-        var measure = unit == CssLengthValue.Unit.Ex ? metrics.XHeight(face) : metrics.ZeroAdvance(face);
+        var measure = unit switch
+        {
+            CssLengthValue.Unit.Ex => metrics.XHeight(face),
+            CssLengthValue.Unit.Ch => metrics.ZeroAdvance(face),
+            _ => metrics.IcAdvance(face),
+        };
 
         return measure is > 0 ? measure : null;
     }

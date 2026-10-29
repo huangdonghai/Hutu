@@ -28,6 +28,12 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 internal sealed class TextSelector
 {
+    /// <summary>The code an autospaced boundary wears on the character it follows.</summary>
+    private const Char AutoSpaceAfter = '\u0001';
+
+    /// <summary>The code a space a boundary replaces wears instead of the character before it.</summary>
+    private const Char AutoSpaceReplace = '\u0002';
+
     private readonly ITextMeasurer _measurer;
     private readonly List<LayoutBox> _runs = new();
     private readonly List<LayoutBox?> _lines = new();
@@ -585,15 +591,42 @@ internal sealed class TextSelector
                 ? prefix[index - 1] + ColumnStep(run, text, index) + spacing
                     + (justification * PlacesAt(points, index - 1))
                     + (words * PlacesAt(wordPlaces, index - 1))
+                    + AutoSpaceBefore(run, index)
                 : _measurer.MeasureAdvance(text[..index], run.Font, run.Flow)
                     + (spacing * CharactersThrough(ordinals, index))
                     + (words * PlacesBefore(wordPlaces, index))
                     + (justification * PlacesBefore(points, index))
+                    + AutoSpaceBefore(run, index)
                     - TrimBefore(run, text, index);
         }
 
         _prefixes[run] = prefix;
         return prefix;
+    }
+
+    /// <summary>Gets how much room the autospaced boundaries before a boundary add.</summary>
+    private Double AutoSpaceBefore(LayoutBox run, Int32 index)
+    {
+        if (run.AutoSpaces is not { } codes || run.AutoSpaceRoom <= 0)
+        {
+            return 0;
+        }
+
+        var total = 0.0;
+
+        for (var at = 0; at < index && at < codes.Length; at++)
+        {
+            if (codes[at] == AutoSpaceAfter)
+            {
+                total += run.AutoSpaceRoom;
+            }
+            else if (codes[at] == AutoSpaceReplace)
+            {
+                total += run.AutoSpaceRoom - _measurer.MeasureAdvance(" ", run.Font, run.Flow);
+            }
+        }
+
+        return total;
     }
 
     /// <summary>Gets how many of the justified room's places have been left behind by a boundary.</summary>
@@ -643,6 +676,11 @@ internal sealed class TextSelector
         if (run.Trims is { } trims && index - 1 < trims.Length && trims[index - 1] != '\0')
         {
             step -= run.Font.Size / 2;
+        }
+
+        if (run.AutoSpaces is { } codes && index - 1 < codes.Length && codes[index - 1] == AutoSpaceReplace)
+        {
+            step = run.AutoSpaceRoom;
         }
 
         return step;
