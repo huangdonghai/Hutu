@@ -78,6 +78,12 @@ public sealed class BorderCommand : PaintCommand
     public UInt32 BottomColor { get; }
 
     public UInt32 LeftColor { get; }
+
+    /// <summary>
+    /// Gets the place a fieldset's legend stands in the border, where the border is not painted
+    /// (HTML rendering §15.3.12). Null for every box whose border is whole.
+    /// </summary>
+    public Rect? Notch { get; init; }
 }
 
 /// <summary>

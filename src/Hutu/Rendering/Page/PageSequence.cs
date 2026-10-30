@@ -550,6 +550,22 @@ internal static class PageSequence
             return Math.Min(pushedAt.Y, end);
         }
 
+        // The content reaches the page's own edge: the page is full, and the flow ends where the
+        // content does - a fieldset's bottom border belongs to the page after, since the box is cut
+        // there and its border is drawn at the box's true end (CSS Fragmentation 3 §5.4).
+        foreach (var unit in units)
+        {
+            // Only where the content that reaches the edge is the last of its run: a line with more
+            // lines behind it is one the widows rule may still move back, and a flex gap is ended
+            // by the gap rather than by the page (CSS Break 3 §3.3, §4.4).
+            if (unit.Top < limit - 0.001 && Math.Abs(unit.Bottom - limit) <= 0.5 &&
+                !unit.ResumeSet && (!unit.IsLine || unit.LineIndex == unit.LineTotal - 1))
+            {
+                resume = limit;
+                return Math.Min(limit, end);
+            }
+        }
+
         if (allowed is { } allowedAt)
         {
             // The break the flow allows stands inside a box that no page can hold whole and that this

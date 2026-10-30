@@ -250,6 +250,12 @@ internal sealed class Box
     public Boolean IsAnonymous { get; init; }
 
     /// <summary>
+    /// Gets whether this box is the rendered legend of the fieldset it was hoisted into: it stands in
+    /// the fieldset's block-start border rather than in its content (HTML rendering §15.3.12).
+    /// </summary>
+    public Boolean IsLegend { get; internal set; }
+
+    /// <summary>
     /// Gets whether the element asked for <c>display: contents</c>, which generates no box of its own:
     /// the box here exists only to hold the children the walk found, and paints none of the element's
     /// background, border or margin (CSS Display 3 §2.5).
@@ -384,9 +390,9 @@ internal sealed class Box
     /// the table algorithms arrange them, but if one ever leaks into normal flow - a stray <c>td</c>
     /// inside a <c>div</c>, say - it degrades to an empty block instead of joining a line box.
     /// </summary>
-    public Boolean IsBlockLevel => !IsInlineOuter && Kind is BoxKind.Block or BoxKind.HorizontalRule or BoxKind.Flex or
+    public Boolean IsBlockLevel => IsLegend || (!IsInlineOuter && Kind is BoxKind.Block or BoxKind.HorizontalRule or BoxKind.Flex or
         BoxKind.Grid or BoxKind.Masonry or BoxKind.Table or BoxKind.TableRowGroup or BoxKind.TableRow or BoxKind.TableCell or
-        BoxKind.TableCaption or BoxKind.TableColumn or BoxKind.TableColumnGroup;
+        BoxKind.TableCaption or BoxKind.TableColumn or BoxKind.TableColumnGroup);
 
     public Boolean IsInlineLevel => !IsBlockLevel;
 

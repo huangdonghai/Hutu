@@ -699,6 +699,22 @@ public sealed class SkiaPaintExecutor
     /// </remarks>
     private static void DrawBorder(SKCanvas canvas, BorderCommand command)
     {
+        if (command.Notch is not { } notch)
+        {
+            DrawBorderSides(canvas, command);
+            return;
+        }
+
+        // A fieldset's legend leaves the border unpainted where it stands, so the sides are drawn
+        // with that rectangle cut away (HTML rendering §15.3.12).
+        canvas.Save();
+        canvas.ClipRect(ToRect(notch), SKClipOperation.Difference, antialias: false);
+        DrawBorderSides(canvas, command);
+        canvas.Restore();
+    }
+
+    private static void DrawBorderSides(SKCanvas canvas, BorderCommand command)
+    {
         // The plain case - square corners and strokes that need no pattern - is by far the most common
         // one on a page, and four rectangles are a good deal cheaper than two rounded paths. The sides
         // may differ in width, and any number of them may be left unwritten, so long as the ink they

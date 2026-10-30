@@ -1945,7 +1945,14 @@ internal sealed class Painter
             colors?.Top ?? ToArgb(style.BorderTopColor ?? style.Color),
             colors?.Right ?? ToArgb(style.BorderRightColor ?? style.Color),
             colors?.Bottom ?? ToArgb(style.BorderBottomColor ?? style.Color),
-            colors?.Left ?? ToArgb(style.BorderLeftColor ?? style.Color)));
+            colors?.Left ?? ToArgb(style.BorderLeftColor ?? style.Color))
+        {
+            // The fieldset's legend stands in the block-start border and the border is not painted
+            // behind it (HTML rendering §15.3.12).
+            Notch = box.LegendBox is { } legend
+                ? new Rect(legend.X, box.BorderBox.Y, legend.Width, border.Top)
+                : null,
+        });
     }
 
     /// <summary>The lines a run draws when nothing around it asked for any.</summary>

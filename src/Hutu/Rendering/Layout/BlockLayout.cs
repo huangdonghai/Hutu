@@ -672,6 +672,31 @@ internal sealed class BlockLayout
     /// accounted for in the collapsed top or bottom the box reports up and down the stack, which
     /// <see cref="CollapsedTop"/> and <see cref="CollapsedBottom"/> compute on the same rules.
     /// </remarks>
+    /// <summary>
+    /// Gets the fieldset's rendered legend, the room its block-start border keeps for it, and how far
+    /// the box itself is pushed down: the border gives way to the legend, and half of a legend taller
+    /// than the border stands above it, so the box begins that much lower while its content stays
+    /// where the legend's block size puts it (HTML rendering §15.3.12).
+    /// </summary>
+    private (Double Inset, Double Overhang, Box Legend)? LegendOf(
+        Box box, Double contentWidth, LayoutContext context)
+    {
+        foreach (var child in box.Children)
+        {
+            if (!child.IsLegend)
+            {
+                continue;
+            }
+
+            var size = _engine.Measure(child, MeasureConstraints.FitWidth(contentWidth), context);
+            var overshoot = Math.Max(0, size.Height - BorderOf(box).Top);
+
+            return (overshoot - overshoot / 2, overshoot / 2, child);
+        }
+
+        return null;
+    }
+
     internal Double MeasureBlockChildren(Box box, Double contentWidth, Double contentHeight, LayoutContext context)
     {
         var cursor = 0.0;
@@ -687,6 +712,13 @@ internal sealed class BlockLayout
 
         var topEscapes = throughTop;
 
+        // A fieldset keeps the room its legend takes in its block-start border, and its content begins
+        // below whichever of the two is deeper (HTML rendering §15.3.12).
+        if (LegendOf(box, contentWidth, childContext) is { } placedLegend)
+        {
+            cursor += placedLegend.Inset;
+        }
+
         // How deep the floats this container holds directly reach, margin boxes included. The
         // height counts these and not the ones absorbed from a container below: only a block
         // formatting context root grows for the floats taking part in it (CSS 2.1 §10.6.7), and
@@ -701,8 +733,10 @@ internal sealed class BlockLayout
             }
 
             // An out-of-flow child neither takes space nor lets its margins collapse with the ones
-            // around it, so it is skipped before anything is measured.
-            if (PositionedLayout.IsOutOfFlow(child))
+            // around it, so it is skipped before anything is measured. A fieldset's legend is skipped
+            // for the same reason: it stands in the border, and the room it takes was given to the
+            // cursor above rather than stacked here (HTML rendering §15.3.12).
+            if (PositionedLayout.IsOutOfFlow(child) || child.IsLegend)
             {
                 continue;
             }
@@ -750,6 +784,14 @@ internal sealed class BlockLayout
             {
                 pendingGroup = pendingGroup.With(childTop);
                 pending = pendingGroup.Value;
+            }
+
+            // A fieldset whose legend stands above its border begins that much lower: the room is
+            // the fieldset's own, not a margin of its content, so it is added to the space before the
+            // box rather than to the collapsed margins around it (HTML rendering §15.3.12).
+            if (LegendOf(child, contentWidth, childContext) is { } childLegend)
+            {
+                pending += childLegend.Overhang;
             }
 
             if (childSelfCollapses)
@@ -2604,6 +2646,11 @@ internal sealed class BlockLayout
 
         var topEscapes = throughTop;
 
+        if (LegendOf(box, contentWidth, context) is { } legendRoom)
+        {
+            cursor += legendRoom.Inset;
+        }
+
         foreach (var child in box.Children)
         {
             if (!child.IsBlockLevel)
@@ -2612,6 +2659,27 @@ internal sealed class BlockLayout
             }
 
             var margin = child.Style.Margin.Resolve(contentWidth);
+
+            // The legend stands in the fieldset's block-start border: it is placed against the
+            // border box rather than against the flow, and it takes no room in the stack of
+            // content that follows it - the room it takes was given to the flow above
+            // (HTML rendering §15.3.12).
+            if (child.IsLegend)
+            {
+                var legendSize = _engine.Measure(child, constraints, context);
+                var legendBorder = BorderOf(box);
+                var legendPadding = box.Style.Padding.Resolve(contentWidth);
+                var x = box.Flow.IsRightToLeft
+                    ? parent.BorderBox.Right - legendBorder.Right - legendPadding.Right -
+                      margin.Right - legendSize.Width
+                    : parent.BorderBox.X + legendBorder.Left + legendPadding.Left + margin.Left;
+                var y = parent.BorderBox.Y + (legendBorder.Top - legendSize.Height) / 2;
+                var place = new Rect(x, y, legendSize.Width, legendSize.Height);
+
+                parent.LegendBox = place;
+                parent.Children.Add(_engine.Arrange(child, place, context));
+                continue;
+            }
 
             if (tracks is { } floats && IsFloat(child))
             {
@@ -2656,6 +2724,14 @@ internal sealed class BlockLayout
                 // own to add (ibid. §10.3.7).
                 pendingGroup = pendingGroup.With(childTop);
                 pending = pendingGroup.Value;
+            }
+
+            // A fieldset whose legend stands above its border begins that much lower: the room is
+            // the fieldset's own, not a margin of its content, so it is added to the space before the
+            // box rather than to the collapsed margins around it (HTML rendering §15.3.12).
+            if (LegendOf(child, contentWidth, context) is { } childLegend)
+            {
+                pending += childLegend.Overhang;
             }
 
             if (PositionedLayout.IsOutOfFlow(child))

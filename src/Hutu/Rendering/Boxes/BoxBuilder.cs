@@ -597,6 +597,61 @@ internal static partial class BoxBuilder
     }
 
     /// <summary>
+    /// Gets the fieldset's rendered legend from among its children: the first legend that is in flow
+    /// and was not floated, which is the one the fieldset is labelled by (HTML rendering §15.3.12).
+    /// </summary>
+    private static Boolean Scrolls(String value) =>
+        value.Equals("auto", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("scroll", StringComparison.OrdinalIgnoreCase);
+
+    private static Box? RenderedLegend(Box parent, List<Box> children)
+    {
+        // Only the shapes the placement is written for take the legend out of the flow: a legend that
+        // states its own block size, in a block container that is not a column, does not scroll and does
+        // not contain its size. An auto-sized legend, a column, a scroll container and a size-contained
+        // field keep the legend in the flow as before - each of those interactions needs its own
+        // measurement (HTML rendering §15.3.12).
+        var style = parent.Style;
+
+        if (!String.Equals(parent.Element?.LocalName, "fieldset", StringComparison.OrdinalIgnoreCase) ||
+            parent.Flow.IsVertical ||
+            parent.Kind is not (BoxKind.Block or BoxKind.InlineBlock or BoxKind.TableCell) ||
+            style.Contain.Inline || style.Contain.Block ||
+            Scrolls(style.OverflowX) || Scrolls(style.OverflowY))
+        {
+            return null;
+        }
+
+        for (var index = 0; index < children.Count; index++)
+        {
+            var child = children[index];
+
+            if (String.Equals(child.Element?.LocalName, "legend", StringComparison.OrdinalIgnoreCase) &&
+                !child.Style.Height.IsAuto &&
+                !PositionedLayout.IsOutOfFlow(child) &&
+                child.Style.Float == FloatSide.None)
+            {
+                // A legend is laid as a block box of its own - it honours a stated width and height,
+                // which an inline box would not - so the box the walk made for it is replaced by one
+                // that stands in the border, and the content it held moves with it.
+                var legend = new Box(BoxKind.Block, child.Style)
+                {
+                    Element = child.Element,
+                    Flow = child.Flow,
+                    IsLegend = true,
+                    Quotes = child.Quotes,
+                };
+
+                legend.Children.AddRange(child.Children);
+                children[index] = legend;
+                return legend;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Wraps runs of inline-level boxes in anonymous blocks when the container also has block-level
     /// children, and drops white-space-only text that only separates blocks.
     /// </summary>
@@ -607,6 +662,11 @@ internal static partial class BoxBuilder
     /// </param>
     internal static void GroupChildren(Box parent, List<Box> children, Boolean wrapInline = false)
     {
+        // A fieldset's first in-flow legend is its rendered legend: it stands in the fieldset's
+        // block-start border rather than in its content, so it leaves the run of inline content here
+        // and becomes the fieldset's first child box (HTML rendering §15.3.12).
+        RenderedLegend(parent, children);
+
         // A child that left the flow is not one of them: it is laid out against a containing block of its
         // own and takes no part in the lines or the stack this box forms. Counting it would wrap the
         // inline content beside it in an anonymous block for no reason - and the box would then be placed
