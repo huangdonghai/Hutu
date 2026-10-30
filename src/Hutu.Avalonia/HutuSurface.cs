@@ -37,6 +37,12 @@ internal sealed class HutuSurface : Control
     private readonly SkiaPaintExecutor _executor;
     private readonly Action<LinkTarget>? _follow;
     private Offset _scroll;
+
+    /// <summary>
+    /// Gets the page being shown, counting from zero, or -1 when the whole document is shown as one
+    /// scrolling page.
+    /// </summary>
+    private Int32 _page = -1;
     private Boolean _dragging;
     private LinkTarget? _pressed;
     private Point _pressedAt;
@@ -72,7 +78,17 @@ internal sealed class HutuSurface : Control
     public event Action<Double>? ZoomWheel;
 
     /// <summary>Turns a point in this control's pixels into the document coordinates the core expects.</summary>
-    private Point ToDocument(Point point) => new(point.X / _zoom, point.Y / _zoom);
+    private Point ToDocument(Point point)
+    {
+        if (PagedPage is { } slice)
+        {
+            // A page is drawn moved to its own top edge, so a point on the sheet is that much
+            // further down the document.
+            return new Point(point.X / _zoom + slice.OriginX, point.Y / _zoom + slice.OriginY);
+        }
+
+        return new Point(point.X / _zoom, point.Y / _zoom);
+    }
 
     // One instance rather than one per assignment, so a move over text does not allocate and the
     // cursor a test reads back is the same object every time.
@@ -101,6 +117,11 @@ internal sealed class HutuSurface : Control
 
     protected override Size MeasureOverride(Size availableSize)
     {
+        if (PagedPage is { } slice)
+        {
+            return new Size(slice.Geometry.Width * _zoom, slice.Geometry.Height * _zoom);
+        }
+
         var layout = _view.Layout;
 
         return layout is null
@@ -117,12 +138,45 @@ internal sealed class HutuSurface : Control
             return;
         }
 
+        if (PagedPage is { } slice)
+        {
+            context.Custom(new SkiaPaintDrawOperation(
+                new Rect(0, 0, slice.Geometry.Width * _zoom, slice.Geometry.Height * _zoom),
+                paint,
+                _executor,
+                default,
+                _zoom,
+                slice));
+
+            return;
+        }
+
         context.Custom(new SkiaPaintDrawOperation(
             new Rect(0, 0, paint.Bounds.Width * _zoom, paint.Bounds.Height * _zoom),
             paint,
             _executor,
             _scroll,
             _zoom));
+    }
+
+    /// <summary>
+    /// Gets the page the surface shows, or null when it shows the whole document: the page the reader
+    /// asked for, kept inside the pages the document came to.
+    /// </summary>
+    private PageSlice? PagedPage => _page >= 0 && _view.Pages is { Count: > 0 } pages
+        ? pages.Pages[Math.Min(_page, pages.Count - 1)]
+        : null;
+
+    /// <summary>Gets the page being shown, counting from zero, or -1 for the whole document.</summary>
+    public Int32 PageIndex => _page;
+
+    /// <summary>Shows one page, or -1 for the whole document again.</summary>
+    public void ShowPage(Int32 index)
+    {
+        _page = index;
+
+        InvalidateMeasure();
+        InvalidateVisual();
     }
 
     /// <summary>
@@ -450,6 +504,11 @@ internal sealed class HutuSurface : Control
     /// <summary>Re-measures and repaints; called after a document is loaded or replaced.</summary>
     public void Refresh()
     {
+        if (_page >= 0 && _view.Pages is { Count: > 0 } pages && _page >= pages.Count)
+        {
+            _page = pages.Count - 1;
+        }
+
         InvalidateMeasure();
         InvalidateVisual();
     }

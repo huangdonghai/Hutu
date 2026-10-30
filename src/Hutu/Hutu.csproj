@@ -25,6 +25,9 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Hutu.Tests" />
     <InternalsVisibleTo Include="Hutu.Avalonia.Tests" />
+    <!-- The Avalonia host switches the medium and states the paper a paged document is printed on,
+         which are the two internals a print view needs. -->
+    <InternalsVisibleTo Include="Hutu.Avalonia" />
     <!-- The conformance harness reads the layout tree and the resolved style of each box, which is
          what a browser is being compared against; a host never needs it. -->
     <InternalsVisibleTo Include="Hutu.Conformance.Tests" />

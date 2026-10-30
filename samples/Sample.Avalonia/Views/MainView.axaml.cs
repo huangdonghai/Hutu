@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Rendering;
+using Hutu.Rendering;
 using Hutu.Rendering.Interaction;
 using Sample.Common;
 using System;
@@ -40,6 +41,10 @@ public partial class MainView : ContentPage
         // The zoom indicator tracks the view's zoom level, including the keyboard and wheel shortcuts.
         MyHutuView.ZoomChanged += UpdateZoomLabel;
         UpdateZoomLabel();
+
+        // The page count changes whenever a document is loaded, so the paging controls follow it.
+        MyHutuView.PagesChanged += UpdatePages;
+        UpdatePages();
 
         UpdateNavigation();
 
@@ -125,6 +130,33 @@ public partial class MainView : ContentPage
     private void ZoomOut_Click(object? sender, RoutedEventArgs e) => MyHutuView.ZoomOut();
 
     private void ZoomReset_Click(object? sender, RoutedEventArgs e) => MyHutuView.ZoomReset();
+
+    /// <summary>Shows the document as printed pages, or as one scrolling page again.</summary>
+    private void Paged_Click(object? sender, RoutedEventArgs e)
+    {
+        // A4 at 96 dpi with 15 mm margins, which is what a document without a page box is printed on.
+        MyHutuView.SetPaged(
+            PagedButton.IsChecked == true,
+            new PageSize(793.7, 1122.5),
+            new Hutu.Rendering.Layout.Thickness(56.7, 56.7, 56.7, 56.7));
+
+        UpdatePages();
+    }
+
+    private void PreviousPage_Click(object? sender, RoutedEventArgs e) => MyHutuView.PreviousPage();
+
+    private void NextPage_Click(object? sender, RoutedEventArgs e) => MyHutuView.NextPage();
+
+    /// <summary>Shows which page of how many the reader stands on, and enables the arrows that move.</summary>
+    private void UpdatePages()
+    {
+        var count = MyHutuView.PageCount;
+        var page = MyHutuView.CurrentPage;
+
+        PageLabel.Text = count == 0 ? "—" : $"{page} / {count}";
+        PreviousPageButton.IsEnabled = page > 1;
+        NextPageButton.IsEnabled = count > 0 && page < count;
+    }
 
     /// <summary>
     /// Answers the fourth and fifth mouse buttons, which are the browser's back and forward. The press

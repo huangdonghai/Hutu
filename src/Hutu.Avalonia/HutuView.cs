@@ -1,10 +1,12 @@
-﻿using AngleSharp.Dom;
+﻿using AngleSharp.Css;
+using AngleSharp.Dom;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
+using Hutu.Rendering;
 using Hutu.Rendering.Interaction;
 using Hutu.Skia;
 using System;
@@ -563,6 +565,73 @@ public class HutuView : ScrollViewer
 
     /// <summary>Resets the zoom to 100%, the way Ctrl+0 does.</summary>
     public void ZoomReset() => ChangeZoom(1);
+
+    /// <summary>Gets whether the document is being shown as the pages it prints on.</summary>
+    public Boolean IsPaged { get; private set; }
+
+    /// <summary>Gets how many pages the document comes to, or zero when it is not paged.</summary>
+    public Int32 PageCount => IsPaged ? _internalView.Pages?.Count ?? 0 : 0;
+
+    /// <summary>Gets the page being shown, counting from one, or zero when it is not paged.</summary>
+    public Int32 CurrentPage => IsPaged && _surface.PageIndex >= 0 ? _surface.PageIndex + 1 : 0;
+
+    /// <summary>Raised when the page being shown, or the number of pages, changes.</summary>
+    public event Action? PagesChanged;
+
+    /// <summary>
+    /// Shows the document as the pages it prints on, or as one scrolling page again. The paper is
+    /// what a document that states no page box is printed on; a document that states one keeps it.
+    /// </summary>
+    public void SetPaged(Boolean paged, PageSize? paper = null, Hutu.Rendering.Layout.Thickness margins = default)
+    {
+        if (paged == IsPaged)
+        {
+            return;
+        }
+
+        IsPaged = paged;
+
+        if (paged && paper is { } size)
+        {
+            _internalView.SetDefaultPage(size, margins);
+        }
+
+        _internalView.SetMediaType(paged ? DeviceCategory.Printer : DeviceCategory.Screen);
+        _surface.ShowPage(paged ? 0 : -1);
+        PagesChanged?.Invoke();
+    }
+
+    /// <summary>Shows one page, counting from one, kept inside the pages the document came to.</summary>
+    public void ShowPage(Int32 number)
+    {
+        var count = PageCount;
+
+        if (!IsPaged || count == 0)
+        {
+            return;
+        }
+
+        _surface.ShowPage(Math.Clamp(number - 1, 0, count - 1));
+        PagesChanged?.Invoke();
+    }
+
+    /// <summary>Shows the page after this one, where there is one.</summary>
+    public void NextPage()
+    {
+        if (IsPaged && CurrentPage < PageCount)
+        {
+            ShowPage(CurrentPage + 1);
+        }
+    }
+
+    /// <summary>Shows the page before this one, where there is one.</summary>
+    public void PreviousPage()
+    {
+        if (IsPaged && CurrentPage > 1)
+        {
+            ShowPage(CurrentPage - 1);
+        }
+    }
 
     /// <summary>
     /// Gets how far through the document the viewport has moved, from 0 at the beginning to 1 at the

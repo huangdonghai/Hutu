@@ -14,7 +14,7 @@
     </Design.DataContext>
 
     <Grid RowDefinitions="Auto,*" RowSpacing="8">
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto" ColumnSpacing="6">
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto" ColumnSpacing="6">
             <Button Grid.Column="0" x:Name="BackButton" Content="←" ToolTip.Tip="Backward" Click="Back_Click" IsEnabled="False" />
             <Button Grid.Column="1" x:Name="ForwardButton" Content="→" ToolTip.Tip="Forward" Click="Forward_Click" IsEnabled="False" />
             <Button Grid.Column="2" x:Name="RefreshButton" Content="⟳" ToolTip.Tip="Refresh" Click="Refresh_Click" IsEnabled="False" />
@@ -26,6 +26,17 @@
                 <TextBlock x:Name="ZoomLabel" Text="100%" VerticalAlignment="Center" Margin="4,0" MinWidth="44" TextAlignment="Center" />
                 <Button Content="+" Width="28" Click="ZoomIn_Click" />
                 <Button Content="⤢" Width="28" Margin="4,0,0,0" Click="ZoomReset_Click" ToolTip.Tip="Reset zoom (Ctrl + 0)" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="6" Orientation="Horizontal" VerticalAlignment="Center" Spacing="4">
+                <ToggleButton x:Name="PagedButton" Content="Pages"
+                              ToolTip.Tip="Show the document as the pages it prints on" Click="Paged_Click" />
+                <Button x:Name="PreviousPageButton" Content="&#x2039;" ToolTip.Tip="Previous page"
+                        Click="PreviousPage_Click" IsEnabled="False" />
+                <TextBlock x:Name="PageLabel" Text="&#x2014;" VerticalAlignment="Center"
+                           MinWidth="48" TextAlignment="Center" />
+                <Button x:Name="NextPageButton" Content="&#x203A;" ToolTip.Tip="Next page"
+                        Click="NextPage_Click" IsEnabled="False" />
             </StackPanel>
         </Grid>
 

@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Media;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
+using Hutu.Rendering;
 using Hutu.Rendering.Paint;
 using Hutu.Skia;
 using Offset = Hutu.Rendering.Layout.Offset;
@@ -19,14 +20,22 @@ internal sealed class SkiaPaintDrawOperation : ICustomDrawOperation
     private readonly SkiaPaintExecutor _executor;
     private readonly Offset _scroll;
     private readonly Double _zoom;
+    private readonly PageSlice? _page;
 
-    public SkiaPaintDrawOperation(Rect bounds, PaintList paint, SkiaPaintExecutor executor, Offset scroll, Double zoom)
+    public SkiaPaintDrawOperation(
+        Rect bounds,
+        PaintList paint,
+        SkiaPaintExecutor executor,
+        Offset scroll,
+        Double zoom,
+        PageSlice? page = null)
     {
         Bounds = bounds;
         _paint = paint;
         _executor = executor;
         _scroll = scroll;
         _zoom = zoom;
+        _page = page;
     }
 
     public Rect Bounds { get; }
@@ -56,7 +65,18 @@ internal sealed class SkiaPaintDrawOperation : ICustomDrawOperation
         // the executor's own counter-translation keeps it pinned exactly as it does at zoom 1.
         canvas.Save();
         canvas.Scale((Single)_zoom);
-        _executor.Execute(_paint, canvas, _scroll);
+
+        // A paged view draws one sheet: the page box is the canvas, and the slice is clipped to the
+        // page area and moved to its top edge by the executor itself.
+        if (_page is { } page)
+        {
+            _executor.ExecutePage(_paint, canvas, page);
+        }
+        else
+        {
+            _executor.Execute(_paint, canvas, _scroll);
+        }
+
         canvas.Restore();
     }
 }
