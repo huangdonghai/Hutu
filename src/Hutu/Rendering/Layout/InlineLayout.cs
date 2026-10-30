@@ -1298,7 +1298,10 @@ internal sealed class InlineLayout
 
                 foreach (var entered in step.Opened)
                 {
-                    box += entered.Ancestor.InlineStartMargin;
+                    // The edge the element begins at is the one Advance worked out: a box the line
+                    // resumes inside was cut at its start edge before the break, and pays nothing for
+                    // that edge - or for the margin that stands outside it - again here.
+                    box = entered.Start;
                     OpenBox(entered, open, lineBox, flow, line);
                     box += entered.Inset;
                 }
@@ -2373,21 +2376,45 @@ internal sealed class InlineLayout
                     break;
 
                 // A ruby pairs its base text with the annotation that goes over it, so the two are
-                // gathered into one item instead of being run together as ordinary text.
+                // gathered into one item instead of being run together as ordinary text. One that
+                // holds nothing still stands on the line for the edges its box carries along it.
                 case BoxKind.Ruby:
+                {
+                    var before = items.Count;
                     AddRuby(child, items, chain);
+
+                    if (items.Count == before)
+                    {
+                        var ancestor = new InlineAncestor(child, chain, basis, flow, _measurer);
+
+                        if (CarriesAnInlineEdge(ancestor))
+                        {
+                            items.Add(InlineItem.CreateEmpty(child, ancestor));
+                        }
+                    }
+
                     break;
+                }
 
                 // An ordinary inline element keeps its own box. It is not flattened away: the runs inside
                 // it go on carrying it, so the line can give it back the box that draws it.
                 case BoxKind.Inline:
-                    Collect(
-                        child,
-                        items,
-                        flow,
-                        new InlineAncestor(child, chain, basis, flow, _measurer),
-                        basis);
+                {
+                    var ancestor = new InlineAncestor(child, chain, basis, flow, _measurer);
+                    var before = items.Count;
+
+                    Collect(child, items, flow, ancestor, basis);
+
+                    // A box with nothing inside it still stands on the line for the margins, borders
+                    // and padding it carries along that axis, and draws its box there. One that
+                    // carries none of them draws nothing at all, and would be a line of its own.
+                    if (items.Count == before && CarriesAnInlineEdge(ancestor))
+                    {
+                        items.Add(InlineItem.CreateEmpty(child, ancestor));
+                    }
+
                     break;
+                }
 
                 // A base or a reading is a run like any other; only the pair around them is set apart.
                 case BoxKind.RubyBase:
@@ -2396,6 +2423,48 @@ internal sealed class InlineLayout
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Gets whether an inline element carries a margin, border or padding along the axis a line runs,
+    /// which is what the line keeps room for even when the element holds nothing.
+    /// </summary>
+    private static Boolean CarriesAnInlineEdge(InlineAncestor? ancestor) =>
+        ancestor is not null &&
+        (ancestor.InlineStartInset > 0 ||
+            ancestor.InlineEndInset > 0 ||
+            ancestor.InlineStartMargin != 0 ||
+            ancestor.InlineEndMargin != 0);
+
+    /// <summary>
+    /// Gets whether the element a run is written in begins at that run: the line has not opened it
+    /// yet. An element that does not wrap its text is one unit the line moves whole, so a run that
+    /// opens one may be handed back to the opportunity before it even though nothing inside it may
+    /// be broken (CSS Text 3 §5.1, §5.2).
+    /// </summary>
+    private static Boolean BeginsHere(LineBuilder builder, InlineAncestor? inline) =>
+        inline is not null && !builder.IsOpen(inline);
+
+    /// <summary>
+    /// Gets whether an item sits inside an element, at any depth - the test that says the steps
+    /// taken since a break opportunity belong to the box that now fails to fit.
+    /// </summary>
+    private static Boolean SitsWithin(InlineAncestor? chain, InlineAncestor? unit)
+    {
+        if (unit is null)
+        {
+            return false;
+        }
+
+        for (var at = chain; at is not null; at = at.Parent)
+        {
+            if (ReferenceEquals(at, unit))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -2603,6 +2672,20 @@ internal sealed class InlineLayout
         LineBuilder.Checkpoint? breakPoint = null;
         List<TailStep>? following = null;
 
+        // The room a stop or comma at the end of the line was left off for, which it only keeps while
+        // it is the last thing on the line: the next thing put there takes that room back, and the
+        // fit it is asked about is made against the line as it really is (CSS Text 3 §8.2.1).
+        var pendingGrace = 0.0;
+
+        void Charge()
+        {
+            if (pendingGrace > 0)
+            {
+                builder.Widen(pendingGrace);
+                pendingGrace = 0;
+            }
+        }
+
         void Close(LineBuilder filled, Boolean forced = false, Boolean hyphen = false)
         {
             var line = filled.Build(_measurer, room.Room, carried, forced, hyphen);
@@ -2623,6 +2706,52 @@ internal sealed class InlineLayout
             builder = new LineBuilder(strut, carried, flow.IsVertical, _measurer, startsParagraph: forced);
             breakPoint = null;
             following = null;
+            pendingGrace = 0;
+        }
+
+        void Replay(List<TailStep> steps)
+        {
+            foreach (var step in steps)
+            {
+                if (step.OutOfFlow)
+                {
+                    builder.AddOutOfFlow(step.Box, step.Style, step.Inline);
+                }
+                else if (step.Empty)
+                {
+                    builder.AddEmpty(step.Box, step.Style, step.Flow, step.Inline!);
+                }
+                else
+                {
+                    builder.Add(
+                        step.Source, step.Start, step.Length, step.Advance,
+                        step.Style, step.Box, step.Flow, step.Inline);
+                }
+            }
+        }
+
+        // A box that does not fit ends the line at the last opportunity before the element it belongs
+        // to, when the steps taken since that opportunity are the element's own: an element that does
+        // not wrap its content is one unit the line moves whole, and the box is part of it.
+        Boolean HandsBack(InlineAncestor? unit) =>
+            breakPoint is not null && following is { } taken &&
+            taken.Exists(step => SitsWithin(step.Inline, unit));
+
+        Boolean HandBack(InlineAncestor? unit)
+        {
+            if (breakPoint is not { } point || following is not { } steps ||
+                !steps.Exists(step => SitsWithin(step.Inline, unit)))
+            {
+                return false;
+            }
+
+            builder.Restore(point);
+            NextLine();
+            breakPoint = null;
+            following = null;
+            Replay(steps);
+
+            return true;
         }
 
         for (var index = 0; index < items.Count; index++)
@@ -2635,17 +2764,13 @@ internal sealed class InlineLayout
                 continue;
             }
 
-            // Only runs of text are kept for the line after a soft hyphen: a box the page puts there
-            // is placed where it stands and cannot be handed back, so the hyphen offers no cutting
-            // place past it. A box that left the flow is placed where it stands and keeps its place
-            // when the line is cut back - it is not on the line, so the word runs on across it.
-            if (!item.IsOutOfFlow &&
-                (String.IsNullOrEmpty(item.Text) || item.IsRuby || item.IsReplaced || item.IsAtomic))
-            {
-                breakPoint = null;
-                following = null;
-            }
+            // Whatever comes beside the glyph the line was left short for takes that room back: the
+            // glyph hangs only while it ends the line, and from here it does not.
+            Charge();
 
+            // Only runs of text are kept for the line after the box the loop is about to place: a box
+            // is placed where it stands and hands the line back only to the opportunity before the
+            // element it belongs to, so the cut a later run looks for never stands past it.
             if (item.IsOutOfFlow)
             {
                 // No room is taken and the cursor does not move, so where the cursor stands when the box
@@ -2656,6 +2781,48 @@ internal sealed class InlineLayout
                 {
                     following.Add(new TailStep(
                         String.Empty, 0, 0, 0, item.Style, item.Box, flow, item.Inline, OutOfFlow: true));
+                }
+
+                continue;
+            }
+
+            // An inline element that holds nothing still stands on the line for the margins, borders
+            // and padding it carries along that axis. It takes that room where the line has come to,
+            // and a line with no room left for it ends at the last opportunity before it - the box
+            // stands on the line after this one, not across its own edge (CSS 2.1 §8.1, §9.4.2).
+            if (item.IsEmpty)
+            {
+                var ancestor = item.Inline!;
+                var after = builder.ExtentFor(ancestor) + ancestor.InlineEndInset + ancestor.InlineEndMargin;
+
+                if (room.Room > 0 && after > room.Room)
+                {
+                    if (breakPoint is { } point && builder.HasContent)
+                    {
+                        var replay = following ?? new List<TailStep>();
+
+                        builder.Restore(point);
+                        NextLine();
+                        breakPoint = null;
+                        following = null;
+                        Replay(replay);
+                    }
+                    else if (builder.HasContent)
+                    {
+                        NextLine();
+                    }
+                    else if (room.Shortened)
+                    {
+                        room.Drop(after);
+                    }
+                }
+
+                builder.AddEmpty(item.Box, item.Style, item.Box.Flow, ancestor);
+
+                if (breakPoint is not null && following is not null)
+                {
+                    following.Add(new TailStep(
+                        String.Empty, 0, 0, 0, item.Style, item.Box, flow, ancestor, Empty: true));
                 }
 
                 continue;
@@ -2678,7 +2845,12 @@ internal sealed class InlineLayout
                     if (builder.HasContent)
                     {
                         room.Restore(band);
-                        NextLine();
+
+                        if (!HandBack(item.Inline))
+                        {
+                            NextLine();
+                        }
+
                         room.Grow(blockSize);
                     }
                     else if (room.Shortened)
@@ -2692,6 +2864,8 @@ internal sealed class InlineLayout
                 }
 
                 builder.AddReplaced(item.Box, inlineSize, blockSize, item.Inline);
+                breakPoint = null;
+                following = null;
                 continue;
             }
 
@@ -2714,13 +2888,25 @@ internal sealed class InlineLayout
                 var band = room.Height;
                 room.Grow(atomic.BlockSize + atomic.BlockStartMargin + atomic.BlockEndMargin);
 
-                if (room.Room > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > room.Room &&
-                    item.Style.WrapsLines)
+                // An inline-block that does not fit ends the line before it where the line may end:
+                // where the value its own text is written with lets the line break, or where the box
+                // is part of a unit that began after that opportunity and can be handed back whole.
+                // A box the line may not break beside - one written under `white-space: nowrap` and
+                // belonging to no unit that can move - overflows instead (CSS Text 3 §5.1, §5.2).
+                if (room.Room > 0 && builder.ExtentFor(item.Inline) + atomic.InlineSize > room.Room)
                 {
-                    if (builder.HasContent)
+                    var mayBreak = item.Style.WrapsLines || BeginsHere(builder, item.Inline);
+                    var handsBack = !mayBreak && builder.HasContent && HandsBack(item.Inline);
+
+                    if (builder.HasContent && (mayBreak || handsBack))
                     {
                         room.Restore(band);
-                        NextLine();
+
+                        if (!HandBack(item.Inline))
+                        {
+                            NextLine();
+                        }
+
                         room.Grow(atomic.BlockSize + atomic.BlockStartMargin + atomic.BlockEndMargin);
                     }
                     else if (room.Shortened)
@@ -2737,6 +2923,8 @@ internal sealed class InlineLayout
                 }
 
                 builder.AddAtomic(item.Box, atomic, item.Inline);
+                breakPoint = null;
+                following = null;
                 continue;
             }
 
@@ -2764,7 +2952,12 @@ internal sealed class InlineLayout
                     if (builder.HasContent)
                     {
                         room.Restore(band);
-                        NextLine();
+
+                        if (!HandBack(item.Inline))
+                        {
+                            NextLine();
+                        }
+
                         room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()));
                     }
                     else if (room.Shortened)
@@ -2777,6 +2970,8 @@ internal sealed class InlineLayout
                 }
 
                 builder.AddRuby(item.Text!, extent, item.Style, item.Box, baseFlow, annotation, baseWidth, item.Inline);
+                breakPoint = null;
+                following = null;
                 continue;
             }
 
@@ -2906,6 +3101,9 @@ internal sealed class InlineLayout
 
                     while (at < end)
                     {
+                        // A glyph the line was left short for is only short while it ends the line.
+                        Charge();
+
                         var taken = steps ? TextClusters.UnitsAt(run.Source, at, end) : run.Length;
 
                         // The room a character of the run asks for is asked of the line it stands on: a tab
@@ -2971,6 +3169,17 @@ internal sealed class InlineLayout
                             : HangGrace(
                                 _measurer, item.Style, run.Source, at, taken, end, lastOfContent, itemFlow);
 
+                        // The margin the element the run sits in takes after its last words stands at
+                        // the end of the line the run ends: the line asks for it as it asks for the
+                        // words, and a negative one leaves the line that much shorter (CSS 2.1 §9.4.2).
+                        var closing = 0.0;
+
+                        if (at + taken == end && end == item.Text!.Length && item.Inline is { } owner &&
+                            (index + 1 >= items.Count || !SitsWithin(items[index + 1].Inline, owner)))
+                        {
+                            closing = owner.InlineEndMargin;
+                        }
+
                         // A soft hyphen is the one opportunity a line takes even when it has no room at
                         // all: the word has nowhere else to go, and the mark is drawn where the page put
                         // the hyphen (CSS Text 3 §6.1). Chrome measured on a zero-width box does the same.
@@ -3024,9 +3233,10 @@ internal sealed class InlineLayout
                             !TextChunker.IsCollapsible(run.Source, at + taken, 1);
 
                         if (breakPoint is { } point && !breaks && builder.HasContent && !inRuby &&
-                            advance > 0 && !String.IsNullOrEmpty(item.Text) && item.Style.WrapsLines &&
+                            advance > 0 && !String.IsNullOrEmpty(item.Text) &&
+                            (item.Style.WrapsLines || BeginsHere(builder, item.Inline)) &&
                             (!spaces || (item.Style.WrapsInsideSpaces && followed)) &&
-                            builder.ExtentFor(item.Inline) + advance + auto.BoundaryDelta - auto.RetroDelta - trim.BoundaryDelta - trim.RetroDelta - Math.Max(endGrace, hangGrace) > room.Room)
+                            builder.ExtentFor(item.Inline) + advance + closing + auto.BoundaryDelta - auto.RetroDelta - trim.BoundaryDelta - trim.RetroDelta - Math.Max(endGrace, hangGrace) > room.Room)
                         {
                             var replay = following ?? new List<TailStep>();
 
@@ -3034,23 +3244,11 @@ internal sealed class InlineLayout
                             NextLine(hyphenate: builder.EndsInSoftHyphen);
                             breakPoint = null;
                             following = null;
-
-                            foreach (var step in replay)
-                            {
-                                if (step.OutOfFlow)
-                                {
-                                    builder.AddOutOfFlow(step.Box, step.Style, step.Inline);
-                                    continue;
-                                }
-
-                                builder.Add(
-                                    step.Source, step.Start, step.Length, step.Advance,
-                                    step.Style, step.Box, step.Flow, step.Inline);
-                            }
+                            Replay(replay);
                         }
 
                         if (breaks && (room.Room > 0 || hyphen) &&
-                            builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - Math.Max(endGrace, hangGrace) > room.Room &&
+                            builder.ExtentFor(item.Inline) + asks + closing - trim.RetroDelta - Math.Max(endGrace, hangGrace) > room.Room &&
                             item.Style.WrapsLines)
                         {
                             // The mark a break draws is part of the line it ends: a shortened line that
@@ -3068,7 +3266,7 @@ internal sealed class InlineLayout
                                 }
                             }
 
-                            if (builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - Math.Max(endGrace, hangGrace) > room.Room)
+                            if (builder.ExtentFor(item.Inline) + asks + closing - trim.RetroDelta - Math.Max(endGrace, hangGrace) > room.Room)
                             {
                                 if (builder.HasContent)
                                 {
@@ -3088,6 +3286,14 @@ internal sealed class InlineLayout
                         }
 
                         builder.Add(run.Source, at, taken, advance, item.Style, item.Box, piece.Flow, item.Inline);
+
+                        // The stop or comma the line was measured without is only without it while it
+                        // ends the line; the next thing put there is asked for its room (CSS Text 3
+                        // §8.2.1).
+                        if (hangGrace > 0)
+                        {
+                            pendingGrace = hangGrace;
+                        }
 
                         // The steps taken after the last opportunity are kept beside it, so the line
                         // after the break can begin with them.
@@ -3195,6 +3401,13 @@ internal sealed class InlineLayout
 
             if (visible <= 0)
             {
+                // An empty box the line ends at stands in the way of the trim as it does of the
+                // hang: its border is the edge the punctuation would have to cross.
+                if (CarriesAnInlineEdge(fragment.Inline))
+                {
+                    return 0;
+                }
+
                 continue;
             }
 
@@ -3248,7 +3461,7 @@ internal sealed class InlineLayout
         fragment.Atomic is not null ||
         fragment.Ruby is not null ||
         fragment.Length > fragment.Hanging ||
-        (fragment.Length == 0 && fragment.Width > 0);
+        (fragment.Length == 0 && (fragment.Width > 0 || CarriesAnInlineEdge(fragment.Inline)));
 
     /// <summary>Hangs the line's opening glyph where the property reaches it, and answers with its advance.</summary>
     private Double HangAtStart(Line line, Boolean firstLine)
@@ -3403,7 +3616,8 @@ internal sealed class InlineLayout
             if (item.IsBreak ||
                 item.IsReplaced ||
                 item.IsAtomic ||
-                item.IsRuby)
+                item.IsRuby ||
+                item.IsEmpty)
             {
                 return (-1, -1);
             }
@@ -6009,7 +6223,8 @@ internal sealed class InlineLayout
             ComputedStyle annotationStyle = default,
             Box? annotationBox = null,
             Boolean atomic = false,
-            Boolean outOfFlow = false)
+            Boolean outOfFlow = false,
+            Boolean empty = false)
         {
             Text = text;
             Style = style;
@@ -6022,6 +6237,7 @@ internal sealed class InlineLayout
             AnnotationBox = annotationBox;
             IsAtomic = atomic;
             IsOutOfFlow = outOfFlow;
+            IsEmpty = empty;
         }
 
         public String? Text { get; }
@@ -6053,6 +6269,13 @@ internal sealed class InlineLayout
         /// </summary>
         public Boolean IsOutOfFlow { get; }
 
+        /// <summary>
+        /// Gets whether the item is an inline element with nothing inside it that takes room: the box
+        /// stands on the line for the margins, borders and padding it carries along it, and draws no
+        /// text (CSS 2.1 §9.4.2, §8.1).
+        /// </summary>
+        public Boolean IsEmpty { get; }
+
         /// <summary>Gets the annotation of a ruby item, or null when the item carries none.</summary>
         public String? AnnotationText { get; }
 
@@ -6079,6 +6302,9 @@ internal sealed class InlineLayout
 
         public static InlineItem CreateOutOfFlow(Box box, InlineAncestor? inline) =>
             new(null, box.Style, box, inline, false, false, outOfFlow: true);
+
+        public static InlineItem CreateEmpty(Box box, InlineAncestor inline) =>
+            new(String.Empty, box.Style, box, inline, false, false, empty: true);
 
         public static InlineItem CreateRuby(
             String text,
@@ -7070,7 +7296,8 @@ internal sealed class InlineLayout
         Box Box,
         WritingModeInfo Flow,
         InlineAncestor? Inline,
-        Boolean OutOfFlow = false);
+        Boolean OutOfFlow = false,
+        Boolean Empty = false);
 
     private sealed class LineBuilder
     {
@@ -7132,6 +7359,19 @@ internal sealed class InlineLayout
         /// <see cref="Build"/> works the extent it hands back out afresh instead of reusing this.
         /// </summary>
         public Double Width { get; private set; }
+
+        /// <summary>
+        /// Charges room the line had left off for a glyph that turned out to stand inside it: a stop
+        /// or comma keeps its advance only while it ends the line.
+        /// </summary>
+        public void Widen(Double room) => Width += room;
+
+        /// <summary>
+        /// Gets whether the line already holds the element, which is what says a run is not the first
+        /// one written in it: an element the line has not opened yet begins where the run stands.
+        /// </summary>
+        public Boolean IsOpen(InlineAncestor inline) =>
+            _open.Exists(entry => ReferenceEquals(entry.Ancestor, inline));
 
         /// <summary>
         /// Gets whether the line carries anything drawn on it. A box that left the flow is not: it stands
@@ -7304,6 +7544,17 @@ internal sealed class InlineLayout
         /// </summary>
         public Double ExtentFor(InlineAncestor? inline) =>
             Width + Advance(_open, inline, _carried, origin: 0, apply: false, step: null);
+
+        /// <summary>
+        /// Adds an inline element that holds nothing: the line keeps the margins, borders and padding
+        /// the box carries along it, and the box is drawn where they put it (CSS 2.1 §8.1).
+        /// </summary>
+        public void AddEmpty(Box box, ComputedStyle style, WritingModeInfo flow, InlineAncestor inline)
+        {
+            Enter(inline);
+
+            _fragments.Add(new TextFragment(String.Empty, 0, 0, 0, style, box, flow, inline));
+        }
 
         /// <summary>Adds an atomic replaced box, which occupies its own used size on the line.</summary>
         public void AddReplaced(Box box, Double width, Double height, InlineAncestor? inline)
@@ -7935,6 +8186,20 @@ internal sealed class InlineLayout
 
                 inFlow = true;
 
+                // An inline element that holds nothing gives the line no height of its own: the line
+                // still exists - the room the box takes along it is what keeps the margins around the
+                // block from folding through it - and is zero-height otherwise (CSS 2.1 §9.4.2, §10.8).
+                if (fragment.Length == 0 &&
+                    !fragment.IsReplaced &&
+                    fragment.Atomic is null &&
+                    fragment.Ruby is null &&
+                    CarriesAnInlineEdge(fragment.Inline))
+                {
+                    above[position] = 0;
+                    below[position] = 0;
+                    continue;
+                }
+
                 // A replaced inline rests its bottom margin edge on the baseline, so it contributes
                 // its whole height as ascent and nothing as descent.
                 if (fragment.IsReplaced)
@@ -8037,10 +8302,16 @@ internal sealed class InlineLayout
             // A column's width comes from the runs set down it, each standing the block's font and
             // line height as it inherits them; the strut is asked only where a break left a line with
             // no run to speak for it, which no run on that line can make wider or narrower.
-            var textual = _vertical
+            // A line holding nothing but the anchors of empty inline elements exists for the room they
+            // take along it and for nothing else: it takes no height from the strut (CSS 2.1 §9.4.2).
+            var anchorsOnly = HasContent && !_fragments.Exists(fragment =>
+                !fragment.OutOfFlow &&
+                (fragment.Length > 0 || fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null));
+
+            var textual = !anchorsOnly && (_vertical
                 ? _fragments.Count == 0
                 : _fragments.TrueForAll(fragment =>
-                    !fragment.IsReplaced && fragment.Atomic is null && fragment.Ruby is null);
+                    !fragment.IsReplaced && fragment.Atomic is null && fragment.Ruby is null));
 
             var strut = textual && _fallback is { } fallback && (HasContent || forced)
                 ? Stretched(measurer, fallback)

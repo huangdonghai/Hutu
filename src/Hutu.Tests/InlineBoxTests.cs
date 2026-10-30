@@ -719,6 +719,89 @@ public sealed class InlineBoxTests
             "the bdi's text starts at its box's left edge, where a left-to-right line begins");
     }
 
+    [Test]
+    public async Task AnEmptyElementStandsOnTheLineForTheEdgesItCarries()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("ab<span style='border-left:5px solid black'></span>cd"));
+
+        // The element holds nothing and still takes the border it carries along the line, which the
+        // run after it starts past (CSS 2.1 §8.1).
+        Assert.Multiple(() =>
+        {
+            Assert.That(Inline(view, "span").BorderBox.Width, Is.EqualTo(5), "the box is its edge and nothing else");
+            Assert.That(Text(view, "cd").BorderBox.X, Is.EqualTo(15), "and the run after it stands past that edge");
+        });
+    }
+
+    [Test]
+    public async Task AnEmptyElementAloneLeavesAZeroHeightLine()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<span style='border-left:5px solid black'></span>"));
+
+        // The line exists - it is what keeps the margins around the block from folding through it -
+        // and is zero-height, because nothing on it asks for a band (CSS 2.1 §9.4.2).
+        Assert.Multiple(() =>
+        {
+            Assert.That(Lines(view).Count(), Is.EqualTo(1), "the box stands on a line of its own");
+            Assert.That(Lines(view).Single().BorderBox.Height, Is.EqualTo(0), "which takes no height");
+            Assert.That(Inline(view, "span").BorderBox.Width, Is.EqualTo(5), "while the box itself is drawn");
+        });
+    }
+
+    [Test]
+    public async Task AStartMarginIsChargedOnlyWhereTheElementBegins()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<span style='margin:0 -5px'>aaa bbb</span>", width: 15));
+
+        // The negative start margin pulls the element's first line out of the box; the line after it
+        // is a continuation, whose start edge was drawn on the line before (CSS 2.1 §8.1).
+        Assert.Multiple(() =>
+        {
+            Assert.That(Text(view, "aaa").BorderBox.X, Is.EqualTo(-5).Within(0.001));
+            Assert.That(Text(view, "bbb").BorderBox.X, Is.EqualTo(0).Within(0.001));
+        });
+    }
+
+    [Test]
+    public async Task AnElementThatDoesNotWrapMovesWholeToTheNextLine()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document(
+            "ab <span style='white-space:nowrap'>cd<span style='display:inline-block;width:5px;height:5px'></span></span>",
+            width: 20));
+
+        // "cd" alone would fit after "ab ", but the box that follows it does not: the line ends at
+        // the space and the whole unit begins the next one (CSS Text 3 §5.1).
+        Assert.Multiple(() =>
+        {
+            Assert.That(Text(view, "cd").BorderBox.Y, Is.GreaterThan(Text(view, "ab").BorderBox.Y));
+            Assert.That(Text(view, "cd").BorderBox.X, Is.EqualTo(0).Within(0.001));
+        });
+    }
+
+    [Test]
+    public async Task AnElementEndsTheLineWithinItsOwnEndMargin()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("ab <span style='margin-right:-5px'>cd</span>", width: 20));
+
+        // The words come to twenty-five pixels and the element gives five of them up at the line's
+        // end, so the line holds them (CSS 2.1 §9.4.2).
+        Assert.Multiple(() =>
+        {
+            Assert.That(Lines(view).Count(), Is.EqualTo(1), "the line ends within the element's end margin");
+            Assert.That(Text(view, "cd").BorderBox.Y, Is.EqualTo(Lines(view).Single().BorderBox.Y).Within(0.001));
+        });
+    }
+
     private static HutuViewInternal CreateView(Int32 viewportWidth = 600)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

@@ -1226,29 +1226,29 @@ internal static class GeneratedContent
             return chain;
         }
 
-        var runs = new List<Box>(items.Count);
+        // A generated box is an inline box holding what the content names, so the margins, borders,
+        // padding and background written on the pseudo-element belong to the box around the words
+        // rather than to the words themselves (Content 3 §1, §4.1). `content: ""` generates the same
+        // box with nothing inside it: the box is the point, because an overlay drawn by a
+        // pseudo-element's own background, border or clip-path has no words to hold, and
+        // Pseudo-Elements 4 §4.1 suppresses the box only for `none` and `normal`.
+        var runs = new List<Box>(1);
+        var wrapper = new Box(BoxKind.Inline, pseudoStyle)
+        {
+            Element = element,
+            Flow = flow,
+            IsGenerated = true,
+        };
 
         foreach (var item in items)
         {
             if (item.Text is { Length: > 0 } text)
             {
-                runs.Add(Run(text, element, pseudoStyle, flow));
+                wrapper.Children.Add(Run(text, element, pseudoStyle, flow));
             }
         }
 
-        // `content: ""` generates an empty box, and the box is the point: an overlay drawn by a
-        // pseudo-element's own background, border or clip-path has no words to hold, and Pseudo-Elements
-        // 4 §4.1 suppresses the box only for `none` and `normal`. Left out here, the box the page styled
-        // never exists and nothing of it is painted.
-        if (runs.Count == 0)
-        {
-            runs.Add(new Box(BoxKind.Inline, pseudoStyle)
-            {
-                Element = element,
-                Flow = flow,
-                IsGenerated = true,
-            });
-        }
+        runs.Add(wrapper);
 
         Insert(arm, box, runs);
         return chain;
