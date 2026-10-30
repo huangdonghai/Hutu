@@ -614,6 +614,16 @@ internal sealed class InlineLayout
         // no room, because the line it would begin is the one line that does not draw it.
         var sawContent = false;
 
+        // Which line segment the walk is in, counted by the forced breaks it has passed: the opening
+        // glyph of a first formatted line and the closing glyph of a last one give up their room, and
+        // the block's own text reaches those lines only in the first and final segment (CSS Text 3
+        // §8.2.1).
+        var segment = 0;
+
+        // The last character the stream drew, kept so a line's closing glyph can give up its room
+        // (CSS Text 3 §8.2). White space after it is not drawn at a line's end, so it does not move.
+        DrawnGlyph? tail = null;
+
         // The width of a collapsible run held back until something is drawn after it. CSS 2.1 §16.6.1
         // removes a space at the end of a line just as it removes one at the beginning, so a trailing
         // space is only room the content asks for once the line turns out to carry something past it.
@@ -634,7 +644,12 @@ internal sealed class InlineLayout
 
             if (item.IsBreak)
             {
-                minContent = Math.Max(minContent, unbreakable);
+                // The glyph a stop or comma at the line's end hangs from asks for no room on the
+                // widest line either: it stands past the edge the line is measured to (CSS Text 3
+                // §8.2). `last` reaches only the block's final line, which this is not.
+                var ending = tail is { } stop ? EndHang(stop, last: false) : 0;
+
+                minContent = Math.Max(minContent, unbreakable - ending);
                 widest = Math.Max(widest, maxContent);
 
                 // The line the break ends takes its trailing space with it, and the one it begins
@@ -645,6 +660,8 @@ internal sealed class InlineLayout
                 sawContent = false;
                 unbreakable = 0;
                 previous = -1;
+                segment++;
+                tail = null;
                 continue;
             }
 
@@ -784,6 +801,12 @@ internal sealed class InlineLayout
                     maxContent += trailing + width;
                     trailing = 0;
                     sawContent = true;
+                    tail = new DrawnGlyph(
+                        item.Style,
+                        source,
+                        TextClusters.ClusterStart(source, chunk.Start + chunk.Length),
+                        chunk.Start + chunk.Length - TextClusters.ClusterStart(source, chunk.Start + chunk.Length),
+                        flow);
                     continue;
                 }
 
@@ -857,6 +880,17 @@ internal sealed class InlineLayout
                         _measurer, item.Style, previous, TextChunker.CodePointAt(source, chunk.Start), flow);
                 }
 
+                // The opening glyph of a first formatted line hangs past the line, so the widest line
+                // the content asks for does not count it (CSS Text 3 §8.2.1, §8.2).
+                if (!sawContent && previous < 0)
+                {
+                    var opening = FirstHangRoom(
+                        item.Style, source, chunk.Start, chunk.Length, item.Inline is not null || segment == 0, flow);
+
+                    maxContent -= opening;
+                    unbreakable -= opening;
+                }
+
                 maxContent += trailing + width;
 
                 previous = TextClusters.BaseBefore(source, chunk.Start + chunk.Length);
@@ -868,6 +902,12 @@ internal sealed class InlineLayout
 
                 trailing = 0;
                 sawContent = true;
+                tail = new DrawnGlyph(
+                    item.Style,
+                    source,
+                    TextClusters.ClusterStart(source, chunk.Start + chunk.Length),
+                    chunk.Start + chunk.Length - TextClusters.ClusterStart(source, chunk.Start + chunk.Length),
+                    flow);
 
                 if (source[chunk.Start + chunk.Length - 1] == (Char)0x00AD && item.Style.WrapsLines &&
                     !item.Style.WordBreak.Equals("auto-phrase", StringComparison.OrdinalIgnoreCase))
@@ -901,11 +941,61 @@ internal sealed class InlineLayout
             unbreakable += item.Ancestor.InlineEndInset;
         }
 
-        minContent = Math.Max(minContent, unbreakable);
-        widest = Math.Max(widest, maxContent);
+        // The closing glyph of the block's final line hangs past it, so neither extent counts it
+        // (CSS Text 3 §8.2.1, §8.2).
+        var closingRoom = tail is { } last ? EndHang(last, last: true) : 0;
+
+        minContent = Math.Max(minContent, unbreakable - closingRoom);
+        widest = Math.Max(widest, maxContent - closingRoom);
 
         return new IntrinsicSize(minContent, Math.Max(widest, minContent));
     }
+
+    /// <summary>One character the intrinsic walk drew, with where its room can be asked for again.</summary>
+    private readonly record struct DrawnGlyph(
+        ComputedStyle Style,
+        String Source,
+        Int32 Start,
+        Int32 Length,
+        WritingModeInfo Flow);
+
+    /// <summary>
+    /// Gets the room the opening glyph of a first formatted line asks for under the value: nothing at
+    /// all, because the glyph hangs outside the line the content is measured at.
+    /// </summary>
+    private Double FirstHangRoom(
+        ComputedStyle style,
+        String source,
+        Int32 start,
+        Int32 length,
+        Boolean firstOfElement,
+        WritingModeInfo flow)
+    {
+        if (!firstOfElement || !HangingPunctuation.HangsAtStart(style.HangingPunctuation))
+        {
+            return 0;
+        }
+
+        var units = TextClusters.UnitsAt(source, start, start + length);
+
+        return HangingPunctuation.IsOpening(TextChunker.CodePointAt(source, start))
+            ? Measure(style, source, start, units, flow)
+            : 0;
+    }
+
+    /// <summary>
+    /// Gets the room the closing glyph of a line asks for under the value: nothing at all, because the
+    /// glyph hangs outside the line. <c>allow-end</c> hangs only a line that would not otherwise fit,
+    /// and the widest line always fits.
+    /// </summary>
+    private Double EndHang(DrawnGlyph glyph, Boolean last) =>
+        HangingPunctuation.HangsAtEnd(
+            glyph.Style.HangingPunctuation,
+            TextChunker.CodePointAt(glyph.Source, glyph.Start),
+            overflows: false,
+            last)
+            ? Measure(glyph.Style, glyph.Source, glyph.Start, glyph.Length, glyph.Flow)
+            : 0;
 
     /// <summary>
     /// Lays out the inline children of the container inside the given content box, appending line
@@ -1183,12 +1273,17 @@ internal sealed class InlineLayout
 
             foreach (var fragment in line.Fragments)
             {
+                // A glyph hanging off the line's start edge stands one advance before the line: the
+                // boxes it belongs to reach out over it, and the line's own cursor is where the
+                // content after it begins (CSS Text 3 §8.2.1).
+                var box = fragment.HangSide == HangStart ? origin - fragment.Width : origin;
+
                 // The inline elements the run sits inside are opened and closed around it, each taking
                 // a box that begins and ends where the run reaches its edges. The step charges the same
                 // padding and border the line was measured with, applied here one edge at a time so
                 // that every box lands where the extent says it should.
                 step.Clear();
-                Advance(open, fragment.Inline, line.ContinuesFromPrevious, origin, apply: true, step);
+                Advance(open, fragment.Inline, line.ContinuesFromPrevious, box, apply: true, step);
 
                 // An element the run leaves is never cut: a cut is what carrying on to the next line
                 // is, and an element that ends in the middle of one ends for good. Its box runs to the
@@ -1196,16 +1291,16 @@ internal sealed class InlineLayout
                 // its end margin then takes its room on the line, after that box.
                 foreach (var left in step.Closed)
                 {
-                    origin += left.Ancestor.InlineEndInset;
-                    CloseBox(left, origin, contentBox, flow, line, cursor, context, placement);
-                    origin += left.Ancestor.InlineEndMargin;
+                    box += left.Ancestor.InlineEndInset;
+                    CloseBox(left, box, contentBox, flow, line, cursor, context, placement);
+                    box += left.Ancestor.InlineEndMargin;
                 }
 
                 foreach (var entered in step.Opened)
                 {
-                    origin += entered.Ancestor.InlineStartMargin;
+                    box += entered.Ancestor.InlineStartMargin;
                     OpenBox(entered, open, lineBox, flow, line);
-                    origin += entered.Inset;
+                    box += entered.Inset;
                 }
 
                 // The spaces a `pre-wrap` line hangs are drawn where they stand but take none of the
@@ -1214,8 +1309,12 @@ internal sealed class InlineLayout
                 // them, which is what a right-to-line-end hanging looks like from both directions.
                 var room = ReferenceEquals(fragment, last) ? fragment.Width - line.Hanging : fragment.Width;
 
-                Place(fragment, open, lineBox, contentBox, flow, line, origin, cursor, context, room, placement, _measurer);
-                origin += fragment.Width;
+                Place(fragment, open, lineBox, contentBox, flow, line, box, cursor, context, room, placement, _measurer);
+
+                // A glyph hung from the end edge keeps its advance on the line's boxes - the background
+                // of an inline element covers it - while the room the line was measured at already
+                // leaves it out.
+                origin = box + fragment.Width;
             }
 
             // The elements the line ends inside carry on to the next line, so each keeps its end edge
@@ -1261,6 +1360,7 @@ internal sealed class InlineLayout
     private void BidiOrder(Line line, WritingModeInfo flow, ComputedStyle container)
     {
         var baseLevel = flow.IsRightToLeft ? 1 : 0;
+
         var changed = false;
         var ordered = new List<TextFragment>(line.Fragments.Count);
         var group = new List<TextFragment>();
@@ -1284,11 +1384,13 @@ internal sealed class InlineLayout
             // An element that asks for an embedding sets its content at a level of its own, and an
             // override also replaces every character's class with its own direction (UAX #9 X1-X8).
             // The runs were flattened into one string, so the marks that say so are written around
-            // each run's own text here, read back with it, and dropped. The block's own embedding
-            // wraps the whole line.
+            // each run's own text here, read back with it, and dropped. For the container only the
+            // override reaches the line: its direction is the line's base level already, so an embed
+            // or an isolate embeds the line in what it already is, while an override rewrites the
+            // direction of every character written on it (CSS Writing Modes 3 §5.2).
             var wrapped = new System.Text.StringBuilder(text.Length + (group.Count * 8) + 4);
             var starts = new Int32[group.Count];
-            var lineMarks = IsEmbedding(container) ? Controls(container) : default;
+            var lineMarks = Overrides(container) ? Controls(container) : default;
 
             if (lineMarks.Open is { } opening)
             {
@@ -1387,9 +1489,63 @@ internal sealed class InlineLayout
 
                 if (pieces.Count > 0)
                 {
-                    if (Math.Abs(earned - fragment.Width) > 0.0001)
+                    // A piece holds the places of the run it was cut from, and the room the line gave
+                    // each of them: the painter spreads the share wherever the piece's own text offers
+                    // a place, so a place the split lost at a boundary is handed to the piece that
+                    // ends the run, where the line's own edge stands.
+                    var expansion = 0.0;
+
+                    if (fragment.Expansions > 0 && fragment.Justify != 0)
                     {
-                        pieces[^1].Width += fragment.Width - earned;
+                        var given = 0;
+
+                        foreach (var piece in pieces)
+                        {
+                            var room = fragment.Expansions - given;
+
+                            if (room <= 0)
+                            {
+                                break;
+                            }
+
+                            var places = Math.Min(
+                                room,
+                                TextClusters.ExpansionPoints(
+                                    piece.Source, piece.Start, piece.Length, piece.Style.TextJustify).Length);
+
+                            if (places <= 0)
+                            {
+                                continue;
+                            }
+
+                            piece.Expand(fragment.Justify, places);
+                            given += places;
+                            expansion += fragment.Justify * places;
+                        }
+
+                        if (given < fragment.Expansions)
+                        {
+                            var places = fragment.Expansions - given;
+
+                            pieces[^1].Expand(fragment.Justify, pieces[^1].Expansions + places);
+                            expansion += fragment.Justify * places;
+                        }
+                    }
+
+                    if (Math.Abs(fragment.Width - earned - expansion) > 0.0001)
+                    {
+                        pieces[^1].Width += fragment.Width - earned - expansion;
+                    }
+
+                    // A hung glyph is one character and keeps the edge of the run it was cut from:
+                    // the piece that begins at the run's start, or the one that ends at its end.
+                    if (fragment.HangSide == HangStart)
+                    {
+                        pieces[0].HangSide = HangStart;
+                    }
+                    else if (fragment.HangSide == HangEnd)
+                    {
+                        pieces[^1].HangSide = HangEnd;
                     }
 
                     // The space a pre-wrap line hangs is at the end of its own text, so it is the last
@@ -1526,6 +1682,13 @@ internal sealed class InlineLayout
     private static Boolean IsEmbedding(ComputedStyle style) =>
         style.UnicodeBidiKeyword?.Trim().ToLowerInvariant() is
             "embed" or "bidi-override" or "isolate" or "isolate-override";
+
+    /// <summary>
+    /// Gets whether an element rewrites the direction of the characters written on it rather than
+    /// only setting the level they are set at (CSS Writing Modes 3 §5.2).
+    /// </summary>
+    private static Boolean Overrides(ComputedStyle style) =>
+        style.UnicodeBidiKeyword?.Trim().ToLowerInvariant() is "bidi-override" or "isolate-override";
 
     /// <summary>
     /// Gets the pair of control characters that put an element's text at the level, and in the
@@ -2410,6 +2573,11 @@ internal sealed class InlineLayout
     {
         var lines = new List<Line>();
 
+        // Where the content's last drawing character stands: the white space a page trails into is
+        // not drawn at the end of the line, so it does not keep the glyph in front of it from being
+        // the last one the line ends at.
+        var lastDrawn = LastDrawnContent(items);
+
         // The elements a line resumes inside, which is what the next builder needs to know so that it
         // draws no start edge for an element whose start edge is already on the line above.
         var carried = (HashSet<InlineAncestor>?)null;
@@ -2428,7 +2596,7 @@ internal sealed class InlineLayout
         // float standing where the indent reaches leaves the line to start where the float ends, not
         // that far past it. A negative indent hangs out of the box and is never pulled back in.
         var leading = indent > 0 ? Math.Max(0, indent - room.Inset) : indent;
-        var builder = new LineBuilder(strut, leading, flow.IsVertical, _measurer, startsParagraph: true);
+        var builder = new LineBuilder(strut, leading, flow.IsVertical, _measurer, startsParagraph: true, firstLine: true);
 
         // The place the line could be cut back to at a soft hyphen, and the steps it has taken since:
         // they begin the next line when the run after the hyphen turns out not to fit.
@@ -2785,6 +2953,24 @@ internal sealed class InlineLayout
                         var endGrace = EndGrace(
                             _measurer, item.Style, run.Source, at, taken, itemFlow);
 
+                        // A line whose last character is a stop or comma may let that character hang
+                        // rather than break the line before it, which is the room `allow-end` gives
+                        // (CSS Text 3 §8.2.1).
+                        var lastOfContent = index == lastDrawn.Item && at + taken == lastDrawn.End;
+
+                        // A border or padding of the element the run sits in stands between the glyph
+                        // and the line's end edge only where that element ends on this line: an
+                        // element the line cuts draws its end edge on a later line. White space the
+                        // line trails into is not drawn, so it does not put the glyph before it back
+                        // inside the element.
+                        var blocked = OnlySpaceRemains(item.Text!, at + taken) &&
+                            EndEdgeOnLine(items, index, item.Inline);
+
+                        var hangGrace = blocked
+                            ? 0
+                            : HangGrace(
+                                _measurer, item.Style, run.Source, at, taken, end, lastOfContent, itemFlow);
+
                         // A soft hyphen is the one opportunity a line takes even when it has no room at
                         // all: the word has nowhere else to go, and the mark is drawn where the page put
                         // the hyphen (CSS Text 3 §6.1). Chrome measured on a zero-width box does the same.
@@ -2840,7 +3026,7 @@ internal sealed class InlineLayout
                         if (breakPoint is { } point && !breaks && builder.HasContent && !inRuby &&
                             advance > 0 && !String.IsNullOrEmpty(item.Text) && item.Style.WrapsLines &&
                             (!spaces || (item.Style.WrapsInsideSpaces && followed)) &&
-                            builder.ExtentFor(item.Inline) + advance + auto.BoundaryDelta - auto.RetroDelta - trim.BoundaryDelta - trim.RetroDelta - endGrace > room.Room)
+                            builder.ExtentFor(item.Inline) + advance + auto.BoundaryDelta - auto.RetroDelta - trim.BoundaryDelta - trim.RetroDelta - Math.Max(endGrace, hangGrace) > room.Room)
                         {
                             var replay = following ?? new List<TailStep>();
 
@@ -2864,7 +3050,7 @@ internal sealed class InlineLayout
                         }
 
                         if (breaks && (room.Room > 0 || hyphen) &&
-                            builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - endGrace > room.Room &&
+                            builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - Math.Max(endGrace, hangGrace) > room.Room &&
                             item.Style.WrapsLines)
                         {
                             // The mark a break draws is part of the line it ends: a shortened line that
@@ -2882,7 +3068,7 @@ internal sealed class InlineLayout
                                 }
                             }
 
-                            if (builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - endGrace > room.Room)
+                            if (builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - Math.Max(endGrace, hangGrace) > room.Room)
                             {
                                 if (builder.HasContent)
                                 {
@@ -2896,7 +3082,7 @@ internal sealed class InlineLayout
                                     // or no floats are left - the long word beside the floated picture goes
                                     // below it rather than overflowing the room the float left, which is
                                     // the specification's own example of the rule.
-                                    room.Drop(builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - endGrace);
+                                    room.Drop(builder.ExtentFor(item.Inline) + asks - trim.RetroDelta - Math.Max(endGrace, hangGrace));
                                 }
                             }
                         }
@@ -2925,8 +3111,436 @@ internal sealed class InlineLayout
             Close(builder);
         }
 
+        // Which inline elements the lines hand on is settled before the edges are: an element that
+        // ends at a line's end is not one the line cut, and the glyph standing there is the last of
+        // its element's last formatted line.
         MarkSlices(lines, maxInline);
+        SettleLines(lines);
         return lines;
+    }
+
+    /// <summary>The side of a line a fragment hangs from: the line's start edge, or its end edge.</summary>
+    private const Int32 HangStart = 1;
+
+    private const Int32 HangEnd = 2;
+
+    /// <summary>
+    /// Settles what stands past each line's edges once every line is built (CSS Text 3 §8.2.1,
+    /// §8.2): a closing punctuation either gives up half its blank at the line's end
+    /// (<c>text-spacing-trim</c>) or hangs there whole, and an opening glyph on an element's first
+    /// formatted line is drawn before the line begins. Hanging is what a value of
+    /// <c>hanging-punctuation</c> reaches; the glyph keeps its ink and gives up its advance, which is
+    /// the negative margin on the edge of its parent inline box the specification describes.
+    /// </summary>
+    /// <remarks>
+    /// At most one character hangs at each edge, a non-zero border or padding between the character
+    /// and the edge keeps it from hanging, and a glyph that hangs leaves nothing for the trim to give
+    /// up: it is outside the room the line was measured at, so the line does not overflow because of
+    /// it and the trim would only narrow it.
+    /// </remarks>
+    private void SettleLines(List<Line> lines)
+    {
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+
+            // The opening glyph hangs first: it stands outside the line, so the room the line has is
+            // what the rest of the line measures into - and the trim at the end of the line asks
+            // whether the line overflows on what is left.
+            var opening = HangAtStart(line, firstLine: index == 0);
+            var used = line.Used - opening;
+            var hung = HangAtEnd(line, lastLine: index == lines.Count - 1, used);
+            var trimmed = 0.0;
+
+            if (hung > 0)
+            {
+                line.Used = used - hung;
+            }
+            else
+            {
+                trimmed = TrimLineEnd(line, line.Extent, used);
+                line.Used = used - trimmed;
+            }
+
+            if (hung > 0 || opening > 0 || trimmed > 0)
+            {
+                line.Offset = Aligned(line, line.Extent);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Takes the room a closing punctuation gives up at the end of the line. <c>trim-end</c> always
+    /// takes it; <c>allow-end</c> only where the line would not otherwise fit. The room of the last
+    /// visible character is what changes; its ink does not move, because the blank it gives up lies
+    /// after it (CSS Text 4 §8.5.2).
+    /// </summary>
+    private Double TrimLineEnd(Line line, Double maxInline, Double used)
+    {
+        for (var index = line.Fragments.Count - 1; index >= 0; index--)
+        {
+            var fragment = line.Fragments[index];
+
+            if (fragment.OutOfFlow)
+            {
+                continue;
+            }
+
+            if (fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null)
+            {
+                return 0;
+            }
+
+            var visible = fragment.Length - fragment.Hanging;
+
+            if (visible <= 0)
+            {
+                continue;
+            }
+
+            var codePoint = CodePointBefore(fragment.Source, fragment.Start + visible);
+            var kind = KindOf(fragment.Style, codePoint);
+            var value = fragment.Style.TextSpacingTrim;
+
+            if (kind == PunctuationClass.None ||
+                value.All ||
+                TextSpacingTrim.HasExclusiveFeature(fragment.Style.ResolvedFont.Features) ||
+                !IsFullwidthPunctuation(_measurer, fragment.Style, codePoint))
+            {
+                return 0;
+            }
+
+            var overflows = used > maxInline - line.Indent;
+
+            if (!TextSpacingTrim.TrimsAtLineEnd(value, kind, overflows))
+            {
+                return 0;
+            }
+
+            var at = visible - 1;
+            var chars = (fragment.Trims ?? new String('\0', fragment.Length)).ToCharArray();
+
+            if (at >= chars.Length || chars[at] != '\0')
+            {
+                return 0;
+            }
+
+            chars[at] = TrimClosing;
+            fragment.Trims = MaskOf(chars);
+
+            var delta = TrimDelta(_measurer, fragment.Style, codePoint, fragment.Flow);
+            fragment.Width -= delta;
+
+            return delta;
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Gets whether a fragment draws something at a line's edge. A run whose characters all hang -
+    /// the spaces a <c>pre-wrap</c> line trails into - draws nothing, and neither does a box that left
+    /// the flow; a zero-length inline box with a border draws only its edge, which still stands in
+    /// the way of anything hanging past it.
+    /// </summary>
+    private static Boolean HasInk(TextFragment fragment) =>
+        fragment.IsReplaced ||
+        fragment.Atomic is not null ||
+        fragment.Ruby is not null ||
+        fragment.Length > fragment.Hanging ||
+        (fragment.Length == 0 && fragment.Width > 0);
+
+    /// <summary>Hangs the line's opening glyph where the property reaches it, and answers with its advance.</summary>
+    private Double HangAtStart(Line line, Boolean firstLine)
+    {
+        for (var index = 0; index < line.Fragments.Count; index++)
+        {
+            var fragment = line.Fragments[index];
+
+            if (fragment.OutOfFlow || !HasInk(fragment))
+            {
+                continue;
+            }
+
+            if (fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null ||
+                fragment.Length - fragment.Hanging <= 0 || fragment.HangSide != 0)
+            {
+                return 0;
+            }
+
+            // The glyph is at the start of an element's first formatted line: the block's own text
+            // reaches it on the block's first line, and an inline element's text on the line it
+            // begins on (CSS Text 3 §8.2.1).
+            var first = fragment.Inline is null
+                ? firstLine
+                : line.ContinuesFromPrevious?.Contains(fragment.Inline) != true;
+
+            if (!first || !HangingPunctuation.HangsAtStart(fragment.Style.HangingPunctuation))
+            {
+                return 0;
+            }
+
+            var units = TextClusters.UnitsAt(fragment.Source, fragment.Start, fragment.Start + fragment.Length - fragment.Hanging);
+
+            if (!HangingPunctuation.IsOpening(TextChunker.CodePointAt(fragment.Source, fragment.Start)))
+            {
+                return 0;
+            }
+
+            if (EdgeBlocked(line.ContinuesFromPrevious, fragment.Inline, start: true))
+            {
+                return 0;
+            }
+
+            return Hang(line, fragment, fragment.Start, units, HangStart);
+        }
+
+        return 0;
+    }
+
+    /// <summary>Hangs the line's closing glyph where the property reaches it, and answers with its advance.</summary>
+    private Double HangAtEnd(Line line, Boolean lastLine, Double used)
+    {
+        for (var index = line.Fragments.Count - 1; index >= 0; index--)
+        {
+            var fragment = line.Fragments[index];
+
+            if (fragment.OutOfFlow || !HasInk(fragment))
+            {
+                continue;
+            }
+
+            if (fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null ||
+                fragment.Length - fragment.Hanging <= 0 || fragment.HangSide != 0)
+            {
+                return 0;
+            }
+
+            // The glyph is at the end of an element's last formatted line: the block's own text
+            // reaches it on the block's last line, and an inline element's text on the line it ends
+            // on - which a cut element has not reached yet (CSS Text 3 §8.2.1).
+            var last = fragment.Inline is null
+                ? lastLine
+                : line.ContinuesToNext?.Contains(fragment.Inline) != true;
+
+            var stop = fragment.Start + fragment.Length - fragment.Hanging;
+
+            // White space the line trails into is not drawn, so the glyph it hangs is the last one
+            // before it.
+            while (stop > fragment.Start)
+            {
+                var before = TextClusters.ClusterStart(fragment.Source, stop);
+
+                if (!TextChunker.IsCollapsible(fragment.Source, before, stop - before))
+                {
+                    break;
+                }
+
+                stop = before;
+            }
+
+            if (stop <= fragment.Start)
+            {
+                return 0;
+            }
+
+            var start = TextClusters.ClusterStart(fragment.Source, stop);
+            var overflows = used > line.Extent - line.Indent;
+            var hangs = HangingPunctuation.HangsAtEnd(
+                fragment.Style.HangingPunctuation,
+                TextChunker.CodePointAt(fragment.Source, start),
+                overflows,
+                last);
+
+            if (!hangs || EdgeBlocked(line.ContinuesToNext, fragment.Inline, start: false))
+            {
+                return 0;
+            }
+
+            return Hang(line, fragment, start, stop - start, HangEnd);
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Gets whether nothing but white space a line collapses stands from a position to the end of the
+    /// text: the glyph before that position is the last the line draws.
+    /// </summary>
+    private static Boolean OnlySpaceRemains(String text, Int32 at)
+    {
+        for (var index = at; index < text.Length;)
+        {
+            var units = TextClusters.UnitsAt(text, index, text.Length);
+
+            if (!TextChunker.IsCollapsible(text, index, units))
+            {
+                return false;
+            }
+
+            index += units;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the last character the content draws, as the item it stands in and the position its run
+    /// ends at - or item <c>-1</c> where the content's last line draws no character at all: a forced
+    /// break at the end leaves an empty last line, and a box draws no character.
+    /// </summary>
+    private static (Int32 Item, Int32 End) LastDrawnContent(List<InlineItem> items)
+    {
+        for (var index = items.Count - 1; index >= 0; index--)
+        {
+            var item = items[index];
+
+            if (item.IsOutOfFlow)
+            {
+                continue;
+            }
+
+            if (item.IsBreak ||
+                item.IsReplaced ||
+                item.IsAtomic ||
+                item.IsRuby)
+            {
+                return (-1, -1);
+            }
+
+            if (item.Text is not { Length: > 0 } text)
+            {
+                continue;
+            }
+
+            var at = text.Length;
+
+            while (at > 0)
+            {
+                var start = TextClusters.ClusterStart(text, at);
+
+                if (!TextChunker.IsCollapsible(text, start, at - start))
+                {
+                    return (index, at);
+                }
+
+                at = start;
+            }
+        }
+
+        return (-1, -1);
+    }
+
+    /// <summary>
+    /// Gets whether a non-zero border or padding of an element the run sits in will stand between the
+    /// glyph at its end and the line's end edge: the element's end edge is drawn on this line only
+    /// when nothing after the run belongs to it, so an element the line cuts does not stand in the way.
+    /// </summary>
+    private static Boolean EndEdgeOnLine(List<InlineItem> items, Int32 index, InlineAncestor? inline)
+    {
+        for (var ancestor = inline; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (ancestor.InlineEndInset <= 0)
+            {
+                continue;
+            }
+
+            var ends = true;
+
+            for (var at = index + 1; at < items.Count && ends; at++)
+            {
+                for (var chain = items[at].Inline; chain is not null; chain = chain.Parent)
+                {
+                    if (ReferenceEquals(chain, ancestor))
+                    {
+                        ends = false;
+                        break;
+                    }
+                }
+            }
+
+            if (ends)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Gets whether a non-zero border or padding stands between a glyph and the line's edge on the
+    /// side it would hang from. An edge the element was cut at belongs to another line, so it is not
+    /// in the way (CSS Text 3 §8.2.1).
+    /// </summary>
+    private static Boolean EdgeBlocked(HashSet<InlineAncestor>? cut, InlineAncestor? inline, Boolean start)
+    {
+        for (var ancestor = inline; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (cut?.Contains(ancestor) == true)
+            {
+                continue;
+            }
+
+            if ((start ? ancestor.InlineStartInset : ancestor.InlineEndInset) > 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Cuts one character off the edge of a run and marks it as hanging from <paramref name="side"/>,
+    /// giving up its advance. The room is measured at the character itself, so a punctuation set in a
+    /// smaller font hangs by its own width rather than the line's.
+    /// </summary>
+    private Double Hang(Line line, TextFragment fragment, Int32 start, Int32 length, Int32 side)
+    {
+        var width = MeasureChunk(_measurer, fragment.Style, fragment.Source, start, length, fragment.Flow);
+
+        var hung = new TextFragment(
+            fragment.Source,
+            start,
+            length,
+            width,
+            fragment.Style,
+            fragment.Box,
+            fragment.Flow,
+            fragment.Inline)
+        {
+            RightToLeft = fragment.RightToLeft,
+            Level = fragment.Level,
+            BaselineShift = fragment.BaselineShift,
+            HangSide = side,
+            Trims = MaskOf(fragment.Trims, start - fragment.Start, length, false),
+            AutoSpaces = MaskOf(fragment.AutoSpaces, start - fragment.Start, length, false),
+        };
+
+        var at = line.Fragments.IndexOf(fragment);
+        var rest = fragment.Length - length;
+
+        if (side == HangStart)
+        {
+            fragment.Trims = MaskOf(fragment.Trims, length, rest, false);
+            fragment.AutoSpaces = MaskOf(fragment.AutoSpaces, length, rest, false);
+            fragment.TrimStart(length);
+            fragment.Width -= width;
+            line.Fragments.Insert(at, hung);
+        }
+        else
+        {
+            var kept = start - fragment.Start;
+
+            fragment.Trims = MaskOf(fragment.Trims, 0, kept, false);
+            fragment.AutoSpaces = MaskOf(fragment.AutoSpaces, 0, kept, false);
+            fragment.Length = kept;
+            fragment.Width -= width;
+            line.Fragments.Insert(at + 1, hung);
+        }
+
+        return width;
     }
 
     /// <summary>
@@ -4506,6 +5120,38 @@ internal sealed class InlineLayout
             : text[index - 1];
 
     /// <summary>
+    /// Gets the room a stop or comma at the end of a run gives up when the line cannot otherwise hold
+    /// it: <c>allow-end</c> hangs the character instead of breaking the line before it, and the line's
+    /// close takes its advance off for real (CSS Text 3 §8.2.1).
+    /// </summary>
+    private static Double HangGrace(
+        ITextMeasurer measurer,
+        ComputedStyle style,
+        String source,
+        Int32 at,
+        Int32 taken,
+        Int32 runEnd,
+        Boolean lastOfContent,
+        WritingModeInfo flow)
+    {
+        if (taken <= 0 || at + taken != runEnd)
+        {
+            return 0;
+        }
+
+        var end = at + taken;
+        var start = TextClusters.ClusterStart(source, end);
+        var codePoint = TextChunker.CodePointAt(source, start);
+
+        // The glyph the breaker may keep past the line's edge: a stop or comma under `allow-end` or
+        // `force-end`, and a closing bracket or quote under `last` where this is the content's final
+        // line (CSS Text 3 §8.2.1). A line the value would not hang the glyph from takes no grace.
+        return HangingPunctuation.HangsAtEnd(style.HangingPunctuation, codePoint, overflows: true, lastOfContent)
+            ? MeasureChunk(measurer, style, source, start, end - start, flow)
+            : 0;
+    }
+
+    /// <summary>
     /// Gets how many times the run's letter spacing is charged along a line, where the glyphs are set
     /// from the characters they were shaped out of, so the character is the unit and not the half of an
     /// encoding that stands for it. A column is left to its own count: it gives every character of the
@@ -5536,6 +6182,14 @@ internal sealed class InlineLayout
         public Int32 Hanging { get; set; }
 
         /// <summary>
+        /// Gets or sets the edge of the line the fragment hangs from - <see cref="HangStart"/> or
+        /// <see cref="HangEnd"/> - or zero when it hangs from none. The glyph stands outside the room
+        /// the line was measured at, which is what the line's alignment and justification read
+        /// (CSS Text 3 §8.2.1).
+        /// </summary>
+        public Int32 HangSide { get; set; }
+
+        /// <summary>
         /// Gets the fragment's text as a string, which is what the node the painter draws out of wants.
         /// Asked once per fragment, when the line is placed - not once per chunk of it, as it was while
         /// the chunks were being appended one character at a time.
@@ -5548,6 +6202,16 @@ internal sealed class InlineLayout
             Source = text;
             Start = 0;
             Length = text.Length;
+        }
+
+        /// <summary>
+        /// Takes characters off the fragment's start, leaving it to draw the rest: a glyph hanging
+        /// from the line's start edge is cut off the run it began rather than copied out of it.
+        /// </summary>
+        public void TrimStart(Int32 length)
+        {
+            Start += length;
+            Length -= length;
         }
 
         /// <summary>Gets how many spaces the fragment ends with, which is what a line does not draw.</summary>
@@ -6337,10 +7001,24 @@ internal sealed class InlineLayout
         public Thickness BorderFor(Boolean cutStart, Boolean cutEnd) =>
             Sliced(Border, cutStart, cutEnd);
 
-        private Thickness Sliced(Thickness thickness, Boolean cutStart, Boolean cutEnd) =>
-            cutStart ? Clear(thickness, _inlineStartSide)
-            : cutEnd ? Clear(thickness, _inlineEndSide)
-            : thickness;
+        private Thickness Sliced(Thickness thickness, Boolean cutStart, Boolean cutEnd)
+        {
+            // An element cut at both ends draws neither side border: the two edges stand on the
+            // lines the element began and ends on, and this line holds only its middle.
+            var sliced = thickness;
+
+            if (cutStart)
+            {
+                sliced = Clear(sliced, _inlineStartSide);
+            }
+
+            if (cutEnd)
+            {
+                sliced = Clear(sliced, _inlineEndSide);
+            }
+
+            return sliced;
+        }
 
         /// <summary>
         /// Gets the physical side the inline axis starts on: the left edge of a left-to-right row, the
@@ -6417,13 +7095,15 @@ internal sealed class InlineLayout
             Double indent,
             Boolean vertical,
             ITextMeasurer measurer,
-            Boolean startsParagraph)
+            Boolean startsParagraph,
+            Boolean firstLine = false)
         {
             _fallback = strut;
             _indent = indent;
             _vertical = vertical;
             _measurer = measurer;
             _startsParagraph = startsParagraph;
+            _firstLine = firstLine;
             Width = indent;
         }
 
@@ -6443,6 +7123,7 @@ internal sealed class InlineLayout
 
         private readonly ITextMeasurer _measurer;
         private readonly Boolean _startsParagraph;
+        private readonly Boolean _firstLine;
 
         /// <summary>
         /// Gets the extent the line takes as it is being built, which is what the wrap test is made
@@ -6458,6 +7139,32 @@ internal sealed class InlineLayout
         /// line and takes no height.
         /// </summary>
         public Boolean HasContent => _fragments.Exists(fragment => !fragment.OutOfFlow);
+
+        /// <summary>
+        /// Gets whether the line draws anything yet. An empty inline box is content but no ink, and a
+        /// glyph hangs from the line's start edge just the same past one.
+        /// </summary>
+        private Boolean HasInk => _fragments.Exists(fragment => !fragment.OutOfFlow && HasInk(fragment));
+
+        /// <summary>
+        /// Gets whether a run is the opening glyph an element's first formatted line hangs: it stands
+        /// at the line's start, its element begins here, and no border or padding of its own stands
+        /// between it and the edge (CSS Text 3 §8.2.1).
+        /// </summary>
+        private Boolean HangsStart(ComputedStyle style, String source, Int32 start, InlineAncestor? inline)
+        {
+            if (!HangingPunctuation.HangsAtStart(style.HangingPunctuation) ||
+                !HangingPunctuation.IsOpening(TextChunker.CodePointAt(source, start)))
+            {
+                return false;
+            }
+
+            // The block's own text reaches the edge on its first line; an inline element's text on
+            // the line the element begins on, which is the line this run is written on.
+            var first = inline is null ? _firstLine : _carried?.Contains(inline) != true;
+
+            return first && !EdgeBlocked(_carried, inline, start: true);
+        }
 
         /// <summary>
         /// Gets whether the line carries any fragment at all, drawn or not. A line with nothing but a box
@@ -6989,6 +7696,17 @@ internal sealed class InlineLayout
                 }
             }
 
+            // A line that begins with an opening glyph the property hangs gives up that glyph's
+            // advance: it stands outside the line, so the room the line is filled to no longer counts
+            // it (CSS Text 3 §8.2.1). The line's close cuts the glyph out and takes the same room off
+            // the extent it reports.
+            if (!isSpace && !HasInk && HangsStart(style, source, start, inline))
+            {
+                Width -= MeasureChunk(
+                    _measurer, style, source, start,
+                    TextClusters.UnitsAt(source, start, start + length), flow);
+            }
+
             Enter(inline);
 
             // A tab draws nothing: the room it took was the line running on to a stop, not a glyph, so
@@ -7517,10 +8235,11 @@ internal sealed class InlineLayout
             line.Ascent = ascent;
             line.Height = ascent + descent;
 
-            var hanging = HangingTrail(measurer);
-            line.Hanging = hanging;
-            used -= TrimLineEnd(measurer, maxInline, used, hanging);
-            line.Used = used - hanging;
+            // The end of the line is settled once every line is built: the trim a closing punctuation
+            // gives up and the glyph a hanging value takes outside the line are decisions about the
+            // line's own edge, and which of the two applies depends on whether this is the last line.
+            line.Hanging = HangingTrail(measurer);
+            line.Used = used - line.Hanging;
             line.Indent = _indent;
             line.Governing = Governing(line.Fragments.Count > 0 ? line.Fragments[0] : null);
             line.Alignment = line.Governing?.TextAlign ?? CssInitialValues.TextAlign;
@@ -7562,75 +8281,6 @@ internal sealed class InlineLayout
                 : first.Atomic is not null || first.IsReplaced
                     ? _fallback ?? first.Style
                     : first.Style;
-
-        /// <summary>
-        /// Takes the room a closing punctuation gives up at the end of the line. <c>trim-end</c> always
-        /// takes it; <c>allow-end</c> only where the line would not otherwise fit. The room of the last
-        /// visible character is what changes; its ink does not move, because the blank it gives up lies
-        /// after it (CSS Text 4 §8.5.2).
-        /// </summary>
-        private Double TrimLineEnd(
-            ITextMeasurer measurer, Double maxInline, Double used, Double hanging)
-        {
-            for (var index = _fragments.Count - 1; index >= 0; index--)
-            {
-                var fragment = _fragments[index];
-
-                if (fragment.OutOfFlow)
-                {
-                    continue;
-                }
-
-                if (fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null)
-                {
-                    return 0;
-                }
-
-                var visible = fragment.Length - fragment.Hanging;
-
-                if (visible <= 0)
-                {
-                    continue;
-                }
-
-                var codePoint = CodePointBefore(fragment.Source, fragment.Start + visible);
-                var kind = KindOf(fragment.Style, codePoint);
-                var value = fragment.Style.TextSpacingTrim;
-
-                if (kind == PunctuationClass.None ||
-                    value.All ||
-                    TextSpacingTrim.HasExclusiveFeature(fragment.Style.ResolvedFont.Features) ||
-                    !IsFullwidthPunctuation(measurer, fragment.Style, codePoint))
-                {
-                    return 0;
-                }
-
-                var overflows = used - hanging > maxInline - _indent;
-
-                if (!TextSpacingTrim.TrimsAtLineEnd(value, kind, overflows))
-                {
-                    return 0;
-                }
-
-                var at = visible - 1;
-                var chars = (fragment.Trims ?? new String('\0', fragment.Length)).ToCharArray();
-
-                if (at >= chars.Length || chars[at] != '\0')
-                {
-                    return 0;
-                }
-
-                chars[at] = TrimClosing;
-                fragment.Trims = MaskOf(chars);
-
-                var delta = TrimDelta(measurer, fragment.Style, codePoint, fragment.Flow);
-                fragment.Width -= delta;
-
-                return delta;
-            }
-
-            return 0;
-        }
 
         /// <summary>
         /// Gets the width of the white space the line trails into where its mode hangs it, marking each

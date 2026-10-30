@@ -51,6 +51,24 @@ public static class TextClusters
             return 0;
         }
 
+        var at = ClusterStart(text, stop);
+
+        return Char.IsHighSurrogate(text[at]) && at + 1 < text.Length
+            ? Char.ConvertToUtf32(text[at], text[at + 1])
+            : text[at];
+    }
+
+    /// <summary>
+    /// Gets where the character that ends at a position begins: the base the marks written after it
+    /// stand on, which is the unit a line may lift off the end of a run.
+    /// </summary>
+    public static Int32 ClusterStart(String text, Int32 stop)
+    {
+        if (stop <= 0 || stop > text.Length)
+        {
+            return 0;
+        }
+
         var at = stop;
 
         do
@@ -59,9 +77,7 @@ public static class TextClusters
         }
         while (at > 0 && Joins(text, at));
 
-        return Char.IsHighSurrogate(text[at]) && at + 1 < text.Length
-            ? Char.ConvertToUtf32(text[at], text[at + 1])
-            : text[at];
+        return at;
     }
 
     /// <summary>Gets whether the character at an index is one the character before it is drawn with.</summary>

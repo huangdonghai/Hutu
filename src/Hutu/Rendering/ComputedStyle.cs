@@ -207,7 +207,7 @@ internal readonly struct ComputedStyle
         {
             "white-space", "text-align", "text-align-last", "text-justify", "vertical-align",
             "text-indent", "visibility", "overflow-wrap", "word-wrap", "word-break", "line-break",
-            "text-spacing-trim", "text-autospace",
+            "text-spacing-trim", "text-autospace", "hanging-punctuation",
         };
 
     /// <summary>
@@ -321,6 +321,13 @@ internal readonly struct ComputedStyle
                     ? declaredAutospace
                     : KeepsTextAsWritten(_element?.LocalName) ? "no-autospace" : null,
                 parent?.TextAutospace ?? TextAutospaceValue.Initial),
+            HangingPunctuation = ResolveHangingPunctuation(
+                ReadKeyword("hanging-punctuation") is { } declaredHanging
+                    ? declaredHanging
+                    : _element?.LocalName.Equals("pre", StringComparison.OrdinalIgnoreCase) == true
+                        ? CssInitialValues.HangingPunctuation
+                        : null,
+                parent?.HangingPunctuation ?? HangingPunctuationValue.Initial),
             VerticalAlign = Keyword("vertical-align", CssInitialValues.VerticalAlign),
             Indent = ReadLength("text-indent", RenderMode.Horizontal, StyleLength.Zero),
             Visibility = Keyword("visibility", CssInitialValues.Visibility),
@@ -3887,6 +3894,9 @@ internal readonly struct ComputedStyle
     /// <summary>Gets which neighbours of an ideograph the line widens before (CSS Text 4 §8.4).</summary>
     public TextAutospaceValue TextAutospace => _values.Text.TextAutospace;
 
+    /// <summary>Gets which edges of a line a punctuation may hang from (CSS Text 3 §8.2.1).</summary>
+    public HangingPunctuationValue HangingPunctuation => _values.Text.HangingPunctuation;
+
     /// <summary>Gets the value <c>text-overflow</c> came to (CSS Overflow 3 §3).</summary>
     public String TextOverflow => _values.Text.TextOverflow;
 
@@ -4274,6 +4284,15 @@ internal readonly struct ComputedStyle
         String? declared,
         TextAutospaceValue inherited) =>
         TextAutospaceValue.TryParse(declared, inherited, out var value) ? value : inherited;
+
+    /// <summary>
+    /// Resolves <c>hanging-punctuation</c>: a value this property does not take leaves the inherited
+    /// one standing, which is what a declaration the parser kept as raw text still deserves.
+    /// </summary>
+    public static HangingPunctuationValue ResolveHangingPunctuation(
+        String? declared,
+        HangingPunctuationValue inherited) =>
+        HangingPunctuationValue.TryParse(declared, inherited, out var value) ? value : inherited;
 
     /// <summary>
     /// Gets whether the element's text is kept as written, without the inter-script spacing. The

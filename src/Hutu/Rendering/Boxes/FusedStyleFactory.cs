@@ -227,6 +227,12 @@ internal sealed class FusedParent
     public TextAutospaceValue TextAutospace { get; init; } = TextAutospaceValue.Initial;
 
     /// <summary>
+    /// Gets which edges of a line the parent lets a punctuation hang from, which the text below it
+    /// inherits unless it writes a value of its own (CSS Text 3 §8.2.1).
+    /// </summary>
+    public HangingPunctuationValue HangingPunctuation { get; init; } = HangingPunctuationValue.Initial;
+
+    /// <summary>
     /// Gets the parent's <c>unicode-bidi</c>. Inherited like the direction it governs, so a page that
     /// asks for plaintext paragraphs once does not have to ask again on every block below it.
     /// </summary>
@@ -464,6 +470,7 @@ internal sealed class FusedParent
         WritingMode = style.WritingMode,
         TextSpacingTrim = style.TextSpacingTrim,
         TextAutospace = style.TextAutospace,
+        HangingPunctuation = style.HangingPunctuation,
         UnicodeBidi = style.UnicodeBidiKeyword,
 
         // The areas, not the values above, are what a child's cached font and text are keyed on: one
@@ -707,6 +714,14 @@ internal static class FusedStyleFactory
 
             var textAutospace = ComputedStyle.ResolveTextAutospace(declaredAutospace, parent.TextAutospace);
 
+            var textHanging = ComputedStyle.ResolveHangingPunctuation(
+                find("hanging-punctuation") is { } declaredHanging
+                    ? declaredHanging.Value
+                    : element.LocalName.Equals("pre", StringComparison.OrdinalIgnoreCase)
+                        ? CssInitialValues.HangingPunctuation
+                        : null,
+                parent.HangingPunctuation);
+
             var built = new TextArea
             {
                 // A text field holds the text it was given: its spaces and its line breaks stand
@@ -729,6 +744,7 @@ internal static class FusedStyleFactory
                 TextJustify = ComputedStyle.ResolveTextJustifyFused(find("text-justify"), parent.TextJustify),
                 TextSpacingTrim = textSpacingTrim,
                 TextAutospace = textAutospace,
+                HangingPunctuation = textHanging,
                 WrapStyle = ComputedStyle.TextWrapStyle(
                     find("text-wrap-style")?.Value,
                     find("text-wrap")?.Value,
@@ -1021,8 +1037,11 @@ internal static class FusedStyleFactory
             Direction = direction,
             Language = language,
 
-            // Inherited like the direction it decides the reading of, except where the element writes a
-            // keyword of its own - which the UA sheet does for every element that carries a `dir`.
+            // `unicode-bidi` is not inherited (CSS Writing Modes 3 §5.2): an element that writes none
+            // takes no embedding of its own, and its text is resolved in the paragraph its block
+            // establishes. The UA sheet states `embed` on the block elements of HTML, and handing that
+            // down would wrap every inline inside them in an embedding of its own - which moves a
+            // neutral at the start of a line to the far end of it.
             //
             // A text field that takes its direction from its text reads each of its lines that way, so
             // the field's content is resolved line by line as `unicode-bidi: plaintext` resolves a
@@ -1030,7 +1049,7 @@ internal static class FusedStyleFactory
             UnicodeBidi = element.LocalName.Equals("textarea", StringComparison.OrdinalIgnoreCase) &&
                 String.Equals(element.GetAttribute("dir")?.Trim(), "auto", StringComparison.OrdinalIgnoreCase)
                     ? "plaintext"
-                    : find("unicode-bidi")?.Value ?? parent.UnicodeBidi,
+                    : find("unicode-bidi")?.Value,
             Orientation = orientation,
             CombinesUpright = combine,
             Color = color,

@@ -65,6 +65,9 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         "text-spacing-trim",
         // CSS Text 4's inter-script spacing, read token by token for the same reason.
         "text-autospace",
+        // CSS Text 3's hanging punctuation, whose value is a set of keywords AngleSharp has no
+        // grammar for; the line layout reads them.
+        "hanging-punctuation",
         "font-variant-east-asian",
         // The legacy -webkit- line clamp: a count of lines a box keeps, and the orientation that makes
         // the box a column of them. AngleSharp has no grammar for either.
@@ -177,6 +180,7 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         "text-emphasis-skip",
         "text-spacing-trim",
         "text-autospace",
+        "hanging-punctuation",
         "font-variant-east-asian",
     };
 
