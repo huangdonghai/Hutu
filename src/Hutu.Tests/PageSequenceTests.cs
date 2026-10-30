@@ -352,6 +352,26 @@ public sealed class PageSequenceTests
         Assert.That(view.Pages!.Pages[0].Geometry.Orientation, Is.EqualTo(PageOrientation.RotateLeft));
     }
 
+    [Test]
+    public async Task AnAbsoluteBoxLeftAtItsPlaceCarriesItsPageNames()
+    {
+        using var view = await Print(
+            "<style>@page { size: 200px; margin: 0 } body, div { margin: 0 }</style>" +
+            "<div style='position:absolute'><div style='page:a'>a</div><div style='page:b'>b</div></div>");
+
+        Assert.That(view.Pages!.Count, Is.EqualTo(2), "the name change inside the box still starts a page");
+    }
+
+    [Test]
+    public async Task AnAbsoluteBoxPlacedByOffsetsDoesNotMoveThePages()
+    {
+        using var view = await Print(
+            "<style>@page { size: 200px; margin: 0 } body, div { margin: 0 }</style>" +
+            "<div style='position:absolute;left:0;top:0'><div style='page:a'>a</div><div style='page:b'>b</div></div>");
+
+        Assert.That(view.Pages!.Count, Is.EqualTo(1), "a box with its own offsets is a picture, not a page break");
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

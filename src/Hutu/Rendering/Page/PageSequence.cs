@@ -37,6 +37,7 @@ internal static class PageSequence
 
         var documentHeight = collector.OutOfFlowBottom;
 
+
         foreach (var unit in units)
         {
             documentHeight = Math.Max(documentHeight, unit.Bottom);
@@ -364,7 +365,14 @@ internal static class PageSequence
             if (PositionedLayout.IsOutOfFlow(source) || source.Style.Float != FloatSide.None)
             {
                 OutOfFlowBottom = Math.Max(OutOfFlowBottom, DeepestBottom(box));
-                return;
+
+                // A positioned box takes no place in the flow, but the page names written inside it
+                // still say which pages its picture is printed on; it joins the page sequence for
+                // that name alone. A float and a box with no page name take no page break at all.
+                if (!NamesItsPage(box))
+                {
+                    return;
+                }
             }
 
             var name = pageNames && ownPageName && source.Style.PageName is { } own ? own : pageName;
@@ -792,31 +800,61 @@ internal static class PageSequence
             for (var index = from; index < to; index++)
             {
                 var line = flow[index];
-                var unit = new FlowUnit
-                {
-                    Top = line.BorderBox.Y,
-                    Bottom = line.BorderBox.Bottom,
-                    Avoid = avoid,
-                    PageName = pageName,
-                    Run = run,
-                    LineIndex = index - from,
-                    LineTotal = total,
-                    Orphans = orphans,
-                    Widows = widows,
-                };
 
-                if (index == from)
+                // A line that holds only a positioned box is no line on the page: the box it holds
+                // is collected below, and a zero-height run of no text is not a break opportunity.
+                if (HasFlowContent(line) || line.BorderBox.Height > 0.001)
                 {
-                    unit.Before = before;
+                    var unit = new FlowUnit
+                    {
+                        Top = line.BorderBox.Y,
+                        Bottom = line.BorderBox.Bottom,
+                        Avoid = avoid,
+                        PageName = pageName,
+                        Run = run,
+                        LineIndex = index - from,
+                        LineTotal = total,
+                        Orphans = orphans,
+                        Widows = widows,
+                    };
+
+                    if (index == from)
+                    {
+                        unit.Before = before;
+                    }
+
+                    if (index == to - 1)
+                    {
+                        unit.After = after;
+                    }
+
+                    units.Add(unit);
                 }
 
-                if (index == to - 1)
+                foreach (var child in line.Children)
                 {
-                    unit.After = after;
+                    if (PositionedLayout.IsOutOfFlow(child.Source) &&
+                        child.Source.Style.Position.IsAbsolute &&
+                        NamesPage(child))
+                    {
+                        Collect(child, units, BreakValue.Auto, BreakValue.Auto, avoid, pageName);
+                    }
                 }
-
-                units.Add(unit);
             }
+        }
+
+        private static Boolean HasFlowContent(LayoutBox line)
+        {
+            foreach (var child in line.Children)
+            {
+                if (!PositionedLayout.IsOutOfFlow(child.Source) &&
+                    child.Source.Style.Float == FloatSide.None)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static FlowUnit BoxUnit(
@@ -834,6 +872,41 @@ internal static class PageSequence
                 Avoid = avoid,
                 PageName = pageName,
             };
+
+        private static Boolean NamesPage(LayoutBox box)
+        {
+            if (box.Source.Style.PageName is not null)
+            {
+                return true;
+            }
+
+            foreach (var child in box.Children)
+            {
+                if (NamesPage(child))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Gets whether an absolutely positioned box carries page names into the page sequence. Only a
+        /// box left at its static place does: one placed by its own offsets is a picture on the page it
+        /// was hung from, and the names inside it do not move it or the pages around it.
+        /// </summary>
+        private static Boolean NamesItsPage(LayoutBox box)
+        {
+            var position = box.Source.Style.Position;
+
+            return position.IsAbsolute &&
+                position.Top.IsAuto &&
+                position.Right.IsAuto &&
+                position.Bottom.IsAuto &&
+                position.Left.IsAuto &&
+                NamesPage(box);
+        }
 
         private static Double DeepestBottom(LayoutBox box)
         {
@@ -859,8 +932,8 @@ internal static class PageSequence
             foreach (var child in box.Children)
             {
                 if (child.Kind is LayoutKind.Text or LayoutKind.Inline ||
-                    PositionedLayout.IsOutOfFlow(child.Source) ||
-                    child.Source.Style.Float != FloatSide.None)
+                    child.Source.Style.Float != FloatSide.None ||
+                    (PositionedLayout.IsOutOfFlow(child.Source) && !NamesItsPage(child)))
                 {
                     continue;
                 }
