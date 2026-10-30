@@ -551,7 +551,11 @@ internal sealed record LayoutProfile(
                 style.UnderlineOffset,
                 style.DecorationInset)
             {
-                Speaker = box.Source,
+                // The element, not the box: every run of text the element decorates has to be gathered
+                // back into the one line it asked for, and the boxes a font fallback cuts the text into
+                // are not separate decorators. Two runs trimmed as two boxes leave a gap at every font
+                // change (CSS Text Decoration 4 §2.1, §2.9.1).
+                Speaker = box.Source.Element ?? (Object)box.Source,
                 Position = style.UnderlinePosition,
             }
             : null;
