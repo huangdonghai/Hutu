@@ -1170,9 +1170,12 @@ public sealed class SkiaPaintExecutor
         // In a column a decoration runs beside the text rather than under it, so it becomes a line
         // down the box at the distance from the baseline that the font asked for - and it is split the
         // same way, the lines stood off the baseline behind the turned glyphs and the crossing one in
-        // front of them.
-        var central = !command.Flow.IsSideways && command.Flow.Orientation != TextOrientation.Sideways;
-        var across = (Single)(central ? command.Bounds.Width / 2 : command.Baseline);
+        // front of them. The distances here are taken from the line's own baseline, which is what the
+        // overline and the line-through are stood off, and which the layout settled from all the text
+        // the line carries; the underline of a column is the one line stood off something else - the
+        // font its own decorating box is set in - and DrawDecorations lays that out (CSS Text
+        // Decoration 4 §2.5, §2.9).
+        var across = (Single)command.Baseline;
         var beside = Beside(command, metrics);
 
         DrawDecorations(canvas, paint, command, metrics, across, alongLine: false, beside, through: false);
@@ -1375,10 +1378,10 @@ public sealed class SkiaPaintExecutor
             {
                 // The face gives the line its zero position; text-underline-offset moves it outward
                 // from there, and text-decoration-thickness replaces the face's own width
-                // (CSS Text Decoration 4 §2.4, §2.8). In a column the zero position is the side the
-                // page asked for: the text-under edge for auto, under and left, and the right edge
-                // for right. A row keeps the alphabetic zero position, where left and right are
-                // read as auto (CSS Text Decoration 4 §2.7).
+                // (CSS Text Decoration 4 §2.4, §2.8). Along a row the line stands off the baseline of
+                // the text it runs across; down a column it stands off the font its own box is set in,
+                // as the branch below lays out. A column that says right puts the line on the other
+                // side of the text, where a row reads left and right as auto (§2.7).
                 var extra = decoration.UnderlineOffset ?? 0;
                 var fontOffset = placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset);
 
@@ -1394,27 +1397,37 @@ public sealed class SkiaPaintExecutor
                     fontOffset = Math.Max(fontOffset, Math.Abs(metrics.Descent));
                 }
 
-                var beside = !alongLine && !command.Flow.IsSideways &&
-                    command.Flow.Orientation != TextOrientation.Sideways;
-
-                // The zero position is the under edge of the run's inline box, not the edge of the
-                // line box: a column is as wide as its line-height, and the glyph's own em box is
-                // centred inside it. Measuring from the line box would stand the rule in the leading
-                // rather than beside the text.
-                var emInset = beside ? Math.Max(0, (command.Bounds.Width - command.Font.Size) / 2) : 0;
+                // Along a row the line stands its settled distance from the baseline the whole line
+                // shares, so a run of Latin turned down a column and the run of ideographs beside it
+                // draw one rule: the offset is the decorating box's own, averaged over the text it
+                // reaches on the line, and not the run's, which would step the line wherever the
+                // scripts meet (§2.9). A column's `right` asks for the other side of the text, where a
+                // row reads left and right as auto (§2.7).
                 Double at;
                 Int32 underlineGrow;
 
-                if (beside && decoration.Position is TextUnderlinePosition.Auto
-                    or TextUnderlinePosition.Under or TextUnderlinePosition.Left)
+                if (!alongLine)
                 {
-                    at = command.Bounds.X + emInset - extra;
-                    underlineGrow = -1;
-                }
-                else if (beside && decoration.Position == TextUnderlinePosition.Right)
-                {
-                    at = command.Bounds.Right - emInset + extra;
-                    underlineGrow = 1;
+                    // A column stands the line off the font the decorating box itself is set in: the
+                    // box's inline box is centred across the column, its baseline sits one ascent into
+                    // it, and the line goes one underline below that. Taking it from the box rather than
+                    // from the runs it crosses is what lines a note set smaller than the text beside it
+                    // at the note's own size, while every run of one box still draws one line (§2.9).
+                    var face = _measurer.GetMetrics(decoration.Font);
+                    var under = (command.Bounds.Width / 2) -
+                        ((face.Ascent - face.Descent) / 2) -
+                        Math.Abs(face.UnderlineOffset);
+
+                    if (decoration.Position == TextUnderlinePosition.Right)
+                    {
+                        at = command.Bounds.X + command.Bounds.Width - under + extra;
+                        underlineGrow = 1;
+                    }
+                    else
+                    {
+                        at = command.Bounds.X + under - extra;
+                        underlineGrow = -1;
+                    }
                 }
                 else
                 {

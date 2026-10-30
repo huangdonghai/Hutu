@@ -556,6 +556,7 @@ internal sealed record LayoutProfile(
                 // are not separate decorators. Two runs trimmed as two boxes leave a gap at every font
                 // change (CSS Text Decoration 4 §2.1, §2.9.1).
                 Speaker = box.Source.Element ?? (Object)box.Source,
+                Font = style.GetFont(),
                 Position = style.UnderlinePosition,
             }
             : null;

@@ -209,6 +209,36 @@ public sealed class TextDecorationPropagationTests
         Assert.That(stands["o"], Is.EqualTo(stands["oo"]), "one line for the whole of the column");
     }
 
+    [Test]
+    public async Task OneBoxDrawsOneLineAcrossRunsOfDifferentSizes()
+    {
+        // One decorating box keeps one position for the line it draws down a column, whatever sizes
+        // the text of that column is set in: the position comes from the font the box itself is set
+        // in, not from each run, so a larger ideograph inside it does not step the line (CSS Text
+        // Decoration 4 §2.9). Measured as the page column the ink stands in.
+        var stands = await Columns("漢<span style='font-size:32px'>字</span>漢", "underline", "16px");
+
+        Assert.That(stands["漢"], Is.GreaterThan(0), "the line is drawn");
+        Assert.That(stands["字"], Is.EqualTo(stands["漢"]), "one line for the whole of the column");
+    }
+
+    [Test]
+    public async Task ABoxSetSmallerStandsItsLineAtItsOwnSize()
+    {
+        // The text a note is set in is smaller than the body beside it, and its decorating box is a box
+        // of its own: the line it draws stands one underline below its own baseline, centred in the
+        // column at its own size, so it runs nearer the middle of the column than the body's does
+        // rather than being pulled out to where the body's line stands (CSS Text Decoration 4 §2.9).
+        var stands = await Columns(
+            "<span style='text-decoration:underline'>漢</span>" +
+            "<span style='font-size:8px;text-decoration:underline'>字</span>",
+            "none",
+            "16px");
+
+        Assert.That(stands["漢"], Is.GreaterThan(0), "the body's line is drawn");
+        Assert.That(stands["字"], Is.GreaterThan(stands["漢"]), "the smaller box is lined further in");
+    }
+
     /// <summary>Draws one underlined line and reports the rows each run of its text is lined on.</summary>
     private static async Task<Dictionary<String, Int32[]>> Rows(String content)
     {
@@ -280,10 +310,13 @@ public sealed class TextDecorationPropagationTests
     }
 
     /// <summary>Draws one column of text and reports the page column each run of it is lined on.</summary>
-    private static async Task<Dictionary<String, Double>> Columns(String content, String decoration)
+    private static async Task<Dictionary<String, Double>> Columns(
+        String content,
+        String decoration,
+        String size = "40px")
     {
         using var view = await Loaded(
-            "<div style='writing-mode:vertical-rl;font-family:" + Family + ";font-size:40px;" +
+            "<div style='writing-mode:vertical-rl;font-family:" + Family + ";font-size:" + size + ";" +
             "text-decoration:" + decoration + "'>" + content + "</div>");
 
         var stands = new Dictionary<String, Double>();

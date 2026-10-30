@@ -70,6 +70,15 @@ public sealed record DecorationSource(
     public Object? Speaker { get; init; }
 
     /// <summary>
+    /// Gets the font the decorating box is set in. A column stands the line it draws at a distance
+    /// taken from that font - its inline box and its own underline metric - rather than from the font
+    /// of each run the line happens to cross, so that a note set smaller than the text beside it is
+    /// lined at its own size and a run that changes face does not move the line (§2.9). It is not part
+    /// of what the record answers, for the reason <see cref="Speaker"/> is not.
+    /// </summary>
+    public FontStyle Font { get; init; }
+
+    /// <summary>
     /// Gets where this decorating box stands its underlines (CSS Text Decoration 4 §2.7). Two boxes
     /// that draw the same line but stand it on different sides are different decorators, so the
     /// position is part of the value the record compares.
