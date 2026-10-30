@@ -6,6 +6,8 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
+using Avalonia.Media;
+using Avalonia.Layout;
 using Hutu.Rendering;
 using Hutu.Rendering.Interaction;
 using Hutu.Skia;
@@ -38,6 +40,10 @@ public class HutuView : ScrollViewer
     private readonly SkiaFontLoader _fonts;
     private readonly HutuViewInternal _internalView;
     private readonly HutuSurface _surface;
+
+    /// <summary>The page as the reader sees it: the sheet the document is drawn on, with the edge and
+    /// the shadow that tell it apart from the desk around it.</summary>
+    private readonly Border _frame;
 
     /// <summary>
     /// The addresses this view has been to. It lives here rather than in the renderer because it is
@@ -89,7 +95,8 @@ public class HutuView : ScrollViewer
         // The surface reports a gesture; what a click on a link comes to is decided here, where the
         // scrolling that following an anchor asks for lives.
         _surface = new HutuSurface(_internalView, new SkiaPaintExecutor(_measurer, _images), Follow);
-        Content = _surface;
+        _frame = new Border { Child = _surface };
+        Content = _frame;
 
         // A page is as wide as its content, which is not always as wide as the window: a vertical
         // document's columns march sideways, and a wide table or a picture reaches past the edge
@@ -597,8 +604,73 @@ public class HutuView : ScrollViewer
         }
 
         _internalView.SetMediaType(paged ? DeviceCategory.Printer : DeviceCategory.Screen);
+
+        // A sheet on a desk: the page is a white sheet with an edge and a shadow, centred on a grey
+        // desk, and the whole document is the bare page again.
+        if (paged)
+        {
+            Background = new SolidColorBrush(Color.Parse("#FF808080"));
+            _frame.Background = Brushes.White;
+            _frame.BorderBrush = new SolidColorBrush(Color.Parse("#FF303030"));
+            _frame.BorderThickness = new Thickness(1);
+            _frame.BoxShadow = BoxShadows.Parse("0 3 12 0 #66000000");
+            _frame.Margin = new Thickness(16);
+            _frame.HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Center;
+            _frame.VerticalAlignment = global::Avalonia.Layout.VerticalAlignment.Top;
+        }
+        else
+        {
+            Background = null;
+            _frame.Background = null;
+            _frame.BorderBrush = null;
+            _frame.BorderThickness = default;
+            _frame.BoxShadow = default;
+            _frame.Margin = default;
+            _frame.HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Stretch;
+            _frame.VerticalAlignment = global::Avalonia.Layout.VerticalAlignment.Stretch;
+        }
+
         _surface.ShowPage(paged ? 0 : -1);
         PagesChanged?.Invoke();
+
+        // The sheet opens fitted, which is where a reader wants to start looking at a printed page.
+        if (paged)
+        {
+            FitToWindow();
+        }
+    }
+
+    /// <summary>
+    /// Scales the page so a whole sheet stands in the window, and takes the screen view back to its
+    /// natural size where paging is off.
+    /// </summary>
+    /// <remarks>
+    /// A paged document is laid out at the paper it prints on, so the fit is a display scale of a
+    /// fixed sheet - the document is not laid out again, which is what a zoom in the scrolling view
+    /// does (CSS zoom reflows; fitting a sheet to a window does not).
+    /// </remarks>
+    public void FitToWindow()
+    {
+        if (!IsPaged)
+        {
+            ZoomReset();
+            return;
+        }
+
+        var page = _surface.PageExtent;
+        var viewport = Bounds.Size;
+
+        if (page.Width <= 0 || page.Height <= 0 || viewport.Width <= 0 || viewport.Height <= 0)
+        {
+            return;
+        }
+
+        // The frame stands 16 pixels off the edge it is centred in and one pixel of border on the sheet.
+        var room = new Size(viewport.Width - 34, viewport.Height - 34);
+        var scale = Math.Min(room.Width / page.Width, room.Height / page.Height);
+
+        _surface.Zoom = Math.Clamp(scale, MinZoom, 1);
+        Offset = new Vector(0, 0);
     }
 
     /// <summary>Shows one page, counting from one, kept inside the pages the document came to.</summary>

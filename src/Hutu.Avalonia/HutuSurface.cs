@@ -170,6 +170,11 @@ internal sealed class HutuSurface : Control
     /// <summary>Gets the page being shown, counting from zero, or -1 for the whole document.</summary>
     public Int32 PageIndex => _page;
 
+    /// <summary>Gets the size of the page being shown, unscaled, or an empty size for the whole document.</summary>
+    public Size PageExtent => PagedPage is { } slice
+        ? new Size(slice.Geometry.Width, slice.Geometry.Height)
+        : default;
+
     /// <summary>Shows one page, or -1 for the whole document again.</summary>
     public void ShowPage(Int32 index)
     {

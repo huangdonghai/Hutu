@@ -69,6 +69,49 @@ public sealed class HutuViewPagedTests
             Assert.That(view.IsPaged, Is.False);
             Assert.That(view.CurrentPage, Is.EqualTo(0), "the whole document is shown again");
             Assert.That(view.PageCount, Is.EqualTo(0));
+            Assert.That(view.Background, Is.Null, "the desk is gone with the sheet");
+        });
+    }
+
+    /// <summary>
+    /// A paged document stands on a grey desk as a white sheet with an edge and a shadow, centred,
+    /// and a sheet too big for the window is fitted to it.
+    /// </summary>
+    [AvaloniaTest]
+    public async Task ThePagedViewFramesTheSheetAndFitsItToTheWindow()
+    {
+        var view = new HutuView();
+        var window = new Window { Content = view, Width = 800, Height = 600 };
+
+        window.Show();
+
+        await view.SetHtml(
+            "<style>@page { size: 2000px 3000px; margin: 0 } body { margin: 0 }"
+            + " div { height: 120px; background: red }</style><div></div>");
+
+        view.SetPaged(true);
+
+        Assert.That(view.Content, Is.TypeOf<Border>(), "the sheet is framed");
+
+        var frame = (Border)view.Content!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(frame.BorderThickness.Left, Is.EqualTo(1), "the sheet has an edge");
+            Assert.That(frame.BoxShadow.Count, Is.GreaterThan(0), "and a shadow off it");
+            Assert.That(frame.HorizontalAlignment, Is.EqualTo(global::Avalonia.Layout.HorizontalAlignment.Center),
+                "it stands in the middle of the window");
+            Assert.That(view.Background, Is.Not.Null, "the desk around it is grey");
+        });
+
+        window.CaptureRenderedFrame();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(frame.DesiredSize.Width, Is.LessThanOrEqualTo(view.Bounds.Width),
+                "the sheet is fitted to the window across");
+            Assert.That(frame.DesiredSize.Height, Is.LessThanOrEqualTo(view.Bounds.Height),
+                "and down it");
         });
     }
 

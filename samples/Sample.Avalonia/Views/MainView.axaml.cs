@@ -131,6 +131,9 @@ public partial class MainView : ContentPage
 
     private void ZoomReset_Click(object? sender, RoutedEventArgs e) => MyHutuView.ZoomReset();
 
+    /// <summary>Fits the page to the window in paged mode, and resets the zoom in the scrolling view.</summary>
+    private void Fit_Click(object? sender, RoutedEventArgs e) => MyHutuView.FitToWindow();
+
     /// <summary>Shows the document as printed pages, or as one scrolling page again.</summary>
     private void Paged_Click(object? sender, RoutedEventArgs e)
     {
