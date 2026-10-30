@@ -291,27 +291,10 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         // A vertical width feature such as `vhal` may make the step narrower than the character is
         // along a row, and that narrower step is the one a column takes. A face whose vertical
         // metrics are wider - some fonts give a symbol a box many ems tall - is not asking for a
-        // wider cell: the character still stands in the one em its row advance gives it.
-        var narrowed = vertical.Succeeded && advance > 0 && advance < horizontal;
-
-        if (narrowed)
-        {
-            return advance;
-        }
-
-        // A CJK symbol the font draws narrower than an ideograph - the interpunct of 漢·劉向傳 above
-        // all - still stands in the ideographic cell a column gives its neighbours.
-        if (CjkSymbols.IsSymbol(codePoint))
-        {
-            var reference = Math.Max(MeasureWidth("\u3000", style), style.Size);
-
-            if (reference > horizontal)
-            {
-                return reference;
-            }
-        }
-
-        return horizontal;
+        // wider cell: the character still stands in the width its row advance gives it.
+        return vertical.Succeeded && advance > 0 && advance < horizontal
+            ? advance
+            : horizontal;
     }
 
     /// <summary>

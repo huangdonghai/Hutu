@@ -1171,7 +1171,8 @@ public sealed class SkiaPaintExecutor
         // down the box at the distance from the baseline that the font asked for - and it is split the
         // same way, the lines stood off the baseline behind the turned glyphs and the crossing one in
         // front of them.
-        var across = (Single)command.Baseline;
+        var central = !command.Flow.IsSideways && command.Flow.Orientation != TextOrientation.Sideways;
+        var across = (Single)(central ? command.Bounds.Width / 2 : command.Baseline);
         var beside = Beside(command, metrics);
 
         DrawDecorations(canvas, paint, command, metrics, across, alongLine: false, beside, through: false);
@@ -1379,6 +1380,20 @@ public sealed class SkiaPaintExecutor
                 // for right. A row keeps the alphabetic zero position, where left and right are
                 // read as auto (CSS Text Decoration 4 §2.7).
                 var extra = decoration.UnderlineOffset ?? 0;
+                var fontOffset = placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset);
+
+                // Across a row of CJK text the alphabetic underline often crosses the glyphs - the
+                // bottom stroke of an ideograph sits on the baseline - so the face's own position is
+                // not a position a reader can see. `auto` and `under` may sit at the text-under edge
+                // instead, which is where a CJK reader expects the rule and what the specification's
+                // note about Asian scripts asks a UA to consider (CSS Text Decoration 4 §2.7).
+                if (alongLine &&
+                    decoration.Position is TextUnderlinePosition.Auto or TextUnderlinePosition.Under &&
+                    TextClusters.StandsAcrossTheLine(command.Text))
+                {
+                    fontOffset = Math.Max(fontOffset, Math.Abs(metrics.Descent));
+                }
+
                 var beside = !alongLine && !command.Flow.IsSideways &&
                     command.Flow.Orientation != TextOrientation.Sideways;
 
@@ -1403,8 +1418,7 @@ public sealed class SkiaPaintExecutor
                 }
                 else
                 {
-                    at = text + (sign * (
-                        (placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset)) + extra));
+                    at = text + (sign * (fontOffset + extra));
                     underlineGrow = grow;
                 }
 
@@ -1874,7 +1888,12 @@ public sealed class SkiaPaintExecutor
     /// </remarks>
     private void DrawTurned(SKCanvas canvas, TextCommand command, SKPaint paint)
     {
-        var baselineX = (Single)(command.Bounds.X + command.Baseline);
+        // A column of mixed or upright text stands on its central baseline, not on the alphabetic
+        // one (CSS Writing Modes 4 §4.2). A sideways column is a horizontal typographic mode and
+        // keeps the alphabetic baseline its glyphs were turned from.
+        var central = !command.Flow.IsSideways && command.Flow.Orientation != TextOrientation.Sideways;
+        var axis = central ? command.Bounds.Width / 2 : command.Baseline;
+        var baselineX = (Single)(command.Bounds.X + axis);
         var upward = command.Flow.TurnsCounterClockwise;
         var start = (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y);
 
@@ -1885,7 +1904,7 @@ public sealed class SkiaPaintExecutor
         // does: the baseline stands a half-leading and a descent into the box, so the run is moved that
         // far along the column to put its first character at the start of the box rather than that much
         // above it.
-        canvas.Translate((Single)command.Baseline, 0);
+        canvas.Translate((Single)axis, 0);
         DrawRunBlob(canvas, command, start, paint, command.LetterSpacing, command.WordSpacing);
         canvas.Restore();
     }
