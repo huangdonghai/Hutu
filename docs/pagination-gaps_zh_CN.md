@@ -250,6 +250,35 @@
 
 flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos 的完整页归属、`print-color-adjust`、脚注、`marks/bleed`。这一层与 CSS Break 3 / CSS Page 3 的完整度有关，部分语料没有覆盖，按产品需要排。
 
+## 6.5 验收对照（M1–M4 逐项，2026-10-30）
+
+口径：✅ 已实现并有单测或打印语料佐证；◆ 按用户决定记为后续里程碑（需要"按页重排"层）；— Chrome 未实现或语料口径不接受，故不实现（附实测依据）。
+
+| 项 | 状态 | 佐证 |
+|---|---|---|
+| M1.1 Printer 设备 / `@media print` | ✅ | `HutuRenderDevice.Category`、`EngineReader.UsePrintMedia` |
+| M1.2 `@page` 收集与 cascade（size/margin/area/frame/选择器/命名页/层叠） | ✅ | `PageStyleTable`、`PageStyleTests`（22 个） |
+| M1.3 页面序列（page area 作 ICB、强制断点、左右页/空白页） | ✅ | `PageSequenceTests`；`css-page`、`CSS2/pagination` 打印对全绿 |
+| M1.4 逐页绘制（页框、裁剪、fixed 每页、abspos 页归属） | ✅ | `PagePaintTests`（固定盒每页、页号边距）；abspos 页名单测 |
+| M1.5 打印 runner + `-print*` 语料 | ✅ | `ReftestRunner.DrawPages/ComparePages`；154/164 |
+| M2.1 递归分片、强制断点沿祖先传播、块级 avoid | ✅ | 嵌套块/行/表格行/行组单测；CSS2 avoid 组打印对全绿 |
+| M2.2 断点处 margin 截断 | ✅ | 强制断点取盒边框顶，页首不留 margin |
+| M2.3 表格分片、caption 只在首片、row/rowgroup/table avoid | ✅ | 表格组打印对全绿；caption 单测 |
+| M2.3 重复 `thead`/`tfoot` | ◆ | 需按页重排 |
+| M2.4 分片装饰（`box-decoration-break` 等） | ◆ | `monolithic-overflow-031/032` |
+| M3.1 `page` 属性传播（block/flex/grid/table/inline-block/正交/abspos） | ✅ | 命名页、正交流单测；`page-name*` 打印对全绿 |
+| M3.2 命名页变化强制分页、`:first/:left/:right/:blank`、`page-orientation` | ✅ | `PageStyleTests`/`PageSequenceTests`（含空白页） |
+| M3.3 页边盒 16 个、`counter(page/pages)` | ✅ | `PageMarginBoxes`；页号绘制、空白页计数测试 |
+| M3.3 `string-set`/`running()` | — | Chrome 未实现，无对照 |
+| M3.4 `@page` 的 `@layer` 顺序 | ✅ | 后层 > 前层、无层 > 层 的层叠单测 |
+| M4 flex/grid 分片 | ✅ | flex 行/列、grid 行单测；flex/grid 打印对全绿 |
+| M4 浮动（整页/clear） | ✅ | 浮动与 `<br clear>` 打印对全绿 |
+| M4 页浮动（`float: top` 等） | — | Chrome 未实现 |
+| M4 竖排分页 | ✅ | `PageAxis`；竖排切页与逐页绘制测试 |
+| M4 fixed/abspos 页归属 | ✅ | 固定盒每页绘制测试 |
+| M4 `print-color-adjust` | — | 实测：语料的 aqua 以背景画在 test、以边框画在 ref，按 `economy` 丢背景会破坏 4 对 float-clear（已实测回滚）；引擎按 `exact` 绘制，与语料口径一致 |
+| M4 脚注、`marks/bleed` | — | Chrome 未实现，无对照 |
+
 ## 7. 关键代码位置索引
 
 | 主题 | 位置 |
