@@ -773,7 +773,10 @@ internal static class PageSequence
                 source.Style.PageName is { } own
                     ? own
                     : pageName;
-            var ownBefore = PageValue(source.Style.Breaks.Before);
+            // A fieldset's legend stands in the border rather than in the flow, so a break asked for
+            // before it is asked for before nothing and is dropped; one asked for after it still
+            // separates it from the content that follows (HTML rendering §15.3.12).
+            var ownBefore = box.Source.IsLegend ? BreakValue.Auto : PageValue(source.Style.Breaks.Before);
             var ownAfter = PageValue(source.Style.Breaks.After);
 
             if (box.Kind == LayoutKind.Table)
