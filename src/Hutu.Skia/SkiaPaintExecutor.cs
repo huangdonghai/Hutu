@@ -165,12 +165,16 @@ public sealed class SkiaPaintExecutor
 
         canvas.Save();
         canvas.ClipRect(pageRect);
+
+        // The room a repeated header takes at the top of the page is room the slice does not have:
+        // its content stands below that much of the page area.
+        var lead = (Single)page.Lead;
         canvas.ClipRect(new SKRect(
             (Single)geometry.Margins.Left,
-            (Single)geometry.Margins.Top,
+            (Single)(geometry.Margins.Top + lead),
             (Single)(geometry.Margins.Left + page.Content.Width),
             (Single)(geometry.Margins.Top + page.Content.Height)));
-        canvas.Translate((Single)page.OriginX, (Single)page.OriginY);
+        canvas.Translate((Single)page.OriginX, (Single)page.OriginY + lead);
 
         var area = new Rect(page.Content.X, page.Content.Y, page.Content.Width, page.Content.Height);
 
@@ -182,6 +186,30 @@ public sealed class SkiaPaintExecutor
         }
 
         canvas.Restore();
+
+        // A table's header stands again at the top of the fragment that continues it: the band it
+        // takes in the document is drawn where the page put it (CSS Break 3 §5.2).
+        if (page.Repeats is { Count: > 0 } repeats)
+        {
+            foreach (var repeat in repeats)
+            {
+                canvas.Save();
+                canvas.ClipRect(pageRect);
+                canvas.ClipRect(ToRect(repeat.Place));
+                canvas.Translate(
+                    (Single)(repeat.Place.X - repeat.Source.X),
+                    (Single)(repeat.Place.Y - repeat.Source.Y));
+
+                Draw(canvas, list.Commands, repeat.Source, default);
+
+                foreach (var layer in list.Sticky)
+                {
+                    Draw(canvas, layer.Commands, repeat.Source, default);
+                }
+
+                canvas.Restore();
+            }
+        }
 
         // A margin box belongs to the page rather than to the document: its text is a number the page
         // knows about itself, and stands in the margin around the page area (CSS Page 3 §5.3).

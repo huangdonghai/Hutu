@@ -20,13 +20,25 @@ namespace Hutu.Rendering;
 /// <param name="PageName">The name the content at the head of the page states, or null for the unnamed page.</param>
 /// <param name="Blank">Whether the page holds no content: one inserted so a left or right page begins on
 /// the side it asks for (CSS Page 3 §3.2).</param>
+/// <param name="Lead">
+/// The distance the slice's content is pushed from the page area's start because something else
+/// stands there - a table's repeated header, which a fragment below the first one carries at its top
+/// (CSS Break 3 §5.2). The room it takes is left out of the page's content extent, so the slice and
+/// the lead together fill the page area.
+/// </param>
+/// <param name="Repeats">
+/// The pieces of the document standing on this page besides its own slice: a table's header drawn
+/// again at the top of every fragment that continues the table.
+/// </param>
 public readonly record struct PageSlice(
     Int32 Number,
     PageGeometry Geometry,
     Rect Content,
     String? PageName = null,
     Boolean Blank = false,
-    IReadOnlyList<PageMarginBand>? MarginBoxes = null)
+    IReadOnlyList<PageMarginBand>? MarginBoxes = null,
+    Double Lead = 0,
+    IReadOnlyList<PageRepeat>? Repeats = null)
 {
     /// <summary>Gets where the document's own origin lands on the page, along the inline axis.</summary>
     public Double OriginX => Geometry.Margins.Left - Content.X;
@@ -34,6 +46,13 @@ public readonly record struct PageSlice(
     /// <summary>Gets where the slice's top lands on the page, below the top margin.</summary>
     public Double OriginY => Geometry.Margins.Top - Content.Y;
 }
+
+/// <summary>
+/// A piece of the document drawn on a page besides its own slice: the rectangle it takes in the
+/// document (<paramref name="Source"/>) and the rectangle it is drawn in on the page
+/// (<paramref name="Place"/>).
+/// </summary>
+public readonly record struct PageRepeat(Rect Source, Rect Place);
 
 /// <summary>
 /// The pages a document comes to when it is printed: the page box every page shares (for now) and the

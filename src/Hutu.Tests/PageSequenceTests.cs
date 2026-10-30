@@ -568,6 +568,32 @@ public sealed class PageSequenceTests
         }
     }
 
+    [Test]
+    public async Task ATableHeaderStandsAgainAtTheTopOfEveryFragmentBelowTheFirst()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, table, thead, tbody, tr, td, th { margin: 0 }" +
+            " table { width: 100px; border-collapse: collapse } th, td { height: 40px; padding: 0; border: 0 }" +
+            " thead th { height: 20px }</style>" +
+            "<table><thead><tr><th></th></tr></thead><tbody>" +
+            "<tr><td></td></tr><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr>" +
+            "</tbody></table>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(3), "a header of twenty and five rows of forty in a hundred-pixel page");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Lead, Is.EqualTo(0).Within(0.01), "the first fragment carries the header in its flow");
+            Assert.That(pages.Pages[0].Repeats, Is.Null);
+            Assert.That(pages.Pages[1].Lead, Is.EqualTo(20).Within(0.01), "the fragment below it makes room for the header");
+            Assert.That(pages.Pages[1].Repeats![0].Place, Is.EqualTo(new Rect(0, 0, 100, 20)), "and draws the header in that room");
+            Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(80).Within(0.01));
+            Assert.That(pages.Pages[2].Lead, Is.EqualTo(20).Within(0.01));
+            Assert.That(pages.Pages[2].Content.Height, Is.EqualTo(40).Within(0.01));
+        });
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

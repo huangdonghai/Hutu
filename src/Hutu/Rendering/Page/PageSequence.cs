@@ -167,7 +167,13 @@ internal static class PageSequence
                 break;
             }
 
-            var contentExtent = Math.Max(1, axis.PageExtent(geometry));
+            // A fragment of a table below the first one carries the table's header again at its
+            // top, and the room it takes is room the fragment's own content does not have
+            // (CSS Break 3 §5.2). A vertical document's tables are left whole for now.
+            var header = HeaderAt(collector.Headers, axis, start, geometry);
+            var lead = header is { } band ? axis.End(band) - axis.Start(band) : 0.0;
+
+            var contentExtent = Math.Max(1, axis.PageExtent(geometry) - lead);
             var limit = Math.Min(documentExtent, start + contentExtent);
             var cut = Cut(units, start, limit, documentExtent, out var forcedBreak, out var resume);
             tail = forcedBreak is BreakValue.Page or BreakValue.Left or BreakValue.Right &&
@@ -196,13 +202,60 @@ internal static class PageSequence
             }
 
             first ??= geometry;
+
+            var repeats = header is { } repeated
+                ? new[]
+                {
+                    new PageRepeat(
+                        repeated,
+                        new Rect(
+                            geometry.Margins.Left + repeated.X,
+                            geometry.Margins.Top,
+                            repeated.Width,
+                            repeated.Height)),
+                }
+                : null;
+
             pages.Add(new PageSlice(
-                number++, geometry, axis.Band(start, cut, geometry), name));
+                number++, geometry, axis.Band(start, cut, geometry), name, Repeats: repeats, Lead: lead));
 
             start = Math.Min(documentExtent, Math.Max(cut, resume));
         }
 
         return new PagedLayout(first ?? styles.DefaultPage(inheritedMargins), WithMarginBoxes(pages, styles), documentExtent);
+    }
+
+    /// <summary>
+    /// Gets the header band a page beginning at <paramref name="start"/> repeats, or null where the
+    /// page begins no fragment that needs one: the first fragment of a table carries its header in
+    /// the flow, and a page outside the table carries none at all.
+    /// </summary>
+    private static Rect? HeaderAt(
+        IReadOnlyList<(Rect Table, Rect Header, Double Rows, Double LastRow)> headers,
+        PageAxis axis,
+        Double start,
+        PageGeometry page)
+    {
+        if (axis.IsVertical)
+        {
+            return null;
+        }
+
+        Rect? found = null;
+
+        foreach (var (table, header, rows, lastRow) in headers)
+        {
+            if (start > rows + 0.001 &&
+                start <= lastRow + 0.001 &&
+                start < table.Bottom - 0.001 &&
+                header.Height > 0.001 &&
+                header.Height < page.ContentHeight - 1)
+            {
+                found = header;
+            }
+        }
+
+        return found;
     }
 
     /// <summary>
@@ -536,6 +589,14 @@ internal static class PageSequence
 
         /// <summary>Gets the spans the floats take, which no page that has room for one may cut through.</summary>
         public List<(Double Top, Double Bottom, Boolean Avoid)> Floats { get; } = new();
+
+        /// <summary>
+        /// Gets the tables that carry a header, with the band it takes, where the table's own rows
+        /// begin, and where the last of them begins. A fragment carries the header again at its top
+        /// when the table's rows have begun on an earlier page and a row of them begins on this one
+        /// (CSS Break 3 §5.2).
+        /// </summary>
+        public List<(Rect Table, Rect Header, Double Rows, Double LastRow)> Headers { get; } = new();
 
         public void Collect(
             LayoutBox box,
@@ -1048,6 +1109,9 @@ internal static class PageSequence
 
             var first = units.Count;
             var flow = new List<LayoutBox>(table.Children.Count);
+            Rect? header = null;
+            var rows = Double.MaxValue;
+            var lastRow = Double.MinValue;
 
             foreach (var child in table.Children)
             {
@@ -1058,6 +1122,41 @@ internal static class PageSequence
                 }
 
                 flow.Add(child);
+
+                // The header is the row group the page called one; the rest are the rows a page
+                // cuts between, and where they begin says whether a page shows rows of its own: a
+                // header repeated over the first fragment would stand where it already stands, and
+                // one repeated over a fragment holding no row but the last one's edge would be
+                // inventing content the page does not carry.
+                if (child.Kind == LayoutKind.TableRowGroup &&
+                    String.Equals(child.Source.Element?.LocalName, "thead", StringComparison.OrdinalIgnoreCase))
+                {
+                    header = header is { } band ? Union(band, child.BorderBox) : child.BorderBox;
+                }
+                else if (child.Kind is LayoutKind.TableRowGroup or LayoutKind.TableRow)
+                {
+                    rows = Math.Min(rows, child.BorderBox.Y);
+
+                    if (child.Kind == LayoutKind.TableRow)
+                    {
+                        lastRow = Math.Max(lastRow, child.BorderBox.Y);
+                    }
+                    else
+                    {
+                        foreach (var row in child.Children)
+                        {
+                            if (row.Kind == LayoutKind.TableRow)
+                            {
+                                lastRow = Math.Max(lastRow, row.BorderBox.Y);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (header is { } headerBand && rows < Double.MaxValue && lastRow > Double.MinValue)
+            {
+                Headers.Add((table.BorderBox, headerBand, rows, lastRow));
             }
 
             for (var index = 0; index < flow.Count; index++)
@@ -1232,6 +1331,12 @@ internal static class PageSequence
                 }
             }
         }
+
+        private static Rect Union(Rect one, Rect other) => new(
+            Math.Min(one.X, other.X),
+            Math.Min(one.Y, other.Y),
+            Math.Max(one.Right, other.Right) - Math.Min(one.X, other.X),
+            Math.Max(one.Bottom, other.Bottom) - Math.Min(one.Y, other.Y));
 
         private static Boolean HasFlowContent(LayoutBox line)
         {

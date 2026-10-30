@@ -174,6 +174,39 @@ public sealed class PagePaintTests
         return count;
     }
 
+    [Test]
+    public async Task AContinuedTableDrawsItsHeaderAtTheTopOfThePage()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(800, 600);
+        view.SetMediaType(DeviceCategory.Printer);
+        await view.SetHtml(
+            "<style>@page { size: 100px; margin: 0 } html, body, table, thead, tbody, tr, th, td { margin: 0 }" +
+            " table { width: 100px; border-collapse: collapse }" +
+            " th, td { padding: 0; border: 0 } thead th { height: 20px; background: red }" +
+            " tbody td { height: 40px; background: yellow }</style>" +
+            "<table><thead><tr><th></th></tr></thead><tbody>" +
+            "<tr><td></td></tr><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr>" +
+            "</tbody></table>");
+
+        var pages = view.Pages!;
+        var executor = new SkiaPaintExecutor(measurer);
+
+        Assert.That(pages.Count, Is.EqualTo(3));
+
+        using var first = Draw(executor, view, pages.Pages[0]);
+        using var second = Draw(executor, view, pages.Pages[1]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.GetPixel(50, 10), Is.EqualTo(SKColors.Red), "the first page carries the header in its flow");
+            Assert.That(first.GetPixel(50, 30), Is.EqualTo(SKColors.Yellow), "and its rows begin under it");
+            Assert.That(second.GetPixel(50, 10), Is.EqualTo(SKColors.Red), "the page that continues the table carries the header again");
+            Assert.That(second.GetPixel(50, 60), Is.EqualTo(SKColors.Yellow), "with its rows standing below the room it takes");
+        });
+    }
+
     /// <summary>Gets whether two pages are drawn with the very same pixels.</summary>
     private static Boolean Same(SKBitmap one, SKBitmap other)
     {
