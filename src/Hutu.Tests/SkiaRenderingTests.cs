@@ -1368,6 +1368,40 @@ public sealed class SkiaRenderingTests
     /// <summary>The size the column placement tests set their character at.</summary>
     private const Single ColumnFontSize = 48;
 
+    [Test]
+    public async Task ATurnedCharacterStandsAboutTheMiddleOfItsColumn()
+    {
+        // A character the column turns is measured out from its baseline, which stands its ascent
+        // towards one edge of the column and its descent towards the other. The column centres that
+        // em box, so the middle dot - whose ink sits in the middle of the box - stands as far from one
+        // edge of its cell as from the other. The dot is set smaller than the line it stands on, which
+        // is what tells the column's middle apart from the baseline the taller text of the line gives
+        // it: a line box wider than the run's own font leaves the two answers apart
+        // (CSS Writing Modes 4 §4.2).
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(200, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:100px;" +
+            "margin:0;font-size:48px;line-height:1.5'>漢<span style='font-size:24px'>·</span></div></body></html>");
+
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+        var cell = TextsIn(view.Layout!.Root).Single(text => text.Text == "·").BorderBox;
+        var inked = Enumerable.Range(0, bitmap.Width)
+            .Where(x => Enumerable.Range((Int32)cell.Y, (Int32)(cell.Bottom - cell.Y))
+                .Any(y => y < bitmap.Height && bitmap.GetPixel(x, y).Red < 200))
+            .ToArray();
+
+        Assert.That(inked, Is.Not.Empty, "the dot is drawn");
+
+        var middle = (inked.Min() + inked.Max() + 1) / 2.0;
+        Assert.That(
+            middle,
+            Is.EqualTo((cell.X + cell.Right) / 2).Within(1.5),
+            "the turned glyph is centred across its column");
+    }
+
     /// <summary>What one character set alone in a column painted: the mark it left, and the cell it was given.</summary>
     private sealed record Rendered(Byte[] Pixels, SKRect Cell, SKRect Ink);
 

@@ -1170,12 +1170,11 @@ public sealed class SkiaPaintExecutor
         // In a column a decoration runs beside the text rather than under it, so it becomes a line
         // down the box at the distance from the baseline that the font asked for - and it is split the
         // same way, the lines stood off the baseline behind the turned glyphs and the crossing one in
-        // front of them. The distances here are taken from the line's own baseline, which is what the
-        // overline and the line-through are stood off, and which the layout settled from all the text
-        // the line carries; the underline of a column is the one line stood off something else - the
-        // font its own decorating box is set in - and DrawDecorations lays that out (CSS Text
-        // Decoration 4 §2.5, §2.9).
-        var across = (Single)command.Baseline;
+        // front of them. The distances here are taken from the baseline the column's glyphs are drawn
+        // about, which is what the overline and the line-through are stood off; the underline of a
+        // column is the one line stood off something else - the font its own decorating box is set in -
+        // and DrawDecorations lays that out (CSS Text Decoration 4 §2.5, §2.9).
+        var across = (Single)Axis(command, metrics);
         var beside = Beside(command, metrics);
 
         DrawDecorations(canvas, paint, command, metrics, across, alongLine: false, beside, through: false);
@@ -1221,7 +1220,7 @@ public sealed class SkiaPaintExecutor
             return;
         }
 
-        DrawTurned(canvas, command, paint);
+        DrawTurned(canvas, command, metrics, paint);
     }
 
     /// <summary>
@@ -1531,7 +1530,7 @@ public sealed class SkiaPaintExecutor
         }
         else
         {
-            DrawTurned(canvas, command, stroke);
+            DrawTurned(canvas, command, metrics, stroke);
         }
     }
 
@@ -1788,7 +1787,7 @@ public sealed class SkiaPaintExecutor
                 (Single)command.Bounds.Y);
         }
 
-        var baselineX = (Single)(command.Bounds.X + command.Baseline);
+        var baselineX = (Single)(command.Bounds.X + Axis(command, metrics));
         var upward = command.Flow.TurnsCounterClockwise;
         var turn = SKMatrix.CreateRotationDegrees(
             upward ? -90 : 90,
@@ -1889,6 +1888,29 @@ public sealed class SkiaPaintExecutor
         alongLine ? new SKPoint(along, across) : new SKPoint(across, along);
 
     /// <summary>
+    /// Gets where a column's glyphs stand on the axis across the column: the middle of the box for text
+    /// kept upright, and for text turned down the column the place that puts its own em box on that same
+    /// middle. A turned run is measured out from its baseline, which stands with its ascent towards one
+    /// edge of the column and its descent towards the other, so the middle of that box lies half the
+    /// difference of the two beyond the baseline (CSS Writing Modes 4 §4.2).
+    /// </summary>
+    private static Double Axis(TextCommand command, FontMetrics metrics)
+    {
+        var middle = command.Bounds.Width / 2;
+
+        if (!command.Flow.IsSideways && command.Flow.Orientation != TextOrientation.Sideways)
+        {
+            return middle;
+        }
+
+        // The turn decides which edge the ascent reaches towards, so the baseline stands half the
+        // box's difference on that side of the middle rather than always on the same one.
+        var half = (metrics.Ascent - metrics.Descent) / 2;
+
+        return command.Flow.TurnsCounterClockwise ? middle + half : middle - half;
+    }
+
+    /// <summary>
     /// Draws a run whose glyphs are all turned the same quarter turn, which is what Latin text and
     /// digits become in a column. The baseline runs down the box, so the turn is taken about the point
     /// the run starts at and the glyphs are then drawn exactly as they would be along a line.
@@ -1896,16 +1918,17 @@ public sealed class SkiaPaintExecutor
     /// <remarks>
     /// A turn to the right reads downward and puts the ascent to the right of the baseline, which is
     /// where a column's baseline sits in the right-to-left modes; the modes that read upward turn the
-    /// other way and put it on the left, and the baseline the layout handed over is already on that
-    /// side of the box.
+    /// other way and put it on the left, which is the way <see cref="Axis"/> counts the turn when it
+    /// places the baseline on that side of the column's middle.
     /// </remarks>
-    private void DrawTurned(SKCanvas canvas, TextCommand command, SKPaint paint)
+    private void DrawTurned(SKCanvas canvas, TextCommand command, FontMetrics metrics, SKPaint paint)
     {
-        // A column of mixed or upright text stands on its central baseline, not on the alphabetic
-        // one (CSS Writing Modes 4 §4.2). A sideways column is a horizontal typographic mode and
-        // keeps the alphabetic baseline its glyphs were turned from.
-        var central = !command.Flow.IsSideways && command.Flow.Orientation != TextOrientation.Sideways;
-        var axis = central ? command.Bounds.Width / 2 : command.Baseline;
+        // A column of mixed or upright text stands on its central baseline, and a sideways run stands
+        // there too: its em box is centred across the column like the upright glyphs beside it, which
+        // puts its own baseline half an em-box's difference in from that middle (CSS Writing Modes 4
+        // §4.2). Standing it on the alphabetic baseline instead leaves a run of Latin - or a lone
+        // middle dot - off to one side of the column it sits in.
+        var axis = Axis(command, metrics);
         var baselineX = (Single)(command.Bounds.X + axis);
         var upward = command.Flow.TurnsCounterClockwise;
         var start = (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y);
