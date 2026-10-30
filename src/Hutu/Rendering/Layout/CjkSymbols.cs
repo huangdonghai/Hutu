@@ -8,22 +8,21 @@ namespace Hutu.Rendering.Layout;
 /// </summary>
 /// <remarks>
 /// UAX#50 marks many of these <c>R</c> because they are not ideographs, but a column sets them as
-/// full-width symbols between the ideographs: the interpunct of a book title - 漢·劉向傳 - the dashes
-/// and ellipses with a presentation form, the currency and mathematical signs, the enclosed numbers,
-/// the box and geometric shapes, and the symbols and dingbats the scripts draw upright.
+/// full-width symbols between the ideographs: the dashes and ellipses with a presentation form, the
+/// currency and mathematical signs, the enclosed numbers, the box and geometric shapes, and the
+/// symbols and dingbats the scripts draw upright.
 /// </remarks>
 public static class CjkSymbols
 {
     /// <summary>Gets whether the code point is one of those symbols.</summary>
     public static Boolean IsSymbol(Int32 codePoint) =>
-        codePoint is 0x00A7 or 0x00A9 or 0x00AE or 0x00B1 or 0x00B7 or 0x00D7 or 0x00F7 or
+        codePoint is 0x00A7 or 0x00A9 or 0x00AE or 0x00B1 or 0x00D7 or 0x00F7 or
             >= 0x00BC and <= 0x00BE or
             >= 0x2013 and <= 0x2014 or
             0x2016 or
-            >= 0x2020 and <= 0x2022 or
+            >= 0x2020 and <= 0x2021 or
             0x2025 or
             0x2026 or
-            0x2027 or
             >= 0x2030 and <= 0x2031 or
             0x203B or
             0x203C or
