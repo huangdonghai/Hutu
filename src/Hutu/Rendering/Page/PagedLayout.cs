@@ -18,7 +18,14 @@ namespace Hutu.Rendering;
 /// <param name="Geometry">The page box the slice is shown in.</param>
 /// <param name="Content">The slice's rectangle in document coordinates, whose height is the room the page uses.</param>
 /// <param name="PageName">The name the content at the head of the page states, or null for the unnamed page.</param>
-public readonly record struct PageSlice(Int32 Number, PageGeometry Geometry, Rect Content, String? PageName = null)
+/// <param name="Blank">Whether the page holds no content: one inserted so a left or right page begins on
+/// the side it asks for (CSS Page 3 §3.2).</param>
+public readonly record struct PageSlice(
+    Int32 Number,
+    PageGeometry Geometry,
+    Rect Content,
+    String? PageName = null,
+    Boolean Blank = false)
 {
     /// <summary>Gets where the document's own origin lands on the page, along the inline axis.</summary>
     public Double OriginX => Geometry.Margins.Left - Content.X;

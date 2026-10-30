@@ -323,6 +323,25 @@ public sealed class PageSequenceTests
         });
     }
 
+    [Test]
+    public async Task ALeftBreakPrintsABlankPageWhenTheSideIsWrong()
+    {
+        using var view = await Print(
+            "<style>@page { size: 200px; margin: 0 } @page :left { margin-top: 7px }" +
+            " body, div { margin: 0 } div { height: 100px }</style>" +
+            "<div></div><div></div><div></div><div style='break-before: left'></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(4), "the third page is blank so the fourth is a left one");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[2].Blank, Is.True);
+            Assert.That(pages.Pages[3].Blank, Is.False);
+            Assert.That(pages.Pages[3].Geometry.Margins.Top, Is.EqualTo(7).Within(0.01), "the content page is a left page");
+        });
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

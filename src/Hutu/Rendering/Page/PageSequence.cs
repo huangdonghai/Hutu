@@ -71,11 +71,28 @@ internal static class PageSequence
         var number = 1;
         PageGeometry? first = null;
         var tail = false;
+        BreakValue? pendingSide = null;
 
         while (start < documentHeight - 0.001 || tail)
         {
             var name = NameAt(units, start);
-            var geometry = styles.Page(name, number, number % 2 == 0, false, inheritedMargins);
+            var isLeft = number % 2 == 0;
+
+            // A forced left or right break names the side the next page must stand on. When the page
+            // the flow reached stands on the other side, a blank page is printed to put it right
+            // (CSS Page 3 §3.2, and the `:blank` page a reader styles).
+            if (pendingSide is { } side &&
+                (side == BreakValue.Left) != isLeft)
+            {
+                var blank = styles.Page(name, number, isLeft, blank: true, inheritedMargins);
+                pages.Add(new PageSlice(
+                    number++, blank, new Rect(0, start, blank.ContentWidth, 0), name, Blank: true));
+                isLeft = !isLeft;
+            }
+
+            pendingSide = null;
+
+            var geometry = styles.Page(name, number, isLeft, blank: false, inheritedMargins);
 
             // A forced break may leave nothing behind it but a zero-height box. That box is still on
             // the next page, and the page it is on is printed even though it has no height.
@@ -90,7 +107,9 @@ internal static class PageSequence
             var contentHeight = Math.Max(1, geometry.ContentHeight);
             var limit = Math.Min(documentHeight, start + contentHeight);
             var cut = Cut(units, start, limit, documentHeight, out var forcedBreak);
-            tail = forcedBreak && HasUnitFrom(units, cut);
+            tail = forcedBreak is BreakValue.Page or BreakValue.Left or BreakValue.Right &&
+                HasUnitFrom(units, cut);
+            pendingSide = forcedBreak is BreakValue.Left or BreakValue.Right ? forcedBreak : null;
 
             if (cut <= start + 0.001)
             {
@@ -168,9 +187,10 @@ internal static class PageSequence
     /// none of those the page's own limit - a monolithic box taller than the page has to be cut
     /// somewhere, or the flow would never advance.
     /// </summary>
-    private static Double Cut(List<FlowUnit> units, Double start, Double limit, Double end, out Boolean forcedBreak)
+    private static Double Cut(
+        List<FlowUnit> units, Double start, Double limit, Double end, out BreakValue forcedBreak)
     {
-        forcedBreak = false;
+        forcedBreak = BreakValue.Auto;
         Double? forced = null;
         Double? allowed = null;
         Double? avoided = null;
@@ -186,11 +206,12 @@ internal static class PageSequence
 
                 if (y > start + 0.001 && y <= limit + 0.001)
                 {
-                    var kind = Boundary(units[index - 1], unit, linesOnPage);
+                    var kind = Boundary(units[index - 1], unit, linesOnPage, out var value);
 
                     if (kind == BreakClass.Forced)
                     {
                         forced = y;
+                        forcedBreak = value;
                         break;
                     }
 
@@ -213,7 +234,6 @@ internal static class PageSequence
 
         if (forced is { } forcedAt)
         {
-            forcedBreak = true;
             return Math.Min(forcedAt, end);
         }
 
@@ -237,12 +257,19 @@ internal static class PageSequence
         return Math.Min(limit, end);
     }
 
-    private static BreakClass Boundary(FlowUnit previous, FlowUnit next, Dictionary<Int32, Int32> linesOnPage)
+    private static BreakClass Boundary(
+        FlowUnit previous,
+        FlowUnit next,
+        Dictionary<Int32, Int32> linesOnPage,
+        out BreakValue forcedValue)
     {
+        forcedValue = BreakValue.Auto;
+
         if (!String.Equals(previous.EndNameSet ? previous.EndName : previous.PageName,
                 next.StartNameSet ? next.StartName : next.PageName,
                 StringComparison.Ordinal))
         {
+            forcedValue = BreakValue.Page;
             return BreakClass.Forced;
         }
 
@@ -250,6 +277,7 @@ internal static class PageSequence
 
         if (combined is BreakValue.Page or BreakValue.Left or BreakValue.Right)
         {
+            forcedValue = combined;
             return BreakClass.Forced;
         }
 
