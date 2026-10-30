@@ -331,4 +331,23 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 ---
 
+## 7. 目标验收清单（逐项 → 证据 → 状态）
+
+目标：按本报告顺序推进分页 M1–M4，逐切片实现、测试、全量门禁并提交。
+
+| 要求 | 证据 | 状态 |
+|---|---|---|
+| M1 打印媒体 / `@page` / 页面序列 / 逐页绘制 / runner | §6.5 各行 + `PageStyleTests`(22)/`PageSequenceTests`/`PagePaintTests`；打印 runner 输出 `build/reftest-print-score.md` | 完成 |
+| M2 递归分片 / 表格分片 / thead-tfoot / avoid / 超高块填页 / 裁剪不延长文档 | 对应单测 + `CSS2/pagination`、`css-page` 打印对；`0fad0a00`、`c334961d`、`21b1a580` | 完成（M2.4 除外） |
+| M3 命名页 / 选择器 / 页码 / 页边盒 / `@layer` | `PageStyleTests` 22 个；命名页与页边盒打印对 | 完成 |
+| M4 flex/grid/浮动/竖排/fixed-abspos | flex/grid 行、竖排切页、固定盒每页单测；对应打印对全绿 | 完成 |
+| 全量门禁（每片） | 单元 2162 全过；打印 186/198；屏幕 2114（0 新增；2 项 5 秒超时抖动，单独跑通过） | 持续满足 |
+| **M2.4 `box-decoration-break: clone`** | `031` 已绿；`032` 的 ref 行要求分片边界不落页边（巨型分片） | **未完成**：需布局期分片器 + 页面分段模型 |
+| （超范围）fieldset legend | 24 对 21 绿；剩 3 个 grid 对，落点见 §6 注记 | 未完成（模块级） |
+| （超范围）多栏平衡 | `column-balancing-paged-001`：平衡不切 monolithic 子盒 + `ColumnsOf` 两处回退 | 未完成（模块级） |
+
+未完成项的共同前提是**布局期分片/平衡能力**，已超出"一次长布局 + 事后切片"的现有模型；按用户先前裁定属后续里程碑。
+
+---
+
 *本报告只做调查；未修改引擎代码。所有代码位置均以 HEAD `7357d65a` 为准。*
