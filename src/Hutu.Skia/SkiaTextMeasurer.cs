@@ -286,10 +286,15 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         var font = GetFont(style, codePoint);
         var vertical = _shaper.ShapeVertical(font, text, style.Features);
         var advance = Math.Abs(vertical.Advance);
+        var horizontal = MeasureWidth(text, style);
 
-        return vertical.Succeeded && advance > 0
+        // A vertical width feature such as `vhal` may make the step narrower than the character is
+        // along a row, and that narrower step is the one a column takes. A face whose vertical
+        // metrics are wider - some fonts give a symbol a box many ems tall - is not asking for a
+        // wider cell: the character still stands in the one em its row advance gives it.
+        return vertical.Succeeded && advance > 0 && advance < horizontal
             ? advance
-            : MeasureWidth(text, style);
+            : horizontal;
     }
 
     /// <summary>
