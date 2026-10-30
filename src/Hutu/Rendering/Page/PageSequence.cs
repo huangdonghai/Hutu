@@ -188,6 +188,13 @@ internal static class PageSequence
     /// none of those the page's own limit - a monolithic box taller than the page has to be cut
     /// somewhere, or the flow would never advance.
     /// </summary>
+    /// <remarks>
+    /// A box that asks not to be broken inside and cannot fit the room the page has left begins the
+    /// next page instead (CSS Break 3 §4.4): the page ends where the box starts, however much room was
+    /// left, and the box is cut only when it cannot fit a page of its own either. That decision is
+    /// taken before the breaks the flow allows, because every one of those after it falls inside the
+    /// box and would split the very thing the page was holding whole.
+    /// </remarks>
     private static Double Cut(
         List<FlowUnit> units, Double start, Double limit, Double end,
         out BreakValue forcedBreak, out Double resume)
@@ -195,6 +202,7 @@ internal static class PageSequence
         forcedBreak = BreakValue.Auto;
         resume = start;
         (Double Y, Double Resume)? forced = null;
+        (Double Y, Double Resume)? pushed = null;
         (Double Y, Double Resume)? allowed = null;
         (Double Y, Double Resume)? avoided = null;
         var linesOnPage = new Dictionary<Int32, Int32>();
@@ -228,6 +236,14 @@ internal static class PageSequence
                         break;
                     }
 
+                    // The unit begins an avoid-inside box whose far edge lies past the page: the box
+                    // does not fit the room that is left, so it is moved rather than split - unless it
+                    // stands at the page's own start, where there is no earlier page to move it to.
+                    if (pushed is null && unit.StartsAvoidBottom > limit + 0.001)
+                    {
+                        pushed = point;
+                    }
+
                     if (kind == BreakClass.Allowed)
                     {
                         allowed = point;
@@ -257,6 +273,12 @@ internal static class PageSequence
         {
             resume = end;
             return end;
+        }
+
+        if (pushed is { } pushedAt)
+        {
+            resume = pushedAt.Resume;
+            return Math.Min(pushedAt.Y, end);
         }
 
         if (allowed is { } allowedAt)
@@ -465,6 +487,24 @@ internal static class PageSequence
                 // its first child: the box's edges and padding belong to the fragment that begins it.
                 units[first].StartBoundaryY = box.BorderBox.Y;
                 units[first].StartBoundarySet = true;
+
+                if (inside.Length != avoid.Length)
+                {
+                    MarkAvoidStart(units, first, box);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Notes on the unit that begins a box how far the box asks not to be broken inside. A page
+        /// that cannot hold the whole of it moves the box to the next one instead of splitting it.
+        /// </summary>
+        private static void MarkAvoidStart(List<FlowUnit> units, Int32 first, LayoutBox box)
+        {
+            if (units.Count > first)
+            {
+                units[first].StartsAvoidBottom =
+                    Math.Max(units[first].StartsAvoidBottom, ContentBottom(box));
             }
         }
 
@@ -605,6 +645,11 @@ internal static class PageSequence
             units[first].StartNameSet = true;
             units[first].StartBoundaryY = flex.BorderBox.Y;
             units[first].StartBoundarySet = true;
+
+            if (inside.Length != avoid.Length)
+            {
+                MarkAvoidStart(units, first, flex);
+            }
             units[^1].EndName = name;
             units[^1].EndNameSet = true;
         }
@@ -749,6 +794,11 @@ internal static class PageSequence
             {
                 units[first].StartBoundaryY = table.BorderBox.Y;
                 units[first].StartBoundarySet = true;
+
+                if (inside.Length != avoid.Length)
+                {
+                    MarkAvoidStart(units, first, table);
+                }
             }
         }
 
@@ -796,6 +846,10 @@ internal static class PageSequence
             if (units.Count == first)
             {
                 units.Add(BoxUnit(group, before, after, avoid, name));
+            }
+            else if (inside.Length != avoid.Length)
+            {
+                MarkAvoidStart(units, first, group);
             }
         }
 
@@ -981,10 +1035,16 @@ internal static class PageSequence
 
         /// <summary>
         /// Gets whether the box is one piece, so a page cannot end inside it. A replaced box, a table,
-        /// a flex or grid container, a multi-column container and a box that clips its overflow are all
-        /// laid as one picture by the engine; a vertical flow is left whole until paged columns are
+        /// a flex or grid container, a multi-column container and a scroll container are all laid as
+        /// one picture by the engine; a vertical flow is left whole until paged columns are
         /// implemented.
         /// </summary>
+        /// <remarks>
+        /// A box that hides its overflow is not among them: clipping says what a fragment shows, not
+        /// that the box has only one fragment. Only a box the reader can scroll is one picture (CSS
+        /// Break 3 §3.1), because the content the scrollbar reaches is not something a page can carry
+        /// on.
+        /// </remarks>
         private static Boolean IsMonolithic(LayoutBox box)
         {
             if (box.Kind is LayoutKind.Image or LayoutKind.Svg or LayoutKind.HorizontalRule or
@@ -998,10 +1058,22 @@ internal static class PageSequence
             return source.IsReplaced ||
                 source.Kind is BoxKind.Grid or BoxKind.Masonry or BoxKind.InlineBlock ||
                 source.Style.Multi.IsMultiColumn ||
-                source.Style.ClipsOverflow ||
+                Scrolls(source.Style) ||
                 source.Style.Contain.Block ||
                 source.Flow.IsVertical;
         }
+
+        /// <summary>
+        /// Gets whether an axis of the box is one the reader can scroll, which is what makes the box
+        /// one picture no page can carry on (CSS Break 3 §3.1). <c>hidden</c> hides what it holds but
+        /// cannot be scrolled to, so it fragments like any other box.
+        /// </summary>
+        private static Boolean Scrolls(ComputedStyle style) =>
+            IsScrollable(style.OverflowX) || IsScrollable(style.OverflowY);
+
+        private static Boolean IsScrollable(String value) =>
+            value.Equals("auto", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("scroll", StringComparison.OrdinalIgnoreCase);
     }
 
     private static Int32[] Append(Int32[] chain, Int32 id)
@@ -1054,6 +1126,13 @@ internal static class PageSequence
         public Double StartBoundaryY { get; set; }
 
         public Boolean StartBoundarySet { get; set; }
+
+        /// <summary>
+        /// Gets the far edge of the box this unit begins where the box asks not to be broken inside,
+        /// or zero where it begins none. A page that cannot hold the whole box moves it instead of
+        /// breaking inside, so this edge is what tells a move from a split.
+        /// </summary>
+        public Double StartsAvoidBottom { get; set; }
 
         /// <summary>Gets whether a gap stands before this unit, which a page break truncates.</summary>
         public Boolean ResumeSet { get; set; }

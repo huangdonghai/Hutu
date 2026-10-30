@@ -144,6 +144,63 @@ public sealed class PageSequenceTests
     }
 
     [Test]
+    public async Task AnAvoidedBoxThatNoLongerFitsThePageMovesWholeToTheNextOne()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " .t { font-size: 10px; line-height: 20px }" +
+            " .b { break-inside: avoid } .b div { height: 45px }</style>" +
+            "<div class='t'>x</div><div class='b'><div></div><div></div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(20).Within(0.01), "the box does not start where it would not fit whole");
+            Assert.That(pages.Pages[1].Content.Y, Is.EqualTo(20).Within(0.01));
+            Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(90).Within(0.01));
+        });
+    }
+
+    [Test]
+    public async Task AnAvoidedBoxTallerThanAPageIsCutOnlyWhereItsOwnAvoidsAllow()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div, p { margin: 0 }" +
+            " .t { font-size: 10px; line-height: 10px }" +
+            " .outer { break-inside: avoid } .outer > p { height: 50px }" +
+            " .inner { break-inside: avoid } .inner > p { height: 50px }</style>" +
+            "<div class='t'>x</div>" +
+            "<div class='outer'><p></p><div class='inner'><p></p><p></p></div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(3), "the outer avoid cannot be kept, the inner one can");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(10).Within(0.01), "the tall box starts a page of its own");
+            Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(50).Within(0.01), "the first child stands alone, the inner box whole after it");
+            Assert.That(pages.Pages[2].Content.Y, Is.EqualTo(60).Within(0.01));
+            Assert.That(pages.Pages[2].Content.Height, Is.EqualTo(100).Within(0.01));
+        });
+    }
+
+    [Test]
+    public async Task AHiddenOverflowBoxIsSharedOverThePagesLikeAnyBlock()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " .clip { overflow: hidden } .clip div { height: 40px }</style>" +
+            "<div class='clip'><div></div><div></div><div></div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(2), "hiding the overflow does not make the box one picture");
+        Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(80).Within(0.01), "two of the three boxes fit");
+    }
+
+    [Test]
     public async Task ThePageMarginsMoveTheSliceIntoThePageArea()
     {
         using var view = await Print(
