@@ -501,9 +501,16 @@ internal sealed class RuleBucketIndex
             reaches[i] = ReachesOutside(flattened[i]);
         }
 
+        var pageDefaults = device as HutuRenderDevice;
+
         return new RuleBucketIndex(
             flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches, origins.ToArray(), PseudoRuleIndex.Build(flattened),
-            pseudoOnly, CounterStyleTable.Build(styles), new PageStyleTable(pages, device));
+            pseudoOnly, CounterStyleTable.Build(styles),
+            new PageStyleTable(
+                pages,
+                device,
+                pageDefaults?.DefaultPageSize ?? PageSize.Default,
+                pageDefaults?.DefaultPageMargins ?? default));
     }
 
     /// <summary>

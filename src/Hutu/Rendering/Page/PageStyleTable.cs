@@ -1,6 +1,7 @@
 using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using Hutu.Rendering.Layout;
+using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
 
@@ -42,11 +43,19 @@ internal sealed class PageStyleTable
 
     private readonly IReadOnlyList<ICssPageRule> _rules;
     private readonly IRenderDimensions _dimensions;
+    private readonly PageSize _defaultSize;
+    private readonly Thickness _defaultMargins;
 
-    public PageStyleTable(IReadOnlyList<ICssPageRule> rules, IRenderDimensions dimensions)
+    public PageStyleTable(
+        IReadOnlyList<ICssPageRule> rules,
+        IRenderDimensions dimensions,
+        PageSize defaultSize,
+        Thickness defaultMargins)
     {
         _rules = rules;
         _dimensions = dimensions;
+        _defaultSize = defaultSize;
+        _defaultMargins = defaultMargins;
     }
 
     /// <summary>
@@ -69,7 +78,7 @@ internal sealed class PageStyleTable
     public PageGeometry Page(String? name, StyleThickness inheritedMargins)
     {
         var rules = Applicable(name);
-        var size = PageSize.Default;
+        var size = _defaultSize;
 
         foreach (var rule in rules)
         {
@@ -79,10 +88,10 @@ internal sealed class PageStyleTable
             }
         }
 
-        var top = default(SideSlot);
-        var right = default(SideSlot);
-        var bottom = default(SideSlot);
-        var left = default(SideSlot);
+        var top = SideSlot.FromPixels(_defaultMargins.Top);
+        var right = SideSlot.FromPixels(_defaultMargins.Right);
+        var bottom = SideSlot.FromPixels(_defaultMargins.Bottom);
+        var left = SideSlot.FromPixels(_defaultMargins.Left);
 
         foreach (var rule in rules)
         {
@@ -106,8 +115,137 @@ internal sealed class PageStyleTable
             areaWidth is { } width ? Math.Max(0, width) + margins.Horizontal : size.Width,
             areaHeight is { } height ? Math.Max(0, height) + margins.Vertical : size.Height);
 
-        return new PageGeometry(box, margins);
+        return new PageGeometry(box, margins, ReadFrame(rules));
     }
+
+    /// <summary>
+    /// Reads what the page box itself wears. Only the colour of a background is read - the layers
+    /// and images belong to the page box painter, which is the next slice - and a border is drawn
+    /// only where its style asks for a line and its colour is not fully transparent.
+    /// </summary>
+    private PageFrame ReadFrame(IReadOnlyList<ICssPageRule> rules)
+    {
+        var chosen = new Dictionary<String, (ICssProperty Property, Boolean Important)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rule in rules)
+        {
+            foreach (var name in FrameProperties)
+            {
+                if (rule.Style.TryGetProperty(name) is not { } property)
+                {
+                    continue;
+                }
+
+                if (chosen.TryGetValue(name, out var held) && held.Important && !property.IsImportant)
+                {
+                    continue;
+                }
+
+                chosen[name] = (property, property.IsImportant);
+            }
+        }
+
+        var hidden = chosen.TryGetValue("visibility", out var visibility) &&
+            IsOneOf(visibility.Property.Value, "hidden", "collapse");
+
+        UInt32? background = chosen.TryGetValue("background-color", out var colour)
+            ? BackgroundLayerParser.ParseColor(colour.Property.Value?.Trim() ?? String.Empty)
+            : null;
+
+        if (background is { } argb && (argb >> 24) == 0)
+        {
+            background = null;
+        }
+
+        var border = new PageBorder(
+            BorderSide(chosen, "top"),
+            BorderSide(chosen, "right"),
+            BorderSide(chosen, "bottom"),
+            BorderSide(chosen, "left"));
+
+        return new PageFrame(background, border, hidden);
+    }
+
+    private PageBorderSide BorderSide(
+        Dictionary<String, (ICssProperty Property, Boolean Important)> chosen,
+        String side)
+    {
+        if (!chosen.TryGetValue("border-" + side + "-style", out var style) ||
+            IsOneOf(style.Property.Value, "none", "hidden", ""))
+        {
+            return PageBorderSide.None;
+        }
+
+        var width = 0.0;
+
+        if (chosen.TryGetValue("border-" + side + "-width", out var stated))
+        {
+            var text = stated.Property.Value?.Trim();
+
+            if (String.Equals(text, "thin", StringComparison.OrdinalIgnoreCase))
+            {
+                width = 1;
+            }
+            else if (String.Equals(text, "medium", StringComparison.OrdinalIgnoreCase))
+            {
+                width = 3;
+            }
+            else if (String.Equals(text, "thick", StringComparison.OrdinalIgnoreCase))
+            {
+                width = 5;
+            }
+            else if (LengthReader.TryReadProperty(
+                    stated.Property, RenderMode.Horizontal, _dimensions,
+                    new LengthReader.FontSource(_dimensions.FontSize), out var length) &&
+                length.HasValue)
+            {
+                width = length.Resolve(0);
+            }
+        }
+
+        if (width <= 0)
+        {
+            return PageBorderSide.None;
+        }
+
+        var colour = chosen.TryGetValue("border-" + side + "-color", out var statedColour)
+            ? BackgroundLayerParser.ParseColor(statedColour.Property.Value?.Trim() ?? String.Empty)
+            : null;
+
+        colour ??= 0xFF000000;
+
+        // A transparent side draws nothing, and an invisible side is no side at all.
+        if ((colour.Value >> 24) == 0)
+        {
+            return PageBorderSide.None;
+        }
+
+        return new PageBorderSide(width, colour.Value, true);
+    }
+
+    private static Boolean IsOneOf(String? value, params String[] names)
+    {
+        var text = value?.Trim();
+
+        foreach (var name in names)
+        {
+            if (String.Equals(text, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static readonly String[] FrameProperties =
+    {
+        "background-color", "visibility",
+        "border-top-width", "border-top-style", "border-top-color",
+        "border-right-width", "border-right-style", "border-right-color",
+        "border-bottom-width", "border-bottom-style", "border-bottom-color",
+        "border-left-width", "border-left-style", "border-left-color",
+    };
 
     /// <summary>
     /// Gets the rules that answer a page of this name: the unnamed rules, then the rules that name it,
@@ -302,7 +440,7 @@ internal sealed class PageStyleTable
         }
         else if (auto || landscape is not null)
         {
-            size = PageSize.Default;
+            size = _defaultSize;
         }
         else
         {
@@ -553,6 +691,9 @@ internal sealed class PageStyleTable
             Important = important;
             Set = true;
         }
+
+        public static SideSlot FromPixels(Double pixels) =>
+            new(SideSpec.Of(StyleLength.FromPixels(pixels)), false);
 
         public SideSpec Value { get; }
 

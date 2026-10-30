@@ -32,9 +32,41 @@ public readonly record struct PageSize(Double Width, Double Height)
 }
 
 /// <summary>
+/// One side of the page box's border: the width it is drawn at, its colour, and whether it is drawn
+/// at all. Only a solid stroke is drawn yet; a dashed or dotted page border is read as a solid one
+/// until the painter's own dash styles are carried over.
+/// </summary>
+public readonly record struct PageBorderSide(Double Width, UInt32 Color, Boolean Visible)
+{
+    public static PageBorderSide None => default;
+}
+
+/// <summary>The four sides of the page box's border.</summary>
+public readonly record struct PageBorder(
+    PageBorderSide Top,
+    PageBorderSide Right,
+    PageBorderSide Bottom,
+    PageBorderSide Left)
+{
+    public static PageBorder None => default;
+
+    public Boolean IsVisible => Top.Visible || Right.Visible || Bottom.Visible || Left.Visible;
+}
+
+/// <summary>
+/// What the page box itself wears: the background behind its content and the border around it. A
+/// <c>visibility: hidden</c> page context hides both, while the document on the page is still shown
+/// (CSS Page 3 §6.3).
+/// </summary>
+public readonly record struct PageFrame(UInt32? Background, PageBorder Border, Boolean Hidden)
+{
+    public static PageFrame None => default;
+}
+
+/// <summary>
 /// The page box a page is laid in: its size and the margins around the page area (CSS Page 3 §3).
 /// </summary>
-public readonly record struct PageGeometry(PageSize Size, Thickness Margins)
+public readonly record struct PageGeometry(PageSize Size, Thickness Margins, PageFrame Frame = default)
 {
     /// <summary>Gets the geometry of a page the document says nothing about.</summary>
     public static PageGeometry Default { get; } = new(PageSize.Default, Thickness.Zero);

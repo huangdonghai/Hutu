@@ -162,6 +162,28 @@ public sealed class HutuViewInternal : IDisposable
     }
 
     /// <summary>
+    /// Sets the paper a page is printed on when the document states no page box. It is what a print
+    /// pipeline's own page size means, and it has to be said before the page is built.
+    /// </summary>
+    internal void SetDefaultPage(PageSize size, Thickness margins)
+    {
+        _renderDevice.DefaultPageSize = size;
+        _renderDevice.DefaultPageMargins = margins;
+
+        if (_renderDevice.Category == DeviceCategory.Printer)
+        {
+            // In paged media the page area is the viewport: vw and vh, a media query and a
+            // percentage that reads the window all resolve against the sheet the document is
+            // printed on, not against the window it was read in.
+            _renderDevice.UpdateViewport(
+                Math.Max(1, (Int32)Math.Round(size.Width - margins.Horizontal)),
+                Math.Max(1, (Int32)Math.Round(size.Height - margins.Vertical)));
+
+            UpdateRenderTree();
+        }
+    }
+
+    /// <summary>
     /// Gets the <c>@page</c> rules the sheets carry for the current medium, or null before a build
     /// has read them.
     /// </summary>

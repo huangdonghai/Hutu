@@ -49,6 +49,30 @@ public sealed class PagePaintTests
         });
     }
 
+    [Test]
+    public async Task ThePageBoxPaintsItsBackgroundAndBorderUnderAndAroundTheContent()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(800, 600);
+        view.SetMediaType(DeviceCategory.Printer);
+        await view.SetHtml(
+            "<style>@page { size: 100px; margin: 10px; background: red; border: 10px solid blue }" +
+            " html, body, div { margin: 0 }</style><div style='height:20px'></div>");
+
+        var page = view.Pages!.Pages[0];
+        var executor = new SkiaPaintExecutor(measurer);
+        using var drawn = Draw(executor, view, page);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(drawn.GetPixel(2, 2), Is.EqualTo(SKColors.Blue), "the page border");
+            Assert.That(drawn.GetPixel(15, 15), Is.EqualTo(SKColors.Red), "the page background reaches the page area");
+            Assert.That(drawn.GetPixel(50, 50), Is.EqualTo(SKColors.Red), "and the rest of the box");
+            Assert.That(drawn.GetPixel(50, 95), Is.EqualTo(SKColors.Blue), "the border closes the page");
+        });
+    }
+
     private static SKBitmap Draw(SkiaPaintExecutor executor, HutuViewInternal view, PageSlice page)
     {
         using var surface = SKSurface.Create(new SKImageInfo((int)page.Geometry.Width, (int)page.Geometry.Height));

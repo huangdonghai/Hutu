@@ -154,7 +154,16 @@ internal sealed class EngineReader : IDisposable
     /// Asks the page as a printing device, so <c>@media print</c> and <c>@page</c> apply. It has to be
     /// said before the page is loaded: the medium is part of what the styles are computed from.
     /// </summary>
-    public void UsePrintMedia() => _view.SetMediaType(DeviceCategory.Printer);
+    public void UsePrintMedia()
+    {
+        _view.SetMediaType(DeviceCategory.Printer);
+
+        // The suite's print runner gives a document that states no page box a five-by-three inch
+        // page with half-inch margins; a pair that does state one states its own over this.
+        _view.SetDefaultPage(
+            new PageSize(5 * 96, 3 * 96),
+            new Thickness(0.5 * 96, 0.5 * 96, 0.5 * 96, 0.5 * 96));
+    }
 
     /// <summary>
     /// Draws every page of a printed document, each at the page box's own size and on white.

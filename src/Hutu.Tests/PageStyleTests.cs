@@ -254,6 +254,32 @@ public sealed class PageStyleTests
         });
     }
 
+    [Test]
+    public async Task ThePageBoxReadsItsBackgroundAndBorder()
+    {
+        using var view = await Render(
+            "<style>@page { size: 100px; margin: 0; background: red; border: 10px solid blue }</style><body></body>");
+
+        var frame = view.DefaultPageGeometry.Frame;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(frame.Background, Is.EqualTo(0xFFFF0000u), "the page box background");
+            Assert.That(frame.Border.Top.Width, Is.EqualTo(10).Within(0.01));
+            Assert.That(frame.Border.Top.Color, Is.EqualTo(0xFF0000FFu));
+            Assert.That(frame.Border.IsVisible, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task AHiddenPageContextHidesThePageBox()
+    {
+        using var view = await Render(
+            "<style>@page { visibility: hidden; border: solid red; background: hotpink }</style><body></body>");
+
+        Assert.That(view.DefaultPageGeometry.Frame.Hidden, Is.True);
+    }
+
     private static async Task<HutuViewInternal> Render(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

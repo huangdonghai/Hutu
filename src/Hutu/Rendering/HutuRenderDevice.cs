@@ -185,6 +185,16 @@ internal sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
     public DeviceCategory Category => _category;
 
     /// <summary>
+    /// Gets or sets the page a printing device lays a document in when no page rule states one. It is
+    /// a device concern, like the window: a print pipeline chooses the paper it prints on, and a
+    /// document that says nothing gets that paper rather than the engine's own guess.
+    /// </summary>
+    internal PageSize DefaultPageSize { get; set; } = PageSize.Default;
+
+    /// <summary>Gets or sets the margins a page starts with when no page rule states one.</summary>
+    internal Thickness DefaultPageMargins { get; set; }
+
+    /// <summary>
     /// Sets the medium the styles are computed for. A change asks the sheets again - an
     /// <c>@media print</c> block answers differently - so the caller rebuilds the box tree after it.
     /// </summary>

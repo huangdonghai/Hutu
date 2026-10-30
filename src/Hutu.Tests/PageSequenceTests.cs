@@ -249,6 +249,36 @@ public sealed class PageSequenceTests
         Assert.That(pages.Pages[0].Geometry.Margins.Top, Is.EqualTo(10).Within(0.01));
     }
 
+    [Test]
+    public async Task AColumnFlexBreaksBetweenItsItems()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " .f { display: flex; flex-direction: column } .i { height: 40px }</style>" +
+            "<div class='f'><div class='i'></div><div class='i'></div><div class='i'></div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(2), "a column flex breaks between items");
+        Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(80).Within(0.01));
+        Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(40).Within(0.01));
+    }
+
+    [Test]
+    public async Task ARowFlexBreaksBetweenItsLines()
+    {
+        using var view = await Print(
+            "<style>@page { size: 60px; margin: 0 } body, div { margin: 0 }" +
+            " .f { display: flex; flex-wrap: wrap; width: 100px } .i { width: 100px; height: 40px }</style>" +
+            "<div class='f'><div class='i'></div><div class='i'></div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(2), "a row flex breaks between its lines");
+        Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(40).Within(0.01));
+        Assert.That(pages.Pages[1].Content.Y, Is.EqualTo(40).Within(0.01));
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

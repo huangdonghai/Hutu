@@ -142,6 +142,13 @@ public sealed class SkiaPaintExecutor
         var pageRect = new SKRect(0, 0, (Single)geometry.Width, (Single)geometry.Height);
 
         canvas.Clear(SKColors.White);
+
+        if (!geometry.Frame.Hidden && geometry.Frame.Background is { } background)
+        {
+            using var fill = PageFill(background);
+            canvas.DrawRect(pageRect, fill);
+        }
+
         canvas.Save();
         canvas.ClipRect(pageRect);
         canvas.ClipRect(new SKRect(
@@ -172,7 +179,42 @@ public sealed class SkiaPaintExecutor
             Draw(canvas, list.FixedCommands, new Rect(0, 0, geometry.ContentWidth, geometry.ContentHeight), default);
             canvas.Restore();
         }
+
+        if (!geometry.Frame.Hidden && geometry.Frame.Border.IsVisible)
+        {
+            DrawPageBorder(canvas, pageRect, geometry.Frame.Border);
+        }
     }
+
+    /// <summary>Draws the four sides of the page box's border inside its own box.</summary>
+    private static void DrawPageBorder(SKCanvas canvas, SKRect page, PageBorder border)
+    {
+        DrawSide(border.Top, new SKRect(page.Left, page.Top, page.Right, page.Top + (Single)border.Top.Width));
+        DrawSide(border.Bottom, new SKRect(page.Left, page.Bottom - (Single)border.Bottom.Width, page.Right, page.Bottom));
+        DrawSide(border.Left, new SKRect(page.Left, page.Top, page.Left + (Single)border.Left.Width, page.Bottom));
+        DrawSide(border.Right, new SKRect(page.Right - (Single)border.Right.Width, page.Top, page.Right, page.Bottom));
+
+        void DrawSide(PageBorderSide side, SKRect rect)
+        {
+            if (side.Visible)
+            {
+                using var fill = PageFill(side.Color);
+                canvas.DrawRect(rect, fill);
+            }
+        }
+    }
+
+    private static SKPaint PageFill(UInt32 argb) =>
+        new()
+        {
+            Style = SKPaintStyle.Fill,
+            Color = new SKColor(
+                (Byte)((argb >> 16) & 0xFF),
+                (Byte)((argb >> 8) & 0xFF),
+                (Byte)(argb & 0xFF),
+                (Byte)((argb >> 24) & 0xFF)),
+            IsAntialias = false,
+        };
 
     /// <summary>
     /// Gets the part of the document the screen can show, which is what the canvas' own clip says, in

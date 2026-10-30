@@ -2,6 +2,7 @@ using Hutu.Rendering.Boxes;
 using Hutu.Rendering.Layout;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Hutu.Rendering;
 
@@ -30,20 +31,29 @@ internal static class PageSequence
     public static PagedLayout Build(LayoutResult layout, PageStyleTable styles, StyleThickness inheritedMargins)
     {
         var units = new List<FlowUnit>();
-        new Collector().Collect(
+        var collector = new Collector();
+        collector.Collect(
             layout.Root, units, BreakValue.Auto, BreakValue.Auto, Array.Empty<Int32>(), null);
 
-        var documentHeight = 0.0;
+        var documentHeight = collector.OutOfFlowBottom;
 
         foreach (var unit in units)
         {
             documentHeight = Math.Max(documentHeight, unit.Bottom);
         }
 
+        // A box's own height may extend past the last line or child that gave it its flow, and a
+        // positioned box that takes no page break still paints. The root is left out: its box is
+        // the window the document was measured in, which is not content.
+        foreach (var child in layout.Root.Children)
+        {
+            documentHeight = Math.Max(documentHeight, ContentBottom(child));
+        }
+
         // A document with no flow unit at all - an absolutely positioned picture, a root that states
         // only a height - still has the size the layout gave it. The units are the flow's own end,
         // because the layout's height includes the viewport the document was measured in.
-        if (units.Count == 0)
+        if (units.Count == 0 && documentHeight <= 0)
         {
             documentHeight = Math.Max(0, layout.Height);
         }
@@ -87,6 +97,27 @@ internal static class PageSequence
         }
 
         return new PagedLayout(first ?? styles.DefaultPage(inheritedMargins), pages, documentHeight);
+    }
+
+    /// <summary>
+    /// Gets the lowest edge the box's picture reaches. A box that clips its overflow stops at its own
+    /// edge: what it hides is not content a page has to reach.
+    /// </summary>
+    private static Double ContentBottom(LayoutBox box)
+    {
+        var bottom = box.BorderBox.Bottom;
+
+        if (box.Source.Style.ClipsOverflow)
+        {
+            return bottom;
+        }
+
+        foreach (var child in box.Children)
+        {
+            bottom = Math.Max(bottom, ContentBottom(child));
+        }
+
+        return bottom;
     }
 
     /// <summary>Gets the page name the content at the head of a page states.</summary>
@@ -251,6 +282,13 @@ internal static class PageSequence
         private Int32 _nextRun;
         private Int32 _nextAvoid;
 
+        /// <summary>
+        /// Gets the lowest edge of a box that took no place in the flow - an absolutely positioned
+        /// or floating box. It takes no page break of its own, but a page has to reach as far as it
+        /// paints, or the picture after the flow would be cut off at the last page's edge.
+        /// </summary>
+        public Double OutOfFlowBottom { get; private set; }
+
         public void Collect(
             LayoutBox box,
             List<FlowUnit> units,
@@ -263,6 +301,7 @@ internal static class PageSequence
 
             if (PositionedLayout.IsOutOfFlow(source) || source.Style.Float != FloatSide.None)
             {
+                OutOfFlowBottom = Math.Max(OutOfFlowBottom, DeepestBottom(box));
                 return;
             }
 
@@ -273,6 +312,12 @@ internal static class PageSequence
             if (box.Kind == LayoutKind.Table)
             {
                 CollectTable(box, units, inheritedBefore, inheritedAfter, avoid, name);
+                return;
+            }
+
+            if (source.Kind == BoxKind.Flex)
+            {
+                CollectFlex(box, units, inheritedBefore, inheritedAfter, avoid, name);
                 return;
             }
 
@@ -325,6 +370,135 @@ internal static class PageSequence
             {
                 units.Add(BoxUnit(box, before, after, avoid, name));
             }
+        }
+
+        /// <summary>
+        /// Collects a flex container as the pieces a page may end between: a row container breaks
+        /// between its flex lines, and a column container between its items (CSS Flexbox 1 §9.3).
+        /// A single-line row is one piece, because a page cannot end beside the items of the line.
+        /// </summary>
+        private void CollectFlex(
+            LayoutBox flex,
+            List<FlowUnit> units,
+            BreakValue inheritedBefore,
+            BreakValue inheritedAfter,
+            Int32[] avoid,
+            String? pageName)
+        {
+            var source = flex.Source;
+            var name = source.Style.PageName ?? pageName;
+            var before = Fragmentainer.Combine(inheritedBefore, PageValue(source.Style.Breaks.Before));
+            var after = Fragmentainer.Combine(inheritedAfter, PageValue(source.Style.Breaks.After));
+            var inside = source.Style.Breaks.Inside == BreakValue.Avoid
+                ? Append(avoid, ++_nextAvoid)
+                : avoid;
+
+            var items = new List<LayoutBox>(flex.Children.Count);
+
+            foreach (var child in flex.Children)
+            {
+                if (!PositionedLayout.IsOutOfFlow(child.Source) &&
+                    child.Source.Style.Float == FloatSide.None)
+                {
+                    items.Add(child);
+                }
+            }
+
+            var first = units.Count;
+
+            if (source.Style.Flex.IsRow)
+            {
+                var lines = FlexLines(items);
+
+                for (var index = 0; index < lines.Count; index++)
+                {
+                    var line = lines[index];
+                    var top = Double.MaxValue;
+                    var bottom = Double.MinValue;
+                    var lineBefore = BreakValue.Auto;
+                    var lineAfter = BreakValue.Auto;
+
+                    foreach (var item in line)
+                    {
+                        top = Math.Min(top, item.BorderBox.Y);
+                        bottom = Math.Max(bottom, item.BorderBox.Bottom);
+
+                        // A break written on an item is a break of the line it stands on: a row's
+                        // items sit beside each other, and the page can only end between lines.
+                        lineBefore = Fragmentainer.Combine(
+                            lineBefore, PageValue(item.Source.Style.Breaks.Before));
+                        lineAfter = Fragmentainer.Combine(
+                            lineAfter, PageValue(item.Source.Style.Breaks.After));
+                    }
+
+                    units.Add(new FlowUnit
+                    {
+                        Top = top,
+                        Bottom = bottom,
+                        Before = Fragmentainer.Combine(index == 0 ? before : BreakValue.Auto, lineBefore),
+                        After = Fragmentainer.Combine(
+                            index == lines.Count - 1 ? after : BreakValue.Auto, lineAfter),
+                        PageName = name,
+                        Avoid = inside,
+                    });
+                }
+            }
+            else
+            {
+                var ordered = items
+                    .OrderBy(item => item.BorderBox.X)
+                    .ThenBy(item => item.BorderBox.Y)
+                    .ToList();
+
+                for (var index = 0; index < ordered.Count; index++)
+                {
+                    var item = ordered[index];
+                    var itemName = item.Source.Style.PageName ?? name;
+
+                    units.Add(BoxUnit(
+                        item,
+                        Fragmentainer.Combine(
+                            index == 0 ? before : BreakValue.Auto,
+                            PageValue(item.Source.Style.Breaks.Before)),
+                        Fragmentainer.Combine(
+                            index == ordered.Count - 1 ? after : BreakValue.Auto,
+                            PageValue(item.Source.Style.Breaks.After)),
+                        inside,
+                        itemName));
+                }
+            }
+
+            if (units.Count == first)
+            {
+                units.Add(BoxUnit(flex, before, after, avoid, name));
+            }
+        }
+
+        /// <summary>
+        /// Groups flex items into the lines their boxes stand on. The items of one line overlap down
+        /// the page; an item whose top is below every box of the line before it begins the next.
+        /// </summary>
+        private static List<List<LayoutBox>> FlexLines(List<LayoutBox> items)
+        {
+            var lines = new List<List<LayoutBox>>();
+            var bottom = Double.MinValue;
+
+            foreach (var item in items.OrderBy(item => item.BorderBox.Y).ThenBy(item => item.BorderBox.X))
+            {
+                if (lines.Count == 0 || item.BorderBox.Y >= bottom - 0.5)
+                {
+                    lines.Add(new List<LayoutBox>());
+                    bottom = item.BorderBox.Bottom;
+                }
+                else
+                {
+                    bottom = Math.Max(bottom, item.BorderBox.Bottom);
+                }
+
+                lines[^1].Add(item);
+            }
+
+            return lines;
         }
 
         /// <summary>
@@ -519,6 +693,18 @@ internal static class PageSequence
                 PageName = pageName,
             };
 
+        private static Double DeepestBottom(LayoutBox box)
+        {
+            var bottom = box.BorderBox.Bottom;
+
+            foreach (var child in box.Children)
+            {
+                bottom = Math.Max(bottom, DeepestBottom(child));
+            }
+
+            return bottom;
+        }
+
         /// <summary>
         /// Gets the children that take part in block flow, in the order they were laid. A float and an
         /// out-of-flow box take no place a page can break at; the text and inline boxes of a line are
@@ -560,7 +746,7 @@ internal static class PageSequence
             var source = box.Source;
 
             return source.IsReplaced ||
-                source.Kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry or BoxKind.InlineBlock ||
+                source.Kind is BoxKind.Grid or BoxKind.Masonry or BoxKind.InlineBlock ||
                 source.Style.Multi.IsMultiColumn ||
                 source.Style.ClipsOverflow ||
                 source.Flow.IsVertical;
