@@ -19,7 +19,7 @@
 > - 按用户决定记为后续里程碑（需要"按页重排"一层）：多栏跨页重排、`box-decoration-break`。表格重复 `thead`/`tfoot` 已用"从长文档原处取同一段内容再画一次"实现，不需要按页重排（`e7aa3963`、`d21eeb97`）；
 >   `box-decoration-break: clone` 不同——每片都要额外吃掉边框/内边距的高度并推动其后内容，属真正的按页重排。实测 `monolithic-overflow-032` 还需要 Blink 的"巨型分片"模型（超高 monolithic 内容所在的一片一直贯穿到内容放完，下一片紧贴其后），该测试自身的注释即写明"expected behavior here is not obvious"，故保持 ◆。`monolithic-overflow-031` 已由 `0fad0a00` 转绿。
 > - 非分页特性（打印模式下同样失败）：`@scope`×3、`(scripting)` 媒体查询、表单控件外观、`mask-image`。
-> - **fieldset/legend 布局（12 对，`gecko/pagination/fieldset-*`）**：这些对照是 Gecko 用例，ref 写的是 Gecko 的 legend 模型；实测 Chrome 与 Gecko 不同——Chrome：fieldset 边框盒顶留在原处（0）、高 240、legend 在边框盒顶、内容顶 = max(边框, legend 高)；ref 的写法（`margin-top`/`padding-top` 各半个超出量、白块盖住边框带）对应 fieldset 边框盒整体下移半个超出量、高 216、内容顶仍在 legend 底。按 Chrome 修会对不上 ref，故这一族需按 ref 自身的几何另行测量（`legend` 提升为块盒 + 边框开缺口的两处修改已试做并回滚）。
+> - **fieldset/legend 布局（12 对，`gecko/pagination/fieldset-*`）**：这些对照是 Gecko 用例，ref 写的是 Gecko 的 legend 模型；实测 Chrome 与 Gecko 不同——Chrome：fieldset 边框盒顶留在原处（0）、高 240、legend 在边框盒顶、内容顶 = max(边框, legend 高)；ref 的写法（`margin-top`/`padding-top` 各半个超出量、白块盖住边框带）对应 fieldset 边框盒整体下移半个超出量、高 216、内容顶仍在 legend 底。按 Chrome 修会对不上 ref，故这一族需按 ref 自身的几何另行测量。Gecko 模型已实现并量过：`legend` 提升为块盒、fieldset 边框盒下移半个超出量、边距/内边距各吃一半、边框带按 legend 水平范围开缺口，另加"内容正好顶到页边时按页边切"；结果打印 177→**183/198**、本族 12→6 红，但屏幕侧 5 对被新的几何带红（flex 基线合成、`contain: size`、`overflow: scroll` 容器、定位过的 legend、bidi 方向），且逐项加闸门后回归集合仍在变动——按"有回归即回滚"已整片撤回，基线回到 177/198。续做时这五处交互需各自测量，再决定是补齐还是继续只支持普通块父盒。
 >
 > 调查日期：2026-10-30。HEAD：`7357d65a`。只读调查，未修改引擎代码。
 >
