@@ -31,6 +31,9 @@
             </StackPanel>
 
             <StackPanel Grid.Column="6" Orientation="Horizontal" VerticalAlignment="Center" Spacing="4">
+                <ComboBox x:Name="PaperBox" Width="132" VerticalAlignment="Center"
+                          ToolTip.Tip="Paper the document is printed on"
+                          SelectionChanged="Paper_SelectionChanged" />
                 <ToggleButton x:Name="PagedButton" Content="Pages"
                               ToolTip.Tip="Show the document as the pages it prints on" Click="Paged_Click" />
                 <Button x:Name="PreviousPageButton" Content="&#x2039;" ToolTip.Tip="Previous page"

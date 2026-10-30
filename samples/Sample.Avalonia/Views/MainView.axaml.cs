@@ -21,6 +21,32 @@ public partial class MainView : ContentPage
     // taken as an embedded resource, which is how the sample pages are addressed everywhere else.
     private const string HomeAddress = "index.htm";
 
+    /// <summary>How many device pixels a millimetre is worth at 96 dpi.</summary>
+    private const Double PixelsPerMillimetre = 96.0 / 25.4;
+
+    /// <summary>A paper the list offers, measured in millimetres.</summary>
+    private sealed record Paper(String Name, Double WidthMm, Double HeightMm);
+
+    private static readonly Paper[] Papers =
+    {
+        new("A4 210×297", 210, 297),
+        new("A5 148×210", 148, 210),
+        new("A6 105×148", 105, 148),
+        new("B5 176×250", 176, 250),
+        new("B6 125×176", 125, 176),
+        new("B7 88×125", 88, 125),
+        new("16开 185×260", 185, 260),
+        new("32开 130×185", 130, 185),
+    };
+
+    /// <summary>The margins every paper is printed with, 15 mm on each side.</summary>
+    private static readonly Hutu.Rendering.Layout.Thickness PageMargins = new(
+        15 * PixelsPerMillimetre,
+        15 * PixelsPerMillimetre,
+        15 * PixelsPerMillimetre,
+        15 * PixelsPerMillimetre);
+
+
     // The addresses that have been loaded, and where in them the reader stands. A fresh address cuts
     // off whatever lay ahead of the current one, which is what makes the forward button go away after
     // navigating somewhere new.
@@ -44,6 +70,10 @@ public partial class MainView : ContentPage
 
         // The page count changes whenever a document is loaded, so the paging controls follow it.
         MyHutuView.PagesChanged += UpdatePages;
+
+        // The paper list stands on A4, which is what the paging starts on.
+        PaperBox.ItemsSource = Papers;
+        PaperBox.SelectedIndex = 0;
         UpdatePages();
 
         UpdateNavigation();
@@ -137,13 +167,23 @@ public partial class MainView : ContentPage
     /// <summary>Shows the document as printed pages, or as one scrolling page again.</summary>
     private void Paged_Click(object? sender, RoutedEventArgs e)
     {
-        // A4 at 96 dpi with 15 mm margins, which is what a document without a page box is printed on.
         MyHutuView.SetPaged(
             PagedButton.IsChecked == true,
-            new PageSize(793.7, 1122.5),
-            new Hutu.Rendering.Layout.Thickness(56.7, 56.7, 56.7, 56.7));
+            SelectedPaper(),
+            PageMargins);
 
         UpdatePages();
+    }
+
+    private void Paper_SelectionChanged(object? sender, SelectionChangedEventArgs e) =>
+        MyHutuView.SetPaper(SelectedPaper(), PageMargins);
+
+    /// <summary>Gets the paper the list has selected, A4 where nothing is.</summary>
+    private PageSize SelectedPaper()
+    {
+        var paper = PaperBox.SelectedItem is Paper selected ? selected : Papers[0];
+
+        return new PageSize(paper.WidthMm * PixelsPerMillimetre, paper.HeightMm * PixelsPerMillimetre);
     }
 
     private void PreviousPage_Click(object? sender, RoutedEventArgs e) => MyHutuView.PreviousPage();

@@ -586,11 +586,37 @@ public class HutuView : ScrollViewer
     /// <summary>Gets whether the document is being shown as the pages it prints on.</summary>
     public Boolean IsPaged { get; private set; }
 
+    /// <summary>Gets the paper a document that states no page box is printed on.</summary>
+    private PageSize? _paper;
+
+
     /// <summary>Gets how many pages the document comes to, or zero when it is not paged.</summary>
     public Int32 PageCount => IsPaged ? _internalView.Pages?.Count ?? 0 : 0;
 
     /// <summary>Gets the page being shown, counting from one, or zero when it is not paged.</summary>
     public Int32 CurrentPage => IsPaged && _surface.PageIndex >= 0 ? _surface.PageIndex + 1 : 0;
+
+    /// <summary>Gets the size of the page being shown, before the display scale; empty when not paged.</summary>
+    public Size PageExtent => IsPaged ? _surface.PageExtent : default;
+
+    /// <summary>
+    /// States the paper a document that states no page box is printed on, and prints it on that
+    /// paper again when it is already paged. A document with its own page box keeps it.
+    /// </summary>
+    public void SetPaper(PageSize size, Hutu.Rendering.Layout.Thickness margins = default)
+    {
+        _paper = size;
+
+        if (!IsPaged)
+        {
+            return;
+        }
+
+        _internalView.SetDefaultPage(size, margins);
+        _surface.ShowPage(0);
+        FitToWindow();
+        PagesChanged?.Invoke();
+    }
 
     /// <summary>Raised when the page being shown, or the number of pages, changes.</summary>
     public event Action? PagesChanged;
@@ -608,9 +634,17 @@ public class HutuView : ScrollViewer
 
         IsPaged = paged;
 
-        if (paged && paper is { } size)
+        if (paged)
         {
-            _internalView.SetDefaultPage(size, margins);
+            if (paper is { } size)
+            {
+                _paper = size;
+            }
+
+            if (_paper is { } stated)
+            {
+                _internalView.SetDefaultPage(stated, margins);
+            }
         }
 
         _internalView.SetMediaType(paged ? DeviceCategory.Printer : DeviceCategory.Screen);

@@ -47,6 +47,12 @@ internal sealed class RenderingPipeline
     /// </summary>
     private Boolean _stylesReadViewport;
 
+    /// <summary>The paper the styles in hand were computed for: a change of paper moves the page
+    /// box, which the sheets are read against, so it is no smaller a change than the viewport.
+    /// </summary>
+    private PageSize _paper;
+    private Layout.Thickness _paperMargins;
+
     public RenderingPipeline(HutuRenderDevice device, ITextMeasurer? textMeasurer = null, IImageProvider? images = null)
     {
         _device = device;
@@ -252,8 +258,16 @@ internal sealed class RenderingPipeline
         var viewport = (_device.ViewPortWidth, _device.ViewPortHeight, _device.Zoom);
         var sameDocument = ReferenceEquals(_built, document);
         var movedViewport = viewport != _viewport;
+        var movedPaper = _device.DefaultPageSize != _paper ||
+            _device.DefaultPageMargins.Top != _paperMargins.Top ||
+            _device.DefaultPageMargins.Right != _paperMargins.Right ||
+            _device.DefaultPageMargins.Bottom != _paperMargins.Bottom ||
+            _device.DefaultPageMargins.Left != _paperMargins.Left;
 
-        if (sameDocument && movedViewport && BoxTree is not null &&
+        _paper = _device.DefaultPageSize;
+        _paperMargins = _device.DefaultPageMargins;
+
+        if (sameDocument && movedViewport && !movedPaper && BoxTree is not null &&
             !_stylesReadViewport && _styles.StillDescribes(document, _device))
         {
             _viewport = viewport;
@@ -262,7 +276,7 @@ internal sealed class RenderingPipeline
             return;
         }
 
-        if (!sameDocument || movedViewport)
+        if (!sameDocument || movedViewport || movedPaper)
         {
             // A different document brings different rules and different declarations, and an index
             // is built against a device: either way what is remembered no longer describes what is

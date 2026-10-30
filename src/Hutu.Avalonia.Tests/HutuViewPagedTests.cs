@@ -139,6 +139,40 @@ public sealed class HutuViewPagedTests
         });
     }
 
+    /// <summary>
+    /// A document that states no page box is printed on the paper the host states, and a new paper
+    /// prints it again on that one.
+    /// </summary>
+    [AvaloniaTest]
+    public async Task ThePaperOfAPagedDocumentFollowsTheChosenSize()
+    {
+        var view = new HutuView();
+        var window = new Window { Content = view, Width = 800, Height = 600 };
+
+        window.Show();
+
+        await view.SetHtml(
+            "<style>body { margin: 0 } div { height: 400px; background: red }</style>"
+            + "<div></div><div></div>");
+
+        var a5 = new PageSize(148 * 96.0 / 25.4, 210 * 96.0 / 25.4);
+        var a6 = new PageSize(105 * 96.0 / 25.4, 148 * 96.0 / 25.4);
+        var margins = new Hutu.Rendering.Layout.Thickness(56.7, 56.7, 56.7, 56.7);
+
+        view.SetPaged(true, a5, margins);
+
+        Assert.That(view.PageExtent.Width, Is.EqualTo(a5.Width).Within(0.5), "the sheet is A5");
+
+        view.SetPaper(a6, margins);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(view.PageExtent.Width, Is.EqualTo(a6.Width).Within(0.5), "the sheet is A6 now");
+            Assert.That(view.PageExtent.Height, Is.EqualTo(a6.Height).Within(0.5));
+            Assert.That(view.CurrentPage, Is.EqualTo(1), "the new sheet opens at its first page");
+        });
+    }
+
     /// <summary>Gets the window as a picture, so two pages can be told apart.</summary>
     private static Byte[] Frame(Window window)
     {
