@@ -67,7 +67,8 @@ public sealed class LayoutProbe
             {
                 lines.Add(
                     $"page {slice.Number} {slice.Geometry.Size.Width}x{slice.Geometry.Size.Height}"
-                    + $" content {slice.Content.Y}+{slice.Content.Height} origin {slice.OriginY}");
+                    + $" content {slice.Content.X},{slice.Content.Y} {slice.Content.Width}x{slice.Content.Height}"
+                    + $" origin {slice.OriginX},{slice.OriginY}");
             }
 
             dump = String.Join(Environment.NewLine, lines) + Environment.NewLine + dump;

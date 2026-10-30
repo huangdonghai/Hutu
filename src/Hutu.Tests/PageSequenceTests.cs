@@ -485,6 +485,27 @@ public sealed class PageSequenceTests
         });
     }
 
+    [Test]
+    public async Task AVerticalDocumentIsCutAlongItsColumns()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px 50px; margin: 0 }" +
+            " html { writing-mode: vertical-rl; font-size: 10px; line-height: 10px }" +
+            " body, p { margin: 0 }</style>" +
+            "<p>" + string.Join(" ", System.Linq.Enumerable.Repeat("abcd", 60)) + "</p>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.GreaterThan(1), "the columns run past one page's width");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Content.X, Is.GreaterThanOrEqualTo(0), "the first page is the rightmost band");
+            Assert.That(pages.Pages[1].Content.X, Is.LessThan(pages.Pages[0].Content.X), "and the next stands to its left");
+            Assert.That(pages.Pages[0].Content.Width, Is.LessThanOrEqualTo(100.01), "no band is wider than the page");
+            Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(50).Within(0.01), "a band is the page's whole inline extent");
+        });
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

@@ -20,6 +20,66 @@ namespace Hutu.Rendering;
 internal static class PageSequence
 {
     /// <summary>
+    /// The axis a document's pages follow: the block axis of its root, which runs down the page in a
+    /// horizontal flow and across it in a vertical one (CSS Writing Modes 3 §6.1). Every position here
+    /// is the block-axis distance from where the flow begins, so a page is always the band between two
+    /// of them - whichever physical edge that band touches.
+    /// </summary>
+    private readonly struct PageAxis
+    {
+        private readonly Boolean _vertical;
+        private readonly Boolean _reversed;
+        private readonly Double _inline;
+
+        private PageAxis(Boolean vertical, Boolean reversed, Double inline)
+        {
+            _vertical = vertical;
+            _reversed = reversed;
+            _inline = inline;
+        }
+
+        public static PageAxis Of(WritingModeInfo flow, Double layoutInline) =>
+            flow.IsVertical
+                ? new PageAxis(
+                    true,
+                    flow.Mode is WritingMode.VerticalRl or WritingMode.SidewaysRl,
+                    layoutInline)
+                : default;
+
+        public Boolean IsVertical => _vertical;
+
+        /// <summary>Gets where the box begins along the axis.</summary>
+        public Double Start(LayoutBox box) => _vertical
+            ? (_reversed ? _inline - box.BorderBox.Right : box.BorderBox.X)
+            : box.BorderBox.Y;
+
+        /// <summary>Gets where the box ends along the axis.</summary>
+        public Double End(LayoutBox box) => _vertical
+            ? (_reversed ? _inline - box.BorderBox.X : box.BorderBox.Right)
+            : box.BorderBox.Bottom;
+
+        public Double Start(Rect rect) => _vertical
+            ? (_reversed ? _inline - (rect.X + rect.Width) : rect.X)
+            : rect.Y;
+
+        public Double End(Rect rect) => _vertical
+            ? (_reversed ? _inline - rect.X : rect.X + rect.Width)
+            : rect.Y + rect.Height;
+
+        /// <summary>Gets the block extent of the page area: how much of the axis one page covers.</summary>
+        public Double PageExtent(PageGeometry page) => _vertical ? page.ContentWidth : page.ContentHeight;
+
+        /// <summary>Gets the document rectangle the page between two positions shows.</summary>
+        public Rect Band(Double from, Double to, PageGeometry page) => _vertical
+            ? new Rect(_reversed ? _inline - to : from, 0, Math.Max(0, to - from), page.ContentHeight)
+            : new Rect(0, from, page.ContentWidth, Math.Max(0, to - from));
+
+        /// <summary>Gets the margin a box keeps at the end of the axis.</summary>
+        public Double EndMargin(Thickness margin) =>
+            _vertical ? (_reversed ? margin.Left : margin.Right) : margin.Bottom;
+    }
+
+    /// <summary>
     /// Gets the one blank page a document with no box at all prints: a root that generates nothing
     /// still prints a sheet, and the sheet is the page box the rule states (CSS Page 3 §3).
     /// </summary>
@@ -30,41 +90,44 @@ internal static class PageSequence
 
     public static PagedLayout Build(LayoutResult layout, PageStyleTable styles, StyleThickness inheritedMargins)
     {
+        // A vertical document's pages follow its block axis, which runs across the sheet rather than
+        // down it; the same cut then serves both, over positions read along that axis.
+        var axis = PageAxis.Of(layout.Root.Flow, layout.Width);
         var units = new List<FlowUnit>();
-        var collector = new Collector();
+        var collector = new Collector(axis);
         collector.Collect(
             layout.Root, units, BreakValue.Auto, BreakValue.Auto, Array.Empty<Int32>(), null);
 
-        var documentHeight = collector.OutOfFlowBottom;
+        var documentExtent = collector.OutOfFlowBottom;
 
         foreach (var unit in units)
         {
-            documentHeight = Math.Max(documentHeight, unit.Bottom);
+            documentExtent = Math.Max(documentExtent, unit.Bottom);
         }
 
-        // A box's own height may extend past the last line or child that gave it its flow, and a
+        // A box's own extent may reach past the last line or child that gave it its flow, and a
         // positioned box that takes no page break still paints. The root is left out: its box is
         // the window the document was measured in, which is not content.
         foreach (var child in layout.Root.Children)
         {
-            documentHeight = Math.Max(documentHeight, ContentBottom(child));
+            documentExtent = Math.Max(documentExtent, ContentBottom(child, axis));
         }
 
         // A document with no flow unit at all - an absolutely positioned picture, a root that states
         // only a height - still has the size the layout gave it. The units are the flow's own end,
-        // because the layout's height includes the viewport the document was measured in.
-        if (units.Count == 0 && documentHeight <= 0)
+        // because the layout's size includes the viewport the document was measured in.
+        if (units.Count == 0 && documentExtent <= 0)
         {
-            documentHeight = Math.Max(0, layout.Height);
+            documentExtent = Math.Max(0, axis.IsVertical ? layout.Width : layout.Height);
         }
 
         var pages = new List<PageSlice>();
 
-        if (documentHeight <= 0.001)
+        if (documentExtent <= 0.001)
         {
             var empty = styles.DefaultPage(inheritedMargins);
-            pages.Add(new PageSlice(1, empty, new Rect(0, 0, empty.ContentWidth, 0), null));
-            return new PagedLayout(empty, WithMarginBoxes(pages, styles), documentHeight);
+            pages.Add(new PageSlice(1, empty, axis.Band(0, 0, empty), null));
+            return new PagedLayout(empty, WithMarginBoxes(pages, styles), documentExtent);
         }
 
         var start = 0.0;
@@ -73,7 +136,7 @@ internal static class PageSequence
         var tail = false;
         BreakValue? pendingSide = null;
 
-        while (start < documentHeight - 0.001 || tail)
+        while (start < documentExtent - 0.001 || tail)
         {
             var name = NameAt(units, start);
             var isLeft = number % 2 == 0;
@@ -86,7 +149,7 @@ internal static class PageSequence
             {
                 var blank = styles.Page(name, number, isLeft, blank: true, inheritedMargins);
                 pages.Add(new PageSlice(
-                    number++, blank, new Rect(0, start, blank.ContentWidth, 0), name, Blank: true));
+                    number++, blank, axis.Band(start, start, blank), name, Blank: true));
                 isLeft = !isLeft;
             }
 
@@ -96,17 +159,17 @@ internal static class PageSequence
 
             // A forced break may leave nothing behind it but a zero-height box. That box is still on
             // the next page, and the page it is on is printed even though it has no height.
-            if (start >= documentHeight - 0.001)
+            if (start >= documentExtent - 0.001)
             {
                 first ??= geometry;
                 pages.Add(new PageSlice(
-                    number, geometry, new Rect(0, start, geometry.ContentWidth, 0), name));
+                    number, geometry, axis.Band(start, start, geometry), name));
                 break;
             }
 
-            var contentHeight = Math.Max(1, geometry.ContentHeight);
-            var limit = Math.Min(documentHeight, start + contentHeight);
-            var cut = Cut(units, start, limit, documentHeight, out var forcedBreak, out var resume);
+            var contentExtent = Math.Max(1, axis.PageExtent(geometry));
+            var limit = Math.Min(documentExtent, start + contentExtent);
+            var cut = Cut(units, start, limit, documentExtent, out var forcedBreak, out var resume);
             tail = forcedBreak is BreakValue.Page or BreakValue.Left or BreakValue.Right &&
                 HasUnitFrom(units, cut);
             pendingSide = forcedBreak is BreakValue.Left or BreakValue.Right ? forcedBreak : null;
@@ -116,7 +179,7 @@ internal static class PageSequence
             // page whole (CSS 2.1 §13.3.1). A float taller than a page, or a page's own forced break,
             // may cut it. The forced break says where the page ends and is not moved.
             if (forcedBreak == BreakValue.Auto &&
-                FloatEdge(collector.Floats, cut, start, contentHeight) is { } floatedEdge)
+                FloatEdge(collector.Floats, cut, start, contentExtent) is { } floatedEdge)
             {
                 cut = floatedEdge;
                 resume = floatedEdge;
@@ -124,22 +187,22 @@ internal static class PageSequence
 
             if (cut <= start + 0.001)
             {
-                cut = Math.Min(documentHeight, Math.Max(limit, start + 0.001));
+                cut = Math.Min(documentExtent, Math.Max(limit, start + 0.001));
             }
 
             if (cut <= start)
             {
-                cut = documentHeight;
+                cut = documentExtent;
             }
 
             first ??= geometry;
             pages.Add(new PageSlice(
-                number++, geometry, new Rect(0, start, geometry.ContentWidth, Math.Max(0, cut - start)), name));
+                number++, geometry, axis.Band(start, cut, geometry), name));
 
-            start = Math.Min(documentHeight, Math.Max(cut, resume));
+            start = Math.Min(documentExtent, Math.Max(cut, resume));
         }
 
-        return new PagedLayout(first ?? styles.DefaultPage(inheritedMargins), WithMarginBoxes(pages, styles), documentHeight);
+        return new PagedLayout(first ?? styles.DefaultPage(inheritedMargins), WithMarginBoxes(pages, styles), documentExtent);
     }
 
     /// <summary>
@@ -203,12 +266,12 @@ internal static class PageSequence
     }
 
     /// <summary>
-    /// Gets the lowest edge the box's picture reaches. A box that clips its overflow stops at its own
-    /// edge: what it hides is not content a page has to reach.
+    /// Gets the furthest edge the box's picture reaches along the page axis. A box that clips its
+    /// overflow stops at its own edge: what it hides is not content a page has to reach.
     /// </summary>
-    private static Double ContentBottom(LayoutBox box)
+    private static Double ContentBottom(LayoutBox box, PageAxis axis)
     {
-        var bottom = box.BorderBox.Bottom;
+        var bottom = axis.End(box);
 
         if (box.Source.Style.ClipsOverflow)
         {
@@ -217,7 +280,7 @@ internal static class PageSequence
 
         foreach (var child in box.Children)
         {
-            bottom = Math.Max(bottom, ContentBottom(child));
+            bottom = Math.Max(bottom, ContentBottom(child, axis));
         }
 
         return bottom;
@@ -458,8 +521,11 @@ internal static class PageSequence
 
     private sealed class Collector
     {
+        private readonly PageAxis _axis;
         private Int32 _nextRun;
         private Int32 _nextAvoid;
+
+        public Collector(PageAxis axis) => _axis = axis;
 
         /// <summary>
         /// Gets the lowest edge of a box that took no place in the flow - an absolutely positioned
@@ -492,7 +558,8 @@ internal static class PageSequence
                 if (source.Style.Float != FloatSide.None)
                 {
                     var kept = source.Style.Breaks.Inside == BreakValue.Avoid;
-                    Floats.Add((box.BorderBox.Y, kept ? box.BorderBox.Bottom + box.Margin.Bottom : box.BorderBox.Bottom, kept));
+                    var end = _axis.End(box) + (kept ? _axis.EndMargin(box.Margin) : 0);
+                    Floats.Add((_axis.Start(box), end, kept));
                 }
 
                 // A positioned box takes no place in the flow, but the page names written inside it
@@ -504,7 +571,10 @@ internal static class PageSequence
                 }
             }
 
-            var name = pageNames && ownPageName && source.Style.PageName is { } own ? own : pageName;
+            var name = pageNames && ownPageName && source.Flow.IsVertical == _axis.IsVertical &&
+                source.Style.PageName is { } own
+                    ? own
+                    : pageName;
             var ownBefore = PageValue(source.Style.Breaks.Before);
             var ownAfter = PageValue(source.Style.Breaks.After);
 
@@ -557,11 +627,9 @@ internal static class PageSequence
                     child.Source.Style.Float != FloatSide.None)
                 {
                     var kept = child.Source.Style.Breaks.Inside == BreakValue.Avoid;
-                    var bottom = kept
-                        ? child.BorderBox.Bottom + child.Margin.Bottom
-                        : child.BorderBox.Bottom;
+                    var end = _axis.End(child) + (kept ? _axis.EndMargin(child.Margin) : 0);
 
-                    Floats.Add((child.BorderBox.Y, bottom, kept));
+                    Floats.Add((_axis.Start(child), end, kept));
                 }
             }
 
@@ -605,7 +673,7 @@ internal static class PageSequence
             {
                 // A break before this box falls at its own border edge, not between its padding and
                 // its first child: the box's edges and padding belong to the fragment that begins it.
-                units[first].StartBoundaryY = box.BorderBox.Y;
+                units[first].StartBoundaryY = _axis.Start(box);
                 units[first].StartBoundarySet = true;
 
                 if (inside.Length != avoid.Length)
@@ -619,12 +687,12 @@ internal static class PageSequence
         /// Notes on the unit that begins a box how far the box asks not to be broken inside. A page
         /// that cannot hold the whole of it moves the box to the next one instead of splitting it.
         /// </summary>
-        private static void MarkAvoidStart(List<FlowUnit> units, Int32 first, LayoutBox box)
+        private void MarkAvoidStart(List<FlowUnit> units, Int32 first, LayoutBox box)
         {
             if (units.Count > first)
             {
                 units[first].StartsAvoidBottom =
-                    Math.Max(units[first].StartsAvoidBottom, ContentBottom(box));
+                    Math.Max(units[first].StartsAvoidBottom, _axis.End(box));
             }
         }
 
@@ -692,8 +760,8 @@ internal static class PageSequence
 
                     foreach (var item in line)
                     {
-                        top = Math.Min(top, item.BorderBox.Y);
-                        bottom = Math.Max(bottom, item.BorderBox.Bottom);
+                        top = Math.Min(top, _axis.Start(item));
+                        bottom = Math.Max(bottom, _axis.End(item));
 
                         // A break written on an item is a break of the line it stands on: a row's
                         // items sit beside each other, and the page can only end between lines.
@@ -717,10 +785,9 @@ internal static class PageSequence
             }
             else
             {
-                var ordered = items
-                    .OrderBy(item => item.BorderBox.X)
-                    .ThenBy(item => item.BorderBox.Y)
-                    .ToList();
+                var ordered = _axis.IsVertical
+                    ? items.OrderBy(item => _axis.Start(item)).ThenBy(item => item.BorderBox.Y).ToList()
+                    : items.OrderBy(item => item.BorderBox.X).ThenBy(item => item.BorderBox.Y).ToList();
 
                 var previousBottom = Double.NegativeInfinity;
 
@@ -743,14 +810,14 @@ internal static class PageSequence
                     // page ends at the item before the gap and the next one starts at its own edge.
                     if (units.Count > itemFirst &&
                         previousBottom > Double.NegativeInfinity &&
-                        item.BorderBox.Y > previousBottom + 0.001)
+                        _axis.Start(item) > previousBottom + 0.001)
                     {
                         units[itemFirst].ResumeSet = true;
                         units[itemFirst].ResumeFrom = previousBottom;
-                        units[itemFirst].ResumeY = item.BorderBox.Y;
+                        units[itemFirst].ResumeY = _axis.Start(item);
                     }
 
-                    previousBottom = item.BorderBox.Bottom;
+                    previousBottom = _axis.End(item);
                 }
             }
 
@@ -763,7 +830,7 @@ internal static class PageSequence
             // inside the container, and the box after it stands on the container's page.
             units[first].StartName = name;
             units[first].StartNameSet = true;
-            units[first].StartBoundaryY = flex.BorderBox.Y;
+            units[first].StartBoundaryY = _axis.Start(flex);
             units[first].StartBoundarySet = true;
 
             if (inside.Length != avoid.Length)
@@ -841,8 +908,8 @@ internal static class PageSequence
 
                     foreach (var item in line)
                     {
-                        top = Math.Min(top, item.BorderBox.Y);
-                        bottom = Math.Max(bottom, item.BorderBox.Bottom);
+                        top = Math.Min(top, _axis.Start(item));
+                        bottom = Math.Max(bottom, _axis.End(item));
                         lineBefore = Fragmentainer.Combine(
                             lineBefore, PageValue(item.Source.Style.Breaks.Before));
                         lineAfter = Fragmentainer.Combine(
@@ -869,7 +936,7 @@ internal static class PageSequence
 
             units[first].StartName = name;
             units[first].StartNameSet = true;
-            units[first].StartBoundaryY = grid.BorderBox.Y;
+            units[first].StartBoundaryY = _axis.Start(grid);
             units[first].StartBoundarySet = true;
 
             if (inside.Length != avoid.Length)
@@ -887,9 +954,10 @@ internal static class PageSequence
         /// item does not reach through the container - the flex container answers for its items alone
         /// (CSS Page 3 §using-named-pages).
         /// </summary>
-        private static String? FlexPageName(LayoutBox flex, String? inherited, Boolean pageNames)
+        private String? FlexPageName(LayoutBox flex, String? inherited, Boolean pageNames)
         {
-            if (!pageNames || flex.Source.Style.PageName is not null)
+            if (!pageNames || flex.Source.Style.PageName is not null ||
+                flex.Source.Flow.IsVertical != _axis.IsVertical)
             {
                 return inherited;
             }
@@ -904,7 +972,9 @@ internal static class PageSequence
                     continue;
                 }
 
-                var itemName = item.Source.Style.PageName;
+                var itemName = item.Source.Flow.IsVertical == _axis.IsVertical
+                    ? item.Source.Style.PageName
+                    : null;
 
                 if (itemName is null)
                 {
@@ -925,24 +995,24 @@ internal static class PageSequence
         }
 
         /// <summary>
-        /// Groups flex items into the lines their boxes stand on. The items of one line overlap down
-        /// the page; an item whose top is below every box of the line before it begins the next.
+        /// Groups the items into the lines their boxes stand on. The items of one line overlap along
+        /// the page axis; an item whose start is past every box of the line before it begins the next.
         /// </summary>
-        private static List<List<LayoutBox>> FlexLines(List<LayoutBox> items)
+        private List<List<LayoutBox>> FlexLines(List<LayoutBox> items)
         {
             var lines = new List<List<LayoutBox>>();
             var bottom = Double.MinValue;
 
-            foreach (var item in items.OrderBy(item => item.BorderBox.Y).ThenBy(item => item.BorderBox.X))
+            foreach (var item in items.OrderBy(item => _axis.Start(item)).ThenBy(item => item.BorderBox.Y))
             {
-                if (lines.Count == 0 || item.BorderBox.Y >= bottom - 0.5)
+                if (lines.Count == 0 || _axis.Start(item) >= bottom - 0.5)
                 {
                     lines.Add(new List<LayoutBox>());
-                    bottom = item.BorderBox.Bottom;
+                    bottom = _axis.End(item);
                 }
                 else
                 {
-                    bottom = Math.Max(bottom, item.BorderBox.Bottom);
+                    bottom = Math.Max(bottom, _axis.End(item));
                 }
 
                 lines[^1].Add(item);
@@ -967,7 +1037,9 @@ internal static class PageSequence
             Boolean pageNames)
         {
             var source = table.Source;
-            var name = source.Style.PageName ?? pageName;
+            var name = source.Flow.IsVertical == _axis.IsVertical && source.Style.PageName is { } own
+                ? own
+                : pageName;
             var before = Fragmentainer.Combine(inheritedBefore, PageValue(source.Style.Breaks.Before));
             var after = Fragmentainer.Combine(inheritedAfter, PageValue(source.Style.Breaks.After));
             var inside = source.Style.Breaks.Inside == BreakValue.Avoid
@@ -1019,7 +1091,7 @@ internal static class PageSequence
             }
             else
             {
-                units[first].StartBoundaryY = table.BorderBox.Y;
+                units[first].StartBoundaryY = _axis.Start(table);
                 units[first].StartBoundarySet = true;
 
                 if (inside.Length != avoid.Length)
@@ -1039,7 +1111,9 @@ internal static class PageSequence
             Boolean pageNames)
         {
             var source = group.Source;
-            var name = source.Style.PageName ?? pageName;
+            var name = source.Flow.IsVertical == _axis.IsVertical && source.Style.PageName is { } own
+                ? own
+                : pageName;
             var before = Fragmentainer.Combine(inheritedBefore, PageValue(source.Style.Breaks.Before));
             var after = Fragmentainer.Combine(inheritedAfter, PageValue(source.Style.Breaks.After));
             var inside = source.Style.Breaks.Inside == BreakValue.Avoid
@@ -1080,7 +1154,7 @@ internal static class PageSequence
             }
         }
 
-        private static void AddRow(
+        private void AddRow(
             LayoutBox row,
             List<FlowUnit> units,
             BreakValue before,
@@ -1119,12 +1193,12 @@ internal static class PageSequence
 
                 // A line that holds only a positioned box is no line on the page: the box it holds
                 // is collected below, and a zero-height run of no text is not a break opportunity.
-                if (HasFlowContent(line) || line.BorderBox.Height > 0.001)
+                if (HasFlowContent(line) || _axis.End(line) - _axis.Start(line) > 0.001)
                 {
                     var unit = new FlowUnit
                     {
-                        Top = line.BorderBox.Y,
-                        Bottom = line.BorderBox.Bottom,
+                        Top = _axis.Start(line),
+                        Bottom = _axis.End(line),
                         Avoid = avoid,
                         PageName = pageName,
                         Run = run,
@@ -1173,7 +1247,7 @@ internal static class PageSequence
             return false;
         }
 
-        private static FlowUnit BoxUnit(
+        private FlowUnit BoxUnit(
             LayoutBox box,
             BreakValue before,
             BreakValue after,
@@ -1181,8 +1255,8 @@ internal static class PageSequence
             String? pageName) =>
             new()
             {
-                Top = box.BorderBox.Y,
-                Bottom = box.BorderBox.Bottom,
+                Top = _axis.Start(box),
+                Bottom = _axis.End(box),
                 Before = before,
                 After = after,
                 Avoid = avoid,
@@ -1224,9 +1298,9 @@ internal static class PageSequence
                 NamesPage(box);
         }
 
-        private static Double DeepestBottom(LayoutBox box)
+        private Double DeepestBottom(LayoutBox box)
         {
-            var bottom = box.BorderBox.Bottom;
+            var bottom = _axis.End(box);
 
             foreach (var child in box.Children)
             {
@@ -1286,8 +1360,7 @@ internal static class PageSequence
                 source.Kind is BoxKind.InlineBlock ||
                 source.Style.Multi.IsMultiColumn ||
                 Scrolls(source.Style) ||
-                source.Style.Contain.Block ||
-                source.Flow.IsVertical;
+                source.Style.Contain.Block;
         }
 
         /// <summary>

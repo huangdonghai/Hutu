@@ -99,6 +99,97 @@ public sealed class PagePaintTests
         });
     }
 
+    [Test]
+    public async Task EachVerticalPageDrawsItsOwnColumnBand()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(800, 600);
+        view.SetMediaType(DeviceCategory.Printer);
+        await view.SetHtml(
+            "<style>@page { size: 100px 50px; margin: 0 }" +
+            " html { writing-mode: vertical-rl; font-size: 10px; line-height: 10px }" +
+            " body, p { margin: 0 }</style>" +
+            "<p style='width: 100px; background: red'>a</p>" +
+            "<p style='width: 100px; background: blue'>b</p>");
+
+        var pages = view.Pages!;
+        var executor = new SkiaPaintExecutor(measurer);
+
+        Assert.That(pages.Count, Is.EqualTo(2), "each paragraph takes a page of its own across the block axis");
+
+        using var first = Draw(executor, view, pages.Pages[0]);
+        using var second = Draw(executor, view, pages.Pages[1]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Ink(first, 0, 0, 100, 50), Is.GreaterThan(0), "the first band carries the first paragraph's columns");
+            Assert.That(Ink(second, 0, 0, 100, 50), Is.EqualTo(0), "and none of them on the page after it");
+            Assert.That(Blues(second, 0, 0, 100, 50), Is.GreaterThan(0), "which carries the columns of the paragraph after it");
+            Assert.That(Blues(first, 0, 0, 100, 50), Is.EqualTo(0));
+        });
+    }
+
+    /// <summary>Counts the blue pixels in one area of the page.</summary>
+    private static Int32 Blues(SKBitmap page, Int32 left, Int32 top, Int32 right, Int32 bottom)
+    {
+        var count = 0;
+
+        for (var y = top; y < bottom; y++)
+        {
+            for (var x = left; x < right; x++)
+            {
+                if (page.GetPixel(x, y) == SKColors.Blue)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>Gets whether two pages are drawn with the very same pixels.</summary>
+    private static Boolean Same(SKBitmap one, SKBitmap other)
+    {
+        if (one.Width != other.Width || one.Height != other.Height)
+        {
+            return false;
+        }
+
+        for (var y = 0; y < one.Height; y++)
+        {
+            for (var x = 0; x < one.Width; x++)
+            {
+                if (one.GetPixel(x, y) != other.GetPixel(x, y))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Counts the pixels that are not the page's white in one area.</summary>
+    private static Int32 Marked(SKBitmap page, Int32 left, Int32 top, Int32 right, Int32 bottom)
+    {
+        var count = 0;
+
+        for (var y = top; y < bottom; y++)
+        {
+            for (var x = left; x < right; x++)
+            {
+                if (page.GetPixel(x, y) != SKColors.White)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
     /// <summary>Counts the pixels of the given colour in one area of the page.</summary>
     private static Int32 Ink(SKBitmap page, Int32 left, Int32 top, Int32 right, Int32 bottom)
     {
