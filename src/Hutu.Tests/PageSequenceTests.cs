@@ -744,6 +744,44 @@ public sealed class PageSequenceTests
         });
     }
 
+    /// <summary>
+    /// A page may not end at a fieldset's legend: the legend stands in the border, so the place ahead
+    /// of it is not one the flow can stop at, and the page takes the content it has room for
+    /// (HTML rendering §15.3.12).
+    /// </summary>
+    [Test]
+    public async Task AFieldsetsLegendIsNoPlaceForAPageToEnd()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " fieldset { padding: 0; margin: 0; border: 10px solid black }" +
+            " legend { padding: 0; margin: 0; width: 20px; height: 20px }</style>" +
+            "<fieldset>a<br>b<br>c<br>d<br>e<br>f<legend></legend></fieldset>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(90).Within(0.01),
+            "the page ends at the last line boundary it can take, not at the legend's top");
+    }
+
+    /// <summary>
+    /// A forced break written before a legend is asked for before nothing: the legend is the first
+    /// thing the fieldset holds, so the break is dropped and the content stays on this page.
+    /// </summary>
+    [Test]
+    public async Task AForcedBreakBeforeALegendIsDropped()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " fieldset { padding: 0; margin: 0; border: 10px solid black }" +
+            " legend { padding: 0; margin: 0; width: 20px; height: 20px }</style>" +
+            "<fieldset><legend style=\"break-before: page\"></legend>a<br>b</fieldset>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(1), "nothing precedes the legend, so the break has nothing to start");
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
