@@ -481,8 +481,22 @@ internal sealed class HutuSurface : Control
             return;
         }
 
+        // A paged view has nothing to scroll: the wheel turns the sheet instead.
+        if (PagedPage is not null && Math.Abs(e.Delta.Y) > 0.01)
+        {
+            e.Handled = true;
+            PageWheel?.Invoke(e.Delta.Y < 0 ? 1 : -1);
+            return;
+        }
+
         base.OnPointerWheelChanged(e);
     }
+
+    /// <summary>
+    /// Raised when the wheel turns in a paged view, with the direction to move: one for the page
+    /// after this one and minus one for the page before it.
+    /// </summary>
+    public event Action<Int32>? PageWheel;
 
     /// <summary>
     /// Gets the point of the document the top left corner of this control stands at, which is what

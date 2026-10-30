@@ -113,6 +113,17 @@ public class HutuView : ScrollViewer
         // The surface catches Ctrl + the wheel before the scroller can scroll with it, and hands the
         // factor here to be applied.
         _surface.ZoomWheel += factor => ChangeZoom(Zoom * factor);
+        _surface.PageWheel += step =>
+        {
+            if (step > 0)
+            {
+                NextPage();
+            }
+            else
+            {
+                PreviousPage();
+            }
+        };
     }
 
     public void AddEpubResourceSource(string epubFileName)

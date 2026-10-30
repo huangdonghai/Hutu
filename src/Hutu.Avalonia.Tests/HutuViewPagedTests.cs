@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.NUnit;
@@ -58,6 +59,12 @@ public sealed class HutuViewPagedTests
 
         view.PreviousPage();
         Assert.That(view.CurrentPage, Is.EqualTo(1));
+
+        window.MouseWheel(new Point(100, 100), new Vector(0, -1));
+        Assert.That(view.CurrentPage, Is.EqualTo(2), "the wheel turns to the next sheet");
+
+        window.MouseWheel(new Point(100, 100), new Vector(0, 1));
+        Assert.That(view.CurrentPage, Is.EqualTo(1), "and back to the one before");
 
         view.ShowPage(99);
         Assert.That(view.CurrentPage, Is.EqualTo(view.PageCount), "a page past the end is kept at the last one");
