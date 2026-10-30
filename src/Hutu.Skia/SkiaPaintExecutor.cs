@@ -1341,6 +1341,16 @@ public sealed class SkiaPaintExecutor
             // baseline: its text is aligned by its central one, which is not the alphabetic baseline
             // §2.5 averages, and only the offsets the line was measured with travel.
             var placed = drawn < command.Placements.Count ? command.Placements[drawn] : null;
+
+            // The line belongs to the decorating box and this run may be one of several it is cut
+            // into; only the first of them draws it, once, across the whole stretch.
+            if (placed is { Leads: false })
+            {
+                continue;
+            }
+
+            var lineStart = placed is { } lead ? (Single?)lead.InlineStart : null;
+            var lineEnd = placed is { } tail ? (Single?)tail.InlineEnd : null;
             var stood = from + (alongLine && placed is not null ? (Single)placed.BaselineShift : 0f);
 
             // The ends of the line are pulled in, or run outward where the distance is negative, by what
@@ -1361,7 +1371,11 @@ public sealed class SkiaPaintExecutor
                 DecorationSkip.All => true,
                 _ => !TextClusters.StandsAcrossTheLine(command.Text),
             };
-            var blocked = skips ? across : Array.Empty<SKRect>();
+
+            // A line the box draws across several runs is laid down once; the run holding the lead
+            // only knows its own ink, so it is drawn whole rather than broken at a glyph the rest of
+            // the stretch does not carry.
+            var blocked = placed is { AcrossRuns: true } || !skips ? Array.Empty<SKRect>() : across;
 
             // Where the run's baseline stands on the axis its lines are measured along, in the same
             // coordinates as those lines: a row counts down from the page's top edge, a column across
@@ -1389,7 +1403,7 @@ public sealed class SkiaPaintExecutor
                 // note about Asian scripts asks a UA to consider (CSS Text Decoration 4 §2.7).
                 if (alongLine &&
                     decoration.Position is TextUnderlinePosition.Auto or TextUnderlinePosition.Under &&
-                    TextClusters.StandsAcrossTheLine(command.Text))
+                    (placed?.Cjk ?? TextClusters.StandsAcrossTheLine(command.Text)))
                 {
                     fontOffset = Math.Max(fontOffset, Math.Abs(metrics.Descent));
                 }
@@ -1408,12 +1422,12 @@ public sealed class SkiaPaintExecutor
                 if (beside && decoration.Position is TextUnderlinePosition.Auto
                     or TextUnderlinePosition.Under or TextUnderlinePosition.Left)
                 {
-                    at = command.Bounds.X + emInset - extra;
+                    at = (placed?.UnderEdge ?? (command.Bounds.X + emInset)) - extra;
                     underlineGrow = -1;
                 }
                 else if (beside && decoration.Position == TextUnderlinePosition.Right)
                 {
-                    at = command.Bounds.Right - emInset + extra;
+                    at = (placed?.OverEdge ?? (command.Bounds.Right - emInset)) + extra;
                     underlineGrow = 1;
                 }
                 else
@@ -1438,7 +1452,9 @@ public sealed class SkiaPaintExecutor
                     // follows the direction the offset was counted in, so it is the same sign as that
                     // one rather than the answer to where the line landed - a page that sets a negative
                     // <c>text-underline-offset</c> still asks for an underline (§2.4).
-                    underlineGrow);
+                    underlineGrow,
+                    lineStart,
+                    lineEnd);
             }
 
             // The face says where its overline goes; a face that will not is answered with the top of
@@ -1468,7 +1484,9 @@ public sealed class SkiaPaintExecutor
                     blocked,
                     // An overline stands over its text and thickens away from it, the other way from
                     // its underline (§2.4).
-                    -grow);
+                    -grow,
+                    lineStart,
+                    lineEnd);
             }
 
             // A line-through is left to the run it crosses: §2.5 has its position recomputed wherever the
@@ -1488,7 +1506,9 @@ public sealed class SkiaPaintExecutor
                     blocked,
                     // A line-through is drawn across the letters it crosses, so a thicker one covers
                     // more of them rather than sliding off the text to one side (§2.5).
-                    0);
+                    0,
+                    lineStart,
+                    lineEnd);
             }
         }
     }
@@ -1586,11 +1606,13 @@ public sealed class SkiaPaintExecutor
         Double trimStart,
         Double trimEnd,
         SKRect[] ink,
-        Int32 grow = 1)
+        Int32 grow = 1,
+        Single? inlineStart = null,
+        Single? inlineEnd = null)
     {
         var height = (Single)thickness;
-        var start = (Single)(alongLine ? command.Bounds.X : command.Bounds.Y);
-        var end = (Single)(alongLine ? command.Bounds.Right : command.Bounds.Bottom);
+        var start = inlineStart ?? (Single)(alongLine ? command.Bounds.X : command.Bounds.Y);
+        var end = inlineEnd ?? (Single)(alongLine ? command.Bounds.Right : command.Bounds.Bottom);
 
         // Where the band is asked to stand off the edge rather than hang from it, the edge is its far
         // side; a line-through is struck through the middle of the text it crosses.

@@ -144,6 +144,33 @@ public sealed record DecorationPlacement(
     Double OverlineThickness)
 {
     /// <summary>
+    /// Gets the inline start and end of the one line this decorating box draws on this line. A font
+    /// fallback cuts the decorated text into several runs; the line belongs to the box, so the first
+    /// run draws it once across all of them.
+    /// </summary>
+    public Double InlineStart { get; init; }
+
+    public Double InlineEnd { get; init; }
+
+    /// <summary>Gets whether this run is the one that draws the line for the decorating box.</summary>
+    public Boolean Leads { get; init; }
+
+    /// <summary>Gets whether the decorated text on this line is set in a CJK script.</summary>
+    public Boolean Cjk { get; init; }
+
+    /// <summary>Gets whether the decorated text was cut into more than one run on this line.</summary>
+    public Boolean AcrossRuns { get; init; }
+
+    /// <summary>
+    /// Gets the under edge one decorating box's line stands on in a column, shared by every run it
+    /// decorates on that line, or null where the line is a row. A rule that stepped to each run's own
+    /// edge would break at every font change even though the line itself is one.
+    /// </summary>
+    public Double? UnderEdge { get; init; }
+
+    /// <summary>Gets the right edge the line stands on where <c>text-underline-position: right</c> asks for it.</summary>
+    public Double? OverEdge { get; init; }
+    /// <summary>
     /// Gets how far the start of this run's stretch of the line is pulled inward, and
     /// <see cref="TrimEnd"/> how far its end is: what <c>text-decoration-inset</c> came to for the run,
     /// counted along the whole of the line the decorating box decorates (CSS Text Decoration 4 §2.9.1).
