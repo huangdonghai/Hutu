@@ -1825,12 +1825,14 @@ internal readonly struct ComputedStyle
     /// <summary>
     /// Resolves how thick a decoration line is, for the fused path. The property is not inherited: a miss
     /// says nothing, and the face's own metrics are what the line then takes - which is also what
-    /// <c>auto</c> and <c>from-font</c> ask for, since this engine reads its metrics from the face
+    /// <c>auto</c> and <c>from-font</c> ask for, since this engine reads its metrics from the face. The
+    /// answer is the length as written and not a whole number of pixels: the value the property computes
+    /// to is an absolute length, and the only floor is one device pixel at the time the line is drawn
     /// (CSS Text Decoration 4 §2.4).
     /// </summary>
     public static Double? ResolveDecorationThicknessFused(
         ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions) =>
-        DecorationLength(declared, font, dimensions) is { } asked ? Math.Round(asked) : null;
+        DecorationLength(declared, font, dimensions);
 
     /// <summary>
     /// Resolves how far an underline stands from where the font puts it, for the fused path. The property

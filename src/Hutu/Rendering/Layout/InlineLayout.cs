@@ -5990,6 +5990,15 @@ internal sealed class InlineLayout
     private static Int32 Places(Line line, Int32 index)
     {
         var fragment = line.Fragments[index];
+
+        // A glyph hung off the line's edge takes no room in the line and no place in it: the room a
+        // justified line spreads is owed to the text the line still holds, and a share falling on the
+        // seam into a hung glyph is a share falling into the margin (CSS Text 3 §8.2.1).
+        if (fragment.HangSide != 0)
+        {
+            return 0;
+        }
+
         var last = fragment.Start + fragment.Length - 1;
         var justify = fragment.Style.TextJustify;
         var places = 0;
@@ -6034,8 +6043,12 @@ internal sealed class InlineLayout
             : 0);
     }
 
-    /// <summary>Gets whether the fragment is the one the line ends with, whose trailing place is the line trailing.</summary>
-    private static Boolean EndsLine(Line line, Int32 index) => index == line.Fragments.Count - 1;
+    /// <summary>
+    /// Gets whether the fragment is the one the text of the line ends with: the last fragment, or the one
+    /// before a glyph hung off the line's edge, whose trailing place is the line's trailing as well.
+    /// </summary>
+    private static Boolean EndsLine(Line line, Int32 index) =>
+        index == line.Fragments.Count - 1 || line.Fragments[index + 1].HangSide != 0;
 
     /// <summary>
     /// Gets the distance the first line of a box is set in from the edge it begins at.

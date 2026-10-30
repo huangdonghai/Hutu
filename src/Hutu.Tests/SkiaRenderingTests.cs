@@ -1402,6 +1402,54 @@ public sealed class SkiaRenderingTests
             "the turned glyph is centred across its column");
     }
 
+    [Test]
+    public async Task AHungStopLeavesTheLastCharacterOnTheLineEdge()
+    {
+        // A line that ends by hanging its stop still spreads its room over the text it holds: the
+        // character before the stop stands on the line's end edge, and only the stop itself is outside
+        // it. A share of the room falling on the seam into the hung glyph instead leaves the last
+        // character short of the edge, which is where a line looks unjustified (CSS Text 3 §5.7.1,
+        // §8.2.1).
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(300, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:24px;height:72px;" +
+            "font-family:Microsoft JhengHei;font-size:16px;line-height:24px;margin:0;" +
+            "text-align:justify;hanging-punctuation:force-end'>甲乙。丙丁。</div></body></html>");
+
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+        var line = Columns(view.Layout!.Root).First(node =>
+            TextsIn(node).Any(text => text.BorderBox.Bottom > node.BorderBox.Bottom + 0.01));
+
+        var left = (Int32)Math.Round(line.BorderBox.X - view.Paint!.Bounds.X) + 1;
+        var right = (Int32)Math.Round(line.BorderBox.Right - view.Paint!.Bounds.X) - 1;
+        var edge = (Int32)Math.Floor(line.BorderBox.Bottom - view.Paint.Bounds.Y);
+        var top = (Int32)Math.Round(line.BorderBox.Y - view.Paint.Bounds.Y);
+        var inkEnd = -1;
+
+        for (var y = edge; y >= top && inkEnd < 0; y--)
+        {
+            for (var x = left; x < right; x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+
+                if (pixel.Red < 240 || pixel.Green < 240 || pixel.Blue < 240)
+                {
+                    inkEnd = y;
+                    break;
+                }
+            }
+        }
+
+        Assert.That(inkEnd, Is.GreaterThanOrEqualTo(0), "the line is drawn");
+        Assert.That(
+            edge - inkEnd,
+            Is.LessThanOrEqualTo(4),
+            "the character before the hung stop stands on the line's end edge");
+    }
+
     /// <summary>What one character set alone in a column painted: the mark it left, and the cell it was given.</summary>
     private sealed record Rendered(Byte[] Pixels, SKRect Cell, SKRect Ink);
 

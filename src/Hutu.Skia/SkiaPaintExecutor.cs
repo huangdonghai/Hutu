@@ -1439,7 +1439,7 @@ public sealed class SkiaPaintExecutor
                     paint,
                     command,
                     (Single)at,
-                    Thickness(decoration.Thickness, placed?.UnderlineThickness ?? metrics.UnderlineThickness),
+                    Thickness(canvas, decoration.Thickness, placed?.UnderlineThickness ?? metrics.UnderlineThickness),
                     decoration.Shape,
                     alongLine,
                     pulls,
@@ -1468,6 +1468,7 @@ public sealed class SkiaPaintExecutor
                     command,
                     (Single)at,
                     Thickness(
+                        canvas,
                         decoration.Thickness,
                         placed?.OverlineThickness
                             ?? (metrics.OverlineThickness > 0
@@ -1492,7 +1493,7 @@ public sealed class SkiaPaintExecutor
                     paint,
                     command,
                     (Single)(origin + from - (sign * Math.Abs(metrics.StrikeoutOffset))),
-                    Thickness(decoration.Thickness, metrics.StrikeoutThickness),
+                    Thickness(canvas, decoration.Thickness, metrics.StrikeoutThickness),
                     decoration.Shape,
                     alongLine,
                     pulls,
@@ -1563,10 +1564,16 @@ public sealed class SkiaPaintExecutor
 
     /// <summary>
     /// Gets how thick a decoration line is: what the decorating box asked for, or the face's own width
-    /// where it asked for nothing. A line is never thinner than one pixel, however small the ask.
+    /// where it asked for nothing. Whatever the ask, the line is never thinner than one device pixel -
+    /// the only floor the specification sets, and a device pixel is a pixel of the surface the page is
+    /// drawn on rather than of the page itself (CSS Text Decoration 4 §2.4).
     /// </summary>
-    private static Double Thickness(Double? asked, Double fromFont) =>
-        Math.Max(1, asked ?? fromFont);
+    private static Double Thickness(SKCanvas canvas, Double? asked, Double fromFont)
+    {
+        var scale = canvas.TotalMatrix.ScaleX;
+
+        return Math.Max(scale > 0 ? 1 / scale : 1, asked ?? fromFont);
+    }
 
     /// <summary>
     /// Draws one decoration line across the run in the shape the element asked for. A solid line is a
