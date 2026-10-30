@@ -801,6 +801,15 @@ internal static class PageSequence
                 return;
             }
 
+            // A multi-column container that a spanner splits breaks between its sections: the page
+            // ends before a spanner that does not fit and carries it whole, and each column block on
+            // either side of it is a piece of the flow (CSS Multicol 1 §6).
+            if (source.Style.Multi.IsMultiColumn && Spans(box))
+            {
+                CollectMulticolSections(box, units, inheritedBefore, inheritedAfter, avoid, name);
+                return;
+            }
+
             if (IsMonolithic(box))
             {
                 units.Add(BoxUnit(
@@ -908,6 +917,95 @@ internal static class PageSequence
             {
                 units[first].StartsAvoidBottom =
                     Math.Max(units[first].StartsAvoidBottom, _axis.End(box));
+            }
+        }
+
+        /// <summary>
+        /// Gets whether one of the container's in-flow children spans every column, which is what
+        /// splits a multi-column container into column blocks a page can end between.
+        /// </summary>
+        private static Boolean Spans(LayoutBox box)
+        {
+            foreach (var child in box.Children)
+            {
+                if (!PositionedLayout.IsOutOfFlow(child.Source) &&
+                    child.Source.Style.Float == FloatSide.None &&
+                    child.Source.Style.SpansColumns)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Collects a spanner-split multi-column container as the pieces a page may end between: every
+        /// spanner stands alone, and the column blocks around it are one piece each (CSS Multicol 1 §6).
+        /// </summary>
+        private void CollectMulticolSections(
+            LayoutBox box,
+            List<FlowUnit> units,
+            BreakValue inheritedBefore,
+            BreakValue inheritedAfter,
+            Int32[] avoid,
+            String? pageName)
+        {
+            var groups = new List<(Double Top, Double Bottom)>();
+            (Double Top, Double Bottom)? run = null;
+
+            foreach (var child in box.Children)
+            {
+                if (PositionedLayout.IsOutOfFlow(child.Source) ||
+                    child.Source.Style.Float != FloatSide.None)
+                {
+                    continue;
+                }
+
+                var top = _axis.Start(child);
+                var bottom = _axis.End(child);
+
+                if (child.Source.Style.SpansColumns)
+                {
+                    if (run is { } open)
+                    {
+                        groups.Add(open);
+                        run = null;
+                    }
+
+                    groups.Add((top, bottom));
+                    continue;
+                }
+
+                run = run is { } growing
+                    ? (Math.Min(growing.Top, top), Math.Max(growing.Bottom, bottom))
+                    : (top, bottom);
+            }
+
+            if (run is { } last)
+            {
+                groups.Add(last);
+            }
+
+            for (var index = 0; index < groups.Count; index++)
+            {
+                var unit = new FlowUnit
+                {
+                    Top = groups[index].Top,
+                    Bottom = groups[index].Bottom,
+                    Before = index == 0 ? inheritedBefore : BreakValue.Auto,
+                    After = index == groups.Count - 1 ? inheritedAfter : BreakValue.Auto,
+                    Avoid = avoid,
+                    PageName = pageName,
+                };
+
+                if (index == 0)
+                {
+                    unit.StartBoundaryY = _axis.Start(box);
+                    unit.StartBoundarySet = true;
+                }
+
+                units.Add(unit);
             }
         }
 
@@ -1711,7 +1809,12 @@ internal static class PageSequence
 
             return source.IsReplaced ||
                 source.Kind is BoxKind.InlineBlock ||
-                source.Style.Multi.IsMultiColumn ||
+                // A one-column container is the ordinary stack with a fragmentainer of its own:
+                // nothing visible splits, so a page may break inside it as it would in a block,
+                // and a multi-column container it holds is the one the page can end in
+                // (CSS Multicol 1 §3.4).
+                (source.Style.Multi.IsMultiColumn &&
+                    source.Style.Multi.Used(box.ContentBox.Width).Count > 1) ||
                 Scrolls(source.Style) ||
                 source.Style.Contain.Block;
         }
