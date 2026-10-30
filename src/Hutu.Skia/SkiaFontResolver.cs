@@ -37,7 +37,7 @@ internal sealed class SkiaFontResolver : IDisposable
     /// </remarks>
     private readonly ConcurrentDictionary<String, SKTypeface> _fetched = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<FallbackKey, Fallback> _fallbacks = new();
-    private readonly ConcurrentDictionary<ListedKey, Fallback> _familyFallbacks = new();
+    private readonly ConcurrentDictionary<FaceKey, IReadOnlyList<SKTypeface>> _listedFamilies = new();
     private readonly List<(String Name, String Path)> _files = new(FontFiles.All());
 
     public SKTypeface Resolve(FontStyle style) =>
@@ -77,14 +77,46 @@ internal sealed class SkiaFontResolver : IDisposable
             }
         }
 
-        return _familyFallbacks.GetOrAdd(
-            new ListedKey(style.Family, codepoint, style.Weight, style.IsItalic),
-            _ => FindListed(style, codepoint)).Typeface;
+        // Resolving the list is the expensive half: matching family names and searching files. It does
+        // not depend on the character, so it is done once per family list and style. A character then
+        // only asks the resolved faces whether they carry its glyph.
+        var families = _listedFamilies.GetOrAdd(
+            new FaceKey(style.Family, style.Weight, style.IsItalic),
+            _ => ResolveListedFamilies(style));
+
+        foreach (var face in families)
+        {
+            if (face.GetGlyph(codepoint) != 0)
+            {
+                return face;
+            }
+        }
+
+        return null;
     }
 
-    private Fallback FindListed(FontStyle style, Int32 codepoint)
+    private IReadOnlyList<SKTypeface> ResolveListedFamilies(FontStyle style)
     {
         var slant = CreateStyle(style.Weight, style.IsItalic);
+        var faces = new List<SKTypeface>();
+        var seen = new HashSet<SKTypeface>();
+
+        void Keep(SKTypeface? face)
+        {
+            if (face is null)
+            {
+                return;
+            }
+
+            // A candidate can be named twice by the same list - a family and its generic, say. The
+            // same wrapper is kept once; separate wrappers of one native face are each owned here.
+            if (!seen.Add(face))
+            {
+                return;
+            }
+
+            faces.Add(face);
+        }
 
         foreach (var family in FontStyle.Split(style.Family))
         {
@@ -97,33 +129,13 @@ internal sealed class SkiaFontResolver : IDisposable
 
             foreach (var stand in StandsFor(name))
             {
-                var match = SKFontManager.Default.MatchFamily(stand, slant);
-
-                if (match is null)
-                {
-                    continue;
-                }
-
-                if (match.GetGlyph(codepoint) != 0)
-                {
-                    return new Fallback(match);
-                }
-
-                match.Dispose();
+                Keep(SKFontManager.Default.MatchFamily(stand, slant));
             }
 
-            if (Named(name) is { } named)
-            {
-                if (named.GetGlyph(codepoint) != 0)
-                {
-                    return new Fallback(named);
-                }
-
-                named.Dispose();
-            }
+            Keep(Named(name));
         }
 
-        return default;
+        return faces;
     }
 
     /// <summary>
@@ -427,12 +439,15 @@ internal sealed class SkiaFontResolver : IDisposable
 
         _fallbacks.Clear();
 
-        foreach (var fallback in _familyFallbacks.Values)
+        foreach (var families in _listedFamilies.Values)
         {
-            fallback.Typeface?.Dispose();
+            foreach (var face in families)
+            {
+                face.Dispose();
+            }
         }
 
-        _familyFallbacks.Clear();
+        _listedFamilies.Clear();
 
         foreach (var fetched in _fetched.Values)
         {
@@ -515,45 +530,6 @@ internal sealed class SkiaFontResolver : IDisposable
     /// when there is none. A value type is what lets a miss be cached, since the dictionary refuses a
     /// null entry.
     /// </summary>
-    /// <summary>The families a character was looked for in, and the style it was looked for at.</summary>
-    private readonly struct ListedKey : IEquatable<ListedKey>
-    {
-        private readonly String _family;
-
-        public ListedKey(String family, Int32 codepoint, Int32 weight, Boolean italic)
-        {
-            _family = family;
-            Codepoint = codepoint;
-            Weight = weight;
-            Italic = italic;
-        }
-
-        public Int32 Codepoint { get; }
-
-        public Int32 Weight { get; }
-
-        public Boolean Italic { get; }
-
-        public Boolean Equals(ListedKey other) =>
-            String.Equals(_family, other._family, StringComparison.Ordinal) &&
-            Codepoint == other.Codepoint &&
-            Weight == other.Weight &&
-            Italic == other.Italic;
-
-        public override Boolean Equals(Object? obj) => obj is ListedKey other && Equals(other);
-
-        public override Int32 GetHashCode()
-        {
-            unchecked
-            {
-                var hash = StringComparer.Ordinal.GetHashCode(_family ?? String.Empty);
-                hash = (hash * 397) ^ Codepoint;
-                hash = (hash * 397) ^ Weight;
-                return (hash * 397) ^ (Italic ? 1 : 0);
-            }
-        }
-    }
-
     private readonly struct Fallback
     {
         public Fallback(SKTypeface typeface) => Typeface = typeface;
