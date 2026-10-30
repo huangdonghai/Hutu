@@ -4,13 +4,13 @@
 >
 > | 口径 | 调查时 | 现在 |
 > |---|---:|---:|
-> | `-print` 逐页语料 | 142 / 162 | **155 / 164** |
+> | `-print` 逐页语料 | 142 / 162 | **177 / 198**（34 个 `paged` 用例从屏幕模式转入打印模式） |
 > | 屏幕全量失败集 | 2138 | **2122**（0 新增失败） |
 > | 单元测试 | 2128 | **2158** |
 >
 > 已落地（`dev-paged`，M1 期的 13 个提交在 `7357d65a..f5245f6c`）：
 > - **M1**：打印媒体（`DeviceCategory.Printer`）、`@page` 的 size/margin/width/height 与页框背景/边框、`page-orientation`、页面序列（tall layout 切片）、逐页绘制与打印 runner。
-> - **M2**：递归块/行分片、强制断点沿祖先传播、表格按行/行组分片、`break-inside: avoid` 的"整块推页"（含嵌套 avoid）、`overflow:hidden` 可切、浮动整块移页（avoid 浮动连边距盒保持完整）、`<br clear>`（CSS 属性与废弃属性）、flex 列向 gap 的页边切断、跨页表格重复 `thead`/`tfoot`（首片之外的每片带上表头与表脚，表头贴片顶、表脚贴片底）、`monolithic` 超高块**填满所在页**而不是在断点前提前收页（`0fad0a00`：整页都装不下的块在其所在页被切开；声明 avoid 的块仍整块移页——含 `tr` 自身的 avoid 未落到单元、行内表格的 avoid 藏在行内两处标记缺失）——`68845b18`、`357116a6`、`2436f2c3`、`3e1d4aa8`、`e7aa3963`、`d21eeb97`、`0fad0a00`。
+> - **M2**：递归块/行分片、强制断点沿祖先传播、表格按行/行组分片、`break-inside: avoid` 的"整块推页"（含嵌套 avoid）、`overflow:hidden` 可切、浮动整块移页（avoid 浮动连边距盒保持完整）、`<br clear>`（CSS 属性与废弃属性）、flex 列向 gap 的页边切断、跨页表格重复 `thead`/`tfoot`（首片之外的每片带上表头与表脚，表头贴片顶、表脚贴片底）、`monolithic` 超高块**填满所在页**而不是在断点前提前收页（`0fad0a00`：整页都装不下的块在其所在页被切开；声明 avoid 的块仍整块移页——含 `tr` 自身的 avoid 未落到单元、行内表格的 avoid 藏在行内两处标记缺失）——`68845b18`、`357116a6`、`2436f2c3`、`3e1d4aa8`、`e7aa3963`、`d21eeb97`、`0fad0a00`；被裁剪的内容不再延长文档（`cdd35675`：`overflow:hidden` 里的内容超出盒尾后仍被收成单元，文档比布局长出 144px，多切一页——bfc-005..008 转绿）。
 > - **M3**：命名页与页面组、`:first/:left/:right/:blank`、页边盒 16 个、`counter(page)`/`counter(pages)`（CSSOM 丢弃页内嵌套 at-rule，改从样式表文本扫描，`d15521ad`）；`@page` 在 `@layer` 里的层叠顺序（`23cff26c`）。
 > - **M4**：浮动跨页、flex 行列分片、grid 按行分片（`6d303559`）、竖排按块轴切页与正交流页名（`035f8791`）、列向 gap；块级 clearance 与"只有格式化上下文根为浮动增高"（`0b4a83d6`）；裁剪对齐（`dd6ba4f1`）、`text-box-trim` 与分页的配合（`e9fc1ad1`）。
 >
@@ -19,6 +19,7 @@
 > - 按用户决定记为后续里程碑（需要"按页重排"一层）：多栏跨页重排、`box-decoration-break`。表格重复 `thead`/`tfoot` 已用"从长文档原处取同一段内容再画一次"实现，不需要按页重排（`e7aa3963`、`d21eeb97`）；
 >   `box-decoration-break: clone` 不同——每片都要额外吃掉边框/内边距的高度并推动其后内容，属真正的按页重排。实测 `monolithic-overflow-032` 还需要 Blink 的"巨型分片"模型（超高 monolithic 内容所在的一片一直贯穿到内容放完，下一片紧贴其后），该测试自身的注释即写明"expected behavior here is not obvious"，故保持 ◆。`monolithic-overflow-031` 已由 `0fad0a00` 转绿。
 > - 非分页特性（打印模式下同样失败）：`@scope`×3、`(scripting)` 媒体查询、表单控件外观、`mask-image`。
+> - **fieldset/legend 布局（12 对，`gecko/pagination/fieldset-*`）**：这些对照是 Gecko 用例，ref 写的是 Gecko 的 legend 模型；实测 Chrome 与 Gecko 不同——Chrome：fieldset 边框盒顶留在原处（0）、高 240、legend 在边框盒顶、内容顶 = max(边框, legend 高)；ref 的写法（`margin-top`/`padding-top` 各半个超出量、白块盖住边框带）对应 fieldset 边框盒整体下移半个超出量、高 216、内容顶仍在 legend 底。按 Chrome 修会对不上 ref，故这一族需按 ref 自身的几何另行测量（`legend` 提升为块盒 + 边框开缺口的两处修改已试做并回滚）。
 >
 > 调查日期：2026-10-30。HEAD：`7357d65a`。只读调查，未修改引擎代码。
 >
