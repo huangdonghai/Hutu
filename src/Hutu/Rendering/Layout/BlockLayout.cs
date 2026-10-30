@@ -689,7 +689,11 @@ internal sealed class BlockLayout
             }
 
             var size = _engine.Measure(child, MeasureConstraints.FitWidth(contentWidth), context);
-            var overshoot = Math.Max(0, size.Height - BorderOf(box).Top);
+            var margin = child.Style.Margin.Resolve(contentWidth);
+
+            // The border gives way to the legend's margin box, not to its border box: its margins
+            // stand in the border as much as its own height does (HTML rendering §15.3.12).
+            var overshoot = Math.Max(0, size.Height + margin.Top + margin.Bottom - BorderOf(box).Top);
 
             return (overshoot - overshoot / 2, overshoot / 2, child);
         }
@@ -2673,7 +2677,8 @@ internal sealed class BlockLayout
                     ? parent.BorderBox.Right - legendBorder.Right - legendPadding.Right -
                       margin.Right - legendSize.Width
                     : parent.BorderBox.X + legendBorder.Left + legendPadding.Left + margin.Left;
-                var y = parent.BorderBox.Y + (legendBorder.Top - legendSize.Height) / 2;
+                var y = parent.BorderBox.Y +
+                    (legendBorder.Top - legendSize.Height - margin.Top - margin.Bottom) / 2 + margin.Top;
                 var place = new Rect(x, y, legendSize.Width, legendSize.Height);
 
                 parent.LegendBox = place;
