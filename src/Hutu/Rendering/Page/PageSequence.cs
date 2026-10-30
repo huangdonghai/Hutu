@@ -64,7 +64,7 @@ internal static class PageSequence
         {
             var empty = styles.DefaultPage(inheritedMargins);
             pages.Add(new PageSlice(1, empty, new Rect(0, 0, empty.ContentWidth, 0), null));
-            return new PagedLayout(empty, pages, documentHeight);
+            return new PagedLayout(empty, WithMarginBoxes(pages, styles), documentHeight);
         }
 
         var start = 0.0;
@@ -139,7 +139,28 @@ internal static class PageSequence
             start = Math.Min(documentHeight, Math.Max(cut, resume));
         }
 
-        return new PagedLayout(first ?? styles.DefaultPage(inheritedMargins), pages, documentHeight);
+        return new PagedLayout(first ?? styles.DefaultPage(inheritedMargins), WithMarginBoxes(pages, styles), documentHeight);
+    }
+
+    /// <summary>
+    /// Hands every page the text its margin boxes carry. The boxes name the page's own number and the
+    /// document's count, so they are read once the count is known.
+    /// </summary>
+    private static List<PageSlice> WithMarginBoxes(List<PageSlice> pages, PageStyleTable styles)
+    {
+        for (var index = 0; index < pages.Count; index++)
+        {
+            var page = pages[index];
+            var boxes = styles.MarginBoxes(
+                page.Geometry, page.PageName, page.Number, pages.Count, page.Number % 2 == 0, page.Blank);
+
+            if (boxes.Count > 0)
+            {
+                pages[index] = page with { MarginBoxes = boxes };
+            }
+        }
+
+        return pages;
     }
 
     /// <summary>Gets whether any flow unit begins at or after <paramref name="y"/>.</summary>

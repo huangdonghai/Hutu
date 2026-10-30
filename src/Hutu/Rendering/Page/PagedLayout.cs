@@ -25,7 +25,8 @@ public readonly record struct PageSlice(
     PageGeometry Geometry,
     Rect Content,
     String? PageName = null,
-    Boolean Blank = false)
+    Boolean Blank = false,
+    IReadOnlyList<PageMarginBand>? MarginBoxes = null)
 {
     /// <summary>Gets where the document's own origin lands on the page, along the inline axis.</summary>
     public Double OriginX => Geometry.Margins.Left - Content.X;

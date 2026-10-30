@@ -183,6 +183,16 @@ public sealed class SkiaPaintExecutor
 
         canvas.Restore();
 
+        // A margin box belongs to the page rather than to the document: its text is a number the page
+        // knows about itself, and stands in the margin around the page area (CSS Page 3 §5.3).
+        if (page.MarginBoxes is { Count: > 0 } bands)
+        {
+            foreach (var band in bands)
+            {
+                DrawMarginText(canvas, band);
+            }
+        }
+
         // A fixed box belongs to the page area rather than to the document, so it is drawn once on
         // every page, against the page area's own origin.
         if (list.FixedCommands.Count > 0)
@@ -1240,6 +1250,35 @@ public sealed class SkiaPaintExecutor
     /// covers what: a descender that reaches down to the rule under it stands in the letter's own ink
     /// rather than in the rule's, while a line that crosses the letters lies over them.
     /// </remarks>
+    /// <summary>
+    /// Draws the text one page margin box carries, where the page put it: along its inline axis by
+    /// its alignment and down its block axis by its vertical alignment.
+    /// </summary>
+    private void DrawMarginText(SKCanvas canvas, PageMarginBand band)
+    {
+        var font = new FontStyle(band.Family, band.FontSize, band.Weight, band.Italic);
+        var metrics = _measurer.GetMetrics(font);
+        var width = _measurer.MeasureWidth(band.Text, font);
+        var height = metrics.Ascent + metrics.Descent;
+        var area = ToRect(band.Area);
+
+        var x = band.Align switch
+        {
+            PageTextAlign.Center => area.Left + (area.Width - (Single)width) / 2,
+            PageTextAlign.End => area.Right - (Single)width,
+            _ => area.Left,
+        };
+
+        var y = band.Vertical switch
+        {
+            PageTextVertical.Middle => area.Top + (area.Height - (Single)height) / 2,
+            PageTextVertical.Bottom => area.Bottom - (Single)height,
+            _ => area.Top,
+        };
+
+        DrawText(canvas, TextCommand.PageMargin(new Rect(x, y, width, height), band.Text, metrics.Ascent, font, band.Color));
+    }
+
     private void DrawText(SKCanvas canvas, TextCommand command)
     {
         var metrics = _measurer.GetMetrics(command.Font);

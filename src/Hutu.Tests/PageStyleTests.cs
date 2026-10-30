@@ -280,6 +280,65 @@ public sealed class PageStyleTests
         Assert.That(view.DefaultPageGeometry.Frame.Hidden, Is.True);
     }
 
+    [Test]
+    public async Task TheMarginBoxesOfAPageCarryItsOwnNumbersAndStandInItsMargin()
+    {
+        using var view = await Render(
+            "<style>@page { size: 300px 400px; margin: 40px;" +
+            " @bottom-center { content: 'Page ' counter(page) ' of ' counter(pages); color: #ff0000 } }" +
+            " body { margin: 0 } .b { height: 500px }</style><div class='b'></div>");
+
+        view.SetMediaType(DeviceCategory.Printer);
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(2), "five hundred pixels in a three-hundred-and-twenty page area");
+        Assert.Multiple(() =>
+        {
+            var first = pages.Pages[0].MarginBoxes![0];
+
+            Assert.That(first.Text, Is.EqualTo("Page 1 of 2"), "the strings and both counters");
+            Assert.Multiple(() =>
+            {
+                Assert.That(first.Area.X, Is.EqualTo(40 + 220 / 3.0).Within(0.01), "the middle third of the bottom strip");
+                Assert.That(first.Area.Y, Is.EqualTo(360).Within(0.01));
+                Assert.That(first.Area.Width, Is.EqualTo(220 / 3.0).Within(0.01));
+                Assert.That(first.Area.Height, Is.EqualTo(40).Within(0.01));
+            });
+            Assert.That(first.Color, Is.EqualTo(0xFFFF0000u));
+            Assert.That(pages.Pages[1].MarginBoxes![0].Text, Is.EqualTo("Page 2 of 2"));
+        });
+    }
+
+    [Test]
+    public async Task APageSelectorCarriesItsMarginBoxesToThePagesItNames()
+    {
+        using var view = await Render(
+            "<style>@page { size: 200px; margin: 20px }" +
+            " @page :first { @top-right { content: 'first' } }" +
+            " body { margin: 0 } .b { height: 480px }</style><div class='b'></div>");
+
+        view.SetMediaType(DeviceCategory.Printer);
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(3), "four hundred and eighty pixels in a hundred and sixty page area");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].MarginBoxes![0].Text, Is.EqualTo("first"));
+            var area = pages.Pages[0].MarginBoxes![0].Area;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(area.X, Is.EqualTo(20 + 160 / 3.0 * 2).Within(0.01), "the last third of the top strip");
+                Assert.That(area.Y, Is.EqualTo(0).Within(0.01));
+                Assert.That(area.Width, Is.EqualTo(160 / 3.0).Within(0.01));
+                Assert.That(area.Height, Is.EqualTo(20).Within(0.01));
+            });
+            Assert.That(pages.Pages[1].MarginBoxes, Is.Null, "the rule names the first page alone");
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

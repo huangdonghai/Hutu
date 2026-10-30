@@ -684,6 +684,13 @@ public sealed class TextCommand : PaintCommand
         Reversed = reversed;
     }
 
+    /// <summary>
+    /// Creates the command a page margin box's text is drawn from: one horizontal run, undecorated,
+    /// which is all a page number standing in a margin asks for (CSS Page 3 §5.3).
+    /// </summary>
+    public static TextCommand PageMargin(Rect bounds, String text, Double baseline, FontStyle font, UInt32 color) =>
+        new(bounds, text, baseline, font, color, Array.Empty<DecorationSource>(), WritingModeInfo.Horizontal, 0);
+
     public String Text { get; }
 
     /// <summary>

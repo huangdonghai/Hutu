@@ -4,6 +4,7 @@ using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace Hutu.Rendering;
@@ -46,6 +47,7 @@ internal sealed class PageStyleTable
     private readonly IRenderDimensions _dimensions;
     private readonly PageSize _defaultSize;
     private readonly Thickness _defaultMargins;
+    private IReadOnlyList<PageMarginRule> _margins = Array.Empty<PageMarginRule>();
 
     public PageStyleTable(
         IReadOnlyList<ICssPageRule> rules,
@@ -58,6 +60,12 @@ internal sealed class PageStyleTable
         _defaultSize = defaultSize;
         _defaultMargins = defaultMargins;
     }
+
+    /// <summary>
+    /// Hands over the margin boxes the sheets' text carries. The CSS object model keeps none of
+    /// them, so they are read beside it and given to the table the pages are asked of.
+    /// </summary>
+    public void AttachMarginBoxes(IReadOnlyList<PageMarginRule> margins) => _margins = margins;
 
     /// <summary>
     /// Gets the page box the default page comes to: the size the last applicable <c>size</c> settles,
@@ -736,6 +744,188 @@ internal sealed class PageStyleTable
             : slot.Value.Inherits
                 ? inherited.Resolve(basis)
                 : slot.Value.Length.Resolve(basis);
+
+    /// <summary>
+    /// Gets the text the page's margin boxes carry, resolved for this page number (CSS Page 3 §5.2).
+    /// The boxes answered are the ones the rules that apply to the page set; a later rule that sets
+    /// the same box replaces the text of an earlier one.
+    /// </summary>
+    public IReadOnlyList<PageMarginBand> MarginBoxes(
+        PageGeometry page, String? name, Int32 number, Int32 total, Boolean isLeft, Boolean blank)
+    {
+        if (_margins.Count == 0)
+        {
+            return Array.Empty<PageMarginBand>();
+        }
+
+        var candidates = new List<(PageMarginRule Rule, Int32 Specificity, Int32 Order)>(_margins.Count);
+
+        for (var index = 0; index < _margins.Count; index++)
+        {
+            var selector = SelectorOf(_margins[index].Selector);
+
+            if (selector.Matches(name, number, isLeft, blank))
+            {
+                candidates.Add((_margins[index], selector.Specificity, index));
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            return Array.Empty<PageMarginBand>();
+        }
+
+        candidates.Sort((one, other) =>
+            one.Specificity != other.Specificity
+                ? one.Specificity.CompareTo(other.Specificity)
+                : one.Order.CompareTo(other.Order));
+
+        var chosen = new Dictionary<PageMarginSlot, PageMarginBox>();
+
+        foreach (var candidate in candidates)
+        {
+            foreach (var box in candidate.Rule.Boxes)
+            {
+                chosen[box.Slot] = box;
+            }
+        }
+
+        var bands = new List<PageMarginBand>(chosen.Count);
+
+        foreach (var (slot, box) in chosen.OrderBy(pair => pair.Key))
+        {
+            var text = PageMarginScan.Content(box.Content, number, total);
+
+            if (text.Length == 0)
+            {
+                continue;
+            }
+
+            bands.Add(new PageMarginBand(
+                SlotRect(page, slot),
+                text,
+                BackgroundLayerParser.ParseColor(box.Color ?? String.Empty) ?? 0xFF000000u,
+                Pixels(box.FontSize, 16),
+                Family(box.FontFamily),
+                Weight(box.FontWeight),
+                (box.FontStyle ?? String.Empty).Contains("italic", StringComparison.OrdinalIgnoreCase) ||
+                    (box.FontStyle ?? String.Empty).Contains("oblique", StringComparison.OrdinalIgnoreCase),
+                Alignment(box.TextAlign),
+                Vertical(box.VerticalAlign)));
+        }
+
+        return bands;
+    }
+
+    /// <summary>Gets the area a margin box stands in: the margin strip, cut into its thirds.</summary>
+    private static Rect SlotRect(PageGeometry page, PageMarginSlot slot)
+    {
+        var width = page.Size.Width;
+        var height = page.Size.Height;
+        var margins = page.Margins;
+        var third = Math.Max(0, width - margins.Horizontal) / 3;
+        var strip = Math.Max(0, height - margins.Vertical) / 3;
+        var left = margins.Left;
+        var right = width - margins.Right;
+        var top = margins.Top;
+        var bottom = height - margins.Bottom;
+
+        return slot switch
+        {
+            PageMarginSlot.TopLeftCorner => new Rect(0, 0, margins.Left, margins.Top),
+            PageMarginSlot.TopLeft => new Rect(left, 0, third, margins.Top),
+            PageMarginSlot.TopCenter => new Rect(left + third, 0, third, margins.Top),
+            PageMarginSlot.TopRight => new Rect(left + third * 2, 0, right - left - third * 2, margins.Top),
+            PageMarginSlot.TopRightCorner => new Rect(right, 0, margins.Right, margins.Top),
+            PageMarginSlot.RightTop => new Rect(right, top, margins.Right, strip),
+            PageMarginSlot.RightMiddle => new Rect(right, top + strip, margins.Right, strip),
+            PageMarginSlot.RightBottom => new Rect(right, top + strip * 2, margins.Right, bottom - top - strip * 2),
+            PageMarginSlot.BottomRightCorner => new Rect(right, bottom, margins.Right, margins.Bottom),
+            PageMarginSlot.BottomRight => new Rect(left + third * 2, bottom, right - left - third * 2, margins.Bottom),
+            PageMarginSlot.BottomCenter => new Rect(left + third, bottom, third, margins.Bottom),
+            PageMarginSlot.BottomLeft => new Rect(left, bottom, third, margins.Bottom),
+            PageMarginSlot.BottomLeftCorner => new Rect(0, bottom, margins.Left, margins.Bottom),
+            PageMarginSlot.LeftBottom => new Rect(0, top + strip * 2, margins.Left, bottom - top - strip * 2),
+            _ => slot == PageMarginSlot.LeftMiddle
+                ? new Rect(0, top + strip, margins.Left, strip)
+                : new Rect(0, top, margins.Left, strip),
+        };
+    }
+
+    private static Double Pixels(String? text, Double fallback)
+    {
+        var value = text?.Trim();
+
+        if (String.IsNullOrEmpty(value))
+        {
+            return fallback;
+        }
+
+        if (value.EndsWith("px", StringComparison.OrdinalIgnoreCase) &&
+            Double.TryParse(value[..^2], NumberStyles.Float, CultureInfo.InvariantCulture, out var pixels))
+        {
+            return pixels > 0 ? pixels : fallback;
+        }
+
+        if (value.EndsWith("pt", StringComparison.OrdinalIgnoreCase) &&
+            Double.TryParse(value[..^2], NumberStyles.Float, CultureInfo.InvariantCulture, out var points))
+        {
+            return points > 0 ? points * 96 / 72 : fallback;
+        }
+
+        return Double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var bare) && bare > 0
+            ? bare
+            : fallback;
+    }
+
+    private static String Family(String? text)
+    {
+        var value = text?.Trim().Trim('"', '\'');
+        var comma = value?.IndexOf(',') ?? -1;
+
+        return String.IsNullOrWhiteSpace(value) ? CssInitialValues.FontFamily : (comma < 0 ? value! : value![..comma].Trim());
+    }
+
+    private static Int32 Weight(String? text) =>
+        (text ?? String.Empty).Trim().ToLowerInvariant() switch
+        {
+            "bold" or "bolder" => 700,
+            _ => Int32.TryParse(text?.Trim(), out var weight) && weight >= 1 && weight <= 1000 ? weight : 400,
+        };
+
+    private static PageTextAlign Alignment(String? text) =>
+        (text ?? String.Empty).Trim().ToLowerInvariant() switch
+        {
+            "center" => PageTextAlign.Center,
+            "end" or "right" => PageTextAlign.End,
+            _ => PageTextAlign.Start,
+        };
+
+    private static PageTextVertical Vertical(String? text) =>
+        (text ?? String.Empty).Trim().ToLowerInvariant() switch
+        {
+            "top" => PageTextVertical.Top,
+            "bottom" => PageTextVertical.Bottom,
+            _ => PageTextVertical.Middle,
+        };
+
+    private static SelectorInfo SelectorOf(String? text)
+    {
+        var trimmed = text?.Trim();
+
+        if (String.IsNullOrEmpty(trimmed))
+        {
+            return new SelectorInfo(null, Array.Empty<String>());
+        }
+
+        var colon = trimmed.IndexOf(':');
+        var name = (colon >= 0 ? trimmed[..colon] : trimmed).Trim();
+        var pseudos = colon < 0
+            ? Array.Empty<String>()
+            : trimmed[(colon + 1)..].Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return new SelectorInfo(name.Length == 0 ? null : name, pseudos);
+    }
 
     private static PageSize Millimetres(Double width, Double height) =>
         new(width * 96.0 / 25.4, height * 96.0 / 25.4);

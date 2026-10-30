@@ -73,6 +73,51 @@ public sealed class PagePaintTests
         });
     }
 
+    [Test]
+    public async Task APageNumberIsDrawnInTheMarginItWasSetIn()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(800, 600);
+        view.SetMediaType(DeviceCategory.Printer);
+        await view.SetHtml(
+            "<style>@page { size: 200px 100px; margin: 20px;" +
+            " @bottom-center { content: counter(page); color: #ff0000; font-size: 10px } }" +
+            " html, body, div { margin: 0 } div { height: 120px; background: blue }</style><div></div>");
+
+        var pages = view.Pages!;
+        var executor = new SkiaPaintExecutor(measurer);
+
+        Assert.That(pages.Count, Is.EqualTo(2), "a hundred and twenty pixel box in a sixty-pixel page area");
+
+        using var first = Draw(executor, view, pages.Pages[0]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(Ink(first, 20, 80, 180, 100), Is.GreaterThan(0), "the number stands in the bottom margin");
+            Assert.That(Ink(first, 20, 0, 180, 80), Is.EqualTo(0), "and not in the page area");
+            Assert.That(Ink(first, 0, 0, 20, 100), Is.EqualTo(0), "nor in the side margins");
+        });
+    }
+
+    /// <summary>Counts the pixels of the given colour in one area of the page.</summary>
+    private static Int32 Ink(SKBitmap page, Int32 left, Int32 top, Int32 right, Int32 bottom)
+    {
+        var count = 0;
+
+        for (var y = top; y < bottom; y++)
+        {
+            for (var x = left; x < right; x++)
+            {
+                if (page.GetPixel(x, y) == SKColors.Red)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
     private static SKBitmap Draw(SkiaPaintExecutor executor, HutuViewInternal view, PageSlice page)
     {
         var turned = page.Geometry.Orientation != PageOrientation.None;

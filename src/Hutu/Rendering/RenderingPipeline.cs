@@ -111,6 +111,26 @@ internal sealed class RenderingPipeline
     }
 
     /// <summary>
+    /// Gets the text of every style sheet the document writes itself. A page rule's margin boxes are
+    /// dropped by the CSS object model, so they are read from here; a sheet reached through a link is
+    /// not among these yet.
+    /// </summary>
+    private static List<String> StyleTexts(IDocument? document)
+    {
+        var texts = new List<String>();
+
+        if (document is not null)
+        {
+            foreach (var style in document.QuerySelectorAll("style"))
+            {
+                texts.Add(style.TextContent);
+            }
+        }
+
+        return texts;
+    }
+
+    /// <summary>
     /// Gets the pages the document comes to when the device is printing, or null on screen. The
     /// slices name the tall layout they were cut from, which stays in <see cref="Layout"/>; a page is
     /// drawn by moving its slice to the page area rather than by laying it out again.
@@ -331,6 +351,14 @@ internal sealed class RenderingPipeline
         // named page may state another width, which the pages it names are clipped to until a layout
         // per page width exists.
         var rules = _device.Category == DeviceCategory.Printer ? PageRulesFor(_built) : null;
+
+        // The margin boxes of the page rules are not part of what the CSS object model keeps, so they
+        // are read from the sheets' own text and handed to the table the pages are asked of.
+        if (rules is not null)
+        {
+            rules.AttachMarginBoxes(PageMarginScan.Read(StyleTexts(_built)));
+        }
+
         var inherited = BoxTree is null ? StyleThickness.Zero : BoxTree.Style.Margin;
 
         // When every named page the document states is the same page, the tall layout is measured at
