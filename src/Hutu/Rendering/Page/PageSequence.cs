@@ -75,7 +75,7 @@ internal static class PageSequence
         while (start < documentHeight - 0.001 || tail)
         {
             var name = NameAt(units, start);
-            var geometry = styles.Page(name, inheritedMargins);
+            var geometry = styles.Page(name, number, number % 2 == 0, false, inheritedMargins);
 
             // A forced break may leave nothing behind it but a zero-height box. That box is still on
             // the next page, and the page it is on is printed even though it has no height.

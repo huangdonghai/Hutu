@@ -4,6 +4,7 @@ using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Hutu.Rendering;
 
@@ -68,16 +69,25 @@ internal sealed class PageStyleTable
     /// inherits from the root element). The values keep their units, because a percentage inherited
     /// from the root resolves against the page box and not against the root's own containing block.
     /// </param>
-    public PageGeometry DefaultPage(StyleThickness inheritedMargins) => Page(null, inheritedMargins);
+    public PageGeometry DefaultPage(StyleThickness inheritedMargins) =>
+        Page(null, 1, false, false, inheritedMargins);
 
     /// <summary>
     /// Gets the page box a page named <paramref name="name"/> comes to. A named rule is more specific
-    /// than an unnamed one and answers after it; a rule whose selector also carries a page
-    /// pseudo-class is left for the selectors that read one.
+    /// than an unnamed one, and a page pseudo-class adds to that; a rule that does not answer the page
+    /// a page is on is left out (CSS Page 3 §7.3).
     /// </summary>
-    public PageGeometry Page(String? name, StyleThickness inheritedMargins)
+    public PageGeometry Page(String? name, StyleThickness inheritedMargins) =>
+        Page(name, 1, false, false, inheritedMargins);
+
+    public PageGeometry Page(
+        String? name,
+        Int32 number,
+        Boolean isLeft,
+        Boolean blank,
+        StyleThickness inheritedMargins)
     {
-        var rules = Applicable(name);
+        var rules = Applicable(name, number, isLeft, blank);
         var size = _defaultSize;
 
         foreach (var rule in rules)
@@ -248,35 +258,34 @@ internal sealed class PageStyleTable
     };
 
     /// <summary>
-    /// Gets the rules that answer a page of this name: the unnamed rules, then the rules that name it,
-    /// because a named selector is the more specific one. A rule carrying a page pseudo-class is not
-    /// read yet, so it is left out rather than applied to every page of the name.
+    /// Gets the rules that answer a page: every rule whose page name equals the page's (or names no
+    /// page) and whose pseudo-classes all hold, ordered from the least specific to the most. A later
+    /// rule wins among equals, which is what makes the last matching declaration the used one.
     /// </summary>
-    private List<ICssPageRule> Applicable(String? name)
+    private List<ICssPageRule> Applicable(String? name, Int32 number, Boolean isLeft, Boolean blank)
     {
-        var rules = new List<ICssPageRule>();
+        var candidates = new List<(ICssPageRule Rule, Int32 Specificity, Int32 Order)>(_rules.Count);
 
-        foreach (var rule in _rules)
+        for (var index = 0; index < _rules.Count; index++)
         {
-            if (SelectorOf(rule).IsDefault)
+            var selector = SelectorOf(_rules[index]);
+
+            if (selector.Matches(name, number, isLeft, blank))
             {
-                rules.Add(rule);
+                candidates.Add((_rules[index], selector.Specificity, index));
             }
         }
 
-        if (name is null)
-        {
-            return rules;
-        }
+        candidates.Sort((one, other) =>
+            one.Specificity != other.Specificity
+                ? one.Specificity.CompareTo(other.Specificity)
+                : one.Order.CompareTo(other.Order));
 
-        foreach (var rule in _rules)
-        {
-            var selector = SelectorOf(rule);
+        var rules = new List<ICssPageRule>(candidates.Count);
 
-            if (!selector.HasPseudo && String.Equals(selector.Name, name, StringComparison.Ordinal))
-            {
-                rules.Add(rule);
-            }
+        foreach (var candidate in candidates)
+        {
+            rules.Add(candidate.Rule);
         }
 
         return rules;
@@ -288,18 +297,55 @@ internal sealed class PageStyleTable
 
         if (String.IsNullOrEmpty(text))
         {
-            return default;
+            return new SelectorInfo(null, Array.Empty<String>());
         }
 
-        var colon = text.IndexOf(':');
-        var name = (colon >= 0 ? text[..colon] : text).Trim();
+        var parts = text.Split(':', StringSplitOptions.TrimEntries);
+        var name = parts[0];
+        var pseudos = parts.Length > 1
+            ? parts[1..].Where(part => part.Length > 0).ToArray()
+            : Array.Empty<String>();
 
-        return new SelectorInfo(name.Length == 0 ? null : name, colon >= 0);
+        return new SelectorInfo(name.Length == 0 ? null : name, pseudos);
     }
 
-    private readonly record struct SelectorInfo(String? Name, Boolean HasPseudo)
+    private readonly record struct SelectorInfo(String? Name, String[] Pseudos)
     {
-        public Boolean IsDefault => Name is null && !HasPseudo;
+        public Boolean IsDefault => Name is null && (Pseudos is null || Pseudos.Length == 0);
+
+        public Int32 Specificity => (Name is null ? 0 : 1) + (Pseudos?.Length ?? 0);
+
+        public Boolean Matches(String? pageName, Int32 number, Boolean isLeft, Boolean blank)
+        {
+            if (Name is not null && !String.Equals(Name, pageName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (Pseudos is null)
+            {
+                return true;
+            }
+
+            foreach (var pseudo in Pseudos)
+            {
+                var matches = pseudo.ToLowerInvariant() switch
+                {
+                    "first" => number == 1,
+                    "left" => isLeft,
+                    "right" => !isLeft,
+                    "blank" => blank,
+                    _ => false,
+                };
+
+                if (!matches)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
     }
 
     /// <summary>

@@ -290,6 +290,39 @@ public sealed class PageSequenceTests
         Assert.That(view.Pages.Pages[1].Content.Height, Is.EqualTo(0).Within(0.01));
     }
 
+    [Test]
+    public async Task TheFirstPageSelectorAnswersTheFirstPageOnly()
+    {
+        using var view = await Print(
+            "<style>@page { size: 200px; margin: 0 } @page :first { margin-top: 5px }" +
+            " body, div { margin: 0 } div { height: 100px }</style>" +
+            "<div></div><div></div><div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Pages[0].Geometry.Margins.Top, Is.EqualTo(5).Within(0.01));
+        Assert.That(pages.Pages[1].Geometry.Margins.Top, Is.EqualTo(0).Within(0.01));
+    }
+
+    [Test]
+    public async Task TheLeftAndRightPageSelectorsFollowThePageSide()
+    {
+        using var view = await Print(
+            "<style>@page { size: 200px; margin: 0 } @page :right { margin-top: 3px }" +
+            " @page :left { margin-top: 7px } body, div { margin: 0 } div { height: 100px }</style>" +
+            "<div></div><div></div><div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(3));
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Geometry.Margins.Top, Is.EqualTo(3).Within(0.01), "the first page is a right page");
+            Assert.That(pages.Pages[1].Geometry.Margins.Top, Is.EqualTo(7).Within(0.01), "the second is a left one");
+            Assert.That(pages.Pages[2].Geometry.Margins.Top, Is.EqualTo(3).Within(0.01), "and the third a right one again");
+        });
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
