@@ -1,5 +1,26 @@
 # Hutu 分页能力缺口调查（Paged Media）
 
+> **进展（2026-10-30，`dev-paged` 分支）**：本报告之后分页已按 M1–M4 顺序实现；本节记录已落地的切片与最新测量，下面的"调查"部分保留为当时的缺口快照。
+>
+> | 口径 | 调查时 | 现在 |
+> |---|---:|---:|
+> | `-print` 逐页语料 | 142 / 162 | **152 / 164** |
+> | 屏幕全量失败集 | 2138 | **2131**（0 新增失败） |
+> | 单元测试 | 2128 | **2141** |
+>
+> 已落地（`dev-paged`，M1 期的 13 个提交在 `7357d65a..f5245f6c`）：
+> - **M1**：打印媒体（`DeviceCategory.Printer`）、`@page` 的 size/margin/width/height 与页框背景/边框、`page-orientation`、页面序列（tall layout 切片）、逐页绘制与打印 runner。
+> - **M2**：递归块/行分片、强制断点沿祖先传播、表格按行/行组分片、`break-inside: avoid` 的"整块推页"（含嵌套 avoid）、`overflow:hidden` 可切、浮动整块移页（avoid 浮动连边距盒保持完整）、`<br clear>`（CSS 属性与废弃属性）、flex 列向 gap 的页边切断——`68845b18`、`357116a6`、`2436f2c3`、`3e1d4aa8`。
+> - **M3**：命名页与页面组、`:first/:left/:right/:blank`、页边盒 16 个、`counter(page)`/`counter(pages)`（CSSOM 丢弃页内嵌套 at-rule，改从样式表文本扫描）——`d15521ad`。
+> - **M4**：浮动跨页、flex 行列分片、列向 gap；裁剪对齐（`dd6ba4f1`）、`text-box-trim` 与分页的配合（`e9fc1ad1`）。
+>
+> 仍缺（未验证或需按页重排）：
+> - 重复 `thead`/`tfoot`、`box-decoration-break`（要按页重排）——`monolithic-overflow-031/032`。
+> - 多栏跨页重排（`column-balancing-paged-001`）。
+> - 浮动宿主高度模型：Chrome 实测"只含浮动的普通容器高度为 0"，但现有屏幕语料有 19 对依赖现状（block-clear/flexbox 等），两者暂不能同时满足——`float-clear-000/003`。
+> - 竖排分页、grid 分片、footnote/页浮动、`print-color-adjust` 默认调色、`marks/bleed`、`@page` 的 `@layer` 顺序、`string-set`/`running()`。
+> - 非分页特性（打印模式下同样失败）：`@scope`×3、`(scripting)` 媒体查询、表单控件外观、`mask-image`。
+>
 > 调查日期：2026-10-30。HEAD：`7357d65a`。只读调查，未修改引擎代码。
 >
 > 范围：CSS Fragmentation 3 + CSS Page 3 意义上的分页——`@page` 页盒、页面序列、打印媒体、页级断点与页级绘制。宿主把一张长文档图按视口高度切片的"阅读器翻页"不在范围内；不过它同样没有 API（见 §4.4）。
