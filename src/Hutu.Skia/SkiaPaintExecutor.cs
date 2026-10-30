@@ -334,9 +334,12 @@ public sealed class SkiaPaintExecutor
                         // A square clip cuts whole pixels, on the same terms as the fill that is cut by it:
                         // an edge left inside a pixel row anti-aliases the row instead, and a box drawn at a
                         // fractional edge then shows the ink it stands over through the seam the clip leaves.
+                        // The whole pixel is the one on the canvas, not the one in the document: a page drawn
+                        // at a fractional offset puts a box and its clip on the same device edge only when
+                        // both are snapped where they are drawn.
                         SkiaRounded.Clip(
                             canvas,
-                            clip.Radii.IsZero ? Snap(ToRect(clip.Bounds)) : ToRect(clip.Bounds),
+                            clip.Radii.IsZero ? SnapToDevice(canvas, ToRect(clip.Bounds)) : ToRect(clip.Bounds),
                             clip.Radii);
                     }
 
