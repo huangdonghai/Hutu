@@ -557,6 +557,7 @@ internal sealed record LayoutProfile(
                 // change (CSS Text Decoration 4 §2.1, §2.9.1).
                 Speaker = box.Source.Element ?? (Object)box.Source,
                 Font = style.GetFont(),
+                Start = box.Flow.InlineStart(box.BorderBox),
                 Position = style.UnderlinePosition,
             }
             : null;

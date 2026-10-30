@@ -1445,6 +1445,7 @@ public sealed class SkiaPaintExecutor
                     pulls,
                     pushes,
                     blocked,
+                    decoration.Start,
                     // An underline stands under its text and thickens away from it: downward along a
                     // row, and out to the side it was measured to down a column. Which side that is
                     // follows the direction the offset was counted in, so it is the same sign as that
@@ -1479,6 +1480,7 @@ public sealed class SkiaPaintExecutor
                     pulls,
                     pushes,
                     blocked,
+                    decoration.Start,
                     // An overline stands over its text and thickens away from it, the other way from
                     // its underline (§2.4).
                     -grow);
@@ -1499,6 +1501,7 @@ public sealed class SkiaPaintExecutor
                     pulls,
                     pushes,
                     blocked,
+                    decoration.Start,
                     // A line-through is drawn across the letters it crosses, so a thicker one covers
                     // more of them rather than sliding off the text to one side (§2.5).
                     0);
@@ -1605,6 +1608,7 @@ public sealed class SkiaPaintExecutor
         Double trimStart,
         Double trimEnd,
         SKRect[] ink,
+        Double boxStart,
         Int32 grow = 1)
     {
         var height = (Single)thickness;
@@ -1638,7 +1642,7 @@ public sealed class SkiaPaintExecutor
         // own ink and the room on either side of it; where it is not, the whole stretch is one piece.
         foreach (var (from, to) in Pieces(start, end, at, height, ink))
         {
-            Shape(canvas, paint, command, at, height, shape, alongLine, from, to);
+            Shape(canvas, paint, command, at, height, shape, alongLine, from, to, boxStart);
         }
     }
 
@@ -1654,7 +1658,8 @@ public sealed class SkiaPaintExecutor
         DecorationShape shape,
         Boolean alongLine,
         Single start,
-        Single end)
+        Single end,
+        Double boxStart)
     {
         if (end <= start)
         {
@@ -1683,7 +1688,7 @@ public sealed class SkiaPaintExecutor
                 StrokeWidth = height,
             };
 
-            Swing(canvas, stroke, start, end, at, height, alongLine);
+            Swing(canvas, stroke, start, end, at, height, alongLine, boxStart);
             return;
         }
 
@@ -1854,9 +1859,17 @@ public sealed class SkiaPaintExecutor
             : new SKRect(at, start, at + height, end), paint);
 
     /// <summary>
-    /// Swings the decoration from side to side of the height it sits at, a half turn to a length of
-    /// twice its own thickness.
+    /// Swings the decoration from side to side of the height it sits at, one cubic turn to a wavelength.
+    /// The wavelength and the turn's reach are the browser's own: a wavelength of one plus twice the
+    /// rounded double thickness, and control points one turn beyond the middle on either side, where
+    /// the rounded triple thickness sets the turn (Chrome's DecorationLinePainter::MakeWave).
     /// </summary>
+    /// <param name="boxStart">
+    /// Where the decorating box begins along the line. The wave is counted from there, so the stretches
+    /// one decoration is drawn in - the ideographs either side of a middle dot, say - carry on the same
+    /// wave instead of each beginning a new one where it starts, and the wave itself is cut to the
+    /// stretch rather than starting a fresh one at its edge.
+    /// </param>
     private static void Swing(
         SKCanvas canvas,
         SKPaint stroke,
@@ -1864,31 +1877,41 @@ public sealed class SkiaPaintExecutor
         Single end,
         Single at,
         Single height,
-        Boolean alongLine)
+        Boolean alongLine,
+        Double boxStart)
     {
-        var step = Math.Max(height * 2, 2);
+        // The wave is measured in the surface's own pixels, as the browser measures it: a line one page
+        // pixel thick is two device pixels on a display drawn twice the size, and the wave it swings is
+        // the wave of that thicker line - which is why the same page shows a finer wave there.
+        var device = Math.Max(canvas.TotalMatrix.ScaleX, 0.0001);
+        var thickness = Math.Max(1, height * device);
+        var wavelength = (1 + (2 * Math.Round((2 * thickness) + 0.5, MidpointRounding.AwayFromZero))) / device;
+        var reach = (0.5 + Math.Round((3 * thickness) + 0.5, MidpointRounding.AwayFromZero)) / device;
+
+        // The stroke is as wide as the line and hangs from the middle of it, so the wave is that middle.
+        var middle = at + (height / 2);
+        var first = boxStart + (Math.Floor((start - boxStart) / wavelength) * wavelength);
 
         using var path = new SKPath();
-        path.MoveTo(Place(start, at, alongLine));
+        path.MoveTo(Place((Single)first, (Single)middle, alongLine));
 
-        var above = true;
-
-        for (var position = start; position < end; position += step)
+        for (var position = first; position < end; position += wavelength)
         {
-            var next = Math.Min(position + step, end);
-            var control = position + (step / 2);
-            var swung = at + (above ? -height : height);
+            var half = position + (wavelength / 2);
+            var next = position + wavelength;
 
-            path.QuadTo(
-                alongLine ? control : swung,
-                alongLine ? swung : control,
-                alongLine ? next : at,
-                alongLine ? at : next);
-
-            above = !above;
+            path.CubicTo(
+                Place((Single)half, (Single)(middle + reach), alongLine),
+                Place((Single)half, (Single)(middle - reach), alongLine),
+                Place((Single)next, (Single)middle, alongLine));
         }
 
+        canvas.Save();
+        canvas.ClipRect(alongLine
+            ? new SKRect(start, (Single)(middle - reach - height), end, (Single)(middle + reach + height))
+            : new SKRect((Single)(middle - reach - height), start, (Single)(middle + reach + height), end));
         canvas.DrawPath(path, stroke);
+        canvas.Restore();
     }
 
     private static SKPoint Place(Single along, Single across, Boolean alongLine) =>

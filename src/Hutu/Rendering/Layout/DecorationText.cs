@@ -79,6 +79,14 @@ public sealed record DecorationSource(
     public FontStyle Font { get; init; }
 
     /// <summary>
+    /// Gets where the decorating box begins along the line. A wavy line is counted from that place, so
+    /// that the runs the box is drawn in carry on one wave rather than each beginning a new one where it
+    /// starts - which is where the browser beside this one counts it from as well (§3.3). It is not part
+    /// of what the record answers, for the reason <see cref="Speaker"/> is not.
+    /// </summary>
+    public Double Start { get; init; }
+
+    /// <summary>
     /// Gets where this decorating box stands its underlines (CSS Text Decoration 4 §2.7). Two boxes
     /// that draw the same line but stand it on different sides are different decorators, so the
     /// position is part of the value the record compares.
