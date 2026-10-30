@@ -173,7 +173,9 @@ internal static class PageSequence
             // own content does not have (CSS Break 3 §5.2). A vertical document's tables are left
             // whole for now.
             var header = HeaderAt(collector.Headers, axis, start, geometry);
-            var lead = header is { } band ? axis.End(band) - axis.Start(band) : 0.0;
+            var cloneLead = CloneEdgeAt(collector.Clones, units, start, top: true);
+            var lead = (header is { } band ? axis.End(band) - axis.Start(band) : 0.0) +
+                (cloneLead?.Height ?? 0.0);
 
             var pageExtent = Math.Max(1, axis.PageExtent(geometry));
             var footer = FooterAt(
@@ -208,6 +210,25 @@ internal static class PageSequence
                 cut = documentExtent;
             }
 
+            // A box that repeats its decoration gives up its block-end edge to the page it is cut
+            // in: the page ends that much short and draws the edge there, and the page after begins
+            // with the box’s block-start edge (CSS Break 3 §5.4).
+            var cloneTrail = CloneEdgeAt(collector.Clones, units, cut, top: false);
+
+            if (cloneTrail is { } cutEdge)
+            {
+                trail += cutEdge.Height;
+
+                var refined = Math.Min(documentExtent, start + Math.Max(1, pageExtent - lead - trail));
+                var again = Cut(units, start, refined, documentExtent, out _, out var resumed);
+
+                if (again > start + 0.001)
+                {
+                    cut = again;
+                    resume = resumed;
+                }
+            }
+
             first ??= geometry;
 
             var repeats = new List<PageRepeat>(2);
@@ -230,6 +251,28 @@ internal static class PageSequence
                         repeatedFoot.Height)));
             }
 
+            if (cloneLead is { } leadEdge)
+            {
+                repeats.Add(new PageRepeat(
+                    leadEdge.Strip,
+                    new Rect(
+                        geometry.Margins.Left + leadEdge.Strip.X,
+                        geometry.Margins.Top,
+                        leadEdge.Strip.Width,
+                        leadEdge.Strip.Height)));
+            }
+
+            if (cloneTrail is { } trailEdge)
+            {
+                repeats.Add(new PageRepeat(
+                    trailEdge.Strip,
+                    new Rect(
+                        geometry.Margins.Left + trailEdge.Strip.X,
+                        geometry.Margins.Top + geometry.ContentHeight - trailEdge.Strip.Height,
+                        trailEdge.Strip.Width,
+                        trailEdge.Strip.Height)));
+            }
+
             pages.Add(new PageSlice(
                 number++, geometry, axis.Band(start, cut, geometry), name,
                 Repeats: repeats.Count > 0 ? repeats : null, Lead: lead, Trail: trail));
@@ -245,6 +288,63 @@ internal static class PageSequence
     /// page begins no fragment that needs one: the first fragment of a table carries its header in
     /// the flow, and a page outside the table carries none at all.
     /// </summary>
+    /// <summary>
+    /// Gets the edge a page carries where it begins or ends inside a box that repeats its
+    /// decoration, with the strip that edge is drawn from: a box’s first fragment runs to the first
+    /// break inside it whatever the page edges say, and every fragment after that ends at the page
+    /// edge it reaches (CSS Break 3 §5.4).
+    /// </summary>
+    private static (Double Height, Rect Strip)? CloneEdgeAt(
+        List<(Rect Box, Double Top, Double Bottom, Rect TopStrip, Rect BottomStrip)> boxes,
+        List<FlowUnit> units,
+        Double at,
+        Boolean top)
+    {
+        foreach (var box in boxes)
+        {
+            if (at <= box.Box.Y + 0.001 || at >= box.Box.Bottom - 0.001 ||
+                at < FirstBreakOf(box.Box, units) - 0.001)
+            {
+                continue;
+            }
+
+            var height = top ? box.Top : box.Bottom;
+            var strip = top ? box.TopStrip : box.BottomStrip;
+
+            if (height > 0.001)
+            {
+                return (height, strip);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets where the first fragment of a repeating box ends: the second piece of flow inside it, or
+    /// its own block-end where it holds one piece only - a box of one monolithic child has no break
+    /// inside it, and its one fragment runs on past every page edge.
+    /// </summary>
+    private static Double FirstBreakOf(Rect box, List<FlowUnit> units)
+    {
+        var seen = 0;
+
+        foreach (var unit in units)
+        {
+            if (unit.Top <= box.Y + 0.001 || unit.Top >= box.Bottom - 0.001)
+            {
+                continue;
+            }
+
+            if (++seen == 2)
+            {
+                return unit.Top;
+            }
+        }
+
+        return box.Bottom;
+    }
+
     private static Rect? HeaderAt(
         IReadOnlyList<(Rect Table, Rect Header, Double Rows, Double LastRow)> headers,
         PageAxis axis,
@@ -721,6 +821,14 @@ internal static class PageSequence
         public List<(Double Top, Double Bottom, Boolean Avoid)> Floats { get; } = new();
 
         /// <summary>
+        /// Gets the boxes that repeat their decoration at every fragment edge, with the room their
+        /// block-start and block-end edges take, the strips both are drawn from, and the first point
+        /// inside the box the flow can break at - its first fragment runs to there whatever the page
+        /// edges say, and every fragment after it ends at the page edge it reaches (CSS Break 3 §5.4).
+        /// </summary>
+        public List<(Rect Box, Double Top, Double Bottom, Rect TopStrip, Rect BottomStrip)> Clones { get; } = new();
+
+        /// <summary>
         /// Gets the tables that carry a header, with the band it takes, where the table's own rows
         /// begin, and where the last of them begins. A fragment carries the header again at its top
         /// when the table's rows have begun on an earlier page and a row of them begins on this one
@@ -766,6 +874,26 @@ internal static class PageSequence
                 if (!NamesItsPage(box))
                 {
                     return;
+                }
+            }
+
+            if (!_axis.IsVertical && source.Style.ClonesDecoration)
+            {
+                var edgeTop = box.Border.Top + box.Padding.Top;
+                var edgeBottom = box.Border.Bottom + box.Padding.Bottom;
+
+                if (edgeTop > 0.001 || edgeBottom > 0.001)
+                {
+                    Clones.Add((
+                        box.BorderBox,
+                        edgeTop,
+                        edgeBottom,
+                        new Rect(box.BorderBox.X, box.BorderBox.Y, box.BorderBox.Width, edgeTop),
+                        new Rect(
+                            box.BorderBox.X,
+                            box.BorderBox.Bottom - edgeBottom,
+                            box.BorderBox.Width,
+                            edgeBottom)));
                 }
             }
 
