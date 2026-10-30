@@ -97,6 +97,7 @@ internal static class PageSequence
         var collector = new Collector(axis);
         collector.Collect(
             layout.Root, units, BreakValue.Auto, BreakValue.Auto, Array.Empty<Int32>(), null);
+        collector.ClampClipped(layout.Root, units, 0, 0);
 
         var documentExtent = collector.OutOfFlowBottom;
 
@@ -837,7 +838,10 @@ internal static class PageSequence
                     continue;
                 }
 
+                var pieceUnit = units.Count;
+                var pieceFloat = Floats.Count;
                 Collect(child, units, childBefore, childAfter, inside, name, pageNames);
+                ClampClipped(child, units, pieceUnit, pieceFloat);
                 index++;
             }
 
@@ -1574,12 +1578,59 @@ internal static class PageSequence
         {
             var bottom = _axis.End(box);
 
+            // What a box hides cannot be scrolled to, so it is no part of the document's own length.
+            if (box.Source.Style.ClipsOverflow)
+            {
+                return bottom;
+            }
+
             foreach (var child in box.Children)
             {
                 bottom = Math.Max(bottom, DeepestBottom(child));
             }
 
             return bottom;
+        }
+
+        /// <summary>
+        /// Cuts what a clipping box holds down to the box's own end: the content past it is painted
+        /// nowhere, so it neither lengthens the document nor gives a page a place to end.
+        /// </summary>
+        public void ClampClipped(
+            LayoutBox box, List<FlowUnit> units, Int32 unitStart, Int32 floatStart)
+        {
+            if (!box.Source.Style.ClipsOverflow)
+            {
+                return;
+            }
+
+            var end = _axis.End(box);
+
+            for (var index = units.Count - 1; index >= unitStart; index--)
+            {
+                var unit = units[index];
+
+                if (unit.Top >= end - 0.001)
+                {
+                    units.RemoveAt(index);
+                    continue;
+                }
+
+                if (unit.Bottom > end)
+                {
+                    unit.Bottom = end;
+                }
+            }
+
+            for (var index = floatStart; index < Floats.Count; index++)
+            {
+                var span = Floats[index];
+
+                if (span.Bottom > end)
+                {
+                    Floats[index] = (span.Top, Math.Max(span.Top, end), span.Avoid);
+                }
+            }
         }
 
         /// <summary>
@@ -1669,7 +1720,7 @@ internal static class PageSequence
     {
         public Double Top { get; init; }
 
-        public Double Bottom { get; init; }
+        public Double Bottom { get; set; }
 
         public BreakValue Before { get; set; } = BreakValue.Auto;
 
