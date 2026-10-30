@@ -27,6 +27,12 @@ namespace Hutu.Rendering;
 /// deliberately unlike a box's own margins, whose percentages all read the containing block's width.
 /// </para>
 /// </remarks>
+/// <summary>
+/// A page rule and the cascade layer it was written in: -1 for a rule written outside every layer
+/// (CSS Cascade 5 §6.4).
+/// </summary>
+internal readonly record struct PageRule(ICssPageRule Rule, Int32 Layer);
+
 internal sealed class PageStyleTable
 {
     private static readonly Dictionary<String, PageSize> NamedSizes = new(StringComparer.OrdinalIgnoreCase)
@@ -43,14 +49,14 @@ internal sealed class PageStyleTable
         ["ledger"] = new PageSize(11 * 96, 17 * 96),
     };
 
-    private readonly IReadOnlyList<ICssPageRule> _rules;
+    private readonly IReadOnlyList<PageRule> _rules;
     private readonly IRenderDimensions _dimensions;
     private readonly PageSize _defaultSize;
     private readonly Thickness _defaultMargins;
     private IReadOnlyList<PageMarginRule> _margins = Array.Empty<PageMarginRule>();
 
     public PageStyleTable(
-        IReadOnlyList<ICssPageRule> rules,
+        IReadOnlyList<PageRule> rules,
         IRenderDimensions dimensions,
         PageSize defaultSize,
         Thickness defaultMargins)
@@ -300,22 +306,28 @@ internal sealed class PageStyleTable
     /// </summary>
     private List<ICssPageRule> Applicable(String? name, Int32 number, Boolean isLeft, Boolean blank)
     {
-        var candidates = new List<(ICssPageRule Rule, Int32 Specificity, Int32 Order)>(_rules.Count);
+        var candidates = new List<(ICssPageRule Rule, Int32 Rank, Int32 Specificity, Int32 Order)>(_rules.Count);
 
         for (var index = 0; index < _rules.Count; index++)
         {
-            var selector = SelectorOf(_rules[index]);
+            var selector = SelectorOf(_rules[index].Rule);
 
             if (selector.Matches(name, number, isLeft, blank))
             {
-                candidates.Add((_rules[index], selector.Specificity, index));
+                // A layer's place in the cascade is settled before specificity: a rule in a later
+                // layer wins over one in an earlier layer whatever selector each carries, and a
+                // rule outside every layer wins over both (CSS Cascade 5 §6.4).
+                var layer = _rules[index].Layer;
+                candidates.Add((_rules[index].Rule, layer < 0 ? Int32.MaxValue : layer, selector.Specificity, index));
             }
         }
 
         candidates.Sort((one, other) =>
-            one.Specificity != other.Specificity
-                ? one.Specificity.CompareTo(other.Specificity)
-                : one.Order.CompareTo(other.Order));
+            one.Rank != other.Rank
+                ? one.Rank.CompareTo(other.Rank)
+                : one.Specificity != other.Specificity
+                    ? one.Specificity.CompareTo(other.Specificity)
+                    : one.Order.CompareTo(other.Order));
 
         var rules = new List<ICssPageRule>(candidates.Count);
 

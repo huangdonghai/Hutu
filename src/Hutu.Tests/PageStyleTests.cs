@@ -339,6 +339,46 @@ public sealed class PageStyleTests
         });
     }
 
+    [Test]
+    public async Task APageRuleOutsideEveryLayerWinsOverALayeredOne()
+    {
+        using var view = await Render(
+            "<style>@page { size: 400px } @layer theme { @page { size: 300px } }</style><body></body>");
+
+        Assert.That(
+            view.DefaultPageGeometry.Width,
+            Is.EqualTo(400).Within(0.01),
+            "an unlayered rule beats a layered one however late the layer is written (CSS Cascade 5 §6.4)");
+    }
+
+    [Test]
+    public async Task ALaterLayerWinsOverAnEarlierOne()
+    {
+        using var view = await Render(
+            "<style>@layer base { @page { size: 300px } } @layer theme { @page { size: 350px } }</style><body></body>");
+
+        Assert.That(view.DefaultPageGeometry.Width, Is.EqualTo(350).Within(0.01), "the layer declared later stands above");
+    }
+
+    [Test]
+    public async Task APageSelectorInsideALayerStillPicksItsPages()
+    {
+        using var view = await Render(
+            "<style>@layer theme { @page { size: 300px } @page :first { size: 320px } }" +
+            " body { margin: 0 } .b { height: 500px }</style><div class='b'></div>");
+
+        view.SetMediaType(DeviceCategory.Printer);
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(2), "two hundred and forty pixels in a three-hundred-and-twenty page area");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Geometry.Width, Is.EqualTo(320).Within(0.01), "the first page carries the selector's size");
+            Assert.That(pages.Pages[1].Geometry.Width, Is.EqualTo(300).Within(0.01), "the page after it falls back to the layer's rule");
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

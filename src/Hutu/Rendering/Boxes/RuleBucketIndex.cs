@@ -407,7 +407,8 @@ internal sealed class RuleBucketIndex
         var collected = new List<ICssStyleRule>();
         var origins = new List<RuleOrigin>();
         var styles = new List<ICssCounterStyleRule>();
-        var pages = new List<ICssPageRule>();
+        var pages = new List<PageRule>();
+        var layers = new LayerOrder();
 
         foreach (var sheet in sheets)
         {
@@ -429,7 +430,7 @@ internal sealed class RuleBucketIndex
 
                     // `@page` names no element either: the page box reads its declarations from a
                     // table of its own, built here where the sheets and the device are both in hand.
-                    CollectPageRules(sheet.Rules[i], pages, device);
+                    CollectPageRules(sheet.Rules[i], pages, device, layers, -1, null);
                 }
 
                 foreach (var rule in sheet.Rules.GetMatchingStyles(device))
@@ -1360,13 +1361,20 @@ internal sealed class RuleBucketIndex
     /// <summary>
     /// Gathers the <c>@page</c> rules of a sheet, including the ones a conditional group holds: a page
     /// declared inside an <c>@media print</c> that this device answers to is as much a page of the
-    /// document as one written at the top, while one in a block that does not apply never arrives.
+    /// document as one written at the top, while one in a block that does not apply never arrives. A
+    /// rule written inside an <c>@layer</c> keeps the layer's place in the cascade.
     /// </summary>
-    private static void CollectPageRules(ICssRule rule, List<ICssPageRule> pages, IRenderDevice device)
+    private static void CollectPageRules(
+        ICssRule rule,
+        List<PageRule> pages,
+        IRenderDevice device,
+        LayerOrder layers,
+        Int32 layer,
+        String? path)
     {
         if (rule is ICssPageRule page)
         {
-            pages.Add(page);
+            pages.Add(new PageRule(page, layer));
             return;
         }
 
@@ -1375,11 +1383,50 @@ internal sealed class RuleBucketIndex
             return;
         }
 
-        var subRules = group.Rules;
-
-        for (var i = 0; i < subRules.Length; i++)
+        if (rule is ICssLayerRule declared)
         {
-            CollectPageRules(subRules[i], pages, device);
+            var name = String.IsNullOrWhiteSpace(declared.Name)
+                ? "<anonymous>"
+                : path is null ? declared.Name : path + "." + declared.Name;
+
+            var id = layers.Id(name);
+            var subRules = group.Rules;
+
+            for (var i = 0; i < subRules.Length; i++)
+            {
+                CollectPageRules(subRules[i], pages, device, layers, id, name);
+            }
+
+            return;
+        }
+
+        var nested = group.Rules;
+
+        for (var i = 0; i < nested.Length; i++)
+        {
+            CollectPageRules(nested[i], pages, device, layers, layer, path);
+        }
+    }
+
+    /// <summary>
+    /// Numbers the cascade layers by where they were first declared: a layer declared later stands
+    /// above an earlier one, and every rule outside them stands above both (CSS Cascade 5 §6.4).
+    /// </summary>
+    private sealed class LayerOrder
+    {
+        private readonly Dictionary<String, Int32> _ids = new(StringComparer.Ordinal);
+
+        public Int32 Id(String name)
+        {
+            if (_ids.TryGetValue(name, out var known))
+            {
+                return known;
+            }
+
+            var id = _ids.Count;
+            _ids[name] = id;
+
+            return id;
         }
     }
 
