@@ -316,8 +316,13 @@ internal static class PageSequence
                         // A box that begins with nothing reaching this page - only its leading
                         // space, a cleared line standing below a float - is no place to end it:
                         // the page fills with what stands there, and the box's first line starts
-                        // the next page. The float that fills the page's foot stays on it.
-                        if (!(unit.StartBoundarySet && unit.Top > limit + 0.001))
+                        // the next page. An empty box is no place to end a page either, and for the
+                        // same reason: nothing stands there to be carried over.
+                        var hollow = unit.Shell ||
+                            unit.Bottom <= y + 0.001 ||
+                            (unit.StartBoundarySet && unit.Top > limit + 0.001);
+
+                        if (!hollow)
                         {
                             allowed = point;
                         }
@@ -579,10 +584,14 @@ internal static class PageSequence
                 index++;
             }
 
-            // Nothing in flow: the box itself is the one piece its break values stand on.
+            // Nothing in flow: the box itself is the one piece its break values stand on - unless
+            // it holds nothing but floats, in which case the page would be ending before the room
+            // those floats take rather than before anything that could be carried over.
             if (units.Count == first)
             {
-                units.Add(BoxUnit(box, before, after, avoid, name));
+                var unit = BoxUnit(box, before, after, avoid, name);
+                unit.Shell = flow.Count == 0 && box.Children.Count > 0;
+                units.Add(unit);
             }
             else
             {
@@ -1229,6 +1238,12 @@ internal static class PageSequence
         public Double StartBoundaryY { get; set; }
 
         public Boolean StartBoundarySet { get; set; }
+
+        /// <summary>
+        /// Gets whether the unit stands for a box that holds no flow content of its own - only
+        /// floats - so its span is room the floats take rather than content a page carries.
+        /// </summary>
+        public Boolean Shell { get; set; }
 
         /// <summary>
         /// Gets the far edge of the box this unit begins where the box asks not to be broken inside,

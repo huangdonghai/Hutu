@@ -522,6 +522,12 @@ internal sealed class InlineLayout
             inline = Math.Max(inline, line.Indent + line.Used);
         }
 
+        // A cleared break at the content's end reaches past the last line to the floats it clears.
+        if (lines.Count > 0)
+        {
+            block = Math.Max(block, lines[^1].Tail);
+        }
+
         // A multi-column container breaks its lines at the width of one column and is as tall as the
         // columns were shared at, not as the one long stack would have been.
         var multi = container.Style.Multi;
@@ -1197,7 +1203,7 @@ internal sealed class InlineLayout
 
         foreach (var line in lines)
         {
-            heights.Add(Math.Max(0, line.Height) + line.GapBefore);
+            heights.Add(Math.Max(0, line.Height) + line.GapBefore + line.Tail);
         }
 
         return heights;
@@ -1338,6 +1344,13 @@ internal sealed class InlineLayout
 
             parent.Children.Add(lineBox);
             cursor += line.Height;
+        }
+
+        // A break that clears at the content's end carries the block down to the floats it clears,
+        // past the line the break stands on (CSS 2.1 §9.5.2).
+        if (to >= lines.Count && start >= -0.0001 && lines.Count > 0)
+        {
+            cursor = Math.Max(cursor, lines[^1].Tail);
         }
 
         return cursor;
@@ -2688,6 +2701,13 @@ internal sealed class InlineLayout
 
         void Close(LineBuilder filled, Boolean forced = false, Boolean hyphen = false)
         {
+            // The room a cleared break moved is taken by the line that follows it, so the line
+            // before no longer reaches past itself.
+            if (lines.Count > 0)
+            {
+                lines[^1].Tail = 0;
+            }
+
             var line = filled.Build(_measurer, room.Room, carried, forced, hyphen);
 
             line.Left = room.Inset;
@@ -2764,7 +2784,17 @@ internal sealed class InlineLayout
 
                 // A break that asks to clear stands the lines after it below the floats it names;
                 // this is the `<br clear>` a page still writes for the job (HTML rendering §15.3.3).
-                room.Clear(item.Style.Clear);
+                var dropped = room.Clear(item.Style.Clear);
+
+                // A break that clears at the end of the content carries the block down to the
+                // floats it clears, even though no line follows it to stand there. A line that
+                // does follow takes the room instead, and the tail is dropped where it is built.
+                if (dropped > 0 && lines.Count > 0)
+                {
+                    lines[^1].Tail = Math.Max(lines[^1].Tail, room.Top);
+                }
+
+
                 continue;
             }
 
@@ -6885,26 +6915,29 @@ internal sealed class InlineLayout
 
         /// <summary>
         /// Stands the lines that are to come below the floats of one side: a break that asks to clear
-        /// puts whatever follows it under the floats it names (CSS 2.1 §9.5.2).
+        /// puts whatever follows it under the floats it names (CSS 2.1 §9.5.2). Gets the distance the
+        /// room was carried down, which is zero where there was nothing of that side to clear.
         /// </summary>
-        public void Clear(ClearSide side)
+        public Double Clear(ClearSide side)
         {
             if (_band is not { } band || side == ClearSide.None)
             {
-                return;
+                return 0;
             }
 
             var cleared = band.Below(Top, side);
 
             if (cleared <= Top + 0.001)
             {
-                return;
+                return 0;
             }
 
             var dropped = cleared - Top;
             Top = cleared;
             Open();
             Gap += dropped;
+
+            return dropped;
         }
 
         /// <summary>
@@ -7057,6 +7090,13 @@ internal sealed class InlineLayout
         public Double Ascent { get; set; }
 
         public Double Height { get; set; }
+
+        /// <summary>
+        /// Gets or sets how far the block's content reaches past this line, where a break that clears
+        /// stands at the content's end: the line before it owes the room the clearance took, and no
+        /// line follows to take it (CSS 2.1 §9.5.2).
+        /// </summary>
+        public Double Tail { get; set; }
 
         /// <summary>
         /// Gets or sets where the line begins inside its block's content box: zero for every line of a
