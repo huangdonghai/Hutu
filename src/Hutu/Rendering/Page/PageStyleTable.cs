@@ -90,7 +90,62 @@ internal sealed class PageStyleTable
             Resolve(bottom, size.Height, inheritedMargins.Bottom),
             Resolve(left, size.Width, inheritedMargins.Left));
 
-        return new PageGeometry(size, margins);
+        // CSS 2.1 §13.2 lets a page rule size the page area itself with width and height, which is
+        // what a page box whose content is over-constrained comes to: the area is the width stated and
+        // the box grows to hold it and its margins. A percentage on either is a share of the size the
+        // `size` property stated, which is the box before the area is forced.
+        var areaWidth = ReadAreaLength("width", size.Width);
+        var areaHeight = ReadAreaLength("height", size.Height);
+
+        var box = new PageSize(
+            areaWidth is { } width ? Math.Max(0, width) + margins.Horizontal : size.Width,
+            areaHeight is { } height ? Math.Max(0, height) + margins.Vertical : size.Height);
+
+        return new PageGeometry(box, margins);
+    }
+
+    /// <summary>
+    /// Reads the page area size a rule forces with <c>width</c> or <c>height</c>, or null where none
+    /// does. A percentage is read against the page box the <c>size</c> property settled.
+    /// </summary>
+    private Double? ReadAreaLength(String name, Double basis)
+    {
+        StyleLength? value = null;
+        var important = false;
+
+        foreach (var rule in _rules)
+        {
+            if (!IsDefaultPage(rule) || rule.Style.TryGetProperty(name) is not { } property)
+            {
+                continue;
+            }
+
+            var text = property.Value?.Trim();
+
+            if (String.IsNullOrEmpty(text) ||
+                String.Equals(text, "auto", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!LengthReader.TryReadProperty(
+                    property, RenderMode.Horizontal, _dimensions,
+                    new LengthReader.FontSource(_dimensions.FontSize), out var length) ||
+                !length.HasValue)
+            {
+                continue;
+            }
+
+            if (value is not null && important && !property.IsImportant)
+            {
+                continue;
+            }
+
+            value = length;
+            important = property.IsImportant;
+        }
+
+        return value?.Resolve(basis);
     }
 
     private static Boolean IsDefaultPage(ICssPageRule rule) =>

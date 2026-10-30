@@ -220,6 +220,40 @@ public sealed class PageStyleTests
         });
     }
 
+    [Test]
+    public async Task APageAreaStatedByWidthAndHeightResizesThePageBox()
+    {
+        using var view = await Render(
+            "<style>@page { size: 500px; margin: 50px; width: 200px; height: 300px }</style><body></body>");
+
+        var page = view.DefaultPageGeometry;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(page.ContentWidth, Is.EqualTo(200).Within(0.01), "the area the rule states");
+            Assert.That(page.ContentHeight, Is.EqualTo(300).Within(0.01));
+            Assert.That(page.Width, Is.EqualTo(300).Within(0.01), "the box grows to hold the area and its margins");
+            Assert.That(page.Height, Is.EqualTo(400).Within(0.01));
+        });
+    }
+
+    [Test]
+    public async Task APercentagePageAreaReadsTheSizeBox()
+    {
+        using var view = await Render(
+            "<style>@page { size: 500px; margin: 10%; width: 40%; height: 60% }</style><body></body>");
+
+        var page = view.DefaultPageGeometry;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(page.ContentWidth, Is.EqualTo(200).Within(0.01), "forty per cent of the size box");
+            Assert.That(page.ContentHeight, Is.EqualTo(300).Within(0.01));
+            Assert.That(page.Margins.Top, Is.EqualTo(50).Within(0.01), "the margin reads the same box");
+            Assert.That(page.Width, Is.EqualTo(300).Within(0.01));
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
