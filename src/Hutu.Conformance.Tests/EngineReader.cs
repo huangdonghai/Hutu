@@ -192,8 +192,9 @@ internal sealed class EngineReader : IDisposable
 
         foreach (var page in pages.Pages)
         {
-            var width = Math.Max(1, (Int32)Math.Ceiling(page.Geometry.Width));
-            var height = Math.Max(1, (Int32)Math.Ceiling(page.Geometry.Height));
+            var turned = page.Geometry.Orientation != PageOrientation.None;
+            var width = Math.Max(1, (Int32)Math.Ceiling(turned ? page.Geometry.Height : page.Geometry.Width));
+            var height = Math.Max(1, (Int32)Math.Ceiling(turned ? page.Geometry.Width : page.Geometry.Height));
 
             using var surface = SKSurface.Create(new SKImageInfo(width, height))
                 ?? throw new InvalidOperationException("Skia could not make a surface");

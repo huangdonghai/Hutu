@@ -125,7 +125,35 @@ internal sealed class PageStyleTable
             areaWidth is { } width ? Math.Max(0, width) + margins.Horizontal : size.Width,
             areaHeight is { } height ? Math.Max(0, height) + margins.Vertical : size.Height);
 
-        return new PageGeometry(box, margins, ReadFrame(rules));
+        return new PageGeometry(box, margins, ReadFrame(rules), ReadOrientation(rules));
+    }
+
+    /// <summary>Reads the quarter turn a page rule asks for, if any.</summary>
+    private static PageOrientation ReadOrientation(IReadOnlyList<ICssPageRule> rules)
+    {
+        var orientation = PageOrientation.None;
+
+        foreach (var rule in rules)
+        {
+            var text = rule.Style.TryGetProperty("page-orientation")?.Value?.Trim();
+
+            if (String.Equals(text, "rotate-left", StringComparison.OrdinalIgnoreCase))
+            {
+                orientation = PageOrientation.RotateLeft;
+            }
+            else if (String.Equals(text, "rotate-right", StringComparison.OrdinalIgnoreCase))
+            {
+                orientation = PageOrientation.RotateRight;
+            }
+            else if (String.Equals(text, "initial", StringComparison.OrdinalIgnoreCase) ||
+                     String.Equals(text, "unset", StringComparison.OrdinalIgnoreCase) ||
+                     String.Equals(text, "revert", StringComparison.OrdinalIgnoreCase))
+            {
+                orientation = PageOrientation.None;
+            }
+        }
+
+        return orientation;
     }
 
     /// <summary>

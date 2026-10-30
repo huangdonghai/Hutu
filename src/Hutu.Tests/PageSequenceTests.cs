@@ -342,6 +342,16 @@ public sealed class PageSequenceTests
         });
     }
 
+    [Test]
+    public async Task APageRuleCanTurnTheSheet()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0; page-orientation: rotate-left }</style>" +
+            "body, div { margin: 0 } <div style='height: 40px'></div>");
+
+        Assert.That(view.Pages!.Pages[0].Geometry.Orientation, Is.EqualTo(PageOrientation.RotateLeft));
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

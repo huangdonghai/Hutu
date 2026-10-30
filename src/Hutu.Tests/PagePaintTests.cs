@@ -75,7 +75,10 @@ public sealed class PagePaintTests
 
     private static SKBitmap Draw(SkiaPaintExecutor executor, HutuViewInternal view, PageSlice page)
     {
-        using var surface = SKSurface.Create(new SKImageInfo((int)page.Geometry.Width, (int)page.Geometry.Height));
+        var turned = page.Geometry.Orientation != PageOrientation.None;
+        using var surface = SKSurface.Create(new SKImageInfo(
+            (int)(turned ? page.Geometry.Height : page.Geometry.Width),
+            (int)(turned ? page.Geometry.Width : page.Geometry.Height)));
 
         executor.ExecutePage(view.Paint!, surface.Canvas, page);
 

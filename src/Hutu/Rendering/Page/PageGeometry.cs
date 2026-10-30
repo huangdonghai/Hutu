@@ -64,9 +64,25 @@ public readonly record struct PageFrame(UInt32? Background, PageBorder Border, B
 }
 
 /// <summary>
+/// How a page box is turned when it is printed: upright, or a quarter turn to either side (CSS Page
+/// 3 §page-orientation). The page keeps the size it states; the turn changes which of its sides is
+/// the top when the sheet is bound.
+/// </summary>
+public enum PageOrientation : Byte
+{
+    None,
+    RotateLeft,
+    RotateRight,
+}
+
+/// <summary>
 /// The page box a page is laid in: its size and the margins around the page area (CSS Page 3 §3).
 /// </summary>
-public readonly record struct PageGeometry(PageSize Size, Thickness Margins, PageFrame Frame = default)
+public readonly record struct PageGeometry(
+    PageSize Size,
+    Thickness Margins,
+    PageFrame Frame = default,
+    PageOrientation Orientation = PageOrientation.None)
 {
     /// <summary>Gets the geometry of a page the document says nothing about.</summary>
     public static PageGeometry Default { get; } = new(PageSize.Default, Thickness.Zero);

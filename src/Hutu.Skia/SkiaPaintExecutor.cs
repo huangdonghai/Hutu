@@ -142,6 +142,20 @@ public sealed class SkiaPaintExecutor
         var pageRect = new SKRect(0, 0, (Single)geometry.Width, (Single)geometry.Height);
 
         canvas.Clear(SKColors.White);
+        canvas.Save();
+
+        // A turned page is drawn upright and then the sheet is turned under it, so every length the
+        // page states keeps its own direction and only the sheet changes which side is the top.
+        if (geometry.Orientation == PageOrientation.RotateLeft)
+        {
+            canvas.Translate(0, (Single)geometry.Width);
+            canvas.RotateDegrees(-90);
+        }
+        else if (geometry.Orientation == PageOrientation.RotateRight)
+        {
+            canvas.Translate((Single)geometry.Height, 0);
+            canvas.RotateDegrees(90);
+        }
 
         if (!geometry.Frame.Hidden && geometry.Frame.Background is { } background)
         {
@@ -184,6 +198,8 @@ public sealed class SkiaPaintExecutor
         {
             DrawPageBorder(canvas, pageRect, geometry.Frame.Border);
         }
+
+        canvas.Restore();
     }
 
     /// <summary>Draws the four sides of the page box's border inside its own box.</summary>

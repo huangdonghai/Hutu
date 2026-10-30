@@ -4,6 +4,7 @@ using Hutu.Rendering.Boxes;
 using Hutu.Rendering.Layout;
 using Hutu.Rendering.Media;
 using Hutu.Rendering.Paint;
+using System.Collections.Generic;
 using System.Diagnostics;
 
 namespace Hutu.Rendering;
@@ -331,7 +332,16 @@ internal sealed class RenderingPipeline
         // per page width exists.
         var rules = _device.Category == DeviceCategory.Printer ? PageRulesFor(_built) : null;
         var inherited = BoxTree is null ? StyleThickness.Zero : BoxTree.Style.Margin;
-        var page = rules?.DefaultPage(inherited);
+
+        // When every named page the document states is the same page, the tall layout is measured at
+        // that page's width. A document with named pages of two widths needs a layout per page group,
+        // which the single tall layout cannot give it.
+        var named = PreferredPageName(BoxTree);
+        PageGeometry? page = rules is { } activeRules
+            ? named is { } pageName
+                ? activeRules.Page(pageName, inherited)
+                : activeRules.DefaultPage(inherited)
+            : null;
 
         PageBox = page;
 
@@ -353,6 +363,53 @@ internal sealed class RenderingPipeline
         {
             _laidMs = Stopwatch.GetElapsedTime(layoutStart, paintStart).TotalMilliseconds;
             _paintedMs = Stopwatch.GetElapsedTime(paintStart).TotalMilliseconds;
+        }
+    }
+
+    /// <summary>
+    /// Gets the one page name the document's boxes state, or null when they state none or more than
+    /// one. It is what lets a document that lives on a single named page be measured at that page's
+    /// width, which a page box with another size would otherwise clip.
+    /// </summary>
+    private static String? PreferredPageName(Box? root)
+    {
+        if (root is null)
+        {
+            return null;
+        }
+
+        String? found = null;
+
+        foreach (var box in Walk(root))
+        {
+            if (box.Style.PageName is not { } name)
+            {
+                continue;
+            }
+
+            if (found is null)
+            {
+                found = name;
+            }
+            else if (!String.Equals(found, name, StringComparison.Ordinal))
+            {
+                return null;
+            }
+        }
+
+        return found;
+    }
+
+    private static IEnumerable<Box> Walk(Box box)
+    {
+        yield return box;
+
+        foreach (var child in box.Children)
+        {
+            foreach (var node in Walk(child))
+            {
+                yield return node;
+            }
         }
     }
 
