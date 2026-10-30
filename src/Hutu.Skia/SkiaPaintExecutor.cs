@@ -132,6 +132,49 @@ public sealed class SkiaPaintExecutor
     }
 
     /// <summary>
+    /// Draws one page of a paged layout: the slice of the tall document the page names, moved onto the
+    /// page area. Content is clipped to the page area's own slice, so a page that ends early leaves
+    /// the rest of its area blank rather than showing the page after it.
+    /// </summary>
+    public void ExecutePage(PaintList list, SKCanvas canvas, PageSlice page)
+    {
+        var geometry = page.Geometry;
+        var pageRect = new SKRect(0, 0, (Single)geometry.Width, (Single)geometry.Height);
+
+        canvas.Clear(SKColors.White);
+        canvas.Save();
+        canvas.ClipRect(pageRect);
+        canvas.ClipRect(new SKRect(
+            (Single)geometry.Margins.Left,
+            (Single)geometry.Margins.Top,
+            (Single)(geometry.Margins.Left + page.Content.Width),
+            (Single)(geometry.Margins.Top + page.Content.Height)));
+        canvas.Translate((Single)page.OriginX, (Single)page.OriginY);
+
+        var area = new Rect(page.Content.X, page.Content.Y, page.Content.Width, page.Content.Height);
+
+        Draw(canvas, list.Commands, area, default);
+
+        foreach (var layer in list.Sticky)
+        {
+            Draw(canvas, layer.Commands, area, default);
+        }
+
+        canvas.Restore();
+
+        // A fixed box belongs to the page area rather than to the document, so it is drawn once on
+        // every page, against the page area's own origin.
+        if (list.FixedCommands.Count > 0)
+        {
+            canvas.Save();
+            canvas.ClipRect(pageRect);
+            canvas.Translate((Single)geometry.Margins.Left, (Single)geometry.Margins.Top);
+            Draw(canvas, list.FixedCommands, new Rect(0, 0, geometry.ContentWidth, geometry.ContentHeight), default);
+            canvas.Restore();
+        }
+    }
+
+    /// <summary>
     /// Gets the part of the document the screen can show, which is what the canvas' own clip says, in
     /// the coordinates the commands are drawn in - the space the clip is kept in.
     /// </summary>

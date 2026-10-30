@@ -89,6 +89,13 @@ public sealed class HutuViewInternal : IDisposable
     public PaintList? Paint => _pipeline.Paint;
 
     /// <summary>
+    /// Gets the pages the document comes to on a printing device, or null on screen. Each page names
+    /// the slice of the tall layout it shows; a host draws a page by moving that slice onto the page
+    /// area rather than by laying the document out again.
+    /// </summary>
+    public PagedLayout? Pages => _pipeline.Pages;
+
+    /// <summary>
     /// Gets or sets whether the next builds time their stages, read back through
     /// <see cref="LastBuildStages"/>. Off by default, so the renderer pays nothing for a measurement
     /// nobody asked for.

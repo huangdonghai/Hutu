@@ -12,7 +12,7 @@ namespace Hutu.Rendering;
 /// produces when nobody asks for another, which is the behaviour a PDF made without a <c>@page</c>
 /// rule has to match.
 /// </remarks>
-internal readonly record struct PageSize(Double Width, Double Height)
+public readonly record struct PageSize(Double Width, Double Height)
 {
     /// <summary>Gets the size of a page the document states none for.</summary>
     public static PageSize Default { get; } = new(8.5 * 96, 11 * 96);
@@ -34,7 +34,7 @@ internal readonly record struct PageSize(Double Width, Double Height)
 /// <summary>
 /// The page box a page is laid in: its size and the margins around the page area (CSS Page 3 §3).
 /// </summary>
-internal readonly record struct PageGeometry(PageSize Size, Thickness Margins)
+public readonly record struct PageGeometry(PageSize Size, Thickness Margins)
 {
     /// <summary>Gets the geometry of a page the document says nothing about.</summary>
     public static PageGeometry Default { get; } = new(PageSize.Default, Thickness.Zero);

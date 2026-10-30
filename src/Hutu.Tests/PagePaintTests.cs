@@ -1,0 +1,61 @@
+using AngleSharp.Css;
+using Hutu.Rendering;
+using Hutu.Skia;
+using NUnit.Framework;
+using SkiaSharp;
+using System.Threading.Tasks;
+
+namespace Hutu.Tests;
+
+/// <summary>
+/// Covers drawing a page: the slice a page names is moved onto its page area and clipped there, so
+/// the page before and the page after never show through.
+/// </summary>
+[TestFixture]
+public sealed class PagePaintTests
+{
+    [Test]
+    public async Task EachPageDrawsItsOwnSliceInsideThePageArea()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(800, 600);
+        view.SetMediaType(DeviceCategory.Printer);
+        await view.SetHtml(
+            "<style>@page { size: 100px; margin: 10px } html, body, div { margin: 0 }" +
+            " div { height: 40px }</style>" +
+            "<div style='background:red'></div><div style='background:blue'></div><div style='background:green'></div>");
+
+        var pages = view.Pages!;
+        var executor = new SkiaPaintExecutor(measurer);
+
+        Assert.That(pages.Count, Is.EqualTo(2), "three forty-pixel boxes in an eighty-pixel page area");
+
+        using var first = Draw(executor, view, pages.Pages[0]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.GetPixel(5, 5), Is.EqualTo(SKColors.White), "the page margin is blank");
+            Assert.That(first.GetPixel(15, 15), Is.EqualTo(SKColors.Red), "the first box");
+            Assert.That(first.GetPixel(15, 55), Is.EqualTo(SKColors.Blue), "the second box");
+            Assert.That(first.GetPixel(15, 95), Is.EqualTo(SKColors.White), "the third box belongs to the next page");
+        });
+
+        using var second = Draw(executor, view, pages.Pages[1]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(second.GetPixel(5, 5), Is.EqualTo(SKColors.White), "the margin is blank on every page");
+            Assert.That(second.GetPixel(15, 15), Is.EqualTo(SKColors.Green), "the second page begins with its own slice");
+            Assert.That(second.GetPixel(15, 55), Is.EqualTo(SKColors.White), "and the slice ends where the page does");
+        });
+    }
+
+    private static SKBitmap Draw(SkiaPaintExecutor executor, HutuViewInternal view, PageSlice page)
+    {
+        using var surface = SKSurface.Create(new SKImageInfo((int)page.Geometry.Width, (int)page.Geometry.Height));
+
+        executor.ExecutePage(view.Paint!, surface.Canvas, page);
+
+        using var image = surface.Snapshot();
+        return SKBitmap.FromImage(image);
+    }
+}

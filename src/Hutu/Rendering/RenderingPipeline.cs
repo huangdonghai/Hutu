@@ -78,6 +78,16 @@ internal sealed class RenderingPipeline
     internal PageStyleTable? PageStyles => _styles.Index?.Pages;
 
     /// <summary>
+    /// Gets the pages the document comes to when the device is printing, or null on screen. The
+    /// slices name the tall layout they were cut from, which stays in <see cref="Layout"/>; a page is
+    /// drawn by moving its slice to the page area rather than by laying it out again.
+    /// </summary>
+    public PagedLayout? Pages { get; private set; }
+
+    /// <summary>The page box the last build was laid out against, or null when the medium is screen.</summary>
+    internal PageGeometry? PageBox { get; private set; }
+
+    /// <summary>
     /// Whether <see cref="Build"/> times its stages and leaves them in <see cref="LastBuildStages"/>.
     /// Off by default, and read from the timestamp clock rather than from a stopwatch, so a renderer
     /// that never asks for it pays nothing: one branch that is always false.
@@ -104,6 +114,8 @@ internal sealed class RenderingPipeline
         BoxTree = null;
         Layout = null;
         Paint = null;
+        Pages = null;
+        PageBox = null;
         _painter.Highlight = null;
         _styles.Reset();
         _built = null;
@@ -279,18 +291,41 @@ internal sealed class RenderingPipeline
 
         // The viewport is the initial containing block, so both of its dimensions matter: the height
         // is what a percentage height on the root - and on everything it makes definite - resolves
-        // against.
-        Layout = _layout?.Layout(BoxTree, _device.RenderWidth, _device.RenderHeight);
+        // against. A printing device hands the document the page area instead: the same tall layout
+        // is produced at the page's width, and the page sequence cuts it into pages afterwards.
+        var page = PageForPrinting();
+
+        PageBox = page;
+
+        Layout = page is { } box
+            ? _layout?.Layout(BoxTree, Math.Max(1, box.ContentWidth), Math.Max(1, box.ContentHeight))
+            : _layout?.Layout(BoxTree, _device.RenderWidth, _device.RenderHeight);
 
         var paintStart = measuring ? Stopwatch.GetTimestamp() : 0L;
 
         Paint = Layout is null ? null : _painter.Paint(Layout);
+        Pages = Layout is { } tall && page is { } geometry ? PageSequence.Build(tall, geometry) : null;
 
         if (measuring)
         {
             _laidMs = Stopwatch.GetElapsedTime(layoutStart, paintStart).TotalMilliseconds;
             _paintedMs = Stopwatch.GetElapsedTime(paintStart).TotalMilliseconds;
         }
+    }
+
+    /// <summary>
+    /// Gets the page box a printing device lays the document in, or null on screen. The page context
+    /// inherits from the root element, which is why the box tree has to exist before the answer is
+    /// read (CSS Page 3 §6.2).
+    /// </summary>
+    private PageGeometry? PageForPrinting()
+    {
+        if (_device.Category != DeviceCategory.Printer || BoxTree is null || _styles.Index is null)
+        {
+            return null;
+        }
+
+        return _styles.Index.Pages.DefaultPage(BoxTree.Style.Margin);
     }
 
     /// <summary>Milliseconds since a <see cref="Stopwatch"/> timestamp, or zero when nothing was timed.</summary>

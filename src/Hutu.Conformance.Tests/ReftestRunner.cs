@@ -71,6 +71,21 @@ internal static class ReftestRunner
     }
 
     /// <summary>
+    /// Draws a page as a printing device draws it: every page of the document, each in its own page
+    /// box. This is the other half of <see cref="DrawAsync"/> - a printed pair is compared page by
+    /// page, not as the one screen picture a window would show.
+    /// </summary>
+    public static async Task<IReadOnlyList<SKBitmap>> DrawPagesAsync(String page)
+    {
+        using var engine = EngineReader.WithTypefaces(Width, Height);
+
+        engine.UsePrintMedia();
+        await engine.LoadAsync(await File.ReadAllTextAsync(page), new Uri(page).AbsoluteUri);
+
+        return engine.RenderPages();
+    }
+
+    /// <summary>
     /// Draws a page, but not for longer than <see cref="Limit"/>: the same drawing as
     /// <see cref="DrawAsync"/>, with a guard round it.
     /// </summary>
@@ -180,6 +195,44 @@ internal static class ReftestRunner
         }
 
         return new ReftestComparison(false, differing, widest, first, writeDiff ? Write(test, marks, label) : null);
+    }
+
+    /// <summary>
+    /// Compares two printed documents page by page. A pair whose halves come to different page counts
+    /// is a difference whatever the pages themselves look like - one page is not another page's
+    /// picture, and a blank page at the end is a page the other half did not print.
+    /// </summary>
+    public static ReftestComparison ComparePages(
+        IReadOnlyList<SKBitmap> test,
+        IReadOnlyList<SKBitmap> reference,
+        String label,
+        Boolean writeDiff = true,
+        FuzzyAllowance? allowance = null)
+    {
+        if (test.Count != reference.Count)
+        {
+            return new ReftestComparison(false, 0, 0,
+                $"the test came to {test.Count} pages where the reference came to {reference.Count}", null);
+        }
+
+        var matched = true;
+        var differing = 0;
+        var widest = 0;
+        String? first = null;
+        String? diff = null;
+
+        for (var index = 0; index < test.Count; index++)
+        {
+            var page = Compare(test[index], reference[index], label + "-page-" + (index + 1), writeDiff, allowance);
+
+            matched &= page.Matched;
+            differing += page.Differing;
+            widest = Math.Max(widest, page.Widest);
+            first ??= page.Detail;
+            diff ??= page.DiffPath;
+        }
+
+        return new ReftestComparison(matched, differing, widest, first, diff);
     }
 
     /// <summary>Gets the largest difference in one colour channel between two pixels.</summary>

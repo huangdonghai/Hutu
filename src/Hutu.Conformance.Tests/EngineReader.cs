@@ -1,3 +1,4 @@
+using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using Hutu.Rendering;
 using Hutu.Rendering.Boxes;
@@ -147,6 +148,48 @@ internal sealed class EngineReader : IDisposable
         using var image = surface.Snapshot();
 
         return SKBitmap.FromImage(image);
+    }
+
+    /// <summary>
+    /// Asks the page as a printing device, so <c>@media print</c> and <c>@page</c> apply. It has to be
+    /// said before the page is loaded: the medium is part of what the styles are computed from.
+    /// </summary>
+    public void UsePrintMedia() => _view.SetMediaType(DeviceCategory.Printer);
+
+    /// <summary>
+    /// Draws every page of a printed document, each at the page box's own size and on white.
+    /// </summary>
+    public IReadOnlyList<SKBitmap> RenderPages()
+    {
+        if (_typefaces is null)
+        {
+            throw new InvalidOperationException("a page is drawn with real typefaces; this reader was built with fixed metrics");
+        }
+
+        if (_view.Pages is not { } pages || Paint is null)
+        {
+            return Array.Empty<SKBitmap>();
+        }
+
+        _executor ??= new SkiaPaintExecutor(_typefaces, _images);
+
+        var drawn = new List<SKBitmap>(pages.Count);
+
+        foreach (var page in pages.Pages)
+        {
+            var width = Math.Max(1, (Int32)Math.Ceiling(page.Geometry.Width));
+            var height = Math.Max(1, (Int32)Math.Ceiling(page.Geometry.Height));
+
+            using var surface = SKSurface.Create(new SKImageInfo(width, height))
+                ?? throw new InvalidOperationException("Skia could not make a surface");
+
+            _executor.ExecutePage(Paint, surface.Canvas, page);
+
+            using var image = surface.Snapshot();
+            drawn.Add(SKBitmap.FromImage(image));
+        }
+
+        return drawn;
     }
 
     /// <summary>
