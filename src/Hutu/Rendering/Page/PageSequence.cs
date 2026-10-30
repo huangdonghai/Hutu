@@ -522,6 +522,14 @@ internal static class PageSequence
                 return;
             }
 
+            if (source.Kind is BoxKind.Grid or BoxKind.Masonry)
+            {
+                CollectGrid(
+                    box, units, inheritedBefore, inheritedAfter, avoid,
+                    FlexPageName(box, name, pageNames));
+                return;
+            }
+
             if (IsMonolithic(box))
             {
                 units.Add(BoxUnit(
@@ -762,6 +770,113 @@ internal static class PageSequence
             {
                 MarkAvoidStart(units, first, flex);
             }
+            units[^1].EndName = name;
+            units[^1].EndNameSet = true;
+        }
+
+        /// <summary>
+        /// Collects a grid container as the rows a page may end between (CSS Grid 1 §12.6): the items
+        /// of one line stand beside each other, so a page can only end between lines. A line with one
+        /// item is collected as the item, since what continues below the page is the item's own
+        /// content.
+        /// </summary>
+        private void CollectGrid(
+            LayoutBox grid,
+            List<FlowUnit> units,
+            BreakValue inheritedBefore,
+            BreakValue inheritedAfter,
+            Int32[] avoid,
+            String? name)
+        {
+            var source = grid.Source;
+            var before = Fragmentainer.Combine(inheritedBefore, PageValue(source.Style.Breaks.Before));
+            var after = Fragmentainer.Combine(inheritedAfter, PageValue(source.Style.Breaks.After));
+            var inside = source.Style.Breaks.Inside == BreakValue.Avoid
+                ? Append(avoid, ++_nextAvoid)
+                : avoid;
+
+            var items = new List<LayoutBox>(grid.Children.Count);
+
+            foreach (var child in grid.Children)
+            {
+                if (!PositionedLayout.IsOutOfFlow(child.Source) &&
+                    child.Source.Style.Float == FloatSide.None)
+                {
+                    items.Add(child);
+                }
+            }
+
+            var first = units.Count;
+
+            if (items.Count == 1)
+            {
+                Collect(items[0], units, before, after, inside, name, pageNames: true, ownPageName: false);
+            }
+            else if (items.Count > 1)
+            {
+                var lines = FlexLines(items);
+
+                for (var index = 0; index < lines.Count; index++)
+                {
+                    var line = lines[index];
+
+                    if (line.Count == 1)
+                    {
+                        Collect(
+                            line[0],
+                            units,
+                            index == 0 ? before : BreakValue.Auto,
+                            index == lines.Count - 1 ? after : BreakValue.Auto,
+                            inside,
+                            name,
+                            pageNames: true,
+                            ownPageName: false);
+                        continue;
+                    }
+
+                    var top = Double.MaxValue;
+                    var bottom = Double.MinValue;
+                    var lineBefore = BreakValue.Auto;
+                    var lineAfter = BreakValue.Auto;
+
+                    foreach (var item in line)
+                    {
+                        top = Math.Min(top, item.BorderBox.Y);
+                        bottom = Math.Max(bottom, item.BorderBox.Bottom);
+                        lineBefore = Fragmentainer.Combine(
+                            lineBefore, PageValue(item.Source.Style.Breaks.Before));
+                        lineAfter = Fragmentainer.Combine(
+                            lineAfter, PageValue(item.Source.Style.Breaks.After));
+                    }
+
+                    units.Add(new FlowUnit
+                    {
+                        Top = top,
+                        Bottom = bottom,
+                        Before = Fragmentainer.Combine(index == 0 ? before : BreakValue.Auto, lineBefore),
+                        After = Fragmentainer.Combine(
+                            index == lines.Count - 1 ? after : BreakValue.Auto, lineAfter),
+                        PageName = name,
+                        Avoid = inside,
+                    });
+                }
+            }
+
+            if (units.Count == first)
+            {
+                units.Add(BoxUnit(grid, before, after, avoid, name));
+            }
+
+            units[first].StartName = name;
+            units[first].StartNameSet = true;
+            units[first].StartBoundaryY = grid.BorderBox.Y;
+            units[first].StartBoundarySet = true;
+
+            if (inside.Length != avoid.Length)
+            {
+                MarkAvoidStart(units, first, grid);
+            }
+
             units[^1].EndName = name;
             units[^1].EndNameSet = true;
         }
@@ -1168,7 +1283,7 @@ internal static class PageSequence
             var source = box.Source;
 
             return source.IsReplaced ||
-                source.Kind is BoxKind.Grid or BoxKind.Masonry or BoxKind.InlineBlock ||
+                source.Kind is BoxKind.InlineBlock ||
                 source.Style.Multi.IsMultiColumn ||
                 Scrolls(source.Style) ||
                 source.Style.Contain.Block ||

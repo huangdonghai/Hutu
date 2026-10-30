@@ -466,6 +466,25 @@ public sealed class PageSequenceTests
         });
     }
 
+    [Test]
+    public async Task AGridBreaksBetweenItsRowsAndNotInsideOne()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " .g { display: grid; grid-template-columns: 40px 40px; grid-auto-rows: 60px }</style>" +
+            "<div class='g'><div></div><div></div><div></div><div></div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(2), "two rows of sixty in a hundred-pixel page");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(60).Within(0.01), "the first row stands whole");
+            Assert.That(pages.Pages[1].Content.Y, Is.EqualTo(60).Within(0.01));
+            Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(60).Within(0.01));
+        });
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
