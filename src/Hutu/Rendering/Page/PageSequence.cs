@@ -481,7 +481,7 @@ internal static class PageSequence
                     }
                 }
 
-                if (y > start + 0.001 && y <= limit + 0.001)
+                if (y > start + 0.001 && y <= limit + 0.001 && !unit.SealedBefore)
                 {
                     var kind = Boundary(units[index - 1], unit, linesOnPage, out var value);
                     var point = (Y: y, Resume: resumeAt);
@@ -871,6 +871,12 @@ internal static class PageSequence
             {
                 var unit = BoxUnit(box, before, after, avoid, name);
                 unit.Shell = flow.Count == 0 && box.Children.Count > 0;
+
+                if (box.Source.IsLegend)
+                {
+                    unit.SealedBefore = true;
+                }
+
                 units.Add(unit);
             }
             else
@@ -879,6 +885,11 @@ internal static class PageSequence
                 // its first child: the box's edges and padding belong to the fragment that begins it.
                 units[first].StartBoundaryY = _axis.Start(box);
                 units[first].StartBoundarySet = true;
+
+                if (box.Source.IsLegend)
+                {
+                    units[first].SealedBefore = true;
+                }
 
                 if (inside.Length != avoid.Length)
                 {
@@ -1748,6 +1759,11 @@ internal static class PageSequence
         /// <summary>Gets whether a break may not fall between this unit and the one after it where
         /// there is any other place to break - a table caption and the row it belongs to.</summary>
         public Boolean KeepWithNext { get; set; }
+
+        /// <summary>Gets whether no break may fall before this unit: a fieldset's legend stands in
+        /// the border rather than in the flow, so nothing ahead of it is a place a page may end
+        /// (HTML rendering §15.3.12).</summary>
+        public Boolean SealedBefore { get; set; }
 
         public Int32[] Avoid { get; init; } = Array.Empty<Int32>();
 
