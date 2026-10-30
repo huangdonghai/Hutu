@@ -272,12 +272,23 @@ internal static class PageSequence
                 var y = unit.StartBoundarySet ? unit.StartBoundaryY : unit.Top;
                 var resumeAt = y;
 
-                // A gap between two flex items is truncated by the break: the page ends at the item
-                // before it, and the next page begins at the item after it.
+                // A gap between two flex items may be ended anywhere inside it: a page whose edge
+                // falls in the gap ends at that edge, and the page after begins there too. A page
+                // that ends exactly where the gap begins leaves the whole gap behind, and the page
+                // after begins at the item beyond it. A gap that begins past the page's own edge
+                // is no break this page can take.
                 if (unit.ResumeSet)
                 {
-                    y = unit.ResumeFrom;
-                    resumeAt = unit.ResumeY;
+                    if (unit.ResumeFrom > limit + 0.001)
+                    {
+                        y = unit.ResumeFrom;
+                        resumeAt = y;
+                    }
+                    else
+                    {
+                        y = Math.Min(limit, unit.ResumeY);
+                        resumeAt = unit.ResumeFrom >= limit - 0.001 ? unit.ResumeY : y;
+                    }
                 }
 
                 if (y > start + 0.001 && y <= limit + 0.001)

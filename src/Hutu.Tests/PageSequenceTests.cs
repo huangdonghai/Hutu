@@ -447,6 +447,25 @@ public sealed class PageSequenceTests
         });
     }
 
+    [Test]
+    public async Task AColumnFlexGapIsCutAtThePageEdgeWhenTheEdgeFallsInsideIt()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " .f { display: flex; flex-direction: column; row-gap: 60px } .i { height: 60px }</style>" +
+            "<div class='f'><div class='i'></div><div class='i'></div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(100).Within(0.01), "the first item and part of the gap");
+            Assert.That(pages.Pages[1].Content.Y, Is.EqualTo(100).Within(0.01), "the next page begins inside the gap");
+            Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(80).Within(0.01), "the rest of the gap and the second item");
+        });
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
