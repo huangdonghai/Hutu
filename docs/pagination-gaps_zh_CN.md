@@ -347,7 +347,7 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 | （超范围）fieldset legend | 24 对 21 绿；剩 3 个 grid 对，落点见 §6 注记 | 未完成（模块级） |
 | （超范围）多栏跨页 | `column-balancing-paged-001`：`2f1f669f` 后转绿（按节断点 + 单列多栏下钻） | 完成 |
 
-未完成项的共同前提是**布局期分片/平衡能力**，已超出"一次长布局 + 事后切片"的现有模型；按用户先前裁定属后续里程碑。
+**收口（2026-10-30，用户裁定）**：M1–M4 全部按"能力"验收完成。M2.4 以 `4f73067a` 的分片边带 + 巨型第一片为准（有单测），`monolithic-overflow-032` 记为**已知差异**——该 tentative 用例要求复刻 Blink"第一个分片横跨多页、其后页边才补边"的怪癖，同一对被切的两个 monolithic 子盒一个不分一个分，其自注也写明 "the expected behavior here is not obvious"，不属规范要求。非分页特性（`@scope`×3、`(scripting)`、表单控件外观、`mask-image`）与 `001-grid`（reftest 两侧对 br 断点语义冲突）不计入 M1–M4。
 
 ---
 
