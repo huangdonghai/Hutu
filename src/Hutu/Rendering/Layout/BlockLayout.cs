@@ -756,7 +756,17 @@ internal sealed class BlockLayout
             {
                 // A zero-height box sits inside the pending strip without advancing the cursor: its
                 // own combined margin has just been added, and the run carries it on to whichever
-                // box follows. Nothing here is a place in the stack the box occupies.
+                // box follows. Nothing here is a place in the stack the box occupies - unless it
+                // steps clear of a float, which is a place: the clearance stands its top edge below
+                // the floats, the top margin spent on getting there, and its bottom margin is what
+                // the boxes after it collapse with (CSS 2.1 §8.3.1, §9.5.2).
+                if (clears && tracks is { } belowClear)
+                {
+                    cursor = Math.Max(cursor + pending, belowClear.ClearBelow(child.Style.Clear, cursor + pending));
+                    pending = childBottom;
+                    pendingGroup = new MarginGroup(childBottom);
+                }
+
                 continue;
             }
 
@@ -817,16 +827,23 @@ internal sealed class BlockLayout
         }
 
         // The trailing strip either escaped through the box (already in the collapsed bottom this
-        // box reports to its parent) or has to be reserved inside this box's content height. A
-        // container that holds floats still widens its height for them whatever the margin stack
-        // says about the last box in it.
+        // box reports to its parent) or has to be reserved inside this box's content height.
         var stacked = throughBottom ? cursor : cursor + pending;
 
         // Published for the container above, which absorbs these when it holds no formatting
         // context of its own - the floats belong to the nearest ancestor that does.
         _engine.PublishFloats(box, tracks);
 
-        return Math.Max(stacked, directBottom);
+        // Only a block formatting context root grows for the floats taking part in it (CSS 2.1
+        // §10.6.7): a plain container is no taller than its content reaches, and the floats hang out
+        // below it into the context its ancestor keeps. "Taking part in it" includes the floats a
+        // child below hands up - a root holds those as much as the ones it places itself. A float and
+        // an out-of-flow box are roots themselves, and hold the floats they carry.
+        var heldBottom = EstablishesContext(box) || IsFloat(box) || PositionedLayout.IsOutOfFlow(box)
+            ? Math.Max(directBottom, tracks?.Bottom ?? 0)
+            : 0.0;
+
+        return Math.Max(stacked, heldBottom);
     }
 
     /// <summary>
@@ -2674,6 +2691,16 @@ internal sealed class BlockLayout
                 var size0 = _engine.Measure(child, constraints, context);
                 var used0 = BoxModel.UsedMargin(child.Style, contentWidth, size0.Width);
 
+                // A cleared zero-height box is the exception, and the measuring pass said where it
+                // stands: below the floats, its top margin spent on the clearance and its bottom
+                // margin left for the boxes after it (CSS 2.1 §8.3.1, §9.5.2).
+                var stand = cursor + pending;
+
+                if (clears && tracks is { } belowClear)
+                {
+                    stand = Math.Max(stand, belowClear.ClearBelow(child.Style.Clear, stand));
+                }
+
                 // CSS 2.1 §8.3.1 gives a self-collapsing box one of two places: its top border edge
                 // is the parent's own when its top margin collapses with the parent's (the escape
                 // this walk has already stopped combining for, which leaves the strip empty), and
@@ -2688,8 +2715,16 @@ internal sealed class BlockLayout
                 var inward0 = box.Flow.IsVertical || box.Flow.InlineSign > 0
                     ? used0.Left
                     : contentWidth - used0.Right - size0.Width;
-                var rect0 = new Rect(contentX + inward0, cursor + pending, size0.Width, size0.Height);
+                var rect0 = new Rect(contentX + inward0, stand, size0.Width, size0.Height);
                 parent.Children.Add(_engine.Arrange(child, rect0, context));
+
+                if (clears && tracks is not null)
+                {
+                    cursor = stand;
+                    pending = childBottom;
+                    pendingGroup = new MarginGroup(childBottom);
+                }
+
                 continue;
             }
 

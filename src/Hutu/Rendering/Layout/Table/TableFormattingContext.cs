@@ -562,6 +562,35 @@ internal sealed partial class TableFormattingContext
             bottom = Math.Max(
                 bottom,
                 child.BorderBox.Bottom - child.RelativeDisplacement.Y + child.Margin.Bottom);
+
+            // A float counts as the content it takes room for, wherever it stands in the subtree -
+            // measured in Chrome, a cell holding nothing but a tall float has no slack to align
+            // anything in, its content box having grown to hold that float.
+            bottom = Math.Max(bottom, Floats(child));
+        }
+
+        static Double Floats(LayoutBox box)
+        {
+            var bottom = 0.0;
+
+            foreach (var child in box.Children)
+            {
+                if (child.IsOutOfFlow)
+                {
+                    continue;
+                }
+
+                if (child.Source.Style.Float != FloatSide.None)
+                {
+                    bottom = Math.Max(
+                        bottom,
+                        child.BorderBox.Bottom - child.RelativeDisplacement.Y + child.Margin.Bottom);
+                }
+
+                bottom = Math.Max(bottom, Floats(child));
+            }
+
+            return bottom;
         }
 
         var used = bottom - top;

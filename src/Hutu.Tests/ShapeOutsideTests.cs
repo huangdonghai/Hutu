@@ -115,11 +115,13 @@ public sealed class ShapeOutsideTests
 
         // The border box is 120 across standing 20 in from the edge, and the margin box 160: naming the
         // border edge lets the lines into the margin the float stands in, and over the band the margin box
-        // covers but the border box does not, it lets them through the whole way.
+        // covers but the border box does not, it lets them through the whole way. The first area is only
+        // as tall as its lines - a plain block does not grow for a float - so the second float stands
+        // beside the first and its lines begin past both margin boxes (measured in Chrome).
         Assert.That(Bounds(view, "a1").X, Is.EqualTo(0).Within(0.5), "the top of the area is only margin");
         Assert.That(Bounds(view, "a2").X, Is.EqualTo(140).Within(0.5), "the border edge, insets and all");
-        Assert.That(Bounds(view, "b1").X, Is.EqualTo(160).Within(0.5), "a float with no shape keeps its margin box");
-        Assert.That(Bounds(view, "b2").X, Is.EqualTo(160).Within(0.5));
+        Assert.That(Bounds(view, "b1").X, Is.EqualTo(320).Within(0.5), "beside the second float, past the first one's margin box too");
+        Assert.That(Bounds(view, "b2").X, Is.EqualTo(320).Within(0.5));
     }
 
     [Test]

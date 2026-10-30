@@ -113,12 +113,12 @@ public sealed class FloatLayoutTests
 
         Assert.That(
             Bounds(view, "area").Height,
-            Is.EqualTo(70),
-            "a container of floats is as tall as the float that reaches furthest down");
+            Is.EqualTo(0),
+            "a container that is no formatting context keeps no height of its own");
         Assert.That(
             Bounds(view, "after").Y,
-            Is.EqualTo(70),
-            "and what follows it starts below the floats rather than beside them");
+            Is.EqualTo(0),
+            "so what follows stands beside the floats, in the room they leave");
     }
 
     [Test]
@@ -193,9 +193,9 @@ public sealed class FloatLayoutTests
         // pixels down, so it lands there, beside a, which still reaches further than that.
         Assert.That(Bounds(view, "c"), Is.EqualTo(new Rect(120, 30, 80, 20)));
 
-        // And the container is as tall as the float that reaches furthest down, which is the first
-        // one - not as tall as the stack, which took nothing from it.
-        Assert.That(Bounds(view, "area").Height, Is.EqualTo(50));
+        // A container that establishes no formatting context is no taller than its content, which
+        // holds no height of the floats: zero, measured in Chrome (CSS 2.1 §10.6.7).
+        Assert.That(Bounds(view, "area").Height, Is.EqualTo(0));
     }
 
     [Test]
