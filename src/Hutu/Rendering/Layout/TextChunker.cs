@@ -293,7 +293,12 @@ internal readonly struct ChunkRange
     /// alphabetic.
     /// </remarks>
     public static Boolean IsUpright(Int32 codePoint) =>
-        IsWide(codePoint) || (codePoint >= 0xFE10 && codePoint <= 0xFE4F);
+        IsWide(codePoint) ||
+        (codePoint >= 0xFE10 && codePoint <= 0xFE4F) ||
+        // Geometric shapes are the CJK symbols a column keeps upright - the white circle U+25CB
+        // used for a zero above all. Their East Asian Width is ambiguous, so the wide ranges above
+        // do not reach them, but their Vertical_Orientation is upright.
+        (codePoint >= 0x25A0 && codePoint <= 0x25FF);
 
     /// <summary>Gets whether the character keeps its own orientation when it is set in a column.</summary>
     public static Boolean IsUpright(Char character) => IsUpright((Int32)character);
