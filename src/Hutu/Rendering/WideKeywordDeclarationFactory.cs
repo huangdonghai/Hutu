@@ -98,6 +98,15 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         "page-break-before",
         "page-break-after",
         "page-break-inside",
+        // CSS Page 3's page descriptors and named-page property, which AngleSharp has no grammar for.
+        // `@page` is read by the engine's own page-rule table; `size`, the orientation and the printer
+        // marks are kept whole so that table can read them, and `page` is the name a box carries into
+        // the page sequence.
+        "size",
+        "page-orientation",
+        "marks",
+        "bleed",
+        "page",
         // The grid-lanes axis/packing descriptor, which AngleSharp has no grammar for at all; the lanes
         // formatting context reads it as text.
         "grid-lanes-direction",

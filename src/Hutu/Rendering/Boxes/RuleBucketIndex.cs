@@ -334,6 +334,7 @@ internal sealed class RuleBucketIndex
     private Int32 _heldMatches;
     private Int32 _freshMatches;
     private readonly CounterStyleTable _counters;
+    private readonly PageStyleTable _pages;
 
     private RuleBucketIndex(
         List<ICssStyleRule> rules,
@@ -345,7 +346,8 @@ internal sealed class RuleBucketIndex
         RuleOrigin[] origins,
         PseudoRuleIndex pseudo,
         Boolean[] pseudoOnly,
-        CounterStyleTable counters)
+        CounterStyleTable counters,
+        PageStyleTable pages)
     {
         _rules = rules;
         _idBuckets = idBuckets;
@@ -357,6 +359,7 @@ internal sealed class RuleBucketIndex
         _pseudo = pseudo;
         _pseudoOnly = pseudoOnly;
         _counters = counters;
+        _pages = pages;
     }
 
     /// <summary>Gets the flattened rules in the order they are matched in.</summary>
@@ -373,6 +376,13 @@ internal sealed class RuleBucketIndex
     /// <c>counter()</c> is spelled with when the name it carries is one the page wrote.
     /// </summary>
     internal CounterStyleTable Counters => _counters;
+
+    /// <summary>
+    /// Gets the page rules the sheets carry for this device. The page box reads them from here rather
+    /// than from the element cascade: <c>@page</c> names no element, and its declarations answer a
+    /// page, not a box.
+    /// </summary>
+    internal PageStyleTable Pages => _pages;
 
     /// <summary>Gets how many elements stood on the match of the last build since the counters were reset.</summary>
     internal Int32 HeldMatches => _heldMatches;
@@ -397,6 +407,7 @@ internal sealed class RuleBucketIndex
         var collected = new List<ICssStyleRule>();
         var origins = new List<RuleOrigin>();
         var styles = new List<ICssCounterStyleRule>();
+        var pages = new List<ICssPageRule>();
 
         foreach (var sheet in sheets)
         {
@@ -415,6 +426,10 @@ internal sealed class RuleBucketIndex
                     // the walk that hands out rules to match drops it - and a style defined in a media
                     // block that does not apply is dropped here the same way, by the group's own check.
                     CollectCounterStyles(sheet.Rules[i], styles, device);
+
+                    // `@page` names no element either: the page box reads its declarations from a
+                    // table of its own, built here where the sheets and the device are both in hand.
+                    CollectPageRules(sheet.Rules[i], pages, device);
                 }
 
                 foreach (var rule in sheet.Rules.GetMatchingStyles(device))
@@ -488,7 +503,7 @@ internal sealed class RuleBucketIndex
 
         return new RuleBucketIndex(
             flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches, origins.ToArray(), PseudoRuleIndex.Build(flattened),
-            pseudoOnly, CounterStyleTable.Build(styles));
+            pseudoOnly, CounterStyleTable.Build(styles), new PageStyleTable(pages, device));
     }
 
     /// <summary>
@@ -1332,6 +1347,32 @@ internal sealed class RuleBucketIndex
         for (var i = 0; i < subRules.Length; i++)
         {
             CollectCounterStyles(subRules[i], styles, device);
+        }
+    }
+
+    /// <summary>
+    /// Gathers the <c>@page</c> rules of a sheet, including the ones a conditional group holds: a page
+    /// declared inside an <c>@media print</c> that this device answers to is as much a page of the
+    /// document as one written at the top, while one in a block that does not apply never arrives.
+    /// </summary>
+    private static void CollectPageRules(ICssRule rule, List<ICssPageRule> pages, IRenderDevice device)
+    {
+        if (rule is ICssPageRule page)
+        {
+            pages.Add(page);
+            return;
+        }
+
+        if (rule is not ICssGroupingRule group || !GroupApplies(rule, device))
+        {
+            return;
+        }
+
+        var subRules = group.Rules;
+
+        for (var i = 0; i < subRules.Length; i++)
+        {
+            CollectPageRules(subRules[i], pages, device);
         }
     }
 

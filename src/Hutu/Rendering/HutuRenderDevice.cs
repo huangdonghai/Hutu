@@ -178,8 +178,17 @@ internal sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
     /// <inheritdoc />
     public Int32 MonochromeBits => 0;
 
+    /// <summary>The medium the document is being rendered for.</summary>
+    private DeviceCategory _category = DeviceCategory.Screen;
+
     /// <inheritdoc />
-    public DeviceCategory Category => DeviceCategory.Screen;
+    public DeviceCategory Category => _category;
+
+    /// <summary>
+    /// Sets the medium the styles are computed for. A change asks the sheets again - an
+    /// <c>@media print</c> block answers differently - so the caller rebuilds the box tree after it.
+    /// </summary>
+    internal void SetCategory(DeviceCategory category) => _category = category;
 
     /// <inheritdoc />
     public IReadOnlyDictionary<String, String> Preferences => _preferences;

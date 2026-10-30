@@ -71,6 +71,13 @@ internal sealed class RenderingPipeline
     public PaintList? Paint { get; private set; }
 
     /// <summary>
+    /// Gets the <c>@page</c> rules the sheets carry for the current device, or null before a build
+    /// has read them. The page box is not laid out yet; this is the table that will be asked for its
+    /// size and margins when it is.
+    /// </summary>
+    internal PageStyleTable? PageStyles => _styles.Index?.Pages;
+
+    /// <summary>
     /// Whether <see cref="Build"/> times its stages and leaves them in <see cref="LastBuildStages"/>.
     /// Off by default, and read from the timestamp clock rather than from a stopwatch, so a renderer
     /// that never asks for it pays nothing: one branch that is always false.

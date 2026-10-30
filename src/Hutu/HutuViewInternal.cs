@@ -133,6 +133,48 @@ public sealed class HutuViewInternal : IDisposable
     /// <summary>Gets the height the styles were last computed against.</summary>
     public int ViewportHeight => _renderDevice.ViewPortHeight;
 
+    /// <summary>Gets the medium the document is computed for.</summary>
+    internal DeviceCategory MediaType => _renderDevice.Category;
+
+    /// <summary>
+    /// Switches the medium the document is computed for, and builds it again when the medium moved.
+    /// A stylesheet answers <c>@media print</c> differently, so nothing computed under the old
+    /// medium can stand.
+    /// </summary>
+    internal bool SetMediaType(DeviceCategory media)
+    {
+        if (_renderDevice.Category == media)
+        {
+            return false;
+        }
+
+        _renderDevice.SetCategory(media);
+        _pipeline.Invalidate();
+        UpdateRenderTree();
+        return true;
+    }
+
+    /// <summary>
+    /// Gets the <c>@page</c> rules the sheets carry for the current medium, or null before a build
+    /// has read them.
+    /// </summary>
+    internal PageStyleTable? PageStyles => _pipeline.PageStyles;
+
+    /// <summary>
+    /// Gets the page box the default page comes to. The page context inherits from the root element,
+    /// so a margin the page says <c>inherit</c> for takes the root box's margin.
+    /// </summary>
+    internal PageGeometry DefaultPageGeometry
+    {
+        get
+        {
+            var root = _pipeline.Layout?.Root.Source;
+            var inherited = root is null ? StyleThickness.Zero : root.Style.Margin;
+
+            return _pipeline.PageStyles?.DefaultPage(inherited) ?? PageGeometry.Default;
+        }
+    }
+
     /// <summary>
     /// Gets or sets the page zoom. A change lays the document out again at the scaled viewport - the
     /// window divided by the zoom - which is what makes a zoomed page reflow rather than merely
