@@ -106,13 +106,22 @@ public sealed class HutuViewPagedTests
 
         window.CaptureRenderedFrame();
 
+        var fitted = view.Zoom;
+
         Assert.Multiple(() =>
         {
             Assert.That(frame.DesiredSize.Width, Is.LessThanOrEqualTo(view.Bounds.Width),
                 "the sheet is fitted to the window across");
             Assert.That(frame.DesiredSize.Height, Is.LessThanOrEqualTo(view.Bounds.Height),
                 "and down it");
+            Assert.That(fitted, Is.LessThan(1), "a page bigger than the window opens scaled down");
         });
+
+        view.ZoomIn();
+        Assert.That(view.Zoom, Is.GreaterThan(fitted), "the zoom controls scale the sheet in paged mode");
+
+        view.FitToWindow();
+        Assert.That(view.Zoom, Is.EqualTo(fitted).Within(1e-6), "fitting returns the sheet to the window");
     }
 
     /// <summary>Gets the window as a picture, so two pages can be told apart.</summary>

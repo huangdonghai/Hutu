@@ -547,6 +547,16 @@ public class HutuView : ScrollViewer
 
         // The scroller's offset is in the surface's pixels, which are the document's pixels scaled by the
         // current zoom. Hold the document point at the viewport's top-left across the change.
+        // A paged document is laid out at its paper, so there is nothing to reflow: the zoom is a
+        // display scale of the fixed sheet, and fitting the window is the same number.
+        if (IsPaged)
+        {
+            Zoom = clamped;
+            _surface.Zoom = clamped;
+            ZoomChanged?.Invoke();
+            return;
+        }
+
         var docX = Offset.X / Zoom;
         var docY = Offset.Y / Zoom;
 
@@ -667,10 +677,12 @@ public class HutuView : ScrollViewer
 
         // The frame stands 16 pixels off the edge it is centred in and one pixel of border on the sheet.
         var room = new Size(viewport.Width - 34, viewport.Height - 34);
-        var scale = Math.Min(room.Width / page.Width, room.Height / page.Height);
+        var scale = Math.Clamp(Math.Min(room.Width / page.Width, room.Height / page.Height), MinZoom, 1);
 
-        _surface.Zoom = Math.Clamp(scale, MinZoom, 1);
+        Zoom = scale;
+        _surface.Zoom = scale;
         Offset = new Vector(0, 0);
+        ZoomChanged?.Invoke();
     }
 
     /// <summary>Shows one page, counting from one, kept inside the pages the document came to.</summary>

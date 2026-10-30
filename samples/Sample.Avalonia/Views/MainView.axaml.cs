@@ -159,6 +159,7 @@ public partial class MainView : ContentPage
         PageLabel.Text = count == 0 ? "—" : $"{page} / {count}";
         PreviousPageButton.IsEnabled = page > 1;
         NextPageButton.IsEnabled = count > 0 && page < count;
+        FitButton.IsEnabled = MyHutuView.IsPaged;
     }
 
     /// <summary>
