@@ -372,6 +372,24 @@ public sealed class PageSequenceTests
         Assert.That(view.Pages!.Count, Is.EqualTo(1), "a box with its own offsets is a picture, not a page break");
     }
 
+    [Test]
+    public async Task AColumnFlexTruncatesItsRowGapAtTheBreak()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " .f { display: flex; flex-direction: column; row-gap: 20px } .i { height: 40px }</style>" +
+            "<div class='f'><div class='i'></div><div class='i'></div><div class='i'></div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(100).Within(0.01), "the first item and the second fill it");
+            Assert.That(pages.Pages[1].Content.Y, Is.EqualTo(120).Within(0.01), "the gap before the third is truncated");
+            Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(40).Within(0.01));
+        });
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

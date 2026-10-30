@@ -107,7 +107,7 @@ internal static class PageSequence
 
             var contentHeight = Math.Max(1, geometry.ContentHeight);
             var limit = Math.Min(documentHeight, start + contentHeight);
-            var cut = Cut(units, start, limit, documentHeight, out var forcedBreak);
+            var cut = Cut(units, start, limit, documentHeight, out var forcedBreak, out var resume);
             tail = forcedBreak is BreakValue.Page or BreakValue.Left or BreakValue.Right &&
                 HasUnitFrom(units, cut);
             pendingSide = forcedBreak is BreakValue.Left or BreakValue.Right ? forcedBreak : null;
@@ -126,7 +126,7 @@ internal static class PageSequence
             pages.Add(new PageSlice(
                 number++, geometry, new Rect(0, start, geometry.ContentWidth, Math.Max(0, cut - start)), name));
 
-            start = cut;
+            start = Math.Min(documentHeight, Math.Max(cut, resume));
         }
 
         return new PagedLayout(first ?? styles.DefaultPage(inheritedMargins), pages, documentHeight);
@@ -189,12 +189,14 @@ internal static class PageSequence
     /// somewhere, or the flow would never advance.
     /// </summary>
     private static Double Cut(
-        List<FlowUnit> units, Double start, Double limit, Double end, out BreakValue forcedBreak)
+        List<FlowUnit> units, Double start, Double limit, Double end,
+        out BreakValue forcedBreak, out Double resume)
     {
         forcedBreak = BreakValue.Auto;
-        Double? forced = null;
-        Double? allowed = null;
-        Double? avoided = null;
+        resume = start;
+        (Double Y, Double Resume)? forced = null;
+        (Double Y, Double Resume)? allowed = null;
+        (Double Y, Double Resume)? avoided = null;
         var linesOnPage = new Dictionary<Int32, Int32>();
 
         for (var index = 0; index < units.Count; index++)
@@ -204,25 +206,35 @@ internal static class PageSequence
             if (index > 0)
             {
                 var y = unit.StartBoundarySet ? unit.StartBoundaryY : unit.Top;
+                var resumeAt = y;
+
+                // A gap between two flex items is truncated by the break: the page ends at the item
+                // before it, and the next page begins at the item after it.
+                if (unit.ResumeSet)
+                {
+                    y = unit.ResumeFrom;
+                    resumeAt = unit.ResumeY;
+                }
 
                 if (y > start + 0.001 && y <= limit + 0.001)
                 {
                     var kind = Boundary(units[index - 1], unit, linesOnPage, out var value);
+                    var point = (Y: y, Resume: resumeAt);
 
                     if (kind == BreakClass.Forced)
                     {
-                        forced = y;
+                        forced = point;
                         forcedBreak = value;
                         break;
                     }
 
                     if (kind == BreakClass.Allowed)
                     {
-                        allowed = y;
+                        allowed = point;
                     }
                     else if (kind == BreakClass.Avoid)
                     {
-                        avoided = y;
+                        avoided = point;
                     }
                 }
             }
@@ -235,27 +247,32 @@ internal static class PageSequence
 
         if (forced is { } forcedAt)
         {
-            return Math.Min(forcedAt, end);
+            resume = forcedAt.Resume;
+            return Math.Min(forcedAt.Y, end);
         }
 
         // Everything that is left fits the page: no break opportunity is better than the document's
         // own end.
         if (end <= limit + 0.001)
         {
+            resume = end;
             return end;
         }
 
         if (allowed is { } allowedAt)
         {
-            return Math.Min(allowedAt, end);
+            resume = allowedAt.Resume;
+            return Math.Min(allowedAt.Y, end);
         }
 
         if (avoided is { } avoidedAt)
         {
-            return Math.Min(avoidedAt, end);
+            resume = avoidedAt.Resume;
+            return Math.Min(avoidedAt.Y, end);
         }
 
-        return Math.Min(limit, end);
+        resume = Math.Min(limit, end);
+        return resume;
     }
 
     private static BreakClass Boundary(
@@ -545,10 +562,15 @@ internal static class PageSequence
                     .ThenBy(item => item.BorderBox.Y)
                     .ToList();
 
+                var previousBottom = Double.NegativeInfinity;
+
                 for (var index = 0; index < ordered.Count; index++)
                 {
+                    var item = ordered[index];
+                    var itemFirst = units.Count;
+
                     Collect(
-                        ordered[index],
+                        item,
                         units,
                         index == 0 ? before : BreakValue.Auto,
                         index == ordered.Count - 1 ? after : BreakValue.Auto,
@@ -556,6 +578,19 @@ internal static class PageSequence
                         name,
                         pageNames: true,
                         ownPageName: false);
+
+                    // The row-gap and the margin between two items are truncated by a page break: the
+                    // page ends at the item before the gap and the next one starts at its own edge.
+                    if (units.Count > itemFirst &&
+                        previousBottom > Double.NegativeInfinity &&
+                        item.BorderBox.Y > previousBottom + 0.001)
+                    {
+                        units[itemFirst].ResumeSet = true;
+                        units[itemFirst].ResumeFrom = previousBottom;
+                        units[itemFirst].ResumeY = item.BorderBox.Y;
+                    }
+
+                    previousBottom = item.BorderBox.Bottom;
                 }
             }
 
@@ -1019,6 +1054,13 @@ internal static class PageSequence
         public Double StartBoundaryY { get; set; }
 
         public Boolean StartBoundarySet { get; set; }
+
+        /// <summary>Gets whether a gap stands before this unit, which a page break truncates.</summary>
+        public Boolean ResumeSet { get; set; }
+
+        public Double ResumeFrom { get; set; }
+
+        public Double ResumeY { get; set; }
 
         /// <summary>Gets the name the boundary at the box's end sees, where it differs from
         /// <see cref="PageName"/>, by the same rule at the other edge.</summary>
