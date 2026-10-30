@@ -930,9 +930,12 @@ internal static class FusedStyleFactory
         // alone: the key is the bare one, which keeps them to one entry per cascade rather than one per
         // size the page happens to set.
         // The display, the float, the clear and the overflow are decided by the declarations alone -
-        // except for the one keyword that reaches past them, `overflow: inherit`, so the two axes the
-        // parent was left with ride in the key as a packed stamp.
-        var plain = new AreaKey(cascade, 0, stamp: OverflowStamp(parent), variables: variables);
+        // except for the keywords that reach past them: `overflow: inherit`, whose axes ride as a
+        // packed stamp, and the obsolete clear attribute a break is read through, which the cascade
+        // cannot see at all.
+        var plain = new AreaKey(
+            cascade, 0, identity: PresentationalHints.Clear(element),
+            stamp: OverflowStamp(parent), variables: variables);
 
         if (cache is not null && cache.TryDisplay(plain, out var display))
         {
@@ -952,7 +955,7 @@ internal static class FusedStyleFactory
             {
                 Display = ComputedStyle.ResolveDisplayFused(find("display")),
                 Float = ComputedStyle.ResolveFloatFused(find("float"), PresentationalHints.Float(element)),
-                Clear = ComputedStyle.ResolveClearFused(find("clear")),
+                Clear = ComputedStyle.ResolveClearFused(find("clear"), PresentationalHints.Clear(element)),
                 ObjectFit = ComputedStyle.ResolveObjectFitFused(find("object-fit")),
                 ClipsOverflow = ComputedStyle.ResolveClipsOverflowFused(overflowX, overflowY),
                 ClipMargin = ComputedStyle.ResolveClipMarginFused(

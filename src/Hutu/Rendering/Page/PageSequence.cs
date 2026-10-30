@@ -37,7 +37,6 @@ internal static class PageSequence
 
         var documentHeight = collector.OutOfFlowBottom;
 
-
         foreach (var unit in units)
         {
             documentHeight = Math.Max(documentHeight, unit.Bottom);
@@ -112,6 +111,17 @@ internal static class PageSequence
                 HasUnitFrom(units, cut);
             pendingSide = forcedBreak is BreakValue.Left or BreakValue.Right ? forcedBreak : null;
 
+            // A float is one picture while it can be: the page ends where a float that asks not to be
+            // broken begins, and where one that merely would not fit begins, so it starts the next
+            // page whole (CSS 2.1 §13.3.1). A float taller than a page, or a page's own forced break,
+            // may cut it. The forced break says where the page ends and is not moved.
+            if (forcedBreak == BreakValue.Auto &&
+                FloatEdge(collector.Floats, cut, start, contentHeight) is { } floatedEdge)
+            {
+                cut = floatedEdge;
+                resume = floatedEdge;
+            }
+
             if (cut <= start + 0.001)
             {
                 cut = Math.Min(documentHeight, Math.Max(limit, start + 0.001));
@@ -144,6 +154,31 @@ internal static class PageSequence
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Gets where a page ending at <paramref name="cut"/> has to end instead so that it does not cut
+    /// through a float that begins on it, or null where no such float lies across the cut. A float
+    /// that asks not to be broken is never cut; one that does is cut only when it is taller than a
+    /// page, since it could not stand whole on the next one either (CSS 2.1 §13.3.1).
+    /// </summary>
+    private static Double? FloatEdge(
+        IReadOnlyList<(Double Top, Double Bottom, Boolean Avoid)> floats, Double cut, Double start, Double pageHeight)
+    {
+        Double? edge = null;
+
+        foreach (var (top, bottom, avoid) in floats)
+        {
+            if (top > start + 0.001 &&
+                cut > top + 0.001 &&
+                cut < bottom - 0.001 &&
+                (avoid || bottom - top <= pageHeight + 0.001))
+            {
+                edge = edge is { } held ? Math.Min(held, top) : top;
+            }
+        }
+
+        return edge;
     }
 
     /// <summary>
@@ -246,7 +281,14 @@ internal static class PageSequence
 
                     if (kind == BreakClass.Allowed)
                     {
-                        allowed = point;
+                        // A box that begins with nothing reaching this page - only its leading
+                        // space, a cleared line standing below a float - is no place to end it:
+                        // the page fills with what stands there, and the box's first line starts
+                        // the next page. The float that fills the page's foot stays on it.
+                        if (!(unit.StartBoundarySet && unit.Top > limit + 0.001))
+                        {
+                            allowed = point;
+                        }
                     }
                     else if (kind == BreakClass.Avoid)
                     {
@@ -389,6 +431,9 @@ internal static class PageSequence
         /// </summary>
         public Double OutOfFlowBottom { get; private set; }
 
+        /// <summary>Gets the spans the floats take, which no page that has room for one may cut through.</summary>
+        public List<(Double Top, Double Bottom, Boolean Avoid)> Floats { get; } = new();
+
         public void Collect(
             LayoutBox box,
             List<FlowUnit> units,
@@ -404,6 +449,14 @@ internal static class PageSequence
             if (PositionedLayout.IsOutOfFlow(source) || source.Style.Float != FloatSide.None)
             {
                 OutOfFlowBottom = Math.Max(OutOfFlowBottom, DeepestBottom(box));
+
+                // A float is drawn whole on one page: the page it begins on ends before it when it
+                // would not fit, so the span it takes is what the cut is held away from.
+                if (source.Style.Float != FloatSide.None)
+                {
+                    var kept = source.Style.Breaks.Inside == BreakValue.Avoid;
+                    Floats.Add((box.BorderBox.Y, kept ? box.BorderBox.Bottom + box.Margin.Bottom : box.BorderBox.Bottom, kept));
+                }
 
                 // A positioned box takes no place in the flow, but the page names written inside it
                 // still say which pages its picture is printed on; it joins the page sequence for
@@ -448,6 +501,24 @@ internal static class PageSequence
             var inside = source.Style.Breaks.Inside == BreakValue.Avoid
                 ? Append(avoid, ++_nextAvoid)
                 : avoid;
+
+            // A float takes no place in this flow - it is not a break opportunity - but the span it
+            // covers is one no page that has room for the whole of it may end inside. A float that
+            // asks not to be broken is placed with its margin box whole; one that does not only has
+            // to fit its own box, and its margin may run over the page's edge (CSS 2.1 §9.5.1).
+            foreach (var child in box.Children)
+            {
+                if (!PositionedLayout.IsOutOfFlow(child.Source) &&
+                    child.Source.Style.Float != FloatSide.None)
+                {
+                    var kept = child.Source.Style.Breaks.Inside == BreakValue.Avoid;
+                    var bottom = kept
+                        ? child.BorderBox.Bottom + child.Margin.Bottom
+                        : child.BorderBox.Bottom;
+
+                    Floats.Add((child.BorderBox.Y, bottom, kept));
+                }
+            }
 
             var first = units.Count;
             var flow = FlowChildren(box);

@@ -1310,8 +1310,8 @@ internal readonly struct ComputedStyle
             : ToFloat(KeywordText(declared, CssInitialValues.Float));
 
     /// <summary>Resolves which side's floats a box clears, for the fused path.</summary>
-    public static Layout.ClearSide ResolveClearFused(ICssProperty? declared) =>
-        ToClear(KeywordText(declared, CssInitialValues.Clear));
+    public static Layout.ClearSide ResolveClearFused(ICssProperty? declared, String? hint = null) =>
+        ToClear(KeywordText(declared, hint ?? CssInitialValues.Clear));
 
     /// <summary>
     /// Maps the <c>float</c> keyword. The logical spellings are kept as logical sides: which edge the

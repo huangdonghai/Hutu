@@ -2761,6 +2761,10 @@ internal sealed class InlineLayout
             if (item.IsBreak)
             {
                 NextLine(forced: true);
+
+                // A break that asks to clear stands the lines after it below the floats it names;
+                // this is the `<br clear>` a page still writes for the job (HTML rendering §15.3.3).
+                room.Clear(item.Style.Clear);
                 continue;
             }
 
@@ -6869,12 +6873,38 @@ internal sealed class InlineLayout
         /// <summary>Gets the room it had to drop through to get there, which the block's stack owes it.</summary>
         public Double Gap { get; private set; }
 
-        /// <summary>Moves on to the next line, at the height the one just built took.</summary>
+        /// <summary>
+        /// Moves on to the next line, at the height the one just built took.
+        /// </summary>
         public void Next(Double height)
         {
             Top += height;
             _height = 0;
             Open();
+        }
+
+        /// <summary>
+        /// Stands the lines that are to come below the floats of one side: a break that asks to clear
+        /// puts whatever follows it under the floats it names (CSS 2.1 §9.5.2).
+        /// </summary>
+        public void Clear(ClearSide side)
+        {
+            if (_band is not { } band || side == ClearSide.None)
+            {
+                return;
+            }
+
+            var cleared = band.Below(Top, side);
+
+            if (cleared <= Top + 0.001)
+            {
+                return;
+            }
+
+            var dropped = cleared - Top;
+            Top = cleared;
+            Open();
+            Gap += dropped;
         }
 
         /// <summary>

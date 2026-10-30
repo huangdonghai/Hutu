@@ -601,6 +601,27 @@ internal static class PresentationalHints
         String.Equals(element.GetAttribute("align")?.Trim(), "center", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Gets the side a <c>&lt;br&gt;</c> asks the content after it to clear, as the standard's sheet
+    /// reads its obsolete <c>clear</c> attribute (HTML rendering §15.3.3), or null where the element
+    /// writes none or is not a break.
+    /// </summary>
+    public static String? Clear(IElement? element)
+    {
+        if (element is null || !element.LocalName.Equals("br", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return element.GetAttribute("clear")?.Trim().ToLowerInvariant() switch
+        {
+            "left" => "left",
+            "right" => "right",
+            "all" => "both",
+            _ => null,
+        };
+    }
+
+    /// <summary>
     /// Gets what the hints this element takes from its own attributes and from the table it belongs to
     /// come to, as one string, or null where it takes none. Two elements that match the same rules are one
     /// kind of element to the style cache, and an attribute read as a declaration is the difference the

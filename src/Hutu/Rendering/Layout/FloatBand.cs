@@ -96,6 +96,12 @@ internal sealed class FloatBand
     /// Gets the height a line with no room left to it in drops to: below every float standing in the
     /// band, which is the rule the specification gives for a line box too narrow to hold anything.
     /// </summary>
-    public Double Below(Double top) =>
-        Math.Max(top, Tracks.ClearBelow(ClearSide.Both, OriginY + top) - OriginY);
+    public Double Below(Double top) => Below(top, ClearSide.Both);
+
+    /// <summary>
+    /// Gets the height a line that clears <paramref name="side"/> stands at: below every float of
+    /// that side standing in the band (CSS 2.1 §9.5.2).
+    /// </summary>
+    public Double Below(Double top, ClearSide side) =>
+        Math.Max(top, Tracks.ClearBelow(side, OriginY + top) - OriginY);
 }

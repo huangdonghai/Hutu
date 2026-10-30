@@ -137,6 +137,25 @@ public sealed class FloatLayoutTests
     }
 
     [Test]
+    public async Task ABreakClearsTheSideItsObsoleteAttributeNames()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "<div id='area' style='width:300px;line-height:20px'>" +
+            "<div style='float:left;width:100px;height:70px'></div>" +
+            "<br clear='all'>" +
+            "</div>" +
+            "<p id='after' style='margin:0;height:20px'>after</p>"));
+
+        // The standard's sheet reads the obsolete attribute as `clear: both` on the break (HTML
+        // rendering §15.3.3), so the line the break stands on goes below the float and takes the
+        // container's height with it - which is what puts the paragraph after it below the float.
+        Assert.That(Bounds(view, "after").Y, Is.EqualTo(70), "the clear on the break moves what follows the container");
+        Assert.That(Bounds(view, "area").Height, Is.EqualTo(70), "the line the break stands on goes below the float");
+    }
+
+    [Test]
     public async Task AClearedBoxStaysBesideTheSideItDoesNotClear()
     {
         using var view = CreateView();
