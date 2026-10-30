@@ -75,7 +75,39 @@ internal sealed class RenderingPipeline
     /// has read them. The page box is not laid out yet; this is the table that will be asked for its
     /// size and margins when it is.
     /// </summary>
-    internal PageStyleTable? PageStyles => _styles.Index?.Pages;
+    internal PageStyleTable? PageStyles => PageRulesFor(_built);
+
+    /// <summary>The table read from the sheets when a build produced no box and so kept no index.</summary>
+    private PageStyleTable? _standalonePages;
+
+    private IDocument? _standalonePagesFor;
+
+    /// <summary>
+    /// Gets the page rules for the document. A build that produced a box kept the index it built, and
+    /// the table rides with it; a document that produced no box - a root that displays nothing - has
+    /// no index to keep, so the sheets are read once for the page box alone, which is what still has
+    /// to be printed.
+    /// </summary>
+    private PageStyleTable? PageRulesFor(IDocument? document)
+    {
+        if (_styles.Index is { } index)
+        {
+            return index.Pages;
+        }
+
+        if (document is null)
+        {
+            return null;
+        }
+
+        if (_standalonePages is null || !ReferenceEquals(_standalonePagesFor, document))
+        {
+            _standalonePages = RuleBucketIndex.Build(BoxBuilder.SheetsOf(document), _device).Pages;
+            _standalonePagesFor = document;
+        }
+
+        return _standalonePages;
+    }
 
     /// <summary>
     /// Gets the pages the document comes to when the device is printing, or null on screen. The
@@ -120,6 +152,8 @@ internal sealed class RenderingPipeline
         _styles.Reset();
         _built = null;
         _stylesReadViewport = false;
+        _standalonePages = null;
+        _standalonePagesFor = null;
     }
 
     /// <summary>
@@ -292,8 +326,12 @@ internal sealed class RenderingPipeline
         // The viewport is the initial containing block, so both of its dimensions matter: the height
         // is what a percentage height on the root - and on everything it makes definite - resolves
         // against. A printing device hands the document the page area instead: the same tall layout
-        // is produced at the page's width, and the page sequence cuts it into pages afterwards.
-        var page = PageForPrinting();
+        // is produced at the page's width, and the page sequence cuts it into pages afterwards. A
+        // named page may state another width, which the pages it names are clipped to until a layout
+        // per page width exists.
+        var rules = _device.Category == DeviceCategory.Printer ? PageRulesFor(_built) : null;
+        var inherited = BoxTree is null ? StyleThickness.Zero : BoxTree.Style.Margin;
+        var page = rules?.DefaultPage(inherited);
 
         PageBox = page;
 
@@ -304,28 +342,18 @@ internal sealed class RenderingPipeline
         var paintStart = measuring ? Stopwatch.GetTimestamp() : 0L;
 
         Paint = Layout is null ? null : _painter.Paint(Layout);
-        Pages = Layout is { } tall && page is { } geometry ? PageSequence.Build(tall, geometry) : null;
+
+        Pages = rules is { } pageRules
+            ? Layout is { } tall
+                ? PageSequence.Build(tall, pageRules, inherited)
+                : page is { } blank ? PageSequence.Blank(blank) : null
+            : null;
 
         if (measuring)
         {
             _laidMs = Stopwatch.GetElapsedTime(layoutStart, paintStart).TotalMilliseconds;
             _paintedMs = Stopwatch.GetElapsedTime(paintStart).TotalMilliseconds;
         }
-    }
-
-    /// <summary>
-    /// Gets the page box a printing device lays the document in, or null on screen. The page context
-    /// inherits from the root element, which is why the box tree has to exist before the answer is
-    /// read (CSS Page 3 §6.2).
-    /// </summary>
-    private PageGeometry? PageForPrinting()
-    {
-        if (_device.Category != DeviceCategory.Printer || BoxTree is null || _styles.Index is null)
-        {
-            return null;
-        }
-
-        return _styles.Index.Pages.DefaultPage(BoxTree.Style.Margin);
     }
 
     /// <summary>Milliseconds since a <see cref="Stopwatch"/> timestamp, or zero when nothing was timed.</summary>

@@ -59,13 +59,21 @@ internal sealed class PageStyleTable
     /// inherits from the root element). The values keep their units, because a percentage inherited
     /// from the root resolves against the page box and not against the root's own containing block.
     /// </param>
-    public PageGeometry DefaultPage(StyleThickness inheritedMargins)
+    public PageGeometry DefaultPage(StyleThickness inheritedMargins) => Page(null, inheritedMargins);
+
+    /// <summary>
+    /// Gets the page box a page named <paramref name="name"/> comes to. A named rule is more specific
+    /// than an unnamed one and answers after it; a rule whose selector also carries a page
+    /// pseudo-class is left for the selectors that read one.
+    /// </summary>
+    public PageGeometry Page(String? name, StyleThickness inheritedMargins)
     {
+        var rules = Applicable(name);
         var size = PageSize.Default;
 
-        foreach (var rule in _rules)
+        foreach (var rule in rules)
         {
-            if (IsDefaultPage(rule) && TryReadSize(rule, out var stated))
+            if (TryReadSize(rule, out var stated))
             {
                 size = stated;
             }
@@ -76,12 +84,9 @@ internal sealed class PageStyleTable
         var bottom = default(SideSlot);
         var left = default(SideSlot);
 
-        foreach (var rule in _rules)
+        foreach (var rule in rules)
         {
-            if (IsDefaultPage(rule))
-            {
-                ReadMargins(rule.Style, ref top, ref right, ref bottom, ref left);
-            }
+            ReadMargins(rule.Style, ref top, ref right, ref bottom, ref left);
         }
 
         var margins = new Thickness(
@@ -94,8 +99,8 @@ internal sealed class PageStyleTable
         // what a page box whose content is over-constrained comes to: the area is the width stated and
         // the box grows to hold it and its margins. A percentage on either is a share of the size the
         // `size` property stated, which is the box before the area is forced.
-        var areaWidth = ReadAreaLength("width", size.Width);
-        var areaHeight = ReadAreaLength("height", size.Height);
+        var areaWidth = ReadAreaLength("width", size.Width, rules);
+        var areaHeight = ReadAreaLength("height", size.Height, rules);
 
         var box = new PageSize(
             areaWidth is { } width ? Math.Max(0, width) + margins.Horizontal : size.Width,
@@ -105,17 +110,72 @@ internal sealed class PageStyleTable
     }
 
     /// <summary>
+    /// Gets the rules that answer a page of this name: the unnamed rules, then the rules that name it,
+    /// because a named selector is the more specific one. A rule carrying a page pseudo-class is not
+    /// read yet, so it is left out rather than applied to every page of the name.
+    /// </summary>
+    private List<ICssPageRule> Applicable(String? name)
+    {
+        var rules = new List<ICssPageRule>();
+
+        foreach (var rule in _rules)
+        {
+            if (SelectorOf(rule).IsDefault)
+            {
+                rules.Add(rule);
+            }
+        }
+
+        if (name is null)
+        {
+            return rules;
+        }
+
+        foreach (var rule in _rules)
+        {
+            var selector = SelectorOf(rule);
+
+            if (!selector.HasPseudo && String.Equals(selector.Name, name, StringComparison.Ordinal))
+            {
+                rules.Add(rule);
+            }
+        }
+
+        return rules;
+    }
+
+    private static SelectorInfo SelectorOf(ICssPageRule rule)
+    {
+        var text = rule.SelectorText?.Trim();
+
+        if (String.IsNullOrEmpty(text))
+        {
+            return default;
+        }
+
+        var colon = text.IndexOf(':');
+        var name = (colon >= 0 ? text[..colon] : text).Trim();
+
+        return new SelectorInfo(name.Length == 0 ? null : name, colon >= 0);
+    }
+
+    private readonly record struct SelectorInfo(String? Name, Boolean HasPseudo)
+    {
+        public Boolean IsDefault => Name is null && !HasPseudo;
+    }
+
+    /// <summary>
     /// Reads the page area size a rule forces with <c>width</c> or <c>height</c>, or null where none
     /// does. A percentage is read against the page box the <c>size</c> property settled.
     /// </summary>
-    private Double? ReadAreaLength(String name, Double basis)
+    private Double? ReadAreaLength(String name, Double basis, IReadOnlyList<ICssPageRule> rules)
     {
         StyleLength? value = null;
         var important = false;
 
-        foreach (var rule in _rules)
+        foreach (var rule in rules)
         {
-            if (!IsDefaultPage(rule) || rule.Style.TryGetProperty(name) is not { } property)
+            if (rule.Style.TryGetProperty(name) is not { } property)
             {
                 continue;
             }
@@ -147,9 +207,6 @@ internal sealed class PageStyleTable
 
         return value?.Resolve(basis);
     }
-
-    private static Boolean IsDefaultPage(ICssPageRule rule) =>
-        String.IsNullOrWhiteSpace(rule.SelectorText);
 
     private Boolean TryReadSize(ICssPageRule rule, out PageSize size)
     {

@@ -18,32 +18,54 @@ namespace Hutu.Rendering;
 /// </remarks>
 internal static class PageSequence
 {
-    public static PagedLayout Build(LayoutResult layout, PageGeometry geometry)
+    /// <summary>
+    /// Gets the one blank page a document with no box at all prints: a root that generates nothing
+    /// still prints a sheet, and the sheet is the page box the rule states (CSS Page 3 §3).
+    /// </summary>
+    public static PagedLayout Blank(PageGeometry geometry) =>
+        new(geometry,
+            new[] { new PageSlice(1, geometry, new Rect(0, 0, geometry.ContentWidth, 0)) },
+            0);
+
+    public static PagedLayout Build(LayoutResult layout, PageStyleTable styles, StyleThickness inheritedMargins)
     {
         var units = new List<FlowUnit>();
-        new Collector().Collect(layout.Root, units, BreakValue.Auto, BreakValue.Auto, Array.Empty<Int32>());
+        new Collector().Collect(
+            layout.Root, units, BreakValue.Auto, BreakValue.Auto, Array.Empty<Int32>(), null);
 
-        var documentHeight = Math.Max(0, layout.Height);
+        var documentHeight = 0.0;
 
         foreach (var unit in units)
         {
             documentHeight = Math.Max(documentHeight, unit.Bottom);
         }
 
+        // A document with no flow unit at all - an absolutely positioned picture, a root that states
+        // only a height - still has the size the layout gave it. The units are the flow's own end,
+        // because the layout's height includes the viewport the document was measured in.
+        if (units.Count == 0)
+        {
+            documentHeight = Math.Max(0, layout.Height);
+        }
+
         var pages = new List<PageSlice>();
-        var contentHeight = Math.Max(1, geometry.ContentHeight);
 
         if (documentHeight <= 0.001)
         {
-            pages.Add(new PageSlice(1, geometry, new Rect(0, 0, geometry.ContentWidth, 0)));
-            return new PagedLayout(geometry, pages, documentHeight);
+            var empty = styles.DefaultPage(inheritedMargins);
+            pages.Add(new PageSlice(1, empty, new Rect(0, 0, empty.ContentWidth, 0), null));
+            return new PagedLayout(empty, pages, documentHeight);
         }
 
         var start = 0.0;
         var number = 1;
+        PageGeometry? first = null;
 
         while (start < documentHeight - 0.001)
         {
+            var name = NameAt(units, start);
+            var geometry = styles.Page(name, inheritedMargins);
+            var contentHeight = Math.Max(1, geometry.ContentHeight);
             var limit = Math.Min(documentHeight, start + contentHeight);
             var cut = Cut(units, start, limit, documentHeight);
 
@@ -57,13 +79,28 @@ internal static class PageSequence
                 cut = documentHeight;
             }
 
+            first ??= geometry;
             pages.Add(new PageSlice(
-                number++, geometry, new Rect(0, start, geometry.ContentWidth, Math.Max(0, cut - start))));
+                number++, geometry, new Rect(0, start, geometry.ContentWidth, Math.Max(0, cut - start)), name));
 
             start = cut;
         }
 
-        return new PagedLayout(geometry, pages, documentHeight);
+        return new PagedLayout(first ?? styles.DefaultPage(inheritedMargins), pages, documentHeight);
+    }
+
+    /// <summary>Gets the page name the content at the head of a page states.</summary>
+    private static String? NameAt(List<FlowUnit> units, Double start)
+    {
+        foreach (var unit in units)
+        {
+            if (unit.Bottom > start + 0.001)
+            {
+                return unit.PageName;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -141,6 +178,11 @@ internal static class PageSequence
 
     private static BreakClass Boundary(FlowUnit previous, FlowUnit next, Dictionary<Int32, Int32> linesOnPage)
     {
+        if (!String.Equals(previous.PageName, next.PageName, StringComparison.Ordinal))
+        {
+            return BreakClass.Forced;
+        }
+
         var combined = Fragmentainer.Combine(previous.After, next.Before);
 
         if (combined is BreakValue.Page or BreakValue.Left or BreakValue.Right)
@@ -148,7 +190,7 @@ internal static class PageSequence
             return BreakClass.Forced;
         }
 
-        if (combined == BreakValue.Avoid || SharesAvoid(previous, next))
+        if (combined == BreakValue.Avoid || previous.KeepWithNext || SharesAvoid(previous, next))
         {
             return BreakClass.Avoid;
         }
@@ -214,7 +256,8 @@ internal static class PageSequence
             List<FlowUnit> units,
             BreakValue inheritedBefore,
             BreakValue inheritedAfter,
-            Int32[] avoid)
+            Int32[] avoid,
+            String? pageName)
         {
             var source = box.Source;
 
@@ -223,8 +266,15 @@ internal static class PageSequence
                 return;
             }
 
+            var name = source.Style.PageName ?? pageName;
             var ownBefore = PageValue(source.Style.Breaks.Before);
             var ownAfter = PageValue(source.Style.Breaks.After);
+
+            if (box.Kind == LayoutKind.Table)
+            {
+                CollectTable(box, units, inheritedBefore, inheritedAfter, avoid, name);
+                return;
+            }
 
             if (IsMonolithic(box))
             {
@@ -232,7 +282,8 @@ internal static class PageSequence
                     box,
                     Fragmentainer.Combine(inheritedBefore, ownBefore),
                     Fragmentainer.Combine(inheritedAfter, ownAfter),
-                    avoid));
+                    avoid,
+                    name));
                 return;
             }
 
@@ -260,20 +311,149 @@ internal static class PageSequence
                         end++;
                     }
 
-                    CollectLines(box, flow, index, end, units, childBefore, childAfter, inside);
+                    CollectLines(box, flow, index, end, units, childBefore, childAfter, inside, name);
                     index = end;
                     continue;
                 }
 
-                Collect(child, units, childBefore, childAfter, inside);
+                Collect(child, units, childBefore, childAfter, inside, name);
                 index++;
             }
 
             // Nothing in flow: the box itself is the one piece its break values stand on.
             if (units.Count == first)
             {
-                units.Add(BoxUnit(box, before, after, avoid));
+                units.Add(BoxUnit(box, before, after, avoid, name));
             }
+        }
+
+        /// <summary>
+        /// Collects a table as the rows a page may end between. A row is one piece - the engine lays
+        /// every cell of it on the same line - and a row group's own break values and avoid reach its
+        /// first and last row (CSS Break 3 §3.1, §4.6). A caption stays with the row after it where the
+        /// table can manage that, so a page does not end between a table and its own caption.
+        /// </summary>
+        private void CollectTable(
+            LayoutBox table,
+            List<FlowUnit> units,
+            BreakValue inheritedBefore,
+            BreakValue inheritedAfter,
+            Int32[] avoid,
+            String? pageName)
+        {
+            var source = table.Source;
+            var name = source.Style.PageName ?? pageName;
+            var before = Fragmentainer.Combine(inheritedBefore, PageValue(source.Style.Breaks.Before));
+            var after = Fragmentainer.Combine(inheritedAfter, PageValue(source.Style.Breaks.After));
+            var inside = source.Style.Breaks.Inside == BreakValue.Avoid
+                ? Append(avoid, ++_nextAvoid)
+                : avoid;
+
+            var first = units.Count;
+            var flow = new List<LayoutBox>(table.Children.Count);
+
+            foreach (var child in table.Children)
+            {
+                if (PositionedLayout.IsOutOfFlow(child.Source) ||
+                    child.Source.Style.Float != FloatSide.None)
+                {
+                    continue;
+                }
+
+                flow.Add(child);
+            }
+
+            for (var index = 0; index < flow.Count; index++)
+            {
+                var child = flow[index];
+                var childBefore = index == 0 ? before : BreakValue.Auto;
+                var childAfter = index == flow.Count - 1 ? after : BreakValue.Auto;
+
+                if (child.Kind == LayoutKind.TableRowGroup)
+                {
+                    CollectRowGroup(child, units, childBefore, childAfter, inside, name);
+                }
+                else if (child.Kind == LayoutKind.TableRow)
+                {
+                    AddRow(child, units, childBefore, childAfter, inside, name);
+                }
+                else
+                {
+                    Collect(child, units, childBefore, childAfter, inside, name);
+
+                    if (child.Source.Kind == BoxKind.TableCaption && units.Count > first)
+                    {
+                        units[^1].KeepWithNext = true;
+                    }
+                }
+            }
+
+            if (units.Count == first)
+            {
+                units.Add(BoxUnit(table, before, after, avoid, name));
+            }
+        }
+
+        private void CollectRowGroup(
+            LayoutBox group,
+            List<FlowUnit> units,
+            BreakValue inheritedBefore,
+            BreakValue inheritedAfter,
+            Int32[] avoid,
+            String? pageName)
+        {
+            var source = group.Source;
+            var name = source.Style.PageName ?? pageName;
+            var before = Fragmentainer.Combine(inheritedBefore, PageValue(source.Style.Breaks.Before));
+            var after = Fragmentainer.Combine(inheritedAfter, PageValue(source.Style.Breaks.After));
+            var inside = source.Style.Breaks.Inside == BreakValue.Avoid
+                ? Append(avoid, ++_nextAvoid)
+                : avoid;
+
+            var first = units.Count;
+            var rows = new List<LayoutBox>(group.Children.Count);
+
+            foreach (var child in group.Children)
+            {
+                if (child.Kind == LayoutKind.TableRow &&
+                    !PositionedLayout.IsOutOfFlow(child.Source) &&
+                    child.Source.Style.Float == FloatSide.None)
+                {
+                    rows.Add(child);
+                }
+            }
+
+            for (var index = 0; index < rows.Count; index++)
+            {
+                AddRow(
+                    rows[index],
+                    units,
+                    index == 0 ? before : BreakValue.Auto,
+                    index == rows.Count - 1 ? after : BreakValue.Auto,
+                    inside,
+                    name);
+            }
+
+            if (units.Count == first)
+            {
+                units.Add(BoxUnit(group, before, after, avoid, name));
+            }
+        }
+
+        private static void AddRow(
+            LayoutBox row,
+            List<FlowUnit> units,
+            BreakValue before,
+            BreakValue after,
+            Int32[] avoid,
+            String? pageName)
+        {
+            units.Add(BoxUnit(
+                row,
+                Fragmentainer.Combine(before, PageValue(row.Source.Style.Breaks.Before)),
+                Fragmentainer.Combine(after, PageValue(row.Source.Style.Breaks.After)),
+                avoid,
+                pageName));
         }
 
         private void CollectLines(
@@ -284,7 +464,8 @@ internal static class PageSequence
             List<FlowUnit> units,
             BreakValue before,
             BreakValue after,
-            Int32[] avoid)
+            Int32[] avoid,
+            String? pageName)
         {
             var run = ++_nextRun;
             var total = to - from;
@@ -300,6 +481,7 @@ internal static class PageSequence
                     Top = line.BorderBox.Y,
                     Bottom = line.BorderBox.Bottom,
                     Avoid = avoid,
+                    PageName = pageName,
                     Run = run,
                     LineIndex = index - from,
                     LineTotal = total,
@@ -321,7 +503,12 @@ internal static class PageSequence
             }
         }
 
-        private static FlowUnit BoxUnit(LayoutBox box, BreakValue before, BreakValue after, Int32[] avoid) =>
+        private static FlowUnit BoxUnit(
+            LayoutBox box,
+            BreakValue before,
+            BreakValue after,
+            Int32[] avoid,
+            String? pageName) =>
             new()
             {
                 Top = box.BorderBox.Y,
@@ -329,6 +516,7 @@ internal static class PageSequence
                 Before = before,
                 After = after,
                 Avoid = avoid,
+                PageName = pageName,
             };
 
         /// <summary>
@@ -364,7 +552,7 @@ internal static class PageSequence
         private static Boolean IsMonolithic(LayoutBox box)
         {
             if (box.Kind is LayoutKind.Image or LayoutKind.Svg or LayoutKind.HorizontalRule or
-                LayoutKind.Table or LayoutKind.TableRowGroup or LayoutKind.TableRow or LayoutKind.TableCell)
+                LayoutKind.TableRowGroup or LayoutKind.TableRow or LayoutKind.TableCell)
             {
                 return true;
             }
@@ -372,7 +560,7 @@ internal static class PageSequence
             var source = box.Source;
 
             return source.IsReplaced ||
-                source.Kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry or BoxKind.Table or BoxKind.InlineBlock ||
+                source.Kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry or BoxKind.InlineBlock ||
                 source.Style.Multi.IsMultiColumn ||
                 source.Style.ClipsOverflow ||
                 source.Flow.IsVertical;
@@ -406,7 +594,13 @@ internal static class PageSequence
 
         public BreakValue After { get; set; } = BreakValue.Auto;
 
+        /// <summary>Gets whether a break may not fall between this unit and the one after it where
+        /// there is any other place to break - a table caption and the row it belongs to.</summary>
+        public Boolean KeepWithNext { get; set; }
+
         public Int32[] Avoid { get; init; } = Array.Empty<Int32>();
+
+        public String? PageName { get; init; }
 
         public Int32 Run { get; init; } = -1;
 

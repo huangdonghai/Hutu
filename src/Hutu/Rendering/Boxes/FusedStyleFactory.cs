@@ -1157,6 +1157,7 @@ internal static class FusedStyleFactory
         values.Multi = MulticolStyle.ReadFused(find, face, dimensions);
         values.LanesDirection = find("grid-lanes-direction")?.Value?.Trim();
         values.Breaks = BreakStyle.ReadFused(find, parent.Widows, parent.Orphans);
+        values.PageName = PageNameOf(find("page")?.Value);
 
         values.Table = display.Display.Contains("table", StringComparison.OrdinalIgnoreCase)
             ? TableStyle.ReadFused(
@@ -1230,6 +1231,19 @@ internal static class FusedStyleFactory
     /// Gets whether the element's own <c>color-scheme</c> asks for the dark one, which is the branch a
     /// <c>light-dark()</c> in its colours picks (CSS Color Adjust 1 §2).
     /// </summary>
+    /// <summary>
+    /// Reads the page name a box states. <c>auto</c> is the initial value and names no page, and an
+    /// empty or missing declaration states nothing either; every other custom-ident is the name.
+    /// </summary>
+    private static String? PageNameOf(String? value)
+    {
+        var text = value?.Trim();
+
+        return String.IsNullOrEmpty(text) || String.Equals(text, "auto", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : text;
+    }
+
     private static Boolean DarkScheme(Func<String, ICssProperty?> find) =>
         find("color-scheme")?.Value is { } scheme &&
         scheme.Contains("dark", StringComparison.OrdinalIgnoreCase);

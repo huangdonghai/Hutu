@@ -3192,6 +3192,9 @@ internal readonly struct ComputedStyle
 
         internal BreakStyle Breaks;
 
+        /// <summary>The page name the box states with <c>page</c>, or null where it states none.</summary>
+        internal String? PageName;
+
         internal PositionStyle? Position;
         internal GridItemStyle? GridItem;
 
@@ -5838,6 +5841,13 @@ internal readonly struct ComputedStyle
 
     /// <summary>Gets where the box lets a fragmentainer break around and inside it.</summary>
     public BreakStyle Breaks => _values.Breaks;
+
+    /// <summary>
+    /// Gets the page name the box states with <c>page</c>, or null where it states none. The name a box
+    /// takes part in is the nearest one an ancestor states, which the page sequence walks out; the
+    /// property itself names only the box it is written on (CSS Page 3 §using-named-pages).
+    /// </summary>
+    public String? PageName => _values.PageName;
 
     /// <summary>Gets whether the box asks to span every column of the multi-column container it stands in.</summary>
     public Boolean SpansColumns => _values.Breaks.SpansColumns;

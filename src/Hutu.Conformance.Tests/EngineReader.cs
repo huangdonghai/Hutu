@@ -166,7 +166,7 @@ internal sealed class EngineReader : IDisposable
             throw new InvalidOperationException("a page is drawn with real typefaces; this reader was built with fixed metrics");
         }
 
-        if (_view.Pages is not { } pages || Paint is null)
+        if (_view.Pages is not { } pages)
         {
             return Array.Empty<SKBitmap>();
         }
@@ -183,7 +183,14 @@ internal sealed class EngineReader : IDisposable
             using var surface = SKSurface.Create(new SKImageInfo(width, height))
                 ?? throw new InvalidOperationException("Skia could not make a surface");
 
-            _executor.ExecutePage(Paint, surface.Canvas, page);
+            surface.Canvas.Clear(SKColors.White);
+
+            // A root that generates no box still prints its sheet: there is nothing to draw, and
+            // the white the surface was made on is the page.
+            if (Paint is not null)
+            {
+                _executor.ExecutePage(Paint, surface.Canvas, page);
+            }
 
             using var image = surface.Snapshot();
             drawn.Add(SKBitmap.FromImage(image));

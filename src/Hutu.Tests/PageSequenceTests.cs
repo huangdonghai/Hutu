@@ -171,6 +171,84 @@ public sealed class PageSequenceTests
         Assert.That(view.Pages, Is.Null, "a screen is a scroll, not a page sequence");
     }
 
+    [Test]
+    public async Task ARootThatGeneratesNothingStillPrintsOnePage()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 }</style><html style='display:none'><body>never</body></html>");
+
+        Assert.That(view.Paint, Is.Null, "there is no box to paint");
+        Assert.That(view.Pages, Is.Not.Null, "but the sheet is still printed");
+        Assert.That(view.Pages!.Count, Is.EqualTo(1));
+        Assert.That(view.Pages.Pages[0].Geometry.Width, Is.EqualTo(100).Within(0.01));
+    }
+
+    [Test]
+    public async Task TableRowsAreSharedOverThePages()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body { margin: 0 }" +
+            " table { border-collapse: collapse; margin: 0 } td { height: 40px; padding: 0; border: 0 }</style>" +
+            "<table><tbody><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr></tbody></table>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(2), "a page may end between two rows");
+        Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(80).Within(0.01));
+        Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(40).Within(0.01));
+    }
+
+    [Test]
+    public async Task ATableCaptionStaysWithItsFirstRow()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body { margin: 0 }" +
+            " table { border-collapse: collapse; margin: 0 } caption { height: 40px; margin: 0 }" +
+            " td { height: 40px; padding: 0; border: 0 }</style>" +
+            "<table><caption></caption><tbody><tr><td></td></tr><tr><td></td></tr>" +
+            "<tr><td></td></tr></tbody></table>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(80).Within(0.01), "the caption and the first row stay together");
+    }
+
+    [Test]
+    public async Task AChangeOfPageNameStartsANewPage()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } @page foo { size: 100px; margin: 10px }" +
+            " body, div { margin: 0 } div { height: 40px }</style>" +
+            "<div></div><div style='page: foo'></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(2), "the name change forces a page break");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].PageName, Is.Null);
+            Assert.That(pages.Pages[0].Geometry.Margins.Top, Is.EqualTo(0).Within(0.01));
+            Assert.That(pages.Pages[1].PageName, Is.EqualTo("foo"));
+            Assert.That(pages.Pages[1].Content.Y, Is.EqualTo(40).Within(0.01));
+            Assert.That(pages.Pages[1].Geometry.Margins.Top, Is.EqualTo(10).Within(0.01), "the named rule answers the page");
+        });
+    }
+
+    [Test]
+    public async Task APageNameTravelsDownToTheBoxesThatStateNone()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } @page foo { size: 100px; margin: 10px }" +
+            " body, section, div { margin: 0 } div { height: 40px }</style>" +
+            "<section style='page: foo'><div></div><div></div></section>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(1), "both boxes belong to the same named page");
+        Assert.That(pages.Pages[0].PageName, Is.EqualTo("foo"));
+        Assert.That(pages.Pages[0].Geometry.Margins.Top, Is.EqualTo(10).Within(0.01));
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
