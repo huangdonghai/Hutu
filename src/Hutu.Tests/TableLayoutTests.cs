@@ -700,9 +700,9 @@ public sealed class TableLayoutTests
 
     /// <summary>
     /// The collapsing border model takes the table's own padding away (CSS 2.1 §17.6.1: in that model the
-    /// table has no padding), while the separating model keeps it - and it is the table box that loses it,
-    /// not the cells, which are padded as the page says. What the author stated as the table's width and
-    /// height is therefore the grid's, with nothing inset between the two.
+    /// table has no padding), while the separating model keeps it. A table's stated width and height are
+    /// its border box's, so the padding is taken out of them - and an empty table cannot go narrower than
+    /// the padding it was given. Measured in Chrome for this exact page: 100x100 and 200x200.
     /// </summary>
     [Test]
     public async Task ACollapsedTableKeepsNoPaddingOfItsOwn()
@@ -727,8 +727,8 @@ public sealed class TableLayoutTests
                 "the collapsing model leaves the stated box standing as the grid's own box");
             Assert.That(
                 $"{separated.Width}x{separated.Height}",
-                Is.EqualTo("300x300"),
-                "the separating model still pays the padding around it");
+                Is.EqualTo("200x200"),
+                "the separating model keeps the padding, and the stated size is the border box");
         });
     }
 
