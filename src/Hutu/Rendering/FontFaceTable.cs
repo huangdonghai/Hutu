@@ -80,6 +80,11 @@ internal sealed class FontFaceTable
                 continue;
             }
 
+            // A face's url() is resolved against the stylesheet it was written in, not against the
+            // document: a sheet reached by a relative address of its own names its files from where
+            // the sheet stands (CSS Fonts 4 §4.1, CSS Values 4 §4.1).
+            var baseUri = css.Href ?? document?.BaseUri;
+
             foreach (var rule in css.Rules.OfType<ICssFontFaceRule>())
             {
                 var name = Layout.FontStyle.Unquote(rule.Family ?? String.Empty);
@@ -93,7 +98,7 @@ internal sealed class FontFaceTable
                 var locals = new List<String>();
                 var files = new List<Source>();
 
-                Read(rule.Source, document?.BaseUri, locals, files);
+                Read(rule.Source, baseUri, locals, files);
 
                 if (locals.Count > 0 && !families.ContainsKey(name))
                 {

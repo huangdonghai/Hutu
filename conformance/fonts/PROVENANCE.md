@@ -20,3 +20,11 @@ They are taken from the same upstream revision as the corpora beside them:
 
 Licences are the upstream ones: Ahem is public domain, and the Noto CJK subsets are under the SIL
 Open Font License 1.1.
+
+`Ahem.ttf` is the upstream face, which maps 278 characters and leaves the rest - the apostrophe
+among them - to whatever face the reader finds next. One character was added to its `cmap` here:
+U+0027 APOSTROPHE, mapped onto the glyph U+0022 QUOTATION MARK already uses. The face draws every
+character it maps as the same full em square, so the mapping adds no drawing that is not already in
+the file; it exists because the hanging-punctuation variants' reference bakes in that one-em
+advance, and a quote the face does not carry could not be made to hang by the width the reference
+states.
