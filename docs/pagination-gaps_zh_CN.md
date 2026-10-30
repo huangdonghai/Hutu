@@ -16,7 +16,8 @@
 >
 > 仍缺（未验证或需按页重排）：
 > - footnote/页浮动、`print-color-adjust` 默认调色（引擎按 `exact` 绘制，与语料口径一致）、`marks/bleed`、`string-set`/`running()`——这些 Chrome 自身未实现，没有可测的对照；按报告的口径属"按产品需要排"。
-> - 按用户决定记为后续里程碑（需要"按页重排"一层）：多栏跨页重排、`box-decoration-break`。表格重复 `thead`/`tfoot` 已用"从长文档原处取同一段内容再画一次"实现，不需要按页重排（`e7aa3963`、`d21eeb97`）；
+> - 按用户决定记为后续里程碑（需要"按页重排"一层）：多栏跨页重排、`box-decoration-break`。
+>   **多栏这条已实测更正归因**：`column-balancing-paged-001` 的差异不在页边界——ref 把 3in 的 `block1` 在两栏里各切 144，即 Gecko 的**平衡允许切开 monolithic 子盒**；我们的平衡路径不切（`FragmentChild` 只有高度与断点值，没有"可切"标记），且 `ColumnsOf` 对"嵌套多栏子盒"（`child.Style.Multi.IsMultiColumn`）与"`column-wrap` 下的 spanner"两处显式回退到普通堆叠（源码注释已注明"until it can"）。所以这一对要先补**多栏平衡的 monolithic 切分 + 嵌套多栏**，属于多栏模块本身，页序列只是继承；与 `monolithic-overflow-032` 所需的"巨型分片"不是同一件事。表格重复 `thead`/`tfoot` 已用"从长文档原处取同一段内容再画一次"实现，不需要按页重排（`e7aa3963`、`d21eeb97`）；
 >   `box-decoration-break: clone` 不同——每片都要额外吃掉边框/内边距的高度并推动其后内容，属真正的按页重排。实测 `monolithic-overflow-032` 还需要 Blink 的"巨型分片"模型（超高 monolithic 内容所在的一片一直贯穿到内容放完，下一片紧贴其后），该测试自身的注释即写明"expected behavior here is not obvious"，故保持 ◆。`monolithic-overflow-031` 已由 `0fad0a00` 转绿。
 > - 非分页特性（打印模式下同样失败）：`@scope`×3、`(scripting)` 媒体查询、表单控件外观、`mask-image`。
 > - **fieldset/legend 布局（还剩 6 对，`gecko/pagination/fieldset-*`）**：这些对照是 Gecko 用例，ref 写的是 Gecko 的 legend 模型（fieldset 边框盒下移半个超出量、边框带按 legend 水平范围开缺口）——已按此实现并落地（`c334961d`：legend 提升为块盒、盒/内边距各吃一半超出量、边框开缺口、"内容恰好顶到页边时按页边切"），但只对**声明了自身块尺寸、位于普通块类父盒、不滚动、无 size containment** 的 legend 生效；auto 高度的 legend、列向、滚动容器、size-contained field 仍留在流内（这些交互各自需要独立测量：flex 基线合成、`contain: size` 的固有尺寸、定位 legend 的偏移、bidi 方向）。打印 177→185，本族 12→4 红。余下 4 对：3 个 grid fieldset（legend 是 grid item，需在 grid 布局里放边框位）、以及 007（页数 3 vs 2：与 legend 无关，属切点选择——Chrome 在内容恰好铺满时"填满页面、放弃 widows"，我们的 `Cut` 仍取最深的"允许"断点，需按 §4.4 降级顺序实现）。legend 自身的 break 值已按"忽略 break-before、保留 break-after"落地（`6b2842ff`，00B/00C 转绿）。
