@@ -122,6 +122,21 @@ public sealed class HutuViewPagedTests
 
         view.FitToWindow();
         Assert.That(view.Zoom, Is.EqualTo(fitted).Within(1e-6), "fitting returns the sheet to the window");
+
+        // A sheet smaller than the window is enlarged to fill it.
+        await view.SetHtml(
+            "<style>@page { size: 200px 150px; margin: 0 } body { margin: 0 }"
+            + " div { height: 300px; background: red }</style><div></div>");
+
+        view.SetPaged(false);
+        view.SetPaged(true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(view.Zoom, Is.GreaterThan(1), "a small sheet is enlarged");
+            Assert.That(frame.DesiredSize.Width, Is.LessThanOrEqualTo(view.Bounds.Width));
+            Assert.That(frame.DesiredSize.Height, Is.LessThanOrEqualTo(view.Bounds.Height));
+        });
     }
 
     /// <summary>Gets the window as a picture, so two pages can be told apart.</summary>

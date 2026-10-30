@@ -651,8 +651,8 @@ public class HutuView : ScrollViewer
     }
 
     /// <summary>
-    /// Scales the page so a whole sheet stands in the window, and takes the screen view back to its
-    /// natural size where paging is off.
+    /// Scales the page so a whole sheet stands in the window - a small sheet is enlarged to fill it,
+    /// a large one shrunk - and takes the screen view back to its natural size where paging is off.
     /// </summary>
     /// <remarks>
     /// A paged document is laid out at the paper it prints on, so the fit is a display scale of a
@@ -677,7 +677,7 @@ public class HutuView : ScrollViewer
 
         // The frame stands 16 pixels off the edge it is centred in and one pixel of border on the sheet.
         var room = new Size(viewport.Width - 34, viewport.Height - 34);
-        var scale = Math.Clamp(Math.Min(room.Width / page.Width, room.Height / page.Height), MinZoom, 1);
+        var scale = Math.Clamp(Math.Min(room.Width / page.Width, room.Height / page.Height), MinZoom, MaxZoom);
 
         Zoom = scale;
         _surface.Zoom = scale;
