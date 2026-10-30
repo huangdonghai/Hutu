@@ -166,14 +166,15 @@ public sealed class SkiaPaintExecutor
         canvas.Save();
         canvas.ClipRect(pageRect);
 
-        // The room a repeated header takes at the top of the page is room the slice does not have:
-        // its content stands below that much of the page area.
+        // The room a repeated header takes at the top of the page, and a repeated footer at the
+        // bottom, is room the slice does not have: its content stands between them, and the slice's
+        // own height already leaves both out.
         var lead = (Single)page.Lead;
         canvas.ClipRect(new SKRect(
             (Single)geometry.Margins.Left,
             (Single)(geometry.Margins.Top + lead),
             (Single)(geometry.Margins.Left + page.Content.Width),
-            (Single)(geometry.Margins.Top + page.Content.Height)));
+            (Single)(geometry.Margins.Top + lead + page.Content.Height)));
         canvas.Translate((Single)page.OriginX, (Single)page.OriginY + lead);
 
         var area = new Rect(page.Content.X, page.Content.Y, page.Content.Width, page.Content.Height);

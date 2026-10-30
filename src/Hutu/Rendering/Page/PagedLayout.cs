@@ -26,9 +26,13 @@ namespace Hutu.Rendering;
 /// (CSS Break 3 §5.2). The room it takes is left out of the page's content extent, so the slice and
 /// the lead together fill the page area.
 /// </param>
+/// <param name="Trail">
+/// The distance at the end of the page area another piece keeps from the slice - a table's repeated
+/// footer, which stands at the bottom of every fragment that continues the table.
+/// </param>
 /// <param name="Repeats">
 /// The pieces of the document standing on this page besides its own slice: a table's header drawn
-/// again at the top of every fragment that continues the table.
+/// again at the top of every fragment that continues the table, and its footer at the bottom.
 /// </param>
 public readonly record struct PageSlice(
     Int32 Number,
@@ -38,6 +42,7 @@ public readonly record struct PageSlice(
     Boolean Blank = false,
     IReadOnlyList<PageMarginBand>? MarginBoxes = null,
     Double Lead = 0,
+    Double Trail = 0,
     IReadOnlyList<PageRepeat>? Repeats = null)
 {
     /// <summary>Gets where the document's own origin lands on the page, along the inline axis.</summary>

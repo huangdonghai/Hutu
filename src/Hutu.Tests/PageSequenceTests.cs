@@ -594,6 +594,32 @@ public sealed class PageSequenceTests
         });
     }
 
+    [Test]
+    public async Task ATableFooterStandsAtTheBottomOfEveryFragmentTheTableGoesOnIn()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, table, thead, tbody, tfoot, tr, td, th { margin: 0 }" +
+            " table { width: 100px; border-collapse: collapse } th, td { padding: 0; border: 0 }" +
+            " thead th { height: 20px } tbody td { height: 40px } tfoot td { height: 20px }</style>" +
+            "<table><thead><tr><th></th></tr></thead><tbody>" +
+            "<tr><td></td></tr><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr>" +
+            "</tbody><tfoot><tr><td></td></tr></tfoot></table>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(4), "a header of twenty, five rows of forty, a footer of twenty");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[1].Lead, Is.EqualTo(20).Within(0.01), "the header takes the top of the fragment");
+            Assert.That(pages.Pages[1].Trail, Is.EqualTo(20).Within(0.01), "and the footer the bottom");
+            Assert.That(pages.Pages[1].Repeats!.Count, Is.EqualTo(2));
+            Assert.That(pages.Pages[1].Repeats![1].Place, Is.EqualTo(new Rect(0, 80, 100, 20)), "the footer stands at the page's bottom");
+            Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(40).Within(0.01), "sixty pixels of room, of which one row");
+            Assert.That(pages.Pages[3].Trail, Is.EqualTo(0).Within(0.01), "the fragment the table ends on keeps the footer in its flow");
+            Assert.That(pages.Pages[3].Content.Height, Is.EqualTo(60).Within(0.01), "the last row and the footer");
+        });
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

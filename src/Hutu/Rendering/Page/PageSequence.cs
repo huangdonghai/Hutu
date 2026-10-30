@@ -168,12 +168,18 @@ internal static class PageSequence
             }
 
             // A fragment of a table below the first one carries the table's header again at its
-            // top, and the room it takes is room the fragment's own content does not have
-            // (CSS Break 3 §5.2). A vertical document's tables are left whole for now.
+            // top, and its footer again at the bottom; the room both take is room the fragment's
+            // own content does not have (CSS Break 3 §5.2). A vertical document's tables are left
+            // whole for now.
             var header = HeaderAt(collector.Headers, axis, start, geometry);
             var lead = header is { } band ? axis.End(band) - axis.Start(band) : 0.0;
 
-            var contentExtent = Math.Max(1, axis.PageExtent(geometry) - lead);
+            var pageExtent = Math.Max(1, axis.PageExtent(geometry));
+            var footer = FooterAt(
+                collector.Footers, axis, start, start + Math.Max(1, pageExtent - lead), lead, pageExtent, geometry);
+            var trail = footer is { } foot ? axis.End(foot) - axis.Start(foot) : 0.0;
+
+            var contentExtent = Math.Max(1, pageExtent - lead - trail);
             var limit = Math.Min(documentExtent, start + contentExtent);
             var cut = Cut(units, start, limit, documentExtent, out var forcedBreak, out var resume);
             tail = forcedBreak is BreakValue.Page or BreakValue.Left or BreakValue.Right &&
@@ -203,21 +209,29 @@ internal static class PageSequence
 
             first ??= geometry;
 
-            var repeats = header is { } repeated
-                ? new[]
-                {
-                    new PageRepeat(
-                        repeated,
-                        new Rect(
-                            geometry.Margins.Left + repeated.X,
-                            geometry.Margins.Top,
-                            repeated.Width,
-                            repeated.Height)),
-                }
-                : null;
+            var repeats = new List<PageRepeat>(2);
+
+            if (header is { } repeated)
+            {
+                repeats.Add(new PageRepeat(
+                    repeated,
+                    new Rect(geometry.Margins.Left + repeated.X, geometry.Margins.Top, repeated.Width, repeated.Height)));
+            }
+
+            if (footer is { } repeatedFoot)
+            {
+                repeats.Add(new PageRepeat(
+                    repeatedFoot,
+                    new Rect(
+                        geometry.Margins.Left + repeatedFoot.X,
+                        geometry.Margins.Top + geometry.ContentHeight - repeatedFoot.Height,
+                        repeatedFoot.Width,
+                        repeatedFoot.Height)));
+            }
 
             pages.Add(new PageSlice(
-                number++, geometry, axis.Band(start, cut, geometry), name, Repeats: repeats, Lead: lead));
+                number++, geometry, axis.Band(start, cut, geometry), name,
+                Repeats: repeats.Count > 0 ? repeats : null, Lead: lead, Trail: trail));
 
             start = Math.Min(documentExtent, Math.Max(cut, resume));
         }
@@ -252,6 +266,43 @@ internal static class PageSequence
                 header.Height < page.ContentHeight - 1)
             {
                 found = header;
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// Gets the footer band a page beginning at <paramref name="start"/> keeps at its bottom, or null
+    /// where the table does not continue past this page: a footer stands again at the bottom of each
+    /// fragment the table goes on in, and the fragment the table ends on carries it in its flow.
+    /// </summary>
+    private static Rect? FooterAt(
+        IReadOnlyList<(Rect Table, Rect Footer, Double Rows, Double LastRow)> footers,
+        PageAxis axis,
+        Double start,
+        Double provisional,
+        Double lead,
+        Double pageExtent,
+        PageGeometry page)
+    {
+        if (axis.IsVertical)
+        {
+            return null;
+        }
+
+        Rect? found = null;
+
+        foreach (var (table, footer, rows, lastRow) in footers)
+        {
+            if (start > rows + 0.001 &&
+                start <= lastRow + 0.001 &&
+                start < table.Bottom - 0.001 &&
+                provisional < table.Bottom - 0.001 &&
+                footer.Height > 0.001 &&
+                lead + footer.Height < pageExtent - 1)
+            {
+                found = footer;
             }
         }
 
@@ -597,6 +648,13 @@ internal static class PageSequence
         /// (CSS Break 3 §5.2).
         /// </summary>
         public List<(Rect Table, Rect Header, Double Rows, Double LastRow)> Headers { get; } = new();
+
+        /// <summary>
+        /// Gets the tables that carry a footer, with the band it takes. A fragment of the table below
+        /// the first keeps the footer standing at its bottom, and the footer's rows are one piece a
+        /// page cannot end inside.
+        /// </summary>
+        public List<(Rect Table, Rect Footer, Double Rows, Double LastRow)> Footers { get; } = new();
 
         public void Collect(
             LayoutBox box,
@@ -1110,6 +1168,7 @@ internal static class PageSequence
             var first = units.Count;
             var flow = new List<LayoutBox>(table.Children.Count);
             Rect? header = null;
+            Rect? footer = null;
             var rows = Double.MaxValue;
             var lastRow = Double.MinValue;
 
@@ -1123,15 +1182,20 @@ internal static class PageSequence
 
                 flow.Add(child);
 
-                // The header is the row group the page called one; the rest are the rows a page
-                // cuts between, and where they begin says whether a page shows rows of its own: a
-                // header repeated over the first fragment would stand where it already stands, and
-                // one repeated over a fragment holding no row but the last one's edge would be
-                // inventing content the page does not carry.
+                // The header and the footer are the row groups the page called such; the rest are
+                // the rows a page cuts between, and where they begin says whether a page shows rows
+                // of its own: a header repeated over the first fragment would stand where it
+                // already stands, and one repeated over a fragment holding no row but the last
+                // one's edge would be inventing content the page does not carry.
                 if (child.Kind == LayoutKind.TableRowGroup &&
                     String.Equals(child.Source.Element?.LocalName, "thead", StringComparison.OrdinalIgnoreCase))
                 {
                     header = header is { } band ? Union(band, child.BorderBox) : child.BorderBox;
+                }
+                else if (child.Kind == LayoutKind.TableRowGroup &&
+                    String.Equals(child.Source.Element?.LocalName, "tfoot", StringComparison.OrdinalIgnoreCase))
+                {
+                    footer = footer is { } band ? Union(band, child.BorderBox) : child.BorderBox;
                 }
                 else if (child.Kind is LayoutKind.TableRowGroup or LayoutKind.TableRow)
                 {
@@ -1154,9 +1218,17 @@ internal static class PageSequence
                 }
             }
 
-            if (header is { } headerBand && rows < Double.MaxValue && lastRow > Double.MinValue)
+            if (rows < Double.MaxValue && lastRow > Double.MinValue)
             {
-                Headers.Add((table.BorderBox, headerBand, rows, lastRow));
+                if (header is { } headerBand)
+                {
+                    Headers.Add((table.BorderBox, headerBand, rows, lastRow));
+                }
+
+                if (footer is { } footerBand)
+                {
+                    Footers.Add((table.BorderBox, footerBand, rows, lastRow));
+                }
             }
 
             for (var index = 0; index < flow.Count; index++)
@@ -1220,6 +1292,15 @@ internal static class PageSequence
                 : avoid;
 
             var first = units.Count;
+
+            // A footer is repeated whole at the bottom of every fragment, so a page may not end
+            // inside a row of it: the rows are one piece of the flow.
+            if (String.Equals(group.Source.Element?.LocalName, "tfoot", StringComparison.OrdinalIgnoreCase))
+            {
+                units.Add(BoxUnit(group, before, after, inside, name));
+                return;
+            }
+
             var rows = new List<LayoutBox>(group.Children.Count);
 
             foreach (var child in group.Children)

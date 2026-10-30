@@ -207,6 +207,37 @@ public sealed class PagePaintTests
         });
     }
 
+    [Test]
+    public async Task AContinuedTableDrawsItsFooterAtTheBottomOfThePage()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(800, 600);
+        view.SetMediaType(DeviceCategory.Printer);
+        await view.SetHtml(
+            "<style>@page { size: 100px; margin: 0 } html, body, table, thead, tbody, tfoot, tr, th, td { margin: 0 }" +
+            " table { width: 100px; border-collapse: collapse } th, td { padding: 0; border: 0 }" +
+            " thead th { height: 20px; background: red } tbody td { height: 40px; background: yellow }" +
+            " tfoot td { height: 20px; background: green }</style>" +
+            "<table><thead><tr><th></th></tr></thead><tbody>" +
+            "<tr><td></td></tr><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr>" +
+            "</tbody><tfoot><tr><td></td></tr></tfoot></table>");
+
+        var pages = view.Pages!;
+        var executor = new SkiaPaintExecutor(measurer);
+
+        Assert.That(pages.Count, Is.EqualTo(4));
+
+        using var second = Draw(executor, view, pages.Pages[1]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(second.GetPixel(50, 10), Is.EqualTo(SKColors.Red), "the header stands at the top");
+            Assert.That(second.GetPixel(50, 50), Is.EqualTo(SKColors.Yellow), "a row in the room between");
+            Assert.That(second.GetPixel(50, 90), Is.EqualTo(SKColors.Green), "and the footer at the page's bottom");
+        });
+    }
+
     /// <summary>Gets whether two pages are drawn with the very same pixels.</summary>
     private static Boolean Same(SKBitmap one, SKBitmap other)
     {
