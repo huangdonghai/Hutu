@@ -202,7 +202,7 @@ internal static class PageSequence
 
             if (index > 0)
             {
-                var y = unit.Top;
+                var y = unit.StartBoundarySet ? unit.StartBoundaryY : unit.Top;
 
                 if (y > start + 0.001 && y <= limit + 0.001)
                 {
@@ -434,6 +434,13 @@ internal static class PageSequence
             {
                 units.Add(BoxUnit(box, before, after, avoid, name));
             }
+            else
+            {
+                // A break before this box falls at its own border edge, not between its padding and
+                // its first child: the box's edges and padding belong to the fragment that begins it.
+                units[first].StartBoundaryY = box.BorderBox.Y;
+                units[first].StartBoundarySet = true;
+            }
         }
 
         /// <summary>
@@ -553,6 +560,8 @@ internal static class PageSequence
             // inside the container, and the box after it stands on the container's page.
             units[first].StartName = name;
             units[first].StartNameSet = true;
+            units[first].StartBoundaryY = flex.BorderBox.Y;
+            units[first].StartBoundarySet = true;
             units[^1].EndName = name;
             units[^1].EndNameSet = true;
         }
@@ -692,6 +701,11 @@ internal static class PageSequence
             if (units.Count == first)
             {
                 units.Add(BoxUnit(table, before, after, avoid, name));
+            }
+            else
+            {
+                units[first].StartBoundaryY = table.BorderBox.Y;
+                units[first].StartBoundarySet = true;
             }
         }
 
@@ -926,6 +940,12 @@ internal static class PageSequence
         public String? StartName { get; set; }
 
         public Boolean StartNameSet { get; set; }
+
+        /// <summary>Gets the document edge a break before this unit falls at, when the unit begins a
+        /// box whose padding stands between that edge and the unit's own top.</summary>
+        public Double StartBoundaryY { get; set; }
+
+        public Boolean StartBoundarySet { get; set; }
 
         /// <summary>Gets the name the boundary at the box's end sees, where it differs from
         /// <see cref="PageName"/>, by the same rule at the other edge.</summary>
