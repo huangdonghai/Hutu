@@ -802,6 +802,27 @@ public sealed class PageSequenceTests
             "the page ends at the column block, not through the spanner");
     }
 
+    /// <summary>
+    /// A box that repeats its decoration gives the page it is cut in the block-end edge it lost, and
+    /// the page after the block-start edge: the room both take is room the fragment's content does
+    /// not have (CSS Break 3 §5.4).
+    /// </summary>
+    [Test]
+    public async Task ARepeatingBoxPutsItsEdgeOnThePageItIsCutIn()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " .clone { box-decoration-break: clone; border: 10px solid black }" +
+            " .a { height: 80px } .b { height: 80px }</style>" +
+            "<div class=\"clone\"><div class=\"a\"></div><div class=\"b\"></div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Pages[0].Trail, Is.EqualTo(10).Within(0.01), "the page carries the box's bottom edge");
+        Assert.That(pages.Pages[0].Repeats, Is.Not.Null);
+        Assert.That(pages.Pages[1].Lead, Is.EqualTo(10).Within(0.01), "and the page after its top edge");
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
