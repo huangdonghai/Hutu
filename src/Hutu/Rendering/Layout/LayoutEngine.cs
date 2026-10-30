@@ -1202,7 +1202,8 @@ internal sealed record LayoutProfile(
         var key = new MeasureKey(
             box,
             constraints.AvailableWidth ?? context.ContainingBlock.Width,
-            constraints.AvailableHeight ?? context.ContainingBlock.Height);
+            constraints.AvailableHeight ?? context.ContainingBlock.Height,
+            constraints.DefiniteWidth.HasValue);
 
         if (_cache.TryGetValue(key, out var cached))
         {
@@ -1796,24 +1797,28 @@ internal sealed record LayoutProfile(
         private readonly Box _box;
         private readonly Double _width;
         private readonly Double _height;
+        private readonly Boolean _definiteWidth;
 
-        public MeasureKey(Box box, Double width, Double height)
+        public MeasureKey(Box box, Double width, Double height, Boolean definiteWidth = false)
         {
             _box = box;
             _width = width;
             _height = height;
+            _definiteWidth = definiteWidth;
         }
 
         public Boolean Equals(MeasureKey other) =>
             ReferenceEquals(_box, other._box) &&
             _width.Equals(other._width) &&
-            _height.Equals(other._height);
+            _height.Equals(other._height) &&
+            _definiteWidth == other._definiteWidth;
 
         public override Boolean Equals(Object? obj) => obj is MeasureKey other && Equals(other);
 
         public override Int32 GetHashCode() => HashCode.Combine(
             System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_box),
             _width,
-            _height);
+            _height,
+            _definiteWidth);
     }
 }

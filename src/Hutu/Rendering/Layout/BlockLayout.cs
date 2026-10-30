@@ -67,10 +67,12 @@ internal sealed class BlockLayout
         // A width stated as one of the content keywords is settled by what the box holds rather than by
         // the containing block, so it is asked for here, where both are in hand.
         var marginBasis = context.ContainingIsVertical ? context.ContainingBlock.Height : context.ContainingBlock.Width;
-        var (borderBoxWidth, contentWidth) = _engine.ContentSizedWidth(box, basisWidth, context) is { } contentSized
-            ? (contentSized, Math.Max(0, contentSized - insets.Horizontal))
-            : BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insets.Horizontal,
-                context.ContainingBlock.Height, marginBasis);
+        var (borderBoxWidth, contentWidth) = constraints.DefiniteWidth is { } definite
+            ? (definite, Math.Max(0, definite - insets.Horizontal))
+            : _engine.ContentSizedWidth(box, basisWidth, context) is { } contentSized
+                ? (contentSized, Math.Max(0, contentSized - insets.Horizontal))
+                : BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insets.Horizontal,
+                    context.ContainingBlock.Height, marginBasis);
         var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insets.Vertical);
 
@@ -760,6 +762,16 @@ internal sealed class BlockLayout
                 continue;
             }
 
+            // A cleared box is moved below the floats it refuses to stand beside before its band is
+            // read. The room it may take depends on where it lands: once a left float has ended, the
+            // same right float that left no space beside it can leave a usable column beside the
+            // cleared top. What it moved through is not given back to the surrounding margins.
+            if (tracks is { } cleared && child.Style.Clear != ClearSide.None)
+            {
+                var clearedTo = cleared.ClearBelow(child.Style.Clear, cursor + pending);
+                pending = Math.Max(pending, clearedTo - cursor);
+            }
+
             // The child's lines stand in the band of the floats around it, at the height the child
             // itself reaches: two siblings at different depths have different room beside a float,
             // so the band is answered per child rather than by the one context the container shares.
@@ -771,22 +783,14 @@ internal sealed class BlockLayout
             var passContext = childContext.WithFloats(band);
             var childConstraints = constraints;
 
-            // A box that steps clear of the floats is measured against the room that stepping leaves it,
-            // and the arranging pass runs the same arithmetic to read the size back out of the cache.
-            if (shift > 0)
+            // A formatting root is measured against the room the floats leave it, whether it also had
+            // to step sideways or only takes a narrower column beside a float on its other edge. The
+            // arranging pass runs the same arithmetic to read the size back out of the cache.
+            if (room < contentWidth)
             {
                 passContext = passContext.ForContainingBlock(
                     new Size(room, childContext.ContainingBlock.Height));
                 childConstraints = MeasureConstraints.FitWidth(room);
-            }
-
-            // A cleared box is moved below the floats it refuses to stand beside. What it moved
-            // through is not given back to the surrounding margins - the stack resumes from where
-            // the box landed.
-            if (tracks is { } cleared && child.Style.Clear != ClearSide.None)
-            {
-                var clearedTo = cleared.ClearBelow(child.Style.Clear, cursor + pending);
-                pending = Math.Max(pending, clearedTo - cursor);
             }
 
             var size = _engine.Measure(child, childConstraints, passContext);
@@ -2693,6 +2697,14 @@ internal sealed class BlockLayout
                 continue;
             }
 
+            // The same clearance the measuring pass applied, before the band is read: the room a
+            // cleared root takes is the room at the height it lands, not at the height it started.
+            if (tracks is { } cleared && child.Style.Clear != ClearSide.None)
+            {
+                var clearedTo = cleared.ClearBelow(child.Style.Clear, cursor + pending);
+                pending = Math.Max(pending, clearedTo - cursor);
+            }
+
             // The band and the step clear of the floats are the measuring pass's own arithmetic, run
             // again at the place the child lands, so the size read back is the one it was answered with.
             var (shift, room, drop, band) = FormattingRoot(
@@ -2705,16 +2717,10 @@ internal sealed class BlockLayout
             var passContext = context.WithFloats(band);
             var childConstraints = constraints;
 
-            if (shift > 0)
+            if (room < contentWidth)
             {
                 passContext = passContext.ForContainingBlock(new Size(room, context.ContainingBlock.Height));
                 childConstraints = MeasureConstraints.FitWidth(room);
-            }
-
-            if (tracks is { } cleared && child.Style.Clear != ClearSide.None)
-            {
-                var clearedTo = cleared.ClearBelow(child.Style.Clear, cursor + pending);
-                pending = Math.Max(pending, clearedTo - cursor);
             }
 
             var size = _engine.Measure(child, childConstraints, passContext);

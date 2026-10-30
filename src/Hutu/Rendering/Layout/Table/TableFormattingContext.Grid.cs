@@ -623,17 +623,19 @@ internal sealed partial class TableFormattingContext
             foreach (var cell in row.Cells)
             {
                 var width = ColumnSpanWidth(build.Grid, cell, spacing);
-                var styleInsetsH = StyleInsetsH(cell.Box, basis);
                 var styleInsetsV = StyleInsetsV(cell.Box, basis);
-                var margin = cell.Box.Style.Margin.Resolve(basis).Horizontal;
                 var contentWidth = Math.Max(0, width - cell.Insets.Horizontal);
                 var cellContext = context.ForContainingBlock(new Size(contentWidth, 0));
 
                 // The constraint describes the border box the cell's own style would produce, so the
-                // block layout inside it resolves to the content width the column settled on.
+                // block layout inside it resolves to the width the column settled on. The cell's own
+                // width and min/max declarations have already taken part in that column sizing; asking
+                // them again here would resolve a percentage against the cell's content box - a
+                // 33.33% cell inside a 198-pixel box measured its content at 66 pixels and wrapped
+                // several times, making the row taller than the content it ended up drawing.
                 var measured = _engine.Measure(
                     cell.Box,
-                    MeasureConstraints.FitWidth(contentWidth + styleInsetsH + margin),
+                    MeasureConstraints.Definite(width),
                     cellContext);
 
                 var contentHeight = Math.Max(0, measured.Height - styleInsetsV);

@@ -111,6 +111,49 @@ public sealed class TableLayoutTests
     }
 
     [Test]
+    public async Task ACellsPercentageWidthDoesNotNarrowItsOwnContentMeasurement()
+    {
+        using var view = CreateView(600);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='width:600px;border-collapse:collapse'>" +
+            "<tr><td id='a' style='width:33.33%;padding:0;line-height:10px'>one two three four five</td>" +
+            "<td style='width:33.34%;padding:0'></td><td style='width:33.33%;padding:0'></td></tr>" +
+            "</table></body></html>");
+
+        var cell = Find(view, "a");
+
+        Assert.That(cell.BorderBox.Width, Is.EqualTo(200).Within(0.5));
+        Assert.That(
+            cell.BorderBox.Height,
+            Is.EqualTo(10).Within(0.5),
+            "the column width has already been settled; the cell's own percentage must not shrink it again");
+    }
+
+    [Test]
+    public async Task PercentageColumnsShareTheRoomAnAutomaticColumnLeaves()
+    {
+        using var view = CreateView(600);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table id='t' style='width:600px;border-collapse:collapse'><tr>" +
+            "<td id='logo' style='padding:0'><div style='width:100px;height:10px'></div></td>" +
+            "<td id='a' style='width:50%;padding:0;line-height:10px'>A</td>" +
+            "<td id='b' style='width:50%;padding:0;line-height:10px'>B</td>" +
+            "</tr></table></body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Find(view, "t").BorderBox.Width, Is.EqualTo(600).Within(0.5));
+            Assert.That(Find(view, "logo").BorderBox.Width, Is.EqualTo(100).Within(0.5));
+            Assert.That(Find(view, "a").BorderBox.Width, Is.EqualTo(250).Within(0.5));
+            Assert.That(Find(view, "b").BorderBox.Width, Is.EqualTo(250).Within(0.5));
+        });
+    }
+
+    [Test]
     public async Task CollapsedBordersShareASingleLine()
     {
         using var view = CreateView(400);

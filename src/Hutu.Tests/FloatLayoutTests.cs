@@ -155,6 +155,28 @@ public sealed class FloatLayoutTests
     }
 
     [Test]
+    public async Task AClearedFormattingRootTakesTheRoomLeftWhereItLands()
+    {
+        using var view = CreateView(1000);
+
+        await view.SetHtml(Page(
+            "<div id='area' style='width:1000px'>" +
+            "<div id='left' style='float:left;width:400px;height:500px'></div>" +
+            "<div id='right' style='float:right;width:400px;height:700px'></div>" +
+            "<div id='links' style='clear:left;overflow:hidden;height:20px'></div>" +
+            "</div>"));
+
+        // clear:left moves the box below the left float, but the right float still reaches past
+        // that height. The formatting root therefore begins at the container's left edge and takes
+        // the 600 pixels left of the right float, rather than measuring the zero-width gap between
+        // both floats at the height it started from.
+        Assert.That(
+            Bounds(view, "links"),
+            Is.EqualTo(new Rect(0, 500, 600, 20)),
+            "clearance moves the box before its width is read off the floats");
+    }
+
+    [Test]
     public async Task TwoFloatsOfOneSideShareARowUntilTheRoomRunsOut()
     {
         using var view = CreateView();

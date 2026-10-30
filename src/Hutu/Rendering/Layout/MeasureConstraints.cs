@@ -12,24 +12,41 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 internal readonly struct MeasureConstraints
 {
-    private MeasureConstraints(Double? availableWidth, Double? availableHeight)
+    private MeasureConstraints(Double? availableWidth, Double? availableHeight, Double? definiteWidth)
     {
         AvailableWidth = availableWidth;
         AvailableHeight = availableHeight;
+        DefiniteWidth = definiteWidth;
     }
 
     public Double? AvailableWidth { get; }
 
     public Double? AvailableHeight { get; }
 
+    /// <summary>
+    /// Gets the border-box width that has already been settled by the caller, or null where the
+    /// box's own width still decides it. A table cell is the case this exists for: its column has
+    /// settled the cell's width, so the cell's percentage width is not a second constraint.
+    /// </summary>
+    public Double? DefiniteWidth { get; }
+
     /// <summary>Gets constraints that leave both dimensions open, as an intrinsic measurement does.</summary>
     public static MeasureConstraints Unconstrained => default;
 
     /// <summary>Gets constraints that fix the available width and leave the height to the content.</summary>
-    public static MeasureConstraints FitWidth(Double width) => new(Math.Max(0, width), null);
+    public static MeasureConstraints FitWidth(Double width) => new(Math.Max(0, width), null, null);
 
     /// <summary>Gets constraints that fix both dimensions.</summary>
-    public static MeasureConstraints Fixed(Double width, Double height) => new(Math.Max(0, width), Math.Max(0, height));
+    public static MeasureConstraints Fixed(Double width, Double height) =>
+        new(Math.Max(0, width), Math.Max(0, height), null);
 
-    public MeasureConstraints WithHeight(Double height) => new(AvailableWidth, Math.Max(0, height));
+    /// <summary>
+    /// Gets constraints that take the given border-box width as already resolved and leave the
+    /// height to the content.
+    /// </summary>
+    public static MeasureConstraints Definite(Double width) =>
+        new(Math.Max(0, width), null, Math.Max(0, width));
+
+    public MeasureConstraints WithHeight(Double height) =>
+        new(AvailableWidth, Math.Max(0, height), DefiniteWidth);
 }

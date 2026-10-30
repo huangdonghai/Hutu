@@ -224,28 +224,73 @@ internal sealed class TableGrid
             return false;
         }
 
+        // A percentage paints a share of the room the columns have, but the columns that asked for no
+        // percentage still need their content first. A row of logos followed by cells declared 27%,
+        // 27%, 27% and 19% otherwise added the logos' minimums on top of the whole table width: the
+        // table grew past the width its own style gave it. When the shares and those minimums cannot
+        // both fit, the percentage columns divide what the automatic columns leave, in the proportions
+        // the page wrote.
+        var percentages = new Dictionary<Int32, Double>();
         var any = false;
 
         foreach (var row in Rows)
         {
             foreach (var cell in row.Cells)
             {
-                if (cell.SpecifiedLength is { Kind: StyleLengthKind.Percent } length)
+                if (cell.Span == 1 && cell.SpecifiedLength is { Kind: StyleLengthKind.Percent } length)
                 {
-                    // A per-cent width sizes the grid area itself, insets included, so nothing is added
-                    // to it here.
-                    cell.Specified = Math.Max(0, length.Resolve(basis));
+                    var width = Math.Max(0, length.Resolve(basis));
+
+                    percentages[cell.Column] = percentages.TryGetValue(cell.Column, out var held)
+                        ? Math.Max(held, width)
+                        : width;
+
                     any = true;
                 }
             }
         }
 
-        if (any)
+        if (!any)
         {
-            Prepare();
+            return false;
         }
 
-        return any;
+        var percentTotal = 0.0;
+
+        foreach (var width in percentages.Values)
+        {
+            percentTotal += width;
+        }
+
+        var reserved = 0.0;
+
+        for (var column = 0; column < Columns; column++)
+        {
+            if (!percentages.ContainsKey(column))
+            {
+                reserved += Minimum[column];
+            }
+        }
+
+        var scale = percentTotal + reserved > basis + 0.0001
+            ? Math.Max(0, basis - reserved) / percentTotal
+            : 1.0;
+
+        foreach (var row in Rows)
+        {
+            foreach (var cell in row.Cells)
+            {
+                if (cell.Span == 1 && cell.SpecifiedLength is { Kind: StyleLengthKind.Percent } length)
+                {
+                    // A per-cent width sizes the grid area itself, insets included, so nothing is added
+                    // to it here.
+                    cell.Specified = Math.Max(0, length.Resolve(basis) * scale);
+                }
+            }
+        }
+
+        Prepare();
+        return true;
     }
 
     /// <summary>Gets the narrowest width the columns can take between them.</summary>
