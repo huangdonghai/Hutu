@@ -1381,18 +1381,24 @@ public sealed class SkiaPaintExecutor
                 var extra = decoration.UnderlineOffset ?? 0;
                 var beside = !alongLine && !command.Flow.IsSideways &&
                     command.Flow.Orientation != TextOrientation.Sideways;
+
+                // The zero position is the under edge of the run's inline box, not the edge of the
+                // line box: a column is as wide as its line-height, and the glyph's own em box is
+                // centred inside it. Measuring from the line box would stand the rule in the leading
+                // rather than beside the text.
+                var emInset = beside ? Math.Max(0, (command.Bounds.Width - command.Font.Size) / 2) : 0;
                 Double at;
                 Int32 underlineGrow;
 
                 if (beside && decoration.Position is TextUnderlinePosition.Auto
                     or TextUnderlinePosition.Under or TextUnderlinePosition.Left)
                 {
-                    at = command.Bounds.X - extra;
+                    at = command.Bounds.X + emInset - extra;
                     underlineGrow = -1;
                 }
                 else if (beside && decoration.Position == TextUnderlinePosition.Right)
                 {
-                    at = command.Bounds.Right + extra;
+                    at = command.Bounds.Right - emInset + extra;
                     underlineGrow = 1;
                 }
                 else
