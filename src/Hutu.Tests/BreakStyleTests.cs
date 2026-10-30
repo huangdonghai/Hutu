@@ -1,3 +1,4 @@
+using AngleSharp.Dom;
 using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
@@ -55,6 +56,31 @@ public sealed class BreakStyleTests
             "break-before: avoid; page-break-before: always");
 
         Assert.That(breaks.Before, Is.EqualTo(BreakValue.Avoid), "the page wrote the modern longhand too");
+    }
+
+    [Test]
+    public async Task AnInlineLegacyPageBreakIsRead()
+    {
+        var breaks = await Read("<div id='d' style='page-break-before: always'>x</div>");
+
+        Assert.That(breaks.Before, Is.EqualTo(BreakValue.Page));
+    }
+
+    [Test]
+    public async Task AnInlineLegacyPageBreakIsReadWhenPrinting()
+    {
+        var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 600);
+        view.SetMediaType(AngleSharp.Css.DeviceCategory.Printer);
+        view.SetDefaultPage(new Hutu.Rendering.PageSize(480, 288), new Thickness(48, 48, 48, 48));
+        await view.SetHtml(
+            "<html><head><style>@page { size:5in 3in; margin:0.5in; }" +
+            " p { height: 96px; width: 96px; margin:0; } .test { page-break-inside:avoid; }</style></head>" +
+            "<body style='margin:0'><p id='d' style='page-break-before:always'>1</p></body></html>");
+
+        var breaks = Find(view).Source.Style.Breaks;
+
+        Assert.That(breaks.Before, Is.EqualTo(BreakValue.Page));
     }
 
     [Test]

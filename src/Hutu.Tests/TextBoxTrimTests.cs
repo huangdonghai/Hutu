@@ -73,6 +73,50 @@ public sealed class TextBoxTrimTests
         Assert.That(Lines(view).Single().BorderBox.Y, Is.EqualTo(0));
     }
 
+    [Test]
+    public async Task OnlyTheBlocksOwnEndsAreTrimmedWhenBlocksStandBetween()
+    {
+        using var view = await Render(
+            "<style>div { text-box-trim: trim-both }</style>" +
+            "<div id='p'>Test<div id='inner' style='height:50px'></div>Test</div>");
+
+        var block = Find(view, "p");
+
+        Assert.That(block.BorderBox.Height, Is.EqualTo(90), "20 at the start, the 50 box, 20 at the end");
+        Assert.That(Find(view, "inner").BorderBox.Y, Is.EqualTo(block.BorderBox.Y + 20), "the runs between blocks trim nothing");
+
+        var lines = Lines(view);
+
+        Assert.That(lines[0].BorderBox.Y, Is.EqualTo(-10), "the first line starts above the block, as the property asks");
+        Assert.That(lines[1].BorderBox.Y, Is.EqualTo(70), "the last line keeps the leading over it; only the block's end is cut");
+    }
+
+    [Test]
+    public async Task AFollowingBlockOfTextHoldsTheElementsLastLine()
+    {
+        using var view = await Render(
+            "<style>div { text-box-trim: trim-both }</style>" +
+            "<div id='p'>Test<div>line</div></div>");
+
+        var block = Find(view, "p");
+
+        Assert.That(block.BorderBox.Height, Is.EqualTo(30), "the run keeps 20 for its first line alone, and the block of text 10");
+        Assert.That(Lines(view)[0].BorderBox.Y, Is.EqualTo(-10), "the first line starts above the block");
+        Assert.That(Lines(view)[1].BorderBox.Y, Is.EqualTo(10), "the block of text starts its own line above itself, its own ends trimmed");
+    }
+
+    [Test]
+    public async Task AFollowingBlockWithNoTextLeavesTheRunAsTheLastLine()
+    {
+        using var view = await Render(
+            "<style>div { text-box-trim: trim-both }</style>" +
+            "<div id='p'>Test<div style='height:20px'></div></div>");
+
+        var block = Find(view, "p");
+
+        Assert.That(block.BorderBox.Height, Is.EqualTo(30), "the run is the first and last line: 30 - 10 - 10, and 20 for the empty block");
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

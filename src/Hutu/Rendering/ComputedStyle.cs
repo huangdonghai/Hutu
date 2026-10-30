@@ -163,9 +163,24 @@ internal readonly struct ComputedStyle
     /// and the list marker style - because a word inside an anonymous block is set the way a word
     /// beside it is, and the colours and background layers stay with the box that carries them.
     /// </para>
+    /// <para>
+    /// <c>text-box-trim</c> is not inherited (CSS Inline 3 §5.1): it reaches the first and last line
+    /// boxes of the element that wrote it, and a wrapper generates lines of its own that are not the
+    /// element's. A wrapper that stands for the element's whole content is the exception, and says so
+    /// by handing the trim over: an anonymous box made of one run between two blocks is the
+    /// element's first or last line and takes that end alone.
+    /// </para>
     /// </remarks>
-    internal ComputedStyle AsAnonymous()
+    internal ComputedStyle AsAnonymous(TextBoxTrim? trim = null)
     {
+        // The text areas are interned and compared by reference when the pipeline asks whether a
+        // restyle moved anything a layout can see (Box.SameLayoutAreas). A wanted trim that is
+        // already the one in hand keeps the area itself; building a copy would make every anonymous
+        // box a box that changed whenever the page is restyled, and the tree would be laid out again
+        // for a colour.
+        var wanted = trim ?? TextBoxTrim.None;
+        var text = wanted == _values.Text.Trim ? _values.Text : _values.Text with { Trim = wanted };
+
         var values = new StyleValues
         {
             Border = BorderArea.Default,
@@ -173,7 +188,7 @@ internal readonly struct ComputedStyle
             DisplayPositioning = DisplayPositioningArea.Block,
             VisualEffects = VisualEffectsArea.Default,
             Font = _values.Font,
-            Text = _values.Text,
+            Text = text,
             Decoration = _values.Decoration,
             List = _values.List,
             Position = PositionStyle.Static,

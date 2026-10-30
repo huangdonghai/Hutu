@@ -630,8 +630,13 @@ internal static partial class BoxBuilder
             {
                 // Anonymous: it has no element, so it has no margin, no padding, no border and no
                 // position of its own. Taking the parent's style wholesale would give it the parent's
-                // margins, and a body's eight pixels would be counted twice.
-                var item = new Box(BoxKind.Block, parent.Style.AsAnonymous()) { IsAnonymous = true, Flow = parent.Flow };
+                // margins, and a body's eight pixels would be counted twice. It stands for the whole
+                // of the parent's content, so it is the element's own line boxes that the trim reaches.
+                var item = new Box(BoxKind.Block, parent.Style.AsAnonymous(parent.Style.TextBoxTrim))
+                {
+                    IsAnonymous = true,
+                    Flow = parent.Flow,
+                };
 
                 foreach (var child in children)
                 {
@@ -662,6 +667,7 @@ internal static partial class BoxBuilder
         }
 
         var index = 0;
+        var firstRun = true;
 
         while (index < children.Count)
         {
@@ -702,10 +708,97 @@ internal static partial class BoxBuilder
                 continue;
             }
 
-            var anonymous = new Box(BoxKind.Block, parent.Style.AsAnonymous()) { IsAnonymous = true, Flow = parent.Flow };
+            // The element's first and last lines are the first line of the first run and the last line
+            // of the last one, wherever the blocks between them stand; a run between two others is
+            // interior and trims nothing (CSS Inline 3 §5.1).
+            var trim = RunTrim(parent, firstRun, LastRun(children, index));
+            var anonymous = new Box(BoxKind.Block, parent.Style.AsAnonymous(trim)) { IsAnonymous = true, Flow = parent.Flow };
             anonymous.Children.AddRange(run);
             parent.Children.Add(anonymous);
+            firstRun = false;
         }
+    }
+
+    /// <summary>
+    /// Gets the trim a run of inline content takes from the box it belongs to: the box's start at the
+    /// first run, its end at the last, and nothing in between.
+    /// </summary>
+    private static TextBoxTrim RunTrim(Box parent, Boolean first, Boolean last)
+    {
+        var trim = parent.Style.TextBoxTrim;
+        var start = first && trim is TextBoxTrim.Start or TextBoxTrim.Both;
+        var end = last && trim is TextBoxTrim.End or TextBoxTrim.Both;
+
+        return start && end ? TextBoxTrim.Both : start ? TextBoxTrim.Start : end ? TextBoxTrim.End : TextBoxTrim.None;
+    }
+
+    /// <summary>
+    /// Gets whether no line follows the children from <paramref name="index"/> on: an inline run of
+    /// its own, or a block whose content makes lines. The box's last line is the last line anywhere
+    /// in its content, so a run that stands before a block of text is trimmed at its start alone.
+    /// </summary>
+    private static Boolean LastRun(List<Box> children, Int32 index)
+    {
+        for (; index < children.Count; index++)
+        {
+            var item = children[index];
+
+            if (PositionedLayout.IsOutOfFlow(item))
+            {
+                continue;
+            }
+
+            if (item.IsBlockLevel)
+            {
+                if (HasLineContent(item))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (item.IsInlineLevel &&
+                (item.Kind != BoxKind.Text ||
+                 (item.Text.Length > 0 && !TextChunker.IsCollapsible(item.Text))))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Gets whether the box's content generates a line box somewhere: text or an inline-level box,
+    /// here or under a block that carries one.
+    /// </summary>
+    private static Boolean HasLineContent(Box box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (child.Kind != BoxKind.Text && child.IsInlineLevel)
+            {
+                return true;
+            }
+
+            if (child.Kind == BoxKind.Text && child.Text.Length > 0 && !TextChunker.IsCollapsible(child.Text))
+            {
+                return true;
+            }
+
+            if (child.IsBlockLevel && HasLineContent(child))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static Boolean IsTag(IElement element, String name) =>

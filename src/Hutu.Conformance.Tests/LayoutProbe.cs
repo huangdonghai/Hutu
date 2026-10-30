@@ -19,6 +19,9 @@ namespace Hutu.Conformance;
 /// <list type="bullet">
 /// <item><c>HUTU_PROBE_PAGE</c> - the html file to read.</item>
 /// <item><c>HUTU_PROBE_OUT</c> - where to write the dump; defaults to <c>build/probe-&lt;name&gt;.txt</c>.</item>
+/// <item><c>HUTU_PROBE_MEDIA</c> - set to <c>print</c> to read the page as a printer, which lists the
+/// page slices beside the tree: the document itself is laid out once and cut, so the boxes of a page
+/// are read against where the cut fell.</item>
 /// </list>
 /// </remarks>
 [TestFixture]
@@ -45,11 +48,30 @@ public sealed class LayoutProbe
 
         using var engine = EngineReader.WithTypefaces(width, height);
 
+        if (Environment.GetEnvironmentVariable("HUTU_PROBE_MEDIA") is "print")
+        {
+            engine.UsePrintMedia();
+        }
+
         engine.LoadAsync(File.ReadAllText(page), new Uri(page).AbsoluteUri).GetAwaiter().GetResult();
 
         var dump = engine.Layout is null || engine.Paint is null
             ? "the page produced no layout tree and no paint list to read"
             : LayoutDumper.Dump(engine.Layout, engine.Paint);
+
+        if (engine.Pages is { } pages)
+        {
+            var lines = new List<String> { "pages: " + pages.Count };
+
+            foreach (var slice in pages.Pages)
+            {
+                lines.Add(
+                    $"page {slice.Number} {slice.Geometry.Size.Width}x{slice.Geometry.Size.Height}"
+                    + $" content {slice.Content.Y}+{slice.Content.Height} origin {slice.OriginY}");
+            }
+
+            dump = String.Join(Environment.NewLine, lines) + Environment.NewLine + dump;
+        }
 
         var target = Environment.GetEnvironmentVariable("HUTU_PROBE_OUT")
                      ?? Path.Combine(Corpus.Root, "build", "probe-" + Path.GetFileNameWithoutExtension(page) + ".txt");
