@@ -90,6 +90,16 @@ public sealed class ImportedCorpusTests
         ? only
         : null;
 
+    /// <summary>
+    /// Only the print pair whose name contains this gets its pages written out as pictures, so that a
+    /// difference of nine thousand pixels can be read as a place rather than as a count. The pages of
+    /// both halves land in <c>build/</c> and the difference in <c>build/reftest-diff/</c>, which is the
+    /// same map the screen side draws when it is asked to look at one page.
+    /// </summary>
+    private static String? Look => Environment.GetEnvironmentVariable("HUTU_PRINT_LOOK") is { Length: > 0 } look
+        ? look
+        : null;
+
     [Test]
     public void TheEngineDrawsSomeOfTheBorrowedPagesTheWayTheySay()
     {
@@ -482,6 +492,24 @@ public sealed class ImportedCorpusTests
         TestContext.Out.WriteLine(report);
     }
 
+    /// <summary>Writes every page of one half of a looked-at pair as a picture, so it can be read.</summary>
+    private static void WritePages(String test, String side, IReadOnlyList<SKBitmap> pages)
+    {
+        var stem = Path.GetFileNameWithoutExtension(test);
+
+        for (var index = 0; index < pages.Count; index++)
+        {
+            var path = Path.Combine(Corpus.Root, "build", $"look-{stem}-{side}-page-{index + 1}.png");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+            using var image = SKImage.FromBitmap(pages[index]);
+            using var stream = File.Create(path);
+
+            image.Encode(SKEncodedImageFormat.Png, 100).SaveTo(stream);
+        }
+    }
+
     /// <summary>
     /// Draws one print pair and says what became of it. The pair declares its relation exactly as a
     /// screen pair does; what changes is that both halves are drawn as page sequences.
@@ -502,11 +530,19 @@ public sealed class ImportedCorpusTests
 
             try
             {
+                var look = Look is { } wanted && test.Replace('\\', '/').Contains(wanted, StringComparison.OrdinalIgnoreCase);
+
+                if (look)
+                {
+                    WritePages(test, "test", drawn);
+                    WritePages(test, "ref", against);
+                }
+
                 var comparison = ReftestRunner.ComparePages(
                     drawn,
                     against,
-                    String.Empty,
-                    writeDiff: false,
+                    look ? "print-" + Path.GetFileNameWithoutExtension(test) : String.Empty,
+                    writeDiff: look,
                     allowance: FuzzyAllowance.Of(File.ReadAllText(test)));
 
                 return comparison.Matched == (relation == "match")
