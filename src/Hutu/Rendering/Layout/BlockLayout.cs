@@ -678,8 +678,8 @@ internal sealed class BlockLayout
     /// than the border stands above it, so the box begins that much lower while its content stays
     /// where the legend's block size puts it (HTML rendering §15.3.12).
     /// </summary>
-    private (Double Inset, Double Overhang, Box Legend)? LegendOf(
-        Box box, Double contentWidth, LayoutContext context)
+    internal static (Double Inset, Double Overhang, Box Legend)? LegendOf(
+        LayoutEngine engine, Box box, Double contentWidth, LayoutContext context)
     {
         foreach (var child in box.Children)
         {
@@ -688,7 +688,7 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            var size = _engine.Measure(child, MeasureConstraints.FitWidth(contentWidth), context);
+            var size = engine.Measure(child, MeasureConstraints.FitWidth(contentWidth), context);
             var margin = child.Style.Margin.Resolve(contentWidth);
 
             // The border gives way to the legend's margin box, not to its border box: its margins
@@ -718,7 +718,7 @@ internal sealed class BlockLayout
 
         // A fieldset keeps the room its legend takes in its block-start border, and its content begins
         // below whichever of the two is deeper (HTML rendering §15.3.12).
-        if (LegendOf(box, contentWidth, childContext) is { } placedLegend)
+        if (LegendOf(_engine, box, contentWidth, childContext) is { } placedLegend)
         {
             cursor += placedLegend.Inset;
         }
@@ -793,7 +793,7 @@ internal sealed class BlockLayout
             // A fieldset whose legend stands above its border begins that much lower: the room is
             // the fieldset's own, not a margin of its content, so it is added to the space before the
             // box rather than to the collapsed margins around it (HTML rendering §15.3.12).
-            if (LegendOf(child, contentWidth, childContext) is { } childLegend)
+            if (LegendOf(_engine, child, contentWidth, childContext) is { } childLegend)
             {
                 pending += childLegend.Overhang;
             }
@@ -2650,7 +2650,7 @@ internal sealed class BlockLayout
 
         var topEscapes = throughTop;
 
-        if (LegendOf(box, contentWidth, context) is { } legendRoom)
+        if (LegendOf(_engine, box, contentWidth, context) is { } legendRoom)
         {
             cursor += legendRoom.Inset;
         }
@@ -2734,7 +2734,7 @@ internal sealed class BlockLayout
             // A fieldset whose legend stands above its border begins that much lower: the room is
             // the fieldset's own, not a margin of its content, so it is added to the space before the
             // box rather than to the collapsed margins around it (HTML rendering §15.3.12).
-            if (LegendOf(child, contentWidth, context) is { } childLegend)
+            if (LegendOf(_engine, child, contentWidth, context) is { } childLegend)
             {
                 pending += childLegend.Overhang;
             }

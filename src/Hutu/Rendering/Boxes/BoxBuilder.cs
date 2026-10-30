@@ -615,7 +615,7 @@ internal static partial class BoxBuilder
 
         if (!String.Equals(parent.Element?.LocalName, "fieldset", StringComparison.OrdinalIgnoreCase) ||
             parent.Flow.IsVertical ||
-            parent.Kind is not (BoxKind.Block or BoxKind.InlineBlock or BoxKind.TableCell) ||
+            parent.Kind is not (BoxKind.Block or BoxKind.InlineBlock or BoxKind.TableCell or BoxKind.Grid) ||
             style.Contain.Inline || style.Contain.Block ||
             Scrolls(style.OverflowX) || Scrolls(style.OverflowY))
         {

@@ -64,6 +64,13 @@ internal sealed class GridFormattingContext
         var plan = Compute(box, contentWidth, declaredHeight, context, definiteWidth: true, sizeRows: true);
         var contentHeight = declaredHeight ?? plan.ContentHeight;
 
+        // The room the legend takes in the border is part of what the fieldset measures for itself
+        // (HTML rendering §15.3.12).
+        if (BlockLayout.LegendOf(_engine, box, contentWidth, context) is { } legendRoom)
+        {
+            contentHeight += legendRoom.Inset;
+        }
+
         // Size containment answers both axes from the intrinsic size the page stated, whatever the
         // tracks and items come to (CSS Contain 1 §3.1.1, CSS Sizing 4 §5).
         var contain = style.Contain;
@@ -118,6 +125,14 @@ internal sealed class GridFormattingContext
         var contentX = borderBox.X + border.Left + padding.Left;
         var contentY = borderBox.Y + border.Top + padding.Top;
 
+        var legendRoom = BlockLayout.LegendOf(_engine, box, contentWidth, context);
+
+        if (legendRoom is { } room)
+        {
+            contentY += room.Inset;
+            contentHeight = Math.Max(0, contentHeight - room.Inset);
+        }
+
         var plan = Compute(
             box, contentWidth, contentHeight, context, definiteWidth: true, sizeRows: true, forOutOfFlow: true);
         var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
@@ -156,6 +171,23 @@ internal sealed class GridFormattingContext
 
         layout.GapDecorations = GapDecorations(box, plan, contentX, contentY);
         ArrangeOutOfFlow(box, layout, plan, layout.PaddingBox, anchored, contentX, contentY, itemContext);
+
+        if (legendRoom is { } placed)
+        {
+            // The legend stands in the fieldset's block-start border: it is placed against the border
+            // box and takes no room in the grid (HTML rendering §15.3.12).
+            var size = _engine.Measure(placed.Legend, MeasureConstraints.FitWidth(contentWidth), context);
+            var margin = placed.Legend.Style.Margin.Resolve(contentWidth);
+            var x = box.Flow.IsRightToLeft
+                ? borderBox.Right - border.Right - padding.Right - margin.Right - size.Width
+                : borderBox.X + border.Left + padding.Left + margin.Left;
+            var y = borderBox.Y + (border.Top - size.Height - margin.Top - margin.Bottom) / 2 + margin.Top;
+            var place = new Rect(x, y, size.Width, size.Height);
+
+            layout.LegendBox = place;
+            layout.Children.Add(_engine.Arrange(placed.Legend, place, context));
+        }
+
         return layout;
     }
 
@@ -545,8 +577,9 @@ internal sealed class GridFormattingContext
         foreach (var child in box.Children)
         {
             // An absolutely or fixed positioned child is not a grid item: it is out of flow and is
-            // placed against the container instead.
-            if (child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child))
+            // placed against the container instead. A fieldset's legend is no item either: it stands
+            // in the border and takes no track (HTML rendering §15.3.12).
+            if (child.IsBlockLevel && !child.IsLegend && !PositionedLayout.IsOutOfFlow(child))
             {
                 items.Add(Create(child));
             }
