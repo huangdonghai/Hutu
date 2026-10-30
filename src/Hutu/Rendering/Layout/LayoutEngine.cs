@@ -3,7 +3,6 @@ using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 
 namespace Hutu.Rendering.Layout;
 
@@ -579,11 +578,9 @@ internal sealed record LayoutProfile(
         var runs = new List<ConsideredRun>();
         ConsideredRuns(line, null, null, runs);
 
-        // One answer per decorating box, told apart by the element that asked and the place in its
-        // list: the runs of a font fallback carry different lists of the same source, and keying by
-        // the list would give each run a line of its own.
-        var ideals = new Dictionary<(Object, Int32), LineIdeal>();
-        var segments = new Dictionary<(Object, Int32), List<Segment>>();
+        // One answer per decorating box, told apart by the list of lines it reaches and the place in it:
+        // a run's own lines and its container's are averaged separately, since each box lays its own.
+        var ideals = new Dictionary<(IReadOnlyList<DecorationSource>, Int32), LineIdeal>();
 
         foreach (var run in runs)
         {
@@ -613,49 +610,13 @@ internal sealed record LayoutProfile(
 
         foreach (var run in runs)
         {
-            for (var asked = 0; asked < run.Asked.Count; asked++)
-            {
-                var key = Key(run, asked);
-
-                if (!segments.TryGetValue(key, out var stretches))
-                {
-                    segments[key] = stretches = new List<Segment>();
-                }
-
-                var start = run.Box.Vertical ? run.Box.BorderBox.Y : run.Box.BorderBox.X;
-                var last = stretches.Count > 0 ? stretches[^1] : null;
-
-                if (last is null || start > last.End + 0.5)
-                {
-                    stretches.Add(new Segment(run));
-                }
-                else
-                {
-                    last.Add(run);
-                }
-            }
-        }
-
-        foreach (var run in runs)
-        {
             var placements = new List<DecorationPlacement>(run.Asked.Count);
 
             for (var asked = 0; asked < run.Asked.Count; asked++)
             {
                 var ideal = Ideal(ideals, line, run, asked);
-                var key = Key(run, asked);
-                var segment = segments[key].First(stretch => stretch.Contains(run.Box));
 
-                placements.Add(ideal.Place(ideal.Stood - run.Baseline) with
-                {
-                    InlineStart = segment.Start,
-                    InlineEnd = segment.End,
-                    Leads = ReferenceEquals(segment.First, run.Box),
-                    Cjk = segment.Cjk,
-                    AcrossRuns = segment.Count > 1,
-                    UnderEdge = segment.Under,
-                    OverEdge = segment.Over,
-                });
+                placements.Add(ideal.Place(ideal.Stood - run.Baseline));
             }
 
             run.Box.DecorationPlacements = placements;
@@ -669,61 +630,13 @@ internal sealed record LayoutProfile(
     /// answered from.
     /// </summary>
     private static LineIdeal Ideal(
-        Dictionary<(Object, Int32), LineIdeal> ideals,
+        Dictionary<(IReadOnlyList<DecorationSource>, Int32), LineIdeal> ideals,
         LayoutBox line,
         ConsideredRun run,
-        Int32 asked)
-    {
-        var owner = run.Asked[asked].Speaker ?? (Object)run.Asked[asked];
-
-        return ideals.TryGetValue((owner, asked), out var ideal)
+        Int32 asked) =>
+        ideals.TryGetValue((run.Asked, asked), out var ideal)
             ? ideal
-            : ideals[(owner, asked)] = new LineIdeal(Along(line));
-    }
-
-    /// <summary>Gets the key that gathers the runs of one decorating box on this line.</summary>
-    private static (Object, Int32) Key(ConsideredRun run, Int32 asked) =>
-        (run.Asked[asked].Speaker ?? (Object)run.Asked[asked], asked);
-
-    /// <summary>
-    /// The stretch one decorating box covers on this line: the first and last inline positions of
-    /// its runs, the one under edge a column stands the rule on, and whether a CJK glyph is in it.
-    /// </summary>
-    private sealed class Segment
-    {
-        internal Segment(ConsideredRun run)
-        {
-            First = run.Box;
-            _members.Add(run.Box);
-            Start = run.Box.Vertical ? run.Box.BorderBox.Y : run.Box.BorderBox.X;
-            End = run.Box.Vertical ? run.Box.BorderBox.Bottom : run.Box.BorderBox.Right;
-            Under = run.UnderEdge;
-            Over = run.OverEdge;
-            Cjk = TextClusters.StandsAcrossTheLine(run.Box.Text ?? String.Empty);
-        }
-
-        internal LayoutBox First { get; }
-        internal Double Start { get; private set; }
-        internal Double End { get; private set; }
-        internal Double Under { get; private set; }
-        internal Double Over { get; private set; }
-        internal Boolean Cjk { get; private set; }
-        internal Int32 Count { get; private set; } = 1;
-        private readonly HashSet<LayoutBox> _members = new();
-
-        internal Boolean Contains(LayoutBox box) => _members.Contains(box);
-
-        internal void Add(ConsideredRun run)
-        {
-            _members.Add(run.Box);
-            Start = Math.Min(Start, run.Box.Vertical ? run.Box.BorderBox.Y : run.Box.BorderBox.X);
-            End = Math.Max(End, run.Box.Vertical ? run.Box.BorderBox.Bottom : run.Box.BorderBox.Right);
-            Under = Math.Min(Under, run.UnderEdge);
-            Over = Math.Max(Over, run.OverEdge);
-            Cjk |= TextClusters.StandsAcrossTheLine(run.Box.Text ?? String.Empty);
-            Count++;
-        }
-    }
+            : ideals[(run.Asked, asked)] = new LineIdeal(Along(line));
 
     /// <summary>
     /// Sums what one decorating box's line takes from each run of the text it decorates: the ideal offsets
@@ -829,17 +742,13 @@ internal sealed record LayoutProfile(
 
         if (box.Kind == LayoutKind.Text && box.Decorations is { Count: > 0 } asked)
         {
-            var inset = Math.Max(0, (box.BorderBox.Width - box.Source.Style.FontSize) / 2);
-
             runs.Add(new ConsideredRun(
                 box,
                 asked,
                 parent ?? box.Font,
                 Along(box),
                 box.OwnDecoration,
-                !box.Source.Style.VerticalAlign.Equals("baseline", StringComparison.OrdinalIgnoreCase),
-                box.BorderBox.X + inset,
-                box.BorderBox.Right - inset));
+                !box.Source.Style.VerticalAlign.Equals("baseline", StringComparison.OrdinalIgnoreCase)));
         }
 
         foreach (var child in box.Children)
@@ -859,9 +768,7 @@ internal sealed record LayoutProfile(
         FontStyle Parent,
         Double Baseline,
         Int32 Own,
-        Boolean Raised,
-        Double UnderEdge,
-        Double OverEdge)
+        Boolean Raised)
     {
         /// <summary>
         /// Gets whether this run is answered from its parent for the lines asked for at this place: a run
