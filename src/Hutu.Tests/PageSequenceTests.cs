@@ -782,6 +782,26 @@ public sealed class PageSequenceTests
         Assert.That(pages.Count, Is.EqualTo(1), "nothing precedes the legend, so the break has nothing to start");
     }
 
+    /// <summary>
+    /// A multi-column container a spanner splits is the pieces a page may end between: the page ends
+    /// before a spanner it has no room for and carries it whole, rather than cutting through it
+    /// (CSS Multicol 1 §6).
+    /// </summary>
+    [Test]
+    public async Task ASpannerIsCarriedWholeToTheNextPage()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " .cols { column-count: 2; column-gap: 0 }" +
+            " .a { height: 60px } .span { column-span: all; height: 60px } .b { height: 60px }</style>" +
+            "<div class=\"cols\"><div class=\"a\"></div><div class=\"span\"></div><div class=\"b\"></div></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(60).Within(0.01),
+            "the page ends at the column block, not through the spanner");
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
