@@ -263,7 +263,7 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 | M1.2 `@page` 收集与 cascade（size/margin/area/frame/选择器/命名页/层叠） | ✅ | `PageStyleTable`、`PageStyleTests`（22 个） |
 | M1.3 页面序列（page area 作 ICB、强制断点、左右页/空白页） | ✅ | `PageSequenceTests`；`css-page`、`CSS2/pagination` 打印对全绿 |
 | M1.4 逐页绘制（页框、裁剪、fixed 每页、abspos 页归属） | ✅ | `PagePaintTests`（固定盒每页、页号边距）；abspos 页名单测 |
-| M1.5 打印 runner + `-print*` 语料 | ✅ | `ReftestRunner.DrawPages/ComparePages`；154/164 |
+| M1.5 打印 runner + `-print*` 语料 | ✅ | `ReftestRunner.DrawPages/ComparePages`；185/198（含 `cdd35675` 转入的 34 对） |
 | M2.1 递归分片、强制断点沿祖先传播、块级 avoid | ✅ | 嵌套块/行/表格行/行组单测；CSS2 avoid 组打印对全绿 |
 | M2.2 断点处 margin 截断 | ✅ | 强制断点取盒边框顶，页首不留 margin |
 | M2.3 表格分片、caption 只在首片、row/rowgroup/table avoid | ✅ | 表格组打印对全绿；caption 单测 |
