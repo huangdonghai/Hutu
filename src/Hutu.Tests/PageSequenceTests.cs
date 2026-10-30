@@ -699,6 +699,51 @@ public sealed class PageSequenceTests
         });
     }
 
+    /// <summary>
+    /// What a box clips with <c>overflow: hidden</c> is painted nowhere, so it neither lengthens the
+    /// document nor gives a page a place to end: the boxes after it stand where the box's own edge
+    /// puts them (CSS Overflow 3 §3.1).
+    /// </summary>
+    [Test]
+    public async Task ContentAClippingBoxHidesDoesNotLengthenTheDocument()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }</style>" +
+            "<div style=\"height: 30px\"></div>" +
+            "<div style=\"overflow: hidden; height: 40px\"><div style=\"height: 500px\"></div></div>" +
+            "<div style=\"height: 20px\"></div>");
+
+        var pages = view.Pages!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.DocumentHeight, Is.EqualTo(90).Within(0.01), "thirty, forty, twenty");
+            Assert.That(pages.Count, Is.EqualTo(1), "the five hundred pixels the box hides add no page");
+        });
+    }
+
+    /// <summary>
+    /// A float a clipping box holds is hidden with it: the span it covers is no place a page may end
+    /// either, or the page would end early for room no page can show.
+    /// </summary>
+    [Test]
+    public async Task AFloatInsideAClippingBoxHoldsNoPage()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }</style>" +
+            "<div style=\"overflow: hidden; height: 60px\">" +
+            "<div style=\"float: left; width: 20px; height: 500px\"></div></div>" +
+            "<div style=\"height: 40px\"></div>");
+
+        var pages = view.Pages!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.DocumentHeight, Is.EqualTo(100).Within(0.01), "sixty and forty, and none of the float's five hundred");
+            Assert.That(pages.Count, Is.EqualTo(1));
+        });
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
