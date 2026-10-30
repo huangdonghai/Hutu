@@ -130,6 +130,31 @@ public sealed class PagePaintTests
         });
     }
 
+    [Test]
+    public async Task AFixedBoxIsDrawnOnEveryPage()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(800, 600);
+        view.SetMediaType(DeviceCategory.Printer);
+        await view.SetHtml(
+            "<style>@page { size: 100px; margin: 10px } html, body, div { margin: 0 }" +
+            " .fix { position: fixed; right: 0; bottom: 0; width: 10px; height: 10px; background: red }" +
+            " .b { height: 160px; background: blue }</style>" +
+            "<div class='fix'></div><div class='b'></div>");
+
+        var pages = view.Pages!;
+        var executor = new SkiaPaintExecutor(measurer);
+
+        Assert.That(pages.Count, Is.EqualTo(2), "a hundred and sixty pixels in an eighty-pixel page area");
+
+        foreach (var page in pages.Pages)
+        {
+            using var drawn = Draw(executor, view, page);
+            Assert.That(Ink(drawn, 80, 80, 90, 90), Is.GreaterThan(0), $"page {page.Number} carries the fixed box at its own corner");
+        }
+    }
+
     /// <summary>Counts the blue pixels in one area of the page.</summary>
     private static Int32 Blues(SKBitmap page, Int32 left, Int32 top, Int32 right, Int32 bottom)
     {

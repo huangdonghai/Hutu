@@ -506,6 +506,68 @@ public sealed class PageSequenceTests
         });
     }
 
+    [Test]
+    public async Task ABlankPageTakesTheRulesAndBoxesOfBlankPages()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 10px }" +
+            " @page :blank { @top-center { content: 'blank' } }" +
+            " @page { @bottom-right { content: counter(page) '/' counter(pages) } }" +
+            " body, p { margin: 0 } .b { height: 50px; break-after: right }</style>" +
+            "<p class='b'>a</p><p>b</p>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(3), "a blank sheet puts the next page on the right");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[1].Blank, Is.True, "the second sheet is the blank one");
+            Assert.That(pages.Pages[1].MarginBoxes![0].Text, Is.EqualTo("blank"), "and it carries what a blank page is given");
+            Assert.That(
+                pages.Pages[1].MarginBoxes![1].Text,
+                Is.EqualTo("2/3"),
+                "the blank sheet counts in the page number and in the count");
+            Assert.That(pages.Pages[2].MarginBoxes![0].Text, Is.EqualTo("3/3"));
+            Assert.That(pages.Pages[0].MarginBoxes![0].Text, Is.EqualTo("1/3"), "the pages that hold content count from the first");
+        });
+    }
+
+    [Test]
+    public async Task ATableCaptionStandsOnTheFirstFragmentOnly()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, table, caption, td { margin: 0 }" +
+            " table { border-collapse: collapse } caption { font-size: 10px; line-height: 10px }" +
+            " td { height: 40px; padding: 0; border: 0 }</style>" +
+            "<table><caption>cap</caption><tbody>" +
+            "<tr><td></td></tr><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr><tr><td></td></tr>" +
+            "</tbody></table>");
+
+        var pages = view.Pages!;
+        var caption = Walk(view.Layout!.Root).First(box => box.Source.Kind == Hutu.Rendering.Boxes.BoxKind.TableCaption);
+
+        Assert.That(pages.Count, Is.EqualTo(3), "a caption and five rows of forty in a hundred-pixel page");
+        Assert.Multiple(() =>
+        {
+            Assert.That(caption.BorderBox.Y, Is.GreaterThanOrEqualTo(pages.Pages[0].Content.Y).Within(0.01));
+            Assert.That(caption.BorderBox.Bottom, Is.LessThanOrEqualTo(pages.Pages[0].Content.Bottom + 0.01), "the caption stands on the first page");
+            Assert.That(pages.Pages[1].Content.Y, Is.GreaterThanOrEqualTo(caption.BorderBox.Bottom).Within(0.01), "and no later fragment carries it");
+        });
+    }
+
+    private static IEnumerable<LayoutBox> Walk(LayoutBox node)
+    {
+        yield return node;
+
+        foreach (var child in node.Children)
+        {
+            foreach (var node2 in Walk(child))
+            {
+                yield return node2;
+            }
+        }
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
