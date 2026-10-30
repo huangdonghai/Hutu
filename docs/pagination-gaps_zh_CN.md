@@ -6,17 +6,17 @@
 > |---|---:|---:|
 > | `-print` 逐页语料 | 142 / 162 | **154 / 164** |
 > | 屏幕全量失败集 | 2138 | **2122**（0 新增失败） |
-> | 单元测试 | 2128 | **2148** |
+> | 单元测试 | 2128 | **2154** |
 >
 > 已落地（`dev-paged`，M1 期的 13 个提交在 `7357d65a..f5245f6c`）：
 > - **M1**：打印媒体（`DeviceCategory.Printer`）、`@page` 的 size/margin/width/height 与页框背景/边框、`page-orientation`、页面序列（tall layout 切片）、逐页绘制与打印 runner。
-> - **M2**：递归块/行分片、强制断点沿祖先传播、表格按行/行组分片、`break-inside: avoid` 的"整块推页"（含嵌套 avoid）、`overflow:hidden` 可切、浮动整块移页（avoid 浮动连边距盒保持完整）、`<br clear>`（CSS 属性与废弃属性）、flex 列向 gap 的页边切断——`68845b18`、`357116a6`、`2436f2c3`、`3e1d4aa8`。
+> - **M2**：递归块/行分片、强制断点沿祖先传播、表格按行/行组分片、`break-inside: avoid` 的"整块推页"（含嵌套 avoid）、`overflow:hidden` 可切、浮动整块移页（avoid 浮动连边距盒保持完整）、`<br clear>`（CSS 属性与废弃属性）、flex 列向 gap 的页边切断、跨页表格重复 `thead`/`tfoot`（首片之外的每片带上表头与表脚，表头贴片顶、表脚贴片底）——`68845b18`、`357116a6`、`2436f2c3`、`3e1d4aa8`、`e7aa3963`、`d21eeb97`。
 > - **M3**：命名页与页面组、`:first/:left/:right/:blank`、页边盒 16 个、`counter(page)`/`counter(pages)`（CSSOM 丢弃页内嵌套 at-rule，改从样式表文本扫描，`d15521ad`）；`@page` 在 `@layer` 里的层叠顺序（`23cff26c`）。
 > - **M4**：浮动跨页、flex 行列分片、grid 按行分片（`6d303559`）、竖排按块轴切页与正交流页名（`035f8791`）、列向 gap；块级 clearance 与"只有格式化上下文根为浮动增高"（`0b4a83d6`）；裁剪对齐（`dd6ba4f1`）、`text-box-trim` 与分页的配合（`e9fc1ad1`）。
 >
 > 仍缺（未验证或需按页重排）：
 > - footnote/页浮动、`print-color-adjust` 默认调色（引擎按 `exact` 绘制，与语料口径一致）、`marks/bleed`、`string-set`/`running()`——这些 Chrome 自身未实现，没有可测的对照；按报告的口径属"按产品需要排"。
-> - 按用户决定记为后续里程碑（需要"按页重排"一层）：重复 `thead`/`tfoot`、多栏跨页重排、`box-decoration-break`。
+> - 按用户决定记为后续里程碑（需要"按页重排"一层）：多栏跨页重排、`box-decoration-break`。表格重复 `thead`/`tfoot` 已用"从长文档原处取同一段内容再画一次"实现，不需要按页重排（`e7aa3963`、`d21eeb97`）。
 > - 非分页特性（打印模式下同样失败）：`@scope`×3、`(scripting)` 媒体查询、表单控件外观、`mask-image`。
 >
 > 调查日期：2026-10-30。HEAD：`7357d65a`。只读调查，未修改引擎代码。
@@ -264,7 +264,7 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 | M2.1 递归分片、强制断点沿祖先传播、块级 avoid | ✅ | 嵌套块/行/表格行/行组单测；CSS2 avoid 组打印对全绿 |
 | M2.2 断点处 margin 截断 | ✅ | 强制断点取盒边框顶，页首不留 margin |
 | M2.3 表格分片、caption 只在首片、row/rowgroup/table avoid | ✅ | 表格组打印对全绿；caption 单测 |
-| M2.3 重复 `thead`/`tfoot` | ◆ | 需按页重排 |
+| M2.3 重复 `thead`/`tfoot` | ✅ | 续片画表头（`e7aa3963`）与表脚（`d21eeb97`）：`PageSequenceTests` 各 1 个、`PagePaintTests` 逐页像素各 1 个；`row-page-break-inside-avoid-2-print` 等表格打印对未回退 |
 | M2.4 分片装饰（`box-decoration-break` 等） | ◆ | `monolithic-overflow-031/032` |
 | M3.1 `page` 属性传播（block/flex/grid/table/inline-block/正交/abspos） | ✅ | 命名页、正交流单测；`page-name*` 打印对全绿 |
 | M3.2 命名页变化强制分页、`:first/:left/:right/:blank`、`page-orientation` | ✅ | `PageStyleTests`/`PageSequenceTests`（含空白页） |
