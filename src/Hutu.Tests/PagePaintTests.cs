@@ -238,6 +238,42 @@ public sealed class PagePaintTests
         });
     }
 
+    /// <summary>
+    /// A box no page could hold whole is drawn down to the bottom of the page it stands on: the page
+    /// is filled with the box rather than ended at the break before it, and the box goes on below.
+    /// </summary>
+    [Test]
+    public async Task ABoxTallerThanAnyPageIsDrawnDownToTheBottomOfItsPage()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(800, 600);
+        view.SetMediaType(DeviceCategory.Printer);
+        await view.SetHtml(
+            "<style>@page { size: 100px; margin: 0 } html, body, div { margin: 0 }" +
+            " #head { height: 20px; background: red }" +
+            " #tall { contain: size; width: 50px; height: 250px; background: blue }</style>" +
+            "<div id=\"head\"></div><div id=\"tall\"></div>");
+
+        var pages = view.Pages!;
+        var executor = new SkiaPaintExecutor(measurer);
+
+        Assert.That(pages.Count, Is.EqualTo(3), "two hundred and fifty in pages of a hundred");
+
+        using var first = Draw(executor, view, pages.Pages[0]);
+        using var second = Draw(executor, view, pages.Pages[1]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.GetPixel(10, 10), Is.EqualTo(SKColors.Red), "the box before stands at the top");
+            Assert.That(first.GetPixel(10, 90), Is.EqualTo(SKColors.Blue),
+                "and the tall box is drawn to this page's own bottom");
+            Assert.That(first.GetPixel(70, 90), Is.EqualTo(SKColors.White), "the room beside it is blank");
+            Assert.That(second.GetPixel(10, 10), Is.EqualTo(SKColors.Blue), "the next page carries on with it");
+            Assert.That(second.GetPixel(10, 90), Is.EqualTo(SKColors.Blue), "to its bottom as well");
+        });
+    }
+
     /// <summary>Gets whether two pages are drawn with the very same pixels.</summary>
     private static Boolean Same(SKBitmap one, SKBitmap other)
     {

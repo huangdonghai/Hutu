@@ -620,6 +620,85 @@ public sealed class PageSequenceTests
         });
     }
 
+    /// <summary>
+    /// A box no page could hold whole, which the page has already begun, is cut where the page ends
+    /// rather than carried to the next one: the page is filled to its own edge (CSS Fragmentation 3
+    /// §4.3), and the lines that overflow a box of definite height do not change that.
+    /// </summary>
+    [Test]
+    public async Task ABoxTallerThanAnyPageFillsThePageItStandsOn()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }" +
+            " #over { height: 0; font-size: 10px; line-height: 20px }" +
+            " #tall { contain: size; height: 250px }</style>" +
+            "<div id=\"over\">a<br>b<br>c<br>d</div><div id=\"tall\"></div>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(3), "two hundred and fifty in pages of a hundred");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(100).Within(0.01),
+                "the page is filled through the tall box, not ended at the last line before it");
+            Assert.That(pages.Pages[1].Content.Y, Is.EqualTo(100).Within(0.01));
+            Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(100).Within(0.01));
+            Assert.That(pages.Pages[2].Content.Height, Is.EqualTo(50).Within(0.01));
+        });
+    }
+
+    /// <summary>
+    /// A row that asks not to be broken inside is moved whole even when no page could hold it: the
+    /// value says the row is one piece, and the page that has room for none of it ends before it.
+    /// </summary>
+    [Test]
+    public async Task ARowTooTallForAnyPageIsMovedWholeWhenItAsksNotToBeBroken()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, table, tbody, tr, td { margin: 0;" +
+            " padding: 0; border: 0 } table { width: 100px; border-spacing: 0 }</style>" +
+            "<table><tbody><tr><td style=\"height: 20px\"></td></tr>" +
+            "<tr style=\"break-inside: avoid\"><td style=\"height: 110px\"></td></tr></tbody></table>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(3), "the row is moved to a page of its own and cut there");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(20).Within(0.01),
+                "the first row is all the first page holds");
+            Assert.That(pages.Pages[1].Content.Y, Is.EqualTo(20).Within(0.01));
+            Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(100).Within(0.01));
+            Assert.That(pages.Pages[2].Content.Height, Is.EqualTo(10).Within(0.01));
+        });
+    }
+
+    /// <summary>
+    /// An inline table that asks not to be broken makes its whole line one piece: the piece is too
+    /// tall for any page and the page before it ends where the line begins, because moving is what the
+    /// value asks for and breaking is what the table refuses (CSS Break 3 §4.4).
+    /// </summary>
+    [Test]
+    public async Task ALineHoldingAnUnbreakableInlineTableMovesWhole()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, p, table, tbody, tr, td { margin: 0;" +
+            " padding: 0; border: 0 } p { height: 30px } table { display: inline-table }</style>" +
+            "<p></p>text<table style=\"break-inside: avoid\"><tbody><tr>" +
+            "<td style=\"height: 110px\"></td></tr></tbody></table>");
+
+        var pages = view.Pages!;
+
+        Assert.That(pages.Count, Is.EqualTo(3), "the line is moved to a page of its own and cut there");
+        Assert.Multiple(() =>
+        {
+            Assert.That(pages.Pages[0].Content.Height, Is.EqualTo(30).Within(0.01),
+                "the page ends where the line begins rather than filling through the table");
+            Assert.That(pages.Pages[1].Content.Y, Is.EqualTo(30).Within(0.01));
+            Assert.That(pages.Pages[1].Content.Height, Is.EqualTo(100).Within(0.01));
+        });
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

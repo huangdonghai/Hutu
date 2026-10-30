@@ -417,6 +417,14 @@ internal static class PageSequence
     /// left, and the box is cut only when it cannot fit a page of its own either. That decision is
     /// taken before the breaks the flow allows, because every one of those after it falls inside the
     /// box and would split the very thing the page was holding whole.
+    /// <para>
+    /// A break is where the flow *cannot* go on, not merely where it may: a box the page has already
+    /// begun, or which begins at the break itself, and which no page could hold whole, runs on past
+    /// every break the flow offers, so the page is filled to its own edge and the box is cut there
+    /// (CSS Fragmentation 3 §4.3). A box that begins at the break and asks not to be broken is the
+    /// exception the rule above makes: that one is moved whole even when it is too tall to arrive
+    /// anywhere.
+    /// </para>
     /// </remarks>
     private static Double Cut(
         List<FlowUnit> units, Double start, Double limit, Double end,
@@ -430,9 +438,23 @@ internal static class PageSequence
         (Double Y, Double Resume)? avoided = null;
         var linesOnPage = new Dictionary<Int32, Int32>();
 
+        // The room a page of this size has for content, and the boxes standing on this page that are
+        // taller than any page can hold.
+        var room = limit - start;
+        List<(Double Top, Double Bottom)>? tooTall = null;
+
         for (var index = 0; index < units.Count; index++)
         {
             var unit = units[index];
+
+            // A box that runs past this page's edge and is taller than the page itself cannot be
+            // carried whole to the next one; it is the reason a page is filled rather than ended
+            // early - but only where it already stands on this page, since a box that begins at the
+            // break is a box the page can still move (CSS Fragmentation 3 §4.3).
+            if (unit.Bottom > limit + 0.001 && unit.Bottom - unit.Top > room + 0.001)
+            {
+                (tooTall ??= new List<(Double, Double)>()).Add((unit.Top, unit.Bottom));
+            }
 
             if (index > 0)
             {
@@ -529,18 +551,58 @@ internal static class PageSequence
 
         if (allowed is { } allowedAt)
         {
+            // The break the flow allows stands inside a box that no page can hold whole and that this
+            // page has already begun: the box runs on past the break to the page's own edge, and there
+            // is nothing to end the page on but that edge.
+            if (FillsThePage(tooTall, allowedAt.Y))
+            {
+                resume = limit;
+                return Math.Min(limit, end);
+            }
+
             resume = allowedAt.Resume;
             return Math.Min(allowedAt.Y, end);
         }
 
         if (avoided is { } avoidedAt)
         {
+            if (FillsThePage(tooTall, avoidedAt.Y))
+            {
+                resume = limit;
+                return Math.Min(limit, end);
+            }
+
             resume = avoidedAt.Resume;
             return Math.Min(avoidedAt.Y, end);
         }
 
         resume = Math.Min(limit, end);
         return resume;
+    }
+
+    /// <summary>
+    /// Gets whether one of the boxes too tall for a page of its own stands at the break already, so
+    /// that the room after the break is that box rather than empty space. A box that begins *at* the
+    /// break is the one the page could still move whole, and the page that asks not to be broken inside
+    /// is moved by the rule above this one; a box too tall for any page and already begun has nowhere
+    /// to be moved to.
+    /// </summary>
+    private static Boolean FillsThePage(List<(Double Top, Double Bottom)>? tooTall, Double at)
+    {
+        if (tooTall is null)
+        {
+            return false;
+        }
+
+        foreach (var span in tooTall)
+        {
+            if (span.Top <= at + 0.001)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static BreakClass Boundary(
@@ -1342,12 +1404,22 @@ internal static class PageSequence
             Int32[] avoid,
             String? pageName)
         {
-            units.Add(BoxUnit(
+            var unit = BoxUnit(
                 row,
                 Fragmentainer.Combine(before, PageValue(row.Source.Style.Breaks.Before)),
                 Fragmentainer.Combine(after, PageValue(row.Source.Style.Breaks.After)),
                 avoid,
-                pageName));
+                pageName);
+
+            // The row is the box its own value stands on: a page that cannot hold it moves it whole
+            // rather than splitting it, so the mark belongs on the row's unit and not on a wrapper's
+            // (CSS Break 3 §4.4).
+            if (row.Source.Style.Breaks.Inside == BreakValue.Avoid)
+            {
+                unit.StartsAvoidBottom = Math.Max(unit.StartsAvoidBottom, unit.Bottom);
+            }
+
+            units.Add(unit);
         }
 
         private void CollectLines(
@@ -1396,6 +1468,20 @@ internal static class PageSequence
                     if (index == to - 1)
                     {
                         unit.After = after;
+                    }
+
+                    // An inline that asks not to be broken - an inline table, an inline block - makes
+                    // its line one piece: a page without room for the line moves it whole, and does so
+                    // even when the piece is too tall for a page of its own, because moving is what the
+                    // value asks for and breaking is what the piece refuses (CSS Break 3 §4.4).
+                    foreach (var child in line.Children)
+                    {
+                        if (!PositionedLayout.IsOutOfFlow(child.Source) &&
+                            child.Source.Style.Breaks.Inside == BreakValue.Avoid)
+                        {
+                            unit.StartsAvoidBottom =
+                                Math.Max(unit.StartsAvoidBottom, _axis.End(child));
+                        }
                     }
 
                     units.Add(unit);
