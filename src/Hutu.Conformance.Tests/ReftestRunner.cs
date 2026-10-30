@@ -86,6 +86,44 @@ internal static class ReftestRunner
     }
 
     /// <summary>
+    /// Draws a page's printed pages, but not for longer than <see cref="Limit"/>: the same pages as
+    /// <see cref="DrawPagesAsync"/> with the guard <see cref="Draw"/> puts round one screen drawing, so
+    /// a page that never comes back costs a thread rather than the run.
+    /// </summary>
+    public static IReadOnlyList<SKBitmap> DrawPages(String page)
+    {
+        IReadOnlyList<SKBitmap>? drawn = null;
+        Exception? failure = null;
+
+        var drawing = new Thread(() =>
+        {
+            try
+            {
+                drawn = DrawPagesAsync(page).GetAwaiter().GetResult();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+        });
+
+        drawing.IsBackground = true;
+        drawing.Start();
+
+        if (!drawing.Join(Limit))
+        {
+            throw new TimeoutException($"drawing {Path.GetFileName(page)} as pages was still going after {Limit.TotalSeconds} seconds");
+        }
+
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        return drawn ?? Array.Empty<SKBitmap>();
+    }
+
+    /// <summary>
     /// Draws a page, but not for longer than <see cref="Limit"/>: the same drawing as
     /// <see cref="DrawAsync"/>, with a guard round it.
     /// </summary>

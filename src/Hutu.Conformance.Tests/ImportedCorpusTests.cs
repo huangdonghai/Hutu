@@ -412,6 +412,142 @@ public sealed class ImportedCorpusTests
     }
 
     /// <summary>
+    /// Scores the borrowed print pairs the way a printer sees them: every page drawn in its own page
+    /// box, compared page by page. This is the same corpus as the screen score above, asked the other
+    /// question - the one a page sequence has to answer.
+    /// </summary>
+    [Test]
+    public void TheEngineDrawsTheBorrowedPrintPagesAsPages()
+    {
+        var pairs = Pairs()
+            .Where(pair => Path.GetFileName(pair.Path).Contains("-print", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (Limit > 0 && pairs.Count > Limit)
+        {
+            pairs = pairs.Take(Limit).ToList();
+        }
+
+        var declared = new ConcurrentBag<String>();
+        var differing = new ConcurrentBag<(String Test, String Finding)>();
+        var undrawable = new ConcurrentBag<(String Test, String Finding)>();
+        var drawn = 0;
+        var gaveUp = 0;
+
+        Progress.Begin("print", pairs.Count);
+
+        Parallel.ForEach(pairs,
+            new ParallelOptions { MaxDegreeOfParallelism = Cores },
+            (pair, state, _) =>
+            {
+                if (Volatile.Read(ref gaveUp) >= TimeoutBudget)
+                {
+                    state.Stop();
+                    return;
+                }
+
+                var (how, finding, timedOut) = DrawOneAsPages(pair.Path);
+
+                if (timedOut)
+                {
+                    Interlocked.Increment(ref gaveUp);
+                }
+
+                Interlocked.Increment(ref drawn);
+                Progress.Tick("print", drawn);
+
+                switch (how)
+                {
+                    case Drawn.Declared:
+                        declared.Add(pair.Name);
+                        break;
+
+                    case Drawn.Differs:
+                        differing.Add((pair.Name, finding!));
+                        break;
+
+                    default:
+                        undrawable.Add((pair.Name, finding!));
+                        break;
+                }
+            });
+
+        Progress.Done("print", drawn);
+
+        var report = Report("print", pairs.Count, drawn, gaveUp, declared, differing, undrawable);
+        var path = Path.Combine(Corpus.Root, "build", "reftest-print-score.md");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, report);
+        TestContext.Out.WriteLine(report);
+    }
+
+    /// <summary>
+    /// Draws one print pair and says what became of it. The pair declares its relation exactly as a
+    /// screen pair does; what changes is that both halves are drawn as page sequences.
+    /// </summary>
+    private static (Drawn How, String? Finding, Boolean TimedOut) DrawOneAsPages(String test)
+    {
+        try
+        {
+            var (reference, relation, complaint) = Resolve(test);
+
+            if (reference is null)
+            {
+                return (Drawn.Undrawable, complaint, false);
+            }
+
+            var drawn = ReftestRunner.DrawPages(test);
+            var against = ReftestRunner.DrawPages(reference);
+
+            try
+            {
+                var comparison = ReftestRunner.ComparePages(
+                    drawn,
+                    against,
+                    String.Empty,
+                    writeDiff: false,
+                    allowance: FuzzyAllowance.Of(File.ReadAllText(test)));
+
+                return comparison.Matched == (relation == "match")
+                    ? (Drawn.Declared, null, false)
+                    : (Drawn.Differs, comparison.Matched
+                        ? "it came to the same picture, and the pair says the two must differ"
+                        : $"{comparison.Differing} pixels differ, {comparison.Detail}", false);
+            }
+            finally
+            {
+                foreach (var page in drawn)
+                {
+                    page.Dispose();
+                }
+
+                foreach (var page in against)
+                {
+                    page.Dispose();
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            try
+            {
+                var path = Path.Combine(Corpus.Root, "build", "print-undrawable.log");
+
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.AppendAllText(path, $"## {test}{Environment.NewLine}{exception}{Environment.NewLine}{Environment.NewLine}");
+            }
+            catch
+            {
+                // A run that cannot write its log still has a finding to report.
+            }
+
+            return (Drawn.Undrawable, $"{exception.GetType().Name}: {Line(exception.Message)}",
+                exception is TimeoutException);
+        }
+    }
+
+    /// <summary>
     /// What the quick run found, and how far it got before it stopped. The count of pages drawn is part of
     /// it: a run that stopped after thirty pages has looked at thirty pages, and its ten findings are ten
     /// out of thirty rather than ten out of the corpus.
