@@ -70,14 +70,27 @@ internal static class PageSequence
         var start = 0.0;
         var number = 1;
         PageGeometry? first = null;
+        var tail = false;
 
-        while (start < documentHeight - 0.001)
+        while (start < documentHeight - 0.001 || tail)
         {
             var name = NameAt(units, start);
             var geometry = styles.Page(name, inheritedMargins);
+
+            // A forced break may leave nothing behind it but a zero-height box. That box is still on
+            // the next page, and the page it is on is printed even though it has no height.
+            if (start >= documentHeight - 0.001)
+            {
+                first ??= geometry;
+                pages.Add(new PageSlice(
+                    number, geometry, new Rect(0, start, geometry.ContentWidth, 0), name));
+                break;
+            }
+
             var contentHeight = Math.Max(1, geometry.ContentHeight);
             var limit = Math.Min(documentHeight, start + contentHeight);
-            var cut = Cut(units, start, limit, documentHeight);
+            var cut = Cut(units, start, limit, documentHeight, out var forcedBreak);
+            tail = forcedBreak && HasUnitFrom(units, cut);
 
             if (cut <= start + 0.001)
             {
@@ -97,6 +110,20 @@ internal static class PageSequence
         }
 
         return new PagedLayout(first ?? styles.DefaultPage(inheritedMargins), pages, documentHeight);
+    }
+
+    /// <summary>Gets whether any flow unit begins at or after <paramref name="y"/>.</summary>
+    private static Boolean HasUnitFrom(List<FlowUnit> units, Double y)
+    {
+        foreach (var unit in units)
+        {
+            if (unit.Top >= y - 0.001)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -125,7 +152,8 @@ internal static class PageSequence
     {
         foreach (var unit in units)
         {
-            if (unit.Bottom > start + 0.001)
+            if (unit.Bottom > start + 0.001 ||
+                (unit.Top >= start - 0.001 && unit.Bottom >= start - 0.001))
             {
                 return unit.PageName;
             }
@@ -140,8 +168,9 @@ internal static class PageSequence
     /// none of those the page's own limit - a monolithic box taller than the page has to be cut
     /// somewhere, or the flow would never advance.
     /// </summary>
-    private static Double Cut(List<FlowUnit> units, Double start, Double limit, Double end)
+    private static Double Cut(List<FlowUnit> units, Double start, Double limit, Double end, out Boolean forcedBreak)
     {
+        forcedBreak = false;
         Double? forced = null;
         Double? allowed = null;
         Double? avoided = null;
@@ -184,6 +213,7 @@ internal static class PageSequence
 
         if (forced is { } forcedAt)
         {
+            forcedBreak = true;
             return Math.Min(forcedAt, end);
         }
 
@@ -209,7 +239,9 @@ internal static class PageSequence
 
     private static BreakClass Boundary(FlowUnit previous, FlowUnit next, Dictionary<Int32, Int32> linesOnPage)
     {
-        if (!String.Equals(previous.PageName, next.PageName, StringComparison.Ordinal))
+        if (!String.Equals(previous.EndNameSet ? previous.EndName : previous.PageName,
+                next.StartNameSet ? next.StartName : next.PageName,
+                StringComparison.Ordinal))
         {
             return BreakClass.Forced;
         }
@@ -295,7 +327,9 @@ internal static class PageSequence
             BreakValue inheritedBefore,
             BreakValue inheritedAfter,
             Int32[] avoid,
-            String? pageName)
+            String? pageName,
+            Boolean pageNames = true,
+            Boolean ownPageName = true)
         {
             var source = box.Source;
 
@@ -305,19 +339,21 @@ internal static class PageSequence
                 return;
             }
 
-            var name = source.Style.PageName ?? pageName;
+            var name = pageNames && ownPageName && source.Style.PageName is { } own ? own : pageName;
             var ownBefore = PageValue(source.Style.Breaks.Before);
             var ownAfter = PageValue(source.Style.Breaks.After);
 
             if (box.Kind == LayoutKind.Table)
             {
-                CollectTable(box, units, inheritedBefore, inheritedAfter, avoid, name);
+                CollectTable(box, units, inheritedBefore, inheritedAfter, avoid, name, pageNames);
                 return;
             }
 
             if (source.Kind == BoxKind.Flex)
             {
-                CollectFlex(box, units, inheritedBefore, inheritedAfter, avoid, name);
+                CollectFlex(
+                    box, units, inheritedBefore, inheritedAfter, avoid,
+                    FlexPageName(box, name, pageNames));
                 return;
             }
 
@@ -361,7 +397,7 @@ internal static class PageSequence
                     continue;
                 }
 
-                Collect(child, units, childBefore, childAfter, inside, name);
+                Collect(child, units, childBefore, childAfter, inside, name, pageNames);
                 index++;
             }
 
@@ -383,10 +419,9 @@ internal static class PageSequence
             BreakValue inheritedBefore,
             BreakValue inheritedAfter,
             Int32[] avoid,
-            String? pageName)
+            String? name)
         {
             var source = flex.Source;
-            var name = source.Style.PageName ?? pageName;
             var before = Fragmentainer.Combine(inheritedBefore, PageValue(source.Style.Breaks.Before));
             var after = Fragmentainer.Combine(inheritedAfter, PageValue(source.Style.Breaks.After));
             var inside = source.Style.Breaks.Inside == BreakValue.Avoid
@@ -413,6 +448,23 @@ internal static class PageSequence
                 for (var index = 0; index < lines.Count; index++)
                 {
                     var line = lines[index];
+
+                    if (line.Count == 1)
+                    {
+                        // A line of one item is the item: its own content is what continues down the
+                        // page, so a break written inside it is a break of the line.
+                        Collect(
+                            line[0],
+                            units,
+                            index == 0 ? before : BreakValue.Auto,
+                            index == lines.Count - 1 ? after : BreakValue.Auto,
+                            inside,
+                            name,
+                            pageNames: true,
+                            ownPageName: false);
+                        continue;
+                    }
+
                     var top = Double.MaxValue;
                     var bottom = Double.MinValue;
                     var lineBefore = BreakValue.Auto;
@@ -452,19 +504,15 @@ internal static class PageSequence
 
                 for (var index = 0; index < ordered.Count; index++)
                 {
-                    var item = ordered[index];
-                    var itemName = item.Source.Style.PageName ?? name;
-
-                    units.Add(BoxUnit(
-                        item,
-                        Fragmentainer.Combine(
-                            index == 0 ? before : BreakValue.Auto,
-                            PageValue(item.Source.Style.Breaks.Before)),
-                        Fragmentainer.Combine(
-                            index == ordered.Count - 1 ? after : BreakValue.Auto,
-                            PageValue(item.Source.Style.Breaks.After)),
+                    Collect(
+                        ordered[index],
+                        units,
+                        index == 0 ? before : BreakValue.Auto,
+                        index == ordered.Count - 1 ? after : BreakValue.Auto,
                         inside,
-                        itemName));
+                        name,
+                        pageNames: true,
+                        ownPageName: false);
                 }
             }
 
@@ -472,6 +520,56 @@ internal static class PageSequence
             {
                 units.Add(BoxUnit(flex, before, after, avoid, name));
             }
+
+            // The container answers for its own edges: what one of its items calls a page is a name
+            // inside the container, and the box after it stands on the container's page.
+            units[first].StartName = name;
+            units[first].StartNameSet = true;
+            units[^1].EndName = name;
+            units[^1].EndNameSet = true;
+        }
+
+        /// <summary>
+        /// Gets the page name a flex container takes from its items: the name they all share, or the
+        /// name the container stands in when they do not agree. A page name written deeper inside an
+        /// item does not reach through the container - the flex container answers for its items alone
+        /// (CSS Page 3 §using-named-pages).
+        /// </summary>
+        private static String? FlexPageName(LayoutBox flex, String? inherited, Boolean pageNames)
+        {
+            if (!pageNames || flex.Source.Style.PageName is not null)
+            {
+                return inherited;
+            }
+
+            String? common = null;
+
+            foreach (var item in flex.Children)
+            {
+                if (PositionedLayout.IsOutOfFlow(item.Source) ||
+                    item.Source.Style.Float != FloatSide.None)
+                {
+                    continue;
+                }
+
+                var itemName = item.Source.Style.PageName;
+
+                if (itemName is null)
+                {
+                    return inherited;
+                }
+
+                if (common is null)
+                {
+                    common = itemName;
+                }
+                else if (!String.Equals(common, itemName, StringComparison.Ordinal))
+                {
+                    return inherited;
+                }
+            }
+
+            return common ?? inherited;
         }
 
         /// <summary>
@@ -513,7 +611,8 @@ internal static class PageSequence
             BreakValue inheritedBefore,
             BreakValue inheritedAfter,
             Int32[] avoid,
-            String? pageName)
+            String? pageName,
+            Boolean pageNames)
         {
             var source = table.Source;
             var name = source.Style.PageName ?? pageName;
@@ -545,7 +644,7 @@ internal static class PageSequence
 
                 if (child.Kind == LayoutKind.TableRowGroup)
                 {
-                    CollectRowGroup(child, units, childBefore, childAfter, inside, name);
+                    CollectRowGroup(child, units, childBefore, childAfter, inside, name, pageNames);
                 }
                 else if (child.Kind == LayoutKind.TableRow)
                 {
@@ -553,7 +652,7 @@ internal static class PageSequence
                 }
                 else
                 {
-                    Collect(child, units, childBefore, childAfter, inside, name);
+                    Collect(child, units, childBefore, childAfter, inside, name, pageNames);
 
                     if (child.Source.Kind == BoxKind.TableCaption && units.Count > first)
                     {
@@ -574,7 +673,8 @@ internal static class PageSequence
             BreakValue inheritedBefore,
             BreakValue inheritedAfter,
             Int32[] avoid,
-            String? pageName)
+            String? pageName,
+            Boolean pageNames)
         {
             var source = group.Source;
             var name = source.Style.PageName ?? pageName;
@@ -749,6 +849,7 @@ internal static class PageSequence
                 source.Kind is BoxKind.Grid or BoxKind.Masonry or BoxKind.InlineBlock ||
                 source.Style.Multi.IsMultiColumn ||
                 source.Style.ClipsOverflow ||
+                source.Style.Contain.Block ||
                 source.Flow.IsVertical;
         }
     }
@@ -787,6 +888,22 @@ internal static class PageSequence
         public Int32[] Avoid { get; init; } = Array.Empty<Int32>();
 
         public String? PageName { get; init; }
+
+        /// <summary>
+        /// Gets the name the boundary at the box's start sees, where it differs from the name of the
+        /// page its own content stands on. A flex container whose own name is auto begins on the
+        /// page it stands on even when its first item names a page; the name is what the item's own
+        /// page is called, not a page break written at the container's edge.
+        /// </summary>
+        public String? StartName { get; set; }
+
+        public Boolean StartNameSet { get; set; }
+
+        /// <summary>Gets the name the boundary at the box's end sees, where it differs from
+        /// <see cref="PageName"/>, by the same rule at the other edge.</summary>
+        public String? EndName { get; set; }
+
+        public Boolean EndNameSet { get; set; }
 
         public Int32 Run { get; init; } = -1;
 

@@ -279,6 +279,17 @@ public sealed class PageSequenceTests
         Assert.That(pages.Pages[1].Content.Y, Is.EqualTo(40).Within(0.01));
     }
 
+    [Test]
+    public async Task AZeroHeightBoxAfterAForcedBreakStillHasItsPage()
+    {
+        using var view = await Print(
+            "<style>@page { size: 100px; margin: 0 } body, div { margin: 0 }</style>" +
+            "<div style='height: 50px; break-after: page'></div><div></div>");
+
+        Assert.That(view.Pages!.Count, Is.EqualTo(2), "the zero-height box is on the page after the break");
+        Assert.That(view.Pages.Pages[1].Content.Height, Is.EqualTo(0).Within(0.01));
+    }
+
     private static async Task<HutuViewInternal> Print(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

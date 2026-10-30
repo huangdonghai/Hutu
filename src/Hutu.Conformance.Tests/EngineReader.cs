@@ -151,6 +151,12 @@ internal sealed class EngineReader : IDisposable
     }
 
     /// <summary>
+    /// Gets the pages the current document comes to when it is printed, or null when it was read for
+    /// a screen.
+    /// </summary>
+    public PagedLayout? Pages => _view.Pages;
+
+    /// <summary>
     /// Asks the page as a printing device, so <c>@media print</c> and <c>@page</c> apply. It has to be
     /// said before the page is loaded: the medium is part of what the styles are computed from.
     /// </summary>
