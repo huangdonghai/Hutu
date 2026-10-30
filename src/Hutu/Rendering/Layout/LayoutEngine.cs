@@ -552,6 +552,7 @@ internal sealed record LayoutProfile(
                 style.DecorationInset)
             {
                 Speaker = box.Source,
+                Position = style.UnderlinePosition,
             }
             : null;
     }

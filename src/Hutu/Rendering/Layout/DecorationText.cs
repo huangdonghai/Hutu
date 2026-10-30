@@ -69,6 +69,13 @@ public sealed record DecorationSource(
     /// </summary>
     public Object? Speaker { get; init; }
 
+    /// <summary>
+    /// Gets where this decorating box stands its underlines (CSS Text Decoration 4 §2.7). Two boxes
+    /// that draw the same line but stand it on different sides are different decorators, so the
+    /// position is part of the value the record compares.
+    /// </summary>
+    public TextUnderlinePosition Position { get; init; } = TextUnderlinePosition.Auto;
+
     public Boolean Equals(DecorationSource? other) =>
         other is not null &&
         Underline == other.Underline &&
@@ -78,7 +85,8 @@ public sealed record DecorationSource(
         Color == other.Color &&
         Thickness == other.Thickness &&
         UnderlineOffset == other.UnderlineOffset &&
-        Insets == other.Insets;
+        Insets == other.Insets &&
+        Position == other.Position;
 
     public override int GetHashCode() =>
         HashCode.Combine(
@@ -90,7 +98,8 @@ public sealed record DecorationSource(
                 Color),
             Thickness,
             UnderlineOffset,
-            Insets);
+            Insets,
+            Position);
 }
 
 /// <summary>

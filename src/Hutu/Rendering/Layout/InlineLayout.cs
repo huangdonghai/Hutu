@@ -8160,6 +8160,8 @@ internal sealed class InlineLayout
             // to at least the height of the tallest font on it.
             var ascent = Double.NegativeInfinity;
             var descent = Double.NegativeInfinity;
+            Double? statedLine = null;
+            var onlyText = true;
 
             // How far each fragment reaches above and below the baseline it stands on, kept because a
             // box's alignment is worked out from it once the line knows how far it reached.
@@ -8186,6 +8188,14 @@ internal sealed class InlineLayout
 
                 inFlow = true;
 
+                // A run lifted out of its row by vertical-align reaches past the line-height its
+                // text asks for, and that reach is the line's own height rather than an overflow
+                // of the face; the clamp below is only for the face's content area.
+                if (!IsBaseline(fragment.Style) || fragment.BaselineShift != 0)
+                {
+                    onlyText = false;
+                }
+
                 // An inline element that holds nothing gives the line no height of its own: the line
                 // still exists - the room the box takes along it is what keeps the margins around the
                 // block from folding through it - and is zero-height otherwise (CSS 2.1 §9.4.2, §10.8).
@@ -8204,6 +8214,7 @@ internal sealed class InlineLayout
                 // its whole height as ascent and nothing as descent.
                 if (fragment.IsReplaced)
                 {
+                    onlyText = false;
                     // Its bottom margin edge rests on the baseline, so it reaches nothing below it - a
                     // descent of zero, which is not the same as leaving it out where the line gathers
                     // descents from nothing because a run of text may hang above the baseline.
@@ -8219,6 +8230,7 @@ internal sealed class InlineLayout
                 // across the line included, since those are part of the room it takes up there.
                 if (fragment.Atomic is { } atomic)
                 {
+                    onlyText = false;
                     above[position] = atomic.BlockStartMargin + atomic.Ascent;
                     below[position] = atomic.BlockEndMargin + (atomic.BlockSize - atomic.Ascent);
                     ascent = Math.Max(ascent, above[position]);
@@ -8233,6 +8245,11 @@ internal sealed class InlineLayout
                 var fragmentAscent = metrics.Ascent;
                 var fragmentDescent = metrics.Descent;
                 var lineHeight = fragment.Style.LineHeight;
+
+                if (lineHeight is { } stated && (statedLine is null || stated > statedLine))
+                {
+                    statedLine = stated;
+                }
 
                 if (lineHeight.HasValue)
                 {
@@ -8250,6 +8267,7 @@ internal sealed class InlineLayout
                 // adds the difference, so that stacked lines do not overlap.
                 if (fragment.Ruby is { } annotation)
                 {
+                    onlyText = false;
                     if (annotation.Under)
                     {
                         fragmentDescent += Math.Max(0, annotation.Block - (fragmentDescent - metrics.Descent));
@@ -8325,6 +8343,11 @@ internal sealed class InlineLayout
                 descent = Double.IsNegativeInfinity(descent)
                     ? strutMetrics.Descent
                     : Math.Max(descent, strutMetrics.Descent);
+
+                // The block's own line-height is a floor for the line, however small the runs on it
+                // ask to be (CSS 2.1 §10.8.1). It is the strut that carries that answer.
+                var strutHeight = strutMetrics.Ascent + strutMetrics.Descent;
+                statedLine = statedLine is { } stated ? Math.Max(stated, strutHeight) : strutHeight;
             }
             else if (Double.IsNegativeInfinity(ascent))
             {
@@ -8505,6 +8528,15 @@ internal sealed class InlineLayout
             line.BandShifts = bands;
             line.Ascent = ascent;
             line.Height = ascent + descent;
+
+            // A line of text is as tall as the line-height it asks for, however much taller the
+            // face's own content area is: the glyphs overflow the line rather than growing it
+            // (CSS 2.1 §10.8.1). A replaced box, an atomic inline or a ruby reading is content of
+            // its own and is left to grow the line as it does.
+            if (onlyText && statedLine is { } limit && line.Height > limit)
+            {
+                line.Height = limit;
+            }
 
             // The end of the line is settled once every line is built: the trim a closing punctuation
             // gives up and the glyph a hanging value takes outside the line are decisions about the

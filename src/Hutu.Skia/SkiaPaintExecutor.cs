@@ -1374,13 +1374,33 @@ public sealed class SkiaPaintExecutor
             {
                 // The face gives the line its zero position; text-underline-offset moves it outward
                 // from there, and text-decoration-thickness replaces the face's own width
-                // (CSS Text Decoration 4 §2.4, §2.8). The line's own position is the edge it was measured
-                // to, and the band it is drawn with grows away from the text it stands under - which is
-                // what lets a page thicken a line and have it cover the room on the far side of that edge
-                // rather than the room between the edge and the letters it already left behind.
-                var at = text + (sign * (
-                    (placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset))
-                    + (decoration.UnderlineOffset ?? 0)));
+                // (CSS Text Decoration 4 §2.4, §2.8). In a column the zero position is the side the
+                // page asked for: the text-under edge for auto, under and left, and the right edge
+                // for right. A row keeps the alphabetic zero position, where left and right are
+                // read as auto (CSS Text Decoration 4 §2.7).
+                var extra = decoration.UnderlineOffset ?? 0;
+                var beside = !alongLine && !command.Flow.IsSideways &&
+                    command.Flow.Orientation != TextOrientation.Sideways;
+                Double at;
+                Int32 underlineGrow;
+
+                if (beside && decoration.Position is TextUnderlinePosition.Auto
+                    or TextUnderlinePosition.Under or TextUnderlinePosition.Left)
+                {
+                    at = command.Bounds.X - extra;
+                    underlineGrow = -1;
+                }
+                else if (beside && decoration.Position == TextUnderlinePosition.Right)
+                {
+                    at = command.Bounds.Right + extra;
+                    underlineGrow = 1;
+                }
+                else
+                {
+                    at = text + (sign * (
+                        (placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset)) + extra));
+                    underlineGrow = grow;
+                }
 
                 DrawLine(
                     canvas,
@@ -1398,7 +1418,7 @@ public sealed class SkiaPaintExecutor
                     // follows the direction the offset was counted in, so it is the same sign as that
                     // one rather than the answer to where the line landed - a page that sets a negative
                     // <c>text-underline-offset</c> still asks for an underline (§2.4).
-                    grow);
+                    underlineGrow);
             }
 
             // The face says where its overline goes; a face that will not is answered with the top of

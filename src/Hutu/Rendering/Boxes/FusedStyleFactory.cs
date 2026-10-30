@@ -358,6 +358,12 @@ internal sealed class FusedParent
     /// </summary>
     public RubyAlign RubyAlign { get; init; }
 
+    /// <summary>
+    /// Where an underline stands against the text, inherited like the offset that follows it
+    /// (CSS Text Decoration 4 §2.7).
+    /// </summary>
+    public TextUnderlinePosition UnderlinePosition { get; init; } = TextUnderlinePosition.Auto;
+
     public TextOrientation? Orientation { get; init; }
     public Boolean? CombinesUpright { get; init; }
     public CursorKind Cursor { get; init; }
@@ -486,6 +492,7 @@ internal sealed class FusedParent
         Ruby = style.RubyPosition,
         RubyOverhang = style.RubyOverhang,
         RubyAlign = style.RubyAlign,
+        UnderlinePosition = style.UnderlinePosition,
         Orientation = style.DeclaredTextOrientation,
         CombinesUpright = style.DeclaredTextCombineUpright,
         Cursor = style.Cursor,
@@ -1082,6 +1089,8 @@ internal static class FusedStyleFactory
             RubyOverhang = ComputedStyle.ResolveRubyOverhangFused(
                 find("ruby-overhang"), parent.RubyOverhang),
             RubyAlign = ComputedStyle.ResolveRubyAlignFused(find("ruby-align"), parent.RubyAlign),
+            UnderlinePosition = ComputedStyle.ResolveTextUnderlinePositionFused(
+                find("text-underline-position"), parent.UnderlinePosition),
             OutlineColor = ComputedStyle.ResolveOutlineColorFused(find("outline-color"), color),
             BackgroundClip = ComputedStyle.ResolveBackgroundClipFused(find("background-clip"), find("-webkit-background-clip")),
 

@@ -12,6 +12,28 @@ using System.Globalization;
 namespace Hutu.Rendering;
 
 /// <summary>
+/// Where an underline stands against the text it decorates, as <c>text-underline-position</c> asks
+/// (CSS Text Decoration 4 §2.7).
+/// </summary>
+public enum TextUnderlinePosition : Byte
+{
+    /// <summary>The user agent's own answer: the font's underline position in a row, and the text-under edge beside a column.</summary>
+    Auto,
+
+    /// <summary>Where the face's own underline metrics put it.</summary>
+    FromFont,
+
+    /// <summary>Under the text content, on the side the writing mode calls under.</summary>
+    Under,
+
+    /// <summary>The left edge of the text in a column.</summary>
+    Left,
+
+    /// <summary>The right edge of the text in a column.</summary>
+    Right,
+}
+
+/// <summary>
 /// How a ruby base and its reading are set within the column they share (CSS Ruby 1 §4.3).
 /// </summary>
 internal enum RubyAlign
@@ -3279,6 +3301,9 @@ internal readonly struct ComputedStyle
 
         /// <summary>Gets how a ruby base and its reading are set within their column (CSS Ruby 1 §4.3).</summary>
         internal RubyAlign RubyAlign;
+
+        /// <summary>Gets where an underline stands against the text it decorates (CSS Text Decoration 4 §2.7).</summary>
+        internal TextUnderlinePosition UnderlinePosition;
         internal CssColorValue OutlineColor = CssColorValue.Black;
         internal BackgroundClip BackgroundClip;
 
@@ -4472,6 +4497,7 @@ internal readonly struct ComputedStyle
             mine.Ruby == theirs.Ruby &&
             mine.RubyOverhang == theirs.RubyOverhang &&
             mine.RubyAlign == theirs.RubyAlign &&
+            mine.UnderlinePosition == theirs.UnderlinePosition &&
             mine.Cursor == theirs.Cursor &&
             mine.Transform == theirs.Transform &&
             mine.TextStrokeWidth == theirs.TextStrokeWidth &&
@@ -5044,6 +5070,80 @@ internal readonly struct ComputedStyle
             "space-between" => RubyAlign.SpaceBetween,
             _ => RubyAlign.SpaceAround,
         };
+
+    /// <summary>
+    /// Gets where an underline stands against the text it decorates (CSS Text Decoration 4 §2.7).
+    /// </summary>
+    public TextUnderlinePosition UnderlinePosition => _values.Fused is { } fused
+        ? fused.UnderlinePosition
+        : ReadKeyword("text-underline-position")?.ToLowerInvariant() switch
+        {
+            "from-font" => TextUnderlinePosition.FromFont,
+            "under" => TextUnderlinePosition.Under,
+            "left" => TextUnderlinePosition.Left,
+            "right" => TextUnderlinePosition.Right,
+            _ => TextUnderlinePosition.Auto,
+        };
+
+    /// <summary>
+    /// Resolves where an underline stands from the element's own cascaded declaration, for the fused
+    /// path. The property is inherited, and its two sides may be written together with <c>under</c>
+    /// or <c>from-font</c>; a side wins because it is the more specific answer.
+    /// </summary>
+    public static TextUnderlinePosition ResolveTextUnderlinePositionFused(
+        ICssProperty? declared,
+        TextUnderlinePosition inherited)
+    {
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrWhiteSpace(text) ||
+            text.Equals("inherit", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("unset", StringComparison.OrdinalIgnoreCase))
+        {
+            return inherited;
+        }
+
+        var left = false;
+        var right = false;
+        var under = false;
+        var fromFont = false;
+
+        foreach (var token in text.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            switch (token.ToLowerInvariant())
+            {
+                case "left":
+                    left = true;
+                    break;
+                case "right":
+                    right = true;
+                    break;
+                case "under":
+                    under = true;
+                    break;
+                case "from-font":
+                    fromFont = true;
+                    break;
+            }
+        }
+
+        if (right)
+        {
+            return TextUnderlinePosition.Right;
+        }
+
+        if (left)
+        {
+            return TextUnderlinePosition.Left;
+        }
+
+        if (fromFont)
+        {
+            return TextUnderlinePosition.FromFont;
+        }
+
+        return under ? TextUnderlinePosition.Under : TextUnderlinePosition.Auto;
+    }
 
     /// <summary>
     /// Resolves the ruby alignment from the element's own cascaded declaration, for the fused path.

@@ -113,6 +113,13 @@ public readonly struct WritingModeInfo
     internal Boolean IsRightToLeft => Direction == TextDirection.RightToLeft;
 
     /// <summary>
+    /// Gets whether the writing mode itself turns every glyph a quarter turn, which is what the
+    /// <c>sideways-*</c> modes do. Their text is read along the page rather than down it, so a rule
+    /// beside it follows the row rules rather than the column ones.
+    /// </summary>
+    public Boolean IsSideways => Mode is WritingMode.SidewaysRl or WritingMode.SidewaysLr;
+
+    /// <summary>
     /// Gets whether the text on this line stands against the way the line reads. A row does it by its
     /// nature: its glyphs go left to right while the line runs back from the right edge, and the drawing
     /// follows the glyphs. A column turns its glyphs with the line, so the direction has to be told to
