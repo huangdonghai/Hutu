@@ -690,8 +690,12 @@ public sealed class HutuViewInternal : IDisposable
 
         configuration = configuration.With(CreateRequesterChain());
 
-        configuration = configuration.WithDefaultLoader(
-            new LoaderOptions { IsResourceLoadingEnabled = true });
+        // AngleSharp may load the document itself, but the pictures are the renderer's: its own
+        // loader would request every image before the first layout and discard the answer, only for
+        // the image cache to request it again. The document loader stays; the resource loader is
+        // replaced with one that delegates everything except pictures.
+        configuration = configuration.WithDefaultLoader(new LoaderOptions());
+        configuration = configuration.With<IResourceLoader>(context => new HutuResourceLoader(context));
 
         return BrowsingContext.New(configuration);
     }
