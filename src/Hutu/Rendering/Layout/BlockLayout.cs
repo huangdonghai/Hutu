@@ -1345,9 +1345,11 @@ internal sealed class BlockLayout
 
         var style = child.Style;
 
-        if (!style.Width.IsAuto || style.Height.IsAuto ||
+        // A box states the height the column leaves room for either way: by writing it, or by
+        // capping what its content may make it, which is what a maximum does.
+        if (!style.Width.IsAuto || (style.Height.IsAuto && !style.MaxHeight.HasValue) ||
             style.MinWidth.HasValue || style.MaxWidth.HasValue ||
-            style.MinHeight.HasValue || style.MaxHeight.HasValue ||
+            style.MinHeight.HasValue ||
             style.Breaks.Before != BreakValue.Auto || style.Breaks.After != BreakValue.Auto ||
             style.Breaks.Inside != BreakValue.Auto ||
             style.OutlineStyle != BorderLineStyle.None || style.BoxShadows.Count > 0 ||

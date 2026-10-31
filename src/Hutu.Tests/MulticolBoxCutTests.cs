@@ -117,6 +117,23 @@ public sealed class MulticolBoxCutTests
     }
 
     [Test]
+    public async Task AWrapperCappedByAMaximumLetsTheColumnCutWhatOverflowsIt()
+    {
+        using var view = await Render(
+            "<style>#c { width: 200px; columns: 2; column-gap: 0; column-fill: auto; height: 100px }" +
+            " .cap { max-height: 100px } .tall { height: 200px }</style>" +
+            "<div id='c'><div class='cap'><div class='tall' id='t'></div></div></div>");
+
+        var pieces = Of(view, "t");
+
+        Assert.That(pieces.Count, Is.EqualTo(2), "a wrapper that caps itself at the column's height is no place to stop");
+        Assert.That(
+            pieces.Select(piece => piece.BorderBox.Height).ToList(),
+            Is.EqualTo(new List<Double> { 100, 100 }),
+            "so the content is shared between the columns");
+    }
+
+    [Test]
     public async Task ABoxThatNeedsMorePiecesThanThereAreColumnsIsLeftWhole()
     {
         using var view = await Render(
