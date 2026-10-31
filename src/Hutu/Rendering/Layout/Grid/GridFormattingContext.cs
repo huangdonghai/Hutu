@@ -142,6 +142,10 @@ internal sealed class GridFormattingContext
 
         itemContext = PositionedLayout.ForDescendants(itemContext, box, layout.PaddingBox, layout.BorderBox);
 
+        // An out-of-flow descendant that anchors to this grid stands in the area its own placement
+        // names, even where its parent is a grid item rather than the grid itself (CSS Grid 2 §10.2).
+        RecordDescendantAreas(box, plan, layout.PaddingBox, contentX, contentY);
+
         foreach (var item in plan.Items)
         {
             var rect = new Rect(
@@ -315,7 +319,8 @@ internal sealed class GridFormattingContext
         Double contentY,
         Boolean vertical,
         Boolean inlineFromEnd,
-        Boolean blockFromEnd)
+        Boolean blockFromEnd,
+        Boolean spanOne = false)
     {
         var contentRight = contentX + plan.ContentWidth;
         var contentBottom = contentY + plan.ContentHeight;
@@ -328,14 +333,30 @@ internal sealed class GridFormattingContext
         // A placement that names the same line for both edges spans one track rather than none: an
         // `auto` end from the same start is a span of one (CSS Grid 1 §8.3), and an out-of-flow item
         // gets the same area its in-flow sibling would (positioned-grid-items-023).
-        if (columnStart is { } columnAt && columnEnd == columnAt && columnAt < plan.ColumnLines.Count)
+        // An end the page left auto stands one track past a start it named, which an out-of-flow box
+        // that anchors through a grid item needs and a container's own child does not (CSS Grid 1 §8.3,
+        // measured: grid-item-oof-013 against positioned-grid-items-022).
+        if (spanOne)
         {
-            columnEnd = columnAt + 1;
+            if (columnStart is { } columnAt && columnEnd is null && columnAt < plan.ColumnLines.Count)
+            {
+                columnEnd = columnAt + 1;
+            }
+
+            if (rowStart is { } rowAt && rowEnd is null && rowAt < plan.RowLines.Count)
+            {
+                rowEnd = rowAt + 1;
+            }
         }
 
-        if (rowStart is { } rowAt && rowEnd == rowAt && rowAt < plan.RowLines.Count)
+        if (columnStart is { } columnAgain && columnEnd == columnAgain && columnAgain < plan.ColumnLines.Count)
         {
-            rowEnd = rowAt + 1;
+            columnEnd = columnAgain + 1;
+        }
+
+        if (rowStart is { } rowAgain && rowEnd == rowAgain && rowAgain < plan.RowLines.Count)
+        {
+            rowEnd = rowAgain + 1;
         }
 
         // A column is the inline axis and a row the block one, so a vertical page turns the two
@@ -386,6 +407,72 @@ internal sealed class GridFormattingContext
 
         return (block, standing);
     }
+
+    /// <summary>
+    /// Records the grid area each out-of-flow descendant this grid anchors to stands in. The walk stops
+    /// at any box that lends a frame of its own or is a grid of its own - those answer for the boxes
+    /// inside them - and only a box that names an inset has its area resolved, since one that names none
+    /// is placed by its static position (CSS Grid 2 §10.2, measured: grid-item-oof-013 against
+    /// descendant-static-position-003 and subgrid/abs-pos-001).
+    /// </summary>
+    private void RecordDescendantAreas(
+        Box box, GridPlan plan, Rect paddingBox, Double contentX, Double contentY)
+    {
+        var grid = box.Style.Grid;
+
+        foreach (var child in box.Children)
+        {
+            Walk(child);
+        }
+
+        void Walk(Box parent)
+        {
+            if (PositionedLayout.LendsAFrame(parent) || parent.Kind == BoxKind.Grid)
+            {
+                return;
+            }
+
+            foreach (var child in parent.Children)
+            {
+                if (PositionedLayout.IsOutOfFlow(child))
+                {
+                    if (child.IsBlockLevel && child.Style.GridItem is var item &&
+                        (NamesBoth(item) || HasAnInset(child.Style.Position)))
+                    {
+                        var (area, _) = OutFlowArea(
+                            child.Style.GridItem,
+                            grid,
+                            plan,
+                            paddingBox,
+                            contentX,
+                            contentY,
+                            vertical: box.Flow.IsVertical,
+                            inlineFromEnd: box.Flow.InlineSign < 0,
+                            blockFromEnd: box.Flow.BlockSign < 0,
+                            spanOne: true);
+
+                        _engine.SetAbsoluteArea(child, area);
+                    }
+
+                    continue;
+                }
+
+                Walk(child);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets whether a placement names an inset of both axes, which is an area a box can stand in even
+    /// without an offset of its own.
+    /// </summary>
+    private static Boolean NamesBoth(GridItemStyle item) =>
+        (item.ColumnStart.Kind != GridLineKind.Auto || item.ColumnEnd.Kind != GridLineKind.Auto) &&
+        (item.RowStart.Kind != GridLineKind.Auto || item.RowEnd.Kind != GridLineKind.Auto);
+
+    /// <summary>Gets whether the box names an offset of its own, which is what a grid area places.</summary>
+    private static Boolean HasAnInset(PositionStyle position) =>
+        !position.Top.IsAuto || !position.Right.IsAuto || !position.Bottom.IsAuto || !position.Left.IsAuto;
 
     /// <summary>Gets the alignment a start or end keyword comes to where the axis grows the other way.</summary>
     private static FlexAlignment Turned(FlexAlignment align, Boolean fromEnd) =>
@@ -773,7 +860,10 @@ internal sealed class GridFormattingContext
         // An out-of-flow child is placed against the grid's lines, so they have to be remembered where
         // one exists: only the pass that arranges the container is asked, because a grid whose frame is
         // written with a clamped repetition has more lines to record than anything reads them for.
-        var placed = forOutOfFlow && HasOutOfFlowChild(box);
+        // The lines are remembered for every pass that arranges the container: an out-of-flow box that
+        // anchors here - the container's own child or a grid item's - stands on them, and a pass that
+        // sizes only the inline extent is not the one that places anything.
+        var placed = forOutOfFlow;
 
         for (var index = 0; decorated && index + 1 < columnTracks.Count; index++)
         {

@@ -1432,6 +1432,16 @@ internal sealed record LayoutProfile(
     internal FloatTracks? FloatsOf(Box box) => _floats.TryGetValue(box, out var tracks) ? tracks : null;
 
     /// <summary>
+    /// Gets the grid area an out-of-flow box stands in, where a grid container is the frame it anchors
+    /// to and the box names the lines of an area (CSS Grid 2 §10.2, measured: grid-item-oof-013).
+    /// </summary>
+    private readonly Dictionary<Box, Rect> _absoluteAreas = new();
+
+    internal void SetAbsoluteArea(Box box, Rect area) => _absoluteAreas[box] = area;
+
+    internal Rect? AbsoluteAreaOf(Box box) => _absoluteAreas.TryGetValue(box, out var area) ? area : null;
+
+    /// <summary>
     /// Lays an out-of-flow box out against its containing block. It is the block context that calls
     /// this, once the in-flow children have been placed, because an <c>absolute</c> or <c>fixed</c>
     /// box takes no part in their stacking.

@@ -1194,7 +1194,12 @@ internal static class FusedStyleFactory
             ? GridStyle.ReadFused(find, face, dimensions)
             : null;
 
-        values.GridItem = parent.InGrid ? GridItemStyle.ReadFused(find) : null;
+        // An out-of-flow box can name a grid area even where its parent is not in the grid itself: its
+        // containing block may be a grid container further up, and the placement applies to it all the
+        // same (CSS Grid 2 §10.2, measured: grid-item-oof-013).
+        values.GridItem = parent.InGrid || values.Position?.IsOutOfFlow == true
+            ? GridItemStyle.ReadFused(find)
+            : null;
 
         // The gap decorations belong to the four kinds of box that can put a gap between anything: a
         // flex container, a grid one - the grid lanes spellings carry the same word - and a

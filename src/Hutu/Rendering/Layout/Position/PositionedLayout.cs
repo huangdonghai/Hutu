@@ -144,6 +144,13 @@ internal sealed class PositionedLayout
             ? context.CapturedContainingBlock ?? context.ViewportRect
             : context.AbsoluteContainingBlock;
 
+        // A box anchored to a grid container stands in the area its own placement names, whether it is
+        // the grid's child or a descendant of one (CSS Grid 2 §10.2, measured: grid-item-oof-013).
+        if (position.Position == PositionMode.Absolute && _engine.AbsoluteAreaOf(box) is { } area)
+        {
+            containingBlock = area;
+        }
+
         var childContext = context.ForContainingBlock(containingBlock);
 
         // An out-of-flow box resolves its offsets against this frame, so a shape its offset-path draws

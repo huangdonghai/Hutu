@@ -805,6 +805,17 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`widows-block-in-inline-001` 889 → **0**；全量屏幕 **2040 → 2039（新增 0）**；单测 2180；打印 189/198。
 
+### 9.56 孙级 abspos 的网格区域：三条判别条件让它与静态位置/子网格共存
+
+`grid-item-oof-013`（分片 grid 里，**孙级**绝对定位项按 `grid-row-start` 落在对应行）需要整条链路：融合样式对 OOF 盒也读 `GridItem`（原来只在 `parent.InGrid` 时读）；`GridFormattingContext` 在排布时记录“后代 abspos 的区域”（走 `OutFlowArea`，`spanOne: true`——只给起始行时按规范跨一条轨道）；`PositionedLayout.Arrange` 命中该区域时替换包含块；行线映射对所有**排布 pass** 都补齐（`placed = forOutOfFlow`，只省成本、不改语义）。
+
+前两次尝试分别弄红 `positioned-grid-items-022`（直接子盒的 auto 末端）与 `descendant-static-position-003`（孙级**静态位置**）、`subgrid/abs-pos-001`（子网格借线）。最终加的判别条件：
+1. `spanOne` 只对**后代路径**生效（直接子盒仍由 `ArrangeOutOfFlow` 走原逻辑）；
+2. 记录时**不进入嵌套 grid**（子网格自己会记自己的后代）；
+3. 只记录“**两轴都有命名**（`NamesBoth`）**或**盒自身带 inset（`HasAnInset`）”的后代——只命名一轴且无 offset 的盒由静态位置摆放（003）。
+
+实测：`grid-item-oof-013` 与 `css-grid/abspos/positioned-grid-descendant-containing-block-009/010/013`、`positioned-grid-descendants-017` 共 **5 对转绿**；全量屏幕 **2039 → 2034（新增 0）**；单测 2180；打印 189/198。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
