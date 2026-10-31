@@ -589,6 +589,12 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 结论：flex 项的跨栏切片要**在 `AddBoxCut` 内部**做"第一片 = 本栏剩余"，并让填充端把剩余空间告诉它（§9.17/§9.22 的 plan 需要携带每栏已用量），而不是另起一条切块路径。那一步是 flexbox 多行一族（065-071/093-096）的共同前置。
 
+### 9.30 块被"推走"、flex 项被"切开"：同一形状两套行为
+
+按 §9.29 在 `PlanMulticolRun` 里给 `AddBoxCut` 的片也开了"按剩余空间切"（`DividesHere = Divides || Offset >= 0`，续排带盒内绝对 offset，`Whole` 用 `child.Whole`）。`071` 依旧 10000，而 `borders` 一族 **0 → 6**：`borders-001` 的 120 高边框盒在还剩 5 的栏里，Chrome 是**整块推到第 2 栏**（ref 明说上边框在第 2 栏），不是切 5；`071` 的 160 高 flex 项在还剩 60 的栏里，Chrome 却是**切 60**。两者都是"无可断内容 + 声明尺寸"的盒，差别只在来源：一个是栏容器的块级子盒，一个是 flex 容器的项。
+
+所以"按剩余空间切"不能只看盒形，还要知道它是谁断的：flex 项的跨栏切片要在 `FlexFormattingContext` 把项交给栏容器时带上这个语义（项属于 flex 容器，容器才决定在哪里断），而不能由 `AddBoxCut` 或 plan 一概而论。已回滚（`borders` 恢复 0），工作树停在 `5a51e480`。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
