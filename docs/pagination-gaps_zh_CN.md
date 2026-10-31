@@ -457,7 +457,12 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 实测：屏幕全量 **2093 → 2091（新增 0）**；转绿 `css-break/flexbox/single-line-column-flex-fragmentation-026`、`gecko/abs-pos/multi-column-1`、`gecko/bugs/379349-2a`；`borders-001/005`、`multicol-span-all-fieldset-002/003` 保持绿；单测 2180；打印 189/198 不变。
 
-=> 下一步沿用同一机制：OOF 盒子**跨过栏边界时按栏分片**（379349 的 ref 第三条边带落在容器外，仍按整盒摆放；`out-of-flow-in-multicolumn` 9 对需真正的逐栏分片），以及同源的 `single-line-column-flex-fragmentation-070a-d/071`。
+
+### 9.15 试过"栏内子盒持有的 OOF 续栏"（未翻绿，已回滚）
+
+在 `ArrangeMulticolRun` 排好一个栏内子盒后，把它持有的 out-of-flow 子盒按栏带切开：可见部分设 `FragmentClip`，余下部分把**包含块连带平移**（`+pitch` 进下一栏、`-boxHeight` 上移）再排一次、只取该 OOF 子盒加进树。实现完整、`026/379349/borders-001` 保持绿，但 `out-of-flow-in-multicolumn-001/004` 残差**一点没动**（840/1600 px）。
+
+dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里是**被推到第 2 栏**（fill 语义），Chrome 则把它**切开**（10 在栏 1 底、10 在栏 2 顶）——abs 的静态位置随之分片。这是"并行流"模型：只要含有定位后代，块就不该整块下推。下一步应在 `Fragmentainer.Fill`/`MulticolChild` 上体现这一点（含 OOF 后代的子盒允许跨栏），而不是继续在 abs 一侧打补丁。=> 下一步沿用同一机制：OOF 盒子**跨过栏边界时按栏分片**（379349 的 ref 第三条边带落在容器外，仍按整盒摆放；`out-of-flow-in-multicolumn` 9 对需真正的逐栏分片），以及同源的 `single-line-column-flex-fragmentation-070a-d/071`。
 
 => 这一族的真正缺口是**栏内 abspos 跨栏分片**（CSS Position 3 §5.5：OOF 后代由片段器分片，跨过栏边界的那一段在下一栏顶部继续）。026 的 abs 正好落在第一栏内（不需要分片），而 379349 的 ref 需要。下一步实现它：在 `ArrangeMulticolChildren` 之后，把包含块落在本盒流内的 OOF 盒子按其量出的矩形与各栏求交，逐栏摆放（平移到该栏 x、裁到该栏）——这与 `out-of-flow-in-multicolumn` 9 对同源。
 **试过"裁剪盒的内容切片"（未提交）**：给 `LayoutBox` 加 `FragmentClip`、让 `OverflowClipEdge` 认它、`AddBoxCut` 放行 `overflow: clip` 的盒子、切出的片按**整盒**排布再裁到片。`borders-001/005` 保持绿，但 `single-line-column-flex-fragmentation-026` 一点没动——探针显示该页 `AddBoxCut` **根本没被调用**：dump 里 flex 容器仍是 100 宽（= 容器宽），说明 `ColumnsOf` 在这些页没走分栏路径。下一步先查 `ColumnsOf` 为何对 `columns:2; width:100px` 的子盒判否（在 `ColumnsOf` 内打一条探针），再谈内容切片。
