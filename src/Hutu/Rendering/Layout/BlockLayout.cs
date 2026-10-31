@@ -1477,11 +1477,13 @@ internal sealed class BlockLayout
             // What stands before and after the child is the margin it presents to the stack, not only
             // the one it wrote: a first child's margin travels out through a parent that does not seal
             // it, and the column has to leave that room too.
+            // The four sides are the box's own: block start and end, inline end and start. A box whose
+            // lines run down the page stands its inline margins above and below instead of beside it.
             var margin = new Thickness(
                 CollapsedStart(child, box.Flow, share),
-                used.Right,
+                vertical ? used.Bottom : used.Right,
                 CollapsedEnd(child, box.Flow, share),
-                used.Left);
+                vertical ? used.Top : used.Left);
             var breaks = child.Style.Breaks;
             var (before, after) = BoundaryBreaks(child);
 
