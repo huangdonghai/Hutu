@@ -163,7 +163,7 @@ internal static class Fragmentainer
         }
 
         var extents = new Double[fragments];
-        var tallest = Tallest(children, fragments);
+        var tallest = Math.Max(Tallest(children, fragments), Indivisible(children));
         var low = 0.0;
         var high = Total(children);
 
@@ -266,6 +266,49 @@ internal static class Fragmentainer
         }
 
         return total;
+    }
+
+    /// <summary>
+    /// Gets the height of the tallest run of lines that cannot be cut at all: a run with too few lines to
+    /// leave the orphans one fragment and the widows the next is no run the page lets a break fall in, so
+    /// the whole of it has to stand in one fragment (CSS Break 3 §3.3, measured: widows-orphans-002).
+    /// </summary>
+    private static Double Indivisible(IReadOnlyList<FragmentChild> children)
+    {
+        var tallest = 0.0;
+        var index = 0;
+
+        while (index < children.Count)
+        {
+            var run = children[index].Run;
+
+            if (run < 0)
+            {
+                index++;
+                continue;
+            }
+
+            var lines = 0;
+            var span = 0.0;
+            var widows = 0;
+            var orphans = 0;
+
+            while (index < children.Count && children[index].Run == run)
+            {
+                lines++;
+                span += children[index].Height;
+                widows = Math.Max(widows, children[index].Widows);
+                orphans = Math.Max(orphans, children[index].Orphans);
+                index++;
+            }
+
+            if (lines < Math.Max(1, widows) + Math.Max(1, orphans))
+            {
+                tallest = Math.Max(tallest, span);
+            }
+        }
+
+        return tallest;
     }
 
     /// <summary>

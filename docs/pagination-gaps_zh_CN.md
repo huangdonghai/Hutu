@@ -749,6 +749,14 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：065/067/070/071 曾全绿但把 `gecko/flexbox/pagination/flexbox-multi-row-1a` 弄红；加“声明高”限制后最终 **094、095 转绿**（另有两条非 flex 对随之转绿），`065/067/070/071` 因自动高回到红；全量屏幕 **2061 → 2057（新增 0）**；单测 2180；打印 189/198。096（行跨界被切开）、068/069/093 仍红，是下一轮。
 
+### 9.50 平衡器的最小片高：行数不够孤儿+寡行的段不可切
+
+`widows-orphans-002`（绝对定位的收缩宽多栏，两个 `X<br>X` 段落、`widows:2`）应平衡成 2×2；我们在 4 栏各放一行。原因是平衡器的下限只取“最高子盒”（一行 17.72），于是 1 行高的候选片被接受；而两行一段、orphans 1 + widows 2 超过段长，**任何切法都不合法**（`KeepsRun` 里孤儿下限会压过寡行，切出 1+1）。
+
+修法：`Fragmentainer.Indivisible` 找出“行数 < orphans + widows”的段，把它的**整段高度**作为平衡下限；这类段在平衡搜索里视为不可切（仍可在最后一片溢出）。限定在平衡路径（`Balance`），`column-fill: auto` 的填充仍按 `KeepsRun` 的既有优先序。
+
+实测：`widows-orphans-002` 248 → **0**；全量屏幕 **2057 → 2056（新增 0）**；单测 2180；打印 189/198。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
