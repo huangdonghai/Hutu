@@ -4442,27 +4442,36 @@ internal sealed class BlockLayout
                         width,
                         child.Whole > 0 ? child.Whole : height);
 
-                    parent.Children.Add(_engine.ArrangeFlexFragment(
+                    var windowRect = new Rect(x + child.Margin.Left, y, width, windowHeight + windowEdge);
+                    var windowSlice = new FragmentSlice(
+                        new Thickness(
+                            windowStarts ? windowBorder.Top : 0,
+                            windowBorder.Right,
+                            child.Last ? windowBorder.Bottom : 0,
+                            windowBorder.Left),
+                        new Thickness(
+                            windowStarts ? windowPadding.Top : 0,
+                            windowPadding.Right,
+                            child.Last ? windowPadding.Bottom : 0,
+                            windowPadding.Left),
+                        windowStarts,
+                        child.Last,
+                        windowWhole);
+                    var windowed = _engine.ArrangeFlexFragment(
                         child.Box,
-                        new Rect(x + child.Margin.Left, y, width, windowHeight + windowEdge),
+                        windowRect,
                         childContext,
                         windowWhole,
                         child.Offset,
                         windowHeight,
-                        new FragmentSlice(
-                            new Thickness(
-                                windowStarts ? windowBorder.Top : 0,
-                                windowBorder.Right,
-                                child.Last ? windowBorder.Bottom : 0,
-                                windowBorder.Left),
-                            new Thickness(
-                                windowStarts ? windowPadding.Top : 0,
-                                windowPadding.Right,
-                                child.Last ? windowPadding.Bottom : 0,
-                                windowPadding.Left),
-                            windowStarts,
-                            child.Last,
-                            windowWhole)));
+                        windowSlice);
+
+                    // A window is one fragmentainer's: a line a break cut through stands above the next
+                    // window and is not drawn here, so what the window holds is clipped to its own box
+                    // (measured: multi-line-row-flex-fragmentation-096, whose straddling line showed
+                    // 50 pixels in a 60-pixel column before this).
+                    windowed.FragmentClip = windowRect;
+                    parent.Children.Add(windowed);
 
                     y += windowHeight + windowEdge + (child.Last ? child.Margin.Bottom : 0);
                     continue;

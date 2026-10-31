@@ -307,14 +307,18 @@ internal sealed partial class FlexFormattingContext
         lines.Sort(static (left, right) => left.Start.CompareTo(right.Start));
 
         var index = 0;
+        var carry = 0.0;
 
         while (index < lines.Count)
         {
             // The window that starts the container begins at its own start, so the leading space an
             // alignment laid down is kept; a window after a break begins at its first line, since the
             // break stands where the space before it would have (measured:
-            // multi-line-row-flex-fragmentation-095/096).
-            var start = index == 0 ? 0.0 : lines[index].Start;
+            // multi-line-row-flex-fragmentation-095/096). A line the window before this one was cut
+            // through begins that much above the top, so only the part not yet shown stands in it
+            // (measured: -096, where a fifty-pixel line shows 2.5 pixels in one column and 47.5 in the
+            // next).
+            var start = index == 0 ? 0.0 : lines[index].Start + carry;
             var end = start;
 
             while (index < lines.Count && lines[index].Start + lines[index].Size - start <= room + 0.001)
@@ -322,6 +326,20 @@ internal sealed partial class FlexFormattingContext
                 end = lines[index].Start + lines[index].Size;
                 index++;
             }
+
+            // Room that runs out inside a line cuts it, so long as the window holds a line already:
+            // the flow makes progress either way. Room that runs out in the space before the next
+            // line cuts nothing - the window ends with the line it holds and the next line begins
+            // its own window (measured: multi-line-row-flex-fragmentation-065/067, whose hundred-
+            // pixel row gaps stand at the break).
+            if (index < lines.Count && end > start && lines[index].Start < start + room - 0.001)
+            {
+                carry = start + room - lines[index].Start;
+                windows.Add((start, room));
+                continue;
+            }
+
+            carry = 0;
 
             // A line taller than the room still takes a window of its own, overflowing it: a flow has
             // to make progress even where the page asked for more than the column can give.
@@ -417,8 +435,11 @@ internal sealed partial class FlexFormattingContext
         foreach (var item in plan.Items)
         {
             var at = blockIsY ? item.OffsetY : item.OffsetX;
+            var size = blockIsY ? item.BorderBoxHeight : item.BorderBoxWidth;
 
-            if (at >= start - 0.001 && at < end - 0.001)
+            // An item the window falls over belongs to it, including one the window before it was cut
+            // through: that one stands above the window's top and only its tail shows.
+            if (at < end - 0.001 && at + size > start + 0.001)
             {
                 members.Add(item);
                 shift = Double.IsNaN(shift) ? at : Math.Min(shift, at);
@@ -428,10 +449,16 @@ internal sealed partial class FlexFormattingContext
         // The piece that starts the container keeps the leading space the whole laid down, the way a
         // column that begins the flow keeps its block-start room; a piece after a break has none, since
         // the break itself stands where the leading space would have (measured:
-        // multi-line-column-flex-fragmentation-060/061).
+        // multi-line-column-flex-fragmentation-060/061). A line cut through by the break before this
+        // piece begins above its top, so the piece starts where the cut fell (measured:
+        // multi-line-row-flex-fragmentation-096).
         if (Double.IsNaN(shift) || offset < 0.001)
         {
             shift = 0;
+        }
+        else
+        {
+            shift = Math.Max(shift, start);
         }
 
         var contentX = borderBox.X + border.Left + padding.Left;

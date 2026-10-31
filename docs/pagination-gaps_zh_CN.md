@@ -881,6 +881,17 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 - **行内拆段**：`box-decoration-break-clone-split-inline`（35314，与 `block-in-inline-015-print` 同源）。
 - **竖排其它**：`break-inside-avoid-min-block-size-2`（123400，竖排多栏里 break-inside:avoid + min-block-size）。
 
+### 9.65 行向 flex：栏可以在行中间切开，下一栏从切点续画
+
+`multi-line-row-flex-fragmentation-096`（`align-content:space-evenly`、180 高、3 行×50、栏高 60）的 Chrome 真值：行 1 在首片（保留首端分布间隙 7.5），行 2 从次片顶部（间隙被断点吞掉），**行 3 被栏切开**——次片底部显示 2.5px、第三片顶部续 47.5px；三个容器片段宽 144、偏移 0/60/120。三处配合才闭合：
+
+1. `Windows`：当窗口已有一行、而剩余空间**停在下一行内部**（`lines[index].Start < start + room`）时，窗口在 `start + room` 处切，下一窗口起点带上 `carry = cut - 下一行起点`，该行因此从窗口顶部上方 `carry` 处开始，只露尾巴；若余量停在**行间隙**里（`065/067` 的 `row-gap:100px`），不切，保持旧行为——这条判别器正是历史上 `cursor = end` 方案弄红 065/067 的原因。
+2. `ArrangeFragment`：成员归属改为**相交**（`at < end && at + size > start`），并让 `shift` 取 `max(首成员, start)`，被切的行才不会被当成上一片的成员而丢掉。
+3. `ArrangeMulticolRun` 的 relay 分支：给窗口片段设 `FragmentClip = 窗口矩形`（此前 relay 片段从不裁剪，交叠行在 60 高的栏里画满 50px 并溢出）。
+
+实测：`096` 7000 → **0**；`065/067` 保持绿；`069` 21300 → 17750（行数不同，尚需项窗口）；`093` 8000 不变（需按项位置窗口，见 §9.64）。全量屏幕 **2016 → 2015（新增 0，修复 1）**；单测 2180；打印 189/198。
+
+
 
 
 
