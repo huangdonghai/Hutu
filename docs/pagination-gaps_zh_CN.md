@@ -551,6 +551,12 @@ dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里�
 
 实测：`break-between-avoid-003` 5000 → **0** 转绿；全量屏幕 7 对绿（另有 `overflow-clip-012`、`table-row-paint-htb-ltr`、`table-section-paint-htb-ltr`、`flexbox_stf-table-row-group`、`text-transform-full-size-kana-007`），新增失败 0（`gecko/text/476378-soft-hyphen-fallback` 整量偶现、单跑两遍皆绿，仍是已知 flaky）；单测 2180；打印 189/198；`wpt/css-break` 87 → **86**。
 
+### 9.25 续排的片落回下一栏：`abspos-in-opacity-001` 转绿
+
+§9.22 记的那一行终于带对了上下文：`ArrangeMulticolRun` 的非换行分支用 `Math.Max(counts.Count, cells.Count)` 作列数。§9.22 时单独改它翻了 093 的 1px 又没翻绿，所以回滚；现在切块已经能分片（§9.21），续排片必须落到**下一栏**而不是下一行。`abspos-in-opacity-001`（`position:relative` > `opacity:.5` > 200 高 abs，切成两片各 100）第一片的 abs 落在栏 1、第二片落在栏 1 的下方——列数一改，第二片到栏 2 顶，蓝底上的 50% 红正好铺成 100×100 的紫色方块。`abspos-in-opacity-002/003` 也从 16000/13000 降到 8000/9000（未绿）。
+
+实测：`abspos-in-opacity-001` 10000 → **0** 转绿；全量屏幕 8 对绿、新增失败 0（`gecko/bugs/1608124-1` 是字体回退页，整量偶现、单跑两遍皆绿，仍是 flaky）；单测 2180；打印 189/198；`wpt/css-break` 86 → **85**。§9.22/§9.23 里那行从此落地。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

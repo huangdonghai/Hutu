@@ -3485,7 +3485,7 @@ internal sealed class BlockLayout
                 parent,
                 content.X,
                 content.Y,
-                wraps ? columns : Math.Max(1, counts.Count),
+                wraps ? columns : Math.Max(1, Math.Max(counts.Count, cells.Count)),
                 share,
                 multi.Gap,
                 boxHeight,
