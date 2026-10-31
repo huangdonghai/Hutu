@@ -774,7 +774,9 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 2. **竖排表格轴映射 + 竖排多栏块轴切片**（约 13 对：table 的 vlr/vrl paint 10、collapsed vlr/vrl 2、`break-inside-avoid-min-block-size-2`）。表格网格需把“列内联尺寸→物理高、行块尺寸→物理宽、vertical-rl 自右向左”；竖排多栏还需沿块轴（x）切宽于栏的子盒（当前把子盒塞进不同栏而不是沿 x 堆叠）。
 3. **repeated-section 的表头/表脚重复**（4 对）：需给 `FragmentSlice` 加片段偏移/高度，让表格在每个片段顶部重画表头并**从该片可用高度中扣除**，即“嵌套 fragmentainer + 重复区段”。
 
-小项：`grid-item-oof-013`（分片 grid 内**孙级** abspos 按 `grid-row-start` 取区域——`OutFlowArea` 已有，缺的是“后续定位、包含块为 grid”的接线）；box-shadow-002/004/005 是分数坐标的抗锯齿差（按规则跳过）。
+小项：`grid-item-oof-013`（分片 grid 内**孙级** abspos 按 `grid-row-start` 取区域）；box-shadow-002/004/005 是分数坐标的抗锯齿差（按规则跳过）。
+
+**`grid-item-oof-013` 试过整条链路并回退（未提交）**：①融合样式对 OOF 盒也读 `GridItem`（原来只在 `parent.InGrid` 时读）；②`GridFormattingContext` 记录“孙级 abspos 的网格区域”（走 `OutFlowArea`，停在就近的 frame）；③`PositionedLayout.Arrange` 命中该区域时替换包含块；④`HasOutOfFlowChild`/行线映射认这些后代（否则 `plan.RowLines` 为空、区域退化为整盒）；⑤只给起始行时按规范跨一条轨道（仅对这条后代路径生效）。结果：目标对与 4 个 `css-grid/abspos` 转绿，但 `descendant-static-position-003`（孙级静态位置）与 `subgrid/abs-pos-001` 变红，净 +2 但门禁要求 0 新增，整片回退。下一轮需先弄清 Chrome 对“孙级 abspos 静态位置 + 网格区域”的优先序（003 的 abs 盒没有 inset，静态位置与区域的夹取顺序不同）。
 
 ### 9.53 片段里的重复区段 + fill 多栏自身行的 orphans 让位（两者缺一不可）
 
