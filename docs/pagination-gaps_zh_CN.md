@@ -651,6 +651,12 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 剩下 caption/结构一侧还有 `table-caption-with-block`（基线里的大差对）和模型重排的 `sections-and-captions-mixed-order`；竖排表格分片仍是最大的一块（~10 对）。
 
+### 9.39 没有行的表格网格也要拿到声明的表高（`table-border-008` 差最后一条黑带）
+
+`table-border-008`：`height:180` 的表格只有两个 150 高的 caption、没有行，放在 6×100 的栏里。§9.38 之后声明的表高归网格，但 `CompleteGrid` 的"余量"只伸给**行**——没有行就没人接，网格还是 0，整表 320 而不是 500。补一行：`targetHeight` 有值而 `Rows.Count == 0` 时，网格自己就是那个高。量到 `table-border-008` 13100 → **1000**，几何与 ref 的三段结构一致（表格 500 高、切成 5 片、caption 带不画背景）。
+
+剩下的 1000 px 是一条 `x=118..367, y=90..109` 的黑带：ref 有、我们没有——像是切口两侧某片的边框归属（ref 的草图画的是首片有上边框无下、末片有下边框无上、中间无边框）。这一行改动本身不翻绿（按"不翻绿不动"回滚），但结论留给下一片：补上黑带的归属即可让 `table-border-008` 转绿。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
