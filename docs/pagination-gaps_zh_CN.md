@@ -434,6 +434,13 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 **下一片（最大解锁）：按片裁内容。** 切片盒子的子盒按**整盒**排一次，每片只画属于自己那一段（`BackgroundOrigin` 已有整盒矩形，渲染时再加一条裁到分片的 clip），不再按片重排。它同时解锁 `transform-006/008`、`break-inside-avoid-min-block-size-2`、`table/repeated-section/text-in-nested-multicol`、`out-of-flow` 的一部分，以及 `widows-orphans-021/022` 这类"float/abs 在分片块里"的用例。再往后是竖排多栏（`ColumnsOf` 现在对 `box.Flow.IsVertical` 直接返回 false），解锁 `borders-006/007`、`box-shadow-003/004`。
 
+### 9.8 按片裁内容：做出来了，但被 float 那一侧挡住
+
+实现过的版本（三处）：`BlockLayout.Arrange` 里切片盒子的内容按**整盒**（`FragmentSlice.Whole` + 盒子自己的 insets）排一次；`LayoutEngine.ResolveDecorations` 给带内容的切片盒子打开 `ClipsOverflow`，于是每片只画自己那一段；`AddBoxCut` 允许切"断点在行里"的盒子（`HoldsBlockChildren` 为假，float 不算断点；`Height.IsAuto` 且无 float 的仍不切）。
+
+实测：`box-decoration-break-clone-009`、`flexbox/multi-line-column-flex-fragmentation-041` 转绿，`transform-006` 从 45771 降到 **7226**（变换盒有了自己的分片，但 ref 还要求每片各自算 `transform-origin`，残差仍在）。整族 +7：`CSS2/floats-clear-multicol-001` 变红——它的 ref 页 `.container`（250 高、只有空白文本子节点）因此被切，test 页同一个 `.container` 里是两个 float 加一个 `br`、高度由 float 撑出（auto），后一道门槛把它留在不切，两侧发散；再把 float 从"断点"里排除、给 float 撑高的盒子开口，仍差 9510 px（`.clear` 落点与 aqua 位置不对）。这条要靠 **block 内 float 跨栏分片**才解得掉，与 `float-009`、`float-017`、`widows-orphans-021/022`、`floats-clear-multicol-001` 是同一块。整片回滚。
+
+
 
 
 
