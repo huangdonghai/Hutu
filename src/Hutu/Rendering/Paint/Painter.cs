@@ -140,7 +140,6 @@ internal sealed class Painter
     private Int32 _cutDepth;
 
     /// <summary>No box above this one was written to be cut.</summary>
-    private static readonly List<Rect> NoCuts = [];
 
     /// <summary>
     /// Gets the box whose background the canvas is painted with: the root's own when the root states a
@@ -315,7 +314,6 @@ internal sealed class Painter
         public Boolean IsEmpty => Below.Count == 0 && Pending.Count == 0 && Above.Count == 0;
     }
 
-    private static readonly List<ClipEdge> NoClips = [];
 
     /// <param name="deferred">
     /// Where a positioned descendant that belongs to a stacking context above this box is left, or null
@@ -1007,7 +1005,7 @@ internal sealed class Painter
                 {
                     PositionMode.Relative => CopiesOf(stack.ActiveClips),
                     PositionMode.Absolute => CopiesOf(stack.ChainClips),
-                    _ => child.HasStackingLevel ? CopiesOf(stack.ActiveClips) : NoClips,
+                    _ => child.HasStackingLevel ? CopiesOf(stack.ActiveClips) : [],
                 };
 
                 var waits = child.ZIndex < 0 ? stack.Below : child.ZIndex == 0 ? stack.Pending : stack.Above;
@@ -1059,7 +1057,7 @@ internal sealed class Painter
     /// Gets the clips standing around a box that stayed in the flow, or no clips where none do - the list
     /// a gathered box carries is only ever read, so an empty one needs no copy.
     /// </summary>
-    private static List<ClipEdge> CopiesOf(List<ClipEdge> clips) => clips.Count > 0 ? [.. clips] : NoClips;
+    private static List<ClipEdge> CopiesOf(List<ClipEdge> clips) => clips.Count > 0 ? [.. clips] : [];
 
     /// <summary>
     /// Gets the edge a box with <c>overflow: clip</c> cuts its content to: the visual box
@@ -1531,7 +1529,7 @@ internal sealed class Painter
     /// Keeps the cuts standing around the place a box was found, for the layer that is to paint it after
     /// the walk has climbed out of them.
     /// </summary>
-    private List<Rect> CutsHere() => _cuts.Count > 0 ? [.. _cuts] : NoCuts;
+    private List<Rect> CutsHere() => _cuts.Count > 0 ? [.. _cuts] : [];
 
     /// <summary>
     /// Paints a box that is lifted into a layer of its own - the viewport's, or a pinned one - inside the

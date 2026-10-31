@@ -601,6 +601,12 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 也就是说整量失败集里有一部分是这个泄漏造成的幻影，改它们会白改。下一步（优先级高于继续翻绿）：先把泄漏钉住——用二分前缀找出"哪个前驱页会把 001 弄红"，再定位静态缓存；修掉之后基线会变，门禁判据也要按新基线重记。在那之前，凡整量红、单跑绿的条目先当幻影看待。
 
+### 9.32 幻影的根源：画家的空剪切表是**静态共享**的
+
+§9.26/§9.31 的"整量红、单跑绿"查到了：`Painter` 里 `NoCuts`/`NoClips` 是两个 `static readonly List`，`CutsHere()`/`CopiesOf()` 在"没有剪切"时直接把这两个**共享空表**交给 `DeferredBox`。`PaintDeferred` 又把 `entry.Cuts` 赋回 `_cuts`，而 `PaintBox`/`Collect` 会对 `_cuts` 做 `Add`/`RemoveAt`——于是某页的剪切被 `Add` 进共享表后，会出现在**并发渲染的另一页**的延迟盒子上；即使单线程，只要有一个 Add 没有配对的 RemoveAt（异常路径），也会跨页残留。harness 用 `Parallel.ForEach`（`MaxDegreeOfParallelism = ProcessorCount/2`）跑整量，所以 `abspos-in-opacity-001` 单跑绿、整量红，`gecko/text` 那几对偶现。
+
+修法：这两处"没有剪切"改成返回**新空表**（`[]`），静态表删掉。实测：`DOTNET_PROCESSOR_COUNT=1` 与默认并发跑 `abspos-in-opacity` 三遍，结果一致（001 绿、002/003 红）；全量屏幕 **2095 → 2079、0 新增失败**（16 对绿，全是本会话切片的成果）；单测 2180；打印 189/198。`wpt/css-break` 77 → **77**——这一片是把判据修准（幻影消失、结果可复现），不是翻绿；从这一片起整量结果才可信。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
