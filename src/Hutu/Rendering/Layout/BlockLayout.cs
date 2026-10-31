@@ -115,7 +115,7 @@ internal sealed class BlockLayout
         }
         else if (HasBlockChildren(box))
         {
-            contentHeight = ColumnsOf(box, contentWidth, out var columns, out var share)
+            contentHeight = ColumnsOf(box, box.Flow.InlineExtent(contentWidth, childHeight), out var columns, out var share)
                 ? MeasureMulticolChildren(box, share, contentWidth, childHeight, declaredHeight is not null, columns, context)
                 : MeasureBlockChildren(
                     box,
@@ -628,7 +628,7 @@ internal sealed class BlockLayout
         {
             used = lines is { } range
                 ? ArrangeBlockLines(box, layout, contentX, contentY, contentWidth, contentHeight, range, start, childContext)
-                : !flow.IsVertical && ColumnsOf(box, contentWidth, out var columns, out var share)
+                : !flow.IsVertical && ColumnsOf(box, flow.InlineExtent(contentWidth, contentHeight), out var columns, out var share)
                     ? ArrangeMulticolChildren(
                         box,
                         layout,
@@ -910,10 +910,10 @@ internal sealed class BlockLayout
     /// floats mixed with flow content keep the ordinary stack, because the column's own float band is
     /// what would shorten the lines around them and the columns do not carry one yet.
     /// </summary>
-    private static Boolean ColumnsOf(Box box, Double contentWidth, out Int32 columns, out Double share)
+    private static Boolean ColumnsOf(Box box, Double contentInline, out Int32 columns, out Double share)
     {
         columns = 1;
-        share = contentWidth;
+        share = contentInline;
 
         if (box.Flow.IsVertical || !box.Style.Multi.IsMultiColumn)
         {
@@ -966,12 +966,12 @@ internal sealed class BlockLayout
             return false;
         }
 
-        var used = box.Style.Multi.Used(contentWidth);
+        var used = box.Style.Multi.Used(contentInline);
 
         // One column is the ordinary stack unless something inside it forces a break: a fragmentainer
         // of a single column still starts another column at a forced break, and the repeated
         // fragmentainer pattern of the corpus writes `columns:1` exactly for that (CSS Break 3 §3.2).
-        if (used.Count <= 1 && !HoldsForcedBreak(box, contentWidth))
+        if (used.Count <= 1 && !HoldsForcedBreak(box, contentInline))
         {
             return false;
         }
