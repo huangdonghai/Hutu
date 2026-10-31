@@ -674,6 +674,14 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 所以 `widows-orphans-002`（`<br>` 块）要的是"平衡时优先让块整块进栏"的启发式，而不是 widows 规则本身；实现时不要动 `KeepsRun` 的 orphans/widows 联动，否则 `column-balancing-000` 会跟着变。两个探针页与结论留档在此。
 
+### 9.43 flex 项按剩余空间切：只对 flex 项，`071` 转绿
+
+§9.30 的"块被推走、flex 项被切"落地了。四件套：①栏里**高于栏的裸竖排 flex** 打开成子项（`HashSet<Box> flexItems` 记下这些项）；②`CutsAsBox`（无子盒、有声明尺寸、比栏高、片数≤栏数、无 `break-inside:avoid`、无边框、无块向 margin）；③对 **flex 项** 跳过 `AddBoxCut`，交给计划的"按剩余空间切 + 续排"；④`divides` 只在这类项上置真。
+
+关键限定是③/④只认 `flexItems`：此前全量把 `break-inside-avoid-min-block-size-1` 弄红，是因为该页的空 div 在引擎里读到的是 `Height=40、Breaks.Inside=Auto`（`break-inside: avoid` 没进计算样式），于是被当成可切盒；限定到 flex 项后该页不走这条路，恢复绿。这类"逻辑属性读取缺口"另记，不再挡这一片。
+
+实测：`single-line-column-flex-fragmentation-071` 10000 → **0** 转绿；`borders` 全绿、`break-inside-avoid-min-block-size-1` 保持绿；全量屏幕 **2095 → 2074、22 对绿、新增失败 0**（`gecko/text/476378-soft-hyphen-fallback` 偶现、单跑绿）；单测 2180；打印 189/198；`wpt/css-break` 72 → **71**。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

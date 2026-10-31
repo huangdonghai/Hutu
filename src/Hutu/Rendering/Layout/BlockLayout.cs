@@ -1042,6 +1042,25 @@ internal sealed class BlockLayout
         return false;
     }
 
+    /// <summary>Gets whether a column may cut a flex item with nothing to break inside - an empty box
+    /// of a stated size taller than the column. A flex item is the fragmentainer's to cut; a block the
+    /// column meets in the flow is pushed whole instead (CSS Flexbox 1 §6 against CSS Fragmentation 3
+    /// §4.3, measured: single-line-column-flex-fragmentation-071 against borders-001).</summary>
+    private static Boolean CutsAsBox(
+        Box child, Size size, Boolean vertical, Thickness margin, Double columnHeight, Int32 columns,
+        Boolean fills, Boolean nested) =>
+        columnHeight > 0 &&
+        BlockExtentOf(size, vertical) > columnHeight + 0.001 &&
+        !child.IsReplaced &&
+        child.Children.Count == 0 &&
+        !(BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) &&
+            !HasBlockMaximum(child, vertical)) &&
+        fills && !child.Style.Multi.IsMultiColumn &&
+        child.Kind is not (BoxKind.Grid or BoxKind.Masonry) &&
+        Math.Ceiling(BlockExtentOf(size, vertical) / columnHeight - 0.001) <= columns &&
+        !nested && margin.Top == 0 && margin.Bottom == 0 &&
+        child.Style.Breaks.Inside != BreakValue.Avoid;
+
     /// <summary>Gets whether a column divides a child where it runs out of room. Only a horizontal
     /// column that fills cuts one; a table is left to the fragmentainer's own table step, a nested
     /// multicol to its own columns, and a box with block margins is left whole because the room a
@@ -1697,6 +1716,46 @@ internal sealed class BlockLayout
             ? MeasureConstraints.Unconstrained.WithHeight(share)
             : MeasureConstraints.FitWidth(share);
         var source = SpliceOverset(members ?? box.Children, share, childContext);
+
+        // A bare column flex taller than the column is fragmented between its items - and inside one
+        // that does not fit - so the column is handed the items rather than the container (CSS Flexbox
+        // 1 §6, measured: single-line-column-flex-fragmentation-071).
+        HashSet<Box>? flexItems = null;
+
+        if (fragmentHeight > 0)
+        {
+            var opened = new List<Box>(source.Count);
+            var expanded = false;
+
+            foreach (var member in source)
+            {
+                if (member.Kind == BoxKind.Flex && !member.Style.Flex.IsRow &&
+                    IsBareWrapper(member, share) &&
+                    BlockExtentOf(_engine.Measure(
+                        member,
+                        vertical ? MeasureConstraints.Unconstrained.WithHeight(share) : MeasureConstraints.FitWidth(share),
+                        childContext), vertical) > fragmentHeight + 0.001)
+                {
+                    flexItems ??= new HashSet<Box>();
+
+                    foreach (var item in member.Children)
+                    {
+                        flexItems.Add(item);
+                        opened.Add(item);
+                    }
+
+                    expanded = true;
+                    continue;
+                }
+
+                opened.Add(member);
+            }
+
+            if (expanded)
+            {
+                source = opened;
+            }
+        }
         var children = new List<MulticolChild>(source.Count);
 
         // Which child a run of lines belongs to, so that the slicer can tell one block's lines from its
@@ -1711,6 +1770,7 @@ internal sealed class BlockLayout
             }
 
             var size = _engine.Measure(child, constraints, childContext);
+            var isFlexItem = flexItems is not null && flexItems.Contains(child);
             var used = BoxModel.UsedMargin(child.Style, share, vertical ? size.Height : size.Width);
 
             // What stands before and after the child is the margin it presents to the stack, not only
@@ -1751,7 +1811,9 @@ internal sealed class BlockLayout
                 // below, which a column may divide where it runs out of room.
                 if (!breakable)
                 {
-                    if (AddBoxCut(
+                    if (!(isFlexItem && CutsAsBox(
+                        child, size, vertical, margin, fragmentHeight, columns,
+                        box.Style.Multi.Fills, context.InFragmentainer)) && AddBoxCut(
                         children,
                         child,
                         size,
@@ -1772,6 +1834,13 @@ internal sealed class BlockLayout
 
                     var dividesNoLines = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer);
                     var extentNoLines = BlockExtentOf(size, vertical);
+
+                    if (!dividesNoLines && isFlexItem && CutsAsBox(
+                        child, size, vertical, margin, fragmentHeight, columns,
+                        box.Style.Multi.Fills, context.InFragmentainer))
+                    {
+                        dividesNoLines = true;
+                    }
 
                     if (dividesNoLines)
                     {
@@ -1837,7 +1906,9 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            if (AddBoxCut(
+            if (!(isFlexItem && CutsAsBox(
+                child, size, vertical, margin, fragmentHeight, columns,
+                box.Style.Multi.Fills, context.InFragmentainer)) && AddBoxCut(
                         children,
                         child,
                         size,
@@ -1858,6 +1929,13 @@ internal sealed class BlockLayout
 
             var divides = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer);
             var extent = BlockExtentOf(size, vertical);
+
+            if (!divides && isFlexItem && CutsAsBox(
+                child, size, vertical, margin, fragmentHeight, columns,
+                box.Style.Multi.Fills, context.InFragmentainer))
+            {
+                divides = true;
+            }
 
             if (divides)
             {
