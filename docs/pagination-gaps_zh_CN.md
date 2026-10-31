@@ -898,6 +898,12 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 - `transform-008`：ref 用三列各 100% 高的假列模拟“每个分片以自身为原点旋转 45°”；test 是 200 高旋转盒在 3 栏里分片并对 100% 高的绝对子盒定位——需“按片段各自算 transform-origin + abspos 对分片包含块解析”。
 - `variable-fragmentainer-size-002`（800）：与 001 同源，内层 `columns:1;height:250` 被“首栏只剩 50、放不下 20px 页眉”切开后，页脚应出现在第三栏顶部（ref 的 (208,50) 热粉方块）；Hutu 的内层容器未被外层切片。
 
+### 9.67 `069` 的完整规则与 `fieldset-001-grid-print` 的断点消费者
+
+- **`multi-line-row-flex-fragmentation-069`**：Chrome 的判定用 **flex 整体高**（不是首个窗口）：`100`（ref）或 `200`（test，含 row-gap）都放不下首栏剩余的 `75`，于是整个 flex **整体下移到第二栏**；进入新栏后按“断点截断行距”重算窗口——两行各 `50`、无间隙地堆叠在同一栏（ref 第二栏从上到下全青）。实现路径：`MulticolChildren` 的 relay 组需作为**原子组**按 `whole` 判下移，且下移后按新栏高重算 `Windows`（行距在窗口断点处截断为 0），两件事都在规划器层，不能靠单片修。
+- **`gecko/pagination/fieldset-001-grid-print`**：Hutu 打印树 2 页（页 1 内容 0..96、页 2 0..147；字段集边框 48 环绕 384×192）；ref 页用 `A<br class=pb>B` 的块盒，其页 1 片段边框延伸至 y≈192（填满分页内容区）。差在“`page-break-after:always` 在 grid 项上的断点被字段集消费后，片段边框应延伸到分页器底”，与 001 系列记载的“br 断点消费者”同源。
+
+
 
 
 
