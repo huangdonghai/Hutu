@@ -868,6 +868,20 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 全量门禁复核（HEAD `94a7d647`）：屏幕失败 **2016**（gecko 603 + wpt 1413；`wpt/css-break` **44**）、单测 2180、打印 189/198。
 
+### 9.64 余下 44 对的分档（本轮逐项测量后）
+
+- **字形 AA（1–2px，按规则跳过）**：`out-of-flow-in-multicolumn-093`（28px，`::before` 项目符号比 ref 高 1–2px）、`sections-and-captions-mixed-order`（899px，绿底文字的抗锯齿相位）。
+- **嵌套片段（子盒内部的递归分片）**：`widows-orphans-021/022`、`overflowed-block-with-no-room-after-000/001`（外层 80 高盒在 70 高栏内切开、内层 140 再切）、`table/repeated-section/variable-fragmentainer-size-001/002`（内层 `columns:1` 被外层切片、每片重画表头/页脚）、`balanced-inner-multicol`（700px：反复的页脚被画到了首片顶部，应在各内层片段的**底**）、`fieldset-001`。
+- **表格片段几何**：`table-border-008`（Chrome：表盒 5 个 70×100 满栏片段；caption 片段 `(8,50,70×100)+(108,50,70×50)` 与 `(308,100,70×50)+(408,50,70×100)`；表盒边框/背景按片段铺，Hutu 的 `TableBox` 排除 caption 故环只框 20 高网格）、`table-collapsed-borders-paint-htb-ltr/-at-boundary`（Chrome 实测：`tr height:50` 的行盒 50 = 5(内半) + 40 + 5；表盒首行上方另有 5px 外侧半线、caption 在表盒之外，故 ref 的假列 div 比行盒高 10）、及其竖排两对。
+- **竖排表格轴映射**：`table-{col,row,section,grid}-paint-vlr-rtl/vrl-rtl` 8 对（Hutu 里表 34×100、单元格 2×35、caption 高 0）。
+- **flex 分页**：`093`（Chrome 实测：容器 3 个 50 宽片段 `(8,8,50×100)+(58,8,50×50)+(108,8,50×0)`；item 按块向逐窗分片——橙项内 210 高子盒分 `(33,8,25×100)+(83,8,25×100)+(133,8,25×10)`，蓝项分 `(8,58,25×50)+(58,8,25×50)`）、`069/096`、`044`（零高栏推首项到下一栏并按块首截断 margin）、`flex-container-fragmentation-006`。
+- **OOF 流坐标分片**：`abspos-in-opacity-003`、`out-of-flow-in-multicolumn-045/073/090`、`box-shadow-003`（竖排带 + ref 竖排 abspos 静态位置）、`block-end-aligned-abspos-with-overflow`。
+- **float 与多栏**：`float-017`（663px，嵌套 flow-root 里的 float 带）、`fragmented-autowidth-fc-root-beside-floats`、`tall-float-pushed-to-next-fragmentainer-002`、`overflowing-block-003`、`line-after-unbreakable-float-after-padding`（312px，同上字相位）。
+- **transform**：`transform-006/008`（分片各自计算 transform-origin）。
+- **行内拆段**：`box-decoration-break-clone-split-inline`（35314，与 `block-in-inline-015-print` 同源）。
+- **竖排其它**：`break-inside-avoid-min-block-size-2`（123400，竖排多栏里 break-inside:avoid + min-block-size）。
+
+
 
 
 
