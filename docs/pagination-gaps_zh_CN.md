@@ -657,6 +657,12 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 剩下的 1000 px 是一条 `x=118..367, y=90..109` 的黑带。逐行扫图后看清了：**分片的换栏位置差 10px**——ref 在 y≈90 就换到下一片，我们在 y=100 才换；ref 的首片在 x=108/208/308（第 2/3/4 栏）各 50/100/50 高，我们的五片从第 1 栏起、每片 100。也就是说 ref 里表格的**网格带**从第 2 栏的 50 处开始（上 caption 150 之后的 50），而我们把整个表格盒（caption+网格）按 100 均切。切口位置要按"表格盒"（§9.38 的 TableBox）而不是"整表"来切。这一行改动本身不翻绿（按"不翻绿不动"回滚），但结论留给下一片：按 TableBox 切 + 补切口边框归属，`table-border-008` 应即转绿。
 
+### 9.40 竖排表格根本没按书写模式排：行永远向下堆
+
+probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y 向下堆、caption 高 0——`TableFormattingContext` 从头到尾没有读过 `box.Flow.IsVertical`（只在 LayoutBox 上打了个 `Flow` 标签），列永远沿 x、行永远沿 y。竖排表格要沿**行内轴（y）**分列、沿**块轴（x，vertical-rl 自右向左）**堆行，折叠边框、caption 的 side 与分片方向都要跟着换。这解释了 10 个以上的 vlr/vrl paint 对为什么几乎是空白图——不是分片没接上，是排布轴错了。这是一整块结构活，留作独立切片。
+
+另记 `widows-orphans-002` 的悬案：4 行、4 栏、两个 2 行的块，`orphans:1; widows:2`；Chrome 平衡到 2 行/栏（每块整块进一栏），我们平衡到 1 行/栏（1/1 切开）。`column-balancing-000`（一个 3 行块、3 栏、默认 2/2）Chrome 却 1/1/1 切开——两者的差别不能靠"块高 vs 栏高"解释，需要 Chrome 探针（每块的 `getClientRects`）确认它到底在什么条件下拒绝短尾。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
