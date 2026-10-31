@@ -841,6 +841,19 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`box-decoration-break-clone-009` 8826 → **0**；全量屏幕 **2021 → 2020（新增 0）**；单测 2180；打印 189/198。`box-decoration-break-clone-split-inline`（行内盒被块级子盒打断）仍差 35314，与 `block-in-inline-015` 同属“行内盒拆成多段”的记号问题。
 
+### 9.61 float 跟在该行内容之后：`LineWidths` 接线 + 四条限定
+
+`float-009`（`A<div float>X</div>` 要排成 `AX`）：float 原先落在行的下方 `(8,58)`。接通早已落地的 `InlineLayout.LineWidths`（此前无调用方），在 measure 与 arrange 两个 pass 的 float 分支里取“前一个匿名行块的最后一行”：行的顶（`bottom - 末行高`）与内容到达处（`Line.Used`）。`FloatTracks.Place` 的 `inlineOffset` 只作用于**第一次尝试**（行所在行）；float 放不下时落到下一行从边开始，而不是带着偏移一路下移。
+
+四条限定（都在实测中各自救回一对）：
+1. `LineWidths` 原来返回 `Line.Extent`（换行用的整行宽），改为 `Line.Used`（内容实际到达处）——否则 `offset=100`，float 永远放不下；
+2. `Before` **不跳过 float**：紧邻的前一个若是 float，不贴行放置（`gecko/bugs/50630-3`：“float 不得高于源码更早的 float”）；
+3. 前一个匿名块若以 `BoxKind.LineBreak`（`<br>`）结尾，则**没有可跟随的行**，float 落在断行之后那一行（`flexbox-baseline-multi-line-vert-001` 的 float 版 ref）；
+4. 贴合放置前要问 `FloatTracks.FreeSpanAt(行顶)`：该行被既存 float 挤窄时，float 放不下就保持原落点（`gecko/bugs/50630-4`：蓝 float 应在被绿 float 挤窄后的下一行行首 `x=108`，而不是抬到上一行）。
+
+实测：`float-009` 12500 → **0**；带绿 `background-clip/clip-text-stacking-context-child-002`（其 ref 用 float 模拟行内盒）；全量屏幕 **2020 → 2018（新增 0，修复 2）**；单测 2180；打印 189/198。
+
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。

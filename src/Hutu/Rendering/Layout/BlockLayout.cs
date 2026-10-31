@@ -780,7 +780,11 @@ internal sealed class BlockLayout
                 // the collapsed bottom margin of the sibling before it is not folded into the
                 // float's top, and the float's outer edge goes below that strip - where the next
                 // box in flow would have gone.
-                var (placed, _) = PlaceFloat(child, floats, cursor + pending, contentWidth, childContext);
+                var beside = Before(box, child) is { } lines
+                    ? ReachedLine(lines, contentWidth, box.Flow, childContext.WithFloats(context.Floats), cursor)
+                    : null;
+                var (placed, _) = PlaceFloat(
+                    child, floats, cursor + pending, contentWidth, childContext, beside?.Top, beside?.Used ?? 0);
                 directBottom = Math.Max(directBottom, placed.Bottom + margin.Bottom);
                 continue;
             }
@@ -3307,7 +3311,9 @@ internal sealed class BlockLayout
         FloatTracks tracks,
         Double top,
         Double contentWidth,
-        LayoutContext childContext)
+        LayoutContext childContext,
+        Double? lineTop = null,
+        Double inlineOffset = 0)
     {
         var style = child.Style;
         var margin = style.Margin.Resolve(contentWidth);
@@ -3333,16 +3339,118 @@ internal sealed class BlockLayout
         // An auto margin on a float is zero rather than a share of what the width left over: the
         // constraint equation that makes <c>margin: 0 auto</c> centre a block has no part for a box
         // that is not in flow to solve.
+        // A float written after a line's content stands on that line, past the content it reached,
+        // so long as it fits in what that row leaves: one that does not fit, or that asks to clear
+        // something, keeps the place the stack reached instead (CSS 2.1 §9.5.1).
+        var side = child.Flow.FloatSideOf(style.Float);
+        Double? beside = null;
+
+        if (lineTop is { } candidate && style.Clear == ClearSide.None)
+        {
+            var (left, right) = tracks.FreeSpanAt(candidate - margin.Top, size.Height + margin.Vertical);
+            var x = side == FloatSide.Left
+                ? left + inlineOffset + margin.Left
+                : right - inlineOffset - size.Width - margin.Right;
+            var fits = side == FloatSide.Left
+                ? x + size.Width <= right + 0.001
+                : x >= left - 0.001;
+
+            if (fits)
+            {
+                beside = candidate;
+            }
+        }
+
         var box = tracks.Place(
-            child.Flow.FloatSideOf(style.Float),
+            side,
             size.Width,
             size.Height,
             margin,
-            y,
+            beside ?? y,
             StandsClear(child.Style, contentWidth),
-            child);
+            child,
+            beside is null ? 0 : inlineOffset);
 
         return (box, size);
+    }
+
+    /// <summary>
+    /// Gets the block right before this one in the box's run: the box a float's place may follow. A
+    /// float of its own, an out-of-flow box and a legend are left out of the run entirely, so none of
+    /// them can be what stands before the float - and a float that follows another float keeps the
+    /// place the stack reached rather than rising to a line it once stood beside (CSS 2.1 §9.5.1:
+    /// no float is higher than one generated earlier in the source).
+    /// </summary>
+    private static Box? Before(Box parent, Box child)
+    {
+        Box? previous = null;
+
+        foreach (var item in parent.Children)
+        {
+            if (ReferenceEquals(item, child))
+            {
+                return previous;
+            }
+
+            if (item.IsBlockLevel && !PositionedLayout.IsOutOfFlow(item) && !item.IsLegend)
+            {
+                previous = item;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets where the last line of a block of lines stands and how far along it the content reaches:
+    /// the place a float written after that content keeps to (CSS 2.1 §9.5.1). Null where there is no
+    /// line to stand beside - the box is not a run of lines, its last line is empty, or the columns
+    /// run down the page, where the float's side is the other axis.
+    /// </summary>
+    private (Double Top, Double Used)? ReachedLine(
+        Box lines,
+        Double contentWidth,
+        WritingModeInfo flow,
+        LayoutContext context,
+        Double bottom)
+    {
+        if (!lines.IsAnonymous || flow.IsVertical || !lines.IsBlockLevel)
+        {
+            return null;
+        }
+
+        // A line the content ended with a forced break leaves no content for a float to follow: the
+        // float stands on the line the break began, below the one that ended (measured on the float
+        // reference of flexbox-baseline-multi-line-vert-001, whose float follows a <br>).
+        for (var index = lines.Children.Count - 1; index >= 0; index--)
+        {
+            var item = lines.Children[index];
+
+            if (item.Kind == BoxKind.Text && String.IsNullOrWhiteSpace(item.Text))
+            {
+                continue;
+            }
+
+            if (item.Kind == BoxKind.LineBreak)
+            {
+                return null;
+            }
+
+            break;
+        }
+
+        var inline = new InlineContext(_engine, context, context, context);
+        var widths = _inline.LineWidths(lines, contentWidth, flow, inline);
+
+        if (widths.Count == 0 || widths[^1] <= 0.001)
+        {
+            return null;
+        }
+
+        var heights = _inline.LineHeights(lines, contentWidth, flow, inline);
+        var height = heights.Count > 0 ? heights[^1] : 0.0;
+
+        return (bottom - height, widths[^1]);
     }
 
     /// <summary>
@@ -3536,7 +3644,11 @@ internal sealed class BlockLayout
                 // has built up still stands between it and that box - CSS 2.1 §8.3.1 folds no margin
                 // into a float's - so the float's outer edge starts below the strip, at the place
                 // the next box in flow would have taken.
-                var placed = PlaceFloat(child, floats, cursor + pending, contentWidth, context);
+                var reached = Before(box, child) is { } lines
+                    ? ReachedLine(lines, contentWidth, box.Flow, context.WithFloats(context.Floats), cursor)
+                    : null;
+                var placed = PlaceFloat(
+                    child, floats, cursor + pending, contentWidth, context, reached?.Top, reached?.Used ?? 0);
 
                 // The same seal the measuring pass put on the box, so that the two phases answer with the
                 // same numbers: a float's content is arranged without the band it was placed beside.

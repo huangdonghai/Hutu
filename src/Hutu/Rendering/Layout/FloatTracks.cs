@@ -375,10 +375,13 @@ internal sealed class FloatTracks
         {
             var (left, right) = FreeSpanAt(y - margin.Top, outer);
             // A float written after the line has set some of its content begins where that content ends,
-            // and a right one ends there (CSS 2.1 §9.5.1).
+            // and a right one ends there (CSS 2.1 §9.5.1). That place belongs to the line's own row: a
+            // float the row cannot hold drops to a row below, where it starts at the edge the line
+            // reaches rather than past content that is no longer there.
+            var offset = attempt == 0 ? inlineOffset : 0;
             var x = side == FloatSide.Left
-                ? left + inlineOffset + margin.Left
-                : right - inlineOffset - width - margin.Right;
+                ? left + offset + margin.Left
+                : right - offset - width - margin.Right;
 
             // What pushes a float down is another float it would really stand on, and nothing else: the
             // specification pins its outer edge against the containing block (§9.5.1 rule 1) and only asks

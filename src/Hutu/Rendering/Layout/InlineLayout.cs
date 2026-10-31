@@ -1210,7 +1210,10 @@ internal sealed class InlineLayout
 
         foreach (var line in lines)
         {
-            widths.Add(Math.Max(0, line.Extent));
+            // `Used` rather than `Extent`: the extent is the room the line was broken at, which is the
+            // whole block unless a float shortened it, while a float set after the line has to begin
+            // where the line's own content reaches (CSS 2.1 §9.5.1).
+            widths.Add(Math.Max(0, line.Used));
         }
 
         return widths;
