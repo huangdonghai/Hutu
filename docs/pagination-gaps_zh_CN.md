@@ -607,6 +607,12 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 修法：这两处"没有剪切"改成返回**新空表**（`[]`），静态表删掉。实测：`DOTNET_PROCESSOR_COUNT=1` 与默认并发跑 `abspos-in-opacity` 三遍，结果一致（001 绿、002/003 红）；全量屏幕 **2095 → 2079、0 新增失败**（16 对绿，全是本会话切片的成果）；单测 2180；打印 189/198。`wpt/css-break` 77 → **77**——这一片是把判据修准（幻影消失、结果可复现），不是翻绿；从这一片起整量结果才可信。
 
+### 9.33 泄漏修掉后再试 reach：002/004 翻绿，014 的续排片却跑到第 2 行
+
+并发泄漏修掉（§9.32）之后重跑 §9.23 的 reach + "整行为空的行盒不算断点"：`abspos-in-opacity-002` 16000 → **0**、`out-of-flow-in-multicolumn-004` 1600 → **0**，两对转绿；`003` 13000 → 6000。但 `out-of-flow-in-multicolumn-014`（原绿）变 45000：它的 `.rel` 高 0、reach 150、正好放进第 2 栏剩下的 150，不需要切；改动把它的 `Fragment.Height` 变成 150 且 `Divides`，随后**绿色块第二个 AddBoxCut 片的续排片**落到了 `(8,349.72)`（第 1 栏第 2 行）而不是第 2 栏顶——计划里"续排 + 后随一个可切子盒"这一格的归属算错了。
+
+净 +1（两绿一红），按门禁回滚。下一步先给 `PlanMulticolRun` 加一条可开关的 trace（每格列数、每片的 child/offset），把 014 这种"续排片后还有子盒"的组合钉清楚，再把 reach 接回来。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
