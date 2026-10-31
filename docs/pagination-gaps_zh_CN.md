@@ -503,6 +503,14 @@ dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里�
 剩余（下一片）：`row/col/section/grid-paint-htb` 的残差是**表格部件背景的几何**，不是分片——行背景目前铺满整行、把 `border-spacing` 的 30px 空档也画上（`row-paint-htb` 恰好 **7350 = 30 × 245**），`col` 背景则根本没有盒子可画。下一步按"单元格并集"绘制行/区段/列背景。`out-of-flow-in-multicolumn-001/004` 仍需上一节的"按剩余空间切 + reach"（块的 reach 要算到 OOF 后代，`AddBoxCut` 目前只看盒子自己的块向尺寸）。
 
 
+### 9.19 行/行组的背景画在单元格下面，不铺 border-spacing
+
+上一节量出的 7350 px 就是它：行的背景铺满整行，把 `border-spacing` 的 30px 空档也画上（30 × 245 = 7350）。CSS 2.1 §17.5.1：行/行组的背景只在其单元格后面，单元格之间那圈间距属于表格，保持空。做法是 `PaintPresentation` 对 `TableRow`/`TableRowGroup`（分离边框模型）按后代单元格矩形逐个 push clip、同一份背景各画一次——渐变仍以部件自己的盒子为锚，所以在空档两侧连续。单元格与行列背景的绘制顺序不变（表格 ground → 行的 ground → 单元格）。
+
+实测：`table-row-paint-htb-ltr` 7350 → **0** 转绿、`table-section-paint-htb-ltr` 8850 → **0** 转绿，另有 `css-flexbox/flexbox_stf-table-row-group` 转绿；竖排同族下降未绿（`row-paint-vlr/vrl` 32030 → 29930、`section-paint-vlr/vrl` 33240 → 30630）。全量屏幕 **gecko 606、wpt 1483 → 1480，新增失败 0**；单测 2180；打印 189/198。
+
+下一步：`col` 的背景（`TableBuild.ColumnBoxes` 有盒子、没有绘制；按列 × 行的单元格带画，`col-paint`/`grid-paint` 同时需要），以及 `collapsed-borders-paint-*` 的切边边框拼接。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

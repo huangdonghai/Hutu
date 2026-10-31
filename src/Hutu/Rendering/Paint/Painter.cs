@@ -799,7 +799,23 @@ internal sealed class Painter
 
         if (!box.SuppressBackground)
         {
-            PaintBackground(box, style, target);
+            // A row's or row group's background stands behind its cells and not over the room the
+            // borders leave between them: the spacing is the table's, and Chrome keeps it empty
+            // (CSS 2.1 §17.5.1). The pattern is laid against the part's own box either way, so a
+            // gradient still runs on across the gap.
+            if (box.Kind is LayoutKind.TableRow or LayoutKind.TableRowGroup && !style.Table.Collapse)
+            {
+                foreach (var area in CellAreas(box))
+                {
+                    target.Add(new PushClipCommand(area, CornerRadii.None));
+                    PaintBackground(box, style, target);
+                    target.Add(new PopClipCommand(area));
+                }
+            }
+            else
+            {
+                PaintBackground(box, style, target);
+            }
         }
 
         AddShadows(box, style, target, inset: true);
@@ -833,6 +849,26 @@ internal sealed class Painter
         if (cutsRules)
         {
             target.Add(new PopClipCommand(OverflowClipEdge(box).Bounds));
+        }
+    }
+
+    /// <summary>Gets the areas of the cells a row or row group holds, which is what its background is
+    /// painted under - a cell of a row, or the cells of every row of a group.</summary>
+    private static IEnumerable<Rect> CellAreas(LayoutBox box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.Kind == LayoutKind.TableCell)
+            {
+                yield return child.BorderBox;
+            }
+            else if (child.Kind is LayoutKind.TableRow or LayoutKind.TableRowGroup)
+            {
+                foreach (var area in CellAreas(child))
+                {
+                    yield return area;
+                }
+            }
         }
     }
 
