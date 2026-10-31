@@ -1069,7 +1069,8 @@ internal sealed class BlockLayout
         Box child, Boolean vertical, Thickness margin, Boolean fills, Boolean nested) =>
         fills && !vertical && !nested && child.Kind != BoxKind.Table &&
         !child.Style.Multi.IsMultiColumn && child.Children.Count > 0 &&
-        margin.Top == 0 && margin.Bottom == 0 && HoldsPositioned(child);
+        margin.Top == 0 && margin.Bottom == 0 &&
+        (HoldsPositioned(child) || child.Kind == BoxKind.Grid);
 
     /// <summary>
     /// Gets whether a column flex is one the columns may cut into a piece per window: every child a

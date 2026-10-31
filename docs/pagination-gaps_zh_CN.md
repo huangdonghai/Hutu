@@ -757,6 +757,12 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`widows-orphans-002` 248 → **0**；全量屏幕 **2057 → 2056（新增 0）**；单测 2180；打印 189/198。
 
+### 9.51 多栏里的 grid 也按“整盒排布 + 裁剪”跨栏切
+
+`grid-container-fragmentation-009`：100 高的两栏里放一个 200 高的 grid（两行 50/150），Chrome 把它切成两片、轨道位置不变。grid 的轨道是**绝对位置**，所以不需要像 flex 那样逐片重排：沿用 `Divides` 的“整盒排布一次 + `FragmentClip`”即可。改动只是让 `DividesAcross` 也收 `BoxKind.Grid` 的、有子盒、无 margin 的容器。副产物：`wpt/css-gaps/grid/fragmentation` 的 8 对与 `subgrid/...-008` 一并转绿（它们的 ref 正是“分片后的 grid 间隙装饰”）。
+
+实测：全量屏幕 **2052 → 2042（新增 0，10 对转绿）**；单测 2180；打印 189/198。竖排 grid、`grid-item-oof-013`（分片 grid 内的绝对定位项）仍红。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
