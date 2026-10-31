@@ -791,6 +791,12 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：全量屏幕 **2042 → 2041（新增 0）**；单测 2180；打印 189/198。`variable-fragmentainer-size-001/002` 与 `balanced-inner-multicol` 仍红——它们还需要**嵌套 fragmentainer**（`columns:1; height:250` 的包装自己就是分片容器，表头要在“包装的每一片”里重复），下一步。
 
+### 9.54 换行 flex 即便只有一行，行高也是最高项（不是容器高）
+
+`single-line-row-flex-fragmentation-050`：`flex-wrap: wrap`、高 50 的 flex 里放一个自动高项（100 宽）和一个 100 高的项；ref 是 100x100 绿方块。我们让自动高项拉伸到容器内容高 50（`ResolveCrossSizes` 在“单行 + 确定高”时把行高直接设为容器内高），而按 CSS Flexbox 1 §9.4 第 8 步，“单行容器之行高 = 容器内高”只适用于**不换行**的容器；换行容器（哪怕只产出一行）的行高取该行各项外高最大值（100），自动高项随之拉伸到 100、溢出盒子 ✓ Chrome 亦如此。
+
+实测：`single-line-row-flex-fragmentation-050` 5000 → **0**；全量屏幕 **2041 → 2040（新增 0）**；单测 2180；打印 189/198。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

@@ -224,6 +224,7 @@ internal sealed partial class FlexFormattingContext
         FlexAlignment alignContent,
         FlexAlignment alignItems,
         Boolean mainIsHorizontal,
+        Boolean wraps,
         LayoutContext context)
     {
         if (lines.Count == 0)
@@ -257,7 +258,11 @@ internal sealed partial class FlexFormattingContext
         {
             var inner = Math.Max(0, definite - gaps);
 
-            if (lines.Count == 1)
+            // Only a container that cannot wrap has one line that is the box's own cross size: a
+            // wrapping container's line stands as tall as the tallest item on it, and the items stretch
+            // to that even where it runs past the box (CSS Flexbox 1 §9.4 step 8, measured:
+            // single-line-row-flex-fragmentation-050).
+            if (lines.Count == 1 && !wraps)
             {
                 lines[0].CrossSize = inner;
             }

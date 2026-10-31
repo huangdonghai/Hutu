@@ -876,7 +876,7 @@ internal sealed partial class FlexFormattingContext
         }
 
         var contentCross = ResolveCrossSizes(
-            lines, crossSize, crossGap, flex.AlignContent, flex.AlignItems, mainIsHorizontal, context);
+            lines, crossSize, crossGap, flex.AlignContent, flex.AlignItems, mainIsHorizontal, flex.Wraps, context);
 
         ApplyRatios(lines, mainIsHorizontal, flex.AlignItems, mainGap);
 
