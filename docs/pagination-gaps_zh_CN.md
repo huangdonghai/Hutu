@@ -511,6 +511,18 @@ dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里�
 
 下一步：`col` 的背景（`TableBuild.ColumnBoxes` 有盒子、没有绘制；按列 × 行的单元格带画，`col-paint`/`grid-paint` 同时需要），以及 `collapsed-borders-paint-*` 的切边边框拼接。
 
+### 9.20 列背景试过、量过，被 RTL 表格的列镜像挡住（未提交）
+
+`col`/`colgroup` 的背景在我们的绘制里没有路径：它们不是布局树里的盒子（`TableBuild.ColumnBoxes` 有它们，但没有 LayoutBox）。做出来的版本（已回滚）：
+
+1. 表格布局期把每列的**带**算出来存到表格 LayoutBox 上：`Area` = 该列从首行顶到最后一行底的整条（排除表格边缘的 `border-spacing`），`Rows` = 每行的裁剪带；渐变以整条为锚、逐行裁剪，60° 这类斜向渐变不会逐行重新起相；
+2. `CollectColumnHints` 按 `col` 的 `span` 属性把列盒/宽度提示展开成多份（`<col span=2>` 管两列，HTML §4.9.12）；
+3. 绘制期在表格自己的背景之后、边框之前，逐列逐行带 push clip 后画该列背景（CSS 2.1 §17.5.2：列背景在表格背景之上、行与单元格之下）。
+
+实测：`wpt/css-break/table/table-col-paint-htb-ltr` 17150 → **0**（转绿），`table-col-paint-vrl-rtl` 30630 → 5280。但全量比较出现一对新失败：`wpt/css-tables/paint/col-paint-htb-rtl`——它此前是**空转通过**（两边都不画背景，页面几乎空白），一旦 ref 侧的列背景可见就暴露真正的缺口：**我们的表格 grid 一律从左往右排列，RTL 表格的首列没有镜像到右边**。ref 页正是不镜像的 LTR 表（宽 50 在前），所以 test 页（宽 100 在前）与它对不上。竖排的 `col-paint-vlr/vrl` 也还差（30630），根子同样是表格自身的竖排/RTL 映射。
+
+结论：列背景要落在"RTL（及竖排）表格列镜像"之后，作为独立一片先做网格镜像（`ColumnX`/列宽/单元格落点/折叠边框一起翻），再把上面三步接回来；本轮未提交、已回滚，工作树停在 `d4079812`。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
