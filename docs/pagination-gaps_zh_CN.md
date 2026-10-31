@@ -831,6 +831,16 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：css-break `box-shadow-002` 320 → 0、`004` 1040 → 0、`005` 720 → 0；另带绿 `css-backgrounds/box-shadow-039/040/041/042/-outset-without-border-radius-001/-overlapping-001/002/003` 与 `gecko/box-shadow/boxshadow-spread` 共 9 对。全量屏幕 **2033 → 2021（新增 0，修复 12）**；单测 2180；打印 189/198。`box-shadow-003`（vertical-rl）仍差 10860：`BandOf` 把块轴起点当作低坐标，而 vertical-rl 的块起点在高坐标一侧；同时该对 ref 的竖排 abspos 静态位置本身偏 +100，两者要一起量。
 
+### 9.59 空白子节点不是内容：clone 盒照样能被栏切开
+
+`box-decoration-break-clone-009`：200 高、`box-decoration-break:clone`、带 10px spread 阴影和 5px outline 的盒写成了两行（`<div …>\n  </div>`），标签之间留下一个纯空白文本节点。`AddBoxCut` 的门槛用 `child.Children.Count > 0` 判断“盒里有东西、先破内部”，纯空白节点让它以为有内容，于是整盒留在一栏、越过栏高溢出；同一盒写成一行（无空白）时则正常被切成两片。Chrome 上两者一致：空白不构成行盒，盒仍按声明高被切。
+
+修法分两步：
+1. 新增 `HoldsContent`：只有“能造出行盒或盒子的子节点”才算内容，纯空白文本不算；门槛改为“有内容”而不是“有子节点”。
+2. 放宽先只给 **clone** 盒：`box-decoration-break:clone` 的每一片本身就是一个完整的盒（背景/边框/阴影/outline 都属于该片，CSS Break 3 §4.7），切它不涉及把一条边在几片之间分配，因此裁切路径里 `cutClones` 时按“片自己的矩形”排布、`whole` 取该片、不加 `FragmentClip`；`slice` 的盒仍整体留下——实测把 slice 盒也切开时 `gecko/bugs/379349-2a`（底边框落到下一栏）、`CSS2/floats-clear/floats-clear-multicol-001` 两对变红，切片语义下边的分配要另做一片。
+
+实测：`box-decoration-break-clone-009` 8826 → **0**；全量屏幕 **2021 → 2020（新增 0）**；单测 2180；打印 189/198。`box-decoration-break-clone-split-inline`（行内盒被块级子盒打断）仍差 35314，与 `block-in-inline-015` 同属“行内盒拆成多段”的记号问题。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

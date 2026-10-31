@@ -2182,7 +2182,15 @@ internal sealed class BlockLayout
         if (columnHeight <= 0 ||
             BlockExtentOf(size, vertical) <= columnHeight + 0.001 ||
             child.IsReplaced ||
-            child.Children.Count > 0 && !child.Style.ClipsOverflow && child.Kind != BoxKind.Table &&
+
+            // A box whose children are only the whitespace between tags holds nothing to break at,
+            // and one that clones its decoration can be cut through that nothing: every piece is a
+            // box of its own, with its own edges, so no edge has to be shared out between them
+            // (measured on box-decoration-break-clone-009, whose box is written across two lines).
+            // One that is merely sliced keeps its edges on the pieces the cutting pass places, which
+            // is not this pass's work yet, so it is left whole.
+            child.Children.Count > 0 && !(child.Style.ClonesDecoration && !HoldsContent(child)) &&
+                !child.Style.ClipsOverflow && child.Kind != BoxKind.Table &&
                 (!HoldsPositioned(child) || vertical) ||
             BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) &&
                 !HasBlockMaximum(child, vertical) && (child.Kind != BoxKind.Table || vertical || HoldsPositioned(child)) ||
@@ -4468,9 +4476,11 @@ internal sealed class BlockLayout
                     var cutEnds = cutClones || child.Last;
 
                     // A piece of a box that holds content is laid out over the whole box, which is
-                    // where its content stands, and drawn only where the fragment holds it.
-                    var holds = child.Box.Children.Count > 0;
-                    var whole = new Rect(rect.X, y - child.Offset, rect.Width, child.Whole);
+                    // where its content stands, and drawn only where the fragment holds it. A box that
+                    // clones its decoration stands as a box of its own in each column instead, so its
+                    // piece is its whole (CSS Break 3 §4.7).
+                    var holds = child.Box.Children.Count > 0 && !cutClones;
+                    var whole = cutClones ? rect : new Rect(rect.X, y - child.Offset, rect.Width, child.Whole);
                     var piece = _engine.Arrange(
                         child.Box,
                         holds ? whole : rect,
@@ -4838,6 +4848,26 @@ internal sealed class BlockLayout
 
         return false;
     }
+
+    /// <summary>
+    /// Gets whether the box holds anything that can make a line or a box of its own. A run of
+    /// whitespace makes neither - the markup between two tags is not content - so a box carrying
+    /// only that is empty as far as breaking is concerned (measured: a stated-height box written
+    /// across two lines was left whole by the columns, while the same box on one line was cut).
+    /// </summary>
+    private static Boolean HoldsContent(Box box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.Kind != BoxKind.Text || !String.IsNullOrWhiteSpace(child.Text))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
 
     /// <summary>
     /// Gets the layout role the box plays. A table part is normally arranged by the table context,
