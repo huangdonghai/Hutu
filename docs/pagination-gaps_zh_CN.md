@@ -613,6 +613,16 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 净 +1（两绿一红），按门禁回滚。下一步先给 `PlanMulticolRun` 加一条可开关的 trace（每格列数、每片的 child/offset），把 014 这种"续排片后还有子盒"的组合钉清楚，再把 reach 接回来。
 
+### 9.34 计划每格只问一次切片器 + reach + 空行不算断点：002/004/014 一起转绿
+
+§9.33 的错格查清了：`PlanMulticolRun` 的 `while` 在"切片器为保进度拿走了一个装不下的子盒"之后**又去问了一次** `Fitting`（限量为负），保进度规则于是把后面的子盒也拽进这一格，014 的绿色块续排片就这样落到了第 1 栏第 2 行。普通填充每格只问一次切片器，计划也照做：一次 `Fitting` 之后无条件结束本格（切块拦截与剩余空间切片在结束前处理）。
+
+这一片同时带回 §9.33 的两件事：`PositionedReach`（OOF 后代的下沿，`fixed` 不计）与"整行为空的行盒不算断点"（`!breakable` 走普通子盒路径，可被切），外加 `FitsTheColumns`（片数不得超过栏数）。
+
+实测：`abspos-in-opacity-002` 16000 → **0**、`out-of-flow-in-multicolumn-004` 1600 → **0**、`out-of-flow-in-multicolumn-014` 保持绿、`003` 13000 → 11000；全量屏幕 **2095 → 2078、18 对绿、新增失败 0**（`gecko/bugs/1608124-1` 字体回退页偶现，单跑绿）；单测 2180；打印 189/198。`wpt/css-break` 77 → **75**。
+
+剩余 OOF：`045`（包装盒 200 高、按 reach 分成两片后仍差 abs 的竖向几何）、`073/090`（片数 3 > 2 栏，按 §9.15 的规则整块溢出，Chrome 的 ref 只要 100×100）、`094-096`（平衡 + OOF 的高度怪癖）。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

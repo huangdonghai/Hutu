@@ -1,3 +1,4 @@
+using AngleSharp.Css.Dom;
 using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
@@ -1051,6 +1052,44 @@ internal sealed class BlockLayout
         !child.Style.Multi.IsMultiColumn && child.Children.Count > 0 &&
         margin.Top == 0 && margin.Bottom == 0 && HoldsPositioned(child);
 
+    /// <summary>Gets how far a box's out-of-flow descendants reach below its own top, which is how
+    /// long a column has to carry the box before the content is spent. A box that names no offset
+    /// stands where the flow would have left it, so the content before it is counted in; a fixed one
+    /// is anchored to the viewport and no part of this box's length (CSS Position 3 §5.5).</summary>
+    private Double PositionedReach(Box box, Double width, LayoutContext context)
+    {
+        var reach = 0.0;
+        var flow = 0.0;
+
+        foreach (var child in box.Children)
+        {
+            if (!PositionedLayout.IsOutOfFlow(child))
+            {
+                flow += _engine.Measure(child, MeasureConstraints.FitWidth(width), context).Height;
+                continue;
+            }
+
+            if (child.Style.Position.Position == PositionMode.Fixed)
+            {
+                continue;
+            }
+
+            var top = child.Style.Position.Top;
+            var start = top.IsAuto ? flow : top.Resolve(0);
+            var height = _engine.Measure(child, MeasureConstraints.FitWidth(width), context).Height;
+
+            reach = Math.Max(reach, start + height);
+        }
+
+        return reach;
+    }
+
+    /// <summary>Gets whether a box divided over the columns leaves every piece a column to stand
+    /// in: a fragmentainer of a stated count draws no column past its last one (CSS Multicol 1
+    /// §1.2), so a box that would need more pieces is left whole to overflow instead.</summary>
+    private static Boolean FitsTheColumns(Double extent, Double columnHeight, Int32 columns) =>
+        columnHeight <= 0 || Math.Ceiling(extent / columnHeight - 0.001) <= columns;
+
     /// <summary>
     /// Gets whether a child of the box asks for a forced break before or after itself, bare wrappers
     /// counted through as they are for the slicer.
@@ -1700,7 +1739,17 @@ internal sealed class BlockLayout
                 // A box with no lines has nothing to break between, but the column can still be cut
                 // through it: where the column's own height is stated and the box is taller, it is
                 // sliced rather than left to overflow the sheet whole.
-                if (lines.Count == 0)
+                var breakable = false;
+
+                foreach (var height in lines)
+                {
+                    breakable |= height > 0.001;
+                }
+
+                // A box whose lines are all empty - nothing but the placeholder an out-of-flow
+                // child leaves on them - has nothing to break between: it is the ordinary child
+                // below, which a column may divide where it runs out of room.
+                if (!breakable)
                 {
                     if (AddBoxCut(
                         children,
@@ -1721,18 +1770,32 @@ internal sealed class BlockLayout
                         continue;
                     }
 
+                    var dividesNoLines = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer);
+                    var extentNoLines = BlockExtentOf(size, vertical);
+
+                    if (dividesNoLines)
+                    {
+                        extentNoLines = Math.Max(extentNoLines, PositionedReach(child, share, childContext));
+                        dividesNoLines = FitsTheColumns(extentNoLines, fragmentHeight, columns);
+
+                        if (!dividesNoLines)
+                        {
+                            extentNoLines = BlockExtentOf(size, vertical);
+                        }
+                    }
+
                     children.Add(new MulticolChild(
                         child,
                         size,
                         margin,
                         new FragmentChild(
-                            BlockExtentOf(size, vertical) + margin.Top + margin.Bottom,
+                            extentNoLines + margin.Top + margin.Bottom,
                             before,
                             after,
                             breaks.Inside),
                         -1,
                         last: true,
-                        divides: DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer)));
+                        divides: dividesNoLines));
 
                     continue;
                 }
@@ -1793,15 +1856,29 @@ internal sealed class BlockLayout
                 continue;
             }
 
+            var divides = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer);
+            var extent = BlockExtentOf(size, vertical);
+
+            if (divides)
+            {
+                extent = Math.Max(extent, PositionedReach(child, share, childContext));
+                divides = FitsTheColumns(extent, fragmentHeight, columns);
+
+                if (!divides)
+                {
+                    extent = BlockExtentOf(size, vertical);
+                }
+            }
+
             children.Add(new MulticolChild(
                 child,
                 size,
                 margin,
                 new FragmentChild(
-                    BlockExtentOf(size, vertical) + margin.Top + margin.Bottom, before, after, breaks.Inside),
+                    extent + margin.Top + margin.Bottom, before, after, breaks.Inside),
                 -1,
                 last: true,
-                divides: DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer)));
+                divides: divides));
         }
 
         return children;
@@ -3870,10 +3947,9 @@ internal sealed class BlockLayout
                     break;
                 }
 
-                if (fits == 0 || cut.Forced)
-                {
-                    break;
-                }
+                // The plain fill asks the slicer once per fragment; asking it again here would let the
+                // progress rule drag a child that did not fit into a column that has no room left.
+                break;
             }
 
             cells.Add(cell);
