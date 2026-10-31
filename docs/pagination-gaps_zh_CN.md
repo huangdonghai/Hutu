@@ -682,6 +682,12 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`single-line-column-flex-fragmentation-071` 10000 → **0** 转绿；`borders` 全绿、`break-inside-avoid-min-block-size-1` 保持绿；全量屏幕 **2095 → 2074、22 对绿、新增失败 0**（`gecko/text/476378-soft-hyphen-fallback` 偶现、单跑绿）；单测 2180；打印 189/198；`wpt/css-break` 72 → **71**。
 
+### 9.44 平衡容器里，持有 OOF 的**自动高**包装也把 reach 计入平衡高
+
+`out-of-flow-in-multicolumn-094/095/096`：多栏无高（balance），内容里有 `position:relative` 的自动高包装、里面是绝对定位的色块；Chrome 让多栏的高度把这些定位内容也**算进平衡**（ref 是 200×200 的绿方块），我们只按在流内容平衡（100 高），外层的红露出 100。修法：`MulticolChildren` 里对**平衡容器**（`divides` 为假）且**自动高**（`BlockSizeIsAuto`）的 OOF 持有者，也把该子盒的 `FragmentChild` 高度取 `max(自身, PositionedReach)`——只影响平衡高，不切块。限定自动高是关键：099 的 `.rel` 有声明高 200，计入后会把它 40000 px 弄红；限定后 094/095/096 三对一起转绿、099 保持绿。
+
+实测：094/095/096 各 20000 → **0**；全量屏幕 **2095 → 2071、25 对绿、新增失败 0**（`gecko/bugs/1608124-1` 字体页偶现、单跑绿）；单测 2180；打印 189/198；`wpt/css-break` 71 → **68**。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

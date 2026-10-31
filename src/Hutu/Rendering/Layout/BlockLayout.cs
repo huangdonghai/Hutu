@@ -1842,6 +1842,11 @@ internal sealed class BlockLayout
                         dividesNoLines = true;
                     }
 
+                    if (!dividesNoLines && HoldsPositioned(child) && BlockSizeIsAuto(child, vertical))
+                    {
+                        extentNoLines = Math.Max(extentNoLines, PositionedReach(child, share, childContext));
+                    }
+
                     if (dividesNoLines)
                     {
                         extentNoLines = Math.Max(extentNoLines, PositionedReach(child, share, childContext));
@@ -1935,6 +1940,11 @@ internal sealed class BlockLayout
                 box.Style.Multi.Fills, context.InFragmentainer))
             {
                 divides = true;
+            }
+
+            if (!divides && HoldsPositioned(child) && BlockSizeIsAuto(child, vertical))
+            {
+                extent = Math.Max(extent, PositionedReach(child, share, childContext));
             }
 
             if (divides)
