@@ -776,6 +776,8 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 小项：`grid-item-oof-013`（分片 grid 内**孙级** abspos 按 `grid-row-start` 取区域）；box-shadow-002/004/005 是分数坐标的抗锯齿差（按规则跳过）。
 
+**声明高的平衡容器“也可切”试过并回退**：`flex-container-fragmentation-006`（空 flex、`height:400`、`margin-top:200`、4 栏 100 高、默认 balance）里 `AddBoxCut` 因 `fills=false` 拒切；把“有声明高的平衡”视作 fill 后，该对 12800→5800（仍红），却弄红 `css-overflow/overflow-clip-margin-mul-column-*` 两对，按门禁回退。另外量到 Chrome 对“上边距超过栏高”的块会把该边距**截断为 0**（flex 从首栏顶开始），这一步单独做亦未翻绿。
+
 **`grid-item-oof-013` 试过整条链路并回退（未提交）**：①融合样式对 OOF 盒也读 `GridItem`（原来只在 `parent.InGrid` 时读）；②`GridFormattingContext` 记录“孙级 abspos 的网格区域”（走 `OutFlowArea`，停在就近的 frame）；③`PositionedLayout.Arrange` 命中该区域时替换包含块；④`HasOutOfFlowChild`/行线映射认这些后代（否则 `plan.RowLines` 为空、区域退化为整盒）；⑤只给起始行时按规范跨一条轨道（仅对这条后代路径生效）。结果：目标对与 4 个 `css-grid/abspos` 转绿，但 `descendant-static-position-003`（孙级静态位置）与 `subgrid/abs-pos-001` 变红，净 +2 但门禁要求 0 新增，整片回退。下一轮需先弄清 Chrome 对“孙级 abspos 静态位置 + 网格区域”的优先序（003 的 abs 盒没有 inset，静态位置与区域的夹取顺序不同）。
 
 ### 9.53 片段里的重复区段 + fill 多栏自身行的 orphans 让位（两者缺一不可）
