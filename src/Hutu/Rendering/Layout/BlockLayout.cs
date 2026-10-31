@@ -1071,6 +1071,46 @@ internal sealed class BlockLayout
         !child.Style.Multi.IsMultiColumn && child.Children.Count > 0 &&
         margin.Top == 0 && margin.Bottom == 0 && HoldsPositioned(child);
 
+    /// <summary>
+    /// Gets whether a column flex is one the columns may cut into a piece per window: every child a
+    /// block of its own in the flow, the container taller than a window, and nothing inside that the
+    /// columns would have to place themselves. A piece of such a flex is laid out as a flex container
+    /// of the piece's own size, so the room a window has left is shared among the items it really
+    /// holds and a break takes the gap it fell in with it (CSS Flexbox 1 §6).
+    /// </summary>
+    private static Boolean RelaysInColumns(
+        Box child, Boolean vertical, Double extent, Double columnHeight, Boolean nested)
+    {
+        if (vertical || nested || columnHeight <= 0 || extent <= columnHeight + 0.001 ||
+            child.Kind != BoxKind.Flex || child.Children.Count == 0 || HoldsPositioned(child))
+        {
+            return false;
+        }
+
+        // A row flex lays its items across the block axis rather than along it, and the window's item
+        // range does not read its lines yet: it keeps standing whole (CSS Flexbox 1 §6).
+        if (child.Style.Flex.IsRow)
+        {
+            return false;
+        }
+
+        // A line that states a forced break ends the fragment wherever the page says, which the
+        // window's item range does not follow yet: such a container keeps standing whole (measured:
+        // multi-line-column-flex-fragmentation-044).
+
+        foreach (var item in child.Children)
+        {
+            if (!item.IsBlockLevel || PositionedLayout.IsOutOfFlow(item) || IsFloat(item) ||
+                Fragmentainer.Forced(item.Style.Breaks.Before) ||
+                Fragmentainer.Forced(item.Style.Breaks.After))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>Gets how far a box's out-of-flow descendants reach below its own top, which is how
     /// long a column has to carry the box before the content is spent. A box that names no offset
     /// stands where the flow would have left it, so the content before it is counted in; a fixed one
@@ -1295,7 +1335,8 @@ internal sealed class BlockLayout
             Double whole = 0,
             Double offset = -1,
             Boolean divides = false,
-            Double startInset = 0)
+            Double startInset = 0,
+            Boolean relays = false)
         {
             Box = box;
             Size = size;
@@ -1307,6 +1348,7 @@ internal sealed class BlockLayout
             Offset = offset;
             Divides = divides;
             StartInset = startInset;
+            Relays = relays;
         }
 
         public Box Box { get; }
@@ -1337,6 +1379,13 @@ internal sealed class BlockLayout
         /// cannot hold it whole cuts it where it ends instead of pushing it on (CSS Position 3 §5.5).
         /// </summary>
         public Boolean Divides { get; }
+
+        /// <summary>
+        /// Gets whether the pieces of this child are laid out one by one: a flex container the columns
+        /// cut is a flex container of each piece's own size, so its items are distributed anew in every
+        /// piece rather than laid out once against the whole (CSS Flexbox 1 §6).
+        /// </summary>
+        public Boolean Relays { get; }
 
         /// <summary>
         /// Gets how far inside the whole box this piece starts, or -1 where the piece is not cut
@@ -1946,10 +1995,17 @@ internal sealed class BlockLayout
 
             var divides = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer);
             var extent = BlockExtentOf(size, vertical);
+            var relays = !divides && RelaysInColumns(
+                child, vertical, extent, fragmentHeight, context.InFragmentainer);
 
             if (!divides && isFlexItem && CutsAsBox(
                 child, size, vertical, margin, fragmentHeight, columns,
                 box.Style.Multi.Fills, context.InFragmentainer))
+            {
+                divides = true;
+            }
+
+            if (relays)
             {
                 divides = true;
             }
@@ -1970,15 +2026,24 @@ internal sealed class BlockLayout
                 }
             }
 
+            // A flex container the columns cut is measured by what its content holds: the edges of the
+            // container belong to the pieces that own them, and the room a fragment shares out is the
+            // content it carries (CSS Flexbox 1 §6).
+            var relayed = relays
+                ? Math.Max(0, extent - BorderOf(child).Vertical - child.Style.Padding.Resolve(share).Vertical)
+                : extent;
+
             children.Add(new MulticolChild(
                 child,
                 size,
                 margin,
                 new FragmentChild(
-                    extent + margin.Top + margin.Bottom, before, after, breaks.Inside),
+                    relayed + margin.Top + margin.Bottom, before, after, breaks.Inside,
+                    splits: relays),
                 -1,
                 last: true,
-                divides: divides));
+                divides: divides,
+                relays: relays));
         }
 
         return children;
@@ -4136,6 +4201,48 @@ internal sealed class BlockLayout
                 // shows only the stretch it holds (CSS Position 3 §5.5).
                 if (portion.Offset >= 0)
                 {
+                    // A piece of a flex container is a flex container of the piece's own size: its
+                    // items are found again in the piece's window and distributed anew within it, and
+                    // only the edges the piece really has are drawn (CSS Flexbox 1 §6).
+                    if (child.Relays)
+                    {
+                        var flexBorder = BorderOf(child.Box);
+                        var flexPadding = child.Box.Style.Padding.Resolve(share);
+                        var flexStarts = portion.Offset < 0.001;
+                        var flexWhole = new Rect(
+                            x + child.Margin.Left, y - portion.Offset, width, child.Size.Height);
+
+                        // The piece's own edges stand outside the content it holds: the top one on the
+                        // piece that starts the container, the bottom one on the piece that ends it.
+                        var flexEdge = (flexStarts ? flexBorder.Top + flexPadding.Top : 0.0) +
+                            (portion.Last ? flexBorder.Bottom + flexPadding.Bottom : 0.0);
+
+                        parent.Children.Add(_engine.ArrangeFlexFragment(
+                            child.Box,
+                            new Rect(x + child.Margin.Left, y, width, portion.Height + flexEdge),
+                            childContext,
+                            flexWhole,
+                            portion.Offset,
+                            portion.Height,
+                            new FragmentSlice(
+                                new Thickness(
+                                    flexStarts ? flexBorder.Top : 0,
+                                    flexBorder.Right,
+                                    portion.Last ? flexBorder.Bottom : 0,
+                                    flexBorder.Left),
+                                new Thickness(
+                                    flexStarts ? flexPadding.Top : 0,
+                                    flexPadding.Right,
+                                    portion.Last ? flexPadding.Bottom : 0,
+                                    flexPadding.Left),
+                                flexStarts,
+                                portion.Last,
+                                flexWhole)));
+
+                        y += portion.Height + flexEdge + (portion.Last ? child.Margin.Bottom : 0);
+                        continue;
+                    }
+
                     var wholeHeight = child.Whole > 0 ? child.Whole : height;
                     var whole = new Rect(x + child.Margin.Left, y - portion.Offset, width, wholeHeight);
                     var held = new Rect(x + child.Margin.Left, y, width, portion.Height);

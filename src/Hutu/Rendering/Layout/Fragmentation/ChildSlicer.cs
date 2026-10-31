@@ -13,7 +13,8 @@ internal readonly struct FragmentChild
         BreakValue inside,
         Int32 run = -1,
         Int32 orphans = 0,
-        Int32 widows = 0)
+        Int32 widows = 0,
+        Boolean splits = false)
     {
         Height = height;
         Before = before;
@@ -22,6 +23,7 @@ internal readonly struct FragmentChild
         Run = run;
         Orphans = orphans;
         Widows = widows;
+        Splits = splits;
     }
 
     /// <summary>Gets the child's outer height: its border box and the margins that stand around it.</summary>
@@ -48,6 +50,13 @@ internal readonly struct FragmentChild
 
     /// <summary>Gets the fewest lines of its run a fragment that is not the first may begin with.</summary>
     public Int32 Widows { get; }
+
+    /// <summary>
+    /// Gets whether the child lets a fragmentainer cut through it. A balance may then settle a fragment
+    /// shorter than the child, since the child can stand in more than one column
+    /// (CSS Flexbox 1 §6, measured: multi-line-column-flex-fragmentation-059).
+    /// </summary>
+    public Boolean Splits { get; }
 }
 
 /// <summary>Where a fragment ends and why.</summary>

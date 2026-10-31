@@ -1444,6 +1444,21 @@ internal sealed record LayoutProfile(
         StaticLine? line = null) =>
         _positioned.Arrange(box, staticPosition, context, standing, line);
 
+    /// <summary>
+    /// Lays one window of a fragmented flex container out. A fragmented flex container is a flex
+    /// container of the window's own size, carrying the items the window falls over, so the room the
+    /// window has left is shared among those items alone (CSS Flexbox 1 §6).
+    /// </summary>
+    internal LayoutBox ArrangeFlexFragment(
+        Box box,
+        Rect borderBox,
+        LayoutContext context,
+        Rect whole,
+        Double offset,
+        Double height,
+        FragmentSlice? slice) =>
+        _flex.ArrangeFragment(box, borderBox, context, whole, offset, height, slice);
+
     /// <summary>Produces the geometry of a measured box inside the given border box.</summary>
     private LayoutBox ArrangeCore(
         Box box,

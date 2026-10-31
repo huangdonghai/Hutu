@@ -721,6 +721,20 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 下一步建议顺序：② flex 容器重排（机制清晰、ref 无怪癖、可先只做 column flex 拿 059–061）；① 竖排转置（10 对，但牵动表与多栏两个核心）；③ 逐对实现理想语义（3 对，需先定“每栏内定位”的规范解释）。
 
+### 9.48 带装饰的 column flex 跨栏：每片各自是一个 flex 容器
+
+`multi-line-column-flex-fragmentation-059/060/061` 的 flex 有边框和背景，`IsBareWrapper` 不收，于是整盒 114 高溢在一个 60 高的栏里。Chrome 的做法（JS 探针实测）：flex 的**内容**高 110 参与平衡（每栏 55），每片是 `55 内容 + 自己的边` 的盒子（57），且每片的项**沿用整盒排布的间距**、只把**首项重锚到片首**：059（space-between）两片的项都在 0 与 28.33（gap 3.33 = 整盒 10/3）；060（space-around）首片保留 1.25 的前导空间、次片为 0、项距 2.5；061（space-evenly）首片 2、次片 0、项距 2。
+
+实现：
+1. `MulticolChildren` 对“非行向、有内容、无 OOF/浮动/强制断点”的 flex（高出栏者）置 `Relays`（并入 `Divides` 走“就地起切 + 续排”），`FragmentChild` 用**内容深度**并带 `Splits`；
+2. `Balance` 对 `Splits` 子盒的下限改为 `height / 栏数`（否则 114 高的子盒永远平衡不出 55）；
+3. `ArrangeMulticolRun` 的预切片分支改调 `LayoutEngine.ArrangeFlexFragment`；
+4. `FlexFormattingContext.ArrangeFragment` 用**整盒计划**一次算出所有项，按块轴窗口选片内项，`shift = 首项块向偏移`（首片为 0，保留整盒前导空间），项尺寸沿用整盒；片的边框盒高 = 片内容 + 该片自己的块首/块尾边。
+
+排除项（实测）：行向 flex（`065` 类，窗口应按行读，尚未写）、带 `break-before/after` 强制的 flex（`044`）、竖排容器内。`Relays` 不改变栏数上限：仍受 `FitsTheColumns` 约束。
+
+实测：059 6000、060/061 各 6000 → **0**；全量屏幕 **2064 → 2061（新增 0）**；单测 2180；打印 189/198。行向 065–071 仍红（065 42600 → 28200，未收敛，已回退行向部分）。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

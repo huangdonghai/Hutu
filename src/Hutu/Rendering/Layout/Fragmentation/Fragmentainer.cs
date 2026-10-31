@@ -163,7 +163,7 @@ internal static class Fragmentainer
         }
 
         var extents = new Double[fragments];
-        var tallest = Tallest(children);
+        var tallest = Tallest(children, fragments);
         var low = 0.0;
         var high = Total(children);
 
@@ -268,13 +268,19 @@ internal static class Fragmentainer
         return total;
     }
 
-    private static Double Tallest(IReadOnlyList<FragmentChild> children)
+    /// <summary>
+    /// Gets the least extent a fragment can have: a child the columns may cut takes a share of itself -
+    /// its whole height spread over them - while one they may not has to stand in a fragment of its own
+    /// (CSS Flexbox 1 §6).
+    /// </summary>
+    private static Double Tallest(IReadOnlyList<FragmentChild> children, Int32 fragments)
     {
         var tallest = 0.0;
 
         for (var i = 0; i < children.Count; i++)
         {
-            tallest = Math.Max(tallest, children[i].Height);
+            var child = children[i];
+            tallest = Math.Max(tallest, child.Splits ? child.Height / fragments : child.Height);
         }
 
         return tallest;

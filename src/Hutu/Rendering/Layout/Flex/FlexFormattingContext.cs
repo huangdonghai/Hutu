@@ -164,7 +164,19 @@ internal sealed partial class FlexFormattingContext
             BoxModel.ClampHeight(style, height - insetV, basisHeight, insetV) + insetV);
     }
 
-    public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context, FragmentSlice? slice = null)
+    /// <summary>
+    /// Lays the box out in the window a fragment of it holds. A fragmented flex container is a flex
+    /// container of the fragment's own size: the items the fragment carries are distributed anew within
+    /// it, so a break takes the gap it fell in with it and the space the container has left is shared
+    /// among the items the fragment really holds (CSS Flexbox 1 §6, measured:
+    /// multi-line-column-flex-fragmentation-059).
+    /// </summary>
+    public LayoutBox Arrange(
+        Box box,
+        Rect borderBox,
+        LayoutContext context,
+        FragmentSlice? slice = null,
+        IReadOnlyList<Box>? members = null)
     {
         var style = box.Style;
         var flex = style.Flex;
@@ -215,7 +227,8 @@ internal sealed partial class FlexFormattingContext
             mainIsHorizontal ? contentHeight : contentWidth,
             insetMain,
             insetCross,
-            itemContext);
+            itemContext,
+            members);
 
         layout.GapDecorations = GapDecorations(
             style.Gap, flex, box.Flow, plan, contentWidth, contentHeight, contentX, contentY);
@@ -232,6 +245,117 @@ internal sealed partial class FlexFormattingContext
         }
 
         ArrangeOutOfFlow(box, layout, contentX, contentY, itemContext);
+        return layout;
+    }
+
+    /// <summary>
+    /// Lays one window of a fragmented flex container out. The container's own layout is worked out once,
+    /// over the whole of it: the window takes the items it falls over, and they keep the distances the
+    /// whole laid them at, the first of them re-anchored at the window's top - a break takes the leading
+    /// space it fell in with it, while the gaps between the items it holds are the container's own
+    /// (CSS Flexbox 1 §6, measured: multi-line-column-flex-fragmentation-059/060/061).
+    /// </summary>
+    public LayoutBox ArrangeFragment(
+        Box box,
+        Rect borderBox,
+        LayoutContext context,
+        Rect whole,
+        Double offset,
+        Double height,
+        FragmentSlice? slice)
+    {
+        var style = box.Style;
+        var flex = style.Flex;
+        var mainIsHorizontal = flex.IsRow != box.Flow.IsVertical;
+        var basis = context.ContainingBlock.Width;
+        var fullBorder = BlockLayout.BorderOf(box);
+        var fullPadding = style.Padding.Resolve(basis);
+        var border = slice?.Border ?? fullBorder;
+        var padding = slice?.Padding ?? fullPadding;
+
+        var layout = new LayoutBox(box, LayoutKind.Block)
+        {
+            Margin = BoxModel.UsedMargin(style, basis, borderBox.Width),
+            Border = border,
+            Padding = padding,
+            BorderBox = borderBox,
+            Flow = box.Flow,
+            SlicesBlockStart = slice is { Starts: false },
+            SlicesBlockEnd = slice is { Ends: false },
+            BackgroundOrigin = slice is null || slice.Value.Starts && slice.Value.Ends
+                ? null
+                : slice.Value.Whole,
+        };
+
+        if (box.Children.Count == 0)
+        {
+            return layout;
+        }
+
+        var insetMain = mainIsHorizontal
+            ? fullBorder.Horizontal + fullPadding.Horizontal
+            : fullBorder.Vertical + fullPadding.Vertical;
+        var insetCross = mainIsHorizontal
+            ? fullBorder.Vertical + fullPadding.Vertical
+            : fullBorder.Horizontal + fullPadding.Horizontal;
+        var contentWidth = Math.Max(0, whole.Width - (mainIsHorizontal ? insetMain : insetCross));
+        var contentHeight = Math.Max(0, whole.Height - (mainIsHorizontal ? insetCross : insetMain));
+        var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
+
+        var plan = Compute(
+            box,
+            flex,
+            mainIsHorizontal ? contentWidth : contentHeight,
+            mainIsHorizontal ? contentHeight : contentWidth,
+            insetMain,
+            insetCross,
+            itemContext);
+
+        // The window is measured in the container's content coordinates, which is what the plan's
+        // offsets are: the piece's own edges stand outside what it holds.
+        var start = offset;
+        var end = offset + height;
+        var members = new List<FlexItem>();
+        var shift = Double.NaN;
+
+        // The window runs along the block axis, whatever the main axis is: a column flex's items
+        // follow one another down it, and a row flex's lines stand across it.
+        var blockIsY = !box.Flow.IsVertical;
+
+        foreach (var item in plan.Items)
+        {
+            var at = blockIsY ? item.OffsetY : item.OffsetX;
+
+            if (at >= start - 0.001 && at < end - 0.001)
+            {
+                members.Add(item);
+                shift = Double.IsNaN(shift) ? at : Math.Min(shift, at);
+            }
+        }
+
+        // The piece that starts the container keeps the leading space the whole laid down, the way a
+        // column that begins the flow keeps its block-start room; a piece after a break has none, since
+        // the break itself stands where the leading space would have (measured:
+        // multi-line-column-flex-fragmentation-060/061).
+        if (Double.IsNaN(shift) || offset < 0.001)
+        {
+            shift = 0;
+        }
+
+        var contentX = borderBox.X + border.Left + padding.Left;
+        var contentY = borderBox.Y + border.Top + padding.Top;
+
+        foreach (var item in members)
+        {
+            var rect = new Rect(
+                contentX + item.OffsetX - (blockIsY ? 0 : shift),
+                contentY + item.OffsetY - (blockIsY ? shift : 0),
+                item.BorderBoxWidth,
+                item.BorderBoxHeight);
+
+            layout.Children.Add(_engine.Arrange(item.Box, rect, itemContext));
+        }
+
         return layout;
     }
 
@@ -522,7 +646,8 @@ internal sealed partial class FlexFormattingContext
         Double? crossSize,
         Double insetMain,
         Double insetCross,
-        LayoutContext context)
+        LayoutContext context,
+        IReadOnlyList<Box>? members = null)
     {
         var isRow = flex.IsRow;
         var mainIsHorizontal = isRow != box.Flow.IsVertical;
@@ -532,7 +657,7 @@ internal sealed partial class FlexFormattingContext
         var items = new List<FlexItem>();
         var sequence = 0;
 
-        foreach (var child in box.Children)
+        foreach (var child in members ?? box.Children)
         {
             // An absolutely or fixed positioned child is not a flex item: it is out of flow and is
             // placed against the container instead.
