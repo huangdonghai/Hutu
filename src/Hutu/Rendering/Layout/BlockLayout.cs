@@ -4471,7 +4471,9 @@ internal sealed class BlockLayout
                                 cutPadding.Left),
                             cutStarts,
                             cutEnds,
-                            whole));
+                            whole,
+                            child.Offset,
+                            height));
 
                     if (holds)
                     {

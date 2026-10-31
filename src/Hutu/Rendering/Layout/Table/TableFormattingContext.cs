@@ -246,7 +246,91 @@ internal sealed partial class TableFormattingContext
             captionBottomY += caption.OuterHeight;
         }
 
+        RepeatSections(build, box, layout, borderBox, gridY, context, slice);
+
         return layout;
+    }
+
+    /// <summary>
+    /// Draws the table's repeating sections again where a fragment after the first needs them: the header
+    /// group at the fragment's top and, where the table goes on, the footer group at its bottom. The copy
+    /// is the table laid out whole, shifted so the section stands where the fragment begins (or ends),
+    /// and clipped to the section's own band so nothing else of it shows (CSS Tables 3 §6.1, measured:
+    /// repeated-section/text-in-nested-multicol).
+    /// </summary>
+    private void RepeatSections(
+        TableBuild build,
+        Box box,
+        LayoutBox layout,
+        Rect borderBox,
+        Double gridY,
+        LayoutContext context,
+        FragmentSlice? slice)
+    {
+        if (slice is not { Offset: > 0.001, Height: > 0.001 } fragment)
+        {
+            return;
+        }
+
+        var top = borderBox.Y + fragment.Offset;
+        var bottom = top + fragment.Height;
+
+        if (SectionBand(build, role: 0) is { } head && head.Height <= fragment.Height + 0.001)
+        {
+            Repeat(head, top, bandAt: top);
+        }
+
+        if (!fragment.Ends && SectionBand(build, role: 2) is { } foot &&
+            foot.Height <= fragment.Height + 0.001)
+        {
+            Repeat(foot, bottom - foot.Height, bandAt: bottom - foot.Height);
+        }
+
+        void Repeat((Double Top, Double Height) section, Double stand, Double bandAt)
+        {
+            var band = new Rect(borderBox.X, bandAt, borderBox.Width, section.Height);
+
+            if (band.Y < borderBox.Y - 0.001 || band.Bottom > borderBox.Bottom + 0.001)
+            {
+                return;
+            }
+
+            var shift = stand - (gridY + section.Top);
+            var copy = Arrange(
+                box,
+                new Rect(borderBox.X, borderBox.Y + shift, borderBox.Width, borderBox.Height),
+                context);
+
+            copy.FragmentClip = band;
+            layout.Children.Add(copy);
+        }
+    }
+
+    /// <summary>
+    /// Gets the band a section's rows take inside the grid, in grid coordinates, or null where the table
+    /// has no section of that role.
+    /// </summary>
+    private static (Double Top, Double Height)? SectionBand(TableBuild build, Int32 role)
+    {
+        var top = Double.NaN;
+        var bottom = 0.0;
+
+        foreach (var row in build.Grid.Rows)
+        {
+            if (RoleOf(row.Group) != role)
+            {
+                continue;
+            }
+
+            if (Double.IsNaN(top))
+            {
+                top = row.Y;
+            }
+
+            bottom = row.Y + row.Height;
+        }
+
+        return Double.IsNaN(top) || bottom <= top ? null : (top, bottom - top);
     }
 
     private LayoutBox ArrangeCaption(CaptionEntry caption, Double x, Double y, Double width, LayoutContext context)

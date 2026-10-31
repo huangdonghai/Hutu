@@ -776,6 +776,17 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 小项：`grid-item-oof-013`（分片 grid 内**孙级** abspos 按 `grid-row-start` 取区域——`OutFlowArea` 已有，缺的是“后续定位、包含块为 grid”的接线）；box-shadow-002/004/005 是分数坐标的抗锯齿差（按规则跳过）。
 
+### 9.53 片段里的重复区段 + fill 多栏自身行的 orphans 让位（两者缺一不可）
+
+`repeated-section/text-in-nested-multicol` 的 ref 是一个 `columns:6; height:20; width:fit-content; column-fill:auto` 的六栏 div（"h a h a h a"），test 是表格（表头组里套 2 栏小多栏）。两页各自缺一条：
+
+1. **ref**：`column-fill: auto` 的**自身文本行**在“一片只装得下一行、默认 `orphans:2`”时，`FragmentSlicer.Fitting` 返回 0，`FillLines` 的 `spills` 分支把整段行塞进第一栏。改为让 orphans 让位于栏高（`HeightFit`：只按高度取行、至少一行）。
+2. **test**：表格的重复表头仍画在**整盒**顶上（片段 2/3 落在 y=-50/-150，看不见）。给 `FragmentSlice` 加 `Offset`/`Height`（`ArrangeMulticolRun` 的预切分支传入 `child.Offset`/`piece height`），`TableFormattingContext` 在非首片顶部重画表头组、在“表格未结束”的片段底部重画表脚组：副本是整张表的又一次排布，按区段带（`gridY + row.Y` 起、行高之和）`FragmentClip` 裁剪。
+
+关键：两条单独落地时都**零对翻转**（ref 或 test 各自仍错），合在一起该对才转绿。
+
+实测：全量屏幕 **2042 → 2041（新增 0）**；单测 2180；打印 189/198。`variable-fragmentainer-size-001/002` 与 `balanced-inner-multicol` 仍红——它们还需要**嵌套 fragmentainer**（`columns:1; height:250` 的包装自己就是分片容器，表头要在“包装的每一片”里重复），下一步。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

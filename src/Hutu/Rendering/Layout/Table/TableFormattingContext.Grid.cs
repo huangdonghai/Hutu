@@ -408,6 +408,17 @@ internal sealed partial class TableFormattingContext
         CollectColumnHints(build, basis);
     }
 
+    /// <summary>
+    /// Gets which of the table's three sections a row group is, from the display it computes to - a
+    /// <c>div</c> told to be a <c>table-header-group</c> is a header as much as a <c>thead</c> is.
+    /// </summary>
+    private static Int32 RoleOf(Box? group) => group?.Style.Display.ToLowerInvariant() switch
+    {
+        "table-header-group" => 0,
+        "table-footer-group" => 2,
+        _ => 1,
+    };
+
     /// <summary>Gets where a row group stands in the rendering order: header, body, footer.</summary>
     private static Int32 Section(Box? group) => group?.Element?.LocalName.ToLowerInvariant() switch
     {

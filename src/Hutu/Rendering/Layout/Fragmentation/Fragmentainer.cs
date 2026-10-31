@@ -71,8 +71,7 @@ internal static class Fragmentainer
             // where it stands and overflow the column instead (CSS Break 3 §4.3).
             if (spills && fit == 0)
             {
-                counts.Add(heights.Count - from);
-                return counts;
+                fit = HeightFit(heights, extent, from, startTrims, endTrims);
             }
 
             counts.Add(fit);
@@ -80,6 +79,31 @@ internal static class Fragmentainer
         }
 
         return counts;
+    }
+
+    /// <summary>
+    /// Gets how many leading lines of the run stand in the room by their height alone, the orphans and
+    /// widows set aside: the fallback a fill takes when no line count can keep them.
+    /// </summary>
+    private static Int32 HeightFit(
+        IReadOnlyList<Double> heights,
+        Double extent,
+        Int32 from,
+        IReadOnlyList<Double>? startTrims,
+        IReadOnlyList<Double>? endTrims)
+    {
+        var room = extent + (startTrims is null ? 0 : startTrims[from]);
+        var used = 0.0;
+        var fit = 0;
+
+        while (from + fit < heights.Count &&
+            used + heights[from + fit] <= room + (endTrims is null ? 0 : endTrims[from + fit]) + 0.001)
+        {
+            used += heights[from + fit];
+            fit++;
+        }
+
+        return Math.Max(1, fit);
     }
 
     /// <summary>
