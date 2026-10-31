@@ -841,6 +841,13 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`box-decoration-break-clone-009` 8826 → **0**；全量屏幕 **2021 → 2020（新增 0）**；单测 2180；打印 189/198。`box-decoration-break-clone-split-inline`（行内盒被块级子盒打断）仍差 35314，与 `block-in-inline-015` 同属“行内盒拆成多段”的记号问题。
 
+### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
+
+**竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
+
+**折叠边框分段（`table-collapsed-borders-paint-htb-ltr` / `-at-boundary`）**。`TableFormattingContext.Grid` 的 `vertical[]`/`horizontal[]` 每条网格线只保留一个解析结果，纵向线的颜色因此被第一行的单元格“定调”。按 CSS 2.1 §17.6.2 改为**逐段解析**：新增 `outerVertical[]` 只累积行/行组/列/列组/表格的候选；每个单元格的左右颜色与线型由 `Resolve(自己的一侧, 同行相邻单元格相对的一侧, outerVertical[线])` 得出；宽度仍取整条线（不动列几何）。实测 htb-ltr 8000 → 4200、at-boundary 10105 → 6600，颜色对了，但两对仍差：剩余是**行带相位差 5px**（测试黑带 31..40，ref 36..45），来自 caption/行边界处“半边框”（5+5）与 ref 假列“整边框”（10 在上）的累计差。宽度也要分段（而非整线取最宽）才可能闭合，那会动到列几何，留作下一片。
+
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
