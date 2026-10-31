@@ -112,7 +112,7 @@ public readonly struct CornerRadii
             height);
 
     private static CornerRadius Spread(CornerRadius radius, Double distance) =>
-        Normalize(radius.Horizontal + distance, radius.Vertical + distance);
+        radius.IsZero ? CornerRadius.Zero : Normalize(radius.Horizontal + distance, radius.Vertical + distance);
 
     /// <summary>
     /// Gets the radii of a shape whose edges were all moved out by <paramref name="distance"/>: every

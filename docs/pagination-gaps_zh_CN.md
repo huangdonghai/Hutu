@@ -822,6 +822,15 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：068 14200 → **0**；全量屏幕 **2034 → 2033（新增 0）**；单测 2180；打印 189/198。
 
+### 9.58 尖角扩散阴影：方角保持方角，且与边框一样按整像素落墨
+
+`box-shadow-002/004/005` 三对（“Box shadows should not be painted at column breaks”，参考页用 10px 边框画同一形状）有两处差异：
+
+1. `CornerRadii.Spread` 无条件把 spread 加进每个角的半径，0 半径的方角因此被画成圆角；Chrome 实测（50×50 方盒 + `0 0 0 10px`，四角 (12,12)/(15,15)/(19,19) 全黑）与规范一致——方角随边移动仍为方角，与 `Grow` 的既有规则相同，改为同样判 `IsZero`。
+2. 阴影与边框从同一条分数边起画时落墨不同：Chrome 实测两者都按设备像素取整（73.72 → 74，63.72 → 64，133.72 → 134），而 Hutu 只给背景/边框对齐（`Fill` 与 `DrawBorderSides` 的 `SnapToDevice`），阴影仍带抗锯齿，于是切口行/角上留 1px 缝。`DrawBoxShadow` 在**零模糊且零圆角**时对 `Area`、`Shape` 与 `Band` 一并 `SnapToDevice`；模糊或圆角阴影保持软边原样。
+
+实测：css-break `box-shadow-002` 320 → 0、`004` 1040 → 0、`005` 720 → 0；另带绿 `css-backgrounds/box-shadow-039/040/041/042/-outset-without-border-radius-001/-overlapping-001/002/003` 与 `gecko/box-shadow/boxshadow-spread` 共 9 对。全量屏幕 **2033 → 2021（新增 0，修复 12）**；单测 2180；打印 189/198。`box-shadow-003`（vertical-rl）仍差 10860：`BandOf` 把块轴起点当作低坐标，而 vertical-rl 的块起点在高坐标一侧；同时该对 ref 的竖排 abspos 静态位置本身偏 +100，两者要一起量。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

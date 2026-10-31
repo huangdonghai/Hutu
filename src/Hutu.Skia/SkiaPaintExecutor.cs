@@ -636,6 +636,20 @@ public sealed class SkiaPaintExecutor
         var area = ToRect(command.Area);
         var shape = ToRect(command.Shape);
 
+        // A shadow with no soft edge and no rounded corner is a box's ink as much as its background
+        // and its borders are, so it covers whole pixels where they do: drawn from the same
+        // fractional edge, a border lands on the row the snap names and a shadow that kept the
+        // fraction left an anti-aliased seam beside it (measured in Chrome, and the whole of
+        // box-shadow-002 came down to that seam). A blurred or rounded shadow keeps its edge as
+        // written - those are the two shapes the snap would move the ink of.
+        var sharp = command.Blur <= 0 && command.AreaRadii.IsZero && command.ShapeRadii.IsZero;
+
+        if (sharp)
+        {
+            area = SnapToDevice(canvas, area);
+            shape = SnapToDevice(canvas, shape);
+        }
+
         using var paint = new SKPaint
         {
             Color = new SKColor(command.Color),
@@ -675,7 +689,12 @@ public sealed class SkiaPaintExecutor
         {
             // The box is one fragment of a broken one: the shadow it casts is the whole box's, kept
             // inside the band of the fragment, so no shadow lies across the edge it was cut at.
-            canvas.ClipRect(ToRect(band), SKClipOperation.Intersect, antialias: true);
+            var bandRect = ToRect(band);
+
+            canvas.ClipRect(
+                sharp ? SnapToDevice(canvas, bandRect) : bandRect,
+                SKClipOperation.Intersect,
+                antialias: true);
         }
 
         var bounds = canvas.SaveLayer(ToRect(command.Bounds), null);
