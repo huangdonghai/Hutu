@@ -700,6 +700,17 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`table-grid-paint-htb-ltr` 17900 → **0**；全量屏幕 **2066 → 2065（新增 0）**；单测 2180；打印 189/198。竖排变体（vlr/vrl）仍红在轴映射（行沿 x 堆、列沿 y 排、vertical-rl 自右向左），是下一片。
 
+### 9.46 `<col>` 背景按“行带 × 列”画；RTL 表格的列序自右向左
+
+`table-col-paint-htb-ltr` 的 ref 是两条绝对定位色带（`inset-block-start: 60px; inline-size: calc(50% - 15px)`，高 255），对应“第一列单元格区从顶行到末行”的带宽——我们此前根本不画 `<col>` 背景。Chrome 实测（`border-spacing: 10px` 的两行两列、单元格透明）：列背景**只在单元格带内**、行间距留白且露出表格背景，且**每一行带渐变重新起相**（y=10 与 y=50 各从 0 开始），列间 spacing 也不画。
+
+实现：`TableFormattingContext.ArrangeColumnBands` 在行盒之前插入 `(列 × 行)` 的 LayoutBox（`Kind=Block`、`SuppressBorder`、仅背景），列盒取自 `col`/`colgroup`；分片时它们作为表格子盒处在表格的 `FragmentClip` 之内，随片裁切。顺带两处缺口：
+
+- **RTL**：`PlaceColumns` 增加 `reversed`，`direction: rtl` 的表格首列在最右（`X = total - cursor - width`）；此前列序恒为 LTR，`col-paint-htb-rtl` 只是恰好两页都不画列背景才空过。
+- **`col span`**：`CollectColumnHints` 按 `span` 重复登记同一个 `col`/`colgroup`（HTML §4.9.11），`table-col-span-1` 的 `col span=2` 此前只覆盖一列。
+
+实测：`table-col-paint-htb-ltr` 17150 → **0**，`col-paint-htb-rtl` 与 `table-col-span-1` 恢复；全量屏幕 **2065 → 2064（新增 0）**；单测 2180；打印 189/198。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

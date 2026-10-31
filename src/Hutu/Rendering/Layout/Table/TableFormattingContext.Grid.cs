@@ -163,7 +163,7 @@ internal sealed partial class TableFormattingContext
         build.Grid.SizeColumns(columnTarget, tableStyle.Fixed);
         MeasureCellHeights(build, context, spacing, targetHeight);
         build.Grid.SizeRows();
-        build.Grid.PlaceColumns(spacing, tableStyle.Collapse);
+        build.Grid.PlaceColumns(spacing, tableStyle.Collapse, build.Box.Flow.IsRightToLeft);
         build.Grid.PlaceRows(rowSpacing, tableStyle.Collapse);
 
         if (targetHeight is { } target)
@@ -728,6 +728,11 @@ internal sealed partial class TableFormattingContext
     }
 
     /// <summary>Reads the width hints a <c>col</c> or <c>colgroup</c> declared, in column order.</summary>
+    /// <remarks>
+    /// A <c>col</c> or <c>colgroup</c> with a <c>span</c> stands for that many columns, and each of them
+    /// takes the box's width and paints its background (HTML §4.9.11, measured:
+    /// gecko/table-background/table-col-span-1).
+    /// </remarks>
     private static void CollectColumnHints(TableBuild build, Double basis)
     {
         foreach (var child in build.Box.Children)
@@ -735,21 +740,38 @@ internal sealed partial class TableFormattingContext
             switch (child.Kind)
             {
                 case BoxKind.TableColumn:
-                    build.ColumnHints.Add(HintOf(child, basis));
-                    build.ColumnBoxes.Add(child);
-                    build.ColumnGroupBoxes.Add(null);
+                    var hint = HintOf(child, basis);
+                    var span = child.Element is IElement element ? Span(element, "span") : 1;
+
+                    for (var i = 0; i < span; i++)
+                    {
+                        build.ColumnHints.Add(hint);
+                        build.ColumnBoxes.Add(child);
+                        build.ColumnGroupBoxes.Add(null);
+                    }
+
                     break;
 
                 case BoxKind.TableColumnGroup:
                     var group = HintOf(child, basis);
+                    var groups = child.Element is IElement groupElement ? Span(groupElement, "span") : 1;
 
-                    foreach (var column in child.Children)
+                    for (var g = 0; g < groups; g++)
                     {
-                        if (column.Kind == BoxKind.TableColumn)
+                        foreach (var column in child.Children)
                         {
-                            build.ColumnHints.Add(HintOf(column, basis) ?? group);
-                            build.ColumnBoxes.Add(column);
-                            build.ColumnGroupBoxes.Add(child);
+                            if (column.Kind == BoxKind.TableColumn)
+                            {
+                                var own = HintOf(column, basis);
+                                var columns = column.Element is IElement columnElement ? Span(columnElement, "span") : 1;
+
+                                for (var i = 0; i < columns; i++)
+                                {
+                                    build.ColumnHints.Add(own ?? group);
+                                    build.ColumnBoxes.Add(column);
+                                    build.ColumnGroupBoxes.Add(child);
+                                }
+                            }
                         }
                     }
 

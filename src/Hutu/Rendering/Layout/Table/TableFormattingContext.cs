@@ -208,6 +208,7 @@ internal sealed partial class TableFormattingContext
 
         var gridY = borderBox.Y + build.Border.Top + build.Padding.Top + build.CaptionTop;
         ArrangeRows(build, layout, gridX, gridY, childContext);
+        ArrangeColumnBands(build, layout, gridX, gridY);
 
         var bottomY = gridY + build.Grid.Height;
 
@@ -271,6 +272,70 @@ internal sealed partial class TableFormattingContext
 
         return _engine.Arrange(caption.Box, new Rect(boxX, boxY, boxWidth, caption.Height), captionContext);
     }
+
+    /// <summary>
+    /// Places the background of each column behind the rows it spans. A column paints in the cells'
+    /// bands and not in the spacing between them, and each row's band is its own picture, so a gradient
+    /// on a column starts afresh at every row (CSS 2.1 §17.5, measured in Chrome: col backgrounds are
+    /// laid row band by row band, with the border-spacing left to the table).
+    /// </summary>
+    /// <remarks>
+    /// The bands are inserted ahead of the rows so that they are drawn under them: a cell's own
+    /// background covers the column's, and a row's covers the column's where the two meet.
+    /// </remarks>
+    private void ArrangeColumnBands(TableBuild build, LayoutBox table, Double gridX, Double gridY)
+    {
+        var grid = build.Grid;
+
+        if (grid.Rows.Count == 0 || grid.Columns == 0)
+        {
+            return;
+        }
+
+        var bands = new List<LayoutBox>();
+
+        for (var column = 0; column < grid.Columns; column++)
+        {
+            var own = column < build.ColumnBoxes.Count ? build.ColumnBoxes[column] : null;
+            var group = column < build.ColumnGroupBoxes.Count ? build.ColumnGroupBoxes[column] : null;
+
+            if (!Paints(group) && !Paints(own))
+            {
+                continue;
+            }
+
+            var x = gridX + grid.ColumnX[column];
+            var width = grid.Widths[column];
+
+            foreach (var row in grid.Rows)
+            {
+                if (Paints(group))
+                {
+                    bands.Add(Band(group!, x, gridY + row.Y, width, row.Height));
+                }
+
+                if (Paints(own))
+                {
+                    bands.Add(Band(own!, x, gridY + row.Y, width, row.Height));
+                }
+            }
+        }
+
+        table.Children.InsertRange(0, bands);
+    }
+
+    /// <summary>Gets whether a table part paints a background of its own.</summary>
+    private static Boolean Paints(Box? part) =>
+        part is not null &&
+        (part.Style.BackgroundColor is { A: > 0 } || part.Style.Backgrounds.Count > 0);
+
+    /// <summary>One column's band over one row, which paints the column's background and nothing else.</summary>
+    private static LayoutBox Band(Box part, Double x, Double y, Double width, Double height) =>
+        new(part, LayoutKind.Block)
+        {
+            BorderBox = new Rect(x, y, width, height),
+            SuppressBorder = true,
+        };
 
     /// <summary>
     /// Lays the rows out, nesting each run of rows that share a row group inside the group's box so

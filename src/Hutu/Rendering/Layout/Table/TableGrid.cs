@@ -365,18 +365,26 @@ internal sealed class TableGrid
     /// Positions the columns relative to the grid origin. The separated model puts the border spacing
     /// around and between the columns; the collapsing model has none, because the borders are centred
     /// on the grid lines instead. The grid's width therefore includes the spacing on both outer edges.
+    /// A table written right-to-left runs its columns from the right edge, so the first column stands
+    /// where the last one would in a left-to-right table (CSS 2.1 §17.5, measured: col-paint-htb-rtl).
     /// </summary>
-    public void PlaceColumns(Double spacing, Boolean collapse)
+    public void PlaceColumns(Double spacing, Boolean collapse, Boolean reversed = false)
     {
         var cursor = collapse ? 0.0 : spacing;
+        var total = collapse ? 0.0 : spacing;
+
+        foreach (var width in Widths)
+        {
+            total += width + spacing;
+        }
+
+        Width = total;
 
         for (var i = 0; i < Columns; i++)
         {
-            ColumnX[i] = cursor;
+            ColumnX[i] = reversed ? total - cursor - Widths[i] : cursor;
             cursor += Widths[i] + spacing;
         }
-
-        Width = cursor;
     }
 
     /// <summary>
