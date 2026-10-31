@@ -164,14 +164,17 @@ internal sealed partial class FlexFormattingContext
             BoxModel.ClampHeight(style, height - insetV, basisHeight, insetV) + insetV);
     }
 
-    public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context)
+    public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context, FragmentSlice? slice = null)
     {
         var style = box.Style;
         var flex = style.Flex;
         var mainIsHorizontal = flex.IsRow != box.Flow.IsVertical;
         var basis = context.ContainingBlock.Width;
-        var padding = style.Padding.Resolve(basis);
-        var border = BlockLayout.BorderOf(box);
+
+        // A fragment of a broken container draws only the edges it owns, the same way a broken block
+        // does (CSS Break 3 §4.7).
+        var padding = slice?.Padding ?? style.Padding.Resolve(basis);
+        var border = slice?.Border ?? BlockLayout.BorderOf(box);
         var insetH = padding.Horizontal + border.Horizontal;
         var insetV = padding.Vertical + border.Vertical;
 
@@ -182,6 +185,11 @@ internal sealed partial class FlexFormattingContext
             Padding = padding,
             BorderBox = borderBox,
             Flow = box.Flow,
+            SlicesBlockStart = slice is { Starts: false },
+            SlicesBlockEnd = slice is { Ends: false },
+            BackgroundOrigin = slice is null || slice.Value.Starts && slice.Value.Ends
+                ? null
+                : slice.Value.Whole,
         };
 
         if (box.Children.Count == 0)

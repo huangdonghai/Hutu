@@ -76,7 +76,8 @@ internal readonly struct LayoutContext
         Rect? referencePaddingBox = null,
         CornerRadii? referenceRadii = null,
         PerspectiveView? perspective = null,
-        Boolean containingIsVertical = false)
+        Boolean containingIsVertical = false,
+        Boolean inFragmentainer = false)
     {
         ContainingBlock = containingBlock;
         ContainingBlockRect = containingBlockRect;
@@ -94,6 +95,7 @@ internal readonly struct LayoutContext
         ReferenceRadii = referenceRadii;
         Perspective = perspective;
         ContainingIsVertical = containingIsVertical;
+        InFragmentainer = inFragmentainer;
     }
 
     /// <summary>
@@ -113,6 +115,10 @@ internal readonly struct LayoutContext
     /// vertical one - even on an orthogonal child (CSS 2.1 section 8.3; CSS Writing Modes 3).
     /// </summary>
     public Boolean ContainingIsVertical { get; }
+
+    /// <summary>Gets whether an ancestor already cuts its content into fragmentainers, which is
+    /// where a box's own extent is settled by the columns it stands in rather than by itself.</summary>
+    public Boolean InFragmentainer { get; }
 
     /// <summary>Gets the containing block's rectangle, in document coordinates.</summary>
     public Rect ContainingBlockRect { get; }
@@ -199,7 +205,8 @@ internal readonly struct LayoutContext
         ReferencePaddingBox,
         ReferenceRadii,
         Perspective,
-        ContainingIsVertical);
+        ContainingIsVertical,
+        InFragmentainer);
 
     /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
@@ -226,7 +233,8 @@ internal readonly struct LayoutContext
         ReferencePaddingBox,
         ReferenceRadii,
         Perspective,
-        ContainingIsVertical);
+        ContainingIsVertical,
+        InFragmentainer);
 
     /// <summary>
     /// Gets the context a child is handed when the floats around it and its own place among them are
@@ -249,7 +257,32 @@ internal readonly struct LayoutContext
         ReferencePaddingBox,
         ReferenceRadii,
         Perspective,
-        ContainingIsVertical);
+        ContainingIsVertical,
+        InFragmentainer);
+
+    /// <summary>
+    /// Gets the context the children of a fragmentainer stand in: what a container cuts its own content
+    /// at is its columns, and a container standing inside another one's columns has its pieces placed
+    /// by the columns around it, which the outer one does not take apart yet.
+    /// </summary>
+    internal LayoutContext WithFragmentainer() => new(
+        ContainingBlock,
+        ContainingBlockRect,
+        Viewport,
+        ViewportRect,
+        Scroll,
+        AbsoluteContainingBlock,
+        Measurer,
+        Floats,
+        BasisIsHypothetical,
+        Subgrid,
+        CapturedContainingBlock,
+        ReferenceBorderBox,
+        ReferencePaddingBox,
+        ReferenceRadii,
+        Perspective,
+        ContainingIsVertical,
+        true);
 
     /// <summary>Gets the context a box's children see, with its content box as their containing block.</summary>
     /// <remarks>
@@ -274,7 +307,8 @@ internal readonly struct LayoutContext
         ReferencePaddingBox,
         ReferenceRadii,
         Perspective,
-        containingIsVertical);
+        containingIsVertical,
+        InFragmentainer);
 
     /// <summary>
     /// Gets the context a box's children see when the content box's position is known, which is what
@@ -296,7 +330,8 @@ internal readonly struct LayoutContext
         ReferencePaddingBox,
         ReferenceRadii,
         Perspective,
-        containingIsVertical);
+        containingIsVertical,
+        InFragmentainer);
 
     /// <summary>
     /// Gets the context a positioned box's children see: the absolute containing block becomes this
@@ -319,7 +354,8 @@ internal readonly struct LayoutContext
         ReferencePaddingBox,
         ReferenceRadii,
         Perspective,
-        ContainingIsVertical);
+        ContainingIsVertical,
+        InFragmentainer);
 
     /// <summary>
     /// Gets the context a box that captures its descendants hands them: the padding box becomes the frame
@@ -344,7 +380,8 @@ internal readonly struct LayoutContext
         ReferencePaddingBox,
         ReferenceRadii,
         Perspective,
-        ContainingIsVertical);
+        ContainingIsVertical,
+        InFragmentainer);
 
     /// <summary>
     /// Gets the context with the boxes of the element that establishes it, so a shape an

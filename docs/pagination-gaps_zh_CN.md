@@ -352,3 +352,34 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 ---
 
 *本报告只做调查；未修改引擎代码。所有代码位置均以 HEAD `7357d65a` 为准。*
+
+---
+
+## 9. css-break 语料清理（屏幕口径）
+
+目标：逐切片修复 `wpt/css-break` 在屏幕与打印两个口径下的失败对。每片门禁 = 单元测试全过 + 打印 189/198 + 屏幕全量 **0 新增失败**（按对名比对，不看总数）。
+
+### 9.1 切片 A：栏切过"没有断点可断"的盒子
+
+实测：屏幕全量 **2108 → 2100**（转绿 8，新增 0）；`wpt/css-break` **104 → 98**；打印仍 **189/198**；单测 **2164 → 2169**（新增 `MulticolBoxCutTests` 5 个）。
+转绿：`css-break/borders-001..004`、`css-break/fieldset-002`、`css-break/out-of-flow-in-multicolumn-014`、`gecko/columns/column-balancing-overflow-000`、`wpt/css-gaps/multicol/multicol-gap-decorations-040`。
+
+| 位置 | 做了什么 |
+|---|---|
+| `BlockLayout.cs:1573` `AddBoxCut` | 空盒子（无子、非替换、写明 height/min-height）比整栏高时按栏高切片；每片用 `FragmentSlice` 只画自己拥有的上下边与背景（CSS Break 3 §4.7），`MulticolChild.Offset` 记住这片在整盒里的起点 |
+| `BlockLayout.cs:1320` / `:1339` `SpliceOverset` / `IsOversetWrapper` | 栏里**最后一个**成员如果是"什么都不画、且写的比自己装的高"的 wrapper（无 border/padding/margin/背景/outline/box-shadow/clone/裁剪/contain，宽 auto、高写明），把它打开，让内容直接进栏被切 |
+| `BlockLayout.cs:1427` `FillsTo` | 填栏容器的切点 = 它写明的栏高，或它最终达到的高度——`max-height` 夹住结果时，那也就是栏高（`multicol-fill-auto-block-children-003`） |
+| `LayoutContext.cs:268` `WithFragmentainer`（+ `BlockLayout.cs:124`、`:624`、`:1445`、`:3245`） | 标记"已经站在别人的栏里"；嵌套多栏里不切，因为外层还不能把内层拆开摆放它的碎片 |
+| `FlexFormattingContext.cs:167` + `LayoutEngine.cs:1451` | flex 容器也接 `FragmentSlice`：空的定高 flex 容器被切时，边与背景与块盒一致（`gecko/flexbox/pagination/flexbox-empty-1a..1h`） |
+
+**Chrome 实测基准**（`build/_frag_probe.html`，hit-test 探针，非截图）：3×100px 的 `column-fill: auto` 栏里，250px 空盒 → 100/100/50 三片；外面套一层 `height:2px` 的盒 → 结果完全相同（证明"打开 wrapper"是对的）；150px → 100/50；`height:48px` wrapper 里 `height:800%` 的子盒 → 三栏都被填满（overflow 的内容确实跟着分片，不是一整块垂在栏外）。
+
+四条"先不切"的范围线，每条都有实测的对立语料：
+
+1. **片数 > 栏数不切**：`column-fill: auto` 的溢出列还没画，切了会把尾巴丢掉——`out-of-flow-in-multicolumn-019` 的 ref 侧要 5 片而内层只有 2 栏，实测丢 400px 绿。
+2. **盒子有内容不切**：内容会在每片从头重排（重复画字），需要的是"按片裁内容"。`contain-size-breaks-001` 就是这条：ref 侧空盒靠 `padding-top` 得到高度被切、test 侧 `contain:size` 的盒有文字不切，两侧不再一致；加上"写明 height/min-height 才切"后恢复绿。
+3. **嵌套多栏不切**：`multicol-rule-nested-balancing-003`（外层被 `ColumnsOf` 主动退回普通堆叠，`BlockLayout.cs:943`，所以内层的片没人摆）。
+4. **balance 容器不切**：去掉 `column-fill: auto` 门槛实测 `break-inside-avoid-min-block-size-1` 由绿转红（只有写明高度的一侧被切），故保留。
+
+下一步（同一族的解锁顺序）：按片裁内容 + 分片装饰（clone/阴影/transform）→ `borders-005..008`、`box-shadow-002..005`、`box-decoration-break-*`；补 `column-fill: auto` 的溢出列 → 解除第 1 条；外层切内层多栏 → 解除第 3 条；table/flex/grid 分片仍是独立里程碑。
+

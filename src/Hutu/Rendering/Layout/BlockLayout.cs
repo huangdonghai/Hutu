@@ -117,7 +117,11 @@ internal sealed class BlockLayout
         {
             contentHeight = ColumnsOf(box, contentWidth, out var columns, out var share)
                 ? MeasureMulticolChildren(box, share, contentWidth, childHeight, declaredHeight is not null, columns, context)
-                : MeasureBlockChildren(box, contentWidth, childHeight, context);
+                : MeasureBlockChildren(
+                    box,
+                    contentWidth,
+                    childHeight,
+                    box.Style.Multi.IsMultiColumn ? context.WithFragmentainer() : context);
         }
         else
         {
@@ -613,6 +617,13 @@ internal sealed class BlockLayout
         var content = new Rect(contentX, contentY, contentWidth, contentHeight);
         var used = 0.0;
 
+        // The children of a multi-column container stand in its columns - or, when a container of
+        // its own among them keeps it in the ordinary stack, in the place its columns would be.
+        if (box.Style.Multi.IsMultiColumn)
+        {
+            childContext = childContext.WithFragmentainer();
+        }
+
         if (HasBlockChildren(box))
         {
             used = lines is { } range
@@ -1091,7 +1102,7 @@ internal sealed class BlockLayout
             return MeasureMulticolSections(box, sections, share, fullWidth, declaredHeight, heightStated, columns, context);
         }
 
-        var children = MulticolChildren(box, share, declaredHeight, context, EffectiveMembers(box.Children, share));
+        var children = MulticolChildren(box, share, declaredHeight, declaredHeight, columns, context, EffectiveMembers(box.Children, share));
 
         var multi = box.Style.Multi;
 
@@ -1136,7 +1147,8 @@ internal sealed class BlockLayout
             FragmentChild fragment,
             Int32 line,
             Boolean last,
-            Double whole = 0)
+            Double whole = 0,
+            Double offset = -1)
         {
             Box = box;
             Size = size;
@@ -1145,6 +1157,7 @@ internal sealed class BlockLayout
             Line = line;
             Last = last;
             Whole = whole;
+            Offset = offset;
         }
 
         public Box Box { get; }
@@ -1169,7 +1182,15 @@ internal sealed class BlockLayout
         public Boolean Last { get; }
 
         /// <summary>Gets whether the child is broken across the columns.</summary>
-        public Boolean Broken => Line >= 0;
+        public Boolean Broken => Line >= 0 || Offset >= 0;
+
+        /// <summary>
+        /// Gets how far inside the whole box this piece starts, or -1 where the piece is not cut
+        /// through the box itself: a child with nothing to break between - an empty box of a stated
+        /// height - is still one the fragmentainer cuts across, and the offset says which slice of it
+        /// this column holds (CSS Fragmentation 3 §4.3).
+        /// </summary>
+        public Double Offset { get; }
 
         /// <summary>
         /// Gets the border box height the child would have had unbroken, for a piece of a broken child.
@@ -1292,6 +1313,82 @@ internal sealed class BlockLayout
         return forced;
     }
 
+    /// <summary>Gets the members a column really holds: a bare wrapper that is shorter than what
+    /// it holds is opened into them, because the box that walks past the wrapper is the one the
+    /// column has to cut, and the wrapper brings nothing of its own to the cut (CSS Break 3 §4.1).
+    /// </summary>
+    private IReadOnlyList<Box> SpliceOverset(IReadOnlyList<Box> source, Double share, LayoutContext context)
+    {
+        // Only the last member is opened: what a wrapper states in height is what the boxes after it
+        // stand past, and the column keeps that room for a wrapper it does not open.
+        var last = source.Count - 1;
+
+        if (last < 0 || !IsOversetWrapper(source[last], share, context))
+        {
+            return source;
+        }
+
+        var members = new List<Box>(source);
+        members.RemoveAt(last);
+        members.AddRange(source[last].Children);
+        return members;
+    }
+
+    /// <summary>Gets whether a box is a wrapper that paints nothing and is shorter than the
+    /// content it holds.</summary>
+    private Boolean IsOversetWrapper(Box child, Double share, LayoutContext context)
+    {
+        if (child.Kind != BoxKind.Block || child.Flow.IsVertical || child.Children.Count == 0)
+        {
+            return false;
+        }
+
+        var style = child.Style;
+
+        if (!style.Width.IsAuto || style.Height.IsAuto ||
+            style.MinWidth.HasValue || style.MaxWidth.HasValue ||
+            style.MinHeight.HasValue || style.MaxHeight.HasValue ||
+            style.Breaks.Before != BreakValue.Auto || style.Breaks.After != BreakValue.Auto ||
+            style.Breaks.Inside != BreakValue.Auto ||
+            style.OutlineStyle != BorderLineStyle.None || style.BoxShadows.Count > 0 ||
+            style.ClipsOverflow || ContainsBlockSize(child) ||
+            style.BackgroundColor is { A: > 0 } || style.Backgrounds.Count > 0)
+        {
+            return false;
+        }
+
+        var border = BorderOf(child);
+        var padding = style.Padding.Resolve(share);
+        var margin = style.Margin.Resolve(share);
+
+        if (border.Horizontal != 0 || border.Vertical != 0 ||
+            padding.Horizontal != 0 || padding.Vertical != 0 ||
+            margin.Horizontal != 0 || margin.Vertical != 0)
+        {
+            return false;
+        }
+
+        // The height the wrapper states is the only thing it brings to the stack; where its own
+        // content walks past that, the content is what the column holds.
+        var constraints = MeasureConstraints.FitWidth(share);
+        var held = 0.0;
+        var size = _engine.Measure(child, constraints, context);
+
+        foreach (var grandchild in child.Children)
+        {
+            if (!grandchild.IsBlockLevel || PositionedLayout.IsOutOfFlow(grandchild) || IsFloat(grandchild))
+            {
+                return false;
+            }
+
+            var inner = _engine.Measure(grandchild, constraints, context);
+            var used = BoxModel.UsedMargin(grandchild.Style, share, inner.Width);
+            held += inner.Height + used.Top + used.Bottom;
+        }
+
+        return held > size.Height + 0.001;
+    }
+
     private static Boolean FragmentsInColumns(Box child) =>
         !HasBlockChildren(child) && BreaksAtLines(child);
 
@@ -1324,16 +1421,30 @@ internal sealed class BlockLayout
             !child.Flow.IsVertical;
     }
 
+    /// <summary>Gets the height a column of a container that fills its columns cuts a box at:
+    /// the height the container states, or the height it comes to, which is what a maximum gives a
+    /// container of an auto height (CSS Multicol 1 §3).</summary>
+    private static Double FillsTo(Box box, LayoutBox parent, Boolean heightStated, Double declaredHeight) =>
+        heightStated
+            ? declaredHeight
+            : box.Style.Multi.Fills
+                ? Math.Max(0, parent.BorderBox.Height - parent.Border.Vertical - parent.Padding.Vertical)
+                : 0.0;
+
     private List<MulticolChild> MulticolChildren(
         Box box,
         Double share,
         Double declaredHeight,
+        Double fragmentHeight,
+        Int32 columns,
         LayoutContext context,
         IReadOnlyList<Box>? members = null)
     {
-        var childContext = context.ForContainingBlock(new Size(share, declaredHeight));
+        // What stands in a column is placed by it: a container of columns inside these ones is not
+        // taken apart by its own, because the columns around it have nowhere to put the pieces.
+        var childContext = context.ForContainingBlock(new Size(share, declaredHeight)).WithFragmentainer();
         var constraints = MeasureConstraints.FitWidth(share);
-        var source = members ?? box.Children;
+        var source = SpliceOverset(members ?? box.Children, share, childContext);
         var children = new List<MulticolChild>(source.Count);
 
         // Which child a run of lines belongs to, so that the slicer can tell one block's lines from its
@@ -1371,10 +1482,16 @@ internal sealed class BlockLayout
                 var lines = _inline.LineHeights(
                     child, share, child.Flow, new InlineContext(_engine, childContext, childContext, childContext));
 
-                // A box with no lines has nothing to break between: it is one piece, however tall its
-                // padding or border make it, and dropping it here would lose it from the flow entirely.
+                // A box with no lines has nothing to break between, but the column can still be cut
+                // through it: where the column's own height is stated and the box is taller, it is
+                // sliced rather than left to overflow the sheet whole.
                 if (lines.Count == 0)
                 {
+                    if (AddBoxCut(children, child, size, margin, before, after, fragmentHeight, columns, box.Style.Multi.Fills, context.InFragmentainer))
+                    {
+                        continue;
+                    }
+
                     children.Add(new MulticolChild(
                         child,
                         size,
@@ -1424,6 +1541,11 @@ internal sealed class BlockLayout
                 continue;
             }
 
+            if (AddBoxCut(children, child, size, margin, before, after, fragmentHeight, columns, box.Style.Multi.Fills, context.InFragmentainer))
+            {
+                continue;
+            }
+
             children.Add(new MulticolChild(
                 child,
                 size,
@@ -1434,6 +1556,98 @@ internal sealed class BlockLayout
         }
 
         return children;
+    }
+
+    /// <summary>
+    /// Cuts a child that has nothing to break between across the columns, where the column's own
+    /// height is stated and the child is taller than it: the fragmentainer fills with what stands,
+    /// and the rest of the box is carried on to the next column rather than left to overflow the
+    /// sheet whole (CSS Fragmentation 3 §4.3). Returns whether the pieces were added.
+    /// </summary>
+    /// <remarks>
+    /// What has structure of its own to break at is left to that - a replaced box is one picture, and
+    /// a container's own children are the next step of the fragmentainer. A box that asks not to be
+    /// broken is still cut once it is taller than the whole fragmentainer: the preference is spent
+    /// when no fragmentainer can hold it (CSS Fragmentation 3 §4.3).
+    /// </remarks>
+    private static Boolean AddBoxCut(
+        List<MulticolChild> children,
+        Box child,
+        Size size,
+        Thickness margin,
+        BreakValue before,
+        BreakValue after,
+        Double columnHeight,
+        Int32 columns,
+        Boolean fills,
+        Boolean nested)
+    {
+        // Only a box that holds nothing is cut here, and only in a container that fills its columns:
+        // a box with children of its own breaks inside those first, and a balanced one finds its own
+        // height rather than being cut at one (CSS Fragmentation 3 §4.3). An empty box has no content
+        // to keep whole, so its height is all its own sizing - what it states, what its minimum
+        // makes it, what its border and padding add - and a column shorter than that has to be cut
+        // through it.
+        if (columnHeight <= 0 ||
+            size.Height <= columnHeight + 0.001 ||
+            child.IsReplaced ||
+            child.Children.Count > 0 ||
+            child.Style.Height.IsAuto && !child.Style.MinHeight.HasValue ||
+            !fills ||
+            child.Style.Multi.IsMultiColumn ||
+            child.Kind is BoxKind.Table or BoxKind.Grid or BoxKind.Masonry ||
+
+            // Every piece has to have a column to stand in: a container of a stated count draws no
+            // column past its last one, so a box that needs more pieces than it has columns would
+            // lose the rest of it (CSS Multicol 1 §1.2).
+            Math.Ceiling(size.Height / columnHeight - 0.001) > columns ||
+
+            // A container inside another one's columns is not taken apart by its own columns yet:
+            // its pieces would have to be placed by the columns around it, which do not cut
+            // through a nested container, so the box is left as it was rather than lose its tail.
+            nested)
+        {
+            return false;
+        }
+
+        var left = size.Height;
+        var offset = 0.0;
+        var pieces = 0;
+
+        while (left > 0.001)
+        {
+            var first = pieces == 0;
+
+            // The margin only stands in front of the first piece; a piece that carries on in another
+            // column has the whole column to stand in.
+            var room = columnHeight - (first ? margin.Top : 0);
+            var height = Math.Min(left, room);
+            var last = left - height <= 0.001;
+
+            children.Add(new MulticolChild(
+                child,
+                new Size(size.Width, height),
+                new Thickness(
+                    first ? margin.Top : 0,
+                    margin.Right,
+                    last ? margin.Bottom : 0,
+                    margin.Left),
+                new FragmentChild(
+                    height + (first ? margin.Top : 0) + (last ? margin.Bottom : 0),
+                    first ? before : BreakValue.Auto,
+                    last ? after : BreakValue.Auto,
+                    BreakValue.Auto),
+                -1,
+                last,
+                size.Height,
+                offset));
+
+            left -= height;
+            offset += height;
+            pieces++;
+        }
+
+        return pieces > 1;
     }
 
     /// <summary>Gets whether every in-flow block child of the box floats, and there is at least one.</summary>
@@ -2021,7 +2235,7 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            var children = MulticolChildren(box, share, declaredHeight, context, EffectiveMembers(section.Members, share));
+            var children = MulticolChildren(box, share, declaredHeight, declaredHeight, columns, context, EffectiveMembers(section.Members, share));
             total += MulticolExtent(box.Style.Multi, columns, heightStated ? declaredHeight : null, children);
         }
 
@@ -2988,9 +3202,21 @@ internal sealed class BlockLayout
             return ArrangeMulticolSections(box, sections, parent, content, columns, share, heightStated, declaredHeight, context);
         }
 
-        var children = MulticolChildren(box, share, heightStated ? declaredHeight : 0, context, EffectiveMembers(box.Children, share));
+        var fragmentHeight = FillsTo(box, parent, heightStated, declaredHeight);
+        var children = MulticolChildren(
+                    box,
+                    share,
+                    heightStated ? declaredHeight : 0,
+                    fragmentHeight,
+                    columns,
+                    context,
+                    EffectiveMembers(box.Children, share));
         var multi = box.Style.Multi;
-        var extent = MulticolExtent(multi, columns, heightStated ? declaredHeight : null, children);
+        var extent = MulticolExtent(
+            multi,
+            columns,
+            fragmentHeight > 0 ? fragmentHeight : null,
+            children);
         var fragments = new List<FragmentChild>(children.Count);
 
         foreach (var child in children)
@@ -3015,7 +3241,8 @@ internal sealed class BlockLayout
         Array.Fill(extents, boxHeight);
 
         var counts = Fragmentainer.Fill(fragments, extents);
-        var childContext = context.ForContainingBlock(new Size(share, wraps ? boxHeight : heightStated ? declaredHeight : 0));
+        var childContext = context.ForContainingBlock(new Size(share, wraps ? boxHeight : fragmentHeight))
+            .WithFragmentainer();
         // Only a wrapping container puts its columns in rows. A run that spills past the stated count
         // keeps going to the right (a `column-fill: auto` fragmentainer of one column starts a second
         // column beside it), so the row's width is the number of columns the fill actually made.
@@ -3102,10 +3329,11 @@ internal sealed class BlockLayout
                 // The lines of one broken child that fall in the same column are one fragment of it:
                 // they stand in the box drawn once for them, and only the fragment's own first and last
                 // line carry the child's edges.
-                var to = child.Broken ? child.Line + 1 : -1;
+                var to = child.Broken && child.Offset < 0 ? child.Line + 1 : -1;
                 var last = child;
 
-                while (child.Broken && index + 1 < counts[cell] && children[from].Broken &&
+                while (child.Broken && child.Offset < 0 && index + 1 < counts[cell] &&
+                    children[from].Broken && children[from].Offset < 0 &&
                     ReferenceEquals(children[from].Box, child.Box))
                 {
                     var next = children[from++];
@@ -3121,6 +3349,45 @@ internal sealed class BlockLayout
 
                 var rect = new Rect(x + child.Margin.Left, y, width, height);
                 FragmentSlice? slice = null;
+
+                // A piece cut through the box itself owns the edges that fall inside its slice, and its
+                // background is painted across the box it came from - the box is not measured again at
+                // the smaller height, only cut (CSS Break 3 §4.7).
+                if (child.Offset >= 0)
+                {
+                    var cutBorder = BorderOf(child.Box);
+                    var cutPadding = child.Box.Style.Padding.Resolve(share);
+                    var cutClones = child.Box.Style.ClonesDecoration;
+                    var cutStarts = cutClones || child.Offset < 0.001;
+                    var cutEnds = cutClones || child.Last;
+
+                    parent.Children.Add(_engine.Arrange(
+                        child.Box,
+                        rect,
+                        childContext,
+                        definiteHeight: false,
+                        slice: new FragmentSlice(
+                            new Thickness(
+                                cutStarts ? cutBorder.Top : 0,
+                                cutBorder.Right,
+                                cutEnds ? cutBorder.Bottom : 0,
+                                cutBorder.Left),
+                            new Thickness(
+                                cutStarts ? cutPadding.Top : 0,
+                                cutPadding.Right,
+                                cutEnds ? cutPadding.Bottom : 0,
+                                cutPadding.Left),
+                            cutStarts,
+                            cutEnds,
+                            new Rect(
+                                rect.X,
+                                y - child.Offset,
+                                rect.Width,
+                                child.Whole))));
+
+                    y += height + child.Margin.Bottom;
+                    continue;
+                }
 
                 if (child.Broken)
                 {
@@ -3213,7 +3480,14 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            var children = MulticolChildren(box, share, heightStated ? declaredHeight : 0, context, EffectiveMembers(section.Members, share));
+            var children = MulticolChildren(
+                box,
+                share,
+                heightStated ? declaredHeight : 0,
+                FillsTo(box, parent, heightStated, declaredHeight),
+                columns,
+                context,
+                EffectiveMembers(section.Members, share));
             var extent = MulticolExtent(multi, columns, heightStated ? declaredHeight : null, children);
             var fragments = new List<FragmentChild>(children.Count);
 
