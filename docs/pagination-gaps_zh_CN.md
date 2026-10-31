@@ -711,6 +711,16 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`table-col-paint-htb-ltr` 17150 → **0**，`col-paint-htb-rtl` 与 `table-col-span-1` 恢复；全量屏幕 **2065 → 2064（新增 0）**；单测 2180；打印 189/198。
 
+### 9.47 剩余 wpt/css-break 失败的三块缺口（2026-11-01 实测记录）
+
+当前 css-break 仍红 67 对（table 19、flexbox 16、grid 2、顶层 30）。逐页 dump 后的结论：
+
+1. **竖排表格 = 两个缺口叠加**（row/section/col/grid/collapsed 的 vlr/vrl 共 10 对）。`table-row-paint-vlr-rtl` 的 test 页里表格量成 `34x100`（把行内轴当成了宽），而 ref 页的 400×100 相对块**整个没有被切开**——竖排多栏目前不做“沿块轴（x）切一个宽于栏的子盒”。两者都要做：表格网格按书写模式转置（列的内联尺寸→物理高、行的块尺寸→物理宽、vertical-rl 自右向左），以及竖排多栏的子盒块轴切片。Chrome 对这两页逐像素一致（已验），所以 ref 是可用的基准。`break-inside-avoid-min-block-size-2` 同属竖排多栏（其子盒被塞进不同“列”而不是沿 x 堆叠），一并卡在这里。
+2. **flex 容器的跨栏重排**（059–061、065–071、093–096 等 ~12 对）。`multi-line-column-flex-fragmentation-059` 里 110 高的 column flex 在 60 高的栏里**没有被切开**（`IsBareWrapper` 只放行无边框/背景的裸 flex），整盒溢出；Chrome 把它切两栏，且**每片单独做 flex 排布**（space-between 只在片内分布、断点处的 gap 截断、边框只在外缘），所以“整盒排一次再裁”不够，要让 `FlexFormattingContext` 接受“项范围 + 片高”重算计划。
+3. **“理想 ref”用例不能拿 Chrome 当真值**（out-of-flow-in-multicolumn-045/073/090 等）。045 的 Chrome 实测 `getBoundingClientRect` 显示 abs 的碎片并集为 `(8,50) 100x100`，与 ref 的普通绿方块**恰好一致**，但 Chrome 的 test 页截图与 ref 仍有差异（这些是 Chrome 已知 bug 的测试）；我们若要过，只能实现 ref 描述的理想语义（OOF 随包含块逐栏分片、每片在所在栏内定位），而不是照抄 Chrome 的怪癖。
+
+下一步建议顺序：② flex 容器重排（机制清晰、ref 无怪癖、可先只做 column flex 拿 059–061）；① 竖排转置（10 对，但牵动表与多栏两个核心）；③ 逐对实现理想语义（3 对，需先定“每栏内定位”的规范解释）。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
