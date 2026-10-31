@@ -1391,6 +1391,10 @@ internal sealed class BlockLayout
         return held > size.Height + 0.001;
     }
 
+    /// <summary>Gets the extent a column stacks a child along: the height of a box whose lines run
+    /// across the page, and the width of one whose lines run down it.</summary>
+    private static Double BlockExtentOf(Size size, Boolean vertical) => vertical ? size.Width : size.Height;
+
     private static Boolean FragmentsInColumns(Box child) =>
         !HasBlockChildren(child) && BreaksAtLines(child);
 
@@ -1444,8 +1448,15 @@ internal sealed class BlockLayout
     {
         // What stands in a column is placed by it: a container of columns inside these ones is not
         // taken apart by its own, because the columns around it have nowhere to put the pieces.
-        var childContext = context.ForContainingBlock(new Size(share, declaredHeight)).WithFragmentainer();
-        var constraints = MeasureConstraints.FitWidth(share);
+        // A column that runs down the page divides the box's inline extent - its height - and stacks the
+        // children along the block axis, which is the width: the two extents are the same numbers on the
+        // box's own axes, and only what the children are handed is turned back into width and height.
+        var vertical = box.Flow.IsVertical;
+        var columnBox = vertical ? new Size(declaredHeight, share) : new Size(share, declaredHeight);
+        var childContext = context.ForContainingBlock(columnBox).WithFragmentainer();
+        var constraints = vertical
+            ? MeasureConstraints.Unconstrained.WithHeight(share)
+            : MeasureConstraints.FitWidth(share);
         var source = SpliceOverset(members ?? box.Children, share, childContext);
         var children = new List<MulticolChild>(source.Count);
 
@@ -1461,7 +1472,7 @@ internal sealed class BlockLayout
             }
 
             var size = _engine.Measure(child, constraints, childContext);
-            var used = BoxModel.UsedMargin(child.Style, share, size.Width);
+            var used = BoxModel.UsedMargin(child.Style, share, vertical ? size.Height : size.Width);
 
             // What stands before and after the child is the margin it presents to the stack, not only
             // the one it wrote: a first child's margin travels out through a parent that does not seal
@@ -1502,7 +1513,8 @@ internal sealed class BlockLayout
                         context.InFragmentainer,
                         child.Style.ClonesDecoration
                             ? BorderOf(child).Vertical + child.Style.Padding.Resolve(share).Vertical
-                            : 0.0))
+                            : 0.0,
+                        vertical))
                     {
                         continue;
                     }
@@ -1512,7 +1524,10 @@ internal sealed class BlockLayout
                         size,
                         margin,
                         new FragmentChild(
-                            size.Height + margin.Top + margin.Bottom, before, after, breaks.Inside),
+                            BlockExtentOf(size, vertical) + margin.Top + margin.Bottom,
+                            before,
+                            after,
+                            breaks.Inside),
                         -1,
                         last: true));
 
@@ -1569,7 +1584,8 @@ internal sealed class BlockLayout
                         context.InFragmentainer,
                         child.Style.ClonesDecoration
                             ? BorderOf(child).Vertical + child.Style.Padding.Resolve(share).Vertical
-                            : 0.0))
+                            : 0.0,
+                        vertical))
             {
                 continue;
             }
@@ -1578,7 +1594,8 @@ internal sealed class BlockLayout
                 child,
                 size,
                 margin,
-                new FragmentChild(size.Height + margin.Top + margin.Bottom, before, after, breaks.Inside),
+                new FragmentChild(
+                    BlockExtentOf(size, vertical) + margin.Top + margin.Bottom, before, after, breaks.Inside),
                 -1,
                 last: true));
         }
@@ -1609,7 +1626,8 @@ internal sealed class BlockLayout
         Int32 columns,
         Boolean fills,
         Boolean nested,
-        Double clonedInsets)
+        Double clonedInsets,
+        Boolean vertical)
     {
         // Only a box that holds nothing is cut here, and only in a container that fills its columns:
         // a box with children of its own breaks inside those first, and a balanced one finds its own
@@ -1629,7 +1647,7 @@ internal sealed class BlockLayout
             // Every piece has to have a column to stand in: a container of a stated count draws no
             // column past its last one, so a box that needs more pieces than it has columns would
             // lose the rest of it (CSS Multicol 1 §1.2).
-            Math.Ceiling(size.Height / columnHeight - 0.001) > columns ||
+            Math.Ceiling(BlockExtentOf(size, vertical) / columnHeight - 0.001) > columns ||
 
             // A container inside another one's columns is not taken apart by its own columns yet:
             // its pieces would have to be placed by the columns around it, which do not cut
@@ -1641,7 +1659,8 @@ internal sealed class BlockLayout
 
         // A box that repeats its decoration at every break adds its border and padding to each piece,
         // so what the column holds is the content (CSS Break 3 §4.7).
-        var left = Math.Max(0, size.Height - clonedInsets);
+        var blockExtent = BlockExtentOf(size, vertical);
+        var left = Math.Max(0, blockExtent - clonedInsets);
         var offset = 0.0;
         var pieces = 0;
 
@@ -1658,7 +1677,7 @@ internal sealed class BlockLayout
 
             children.Add(new MulticolChild(
                 child,
-                new Size(size.Width, height),
+                vertical ? new Size(height, size.Height) : new Size(size.Width, height),
                 new Thickness(
                     first ? margin.Top : 0,
                     margin.Right,
@@ -1671,7 +1690,7 @@ internal sealed class BlockLayout
                     BreakValue.Auto),
                 -1,
                 last,
-                size.Height,
+                blockExtent,
                 offset));
 
             left -= content;
