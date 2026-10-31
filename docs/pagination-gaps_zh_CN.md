@@ -470,7 +470,19 @@ dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里�
 
 实测：屏幕全量 **2091 → 2090（新增 0）**；`css-break/table/table-border-007` 转绿（14000 → 0）；`table-border-008` 仍红但残差变化（36400 → 49025，属另一机制：行/列背景的按片绘制）；`table-col/row-paint` 未动（需行级断点与部件背景切片）。单测 2180；打印 189/198 不变。
 
-=> 表格这一族的下一步：`FragmentSlice` 的边只影响"画"、不应影响"排"——目前按整盒排布时把切边为零使内容盒变大 10px（007 无行内容所以没暴露）；行/列/区段的背景与折叠边框需要按片裁切（`table-*-paint-*` 14 对）。=> 下一步沿用同一机制：OOF 盒子**跨过栏边界时按栏分片**（379349 的 ref 第三条边带落在容器外，仍按整盒摆放；`out-of-flow-in-multicolumn` 9 对需真正的逐栏分片），以及同源的 `single-line-column-flex-fragmentation-070a-d/071`。
+
+### 9.17 两族同一个根因：Chrome 在栏尾**切开**带定位后代的块，我们把它整块下推
+
+`table-row-paint-*` 的 **ref 页根本不是表格**：它画的是一个 `position:relative`、400 高的块，里面用 `position:absolute` 的色带模拟"每片的行背景"（红色顶/底 caption、两条 110/135 的橙色渐变行、一条白色竖缝），放在 4×100 的栏里。也就是说这些 ref 依赖的是：**这个 400 高的相对块被 4 个栏切开，绝对定位的后代随它的每一段落到对应栏**。
+
+同一条缺口在 `out-of-flow-in-multicolumn-001/004` 已经量过：`.rel`（高 20、栏剩 10）我们**整块下推**到第 2 栏，Chrome 在栏尾切开（10+10），abs 的静态位置随之分片。
+
+所以下一片（**并行流分片**）的规则是：
+1. 一个块在栏里放不下 *剩余* 空间时，若它**持有 out-of-flow 后代**，就不下推，而在栏尾切开；余下部分进下一栏顶部（与 `FragmentClip` 机制一致）；
+2. 第一片的可用高度是**本栏剩余**（不是整栏高），其后每片为整栏高；
+3. 切开只影响绘制与后代定位，块的 in-flow 内容仍按整盒排一次。
+
+预期解锁：`out-of-flow-in-multicolumn-001/004/045/073/090`、`table-row-paint-*`、`table-col-paint-*`（ref 同形），以及 `table/repeated-section` 的一部分。试过的两个近似实现（直接子盒跨栏续排、按行分带）都没翻绿，已回滚；差别正是"按剩余空间切"与"按整栏高分带"。=> 表格这一族的下一步：`FragmentSlice` 的边只影响"画"、不应影响"排"——目前按整盒排布时把切边为零使内容盒变大 10px（007 无行内容所以没暴露）；行/列/区段的背景与折叠边框需要按片裁切（`table-*-paint-*` 14 对）。=> 下一步沿用同一机制：OOF 盒子**跨过栏边界时按栏分片**（379349 的 ref 第三条边带落在容器外，仍按整盒摆放；`out-of-flow-in-multicolumn` 9 对需真正的逐栏分片），以及同源的 `single-line-column-flex-fragmentation-070a-d/071`。
 
 => 这一族的真正缺口是**栏内 abspos 跨栏分片**（CSS Position 3 §5.5：OOF 后代由片段器分片，跨过栏边界的那一段在下一栏顶部继续）。026 的 abs 正好落在第一栏内（不需要分片），而 379349 的 ref 需要。下一步实现它：在 `ArrangeMulticolChildren` 之后，把包含块落在本盒流内的 OOF 盒子按其量出的矩形与各栏求交，逐栏摆放（平移到该栏 x、裁到该栏）——这与 `out-of-flow-in-multicolumn` 9 对同源。
 **试过"裁剪盒的内容切片"（未提交）**：给 `LayoutBox` 加 `FragmentClip`、让 `OverflowClipEdge` 认它、`AddBoxCut` 放行 `overflow: clip` 的盒子、切出的片按**整盒**排布再裁到片。`borders-001/005` 保持绿，但 `single-line-column-flex-fragmentation-026` 一点没动——探针显示该页 `AddBoxCut` **根本没被调用**：dump 里 flex 容器仍是 100 宽（= 容器宽），说明 `ColumnsOf` 在这些页没走分栏路径。下一步先查 `ColumnsOf` 为何对 `columns:2; width:100px` 的子盒判否（在 `ColumnsOf` 内打一条探针），再谈内容切片。
