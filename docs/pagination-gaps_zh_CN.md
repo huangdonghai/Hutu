@@ -765,7 +765,7 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 ### 9.52 当前基线与剩余缺口（2026-11-01 收口记录）
 
-屏幕全量失败 **2042**（本会话起点 2066，累计 24 对转绿）；`wpt/css-break` **55**（table 18、flexbox 7、grid 1、顶层 29）；单测 2180；打印 189/198。已推送的切片：`4570b6a4`（表格盒/caption/就地起切）、`d89d381b`（列背景 + RTL 列序 + col span）、`3c21d520`（column flex 逐片重排）、`85e9e4ee`（行向 flex 窗口）、`55e1992c`（平衡器不可切段下限）、`230bcf7b`（自动高行向 flex 单行一项）、`c1b4726f`（多栏 grid 跨栏切分，10 对）。
+屏幕全量失败 **2033**（本会话起点 2066，累计 33 对转绿）；`wpt/css-break` **50**（table 17、flexbox 5、grid 0、顶层 28）；单测 2180；打印 189/198。已推送的切片：`4570b6a4`（表格盒/caption/就地起切）、`d89d381b`（列背景 + RTL 列序 + col span）、`3c21d520`（column flex 逐片重排）、`85e9e4ee`（行向 flex 窗口）、`55e1992c`（平衡器不可切段下限）、`230bcf7b`（自动高行向 flex 单行一项）、`c1b4726f`（多栏 grid 跨栏切分，10 对）。
 
 实测并回退（勿重复）：多栏自身文本行的 fill 分栏（`FragmentSlicer.Fitting` 的 orphans 让位）——修好 `text-in-nested-multicol` 的文本分栏却零对翻转；表格分区全量排序（所有 thead→tbody→tfoot、按计算 display 判角色）——目标页 851→441 但弄红 `css-tables/row-group-order`；行向 flex 行跨界切开——096 7000→560 但 065/067 的 ref 页同被重分片而巨差。
 
