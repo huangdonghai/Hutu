@@ -936,7 +936,6 @@ internal sealed class BlockLayout
         }
 
         var floats = 0;
-        var flowing = 0;
 
         foreach (var child in box.Children)
         {
@@ -965,8 +964,6 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            flowing++;
-
             // A spanner spans every column of its row (CSS Multicol 3 §3.2), which the section layout
             // below lays out; a wrapping container would have to put the spanner in a row of column
             // boxes this does not do, so that pair keeps the ordinary stack until it can.
@@ -990,12 +987,10 @@ internal sealed class BlockLayout
             return false;
         }
 
-        // Floats share a column only when nothing else stands among them: a flow box would have to read
-        // the room they leave, which is the band this path does not lay down yet.
-        if (floats > 0 && flowing > 0)
-        {
-            return false;
-        }
+        // A float standing among flow boxes takes its place in the column the flow reached, as any
+        // other child does, and the lines after it read the room it leaves only through the band the
+        // children are handed: measured on widows-orphans-020, where a full-width float ends the
+        // first column and the line that follows it opens the second.
 
         var used = box.Style.Multi.Used(contentInline);
 

@@ -853,6 +853,13 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`float-009` 12500 → **0**；带绿 `background-clip/clip-text-stacking-context-child-002`（其 ref 用 float 模拟行内盒）；全量屏幕 **2020 → 2018（新增 0，修复 2）**；单测 2180；打印 189/198。
 
+### 9.62 栏里可以有 float：`ColumnsOf` 不再拒绝“float + 流动内容”
+
+`widows-orphans-020`（一栏 100 高：20px 块 → 100% 宽 80 高 float → `&nbsp;<br>` 行）原先整条多栏被 `ColumnsOf` 的“float 与其他流动盒并存”拒绝，退化成普通块：float 与行按 190 宽排、绿色盖到第二栏外。按测量放开该拒绝：float 与普通块一样作为 `MulticolChild` 进入某一栏（占掉该栏余下高度），其后的行因放不下进入下一栏；全宽 float 不需要行内 band，故本步不需要逐栏 float band。
+
+实测：`widows-orphans-020` 9000 → **0**，连带 `gecko/bugs/563584-9d` 转绿；全量屏幕 **2018 → 2016（新增 0，修复 2）**；单测 2180；打印 189/198。`widows-orphans-021/022`（float 在**被行切开的子盒内部**，需要逐栏 float band）仍差 6250 / 8750；`overflowing-block-003`（float 在栏内与文字互动）同属后续片。
+
+
 
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
