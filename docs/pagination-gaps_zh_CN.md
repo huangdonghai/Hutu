@@ -537,6 +537,12 @@ dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里�
 
 接 §9.21：`045` 的续排片虽然分出来了，却落在第一栏的**下方**而不是第二栏——`ArrangeMulticolRun` 的非换行分支拿 `counts.Count`（普通填充的栏数）当列数，而切块计划可能比它多一格，于是 `row = cell / columns` 把第二片算成了第 2 行（y +100）。把列数改成 `Math.Max(counts.Count, cells.Count)` 后，045 的第二片正确落到 `(-42,-50.28)`（第二栏顶、`y-offset` 的整盒位置），但该对的 10000 px 没动（它还要 `reach` 和更细的 abs 几何），而 `093` 的像素反而从 28 涨到 269，按"不翻绿不动"的规则回滚了这一行。下一片做 `reach` 时把这一行一起带上，并先看 093 为什么会因此偏 1px。
 
+### 9.23 `reach` 量出来了，但没有翻绿：还差"片数不能超过栏数"
+
+接 §9.21/§9.22 补 `reach`：切块的长度不再只看盒子自己的块向高度，而是 `PositionedReach`——直接 out-of-flow 子盒的 `top`（`auto` 时按它前面 in-flow 内容的累计高当静态位置）加它量出的高度，`fixed` 不计。量到的效果：`073/090` 11600 → **10000**（`.rel` 真的按 0/100/200 分三段了），`004/045` 不动。
+
+但没有一对翻绿，而且 `073` 的第三片落到了第 3 栏（`columns = max(counts, cells)` 时），多栏容器只画两栏，那片就画到盒子外面去了。Chrome 的 ref 只要 100×100 的绿方块：abs 跨两栏各 100，第三段不该有。所以下一片还要一条和 `AddBoxCut` 一样的门槛——**切出来的片数不得超过栏数**（`ceil(reach / columnHeight) <= columns`），超了就整块放着让它溢出（§4.3），再配"续排片落在下一栏"的列数（§9.22 那一行）。这轮 `reach`、列数两处都回滚，工作树停在 `5281cf6b`。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
