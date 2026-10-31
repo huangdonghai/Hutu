@@ -763,6 +763,19 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：全量屏幕 **2052 → 2042（新增 0，10 对转绿）**；单测 2180；打印 189/198。竖排 grid、`grid-item-oof-013`（分片 grid 内的绝对定位项）仍红。
 
+### 9.52 当前基线与剩余缺口（2026-11-01 收口记录）
+
+屏幕全量失败 **2042**（本会话起点 2066，累计 24 对转绿）；`wpt/css-break` **55**（table 18、flexbox 7、grid 1、顶层 29）；单测 2180；打印 189/198。已推送的切片：`4570b6a4`（表格盒/caption/就地起切）、`d89d381b`（列背景 + RTL 列序 + col span）、`3c21d520`（column flex 逐片重排）、`85e9e4ee`（行向 flex 窗口）、`55e1992c`（平衡器不可切段下限）、`230bcf7b`（自动高行向 flex 单行一项）、`c1b4726f`（多栏 grid 跨栏切分，10 对）。
+
+实测并回退（勿重复）：多栏自身文本行的 fill 分栏（`FragmentSlicer.Fitting` 的 orphans 让位）——修好 `text-in-nested-multicol` 的文本分栏却零对翻转；表格分区全量排序（所有 thead→tbody→tfoot、按计算 display 判角色）——目标页 851→441 但弄红 `css-tables/row-group-order`；行向 flex 行跨界切开——096 7000→560 但 065/067 的 ref 页同被重分片而巨差。
+
+剩余三块（都需要新机制，按收益/难度）：
+1. **多栏内 float 带**（约 10 对：float-009/017、line-after-unbreakable-float、widows-orphans-020..023、tall-float-pushed、overflowing-block-003、fragmented-autowidth）。`ColumnsOf` 现以 `floats>0 && flowing>0` 拒绝分栏；需要“栏内 float 占道、后随行盒绕排”，并与 `FloatTracks` 的按栏记账接通。
+2. **竖排表格轴映射 + 竖排多栏块轴切片**（约 13 对：table 的 vlr/vrl paint 10、collapsed vlr/vrl 2、`break-inside-avoid-min-block-size-2`）。表格网格需把“列内联尺寸→物理高、行块尺寸→物理宽、vertical-rl 自右向左”；竖排多栏还需沿块轴（x）切宽于栏的子盒（当前把子盒塞进不同栏而不是沿 x 堆叠）。
+3. **repeated-section 的表头/表脚重复**（4 对）：需给 `FragmentSlice` 加片段偏移/高度，让表格在每个片段顶部重画表头并**从该片可用高度中扣除**，即“嵌套 fragmentainer + 重复区段”。
+
+小项：`grid-item-oof-013`（分片 grid 内**孙级** abspos 按 `grid-row-start` 取区域——`OutFlowArea` 已有，缺的是“后续定位、包含块为 grid”的接线）；box-shadow-002/004/005 是分数坐标的抗锯齿差（按规则跳过）。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
