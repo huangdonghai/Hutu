@@ -595,6 +595,12 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 所以"按剩余空间切"不能只看盒形，还要知道它是谁断的：flex 项的跨栏切片要在 `FlexFormattingContext` 把项交给栏容器时带上这个语义（项属于 flex 容器，容器才决定在哪里断），而不能由 `AddBoxCut` 或 plan 一概而论。已回滚（`borders` 恢复 0），工作树停在 `5a51e480`。
 
+### 9.31 整量失败集里有"单跑即绿"的幻影：先认清再动手
+
+按 §9.26 的线索抽查了几对：`forced-break-at-fragmentainer-start-000`、`monolithic-content-with-forced-break-002/003`、`relpos-inline` 用 `HUTU_SCORE_ONLY` 指到单对时**全绿**（`LooksAtOnePairClosely` 的图也一致），但它们在整量里挂着红。`ReftestRunner.Draw` 每页都新开线程、新引擎，泄漏只可能来自进程级静态状态（字体/度量缓存一类），而 001 那对已量到"先画 002/003 再画 001 就红"。
+
+也就是说整量失败集里有一部分是这个泄漏造成的幻影，改它们会白改。下一步（优先级高于继续翻绿）：先把泄漏钉住——用二分前缀找出"哪个前驱页会把 001 弄红"，再定位静态缓存；修掉之后基线会变，门禁判据也要按新基线重记。在那之前，凡整量红、单跑绿的条目先当幻影看待。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
