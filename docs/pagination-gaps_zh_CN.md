@@ -444,6 +444,10 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 追到根因：`ColumnsOf` 的"任何 out-of-flow 子元素 → return false"（§4.3.6 的旧范围线）让 `single-line-column-flex-fragmentation-026` 这类页**根本不形成分栏**（探针：`COL inline=100 count=2 used=2 kids=2` 随后在 OOF 子盒处返回 false；dump 里 flex 容器仍是整宽）。改成"OOF 子盒不算拒绝理由"（它们在盒子的 padding box 上定位，与栏无关），并在**含 spanner**时保留旧的拒绝（spanner 的 run 还没教过怎么摆这些盒子）。再叠加"裁剪盒内容切片"（`FragmentClip` + 按整盒排布 + 裁到片 + `max-height` 算有界高度），`026` **转绿**、`borders-001/005` 与 `multicol-span-all-fieldset-002/003` 保持绿、12 个探测家族 0 回归。
 
 但全量屏幕门禁里 `gecko/bugs/379349-2a` 红 4396 px（`.fno1` 段落位移）。**关掉两处新切割许可后仍是 4396**，说明嫌疑在 `ColumnsOf` 的 OOF 改动本身，而不是内容切片；该页没有 OOF 子盒，机制未查明。整片回滚，WIP 存 `build/abs-columns-wip.cs`。下一步：在该页给 `ColumnsOf`/`HoldsSpanner` 打探针，看是哪一条路径因 OOF 改动而改变了分栏结果。
+
+**孤立实验（已做）**：只应用 OOF 那一条改动（不动切割许可、不加 `FragmentClip`），`379349-2a` 依旧红 4396 px，`026` 依旧红（它还需要内容切片）——确认红的是 OOF 改动本身。查看该对：`379349-2a-ref.html` 的 multicol 里有 `position:absolute` 的边带（x=48/198/348，第三条落在容器 300 宽之外），改动让它**从"整体堆叠"变成"分栏"**，边带落点因此改变；test 页没有 OOF 子盒、行为不变，于是两侧发散。
+
+=> 这一族的真正缺口是**栏内 abspos 跨栏分片**（CSS Position 3 §5.5：OOF 后代由片段器分片，跨过栏边界的那一段在下一栏顶部继续）。026 的 abs 正好落在第一栏内（不需要分片），而 379349 的 ref 需要。下一步实现它：在 `ArrangeMulticolChildren` 之后，把包含块落在本盒流内的 OOF 盒子按其量出的矩形与各栏求交，逐栏摆放（平移到该栏 x、裁到该栏）——这与 `out-of-flow-in-multicolumn` 9 对同源。
 **试过"裁剪盒的内容切片"（未提交）**：给 `LayoutBox` 加 `FragmentClip`、让 `OverflowClipEdge` 认它、`AddBoxCut` 放行 `overflow: clip` 的盒子、切出的片按**整盒**排布再裁到片。`borders-001/005` 保持绿，但 `single-line-column-flex-fragmentation-026` 一点没动——探针显示该页 `AddBoxCut` **根本没被调用**：dump 里 flex 容器仍是 100 宽（= 容器宽），说明 `ColumnsOf` 在这些页没走分栏路径。下一步先查 `ColumnsOf` 为何对 `columns:2; width:100px` 的子盒判否（在 `ColumnsOf` 内打一条探针），再谈内容切片。
 
 
