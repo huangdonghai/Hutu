@@ -623,6 +623,12 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 剩余 OOF：`045`（包装盒 200 高、按 reach 分成两片后仍差 abs 的竖向几何）、`073/090`（片数 3 > 2 栏，按 §9.15 的规则整块溢出，Chrome 的 ref 只要 100×100）、`094-096`（平衡 + OOF 的高度怪癖）。
 
+### 9.35 表格多出来的高按行高等比分，不按行数均分
+
+`specified-block-size-007`：`height:400` 的表格里只有 1px（黄）与 3px（青）两行，放在 4×100 的栏里。ref 是"第 1 栏黄、后 3 栏青"，即两行被拉成 **100 与 300**——多出来的 396 按行高 **1:3** 分；我们均分（201/203），第 2 栏也成了黄色。`TableGrid.StretchRows` 改为按各行当前高度等比分配多余高度（各行都没高时退回均分），有未声明高度的行也按"参与分配的那些行"等比。
+
+实测：`specified-block-size-007` 2475 → **0** 转绿；全量屏幕 **2095 → 2077、19 对绿、新增失败 0**（`gecko/text/initial-zwj-1` 偶现、单跑绿）；单测 2180；打印 189/198；`wpt/css-break` 75 → **74**。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

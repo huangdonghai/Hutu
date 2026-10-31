@@ -480,14 +480,29 @@ internal sealed class TableGrid
         }
 
         // A row that asked for a height keeps it while any row that asked for none is left to take the
-        // room; a table whose rows all asked for a height shares the surplus over all of them equally.
+        // room. A table whose rows all asked for a height shares the surplus in proportion to what each
+        // already took, which is what Chrome does: a table of a stated height with a 1px and a 3px row
+        // comes out 100 and 300, not 201 and 203 (measured, specified-block-size-007).
+        // Chrome shares the room a stated table height leaves over in proportion to what each row
+        // already takes - a 1px row and a 3px row in a 400-tall table come out 100 and 300, measured
+        // in specified-block-size-007 - and falls back to an equal share when the rows have no height
+        // at all to be in proportion to.
         var share = surplus / (open > 0 ? open : Rows.Count);
+        var total = 0.0;
 
         foreach (var row in Rows)
         {
             if (open == 0 || !row.HeightDeclared)
             {
-                row.Height += share;
+                total += row.Height;
+            }
+        }
+
+        foreach (var row in Rows)
+        {
+            if (open == 0 || !row.HeightDeclared)
+            {
+                row.Height += total > 0 ? surplus * row.Height / total : share;
                 row.FilledByTable = true;
             }
         }
