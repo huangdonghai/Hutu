@@ -451,6 +451,14 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 第二条缺的是**行已用内联宽度**：`InlineLayout` 只暴露 `LineHeights`，没有 `LineWidths`；measure 与 arrange 必须拿到同一个数，否则容器高度会漂。已先把 `FloatTracks.Place` 加上 `inlineOffset`（默认 0，行为不变，56 个 float 单测全过），供下一步接线。
 
+**接线量过一轮（未提交）**：`LineWidths` 已落地（`b2ca452b`），两条规则接上后 `float-009` **转绿**、`borders-001` 保持绿；但三对变红，逐一收敛：
+
+- `css-break/flexbox/flex-fragmented-with-float-descendant-001`：把规则限定在"自身不是格式化上下文根"的盒子里（flex 项、裁剪盒、定位盒各有自己的排布）后**恢复**；
+- `CSS2/pagination/float-page-break-inside-avoid-7-print`：同一限定后也恢复（打印对，需再验）；
+- `CSS2/abspos/static-inside-float-inside-inline`：**仍红**——`<span line-height:200px><br>` 之后紧跟 float，`<br>` 造出的空行让 float 升到了行首（应为 `<br>` 之后 200px）。需要"前一行是否由强制换行造成"这个判断（空行不应抬高 float），这条判断还没写。
+
+measure 侧还有一处要小心：`LineWidths` 会重新规划行，若对每个行盒都调用，会二次规划同一内容并扰动 float 记账；正确做法是**推迟到真的有 float 要放时**再算（按 `lined` 记住前一个行盒）。
+
 
 
 ### 9.8 按片裁内容：做出来了，但被 float 那一侧挡住
