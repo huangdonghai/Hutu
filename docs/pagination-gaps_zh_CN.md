@@ -747,7 +747,7 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实现：`FlexFormattingContext.Windows` 用整盒计划取行偏移并按栏高分窗；`MulticolChildren` 为每个窗口造一个 `Offset≥0` 的预切片（片高 = 窗口内容，排布时再加片自己的边）；`ArrangeMulticolRun` 里预切片 relay 用“整盒计划 + 首行重锚”摆放；`extents` 让每个预切片各占一栏（平衡容器可越过声明栏数）；`MulticolExtent` 的平衡结果按容器声明高**封顶**（顺带转绿 `gecko/columns/columnfill-overflow` 与 `multicol-span-all-children-height-003`）。
 
-实测：065/067/070/071 曾全绿但把 `gecko/flexbox/pagination/flexbox-multi-row-1a` 弄红；加“声明高”限制后最终 **094、095 转绿**（另有两条非 flex 对随之转绿），`065/067/070/071` 因自动高回到红；全量屏幕 **2061 → 2057（新增 0）**；单测 2180；打印 189/198。096（行跨界被切开）、068/069/093 仍红，是下一轮。
+实测（两步）：先只放“声明高”的容器，**094、095 转绿**（另有两条非 flex 对随之转绿），全量屏幕 2061 → 2057；随后把自动高容器也放进来、但**只在其每行恰有一项时**走窗口模型（行内多项的行跨界尚未实现，`gecko/flexbox/pagination/flexbox-multi-row-1a` 的 ref 就是“每行两项且整块摆放”），**065/067/070/071 一并转绿**，全量屏幕 **2057 → 2052（新增 0）**；单测 2180；打印 189/198。096（行跨界被切开）、068/069/093 仍红，是下一轮。
 
 ### 9.50 平衡器的最小片高：行数不够孤儿+寡行的段不可切
 

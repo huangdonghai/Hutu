@@ -1119,12 +1119,9 @@ internal sealed class BlockLayout
     private static Boolean RowRelaysInColumns(
         Box child, Boolean vertical, Double extent, Double columnHeight, Boolean nested)
     {
-        // Only a container whose block size it was told has windows to lay out: one that takes its
-        // size from its lines stands whole, as a block of that size does (measured:
-        // gecko/flexbox/pagination/flexbox-multi-row-1a).
         if (vertical || nested || columnHeight <= 0 || extent <= columnHeight + 0.001 ||
             child.Kind != BoxKind.Flex || !child.Style.Flex.IsRow || !child.Style.Flex.Wraps ||
-            child.Children.Count == 0 || HoldsPositioned(child) || BlockSizeIsAuto(child, vertical))
+            child.Children.Count == 0 || HoldsPositioned(child))
         {
             return false;
         }
@@ -2037,7 +2034,13 @@ internal sealed class BlockLayout
                     childContext,
                     fragmentHeight);
 
-                if (windows.Count > 0)
+                // A container that takes its block size from its lines is cut only where a line holds a
+                // single item: a line with several of them would have to be split at the break, which
+                // the windows do not do yet (measured:
+                // gecko/flexbox/pagination/flexbox-multi-row-1a against multi-line-row-flex-fragmentation-065).
+                var autoBlock = BlockSizeIsAuto(child, vertical);
+
+                if (windows.Count > 0 && (!autoBlock || windows.Count == child.Children.Count))
                 {
                     for (var index = 0; index < windows.Count; index++)
                     {
