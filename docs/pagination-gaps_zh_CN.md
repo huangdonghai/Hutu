@@ -663,6 +663,17 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 另记 `widows-orphans-002` 的悬案：4 行、4 栏、两个 2 行的块，`orphans:1; widows:2`；Chrome 平衡到 2 行/栏（每块整块进一栏），我们平衡到 1 行/栏（1/1 切开）。`column-balancing-000`（一个 3 行块、3 栏、默认 2/2）Chrome 却 1/1/1 切开——两者的差别不能靠"块高 vs 栏高"解释，需要 Chrome 探针（每块的 `getClientRects`）确认它到底在什么条件下拒绝短尾。
 
+### 9.41 Chrome 平衡探针：`<br>` 分行的块，Chrome 倾向少用栏
+
+用 Chrome + `getBoundingClientRect` 量了两个最小例（`column-fill:balance-all`，等宽等线高）：
+
+- 两个 2 行块（`<br>` 分行）、4 栏：Chrome 给 **2 栏 × 2 行**（每块整块进一栏），不是 4×1；
+- 一个 3 行块、3 栏：Chrome 给 **2 栏（2 行 + 1 行）**，不是 3×1。
+
+而 `column-balancing-000`（一个 3 行块、3 栏、`column-fill` 默认）ref 是 3 栏 1/1/1——差别在**自然换行 vs `<br>` 强制断**：有 `<br>` 时 Chrome 的平衡器倾向挑"少一栏、每块尽量整"的高度；自然换行的块则按最小高度铺满。`orphans/widows` 在这里都不是主因（强制断点不受它们约束，CSS Break 3 §3.3 只约束**非强制**断点）。
+
+所以 `widows-orphans-002`（`<br>` 块）要的是"平衡时优先让块整块进栏"的启发式，而不是 widows 规则本身；实现时不要动 `KeepsRun` 的 orphans/widows 联动，否则 `column-balancing-000` 会跟着变。两个探针页与结论留档在此。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
