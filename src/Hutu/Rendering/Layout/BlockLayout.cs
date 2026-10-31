@@ -3366,6 +3366,7 @@ internal sealed class BlockLayout
                 share,
                 multi.Gap,
                 boxHeight,
+                box.Flow.BlockIsRightToLeft,
                 childContext);
         }
         else
@@ -3431,6 +3432,7 @@ internal sealed class BlockLayout
         Double share,
         Double gap,
         Double boxExtent,
+        Boolean blockReversed,
         LayoutContext childContext)
     {
         var from = 0;
@@ -3439,17 +3441,20 @@ internal sealed class BlockLayout
         {
             var column = cell % columns;
             var y = originY + column * (share + gap);
-            var x = originX;
+
+            // The block axis starts at the box edge the writing mode names: the right one for
+            // vertical-rl, where the pieces of a cut box run back towards the left.
+            var x = blockReversed ? originX + boxExtent : originX;
 
             for (var index = 0; index < counts[cell]; index++)
             {
                 var child = children[from++];
 
                 // The column starts a fresh stack, as a horizontal one does.
-                x += child.Margin.Top;
-
                 var width = child.Size.Width;
                 var height = child.Size.Height;
+                var start = blockReversed ? x - child.Margin.Top : x + child.Margin.Top;
+                var blockX = blockReversed ? start - width : start;
 
                 if (child.Offset >= 0)
                 {
@@ -3463,39 +3468,39 @@ internal sealed class BlockLayout
 
                     parent.Children.Add(_engine.Arrange(
                         child.Box,
-                        new Rect(x, y + child.Margin.Left, width, height),
+                        new Rect(blockX, y + child.Margin.Left, width, height),
                         childContext,
                         definiteHeight: false,
                         slice: new FragmentSlice(
                             new Thickness(
                                 cutBorder.Top,
-                                cutEnds ? cutBorder.Right : 0,
+                                (blockReversed ? cutStarts : cutEnds) ? cutBorder.Right : 0,
                                 cutBorder.Bottom,
-                                cutStarts ? cutBorder.Left : 0),
+                                (blockReversed ? cutEnds : cutStarts) ? cutBorder.Left : 0),
                             new Thickness(
                                 cutPadding.Top,
-                                cutEnds ? cutPadding.Right : 0,
+                                (blockReversed ? cutStarts : cutEnds) ? cutPadding.Right : 0,
                                 cutPadding.Bottom,
-                                cutStarts ? cutPadding.Left : 0),
+                                (blockReversed ? cutEnds : cutStarts) ? cutPadding.Left : 0),
                             cutStarts,
                             cutEnds,
                             new Rect(
-                                x - child.Offset,
+                                blockReversed ? blockX + child.Offset + width - child.Whole : blockX - child.Offset,
                                 y + child.Margin.Left,
                                 child.Whole,
                                 height))));
 
-                    x += width + child.Margin.Bottom;
+                    x = blockReversed ? blockX - child.Margin.Bottom : blockX + width + child.Margin.Bottom;
                     continue;
                 }
 
                 parent.Children.Add(_engine.Arrange(
                     child.Box,
-                    new Rect(x, y + child.Margin.Left, width, height),
+                    new Rect(blockX, y + child.Margin.Left, width, height),
                     childContext,
                     definiteHeight: false));
 
-                x += width + child.Margin.Bottom;
+                x = blockReversed ? blockX - child.Margin.Bottom : blockX + width + child.Margin.Bottom;
             }
         }
     }

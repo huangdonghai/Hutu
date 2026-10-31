@@ -438,6 +438,14 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
 
+### 9.10 切片 F：竖排多栏（栏沿 inline 轴、块轴反向）
+
+`ColumnsOf` 过去对 `box.Flow.IsVertical` 直接返回 false，竖排多栏一律退化成普通堆叠。现在按**行内尺寸**（竖排是高度）分栏，栏内子盒沿块轴（竖排是宽度）堆叠；切片的块向边在**左右**，vertical-rl 的块轴从右往左、片也自右向左排。关键的一行是 `AddBoxCut` 里遗留的 `size.Height <= columnHeight` 门槛（竖排子盒的 `size.Height` 恰等于栏高，导致永远不切），改为按块向 extent 判断后立刻生效。
+
+范围线：竖排容器**含 float（含嵌套）或 `column-height` 换行**时仍走普通堆叠——这两条 walk 还没写；`ColumnsOf` 里直接挡住。
+
+实测：屏幕全量 **2095 → 2093（新增 0）**；`borders-006`、`borders-007` 转绿；单测 2180；打印 189/198 不变。竖排阴影两对仍差：`box-shadow-004` 1132（AA 软边）、`box-shadow-003` 12157（阴影带在反向块轴上的位置待查）。
+
 
 ### 9.8 按片裁内容：做出来了，但被 float 那一侧挡住
 

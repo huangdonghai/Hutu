@@ -120,6 +120,10 @@ public readonly struct WritingModeInfo
     /// </summary>
     public Boolean SetsTextBackwards => IsVertical && IsRightToLeft;
 
+    /// <summary>Gets whether the block axis runs from the right edge back to the left one, which is
+    /// what a vertical-rl box does.</summary>
+    internal Boolean BlockIsRightToLeft => Mode is WritingMode.VerticalRl or WritingMode.SidewaysRl;
+
     /// <summary>Gets whether the inline axis runs down the page rather than along it.</summary>
     public Boolean IsVertical => Mode != WritingMode.HorizontalTb;
 
