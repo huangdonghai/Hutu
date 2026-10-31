@@ -459,6 +459,8 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 measure 侧还有一处要小心：`LineWidths` 会重新规划行，若对每个行盒都调用，会二次规划同一内容并扰动 float 记账；正确做法是**推迟到真的有 float 要放时**再算（按 `lined` 记住前一个行盒）。
 
+**第二轮接线（仍红，已回滚）**：按上一条把 `LineWidths` 推迟到 float 处再算，并把规则只放在 **arrange** 侧（measure 侧保持原样）；再依次加三条限定——①只对"自身不是格式化上下文根"的盒子、②行必须**部分填满**（整行或 `<br>` 造成的空行都不把 float 抬高，本来也放不下）、③容器不能是 `IsInlineOuter`（行内盒的行由 inline 排布负责）。结果 `float-009`、`borders-001`、`flex-fragmented-with-float-descendant-001` 全绿，但 `CSS2/abspos/static-inside-float-inside-inline` **仍然红**（float 升到 `<br>` 行首，应在其后 200px）；HEAD 该对是绿的，说明问题出在这轮改动里，而三条限定都排除不了它。下次应从**打印 `lineTop`/`reach` 的实际取值**入手（该页 dump：`block span` 下 `~block` 与 float 并列，float 落点与 `~block` 同 y），确认是谁把 float 抬上去的。
+
 
 
 ### 9.8 按片裁内容：做出来了，但被 float 那一侧挡住
