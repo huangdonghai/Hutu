@@ -432,7 +432,14 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 **`transform-006/008`。** 变换盒自己 175 高、子盒 300 高，ref 要求**每一片**各自算 `transform-origin` 且内容跟着裁。我们的盒有内容就不切（切了内容会在每片重排），所以这一对与 `borders-006/007`（竖排多栏）、`break-inside-avoid-min-block-size-2`、`table/repeated-section/text-in-nested-multicol` 卡在同一处。
 
-**下一片（最大解锁）：按片裁内容。** 切片盒子的子盒按**整盒**排一次，每片只画属于自己那一段（`BackgroundOrigin` 已有整盒矩形，渲染时再加一条裁到分片的 clip），不再按片重排。它同时解锁 `transform-006/008`、`break-inside-avoid-min-block-size-2`、`table/repeated-section/text-in-nested-multicol`、`out-of-flow` 的一部分，以及 `widows-orphans-021/022` 这类"float/abs 在分片块里"的用例。再往后是竖排多栏（`ColumnsOf` 现在对 `box.Flow.IsVertical` 直接返回 false），解锁 `borders-006/007`、`box-shadow-003/004`。
+**下一片（最大解锁）：按片裁内容。** 切片盒子的子盒按**整盒**排一次，每片只画属于自己那一段（`BackgroundOrigin` 已有整盒矩形，渲染时再加一条裁到分片的 clip），不再按片重排。它同时解锁 `transform-006/008`、`break-inside-avoid-min-block-size-2`、`table/repeated-section/text-in-nested-multicol`、`out-of-flow` 的一部分，以及 `widows-orphans-021/022` 这类"float/abs 在分片块里"的用例。再往后是竖排多栏（`ColumnsOf` 现在对 `box.Flow.IsVertical` 直接返回 false），解锁 `borders-006/007`、`box-shadow-003/004`。
+### 9.12 家族测绘：flexbox 与 table 的剩余缺口形状
+
+- **flexbox（22 对）**不是单一机制：最小的 10 对同签名（`58,50`、白 vs 绿、10000 px）分两种——`single-line-column-flex-fragmentation-026/070a-d/071` 是"`overflow:clip` + `max-height` 的 flex 容器高过栏、内容要跨栏继续"；`multi-line-row-flex-fragmentation-083a-d` 是"item 的 `break-before` 传播到 flex line"。另一半（`059..061`、`065..071`、`093..096`）是 item 尺寸/多行行盒的细节。
+- **table（18 对）**分两组：4 个小的 repeated-section 对（`balanced-inner-multicol` 700、`text-in-nested-multicol` 224、`variable-fragmentainer-size-001/002`）需要"栏里的表格重复区段"；14 个 paint 对（`table-*-paint-*`、`collapsed-borders-paint-*`、`table-border-007/008`、`caption-and-cells`）是"表格部件被栏切开时按片绘制背景/边框"，一次可覆盖一大片。
+
+**试过"裁剪盒的内容切片"（未提交）**：给 `LayoutBox` 加 `FragmentClip`、让 `OverflowClipEdge` 认它、`AddBoxCut` 放行 `overflow: clip` 的盒子、切出的片按**整盒**排布再裁到片。`borders-001/005` 保持绿，但 `single-line-column-flex-fragmentation-026` 一点没动——探针显示该页 `AddBoxCut` **根本没被调用**：dump 里 flex 容器仍是 100 宽（= 容器宽），说明 `ColumnsOf` 在这些页没走分栏路径。下一步先查 `ColumnsOf` 为何对 `columns:2; width:100px` 的子盒判否（在 `ColumnsOf` 内打一条探针），再谈内容切片。
+
 
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
