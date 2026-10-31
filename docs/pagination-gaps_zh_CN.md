@@ -523,6 +523,16 @@ dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里�
 
 结论：列背景要落在"RTL（及竖排）表格列镜像"之后，作为独立一片先做网格镜像（`ColumnX`/列宽/单元格落点/折叠边框一起翻），再把上面三步接回来；本轮未提交、已回滚，工作树停在 `d4079812`。
 
+### 9.21 按剩余空间切持有 OOF 的块：001 转绿，但"已填充列"的判据连坐（未提交）
+
+把 §9.17 的并行流分片真的做出来了（已回滚），机制是：`MulticolChild.Divides`（`column-fill:auto`、横排、块向 margin 为零、持有 out-of-flow 后代）→ `PlanMulticolRun` 逐栏给出 piece（整块或切块；余下部分从下一栏顶续排，`NeededCells` 按块高给足栏数）→ `ArrangeMulticolRun` 消费 piece：切块按**整盒**排一次再 `FragmentClip` 到片（与表格切片同一套）。还有一个关键点：`ChildSlicer.Fitting` 对**第一个**装不下的子盒会返回 1（保证流程前进），所以切块必须在它之前拦截，否则持有 OOF 的首子永远整块溢出。
+
+实测：`out-of-flow-in-multicolumn-001` 840 → **0 转绿**——顺带把 `column-rule` 露了出来：原来 `MulticolRules` 判断"某列有内容"看的是**子盒盒子**的落点，切块的盒子整体站在上面一段，于是规则不画；改成看 `FragmentClip`（片真正占的那段）并放宽为"与栏带相交"之后，白 16px 的 `column-rule` 画进 001 的栏缝，000 页对齐。
+
+但全量 15 对变红：`out-of-flow-in-multicolumn-019`（嵌套多栏里的 `.rel` 被外层切开，父栏本就拒绝嵌套 multicol）、`table/repeated-section/abspos-uncontained-text`（又把表格切成真失败）、**11 个 `wpt/css-gaps/multicol/multicol-gap-decorations-*`**——"填充列"的放宽把规则画到了原先近似规则刻意不画的位置。整片净 −14，按规则回滚，工作树停在 `d4079812`。
+
+下一步的顺序应当是：①把"填充列"的新判据只用于**切片的续排**，不替换 `MulticolRules` 原来的近似（或先单独量一遍 css-gaps 的 78 对再动）；②嵌套多栏的子盒不参与外层切块；③`reach`（045/004/073/090）：块的切分长度要算到 OOF 后代的底，现在只看盒子自己的块向尺寸。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
