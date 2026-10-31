@@ -418,5 +418,22 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 实测：屏幕全量 **2097 → 2096（新增 0）**；`borders-008` 转绿；单测 2179（`MulticolBoxCutTests` 加 1 个 clone 用例）；打印 189/198 不变。
 
+### 9.6 切片 E：被 max-height 夹住的 wrapper 也打开
+
+`IsOversetWrapper` 只认"写明了 height"的 wrapper；`fieldset-007` 的 wrapper 用 `max-height:100px` 夹住自己，内容 300px 溢出，Chrome 一样顺着栏分片。现在"写明 height"或"写了 max-height"都算给盒子定了高（内容是否真的越界由后文的 `held > size.Height` 判定）。
+
+实测：屏幕全量 **2096 → 2095（新增 0）**；`fieldset-007` 转绿；单测 2180（`MulticolBoxCutTests` 加 1 个 max-height 用例）；打印 189/198 不变。
+
+### 9.7 量过但回滚的三件事（同一块缺口的三个侧面）
+
+**空白子节点算不算内容。** `box-decoration-break-clone-009` 的盒子只有卷起来的空白文本子节点，`AddBoxCut` 的 `Children.Count > 0` 因此不肯切它。把"只有可折叠空白"视为空（`HoldsAnything`）后 `clone-009` 与 `gecko/pagination/abspos-breaking-001` 都转绿，但 `wpt/CSS2/floats-clear/floats-clear-multicol-001` 变红：它的 ref 页那个空 `.container` 因此被切（正确），test 页的 `.container` 里装的是两个 float，我们的引擎还不能把 block 里的 float 按栏分片，两侧于是发散。1 红换 2 绿不合门禁，整片回滚。
+
+**OOF 与平衡（`out-of-flow-in-multicolumn-094/095/096`）。** 三对的 ref 都要求整块绿（多栏容器高 200 而不是平衡出来的 100）。Chrome 实测（`build/_oof_balance.html`）：两个 100px 子盒 + 一个 `.rel` 包着 abs(100) → 容器 **200**；abs 直接作容器子盒 → **100**；对照 → 100。即"abspos 的包含块落在多栏内部的普通流盒里"时 Chrome 让片段器撑到那个盒的静态位置，而包含块是多栏本身时 abspos 按栏分片、不撑高。规范里没有对应条款，记为 Chrome 怪癖，不实现。
+
+**`transform-006/008`。** 变换盒自己 175 高、子盒 300 高，ref 要求**每一片**各自算 `transform-origin` 且内容跟着裁。我们的盒有内容就不切（切了内容会在每片重排），所以这一对与 `borders-006/007`（竖排多栏）、`break-inside-avoid-min-block-size-2`、`table/repeated-section/text-in-nested-multicol` 卡在同一处。
+
+**下一片（最大解锁）：按片裁内容。** 切片盒子的子盒按**整盒**排一次，每片只画属于自己那一段（`BackgroundOrigin` 已有整盒矩形，渲染时再加一条裁到分片的 clip），不再按片重排。它同时解锁 `transform-006/008`、`break-inside-avoid-min-block-size-2`、`table/repeated-section/text-in-nested-multicol`、`out-of-flow` 的一部分，以及 `widows-orphans-021/022` 这类"float/abs 在分片块里"的用例。再往后是竖排多栏（`ColumnsOf` 现在对 `box.Flow.IsVertical` 直接返回 false），解锁 `borders-006/007`、`box-shadow-003/004`。
+
+
 
 
