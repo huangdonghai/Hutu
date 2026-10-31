@@ -115,8 +115,18 @@ internal sealed class BlockLayout
         }
         else if (HasBlockChildren(box))
         {
+            // A column that runs down the page is bounded by the width of the box, which this pass
+            // holds already; the height is the inline axis the columns are shared over.
+            var columnExtent = box.Flow.IsVertical ? contentWidth : childHeight;
             contentHeight = ColumnsOf(box, box.Flow.InlineExtent(contentWidth, childHeight), out var columns, out var share)
-                ? MeasureMulticolChildren(box, share, contentWidth, childHeight, declaredHeight is not null, columns, context)
+                ? MeasureMulticolChildren(
+                    box,
+                    share,
+                    contentWidth,
+                    columnExtent,
+                    declaredHeight is not null || box.Flow.IsVertical,
+                    columns,
+                    context)
                 : MeasureBlockChildren(
                     box,
                     contentWidth,
@@ -628,7 +638,7 @@ internal sealed class BlockLayout
         {
             used = lines is { } range
                 ? ArrangeBlockLines(box, layout, contentX, contentY, contentWidth, contentHeight, range, start, childContext)
-                : !flow.IsVertical && ColumnsOf(box, flow.InlineExtent(contentWidth, contentHeight), out var columns, out var share)
+                : ColumnsOf(box, flow.InlineExtent(contentWidth, contentHeight), out var columns, out var share)
                     ? ArrangeMulticolChildren(
                         box,
                         layout,
@@ -915,7 +925,7 @@ internal sealed class BlockLayout
         columns = 1;
         share = contentInline;
 
-        if (box.Flow.IsVertical || !box.Style.Multi.IsMultiColumn)
+        if (!box.Style.Multi.IsMultiColumn)
         {
             return false;
         }
@@ -957,6 +967,13 @@ internal sealed class BlockLayout
             {
                 return false;
             }
+        }
+
+        // A column that runs down the page does not pack floats or wrap into rows yet: both walks
+        // assume the columns advance across the page.
+        if (box.Flow.IsVertical && (floats > 0 || box.Style.Multi.Wraps || HoldsAnyFloat(box, box.Children)))
+        {
+            return false;
         }
 
         // Floats share a column only when nothing else stands among them: a flow box would have to read
@@ -1391,6 +1408,14 @@ internal sealed class BlockLayout
         return held > size.Height + 0.001;
     }
 
+    /// <summary>Gets whether a box leaves the extent a column stacks it along to its content.</summary>
+    private static Boolean BlockSizeIsAuto(Box child, Boolean vertical) =>
+        vertical ? child.Style.Width.IsAuto : child.Style.Height.IsAuto;
+
+    /// <summary>Gets whether a box states a floor for that extent.</summary>
+    private static Boolean HasBlockMinimum(Box child, Boolean vertical) =>
+        vertical ? child.Style.MinWidth.HasValue : child.Style.MinHeight.HasValue;
+
     /// <summary>Gets the extent a column stacks a child along: the height of a box whose lines run
     /// across the page, and the width of one whose lines run down it.</summary>
     private static Double BlockExtentOf(Size size, Boolean vertical) => vertical ? size.Width : size.Height;
@@ -1637,11 +1662,13 @@ internal sealed class BlockLayout
         // to keep whole, so its height is all its own sizing - what it states, what its minimum
         // makes it, what its border and padding add - and a column shorter than that has to be cut
         // through it.
+
+
         if (columnHeight <= 0 ||
-            size.Height <= columnHeight + 0.001 ||
+            BlockExtentOf(size, vertical) <= columnHeight + 0.001 ||
             child.IsReplaced ||
             child.Children.Count > 0 ||
-            child.Style.Height.IsAuto && !child.Style.MinHeight.HasValue ||
+            BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) ||
             !fills ||
             child.Style.Multi.IsMultiColumn ||
             child.Kind is BoxKind.Table or BoxKind.Grid or BoxKind.Masonry ||
@@ -1661,7 +1688,9 @@ internal sealed class BlockLayout
 
         // A box that repeats its decoration at every break adds its border and padding to each piece,
         // so what the column holds is the content (CSS Break 3 §4.7).
+        Console.WriteLine($"GUARD col={columnHeight <= 0} small={BlockExtentOf(size, vertical) <= columnHeight + 0.001} rep={child.IsReplaced} auto={BlockSizeIsAuto(child, vertical)} min={HasBlockMinimum(child, vertical)} nofill={!fills} multi={child.Style.Multi.IsMultiColumn} kind={child.Kind} many={Math.Ceiling(BlockExtentOf(size, vertical) / columnHeight - 0.001) > columns} nested={nested}");
         var blockExtent = BlockExtentOf(size, vertical);
+        Console.WriteLine($"CUT-OK v={vertical} block={blockExtent} col={columnHeight} clone={clonedInsets}");
         var left = Math.Max(0, blockExtent - clonedInsets);
         var offset = 0.0;
         var pieces = 0;
@@ -1701,6 +1730,21 @@ internal sealed class BlockLayout
         }
 
         return pieces > 1;
+    }
+
+    /// <summary>Gets whether a box or anything inside it floats, which is the pair a column that runs
+    /// down the page does not pack yet.</summary>
+    private static Boolean HoldsAnyFloat(Box box, IReadOnlyList<Box> children)
+    {
+        foreach (var child in children)
+        {
+            if (IsFloat(child) || HoldsAnyFloat(child, child.Children))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Gets whether every in-flow block child of the box floats, and there is at least one.</summary>
@@ -3255,6 +3299,14 @@ internal sealed class BlockLayout
             return ArrangeMulticolSections(box, sections, parent, content, columns, share, heightStated, declaredHeight, context);
         }
 
+        // A column that runs down the page is bounded by the width of the box - the axis it stacks
+        // along - which this pass already holds; the height is the inline axis it shares them over.
+        if (box.Flow.IsVertical)
+        {
+            heightStated = true;
+            declaredHeight = content.Width;
+        }
+
         var fragmentHeight = FillsTo(box, parent, heightStated, declaredHeight);
         var children = MulticolChildren(
                     box,
@@ -3293,25 +3345,45 @@ internal sealed class BlockLayout
         var extents = new Double[Math.Max(1, wraps ? columns * rows : multi.Fills ? children.Count : columns)];
         Array.Fill(extents, boxHeight);
 
+        Console.WriteLine($"FILL v={box.Flow.IsVertical} kids={children.Count} boxExt={boxHeight} frags={String.Join(",", fragments.Select(f => f.Height))}");
+        Console.WriteLine($"MC v={box.Flow.IsVertical} decl={(heightStated ? declaredHeight : 0)} frag={fragmentHeight} pieces={children.Count}");
         var counts = Fragmentainer.Fill(fragments, extents);
-        var childContext = context.ForContainingBlock(new Size(share, wraps ? boxHeight : fragmentHeight))
+        var childContext = context.ForContainingBlock(
+            box.Flow.IsVertical ? new Size(fragmentHeight, share) : new Size(share, wraps ? boxHeight : fragmentHeight))
             .WithFragmentainer();
         // Only a wrapping container puts its columns in rows. A run that spills past the stated count
         // keeps going to the right (a `column-fill: auto` fragmentainer of one column starts a second
         // column beside it), so the row's width is the number of columns the fill actually made.
-        ArrangeMulticolRun(
-            children,
-            counts,
-            parent,
-            content.X,
-            content.Y,
-            wraps ? columns : Math.Max(1, counts.Count),
-            share,
-            multi.Gap,
-            boxHeight,
-            multi.RowGap,
-            childContext,
-            new Dictionary<Box, Double>());
+        if (box.Flow.IsVertical)
+        {
+            ArrangeMulticolRunAcross(
+                children,
+                counts,
+                parent,
+                content.X,
+                content.Y,
+                Math.Max(1, counts.Count),
+                share,
+                multi.Gap,
+                boxHeight,
+                childContext);
+        }
+        else
+        {
+            ArrangeMulticolRun(
+                children,
+                counts,
+                parent,
+                content.X,
+                content.Y,
+                wraps ? columns : Math.Max(1, counts.Count),
+                share,
+                multi.Gap,
+                boxHeight,
+                multi.RowGap,
+                childContext,
+                new Dictionary<Box, Double>());
+        }
 
         _engine.PublishFloats(box, null);
 
@@ -3328,7 +3400,9 @@ internal sealed class BlockLayout
             parent,
             box.Style,
             content,
-            new List<(Double, Double)> { (content.Y, content.Y + runHeight) });
+            box.Flow.IsVertical
+                ? new List<(Double, Double)> { (content.X, content.X + extent) }
+                : new List<(Double, Double)> { (content.Y, content.Y + runHeight) });
 
         return extent;
     }
@@ -3345,6 +3419,87 @@ internal sealed class BlockLayout
     /// Where each broken child began, so a later piece can paint the background of the whole box it was
     /// cut from. It is handed in so pieces that fall in different rows and runs still agree.
     /// </param>
+    /// <summary>Places the children of columns that run down the page: the columns stand one below
+    /// the next along the inline axis, and each stacks its children across the block one.</summary>
+    private void ArrangeMulticolRunAcross(
+        List<MulticolChild> children,
+        IReadOnlyList<Int32> counts,
+        LayoutBox parent,
+        Double originX,
+        Double originY,
+        Int32 columns,
+        Double share,
+        Double gap,
+        Double boxExtent,
+        LayoutContext childContext)
+    {
+        var from = 0;
+
+        for (var cell = 0; cell < counts.Count; cell++)
+        {
+            var column = cell % columns;
+            var y = originY + column * (share + gap);
+            var x = originX;
+
+            for (var index = 0; index < counts[cell]; index++)
+            {
+                var child = children[from++];
+
+                // The column starts a fresh stack, as a horizontal one does.
+                x += child.Margin.Top;
+
+                var width = child.Size.Width;
+                var height = child.Size.Height;
+
+                if (child.Offset >= 0)
+                {
+                    // A piece cut through the box owns the edges that fall inside its slice: the edges
+                    // the cut fell on are the left and right ones, since the box runs across the page.
+                    var cutBorder = BorderOf(child.Box);
+                    var cutPadding = child.Box.Style.Padding.Resolve(height);
+                    var cutClones = child.Box.Style.ClonesDecoration;
+                    var cutStarts = cutClones || child.Offset < 0.001;
+                    var cutEnds = cutClones || child.Last;
+
+                    parent.Children.Add(_engine.Arrange(
+                        child.Box,
+                        new Rect(x, y + child.Margin.Left, width, height),
+                        childContext,
+                        definiteHeight: false,
+                        slice: new FragmentSlice(
+                            new Thickness(
+                                cutBorder.Top,
+                                cutEnds ? cutBorder.Right : 0,
+                                cutBorder.Bottom,
+                                cutStarts ? cutBorder.Left : 0),
+                            new Thickness(
+                                cutPadding.Top,
+                                cutEnds ? cutPadding.Right : 0,
+                                cutPadding.Bottom,
+                                cutStarts ? cutPadding.Left : 0),
+                            cutStarts,
+                            cutEnds,
+                            new Rect(
+                                x - child.Offset,
+                                y + child.Margin.Left,
+                                child.Whole,
+                                height))));
+
+                    x += width + child.Margin.Bottom;
+                    continue;
+                }
+
+                parent.Children.Add(_engine.Arrange(
+                    child.Box,
+                    new Rect(x, y + child.Margin.Left, width, height),
+                    childContext,
+                    definiteHeight: false));
+
+                x += width + child.Margin.Bottom;
+            }
+        }
+    }
+
     private void ArrangeMulticolRun(
         List<MulticolChild> children,
         IReadOnlyList<Int32> counts,
