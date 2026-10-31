@@ -859,6 +859,16 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`widows-orphans-020` 9000 → **0**，连带 `gecko/bugs/563584-9d` 转绿；全量屏幕 **2018 → 2016（新增 0，修复 2）**；单测 2180；打印 189/198。`widows-orphans-021/022`（float 在**被行切开的子盒内部**，需要逐栏 float band）仍差 6250 / 8750；`overflowing-block-003`（float 在栏内与文字互动）同属后续片。
 
+### 9.63 剩余簇的现场测量（021/022、093、table-border-008、variable-fragmentainer）
+
+- `widows-orphans-021/022`：Chrome 实测（021 的 fragment rects）`div` 有两个片段 `(8,50,50x100)`、`(58,50,50x100)`——**每一栏的片段都是满栏高**，内容按内部块/行边界分配到两栏（25px 块在第 1 栏；`<br>` 行、float、`&nbsp;` 行、`<br>` 行在第 2 栏的不同 y 上）。Hutu 该子盒根本未被切开：它有**块子盒**，`FragmentsInColumns` 为假、`DividesAcross` 为假，整盒 50x125 溢出。要点是“子盒内部递归分片”（与 `overflowed-block-with-no-room-after-000/001` 同源），不是 float band。
+- `multi-line-row-flex-fragmentation-093`：100 宽换行 row flex 里第 2 项自带 210 高溢出子盒 ⇒ 单行高 210，需按**项窗口**（0..100/100..200/200..210）逐窗重排；当前 `Windows` 只按行切，整行进一个窗口。
+- `table-border-008`：表 50 宽 + 10 边框、上下各 150 caption、总高 480，在 6 栏（每栏 100）里“切成三栏”。ref 在**第 3、4 栏顶**都要黑边框：折叠/切片的表在其 caption 分片处也要画出表盒边框，Hutu 只在首栏画。与折叠表“外侧半线”几何（§9.60）同源。
+- `table/repeated-section/variable-fragmentainer-size-001`：外层 3 栏切内层 `columns:1;height:250px` 容器，表（thead 20 / tfoot 20 / 内容 130）在**每个内层片段**都要重画页眉/页脚；Hutu 的内层容器未被外层切出多片，故只画一次。属“嵌套片段的重复区段”。
+
+全量门禁复核（HEAD `94a7d647`）：屏幕失败 **2016**（gecko 603 + wpt 1413；`wpt/css-break` **44**）、单测 2180、打印 189/198。
+
+
 
 
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
