@@ -1445,6 +1445,17 @@ internal sealed record LayoutProfile(
         _positioned.Arrange(box, staticPosition, context, standing, line);
 
     /// <summary>
+    /// Gets the windows a fragmentainer of the given room cuts a wrapping row flex into: the lines it
+    /// holds and where each window begins along the container's block axis (CSS Flexbox 1 §6).
+    /// </summary>
+    internal IReadOnlyList<(Double Offset, Double Height)> FlexWindows(
+        Box box,
+        Rect borderBox,
+        LayoutContext context,
+        Double room) =>
+        _flex.Windows(box, borderBox, context, room);
+
+    /// <summary>
     /// Lays one window of a fragmented flex container out. A fragmented flex container is a flex
     /// container of the window's own size, carrying the items the window falls over, so the room the
     /// window has left is shared among those items alone (CSS Flexbox 1 §6).

@@ -735,6 +735,20 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：059 6000、060/061 各 6000 → **0**；全量屏幕 **2064 → 2061（新增 0）**；单测 2180；打印 189/198。行向 065–071 仍红（065 42600 → 28200，未收敛，已回退行向部分）。
 
+### 9.49 行向 flex 跨栏：按行窗口切，片高为整栏、首窗保留前导空间
+
+`multi-line-row-flex-fragmentation-065/067/070/071/094/095` 是带 `row-gap`/`align-content` 的换行行向 flex。Chrome 实测（JS 探针 + 截图）：
+
+1. **窗口按行切**：片从“上一片装不下的第一条行”开始，`gap` 在断点处截断——下一行的行首就落在新片顶部（065 的 100 高栏里每片只放一行，4 行 = 4 片，且**溢出到声明的 2 栏之外**仍照画）；
+2. **片高 = 整栏**（065 每片 100 高，灰色背景一直铺到栏底，即使内容只有 50）；
+3. **首窗从容器起点开始**（保留 `align-content` 的前导空间，095/096），断点后的窗口从首行开始（前导空间被截断）；
+4. 行向 flex 里 `break-before: always` 是**容器内的换行**而非分片断点（067），不能据此拒切；
+5. 只有**声明了块向尺寸**的 flex 才走窗口：自动高的 flex 与同尺寸的普通块一样整体摆放（`gecko/flexbox/pagination/flexbox-multi-row-1a` 的 ref 就是这么画的）。
+
+实现：`FlexFormattingContext.Windows` 用整盒计划取行偏移并按栏高分窗；`MulticolChildren` 为每个窗口造一个 `Offset≥0` 的预切片（片高 = 窗口内容，排布时再加片自己的边）；`ArrangeMulticolRun` 里预切片 relay 用“整盒计划 + 首行重锚”摆放；`extents` 让每个预切片各占一栏（平衡容器可越过声明栏数）；`MulticolExtent` 的平衡结果按容器声明高**封顶**（顺带转绿 `gecko/columns/columnfill-overflow` 与 `multicol-span-all-children-height-003`）。
+
+实测：065/067/070/071 曾全绿但把 `gecko/flexbox/pagination/flexbox-multi-row-1a` 弄红；加“声明高”限制后最终 **094、095 转绿**（另有两条非 flex 对随之转绿），`065/067/070/071` 因自动高回到红；全量屏幕 **2061 → 2057（新增 0）**；单测 2180；打印 189/198。096（行跨界被切开）、068/069/093 仍红，是下一轮。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

@@ -1111,6 +1111,38 @@ internal sealed class BlockLayout
         return true;
     }
 
+    /// <summary>
+    /// Gets whether a wrapping row flex is one the columns cut window by window: every child a block of
+    /// its own in the flow, the container taller than a window, and nothing inside that the columns
+    /// would have to place themselves (CSS Flexbox 1 §6).
+    /// </summary>
+    private static Boolean RowRelaysInColumns(
+        Box child, Boolean vertical, Double extent, Double columnHeight, Boolean nested)
+    {
+        // Only a container whose block size it was told has windows to lay out: one that takes its
+        // size from its lines stands whole, as a block of that size does (measured:
+        // gecko/flexbox/pagination/flexbox-multi-row-1a).
+        if (vertical || nested || columnHeight <= 0 || extent <= columnHeight + 0.001 ||
+            child.Kind != BoxKind.Flex || !child.Style.Flex.IsRow || !child.Style.Flex.Wraps ||
+            child.Children.Count == 0 || HoldsPositioned(child) || BlockSizeIsAuto(child, vertical))
+        {
+            return false;
+        }
+
+        foreach (var item in child.Children)
+        {
+            // A break stated on an item of a wrapping row is a line break inside the container rather
+            // than one through the fragmentainer (CSS Flexbox 1 §6), so it is no reason to leave the
+            // container whole (measured: multi-line-row-flex-fragmentation-067).
+            if (!item.IsBlockLevel || PositionedLayout.IsOutOfFlow(item) || IsFloat(item))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>Gets how far a box's out-of-flow descendants reach below its own top, which is how
     /// long a column has to carry the box before the content is spent. A box that names no offset
     /// stands where the flow would have left it, so the content before it is counted in; a fixed one
@@ -1993,8 +2025,49 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            var divides = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer);
             var extent = BlockExtentOf(size, vertical);
+
+            // A wrapping row flex is cut window by window: each window begins at the first line the one
+            // before it could not hold, so a gap the break fell in is dropped rather than kept whole.
+            if (RowRelaysInColumns(child, vertical, extent, fragmentHeight, context.InFragmentainer))
+            {
+                var windows = _engine.FlexWindows(
+                    child,
+                    new Rect(0, 0, size.Width, size.Height),
+                    childContext,
+                    fragmentHeight);
+
+                if (windows.Count > 0)
+                {
+                    for (var index = 0; index < windows.Count; index++)
+                    {
+                        var window = windows[index];
+                        var firstWindow = index == 0;
+                        var lastWindow = index == windows.Count - 1;
+
+                        children.Add(new MulticolChild(
+                            child,
+                            size,
+                            new Thickness(
+                                firstWindow ? margin.Top : 0,
+                                margin.Right,
+                                lastWindow ? margin.Bottom : 0,
+                                margin.Left),
+                            new FragmentChild(
+                                window.Height, firstWindow ? before : BreakValue.Auto,
+                                lastWindow ? after : BreakValue.Auto, breaks.Inside),
+                            -1,
+                            last: lastWindow,
+                            whole: size.Height,
+                            offset: window.Offset,
+                            relays: true));
+                    }
+
+                    continue;
+                }
+            }
+
+            var divides = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer);
             var relays = !divides && RelaysInColumns(
                 child, vertical, extent, fragmentHeight, context.InFragmentainer);
 
@@ -2842,7 +2915,12 @@ internal sealed class BlockLayout
             fragments.Add(child.Fragment);
         }
 
-        return Fragmentainer.Balance(fragments, columns);
+        var balanced = Fragmentainer.Balance(fragments, columns);
+
+        // A height the container states caps its columns: the content balances within it where it can,
+        // and spills into more columns than it names where it cannot (CSS Multicol 1 §3, measured:
+        // multi-line-row-flex-fragmentation-094).
+        return declaredHeight is { } cap && cap < balanced ? cap : balanced;
     }
 
     /// <summary>Gets whether the child is pinned to an edge of its container instead of stacked in it.</summary>
@@ -3764,7 +3842,20 @@ internal sealed class BlockLayout
         // A fill is not held to the column count: content that does not fit the stated columns spills
         // into more of them, which is how Chrome lays out a run longer than its `column-count`. A
         // balance has already been solved into the columns it was given.
-        var extents = new Double[Math.Max(1, wraps ? columns * rows : multi.Fills ? Math.Max(children.Count, NeededCells(children, boxHeight)) : columns)];
+        // A balanced container names its columns, but a piece the fragmentainer already cut - a window
+        // of a flex container - takes a column of its own even past that count, since it has no room
+        // left to share (CSS Flexbox 1 §6).
+        var cutPieces = 0;
+
+        foreach (var child in children)
+        {
+            if (child.Offset >= 0)
+            {
+                cutPieces++;
+            }
+        }
+
+        var extents = new Double[Math.Max(1, wraps ? columns * rows : multi.Fills ? Math.Max(children.Count, NeededCells(children, boxHeight)) : Math.Max(columns, cutPieces))];
         Array.Fill(extents, boxHeight);
 
         var counts = Fragmentainer.Fill(fragments, extents);
@@ -4195,6 +4286,50 @@ internal sealed class BlockLayout
 
                 var width = child.Size.Width;
                 var height = child.Size.Height;
+
+                // A window of a wrapping row flex is laid out as a flex container of the window's own
+                // size: its lines keep the distances the whole container laid them at, the first of them
+                // at the window's top, and the piece's own edge stands outside the content it holds
+                // (CSS Flexbox 1 §6, measured: multi-line-row-flex-fragmentation-065/094).
+                if (child.Relays && child.Offset >= 0)
+                {
+                    var windowBorder = BorderOf(child.Box);
+                    var windowPadding = child.Box.Style.Padding.Resolve(share);
+                    var windowStarts = child.Offset < 0.001;
+                    var windowEdge = (windowStarts ? windowBorder.Top + windowPadding.Top : 0.0) +
+                        (child.Last ? windowBorder.Bottom + windowPadding.Bottom : 0.0);
+                    var windowHeight = portion.Height > 0.001 ? portion.Height : child.Fragment.Height;
+                    var windowWhole = new Rect(
+                        x + child.Margin.Left,
+                        y - child.Offset - (windowBorder.Top + windowPadding.Top),
+                        width,
+                        child.Whole > 0 ? child.Whole : height);
+
+                    parent.Children.Add(_engine.ArrangeFlexFragment(
+                        child.Box,
+                        new Rect(x + child.Margin.Left, y, width, windowHeight + windowEdge),
+                        childContext,
+                        windowWhole,
+                        child.Offset,
+                        windowHeight,
+                        new FragmentSlice(
+                            new Thickness(
+                                windowStarts ? windowBorder.Top : 0,
+                                windowBorder.Right,
+                                child.Last ? windowBorder.Bottom : 0,
+                                windowBorder.Left),
+                            new Thickness(
+                                windowStarts ? windowPadding.Top : 0,
+                                windowPadding.Right,
+                                child.Last ? windowPadding.Bottom : 0,
+                                windowPadding.Left),
+                            windowStarts,
+                            child.Last,
+                            windowWhole)));
+
+                    y += windowHeight + windowEdge + (child.Last ? child.Margin.Bottom : 0);
+                    continue;
+                }
 
                 // A piece of a child the column divided: the box is laid out over the whole of
                 // itself, where its content and its out-of-flow descendants stand, and the column

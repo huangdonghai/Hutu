@@ -249,6 +249,98 @@ internal sealed partial class FlexFormattingContext
     }
 
     /// <summary>
+    /// Gets the windows a fragmentainer of the given room cuts a wrapping row container into. The lines
+    /// are taken in the order they stand, as many to a window as the room holds; a gap a break falls in
+    /// is truncated, so the line after it stands at the top of the window after (CSS Flexbox 1 §6).
+    /// </summary>
+    /// <returns>Each window's start in the container's content coordinates and the room it takes.</returns>
+    public IReadOnlyList<(Double Offset, Double Height)> Windows(
+        Box box,
+        Rect borderBox,
+        LayoutContext context,
+        Double room)
+    {
+        var windows = new List<(Double Offset, Double Height)>();
+        var style = box.Style;
+        var flex = style.Flex;
+
+        if (room <= 0 || box.Children.Count == 0)
+        {
+            return windows;
+        }
+
+        var basis = context.ContainingBlock.Width;
+        var border = BlockLayout.BorderOf(box);
+        var padding = style.Padding.Resolve(basis);
+        var mainIsHorizontal = flex.IsRow != box.Flow.IsVertical;
+        var insetMain = mainIsHorizontal
+            ? border.Horizontal + padding.Horizontal
+            : border.Vertical + padding.Vertical;
+        var insetCross = mainIsHorizontal
+            ? border.Vertical + padding.Vertical
+            : border.Horizontal + padding.Horizontal;
+        var contentWidth = Math.Max(0, borderBox.Width - (mainIsHorizontal ? insetMain : insetCross));
+        var contentHeight = Math.Max(0, borderBox.Height - (mainIsHorizontal ? insetCross : insetMain));
+        var itemContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
+        var plan = Compute(
+            box,
+            flex,
+            mainIsHorizontal ? contentWidth : contentHeight,
+            mainIsHorizontal ? contentHeight : contentWidth,
+            insetMain,
+            insetCross,
+            itemContext);
+
+        if (plan.Lines.Count == 0)
+        {
+            return windows;
+        }
+
+        var lines = new List<(Double Start, Double Size)>(plan.Lines.Count);
+
+        foreach (var line in plan.Lines)
+        {
+            var start = flex.IsWrapReversed ? contentHeight - line.CrossStart - line.CrossSize : line.CrossStart;
+            lines.Add((start, line.CrossSize));
+        }
+
+        lines.Sort(static (left, right) => left.Start.CompareTo(right.Start));
+
+        var index = 0;
+
+        while (index < lines.Count)
+        {
+            // The window that starts the container begins at its own start, so the leading space an
+            // alignment laid down is kept; a window after a break begins at its first line, since the
+            // break stands where the space before it would have (measured:
+            // multi-line-row-flex-fragmentation-095/096).
+            var start = index == 0 ? 0.0 : lines[index].Start;
+            var end = start;
+
+            while (index < lines.Count && lines[index].Start + lines[index].Size - start <= room + 0.001)
+            {
+                end = lines[index].Start + lines[index].Size;
+                index++;
+            }
+
+            // A line taller than the room still takes a window of its own, overflowing it: a flow has
+            // to make progress even where the page asked for more than the column can give.
+            if (end <= start)
+            {
+                end = start + lines[index].Size;
+                index++;
+            }
+
+            // A window is a fragmentainer's: its box is the whole room, even where the lines it holds
+            // end before it, which is what lets the container's background fill the column to its foot
+            // (measured: multi-line-row-flex-fragmentation-065).
+            windows.Add((start, room));
+        }
+
+        return windows;
+    }
+
+    /// <summary>
     /// Lays one window of a fragmented flex container out. The container's own layout is worked out once,
     /// over the whole of it: the window takes the items it falls over, and they keep the distances the
     /// whole laid them at, the first of them re-anchored at the window's top - a break takes the leading
