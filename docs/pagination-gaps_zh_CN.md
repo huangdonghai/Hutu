@@ -392,4 +392,19 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 下一片（不依赖分片）：把四个逻辑 inset 按 writing-mode × direction 折到物理边（CSS Logical 1 §12.2），物理属性已声明时保留其值，`inset` / `inset-block` / `inset-inline` 简写展开；单测覆盖 8 种模式组合，然后重测 `box-shadow-002..005`、`borders-005..008`、`out-of-flow-in-multicolumn-*`。阴影 band 那条改动等这一片能把 `box-shadow-*` 送到可判分的距离后再重新落地。
 
+### 9.3 切片 B：逻辑 inset + 断点处的阴影带
+
+实测：屏幕全量 **2100 → 2098**（新增 0）；单测 2169 → **2178**（`LogicalInsetTests` 6 个、`ShadowAtTheCutTests` 3 个）；打印 189/198 不变。
+
+| 位置 | 做了什么 |
+|---|---|
+| `PositionStyle.cs:163` `Fold`（`Read` 与 `ReadFused` 两条读路径都走它） | 四个逻辑 inset 按 writing-mode × direction 折到物理边：水平方向 block-start=top、水平 LTR inline-start=left；vertical-rl 的 block-start=right、vertical-lr 为 left；竖排的 inline 轴随 `direction: rtl` 反向。物理边已有值时保留（`auto` 与"没写"分不开，按已写处理）。 |
+| `FusedStyleFactory.cs:1153` | 把本盒的 `writingMode` / `direction` 交给 `ReadFused`。 |
+| `PaintCommand.cs` `BoxShadowCommand.Band` + `Painter.cs` `BandOf` + `SkiaPaintExecutor.DrawBoxShadow` | 分片盒子改画**整盒**的阴影（`BackgroundOrigin`），再用 band 夹住：被切断的两边止于切点，盒子真有的边放到阴影可达范围；后端 `Save()+ClipRect` 实现。`box-decoration-break: clone` 的分片两边都是真边，band 自然为整段。 |
+
+`box-shadow` 四对的变化（像素差）：`002` 11926 → **412**、`005` 12626 → **996**、`004` 9642 → **8137**、`003` 6198 → **5442**。都还没翻绿：`002` 的残差是整像素边框与抗锯齿阴影带之间 1px 的软边（规范上等价），`003` 是 vertical-rl 的 band 路径（单测覆盖了映射，但这对的残差还没定位），`004/005` 待查（005 只差 996）。另有两对顺带转绿：`css-shapes/shape-outside-circle-054/055`（ref 用逻辑 inset 摆圆）。
+
+`inset` / `inset-block` / `inset-inline` 三个简写由 AngleSharp 解析成长手，Hutu 只读长手，所以简写自动覆盖。剩余缺口：物理与逻辑同时写时以"物理已写"为准，没有按层叠顺序判定（两者落在同一个物理属性上，规范由层叠决定）。
+
+
 

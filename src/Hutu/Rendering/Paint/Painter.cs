@@ -643,6 +643,11 @@ internal sealed class Painter
         var area = inset ? box.PaddingBox : box.BorderBox;
         var radii = inset ? box.PaddingRadii : box.Radii;
 
+        // A fragment of a box broken across the columns casts the shadow of the box it came from, and
+        // none at the edge it was cut at: a cut is not an edge of the box, so nothing falls across it
+        // (CSS Break 3 §4.7).
+        var whole = !inset && (box.SlicesBlockStart || box.SlicesBlockEnd) ? box.BackgroundOrigin : null;
+
         for (var index = shadows.Count - 1; index >= 0; index--)
         {
             var shadow = shadows[index];
@@ -657,11 +662,12 @@ internal sealed class Painter
             // An inner shadow's spread works the other way: expanding the shadow is the same as contracting
             // the shape it is drawn from (§6.1).
             var distance = inset ? -shadow.Spread : shadow.Spread;
-            var width = Math.Max(0, area.Width + distance * 2);
-            var height = Math.Max(0, area.Height + distance * 2);
+            var cast = whole ?? area;
+            var width = Math.Max(0, cast.Width + distance * 2);
+            var height = Math.Max(0, cast.Height + distance * 2);
             var shape = new Rect(
-                area.X - distance + shadow.OffsetX,
-                area.Y - distance + shadow.OffsetY,
+                cast.X - distance + shadow.OffsetX,
+                cast.Y - distance + shadow.OffsetY,
                 width,
                 height);
 
@@ -675,14 +681,35 @@ internal sealed class Painter
 
             target.Add(new BoxShadowCommand(
                 bounds,
-                area,
+                cast,
                 radii,
                 shape,
                 radii.Spread(distance, width, height),
                 shadow.Blur,
                 shadow.Color,
-                inset));
+                inset,
+                whole is null ? null : BandOf(box, area, bounds)));
         }
+    }
+
+    /// <summary>
+    /// Gets the band a fragment of a broken box keeps its shadow inside: the two edges it was cut at
+    /// hold the shadow in, and at the edges the box really has it falls as far as it reaches.
+    /// </summary>
+    private static Rect BandOf(LayoutBox box, Rect fragment, Rect bounds)
+    {
+        var vertical = box.Flow.IsVertical;
+        var low = vertical ? fragment.X : fragment.Y;
+        var high = vertical ? fragment.Right : fragment.Bottom;
+
+        // The band of a cut edge stops at the cut; an edge the box owns lets the shadow out to the
+        // bounds it was drawn to.
+        var from = box.SlicesBlockStart ? low : vertical ? bounds.X : bounds.Y;
+        var to = box.SlicesBlockEnd ? high : vertical ? bounds.Right : bounds.Bottom;
+
+        return vertical
+            ? new Rect(from, bounds.Y, to - from, bounds.Height)
+            : new Rect(bounds.X, from, bounds.Width, to - from);
     }
 
     /// <summary>

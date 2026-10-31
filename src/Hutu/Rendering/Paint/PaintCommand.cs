@@ -199,7 +199,8 @@ public sealed class BoxShadowCommand : PaintCommand
         CornerRadii shapeRadii,
         Double blur,
         UInt32 color,
-        Boolean inset)
+        Boolean inset,
+        Rect? band = null)
         : base(bounds)
     {
         Area = area;
@@ -209,6 +210,7 @@ public sealed class BoxShadowCommand : PaintCommand
         Blur = blur;
         Color = color;
         Inset = inset;
+        Band = band;
     }
 
     /// <summary>Gets the box's own area: the border box of an outer shadow, the padding box of an inner one.</summary>
@@ -233,6 +235,13 @@ public sealed class BoxShadowCommand : PaintCommand
 
     /// <summary>Gets whether the shadow lies inside the box rather than under it.</summary>
     public Boolean Inset { get; }
+
+    /// <summary>
+    /// Gets the band the shadow is kept inside where the box it was drawn from is one fragment of a
+    /// broken box: the fragment's own extent along the axis it was cut at, and as far as the whole
+    /// box's shadow reaches along the axes it was not. Null where the box stands whole.
+    /// </summary>
+    public Rect? Band { get; }
 }
 
 /// <summary>

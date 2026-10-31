@@ -1150,7 +1150,7 @@ internal static class FusedStyleFactory
         values.VisualEffects = visual;
         values.Decoration = textDecoration;
         values.List = pool is null ? list : pool.List(list);
-        values.Position = PositionStyle.ReadFused(find, face, dimensions, parent.Position);
+        values.Position = PositionStyle.ReadFused(find, face, dimensions, parent.Position, writingMode, direction);
 
         // The table longhands are five property lookups no element that is not part of a table has a
         // use for, so they are only read where the display says the box is one. Every spelling of it

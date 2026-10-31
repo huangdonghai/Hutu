@@ -98,14 +98,24 @@ internal readonly struct PositionStyle
         0,
         false);
 
-    internal static PositionStyle Read(ComputedStyle style) => new(
-        ReadPosition(style),
-        Inset(style, "top"),
-        Inset(style, "right"),
-        Inset(style, "bottom"),
-        Inset(style, "left"),
-        ReadZIndex(style, out var hasZIndex),
-        hasZIndex);
+    internal static PositionStyle Read(ComputedStyle style)
+    {
+        var edges = Fold(
+            (Inset(style, "top"), Inset(style, "right"), Inset(style, "bottom"), Inset(style, "left")),
+            (Inset(style, "inset-block-start"), Inset(style, "inset-block-end"),
+                Inset(style, "inset-inline-start"), Inset(style, "inset-inline-end")),
+            style.WritingMode,
+            style.Direction);
+
+        return new PositionStyle(
+            ReadPosition(style),
+            edges.Top,
+            edges.Right,
+            edges.Bottom,
+            edges.Left,
+            ReadZIndex(style, out var hasZIndex),
+            hasZIndex);
+    }
 
     /// <summary>
     /// Reads the positioning longhands from the element's own cascaded declarations, for the
@@ -115,14 +125,76 @@ internal readonly struct PositionStyle
         Func<String, ICssProperty?> find,
         LengthReader.FontSource font,
         IRenderDimensions dimensions,
-        PositionStyle parent) => new(
-        ComputedStyle.ResolvePositionModeFused(find("position")),
-        ComputedStyle.ResolveInsetFused(find("top"), parent.Top, font, dimensions),
-        ComputedStyle.ResolveInsetFused(find("right"), parent.Right, font, dimensions),
-        ComputedStyle.ResolveInsetFused(find("bottom"), parent.Bottom, font, dimensions),
-        ComputedStyle.ResolveInsetFused(find("left"), parent.Left, font, dimensions),
-        ReadZIndexFused(find("z-index"), out var hasZIndex),
-        hasZIndex);
+        PositionStyle parent,
+        WritingMode writingMode,
+        TextDirection direction)
+    {
+        var edges = Fold(
+            (ComputedStyle.ResolveInsetFused(find("top"), parent.Top, font, dimensions),
+                ComputedStyle.ResolveInsetFused(find("right"), parent.Right, font, dimensions),
+                ComputedStyle.ResolveInsetFused(find("bottom"), parent.Bottom, font, dimensions),
+                ComputedStyle.ResolveInsetFused(find("left"), parent.Left, font, dimensions)),
+            (ComputedStyle.ResolveInsetFused(find("inset-block-start"), parent.Top, font, dimensions),
+                ComputedStyle.ResolveInsetFused(find("inset-block-end"), parent.Bottom, font, dimensions),
+                ComputedStyle.ResolveInsetFused(find("inset-inline-start"), parent.Left, font, dimensions),
+                ComputedStyle.ResolveInsetFused(find("inset-inline-end"), parent.Right, font, dimensions)),
+            writingMode,
+            direction);
+
+        return new PositionStyle(
+            ComputedStyle.ResolvePositionModeFused(find("position")),
+            edges.Top,
+            edges.Right,
+            edges.Bottom,
+            edges.Left,
+            ReadZIndexFused(find("z-index"), out var hasZIndex),
+            hasZIndex);
+    }
+
+    /// <summary>
+    /// Puts the four logical insets on the physical edges their box's axes name them (CSS Logical 1
+    /// §12.2), leaving every edge an offset was already written for to that offset.
+    /// </summary>
+    /// <remarks>
+    /// An edge written as <c>auto</c> cannot be told from one nothing was written for, so a logical
+    /// inset fills it. The two would meet on the same physical property, where the cascade would have
+    /// the last word; a page that writes both for one edge is left to the physical one.
+    /// </remarks>
+    private static (StyleLength Top, StyleLength Right, StyleLength Bottom, StyleLength Left) Fold(
+        (StyleLength Top, StyleLength Right, StyleLength Bottom, StyleLength Left) physical,
+        (StyleLength BlockStart, StyleLength BlockEnd, StyleLength InlineStart, StyleLength InlineEnd) logical,
+        WritingMode writingMode,
+        TextDirection direction)
+    {
+        if (logical.BlockStart.IsAuto && logical.BlockEnd.IsAuto &&
+            logical.InlineStart.IsAuto && logical.InlineEnd.IsAuto)
+        {
+            return physical;
+        }
+
+        // A vertical box runs its block axis across the page, and a right-to-left one starts its inline
+        // axis at the other end of it (CSS Writing Modes 4 §3, §6.2).
+        var vertical = writingMode is not WritingMode.HorizontalTb;
+        var reverse = writingMode is WritingMode.VerticalRl or WritingMode.SidewaysRl;
+        var rtl = direction is TextDirection.RightToLeft;
+
+        var edges = new[] { physical.Top, physical.Right, physical.Bottom, physical.Left };
+
+        Fill(vertical ? (reverse ? 1 : 3) : 0, logical.BlockStart);
+        Fill(vertical ? (reverse ? 3 : 1) : 2, logical.BlockEnd);
+        Fill(vertical ? (rtl ? 2 : 0) : (rtl ? 1 : 3), logical.InlineStart);
+        Fill(vertical ? (rtl ? 0 : 2) : (rtl ? 3 : 1), logical.InlineEnd);
+
+        return (edges[0], edges[1], edges[2], edges[3]);
+
+        void Fill(Int32 edge, StyleLength value)
+        {
+            if (!edges[edge].HasValue && !value.IsAuto)
+            {
+                edges[edge] = value;
+            }
+        }
+    }
 
     private static Int32 ReadZIndexFused(ICssProperty? declared, out Boolean hasValue)
     {

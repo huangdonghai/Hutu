@@ -669,12 +669,22 @@ public sealed class SkiaPaintExecutor
 
         paint.ImageFilter = Blur(command.Blur);
 
+        canvas.Save();
+
+        if (command.Band is { } band)
+        {
+            // The box is one fragment of a broken one: the shadow it casts is the whole box's, kept
+            // inside the band of the fragment, so no shadow lies across the edge it was cut at.
+            canvas.ClipRect(ToRect(band), SKClipOperation.Intersect, antialias: true);
+        }
+
         var bounds = canvas.SaveLayer(ToRect(command.Bounds), null);
 
         SkiaRounded.Fill(canvas, shape, command.ShapeRadii, paint);
         SkiaRounded.Fill(canvas, area, command.AreaRadii, cut);
 
         canvas.RestoreToCount(bounds);
+        canvas.Restore();
     }
 
     /// <summary>
