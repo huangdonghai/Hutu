@@ -1487,7 +1487,20 @@ internal sealed class BlockLayout
                 // sliced rather than left to overflow the sheet whole.
                 if (lines.Count == 0)
                 {
-                    if (AddBoxCut(children, child, size, margin, before, after, fragmentHeight, columns, box.Style.Multi.Fills, context.InFragmentainer))
+                    if (AddBoxCut(
+                        children,
+                        child,
+                        size,
+                        margin,
+                        before,
+                        after,
+                        fragmentHeight,
+                        columns,
+                        box.Style.Multi.Fills,
+                        context.InFragmentainer,
+                        child.Style.ClonesDecoration
+                            ? BorderOf(child).Vertical + child.Style.Padding.Resolve(share).Vertical
+                            : 0.0))
                     {
                         continue;
                     }
@@ -1541,7 +1554,20 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            if (AddBoxCut(children, child, size, margin, before, after, fragmentHeight, columns, box.Style.Multi.Fills, context.InFragmentainer))
+            if (AddBoxCut(
+                        children,
+                        child,
+                        size,
+                        margin,
+                        before,
+                        after,
+                        fragmentHeight,
+                        columns,
+                        box.Style.Multi.Fills,
+                        context.InFragmentainer,
+                        child.Style.ClonesDecoration
+                            ? BorderOf(child).Vertical + child.Style.Padding.Resolve(share).Vertical
+                            : 0.0))
             {
                 continue;
             }
@@ -1580,7 +1606,8 @@ internal sealed class BlockLayout
         Double columnHeight,
         Int32 columns,
         Boolean fills,
-        Boolean nested)
+        Boolean nested,
+        Double clonedInsets)
     {
         // Only a box that holds nothing is cut here, and only in a container that fills its columns:
         // a box with children of its own breaks inside those first, and a balanced one finds its own
@@ -1610,7 +1637,9 @@ internal sealed class BlockLayout
             return false;
         }
 
-        var left = size.Height;
+        // A box that repeats its decoration at every break adds its border and padding to each piece,
+        // so what the column holds is the content (CSS Break 3 §4.7).
+        var left = Math.Max(0, size.Height - clonedInsets);
         var offset = 0.0;
         var pieces = 0;
 
@@ -1620,9 +1649,10 @@ internal sealed class BlockLayout
 
             // The margin only stands in front of the first piece; a piece that carries on in another
             // column has the whole column to stand in.
-            var room = columnHeight - (first ? margin.Top : 0);
-            var height = Math.Min(left, room);
-            var last = left - height <= 0.001;
+            var room = Math.Max(1, columnHeight - clonedInsets - (first ? margin.Top : 0));
+            var content = Math.Min(left, room);
+            var height = content + clonedInsets;
+            var last = left - content <= 0.001;
 
             children.Add(new MulticolChild(
                 child,
@@ -1642,7 +1672,7 @@ internal sealed class BlockLayout
                 size.Height,
                 offset));
 
-            left -= height;
+            left -= content;
             offset += height;
             pieces++;
         }

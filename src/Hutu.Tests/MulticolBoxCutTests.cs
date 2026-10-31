@@ -96,6 +96,27 @@ public sealed class MulticolBoxCutTests
     }
 
     [Test]
+    public async Task ABoxThatRepeatsItsEdgesBreaksTheContentAndAddsThemToEveryPiece()
+    {
+        using var view = await Render(
+            "<style>#c { width: 300px; columns: 3; column-gap: 0; column-fill: auto; height: 100px }" +
+            " .clone { box-decoration-break: clone; border: 10px solid; height: 240px }</style>" +
+            "<div id='c'><div class='clone' id='b'></div></div>");
+
+        var pieces = Of(view, "b");
+
+        Assert.That(pieces.Count, Is.EqualTo(3), "eighty of content stands in each column");
+        Assert.That(
+            pieces.Select(piece => piece.BorderBox.Height).ToList(),
+            Is.EqualTo(new List<Double> { 100, 100, 100 }),
+            "and each piece brings its own edges, ten above and ten below");
+        Assert.That(
+            pieces.Select(piece => piece.Border.Top + piece.Border.Bottom).Distinct().ToList(),
+            Is.EqualTo(new List<Double> { 20 }),
+            "so the edges are drawn on every piece, not only the first and the last");
+    }
+
+    [Test]
     public async Task ABoxThatNeedsMorePiecesThanThereAreColumnsIsLeftWhole()
     {
         using var view = await Render(
