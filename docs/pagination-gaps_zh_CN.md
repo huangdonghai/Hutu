@@ -629,6 +629,14 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 实测：`specified-block-size-007` 2475 → **0** 转绿；全量屏幕 **2095 → 2077、19 对绿、新增失败 0**（`gecko/text/initial-zwj-1` 偶现、单跑绿）；单测 2180；打印 189/198；`wpt/css-break` 75 → **74**。
 
+### 9.36 表格的高度与背景只归"表格盒"，不含 caption（`table-caption-and-cells` 待做）
+
+`table-caption-and-cells`：`height:2em` 的表格带一个 caption，栏高 9em、前面 8em 的空盒——ref 里 caption 所在的一条（32 高）是**白的**，黑色背景只出现在 caption 之下的 32 高区域，整表 64 高。也就是说 Chrome 把表格的 `height` 和背景都算在**表格盒（网格）**上，caption 在表格包装盒里、在表格盒之外：高度 `2em` 是网格的高，caption 再加在它上面；背景不画到 caption 带。
+
+我们两处都不对：`Measure` 里 `gridHeight = declared - captionTop - captionBottom`（把 caption 从声明的表高里扣掉，于是行被压成 0），且表的背景铺满含 caption 的整个 BorderBox。实测差 10164 px（5120 = caption 带的背景，4918 = 少掉的行带）。
+
+修法要走结构：表格的 LayoutBox 只包网格（caption 作为包装层的兄弟），或者给"表背景矩形"一个显式覆盖（现在只有 `BackgroundOrigin` 用于切片放置，不控制裁剪）。这一对和 `table-caption-and-cells-fixed-width`（同形）要先动这个结构，再谈其余 caption 族。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
