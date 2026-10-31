@@ -797,6 +797,14 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`single-line-row-flex-fragmentation-050` 5000 → **0**；全量屏幕 **2041 → 2040（新增 0）**；单测 2180；打印 189/198。
 
+### 9.55 裸包装“内容比一栏还高”时也要展开，让栏切其内容
+
+`widows-block-in-inline-001`：`<span><div>p2（7 行）</div></span>` 里的块被 hoist 成 span 下的块，span 是一个**裸包装**（无边框/背景/尺寸）。`SpliceOverset` 原本只在“裸包装声明的块高小于其内容”时把它展开；这里高是 auto，包装与其内容等高，于是整块被放进一栏、7 行全部溢出，而不是按行分到 2、3 栏。
+
+修法：`SpliceOverset` 再收 `fragmentHeight`——裸包装（`IsBareWrapper`）的**内容高超过一栏**时同样展开，其子块随行切片分栏（包装本身不画任何东西，也不构成断点，CSS Break 3 §4.1）。
+
+实测：`widows-block-in-inline-001` 889 → **0**；全量屏幕 **2040 → 2039（新增 0）**；单测 2180；打印 189/198。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

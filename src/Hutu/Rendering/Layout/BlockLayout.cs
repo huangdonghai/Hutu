@@ -1651,13 +1651,28 @@ internal sealed class BlockLayout
     /// it holds is opened into them, because the box that walks past the wrapper is the one the
     /// column has to cut, and the wrapper brings nothing of its own to the cut (CSS Break 3 §4.1).
     /// </summary>
-    private IReadOnlyList<Box> SpliceOverset(IReadOnlyList<Box> source, Double share, LayoutContext context)
+    private IReadOnlyList<Box> SpliceOverset(
+        IReadOnlyList<Box> source, Double share, LayoutContext context, Double fragmentHeight)
     {
         // Only the last member is opened: what a wrapper states in height is what the boxes after it
         // stand past, and the column keeps that room for a wrapper it does not open.
         var last = source.Count - 1;
 
-        if (last < 0 || !IsOversetWrapper(source[last], share, context))
+        if (last < 0)
+        {
+            return source;
+        }
+
+        // A wrapper that paints nothing and holds more than a column is opened too: the content is what
+        // the column has to cut, and the wrapper lends it no boundary of its own (CSS Break 3 §4.1,
+        // measured: widows-block-in-inline-001).
+        var opens = IsOversetWrapper(source[last], share, context) ||
+            (fragmentHeight > 0 && IsBareWrapper(source[last], share) &&
+             BlockExtentOf(
+                 _engine.Measure(source[last], MeasureConstraints.FitWidth(share), context), false) >
+                 fragmentHeight + 0.001);
+
+        if (!opens)
         {
             return source;
         }
@@ -1804,7 +1819,7 @@ internal sealed class BlockLayout
         var constraints = vertical
             ? MeasureConstraints.Unconstrained.WithHeight(share)
             : MeasureConstraints.FitWidth(share);
-        var source = SpliceOverset(members ?? box.Children, share, childContext);
+        var source = SpliceOverset(members ?? box.Children, share, childContext, fragmentHeight);
 
         // A bare column flex taller than the column is fragmented between its items - and inside one
         // that does not fit - so the column is handed the items rather than the container (CSS Flexbox
