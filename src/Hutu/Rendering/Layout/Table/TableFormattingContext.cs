@@ -64,10 +64,11 @@ internal sealed partial class TableFormattingContext
         // measured against the width the table settled on.
         MeasureOthers(build, contentWidth, context);
 
+        // The height a table states is the height of its grid: the captions stand in the wrapper around
+        // the table box and are added on top, which is what Chrome draws for a 2em-tall table with a
+        // caption (measured, table-caption-and-cells).
         var declared = BoxModel.DeclaredHeight(style, basisHeight, build.InsetsV);
-        var gridHeight = declared is { } tableHeight
-            ? tableHeight - build.CaptionTop - build.CaptionBottom
-            : (Double?)null;
+        var gridHeight = declared;
 
         CompleteGrid(build, contentWidth, context, gridHeight);
 
@@ -153,6 +154,11 @@ internal sealed partial class TableFormattingContext
             BackgroundOrigin = slice is null || slice.Value.Starts && slice.Value.Ends
                 ? null
                 : slice.Value.Whole,
+            TableBox = new Rect(
+                borderBox.X,
+                borderBox.Y + build.CaptionTop,
+                borderBox.Width,
+                Math.Max(0, borderBox.Height - build.CaptionTop - build.CaptionBottom)),
         };
 
         var gridX = borderBox.X + build.Border.Left + build.Padding.Left;

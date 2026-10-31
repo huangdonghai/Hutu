@@ -643,6 +643,14 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 所以表格这一族的下一步顺序：①§9.36 的表格盒结构（解锁 caption 两对）；②竖排表格的分片映射（一次解锁 ~10 对）；③repeated-section 的嵌套片段器重复；④模型重排的边角。flexbox 一族的下一片仍是"项的跨栏切片归 flex 容器"（§9.30）。
 
+### 9.38 表格盒不含 caption：声明的表高归网格，背景/边框只画在表格盒上
+
+按 §9.36 做结构：①`Measure` 里声明的表高不再减去 caption（`gridHeight = declared`），caption 的高加在网格之上；②`TableFormattingContext.Arrange` 记下 `TableBox`（网格 + 其边框/内边距，去掉上下 caption 带），画家在 `PaintPresentation` 里只把**表格盒的地面**（背景、内阴影、边框、边框图）裁到它；外阴影不裁（它本来就落在盒外，裁了会整块消失——`gecko/box-shadow/tableboxshadow-basic` 就是这样红过一轮，已修）。
+
+实测：`table-caption-and-cells` 与 `table-caption-and-cells-fixed-width`（各 10164）→ **0** 双双转绿；`table-border-008` 13600 → 13100；全量屏幕 **2095 → 2075、21 对绿、新增失败 0**（`gecko/text/476378-soft-hyphen-fallback` 偶现、单跑绿）；单测 2180；打印 189/198；`wpt/css-break` 74 → **72**。
+
+剩下 caption/结构一侧还有 `table-caption-with-block`（基线里的大差对）和模型重排的 `sections-and-captions-mixed-order`；竖排表格分片仍是最大的一块（~10 对）。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

@@ -388,6 +388,11 @@ internal sealed class LayoutBox
     /// out in the whole box and only the stretch inside the fragment may be drawn.</summary>
     public Rect? FragmentClip { get; set; }
 
+    /// <summary>Gets or sets the table box - the grid and the border around it, without the captions,
+    /// which stand in the wrapper outside it. The table's background and border are painted there and
+    /// not over them.</summary>
+    public Rect? TableBox { get; set; }
+
     /// <summary>
     /// Gets or sets the border box the block would have had before it was broken, where this fragment is
     /// one piece of it: a background is painted over that whole box and then cut with the box, which is

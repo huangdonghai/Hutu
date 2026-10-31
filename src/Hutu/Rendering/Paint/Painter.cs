@@ -793,7 +793,18 @@ internal sealed class Painter
         // A shadow is presentation of the box as much as its background is, so it goes where the
         // specification puts it: the outer ones immediately below the background and the inner ones
         // immediately above it, still below the border (CSS Backgrounds 3 §6.1.3).
+        // A table's own picture covers its table box - the grid and the border around it - and not the
+        // captions, which stand in the wrapper outside it (CSS 2.1 §17.4, measured:
+        // table-caption-and-cells).
+        var tableBox = box.Kind == LayoutKind.Table ? box.TableBox : null;
+
         AddShadows(box, style, target, inset: false);
+
+        // The shadow falls outside the box and is left whole; what is cut is the box's own ground.
+        if (tableBox is { } band)
+        {
+            target.Add(new PushClipCommand(band, CornerRadii.None));
+        }
 
         if (!box.SuppressBackground)
         {
@@ -822,6 +833,11 @@ internal sealed class Painter
         {
             AddBorder(box, style, target);
             AddBorderImage(box, style, target);
+        }
+
+        if (tableBox is { } drawn)
+        {
+            target.Add(new PopClipCommand(drawn));
         }
 
         // A rule belongs to the gap rather than to the columns: it stands in the middle of it, reaches
