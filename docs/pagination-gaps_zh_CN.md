@@ -557,6 +557,12 @@ dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里�
 
 实测：`abspos-in-opacity-001` 10000 → **0** 转绿；全量屏幕 8 对绿、新增失败 0（`gecko/bugs/1608124-1` 是字体回退页，整量偶现、单跑两遍皆绿，仍是 flaky）；单测 2180；打印 189/198；`wpt/css-break` 86 → **85**。§9.22/§9.23 里那行从此落地。
 
+### 9.26 记一笔：整族跑与单跑会给出不同的 001（跨页状态泄漏）
+
+量 `abspos-in-opacity-001` 时发现：`HUTU_SCORE_ONLY=wpt/css-break/abspos-in-opacity-001` 单跑是绿的，`=wpt/css-break/abspos-in-opacity`（连同 002/003）跑就是 10000 px 红——同一份二进制、同一渲染器。用 `LooksAtOnePairClosely` 单独画这一对时两张图字节相同。也就是说 harness 在**同一进程里连续画多页**时有状态残留（字体/度量缓存之类），这解释了此前 `gecko/text/476378-soft-hyphen-fallback`、`gecko/bugs/1608124-1` 这类"整量偶现、单跑皆绿"的 flaky。门禁判据仍然只看**整量**跑的名字差集，但以后量单页时要知道单跑结果不能当作反证。
+
+同轮还量过：`reach`（§9.23）+ `FitsTheColumns` 门槛 + 续排落下一栏，`abspos-in-opacity-002/003` 从 16000/13000 降到 8000/9000（`001` 保持绿），但没有新翻绿；再把"整行为空的行盒当作无可断点"接进 `MulticolChildren` 后 002/003 又回到 10000。按"不翻绿不动"整片回滚，工作树停在 `c383f789`。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
