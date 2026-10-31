@@ -1375,10 +1375,22 @@ internal sealed class BlockLayout
             return true;
         }
 
-        foreach (var grandchild in child.Children)
+        return ForcedBreakWithin(child, share);
+    }
+
+    /// <summary>Gets whether a box holds a forced column break among what a column would see as its
+    /// members - the children it is opened into, and those of any bare wrapper among them.</summary>
+    private static Boolean ForcedBreakWithin(Box box, Double share)
+    {
+        foreach (var child in box.Children)
         {
-            if (grandchild.Style.Breaks.Before is BreakValue.Column or BreakValue.Page ||
-                grandchild.Style.Breaks.After is BreakValue.Column or BreakValue.Page)
+            if (child.Style.Breaks.Before is BreakValue.Column or BreakValue.Page ||
+                child.Style.Breaks.After is BreakValue.Column or BreakValue.Page)
+            {
+                return true;
+            }
+
+            if (IsBareWrapper(child, share) && ForcedBreakWithin(child, share))
             {
                 return true;
             }
@@ -1392,7 +1404,22 @@ internal sealed class BlockLayout
     /// only.</summary>
     private static Boolean IsBareWrapper(Box child, Double share)
     {
-        if (child.Kind != BoxKind.Block || child.Flow.IsVertical || child.Children.Count == 0)
+        if (child.Children.Count == 0 || child.Flow.IsVertical)
+        {
+            return false;
+        }
+
+        // A column flex stacks its items down the block axis as a block stacks its children, so a
+        // column may cut between them; a row flex lays them side by side, which is no list of
+        // members the block axis can walk (CSS Flexbox 1 §6).
+        if (child.Kind == BoxKind.Flex)
+        {
+            if (child.Style.Flex.IsRow || child.Style.Flex.Wraps)
+            {
+                return false;
+            }
+        }
+        else if (child.Kind != BoxKind.Block)
         {
             return false;
         }

@@ -563,6 +563,14 @@ dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里�
 
 同轮还量过：`reach`（§9.23）+ `FitsTheColumns` 门槛 + 续排落下一栏，`abspos-in-opacity-002/003` 从 16000/13000 降到 8000/9000（`001` 保持绿），但没有新翻绿；再把"整行为空的行盒当作无可断点"接进 `MulticolChildren` 后 002/003 又回到 10000。按"不翻绿不动"整片回滚，工作树停在 `c383f789`。
 
+### 9.27 竖排 flex 容器当作可切的成员列表，强制栏断递归找
+
+flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的形状是"栏容器 > 竖排 flex > 两个竖排 flex（第二个/内部某项带 `break-before|after: column`）"，Chrome 在 flex 项之间断栏，我们因为"有子盒的盒子不切"（`AddBoxCut` 的 children 门槛）整块塞进第一栏。
+
+做法：`IsBareWrapper` 接受 **竖排、不换行、无装饰无声明尺寸** 的 flex 容器（`flex-direction: column` 的项沿块轴堆叠，和块的子盒一样是块轴上的成员；行向容器不算）。`IsForcedBreakCarrier` 的判定改为 `ForcedBreakWithin`——递归穿过这些裸包装找强制栏断，所以 `break-before: column` 写在**内层 flex 的某一项**上也能把外层打开（070b/070d 就是这种）。打开后由 `EffectiveMembers` 把项变成栏容器的成员，`break` 值由 `ChildSlicer` 照常处理。
+
+实测：070a/b/c/d 四对 10000 → **0** 全绿；全量屏幕 12 对绿、**新增失败 0**（gecko 606、wpt 1484 → 1483+… 里含此四对）；单测 2180；打印 189/198；`wpt/css-break` 85 → **81**。仍未绿的 `071` 需要 flex 项自身的跨栏分片（160 高的项 > 栏高），`multi-line-*` 一族需要行向 flex 的跨栏排版。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
