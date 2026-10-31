@@ -637,6 +637,12 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 修法要走结构：表格的 LayoutBox 只包网格（caption 作为包装层的兄弟），或者给"表背景矩形"一个显式覆盖（现在只有 `BackgroundOrigin` 用于切片放置，不控制裁剪）。这一对和 `table-caption-and-cells-fixed-width`（同形）要先动这个结构，再谈其余 caption 族。
 
+### 9.37 表格族的分布：竖排与 caption 结构是两道门槛
+
+按差距排序看了 `wpt/css-break/table` 余下的 22 对：小差距的 4 对全是 **repeated-section**（嵌套片段器里的表头/表尾重复，机制未做）；`sections-and-captions-mixed-order`（851）是**表格模型重排**（caption 按 side 分前后、header/rowgroup/footer 分组，组内顺序与文档顺序不同），差的是列边界的 1–2px 行位；`table-caption-and-cells*`（各 10164）卡在 §9.36 的"表格盒不含 caption"；其余 10 对以上全是**竖排**（vlr/vrl）的 row/col/section/grid/collapsed-borders paint。
+
+所以表格这一族的下一步顺序：①§9.36 的表格盒结构（解锁 caption 两对）；②竖排表格的分片映射（一次解锁 ~10 对）；③repeated-section 的嵌套片段器重复；④模型重排的边角。flexbox 一族的下一片仍是"项的跨栏切片归 flex 容器"（§9.30）。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
