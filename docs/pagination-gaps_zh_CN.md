@@ -816,6 +816,12 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：`grid-item-oof-013` 与 `css-grid/abspos/positioned-grid-descendant-containing-block-009/010/013`、`positioned-grid-descendants-017` 共 **5 对转绿**；全量屏幕 **2039 → 2034（新增 0）**；单测 2180；打印 189/198。
 
+### 9.57 行向 flex 的窗口触发看“窗口数”，不看盒高
+
+`multi-line-row-flex-fragmentation-068`：flex 自身声明高 25（比一栏 100 还矮），但行高 150 + row-gap 100 的内容溢出到 300。原触发条件 `extent > columnHeight` 因此不成立，整盒放进一栏、内容全溢出。改为让 `PlanMulticolRun` 之外的那一层**只问窗口个数**：`windows.Count > 1` 才跨栏（窗口由整盒计划的行偏移与栏高算出，与盒自身的声明高无关）。行内多项目的自动高容器仍只在其“每行恰一项”时才走窗口。
+
+实测：068 14200 → **0**；全量屏幕 **2034 → 2033（新增 0）**；单测 2180；打印 189/198。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

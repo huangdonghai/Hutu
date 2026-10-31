@@ -1120,7 +1120,10 @@ internal sealed class BlockLayout
     private static Boolean RowRelaysInColumns(
         Box child, Boolean vertical, Double extent, Double columnHeight, Boolean nested)
     {
-        if (vertical || nested || columnHeight <= 0 || extent <= columnHeight + 0.001 ||
+        // Whether a window is cut at all is the plan's to say: a flex whose lines run past the column is
+        // cut even where its own box is shorter, since the content is what the column meets
+        // (CSS Flexbox 1 §6, measured: multi-line-row-flex-fragmentation-068).
+        if (vertical || nested || columnHeight <= 0 ||
             child.Kind != BoxKind.Flex || !child.Style.Flex.IsRow || !child.Style.Flex.Wraps ||
             child.Children.Count == 0 || HoldsPositioned(child))
         {
@@ -2056,7 +2059,7 @@ internal sealed class BlockLayout
                 // gecko/flexbox/pagination/flexbox-multi-row-1a against multi-line-row-flex-fragmentation-065).
                 var autoBlock = BlockSizeIsAuto(child, vertical);
 
-                if (windows.Count > 0 && (!autoBlock || windows.Count == child.Children.Count))
+                if (windows.Count > 1 && (!autoBlock || windows.Count == child.Children.Count))
                 {
                     for (var index = 0; index < windows.Count; index++)
                     {
