@@ -1631,6 +1631,14 @@ internal sealed class Painter
             ? whole
             : area;
 
+        // A table's background belongs to the table box rather than to the wrapper: the captions stand
+        // outside it, above and below the border, so a gradient on the table starts at its grid's top
+        // edge (CSS 2.1 §17.4, measured: table-grid-paint-htb-ltr).
+        if (box.TableBox is { } grid && box.BackgroundClip == BackgroundClip.BorderBox)
+        {
+            placement = grid;
+        }
+
         // The colour first and the layers last-first, so the first declared layer ends on top, as CSS
         // paints them. They are gathered rather than sent straight out because a text clip wraps the
         // whole set in one masked command.
@@ -2057,8 +2065,12 @@ internal sealed class Painter
         // necessarily the box's own, so the resolution is carried on the box when it applies.
         var colors = box.BorderColors;
 
+        // A table's border is drawn around its table box, under the captions rather than around them
+        // (CSS 2.1 §17.4, measured: table-grid-paint-htb-ltr).
+        var framed = box.Kind == LayoutKind.Table && box.TableBox is { } table ? table : box.BorderBox;
+
         target.Add(new BorderCommand(
-            box.BorderBox,
+            framed,
             border,
             box.BorderStyles ?? style.BorderStyles,
             box.Radii,

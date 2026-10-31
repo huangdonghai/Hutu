@@ -1294,7 +1294,8 @@ internal sealed class BlockLayout
             Boolean last,
             Double whole = 0,
             Double offset = -1,
-            Boolean divides = false)
+            Boolean divides = false,
+            Double startInset = 0)
         {
             Box = box;
             Size = size;
@@ -1305,6 +1306,7 @@ internal sealed class BlockLayout
             Whole = whole;
             Offset = offset;
             Divides = divides;
+            StartInset = startInset;
         }
 
         public Box Box { get; }
@@ -1343,6 +1345,14 @@ internal sealed class BlockLayout
         /// this column holds (CSS Fragmentation 3 §4.3).
         /// </summary>
         public Double Offset { get; }
+
+        /// <summary>
+        /// Gets the room the piece needs at the top of the column that takes it - its block-start
+        /// border and padding - which a column with less room than that leaves for the next one rather
+        /// than start the box in the middle of its own edge (measured in Chrome: a ten-pixel border is
+        /// pushed on by five pixels of room and kept by ten).
+        /// </summary>
+        public Double StartInset { get; }
 
         /// <summary>
         /// Gets the border box height the child would have had unbroken, for a piece of a broken child.
@@ -1827,6 +1837,7 @@ internal sealed class BlockLayout
                         child.Style.ClonesDecoration
                             ? BorderOf(child).Vertical + child.Style.Padding.Resolve(share).Vertical
                             : 0.0,
+                        BorderOf(child).Top + child.Style.Padding.Resolve(share).Top,
                         vertical))
                     {
                         continue;
@@ -1927,6 +1938,7 @@ internal sealed class BlockLayout
                         child.Style.ClonesDecoration
                             ? BorderOf(child).Vertical + child.Style.Padding.Resolve(share).Vertical
                             : 0.0,
+                        BorderOf(child).Top + child.Style.Padding.Resolve(share).Top,
                         vertical))
             {
                 continue;
@@ -1996,6 +2008,7 @@ internal sealed class BlockLayout
         Boolean fills,
         Boolean nested,
         Double clonedInsets,
+        Double startInset,
         Boolean vertical)
     {
         // Only a box that holds nothing is cut here, and only in a container that fills its columns:
@@ -2036,6 +2049,7 @@ internal sealed class BlockLayout
         var left = Math.Max(0, blockExtent - clonedInsets);
         var offset = 0.0;
         var pieces = 0;
+        var top = startInset;
 
         while (left > 0.001)
         {
@@ -2060,11 +2074,12 @@ internal sealed class BlockLayout
                     height + (first ? margin.Top : 0) + (last ? margin.Bottom : 0),
                     first ? before : BreakValue.Auto,
                     last ? after : BreakValue.Auto,
-                    BreakValue.Auto),
+                    child.Style.Breaks.Inside),
                 -1,
                 last,
                 blockExtent,
-                offset));
+                offset,
+                startInset: first || child.Style.ClonesDecoration ? top : 0.0));
 
             left -= content;
             offset += height;
@@ -3878,15 +3893,23 @@ internal sealed class BlockLayout
             return needed;
         }
 
+        var cut = 0;
+
         foreach (var child in children)
         {
             if (child.Divides)
             {
                 needed = Math.Max(needed, (Int32)Math.Ceiling(child.Fragment.Height / boxHeight - 0.001) + 1);
             }
+            else if (child.Offset >= 0)
+            {
+                // A piece of a box the fragmentainer already cut starts where the flow has reached, so
+                // the column it reaches may hold only part of it and the rest goes to the column after.
+                cut++;
+            }
         }
 
-        return needed;
+        return Math.Max(needed, children.Count + cut);
     }
 
     /// <summary>
@@ -3903,7 +3926,7 @@ internal sealed class BlockLayout
     {
         var cells = new List<List<MulticolPiece>>(counts.Count);
 
-        if (!children.Exists(child => child.Divides))
+        if (!children.Exists(child => child.Divides || child.Offset >= 0))
         {
             var from = 0;
 
@@ -3926,6 +3949,18 @@ internal sealed class BlockLayout
         var resume = -1;
         var resumeAt = 0.0;
 
+        // Where inside the whole box a portion begins: the offset the column divides at, plus the part
+        // of the piece the column before it already held. A piece the fragmentainer cut for itself
+        // already begins somewhere inside the box, and that distance is added for it.
+        static Double StartOf(MulticolChild child, Double within) =>
+            child.Offset >= 0 ? child.Offset + within : within;
+
+        // A piece of a box taller than the column is cut through it rather than moved on: the column
+        // holds what it has room for and the rest carries on at the top of the next (CSS Fragmentation
+        // 3 §4.3). The box that may be cut is one the columns already divided, or a piece of one the
+        // fragmentainer cut for itself.
+        static Boolean Cuts(MulticolChild child) => child.Divides || child.Offset >= 0;
+
         for (var number = 0; number < extents.Count; number++)
         {
             var limit = extents[number];
@@ -3938,7 +3973,7 @@ internal sealed class BlockLayout
                 var take = Math.Min(total - resumeAt, limit);
                 var last = resumeAt + take >= total - 0.001;
 
-                cell.Add(new MulticolPiece(resume, resumeAt, take, last));
+                cell.Add(new MulticolPiece(resume, StartOf(children[resume], resumeAt), take, last));
                 used = take;
 
                 if (last)
@@ -3973,7 +4008,8 @@ internal sealed class BlockLayout
                 // The slicer takes the first child whatever its height, so that the flow makes
                 // progress; a child the columns may divide is cut at the room instead of overflowing.
                 if (!cut.Forced && number < extents.Count - 1 && placed > 0 &&
-                    children[placed - 1].Divides && used > limit + 0.001)
+                    children[placed - 1].Fragment.Inside != BreakValue.Avoid &&
+                    Cuts(children[placed - 1]) && used > limit + 0.001)
                 {
                     var height = fragments[placed - 1].Height;
                     var room = Math.Max(0, limit - (used - height));
@@ -3986,7 +4022,7 @@ internal sealed class BlockLayout
                         var take = Math.Min(room, height);
                         var last = take >= height - 0.001;
 
-                        cell.Add(new MulticolPiece(placed, 0, take, last));
+                        cell.Add(new MulticolPiece(placed, StartOf(children[placed], 0), take, last));
 
                         if (last)
                         {
@@ -4012,15 +4048,25 @@ internal sealed class BlockLayout
                     break;
                 }
 
-                // A child that holds out-of-flow descendants does not move to the next column: the
-                // room this one has left is its first piece, and the rest follows at the top of the
-                // next column (CSS Position 3 §5.5).
-                if (!cut.Forced && children[placed].Divides && limit - used > 0.001)
+                // A child that holds out-of-flow descendants, or a piece of one the fragmentainer cut,
+                // does not move to the next column: the room this one has left is its first piece, and
+                // the rest follows at the top of the next column (CSS Position 3 §5.5, CSS Fragmentation
+                // 3 §4.3). A piece that begins with a border or padding of its own needs that much room:
+                // a column with less leaves it for the next rather than start it mid-edge (measured in
+                // Chrome: a ten-pixel border is pushed on by five pixels and kept by ten). A box that
+                // asks not to be broken inside keeps that wish until a column of its own cannot hold it,
+                // so it moves on whole rather than be started in what is left (CSS Break 3 §3.1).
+                var gate = children[placed].Fragment.Inside == BreakValue.Avoid
+                    ? fragments[placed].Height
+                    : children[placed].StartInset;
+
+                if (!cut.Forced && Cuts(children[placed]) &&
+                    limit - used >= gate - 0.001 && limit - used > 0.001)
                 {
                     var take = limit - used;
                     var last = take >= fragments[placed].Height - 0.001;
 
-                    cell.Add(new MulticolPiece(placed, 0, take, last));
+                    cell.Add(new MulticolPiece(placed, StartOf(children[placed], 0), take, last));
 
                     if (last)
                     {
@@ -4090,11 +4136,13 @@ internal sealed class BlockLayout
                 // shows only the stretch it holds (CSS Position 3 §5.5).
                 if (portion.Offset >= 0)
                 {
-                    var whole = new Rect(x + child.Margin.Left, y - portion.Offset, width, height);
+                    var wholeHeight = child.Whole > 0 ? child.Whole : height;
+                    var whole = new Rect(x + child.Margin.Left, y - portion.Offset, width, wholeHeight);
                     var held = new Rect(x + child.Margin.Left, y, width, portion.Height);
                     var cutBorder = BorderOf(child.Box);
                     var cutPadding = child.Box.Style.Padding.Resolve(share);
                     var cutStarts = portion.Offset < 0.001;
+                    var cutEnds = portion.Last && child.Last;
                     var arranged = _engine.Arrange(
                         child.Box,
                         whole,
@@ -4104,15 +4152,15 @@ internal sealed class BlockLayout
                             new Thickness(
                                 cutStarts ? cutBorder.Top : 0,
                                 cutBorder.Right,
-                                portion.Last ? cutBorder.Bottom : 0,
+                                cutEnds ? cutBorder.Bottom : 0,
                                 cutBorder.Left),
                             new Thickness(
                                 cutStarts ? cutPadding.Top : 0,
                                 cutPadding.Right,
-                                portion.Last ? cutPadding.Bottom : 0,
+                                cutEnds ? cutPadding.Bottom : 0,
                                 cutPadding.Left),
                             cutStarts,
-                            portion.Last,
+                            cutEnds,
                             whole));
 
                     arranged.FragmentClip = held;

@@ -57,8 +57,10 @@ internal sealed partial class TableFormattingContext
             constraints);
 
         // The captions are measured first because the height the table declared covers them too; what is
-        // left of it once they have taken their share is the height the rows have to fill.
-        MeasureCaptions(build, contentWidth, context);
+        // left of it once they have taken their share is the height the rows have to fill. A caption
+        // stands in the table's wrapper, so the room it is measured against is the table's outer width,
+        // its own border and padding included (CSS 2.1 §17.4, measured: table-grid-paint-htb-ltr).
+        MeasureCaptions(build, contentWidth + build.InsetsH, context);
 
         // The children that are not table parts are blocks of the table's own content, and they are
         // measured against the width the table settled on.
@@ -128,13 +130,21 @@ internal sealed partial class TableFormattingContext
         var basis = context.ContainingBlock.Width;
         var build = Build(box, basis, context);
 
-        // A fragment of a broken table draws only the edges it owns: the border on an edge it was
-        // cut at belongs to the fragment that really has that edge (CSS Break 3 §4.7).
-        var border = slice?.Border ?? build.Border;
-        var padding = slice?.Padding ?? build.Padding;
+        // The table's own border belongs to the table box, not to the wrapper the captions stand in. A
+        // piece that covers the whole box keeps every edge, and the fragment's clip cuts the ones that
+        // fall outside it - which is what draws the table box's top edge in a fragment that cut the
+        // wrapper above it (table-grid-paint-htb-ltr). A piece cut through the table box itself owns only
+        // the edges it really has (table-border-007). CSS 2.1 §17.4, CSS Break 3 §4.7.
+        var ownEdges = slice is { } cut &&
+            (Math.Abs(cut.Whole.Height - borderBox.Height) > 0.001 ||
+             Math.Abs(cut.Whole.Width - borderBox.Width) > 0.001)
+                ? slice
+                : null;
+        var border = ownEdges?.Border ?? build.Border;
+        var padding = ownEdges?.Padding ?? build.Padding;
         var contentWidth = Math.Max(0, borderBox.Width - border.Horizontal - padding.Horizontal);
 
-        MeasureCaptions(build, contentWidth, context);
+        MeasureCaptions(build, borderBox.Width, context);
         MeasureOthers(build, contentWidth, context);
 
         // The box the table was given already accounts for the height it declared, so whatever the
@@ -162,7 +172,6 @@ internal sealed partial class TableFormattingContext
         };
 
         var gridX = borderBox.X + build.Border.Left + build.Padding.Left;
-        var topY = borderBox.Y + build.Border.Top + build.Padding.Top;
 
         // A positioned table anchors the absolutely positioned descendants the captions and cells hand
         // up to it, the same way a positioned block does: a static caption is not a containing block,
@@ -181,6 +190,11 @@ internal sealed partial class TableFormattingContext
         // the way the gecko table-abs-pos references say it should not.
         var childContext = PositionedLayout.ForDescendants(context, box, layout.BorderBox, layout.BorderBox);
 
+        // A caption stands in the table's wrapper, across the whole of the table's outer width: the
+        // table's own border and padding are inside the box the captions straddle, not around them
+        // (CSS 2.1 §17.4, measured: table-grid-paint-htb-ltr).
+        var captionY = borderBox.Y;
+
         foreach (var caption in build.Captions)
         {
             if (caption.Side != CaptionSide.Top)
@@ -188,11 +202,11 @@ internal sealed partial class TableFormattingContext
                 continue;
             }
 
-            layout.Children.Add(ArrangeCaption(caption, gridX, topY, contentWidth, childContext));
-            topY += caption.OuterHeight;
+            layout.Children.Add(ArrangeCaption(caption, borderBox.X, captionY, borderBox.Width, childContext));
+            captionY += caption.OuterHeight;
         }
 
-        var gridY = topY;
+        var gridY = borderBox.Y + build.Border.Top + build.Padding.Top + build.CaptionTop;
         ArrangeRows(build, layout, gridX, gridY, childContext);
 
         var bottomY = gridY + build.Grid.Height;
@@ -216,6 +230,10 @@ internal sealed partial class TableFormattingContext
             bottomY += build.OtherHeights[index];
         }
 
+        // The bottom captions stand under the table box - under its bottom border - rather than under the
+        // rows, and the wrapper ends with them (CSS 2.1 §17.4).
+        var captionBottomY = borderBox.Bottom - build.CaptionBottom;
+
         foreach (var caption in build.Captions)
         {
             if (caption.Side != CaptionSide.Bottom)
@@ -223,8 +241,8 @@ internal sealed partial class TableFormattingContext
                 continue;
             }
 
-            layout.Children.Add(ArrangeCaption(caption, gridX, bottomY, contentWidth, childContext));
-            bottomY += caption.OuterHeight;
+            layout.Children.Add(ArrangeCaption(caption, borderBox.X, captionBottomY, borderBox.Width, childContext));
+            captionBottomY += caption.OuterHeight;
         }
 
         return layout;

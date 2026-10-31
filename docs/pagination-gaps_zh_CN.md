@@ -432,7 +432,7 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 **`transform-006/008`。** 变换盒自己 175 高、子盒 300 高，ref 要求**每一片**各自算 `transform-origin` 且内容跟着裁。我们的盒有内容就不切（切了内容会在每片重排），所以这一对与 `borders-006/007`（竖排多栏）、`break-inside-avoid-min-block-size-2`、`table/repeated-section/text-in-nested-multicol` 卡在同一处。
 
-**下一片（最大解锁）：按片裁内容。** 切片盒子的子盒按**整盒**排一次，每片只画属于自己那一段（`BackgroundOrigin` 已有整盒矩形，渲染时再加一条裁到分片的 clip），不再按片重排。它同时解锁 `transform-006/008`、`break-inside-avoid-min-block-size-2`、`table/repeated-section/text-in-nested-multicol`、`out-of-flow` 的一部分，以及 `widows-orphans-021/022` 这类"float/abs 在分片块里"的用例。再往后是竖排多栏（`ColumnsOf` 现在对 `box.Flow.IsVertical` 直接返回 false），解锁 `borders-006/007`、`box-shadow-003/004`。
+**下一片（最大解锁）：按片裁内容。** 切片盒子的子盒按**整盒**排一次，每片只画属于自己那一段（`BackgroundOrigin` 已有整盒矩形，渲染时再加一条裁到分片的 clip），不再按片重排。它同时解锁 `transform-006/008`、`break-inside-avoid-min-block-size-2`、`table/repeated-section/text-in-nested-multicol`、`out-of-flow` 的一部分，以及 `widows-orphans-021/022` 这类"float/abs 在分片块里"的用例。再往后是竖排多栏（`ColumnsOf` 现在对 `box.Flow.IsVertical` 直接返回 false），解锁 `borders-006/007`、`box-shadow-003/004`。
 ### 9.12 家族测绘：flexbox 与 table 的剩余缺口形状
 
 - **flexbox（22 对）**不是单一机制：最小的 10 对同签名（`58,50`、白 vs 绿、10000 px）分两种——`single-line-column-flex-fragmentation-026/070a-d/071` 是"`overflow:clip` + `max-height` 的 flex 容器高过栏、内容要跨栏继续"；`multi-line-row-flex-fragmentation-083a-d` 是"item 的 `break-before` 传播到 flex line"。另一半（`059..061`、`065..071`、`093..096`）是 item 尺寸/多行行盒的细节。
@@ -688,6 +688,18 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 实测：094/095/096 各 20000 → **0**；全量屏幕 **2095 → 2071、25 对绿、新增失败 0**（`gecko/bugs/1608124-1` 字体页偶现、单跑绿）；单测 2180；打印 189/198；`wpt/css-break` 71 → **68**。
 
+### 9.45 表格的“盒”是网格盒：caption/边框/背景原点 + 可切盒的就地起切
+
+`table-grid-paint-htb-ltr` 的 ref 是三条普通 div（140 高 lime、245 高带 10px 边框的渐变、15 高 lime），test 是带两个 caption、`border: 10px` 的同尺寸表格。Chrome 对两页逐像素一致，说明表格的分片几何与“表格盒”是同一个东西——**caption 不在表格盒内**。我们过去的四处偏差正好互相掩盖，这次一起量：
+
+1. **caption 在 wrapper 全宽处**（CSS 2.1 §17.4）：caption 的测量基准应是表格**边框盒宽**（`contentWidth + InsetsH`），摆放的 x/宽取 wrapper（`borderBox.X/Width`），顶部 caption 从 wrapper 顶（`borderBox.Y`）起，而不是从内容区（被 10px 边框缩进）。`table-caption-*` 几对因此保持绿。
+2. **表格背景的原点是网格盒**：Painter 里表格背景的 `placement` 改用 `TableBox`（网格边框盒），碎片里渐变相位才与 Chrome 一致（本例 col3 相位 10 = 60 mod 50，锚点是网格盒顶而非 wrapper 顶）。
+3. **表格边框画在网格盒上**：`AddBorder` 对 `LayoutKind.Table` 用 `TableBox`；同时表格的 layout 只在“整盒排布”时保留 slice 的完整边框（片会由 `FragmentClip` 裁），在“片段矩形排布”（空表格逐片排）时仍按 slice 裁边——`table-border-007`（200 高的空表格切两栏，第二片无上边框）因此保持绿。
+4. **放不下的可切盒就地起切**：`AddBoxCut` 早已把超栏空盒切成 100/100/45，但 `PlanMulticolRun` 的整块快速路径把它们当整子下推，ref 页因此被推到第 3 栏、溢出到不存在的第 5 栏。现在预切分片也走规划循环：本栏剩余 ≥ 盒的**块首边框+内边距**时，就地取一段并续排；不足则下推（Chrome 实测：5px 剩余 + 10px 边框 → 下推，0 边框 → 就地填，边框 2px → 填，padding 10 → 推）。`break-inside: avoid` 的盒子例外：放不下整块就下推，到新栏仍放不下才切（`break-inside-avoid-min-block-size-1` 实测，`FragmentChild.Inside` 现在携带真实值）。
+5. 续排的片用**整盒高度**（`child.Whole`）摆位，末片才带走底边框（`portion.Last && child.Last`）。
+
+实测：`table-grid-paint-htb-ltr` 17900 → **0**；全量屏幕 **2066 → 2065（新增 0）**；单测 2180；打印 189/198。竖排变体（vlr/vrl）仍红在轴映射（行沿 x 堆、列沿 y 排、vertical-rl 自右向左），是下一片。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
@@ -698,7 +710,7 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 范围线：竖排容器**含 float（含嵌套）或 `column-height` 换行**时仍走普通堆叠——这两条 walk 还没写；`ColumnsOf` 里直接挡住。
 
-实测：屏幕全量 **2095 → 2093（新增 0）**；`borders-006`、`borders-007` 转绿；单测 2180；打印 189/198 不变。竖排阴影两对仍差：`box-shadow-004` 1132（AA 软边）、`box-shadow-003` 12157（阴影带在反向块轴上的位置待查）。
+实测：屏幕全量 **2095 → 2093（新增 0）**；`borders-006`、`borders-007` 转绿；单测 2180；打印 189/198 不变。竖排阴影两对仍差：`box-shadow-004` 1132（AA 软边）、`box-shadow-003` 12157（阴影带在反向块轴上的位置待查）。
 ### 9.11 块的 float 摆放：第一条规则已量、第二条缺行宽 API
 
 `float-009` 的 `A<div style="float:left">X</div>` 要求 `X` 与 `A` 并排（ref 直接写 `<div>AX</div>`）。已实现并量过第一条规则——"float 的顶不得高于同一块容器里前一个**匿名**行盒的顶"（CSS 2.1 §9.5.1）：`X` 从行下方 `(8,58)` 升到行的顶 `(8,8)`，像素差 12500 → 7500，`borders-001`（ref 也用 `float:left`）保持绿；但 x 仍是内容左边缘，压住 `A`，需要第二条规则"float 排在该行**当前** inline 位置"。单独落地第一条会红两对（`CSS2/abspos/static-inside-float-inside-outline`、`css-break/flexbox/flex-fragmented-with-float-descendant-001`），故未提交。
