@@ -940,9 +940,18 @@ internal sealed class BlockLayout
                 continue;
             }
 
+            // An out-of-flow child stands against this box's own padding box rather than in a
+            // column (CSS Position 3 §5.5), so it is no reason to keep the columns from forming -
+            // unless a spanner is about, since the runs a spanner makes have not been taught where
+            // those boxes stand.
             if (PositionedLayout.IsOutOfFlow(child))
             {
-                return false;
+                if (HoldsSpanner(box))
+                {
+                    return false;
+                }
+
+                continue;
             }
 
             if (child.Style.Float != FloatSide.None)
@@ -996,6 +1005,21 @@ internal sealed class BlockLayout
         columns = used.Count;
         share = used.Width;
         return true;
+    }
+
+    /// <summary>Gets whether the box holds a spanner, which is the pair its columns are laid out in
+    /// rows of runs for (CSS Multicol 3 §3.2).</summary>
+    private static Boolean HoldsSpanner(Box box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (child.Style.SpansColumns)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -1412,6 +1436,11 @@ internal sealed class BlockLayout
     private static Boolean BlockSizeIsAuto(Box child, Boolean vertical) =>
         vertical ? child.Style.Width.IsAuto : child.Style.Height.IsAuto;
 
+    /// <summary>Gets whether a box caps that extent, which is what a maximum does for a box of
+    /// an automatic one (CSS 2.1 §10.7).</summary>
+    private static Boolean HasBlockMaximum(Box child, Boolean vertical) =>
+        vertical ? child.Style.MaxWidth.HasValue : child.Style.MaxHeight.HasValue;
+
     /// <summary>Gets whether a box states a floor for that extent.</summary>
     private static Boolean HasBlockMinimum(Box child, Boolean vertical) =>
         vertical ? child.Style.MinWidth.HasValue : child.Style.MinHeight.HasValue;
@@ -1667,8 +1696,9 @@ internal sealed class BlockLayout
         if (columnHeight <= 0 ||
             BlockExtentOf(size, vertical) <= columnHeight + 0.001 ||
             child.IsReplaced ||
-            child.Children.Count > 0 ||
-            BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) ||
+            child.Children.Count > 0 && !child.Style.ClipsOverflow ||
+            BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) &&
+                !HasBlockMaximum(child, vertical) ||
             !fills ||
             child.Style.Multi.IsMultiColumn ||
             child.Kind is BoxKind.Table or BoxKind.Grid or BoxKind.Masonry ||
@@ -3397,6 +3427,21 @@ internal sealed class BlockLayout
                 (wrapHeight + multi.RowGap) - multi.RowGap
             : extent;
 
+        // An out-of-flow child anchors to this box's padding box, which is the containing block it
+        // was given; it takes no part in the columns (CSS Position 3 §5.5).
+        var positioned = PositionedLayout.ForDescendants(context, box, parent.PaddingBox, parent.BorderBox);
+
+        foreach (var child in box.Children)
+        {
+            if (child.IsBlockLevel && PositionedLayout.IsOutOfFlow(child))
+            {
+                parent.Children.Add(_engine.ArrangePositioned(
+                    child,
+                    new Offset(content.X, content.Y),
+                    positioned));
+            }
+        }
+
         MulticolRules.Add(
             parent,
             box.Style,
@@ -3574,9 +3619,13 @@ internal sealed class BlockLayout
                     var cutStarts = cutClones || child.Offset < 0.001;
                     var cutEnds = cutClones || child.Last;
 
-                    parent.Children.Add(_engine.Arrange(
+                    // A piece of a box that holds content is laid out over the whole box, which is
+                    // where its content stands, and drawn only where the fragment holds it.
+                    var holds = child.Box.Children.Count > 0;
+                    var whole = new Rect(rect.X, y - child.Offset, rect.Width, child.Whole);
+                    var piece = _engine.Arrange(
                         child.Box,
-                        rect,
+                        holds ? whole : rect,
                         childContext,
                         definiteHeight: false,
                         slice: new FragmentSlice(
@@ -3592,11 +3641,14 @@ internal sealed class BlockLayout
                                 cutPadding.Left),
                             cutStarts,
                             cutEnds,
-                            new Rect(
-                                rect.X,
-                                y - child.Offset,
-                                rect.Width,
-                                child.Whole))));
+                            whole));
+
+                    if (holds)
+                    {
+                        piece.FragmentClip = rect;
+                    }
+
+                    parent.Children.Add(piece);
 
                     y += height + child.Margin.Bottom;
                     continue;

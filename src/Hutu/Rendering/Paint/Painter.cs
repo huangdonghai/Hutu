@@ -1024,6 +1024,13 @@ internal sealed class Painter
     /// </summary>
     private static ClipEdge OverflowClipEdge(LayoutBox box)
     {
+        // A piece of a broken box shows the stretch of the whole box it holds: the content was laid
+        // out over the whole box, and the fragment it is drawn in is the frame it is cut by.
+        if (box.FragmentClip is { } fragment)
+        {
+            return new ClipEdge(fragment, CornerRadii.None);
+        }
+
         var style = box.Source.Style;
         var margin = style.ClipsWithMargin ? style.OverflowClipMargin : ClipMargin.None;
 

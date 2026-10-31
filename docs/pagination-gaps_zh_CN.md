@@ -447,6 +447,18 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 **孤立实验（已做）**：只应用 OOF 那一条改动（不动切割许可、不加 `FragmentClip`），`379349-2a` 依旧红 4396 px，`026` 依旧红（它还需要内容切片）——确认红的是 OOF 改动本身。查看该对：`379349-2a-ref.html` 的 multicol 里有 `position:absolute` 的边带（x=48/198/348，第三条落在容器 300 宽之外），改动让它**从"整体堆叠"变成"分栏"**，边带落点因此改变；test 页没有 OOF 子盒、行为不变，于是两侧发散。
 
+
+### 9.14 切片 G：分栏与 out-of-flow 子盒共存 + 裁剪盒内容切片
+
+三处改动：
+1. `ColumnsOf` 不再因 out-of-flow 子盒拒绝分栏（它们在盒子的 padding box 上定位，与栏无关）；**含 spanner** 时仍拒绝，因为 spanner 的 run 还没教过怎么摆这些盒子。
+2. `ArrangeMulticolChildren` **第一次真正摆放这些 OOF 子盒**（此前多栏分支把它们直接丢掉了）：用 `PositionedLayout.ForDescendants(context, box, parent.PaddingBox, parent.BorderBox)` 锚到本盒的 padding box。
+3. **裁剪盒内容切片**：`overflow` 不为 visible 的盒子即使有内容也可被栏切开——切出的片按**整盒**排布（内容只排一次），每片设 `LayoutBox.FragmentClip` 为片自己的矩形，`OverflowClipEdge` 认它，于是每片只画自己那一段；`max-height` 与 `height` 一样算"有界高度"。
+
+实测：屏幕全量 **2093 → 2091（新增 0）**；转绿 `css-break/flexbox/single-line-column-flex-fragmentation-026`、`gecko/abs-pos/multi-column-1`、`gecko/bugs/379349-2a`；`borders-001/005`、`multicol-span-all-fieldset-002/003` 保持绿；单测 2180；打印 189/198 不变。
+
+=> 下一步沿用同一机制：OOF 盒子**跨过栏边界时按栏分片**（379349 的 ref 第三条边带落在容器外，仍按整盒摆放；`out-of-flow-in-multicolumn` 9 对需真正的逐栏分片），以及同源的 `single-line-column-flex-fragmentation-070a-d/071`。
+
 => 这一族的真正缺口是**栏内 abspos 跨栏分片**（CSS Position 3 §5.5：OOF 后代由片段器分片，跨过栏边界的那一段在下一栏顶部继续）。026 的 abs 正好落在第一栏内（不需要分片），而 379349 的 ref 需要。下一步实现它：在 `ArrangeMulticolChildren` 之后，把包含块落在本盒流内的 OOF 盒子按其量出的矩形与各栏求交，逐栏摆放（平移到该栏 x、裁到该栏）——这与 `out-of-flow-in-multicolumn` 9 对同源。
 **试过"裁剪盒的内容切片"（未提交）**：给 `LayoutBox` 加 `FragmentClip`、让 `OverflowClipEdge` 认它、`AddBoxCut` 放行 `overflow: clip` 的盒子、切出的片按**整盒**排布再裁到片。`borders-001/005` 保持绿，但 `single-line-column-flex-fragmentation-026` 一点没动——探针显示该页 `AddBoxCut` **根本没被调用**：dump 里 flex 容器仍是 100 宽（= 容器宽），说明 `ColumnsOf` 在这些页没走分栏路径。下一步先查 `ColumnsOf` 为何对 `columns:2; width:100px` 的子盒判否（在 `ColumnsOf` 内打一条探针），再谈内容切片。
 

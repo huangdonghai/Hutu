@@ -384,6 +384,10 @@ internal sealed class LayoutBox
     /// </summary>
     public Boolean SlicesBlockEnd { get; set; }
 
+    /// <summary>Gets or sets the fragment this piece of a broken box shows, where the content was laid
+    /// out in the whole box and only the stretch inside the fragment may be drawn.</summary>
+    public Rect? FragmentClip { get; set; }
+
     /// <summary>
     /// Gets or sets the border box the block would have had before it was broken, where this fragment is
     /// one piece of it: a background is painted over that whole box and then cut with the box, which is
