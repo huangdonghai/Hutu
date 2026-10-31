@@ -571,6 +571,16 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 实测：070a/b/c/d 四对 10000 → **0** 全绿；全量屏幕 12 对绿、**新增失败 0**（gecko 606、wpt 1484 → 1483+… 里含此四对）；单测 2180；打印 189/198；`wpt/css-break` 85 → **81**。仍未绿的 `071` 需要 flex 项自身的跨栏分片（160 高的项 > 栏高），`multi-line-*` 一族需要行向 flex 的跨栏排版。
 
+### 9.28 行向 flex 的"整行是成员"：083a-d 四对转绿
+
+`multi-line-row-flex-fragmentation-083a-d` 是 070 的行向版本：栏容器 > 行向 wrap flex > 两个行向 flex，强制栏断落在第二个 flex 上（083a/c）或落在它/前一个 flex 的**首/尾项**上（083b/d）。
+
+做法三处：①`IsBareWrapper` 再接受一种 flex——行向、wrap、**每个子盒都是 flex 容器**（此时一个子盒就是一行，行与行之间才由块轴共享）；②`BoundaryBreaks` 让 flex 的**首项 `break-before` / 尾项 `break-after`** 的强制值传播到容器边界（CSS Flexbox 1 §6：项上的强制断先变成 flex 换行）；③`ForcedBreakWithin` 也看 flex 子盒的首/尾项，好让外层被打开。
+
+实测：083a/b/c/d 四对 10000 → **0** 全绿；全量屏幕 16 对绿、新增失败 0（`gecko/text/476378-soft-hyphen-fallback` 仍是已知 flaky，单跑两遍皆绿）；单测 2180；打印 189/198；`wpt/css-break` 81 → **77**。
+
+剩下的 flexbox：`single-line-column-flex-fragmentation-071`（flex 项自身比栏高，需要项内跨栏分片）、`multi-line-row-flex-fragmentation-065/067/068/069/070/071/093-096`（多行行向、项内分片）、`multi-line-column-059-061`（列向 wrap + space-between 的段间间隙）、`flex-container-fragmentation-006`、`single-line-row-044/050`。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

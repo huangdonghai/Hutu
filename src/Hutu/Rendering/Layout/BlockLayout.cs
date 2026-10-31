@@ -1089,6 +1089,23 @@ internal sealed class BlockLayout
         var before = child.Style.Breaks.Before;
         var after = child.Style.Breaks.After;
 
+        // A forced break on the first or the last item of a flex travels to the container's own
+        // edge, which is the line it starts or ends (CSS Flexbox 1 §6).
+        if (child.Kind == BoxKind.Flex && child.Children.Count > 0)
+        {
+            if (Fragmentainer.Forced(child.Children[0].Style.Breaks.Before))
+            {
+                before = Fragmentainer.Combine(before, child.Children[0].Style.Breaks.Before);
+            }
+
+            var last = child.Children[^1];
+
+            if (Fragmentainer.Forced(last.Style.Breaks.After))
+            {
+                after = Fragmentainer.Combine(after, last.Style.Breaks.After);
+            }
+        }
+
         if (child.Kind != BoxKind.Table)
         {
             return (before, after);
@@ -1394,6 +1411,13 @@ internal sealed class BlockLayout
             {
                 return true;
             }
+
+            if (child.Kind == BoxKind.Flex && child.Children.Count > 0 &&
+                (Fragmentainer.Forced(child.Children[0].Style.Breaks.Before) ||
+                 Fragmentainer.Forced(child.Children[^1].Style.Breaks.After)))
+            {
+                return true;
+            }
         }
 
         return false;
@@ -1414,9 +1438,26 @@ internal sealed class BlockLayout
         // members the block axis can walk (CSS Flexbox 1 §6).
         if (child.Kind == BoxKind.Flex)
         {
-            if (child.Style.Flex.IsRow || child.Style.Flex.Wraps)
+            // A column flex stacks its items down the block axis as a block does, so the columns
+            // may cut between them. A row flex wrapping a row of flex containers is the same list
+            // one line further out: a forced break on one of them starts a new line, and the line
+            // is what the columns share (CSS Flexbox 1 §6).
+            var row = child.Style.Flex.IsRow;
+
+            if (!row && child.Style.Flex.Wraps)
             {
                 return false;
+            }
+
+            if (row)
+            {
+                foreach (var item in child.Children)
+                {
+                    if (item.Kind != BoxKind.Flex)
+                    {
+                        return false;
+                    }
+                }
             }
         }
         else if (child.Kind != BoxKind.Block)
