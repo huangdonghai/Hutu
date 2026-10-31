@@ -581,6 +581,14 @@ flexbox 子族的第一片。`single-line-column-flex-fragmentation-070a-d` 的�
 
 剩下的 flexbox：`single-line-column-flex-fragmentation-071`（flex 项自身比栏高，需要项内跨栏分片）、`multi-line-row-flex-fragmentation-065/067/068/069/070/071/093-096`（多行行向、项内分片）、`multi-line-column-059-061`（列向 wrap + space-between 的段间间隙）、`flex-container-fragmentation-006`、`single-line-row-044/050`。
 
+### 9.29 flex 项跨栏切片：绕开 `AddBoxCut` 会打断 borders 一族（未提交）
+
+`single-line-column-flex-fragmentation-071` 需要"flex 项比栏高时在项内切开"：项是 `height:120; padding:20` 的块，栏高 100，第一栏还剩 60——Chrome 把项切成 60+100。我们的填法把项整块溢出（`Fitting` 的保进度规则）。
+
+试的版本：把这种"无可断内容、有声明高的盒"从 `AddBoxCut` 手里拿过来，交给 `PlanMulticolRun` 的切块路径（第一片取本栏剩余、余下进下一栏），判断条件照抄 `AddBoxCut` 的门槛。`071` 没动（10000），而 `wpt/css-break/borders` 一族 **0 → 8 全红**：`AddBoxCut` 的分片几何（`clonesDecoration` 的内缩、切边为零的 border/padding、`Sliced` 圆角、`BackgroundOrigin`）是绕过不了的一整套，换个路径就全丢。整片回滚，工作树停在 `00c2492b`。
+
+结论：flex 项的跨栏切片要**在 `AddBoxCut` 内部**做"第一片 = 本栏剩余"，并让填充端把剩余空间告诉它（§9.17/§9.22 的 plan 需要携带每栏已用量），而不是另起一条切块路径。那一步是 flexbox 多行一族（065-071/093-096）的共同前置。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
