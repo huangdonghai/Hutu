@@ -543,6 +543,14 @@ dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里�
 
 但没有一对翻绿，而且 `073` 的第三片落到了第 3 栏（`columns = max(counts, cells)` 时），多栏容器只画两栏，那片就画到盒子外面去了。Chrome 的 ref 只要 100×100 的绿方块：abs 跨两栏各 100，第三段不该有。所以下一片还要一条和 `AddBoxCut` 一样的门槛——**切出来的片数不得超过栏数**（`ceil(reach / columnHeight) <= columns`），超了就整块放着让它溢出（§4.3），再配"续排片落在下一栏"的列数（§9.22 那一行）。这轮 `reach`、列数两处都回滚，工作树停在 `5281cf6b`。
 
+### 9.24 `break-before: avoid` 把切口推进裸包装里
+
+`break-between-avoid-003`：一列里 4 个 50 高的方块，最后一个写着 `break-before: avoid`，栏高 160。Chrome 把切口退到第 2 块之后（100+100），我们把 3 块塞进第一栏（150+50）——因为 `avoid` 落在**裸包装**与最后一个方块的边界上，而 `EffectiveMembers` 只在"包装的直接子盒里有强制栏断"时才拆包装，`avoid` 不算。按 CSS Break 3 §4.1，裸包装（无边框/内边距/外边距/背景/声明尺寸）本就可以当作页面直接写在栏容器里。
+
+改法：`IsForcedBreakCarrier` 拆出 `IsBareWrapper`（只做"裸"的判定），`EffectiveMembers` 在"下一个成员写着 `break-before: avoid`"时也把裸包装打开，且 `FlattenBare` 递归展开（一层不够：`<div><div><div>` 里那两层都要打开，`avoid` 才能退到第 2 块后）。`avoid` 到的边界由 `ChildSlicer.Fitting` 原有的回退逻辑处理。
+
+实测：`break-between-avoid-003` 5000 → **0** 转绿；全量屏幕 7 对绿（另有 `overflow-clip-012`、`table-row-paint-htb-ltr`、`table-section-paint-htb-ltr`、`flexbox_stf-table-row-group`、`text-transform-full-size-kana-007`），新增失败 0（`gecko/text/476378-soft-hyphen-fallback` 整量偶现、单跑两遍皆绿，仍是已知 flaky）；单测 2180；打印 189/198；`wpt/css-break` 87 → **86**。
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。

@@ -1304,9 +1304,9 @@ internal sealed class BlockLayout
     {
         var carries = false;
 
-        foreach (var child in source)
+        for (var index = 0; index < source.Count; index++)
         {
-            if (IsForcedBreakCarrier(child, share))
+            if (IsForcedBreakCarrier(source[index], share, AvoidFollows(source, index)))
             {
                 carries = true;
                 break;
@@ -1320,19 +1320,42 @@ internal sealed class BlockLayout
 
         var members = new List<Box>(source.Count);
 
-        foreach (var child in source)
+        for (var index = 0; index < source.Count; index++)
         {
-            if (IsForcedBreakCarrier(child, share))
+            if (IsForcedBreakCarrier(source[index], share, AvoidFollows(source, index)))
             {
-                members.AddRange(child.Children);
+                FlattenBare(source[index], share, members);
+            }
+            else
+            {
+                members.Add(source[index]);
+            }
+        }
+
+        return members;
+    }
+
+    /// <summary>Gets whether the member after this one forbids the break before itself, which is a
+    /// break the wrapper before it may have to make room for inside its own content.</summary>
+    private static Boolean AvoidFollows(IReadOnlyList<Box> source, Int32 index) =>
+        index + 1 < source.Count && source[index + 1].Style.Breaks.Before == BreakValue.Avoid;
+
+    /// <summary>Opens a bare wrapper into the members it holds, and any bare wrapper among them too:
+    /// a box that brings nothing of its own is laid out as if its children stood where it does, which
+    /// is what lets a break the wrapper could not take be found inside it (CSS Break 3 §4.1).</summary>
+    private static void FlattenBare(Box wrapper, Double share, List<Box> members)
+    {
+        foreach (var child in wrapper.Children)
+        {
+            if (IsForcedBreakCarrier(child, share, avoidAfter: false) || IsBareWrapper(child, share))
+            {
+                FlattenBare(child, share, members);
             }
             else
             {
                 members.Add(child);
             }
         }
-
-        return members;
     }
 
     /// <summary>
@@ -1340,7 +1363,34 @@ internal sealed class BlockLayout
     /// border, padding, margin, background or stated size of its own, no clipping, a block axis the
     /// columns share, and block children only.
     /// </summary>
-    private static Boolean IsForcedBreakCarrier(Box child, Double share)
+    private static Boolean IsForcedBreakCarrier(Box child, Double share, Boolean avoidAfter)
+    {
+        if (!IsBareWrapper(child, share))
+        {
+            return false;
+        }
+
+        if (avoidAfter)
+        {
+            return true;
+        }
+
+        foreach (var grandchild in child.Children)
+        {
+            if (grandchild.Style.Breaks.Before is BreakValue.Column or BreakValue.Page ||
+                grandchild.Style.Breaks.After is BreakValue.Column or BreakValue.Page)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Gets whether a block is a bare wrapper: no border, padding, margin, background or
+    /// stated size of its own, no clipping, a block axis the columns share, and block children
+    /// only.</summary>
+    private static Boolean IsBareWrapper(Box child, Double share)
     {
         if (child.Kind != BoxKind.Block || child.Flow.IsVertical || child.Children.Count == 0)
         {
@@ -1371,23 +1421,15 @@ internal sealed class BlockLayout
             return false;
         }
 
-        var forced = false;
-
         foreach (var grandchild in child.Children)
         {
             if (!grandchild.IsBlockLevel || PositionedLayout.IsOutOfFlow(grandchild) || IsFloat(grandchild))
             {
                 return false;
             }
-
-            if (grandchild.Style.Breaks.Before is BreakValue.Column or BreakValue.Page ||
-                grandchild.Style.Breaks.After is BreakValue.Column or BreakValue.Page)
-            {
-                forced = true;
-            }
         }
 
-        return forced;
+        return true;
     }
 
     /// <summary>Gets the members a column really holds: a bare wrapper that is shorter than what
