@@ -406,5 +406,11 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 `inset` / `inset-block` / `inset-inline` 三个简写由 AngleSharp 解析成长手，Hutu 只读长手，所以简写自动覆盖。剩余缺口：物理与逻辑同时写时以"物理已写"为准，没有按层叠顺序判定（两者落在同一个物理属性上，规范由层叠决定）。
 
+### 9.4 切片 C：圆角按整盒量，而不是按分片量
+
+`LayoutEngine.ResolveDecorations` 原来用**分片**的 border box 解析 `border-radius`；CSS Backgrounds 3 §5.1 的等比缩小会因此把"盒子真有角的那一片"的半径缩小（`borders-005`：整盒 290 高、半径 80，最后一片只有 70 高 → 半径被缩到 35）。现在切片盒子用 `BackgroundOrigin`（整盒）解析，切断边照旧清零四角（§4.7）。
+
+实测：屏幕全量 **2098 → 2097（新增 0）**；`borders-005` 转绿；单测 2178 全过；打印 189/198 不变。
+
 
 

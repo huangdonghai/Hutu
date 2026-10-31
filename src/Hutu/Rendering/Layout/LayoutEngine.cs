@@ -430,7 +430,15 @@ internal sealed record LayoutProfile(
     {
         var style = box.Source.Style;
 
-        box.Radii = CornerRadii.Resolve(style.BorderRadius, box.BorderBox.Width, box.BorderBox.Height);
+        // A fragment of a broken box keeps the corner curves of the box it came from, so they are
+        // measured against that whole box: the piece a radius really ends on is shorter than it, and a
+        // radius scaled down to the fragment would round a corner the box does not have
+        // (CSS Break 3 §4.7, CSS Backgrounds 3 §5.1).
+        var rounded = (box.SlicesBlockStart || box.SlicesBlockEnd) && box.BackgroundOrigin is { } whole
+            ? whole
+            : box.BorderBox;
+
+        box.Radii = CornerRadii.Resolve(style.BorderRadius, rounded.Width, rounded.Height);
         box.BackgroundClip = style.BackgroundClip;
 
         // An inline element has no box of its own to clip anything to, and CSS says `overflow` has no
