@@ -383,3 +383,13 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 下一步（同一族的解锁顺序）：按片裁内容 + 分片装饰（clone/阴影/transform）→ `borders-005..008`、`box-shadow-002..005`、`box-decoration-break-*`；补 `column-fill: auto` 的溢出列 → 解除第 1 条；外层切内层多栏 → 解除第 3 条；table/flex/grid 分片仍是独立里程碑。
 
+### 9.2 已做过并回滚的实验：断点处的 box-shadow
+
+按 CSS Break 3 §4.7 实现过一版：切片盒子的阴影改用**整盒**的 shape（`LayoutBox.BackgroundOrigin`），再用一条 band 夹住——被切开的边不放阴影带，盒子真正拥有的边才放到 `bounds` 那么远；band 沿切断轴取片段自身范围，沿另两轴取整盒阴影的可达范围（`BoxShadowCommand` 加 `Band`，`SkiaPaintExecutor.DrawBoxShadow` 外层 `Save()+ClipRect`）。
+实测：`box-shadow-002` 11926 → **9282** px，`003/004/005` **没变**。因为没有一对翻绿，增益无法用门禁证明，整片回滚。
+
+残差不在阴影上。`box-shadow-002..005` 的 **ref 页是 abspos 盒子**，靠 `inset-inline-start` / `inset-block-start` 摆放三条边带；我们渲染 ref 时三条全落在父盒原点（paint 实证：`border 58,83.72 70x110`、`border 58,83.72 70x100`、`border 58,83.72 70x60`，x/y 完全相同）。全仓 `src/Hutu` 里 `inset-inline` / `inset-block` **零读取点**，而 fork 已经注册了这些属性（`deps/AngleSharp.Css/src/AngleSharp.Css/Factories/DefaultDeclarationFactory.cs:3032`），所以这是纯 Hutu 侧缺口。语料面：**223** 个 reftest 文件用了逻辑 inset，`css-break` 族内 **13** 个。
+
+下一片（不依赖分片）：把四个逻辑 inset 按 writing-mode × direction 折到物理边（CSS Logical 1 §12.2），物理属性已声明时保留其值，`inset` / `inset-block` / `inset-inline` 简写展开；单测覆盖 8 种模式组合，然后重测 `box-shadow-002..005`、`borders-005..008`、`out-of-flow-in-multicolumn-*`。阴影 band 那条改动等这一片能把 `box-shadow-*` 送到可判分的距离后再重新落地。
+
+
