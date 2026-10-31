@@ -1197,6 +1197,25 @@ internal sealed class InlineLayout
     }
 
     /// <summary>Gets the heights the lines take when stacked, the gaps a float made included.</summary>
+    /// <summary>Gets how far along its line each of the container's lines reaches at the given width:
+    /// the place a float written after that content stands at, and a right one ends at (CSS 2.1 §9.5.1).
+    /// </summary>
+    public IReadOnlyList<Double> LineWidths(
+        Box container, Double maxInline, WritingModeInfo flow, InlineContext context) =>
+        Widths(Plan(container, maxInline, flow, context, Indentation(container, flow, maxInline)));
+
+    private static List<Double> Widths(List<Line> lines)
+    {
+        var widths = new List<Double>(lines.Count);
+
+        foreach (var line in lines)
+        {
+            widths.Add(Math.Max(0, line.Extent));
+        }
+
+        return widths;
+    }
+
     private static List<Double> Heights(List<Line> lines)
     {
         var heights = new List<Double>(lines.Count);
