@@ -463,16 +463,25 @@ internal sealed class Painter
     }
 
     /// <summary>
-    /// Gets the rectangle the box cuts its subtree to, or null where it states none. Only a box taken out of
-    /// the flow answers to the legacy <c>clip</c>, and the area is the border box the offsets were read
-    /// against, which the layout has to have settled first (§11.1.1, CSS Masking 1 §1.3). The gather walk
-    /// and the painting both answer from here, so the cut a box is painted with is the one its descendants
-    /// were gathered under.
+    /// Gets the rectangle the box cuts its subtree to, or null where it states none. A piece of a box the
+    /// columns divided is cut to the fragment it stands in: the box was laid out over the whole of itself
+    /// and each piece shows only the stretch it holds. Otherwise only a box taken out of the flow answers
+    /// to the legacy <c>clip</c>, and the area is the border box the offsets were read against, which the
+    /// layout has to have settled first (§11.1.1, CSS Masking 1 §1.3). The gather walk and the painting
+    /// both answer from here, so the cut a box is painted with is the one its descendants were gathered
+    /// under.
     /// </summary>
-    private static Rect? CutOf(LayoutBox box) =>
-        box.Position is PositionMode.Absolute or PositionMode.Fixed
+    private static Rect? CutOf(LayoutBox box)
+    {
+        if (box.FragmentClip is { } fragment)
+        {
+            return fragment;
+        }
+
+        return box.Position is PositionMode.Absolute or PositionMode.Fixed
             ? box.Source.Style.Clip?.ClipOf(box.BorderBox)
             : null;
+    }
 
     /// <summary>
     /// Paints a box inside the rectangle its <c>clip</c> cuts it to, if it states one.
@@ -1178,6 +1187,16 @@ internal sealed class Painter
     {
         var hidden = box.Kind != LayoutKind.Line && box.Source.Style.IsHidden;
 
+        // A piece of a box the columns divided shows only the stretch of the whole box it holds, and
+        // its ground is part of that picture: the box was laid out over the whole of itself, so both
+        // the piece and everything below it are cut to the fragment (CSS Break 3 §4.7).
+        var cut = box.FragmentClip;
+
+        if (cut is { } standing)
+        {
+            target.Add(new PushClipCommand(standing, CornerRadii.None));
+        }
+
         if (!hidden)
         {
             PaintPresentation(box, target);
@@ -1225,6 +1244,11 @@ internal sealed class Painter
         {
             target.Add(new PopClipCommand(edge.Bounds));
         }
+
+        if (cut is { } cutEdge)
+        {
+            target.Add(new PopClipCommand(cutEdge));
+        }
     }
 
     /// <summary>
@@ -1234,6 +1258,13 @@ internal sealed class Painter
     private void PaintInk(LayoutBox box, PaintList list, List<PaintCommand> target, DeferredStack? owner)
     {
         var hidden = box.Kind != LayoutKind.Line && box.Source.Style.IsHidden;
+
+        var cut = box.FragmentClip;
+
+        if (cut is { } standing)
+        {
+            target.Add(new PushClipCommand(standing, CornerRadii.None));
+        }
 
         if (!hidden)
         {
@@ -1292,6 +1323,11 @@ internal sealed class Painter
         if (clipped)
         {
             target.Add(new PopClipCommand(edge.Bounds));
+        }
+
+        if (cut is { } cutEdge)
+        {
+            target.Add(new PopClipCommand(cutEdge));
         }
 
         // The outline is drawn around the box rather than in it, so it comes after the clip that held the

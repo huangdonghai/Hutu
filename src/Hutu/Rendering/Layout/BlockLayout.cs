@@ -1023,6 +1023,25 @@ internal sealed class BlockLayout
     }
 
     /// <summary>
+    /// Gets whether a box holds a descendant taken out of the flow. The descendant is anchored to the
+    /// box it finds, so a column that carries the box on into the next one carries the descendant with
+    /// it (CSS Position 3 §5.5); a box that holds nothing else has no content of its own to break
+    /// between and is divided by the columns themselves.
+    /// </summary>
+    private static Boolean HoldsPositioned(Box box)
+    {
+        foreach (var child in box.Children)
+        {
+            if (PositionedLayout.IsOutOfFlow(child) || HoldsPositioned(child))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Gets whether a child of the box asks for a forced break before or after itself, bare wrappers
     /// counted through as they are for the slicer.
     /// </summary>
@@ -1696,9 +1715,10 @@ internal sealed class BlockLayout
         if (columnHeight <= 0 ||
             BlockExtentOf(size, vertical) <= columnHeight + 0.001 ||
             child.IsReplaced ||
-            child.Children.Count > 0 && !child.Style.ClipsOverflow && child.Kind != BoxKind.Table ||
+            child.Children.Count > 0 && !child.Style.ClipsOverflow && child.Kind != BoxKind.Table &&
+                (!HoldsPositioned(child) || vertical) ||
             BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) &&
-                !HasBlockMaximum(child, vertical) ||
+                !HasBlockMaximum(child, vertical) && (child.Kind != BoxKind.Table || vertical || HoldsPositioned(child)) ||
             !fills ||
             child.Style.Multi.IsMultiColumn ||
             child.Kind is BoxKind.Grid or BoxKind.Masonry ||
@@ -1718,9 +1738,7 @@ internal sealed class BlockLayout
 
         // A box that repeats its decoration at every break adds its border and padding to each piece,
         // so what the column holds is the content (CSS Break 3 §4.7).
-        Console.WriteLine($"GUARD col={columnHeight <= 0} small={BlockExtentOf(size, vertical) <= columnHeight + 0.001} rep={child.IsReplaced} auto={BlockSizeIsAuto(child, vertical)} min={HasBlockMinimum(child, vertical)} nofill={!fills} multi={child.Style.Multi.IsMultiColumn} kind={child.Kind} many={Math.Ceiling(BlockExtentOf(size, vertical) / columnHeight - 0.001) > columns} nested={nested}");
         var blockExtent = BlockExtentOf(size, vertical);
-        Console.WriteLine($"CUT-OK v={vertical} block={blockExtent} col={columnHeight} clone={clonedInsets}");
         var left = Math.Max(0, blockExtent - clonedInsets);
         var offset = 0.0;
         var pieces = 0;
@@ -3375,8 +3393,6 @@ internal sealed class BlockLayout
         var extents = new Double[Math.Max(1, wraps ? columns * rows : multi.Fills ? children.Count : columns)];
         Array.Fill(extents, boxHeight);
 
-        Console.WriteLine($"FILL v={box.Flow.IsVertical} kids={children.Count} boxExt={boxHeight} frags={String.Join(",", fragments.Select(f => f.Height))}");
-        Console.WriteLine($"MC v={box.Flow.IsVertical} decl={(heightStated ? declaredHeight : 0)} frag={fragmentHeight} pieces={children.Count}");
         var counts = Fragmentainer.Fill(fragments, extents);
         var childContext = context.ForContainingBlock(
             box.Flow.IsVertical ? new Size(fragmentHeight, share) : new Size(share, wraps ? boxHeight : fragmentHeight))

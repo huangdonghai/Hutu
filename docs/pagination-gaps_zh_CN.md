@@ -488,6 +488,21 @@ dump 001 后看清真正缺口：`.rel`（高 20，栏剩 10）在我们这里�
 **试过"裁剪盒的内容切片"（未提交）**：给 `LayoutBox` 加 `FragmentClip`、让 `OverflowClipEdge` 认它、`AddBoxCut` 放行 `overflow: clip` 的盒子、切出的片按**整盒**排布再裁到片。`borders-001/005` 保持绿，但 `single-line-column-flex-fragmentation-026` 一点没动——探针显示该页 `AddBoxCut` **根本没被调用**：dump 里 flex 容器仍是 100 宽（= 容器宽），说明 `ColumnsOf` 在这些页没走分栏路径。下一步先查 `ColumnsOf` 为何对 `columns:2; width:100px` 的子盒判否（在 `ColumnsOf` 内打一条探针），再谈内容切片。
 
 
+### 9.18 表格按栏切开，片的整个画面裁到片
+
+上一节留下的第一层是"片里的内容没人裁"：切出的片按**整盒**排布（`whole` rect + `FragmentClip`），但绘制侧只有 `OverflowClipEdge` 认 `FragmentClip`，而它只在 `ClipsOverflow` 打开时才被推到命令表里；`PaintGround`/`PaintInk`（块级背景、边框、文字的真实绘制路径，`PaintBox` 只走层叠上下文根和替换盒）根本不看 `FragmentClip`。所以 4 片会把整张 400 高的表在每栏原样再画一遍。
+
+这一片三处：
+
+1. `HoldsPositioned`：持有 out-of-flow 后代的块，只要有声明/最小/最大高，就可被 `AddBoxCut` 切开（横排；见下）；
+2. **auto 高的表格**可切（表格是片段器该切的盒子），但持有定位后代时仍不切——`table/repeated-section/abspos-uncontained-text` 的 abs 锚在视口上，Chrome 只画一次，切口不该把它裁掉；
+3. 绘制：`FragmentClip` 进 `CutOf`（`PaintBox` 的层叠上下文根），并在 `PaintGround`/`PaintInk` 里把这一片的整个画面（背景、边框、文字、整棵子树）裁到片矩形。
+
+实测（基准 `e214ebd4`）：全量屏幕 **gecko 606 不变、wpt 1484 → 1483**；`wpt/css-break` 91 → **90**，`overflow-clip-012` 转绿，新增失败 **0**。表格族像素大幅下降但未翻绿：`sections-and-captions-mixed-order` 30205 → **851**、`specified-block-size-007` 21126 → **2475**、`table-border-008` 49025 → **13600**、`table-collapsed-borders-paint-at-boundary` 34100 → **10105**、`collapsed-htb` 21960 → **9130**、`grid-paint-htb` 62800 → **17600**。竖排各对保持基准——`ArrangeMulticolRunAcross` 还没把切片的块向边映射对，`HoldsPositioned` 与表格豁免都只在横排生效（竖排不切，行为不变）。单测 2180；打印 189/198。
+
+剩余（下一片）：`row/col/section/grid-paint-htb` 的残差是**表格部件背景的几何**，不是分片——行背景目前铺满整行、把 `border-spacing` 的 30px 空档也画上（`row-paint-htb` 恰好 **7350 = 30 × 245**），`col` 背景则根本没有盒子可画。下一步按"单元格并集"绘制行/区段/列背景。`out-of-flow-in-multicolumn-001/004` 仍需上一节的"按剩余空间切 + reach"（块的 reach 要算到 OOF 后代，`AddBoxCut` 目前只看盒子自己的块向尺寸）。
+
+
 ### 9.9 块的 float 摆放：两条规则都要，缺一条就不收敛
 
 `float-009` 的 dump 显示 `A<div style="float:left">X</div>` 里我们的 `X` 落在行的**下方** `(8,58)`，而 ref 是 `AX` 并排（`float-009-ref.html` 直接写 `<div>AX</div>`）。做了第一条规则——"float 的顶不得高于同一块容器里前一个匿名行盒的顶"（CSS 2.1 §9.5.1，两个 pass 同步、只在 `child.IsAnonymous` 时生效）——之后 `X` 到了行的顶 `(8,8)`，但 x 仍是内容左边缘，与 `A` 重叠；ref 要的是 `(58,8)`，即"行内内容之后的 float 排在该行当前 inline 位置"。第一条规则单独落地时 `float-009` 12500 → **7500** px，`borders-001` 保持绿（它的 ref 用 `float:left`，必须靠"只认匿名块"救回），但 `CSS2/abspos/static-inside-float-inside-inline` 与 `css-break/flexbox/flex-fragmented-with-float-descendant-001` 变红，净 +2，整片回滚。下一步：把"float 排在该行当前 inline 位置（行盒已用宽度）"补上，两条一起量。
