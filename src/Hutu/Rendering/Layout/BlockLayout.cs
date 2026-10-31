@@ -1041,6 +1041,16 @@ internal sealed class BlockLayout
         return false;
     }
 
+    /// <summary>Gets whether a column divides a child where it runs out of room. Only a horizontal
+    /// column that fills cuts one; a table is left to the fragmentainer's own table step, a nested
+    /// multicol to its own columns, and a box with block margins is left whole because the room a
+    /// margin takes from the first piece is not worked out here yet.</summary>
+    private static Boolean DividesAcross(
+        Box child, Boolean vertical, Thickness margin, Boolean fills, Boolean nested) =>
+        fills && !vertical && !nested && child.Kind != BoxKind.Table &&
+        !child.Style.Multi.IsMultiColumn && child.Children.Count > 0 &&
+        margin.Top == 0 && margin.Bottom == 0 && HoldsPositioned(child);
+
     /// <summary>
     /// Gets whether a child of the box asks for a forced break before or after itself, bare wrappers
     /// counted through as they are for the slicer.
@@ -1208,7 +1218,8 @@ internal sealed class BlockLayout
             Int32 line,
             Boolean last,
             Double whole = 0,
-            Double offset = -1)
+            Double offset = -1,
+            Boolean divides = false)
         {
             Box = box;
             Size = size;
@@ -1218,6 +1229,7 @@ internal sealed class BlockLayout
             Last = last;
             Whole = whole;
             Offset = offset;
+            Divides = divides;
         }
 
         public Box Box { get; }
@@ -1243,6 +1255,11 @@ internal sealed class BlockLayout
 
         /// <summary>Gets whether the child is broken across the columns.</summary>
         public Boolean Broken => Line >= 0 || Offset >= 0;
+
+        /// <summary>Gets whether an out-of-flow descendant anchors to this child, so a column that
+        /// cannot hold it whole cuts it where it ends instead of pushing it on (CSS Position 3 §5.5).
+        /// </summary>
+        public Boolean Divides { get; }
 
         /// <summary>
         /// Gets how far inside the whole box this piece starts, or -1 where the piece is not cut
@@ -1604,7 +1621,8 @@ internal sealed class BlockLayout
                             after,
                             breaks.Inside),
                         -1,
-                        last: true));
+                        last: true,
+                        divides: DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer)));
 
                     continue;
                 }
@@ -1672,7 +1690,8 @@ internal sealed class BlockLayout
                 new FragmentChild(
                     BlockExtentOf(size, vertical) + margin.Top + margin.Bottom, before, after, breaks.Inside),
                 -1,
-                last: true));
+                last: true,
+                divides: DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer)));
         }
 
         return children;
@@ -3390,10 +3409,11 @@ internal sealed class BlockLayout
         // A fill is not held to the column count: content that does not fit the stated columns spills
         // into more of them, which is how Chrome lays out a run longer than its `column-count`. A
         // balance has already been solved into the columns it was given.
-        var extents = new Double[Math.Max(1, wraps ? columns * rows : multi.Fills ? children.Count : columns)];
+        var extents = new Double[Math.Max(1, wraps ? columns * rows : multi.Fills ? Math.Max(children.Count, NeededCells(children, boxHeight)) : columns)];
         Array.Fill(extents, boxHeight);
 
         var counts = Fragmentainer.Fill(fragments, extents);
+        var cells = PlanMulticolRun(children, fragments, extents, counts);
         var childContext = context.ForContainingBlock(
             box.Flow.IsVertical ? new Size(fragmentHeight, share) : new Size(share, wraps ? boxHeight : fragmentHeight))
             .WithFragmentainer();
@@ -3419,7 +3439,7 @@ internal sealed class BlockLayout
         {
             ArrangeMulticolRun(
                 children,
-                counts,
+                cells,
                 parent,
                 content.X,
                 content.Y,
@@ -3566,9 +3586,200 @@ internal sealed class BlockLayout
         }
     }
 
+    /// <summary>One column's share of the children: a child that stands whole, or a piece of one the
+    /// column divided - where inside that child the piece begins, how much of it the column holds,
+    /// and whether it is the last piece.</summary>
+    private readonly record struct MulticolPiece(Int32 Child, Double Offset, Double Height, Boolean Last);
+
+    /// <summary>Gets the fewest columns a fill needs when a child may be divided: one that holds
+    /// out-of-flow descendants takes as many columns as its height spans, and one more for the room
+    /// it may lose to the column it begins in.</summary>
+    private static Int32 NeededCells(List<MulticolChild> children, Double boxHeight)
+    {
+        var needed = 0;
+
+        if (boxHeight <= 0)
+        {
+            return needed;
+        }
+
+        foreach (var child in children)
+        {
+            if (child.Divides)
+            {
+                needed = Math.Max(needed, (Int32)Math.Ceiling(child.Fragment.Height / boxHeight - 0.001) + 1);
+            }
+        }
+
+        return needed;
+    }
+
+    /// <summary>
+    /// Shares the children over the columns, keeping a child that holds out-of-flow descendants in the
+    /// column it reached: it is cut where that column runs out of room and what is left carries on at
+    /// the top of the next (CSS Position 3 §5.5). Every other child stands or moves whole, exactly as
+    /// the plain fill places it.
+    /// </summary>
+    private static List<List<MulticolPiece>> PlanMulticolRun(
+        List<MulticolChild> children,
+        IReadOnlyList<FragmentChild> fragments,
+        IReadOnlyList<Double> extents,
+        IReadOnlyList<Int32> counts)
+    {
+        var cells = new List<List<MulticolPiece>>(counts.Count);
+
+        if (!children.Exists(child => child.Divides))
+        {
+            var from = 0;
+
+            foreach (var count in counts)
+            {
+                var whole = new List<MulticolPiece>(count);
+
+                for (var index = 0; index < count; index++)
+                {
+                    whole.Add(new MulticolPiece(from++, -1, 0, true));
+                }
+
+                cells.Add(whole);
+            }
+
+            return cells;
+        }
+
+        var placed = 0;
+        var resume = -1;
+        var resumeAt = 0.0;
+
+        for (var number = 0; number < extents.Count; number++)
+        {
+            var limit = extents[number];
+            var used = 0.0;
+            var cell = new List<MulticolPiece>();
+
+            if (resume >= 0)
+            {
+                var total = fragments[resume].Height;
+                var take = Math.Min(total - resumeAt, limit);
+                var last = resumeAt + take >= total - 0.001;
+
+                cell.Add(new MulticolPiece(resume, resumeAt, take, last));
+                used = take;
+
+                if (last)
+                {
+                    placed = Math.Max(placed, resume + 1);
+                    resume = -1;
+                }
+                else
+                {
+                    resumeAt += take;
+                    cells.Add(cell);
+                    continue;
+                }
+            }
+
+            while (placed < children.Count)
+            {
+                var cut = ChildSlicer.Fitting(fragments, limit - used, placed);
+                var fits = cut.Fits;
+
+                if (fits == 0 && number == extents.Count - 1)
+                {
+                    fits = 1;
+                }
+
+                for (var index = 0; index < fits; index++)
+                {
+                    used += fragments[placed].Height;
+                    cell.Add(new MulticolPiece(placed++, -1, 0, true));
+                }
+
+                // The slicer takes the first child whatever its height, so that the flow makes
+                // progress; a child the columns may divide is cut at the room instead of overflowing.
+                if (!cut.Forced && number < extents.Count - 1 && placed > 0 &&
+                    children[placed - 1].Divides && used > limit + 0.001)
+                {
+                    var height = fragments[placed - 1].Height;
+                    var room = Math.Max(0, limit - (used - height));
+
+                    cell.RemoveAt(cell.Count - 1);
+                    placed--;
+
+                    if (room > 0.001)
+                    {
+                        var take = Math.Min(room, height);
+                        var last = take >= height - 0.001;
+
+                        cell.Add(new MulticolPiece(placed, 0, take, last));
+
+                        if (last)
+                        {
+                            placed++;
+                        }
+                        else
+                        {
+                            resume = placed;
+                            resumeAt = take;
+                        }
+                    }
+                    else
+                    {
+                        resume = placed;
+                        resumeAt = 0;
+                    }
+
+                    break;
+                }
+
+                if (placed >= children.Count)
+                {
+                    break;
+                }
+
+                // A child that holds out-of-flow descendants does not move to the next column: the
+                // room this one has left is its first piece, and the rest follows at the top of the
+                // next column (CSS Position 3 §5.5).
+                if (!cut.Forced && children[placed].Divides && limit - used > 0.001)
+                {
+                    var take = limit - used;
+                    var last = take >= fragments[placed].Height - 0.001;
+
+                    cell.Add(new MulticolPiece(placed, 0, take, last));
+
+                    if (last)
+                    {
+                        placed++;
+                    }
+                    else
+                    {
+                        resume = placed;
+                        resumeAt = take;
+                    }
+
+                    break;
+                }
+
+                if (fits == 0 || cut.Forced)
+                {
+                    break;
+                }
+            }
+
+            cells.Add(cell);
+
+            if (placed >= children.Count && resume < 0)
+            {
+                break;
+            }
+        }
+
+        return cells;
+    }
+
     private void ArrangeMulticolRun(
         List<MulticolChild> children,
-        IReadOnlyList<Int32> counts,
+        List<List<MulticolPiece>> cells,
         LayoutBox parent,
         Double originX,
         Double originY,
@@ -3580,18 +3791,18 @@ internal sealed class BlockLayout
         LayoutContext childContext,
         Dictionary<Box, Double> startsAt)
     {
-        var from = 0;
-
-        for (var cell = 0; cell < counts.Count; cell++)
+        for (var cell = 0; cell < cells.Count; cell++)
         {
             var column = cell % columns;
             var row = cell / columns;
             var x = originX + column * (share + gap);
             var y = originY + row * (boxHeight + rowGap);
+            var pieces = cells[cell];
 
-            for (var index = 0; index < counts[cell]; index++)
+            for (var index = 0; index < pieces.Count; index++)
             {
-                var child = children[from++];
+                var portion = pieces[index];
+                var child = children[portion.Child];
 
                 // A column box begins a fresh stack: what a child brings to its top edge is added there
                 // rather than folded into the margin run the box before ended with.
@@ -3600,18 +3811,53 @@ internal sealed class BlockLayout
                 var width = child.Size.Width;
                 var height = child.Size.Height;
 
+                // A piece of a child the column divided: the box is laid out over the whole of
+                // itself, where its content and its out-of-flow descendants stand, and the column
+                // shows only the stretch it holds (CSS Position 3 §5.5).
+                if (portion.Offset >= 0)
+                {
+                    var whole = new Rect(x + child.Margin.Left, y - portion.Offset, width, height);
+                    var held = new Rect(x + child.Margin.Left, y, width, portion.Height);
+                    var cutBorder = BorderOf(child.Box);
+                    var cutPadding = child.Box.Style.Padding.Resolve(share);
+                    var cutStarts = portion.Offset < 0.001;
+                    var arranged = _engine.Arrange(
+                        child.Box,
+                        whole,
+                        childContext,
+                        definiteHeight: false,
+                        slice: new FragmentSlice(
+                            new Thickness(
+                                cutStarts ? cutBorder.Top : 0,
+                                cutBorder.Right,
+                                portion.Last ? cutBorder.Bottom : 0,
+                                cutBorder.Left),
+                            new Thickness(
+                                cutStarts ? cutPadding.Top : 0,
+                                cutPadding.Right,
+                                portion.Last ? cutPadding.Bottom : 0,
+                                cutPadding.Left),
+                            cutStarts,
+                            portion.Last,
+                            whole));
+
+                    arranged.FragmentClip = held;
+                    parent.Children.Add(arranged);
+                    y += portion.Height + (portion.Last ? child.Margin.Bottom : 0);
+                    continue;
+                }
+
                 // The lines of one broken child that fall in the same column are one fragment of it:
                 // they stand in the box drawn once for them, and only the fragment's own first and last
                 // line carry the child's edges.
                 var to = child.Broken && child.Offset < 0 ? child.Line + 1 : -1;
                 var last = child;
 
-                while (child.Broken && child.Offset < 0 && index + 1 < counts[cell] &&
-                    children[from].Broken && children[from].Offset < 0 &&
-                    ReferenceEquals(children[from].Box, child.Box))
+                while (child.Broken && child.Offset < 0 && index + 1 < pieces.Count &&
+                    children[pieces[index + 1].Child].Broken && children[pieces[index + 1].Child].Offset < 0 &&
+                    ReferenceEquals(children[pieces[index + 1].Child].Box, child.Box))
                 {
-                    var next = children[from++];
-                    index++;
+                    var next = children[pieces[++index].Child];
 
                     // Every piece of the run but the first stands where the one before it ended, and only
                     // the last of them brings the margin the child ends with: a column that forgot both
@@ -3782,9 +4028,11 @@ internal sealed class BlockLayout
             var extents = new Double[Math.Max(1, multi.Fills ? children.Count : columns)];
             Array.Fill(extents, extent);
 
+            var sectionCounts = Fragmentainer.Fill(fragments, extents);
+
             ArrangeMulticolRun(
                 children,
-                Fragmentainer.Fill(fragments, extents),
+                PlanMulticolRun(children, fragments, extents, sectionCounts),
                 parent,
                 content.X,
                 y,

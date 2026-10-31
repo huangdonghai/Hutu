@@ -69,6 +69,30 @@ internal static class MulticolRules
 
             foreach (var child in layout.Children)
             {
+                // A piece of a box the columns divided stands at its whole box's place, so what it
+                // really fills is the stretch its fragment names - the column that fragment meets,
+                // whatever row of the run its whole box began in. Every other child fills the column
+                // its own box stands at, by the same reckoning the rules have always used.
+                if (child.FragmentClip is { } held)
+                {
+                    if (held.Height > 0 && held.Width > 0)
+                    {
+                        var edgeHeld = (along ? held.Y : held.X) - start;
+                        var downHeld = (along ? held.X : held.Y) - run.From;
+                        var extentHeld = along ? held.Width : held.Height;
+                        var columnHeld = step > 0 ? (Int32)Math.Round(edgeHeld / step) : 0;
+
+                        if (columnHeld >= 0 && columnHeld < count &&
+                            Math.Abs(edgeHeld - columnHeld * step) <= 0.5 &&
+                            downHeld + extentHeld > 0.5 && downHeld < columnHeight - 0.5)
+                        {
+                            filled[columnHeld] = true;
+                        }
+                    }
+
+                    continue;
+                }
+
                 if (child.BorderBox.Height <= 0 || child.BorderBox.Width <= 0)
                 {
                     continue;
