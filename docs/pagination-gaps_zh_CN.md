@@ -444,7 +444,13 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 
 范围线：竖排容器**含 float（含嵌套）或 `column-height` 换行**时仍走普通堆叠——这两条 walk 还没写；`ColumnsOf` 里直接挡住。
 
-实测：屏幕全量 **2095 → 2093（新增 0）**；`borders-006`、`borders-007` 转绿；单测 2180；打印 189/198 不变。竖排阴影两对仍差：`box-shadow-004` 1132（AA 软边）、`box-shadow-003` 12157（阴影带在反向块轴上的位置待查）。
+实测：屏幕全量 **2095 → 2093（新增 0）**；`borders-006`、`borders-007` 转绿；单测 2180；打印 189/198 不变。竖排阴影两对仍差：`box-shadow-004` 1132（AA 软边）、`box-shadow-003` 12157（阴影带在反向块轴上的位置待查）。
+### 9.11 块的 float 摆放：第一条规则已量、第二条缺行宽 API
+
+`float-009` 的 `A<div style="float:left">X</div>` 要求 `X` 与 `A` 并排（ref 直接写 `<div>AX</div>`）。已实现并量过第一条规则——"float 的顶不得高于同一块容器里前一个**匿名**行盒的顶"（CSS 2.1 §9.5.1）：`X` 从行下方 `(8,58)` 升到行的顶 `(8,8)`，像素差 12500 → 7500，`borders-001`（ref 也用 `float:left`）保持绿；但 x 仍是内容左边缘，压住 `A`，需要第二条规则"float 排在该行**当前** inline 位置"。单独落地第一条会红两对（`CSS2/abspos/static-inside-float-inside-outline`、`css-break/flexbox/flex-fragmented-with-float-descendant-001`），故未提交。
+
+第二条缺的是**行已用内联宽度**：`InlineLayout` 只暴露 `LineHeights`，没有 `LineWidths`；measure 与 arrange 必须拿到同一个数，否则容器高度会漂。已先把 `FloatTracks.Place` 加上 `inlineOffset`（默认 0，行为不变，56 个 float 单测全过），供下一步接线。
+
 
 
 ### 9.8 按片裁内容：做出来了，但被 float 那一侧挡住

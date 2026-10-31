@@ -351,7 +351,15 @@ internal sealed class FloatTracks
     /// The float's own box, kept so a later question can tell a float this container holds from a float it
     /// merely stands beside.
     /// </param>
-    public Rect Place(FloatSide side, Double width, Double height, Thickness margin, Double top, Func<Rect, FloatArea?>? area = null, Box? owner = null)
+    public Rect Place(
+        FloatSide side,
+        Double width,
+        Double height,
+        Thickness margin,
+        Double top,
+        Func<Rect, FloatArea?>? area = null,
+        Box? owner = null,
+        Double inlineOffset = 0)
     {
         var y = top + margin.Top;
 
@@ -366,7 +374,11 @@ internal sealed class FloatTracks
         for (var attempt = 0; attempt < blocking + 1; attempt++)
         {
             var (left, right) = FreeSpanAt(y - margin.Top, outer);
-            var x = side == FloatSide.Left ? left + margin.Left : right - width - margin.Right;
+            // A float written after the line has set some of its content begins where that content ends,
+            // and a right one ends there (CSS 2.1 §9.5.1).
+            var x = side == FloatSide.Left
+                ? left + inlineOffset + margin.Left
+                : right - inlineOffset - width - margin.Right;
 
             // What pushes a float down is another float it would really stand on, and nothing else: the
             // specification pins its outer edge against the containing block (§9.5.1 rule 1) and only asks
