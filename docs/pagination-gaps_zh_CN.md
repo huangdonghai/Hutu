@@ -438,6 +438,12 @@ flex/grid 分片（26+2）、浮动与页浮动、竖排分页、fixed/abspos �
 - **flexbox（22 对）**不是单一机制：最小的 10 对同签名（`58,50`、白 vs 绿、10000 px）分两种——`single-line-column-flex-fragmentation-026/070a-d/071` 是"`overflow:clip` + `max-height` 的 flex 容器高过栏、内容要跨栏继续"；`multi-line-row-flex-fragmentation-083a-d` 是"item 的 `break-before` 传播到 flex line"。另一半（`059..061`、`065..071`、`093..096`）是 item 尺寸/多行行盒的细节。
 - **table（18 对）**分两组：4 个小的 repeated-section 对（`balanced-inner-multicol` 700、`text-in-nested-multicol` 224、`variable-fragmentainer-size-001/002`）需要"栏里的表格重复区段"；14 个 paint 对（`table-*-paint-*`、`collapsed-borders-paint-*`、`table-border-007/008`、`caption-and-cells`）是"表格部件被栏切开时按片绘制背景/边框"，一次可覆盖一大片。
 
+
+### 9.13 columns 遇到 out-of-flow 子盒：让分栏成形（差一对，已回滚）
+
+追到根因：`ColumnsOf` 的"任何 out-of-flow 子元素 → return false"（§4.3.6 的旧范围线）让 `single-line-column-flex-fragmentation-026` 这类页**根本不形成分栏**（探针：`COL inline=100 count=2 used=2 kids=2` 随后在 OOF 子盒处返回 false；dump 里 flex 容器仍是整宽）。改成"OOF 子盒不算拒绝理由"（它们在盒子的 padding box 上定位，与栏无关），并在**含 spanner**时保留旧的拒绝（spanner 的 run 还没教过怎么摆这些盒子）。再叠加"裁剪盒内容切片"（`FragmentClip` + 按整盒排布 + 裁到片 + `max-height` 算有界高度），`026` **转绿**、`borders-001/005` 与 `multicol-span-all-fieldset-002/003` 保持绿、12 个探测家族 0 回归。
+
+但全量屏幕门禁里 `gecko/bugs/379349-2a` 红 4396 px（`.fno1` 段落位移）。**关掉两处新切割许可后仍是 4396**，说明嫌疑在 `ColumnsOf` 的 OOF 改动本身，而不是内容切片；该页没有 OOF 子盒，机制未查明。整片回滚，WIP 存 `build/abs-columns-wip.cs`。下一步：在该页给 `ColumnsOf`/`HoldsSpanner` 打探针，看是哪一条路径因 OOF 改动而改变了分栏结果。
 **试过"裁剪盒的内容切片"（未提交）**：给 `LayoutBox` 加 `FragmentClip`、让 `OverflowClipEdge` 认它、`AddBoxCut` 放行 `overflow: clip` 的盒子、切出的片按**整盒**排布再裁到片。`borders-001/005` 保持绿，但 `single-line-column-flex-fragmentation-026` 一点没动——探针显示该页 `AddBoxCut` **根本没被调用**：dump 里 flex 容器仍是 100 宽（= 容器宽），说明 `ColumnsOf` 在这些页没走分栏路径。下一步先查 `ColumnsOf` 为何对 `columns:2; width:100px` 的子盒判否（在 `ColumnsOf` 内打一条探针），再谈内容切片。
 
 
