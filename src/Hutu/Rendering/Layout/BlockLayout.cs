@@ -1696,12 +1696,12 @@ internal sealed class BlockLayout
         if (columnHeight <= 0 ||
             BlockExtentOf(size, vertical) <= columnHeight + 0.001 ||
             child.IsReplaced ||
-            child.Children.Count > 0 && !child.Style.ClipsOverflow ||
+            child.Children.Count > 0 && !child.Style.ClipsOverflow && child.Kind != BoxKind.Table ||
             BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) &&
                 !HasBlockMaximum(child, vertical) ||
             !fills ||
             child.Style.Multi.IsMultiColumn ||
-            child.Kind is BoxKind.Table or BoxKind.Grid or BoxKind.Masonry ||
+            child.Kind is BoxKind.Grid or BoxKind.Masonry ||
 
             // Every piece has to have a column to stand in: a container of a stated count draws no
             // column past its last one, so a box that needs more pieces than it has columns would

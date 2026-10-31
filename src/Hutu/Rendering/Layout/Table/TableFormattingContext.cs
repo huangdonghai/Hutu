@@ -121,28 +121,38 @@ internal sealed partial class TableFormattingContext
     }
 
     /// <summary>Places the captions, the rows and the cells inside the table's border box.</summary>
-    public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context)
+    public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context, FragmentSlice? slice = null)
     {
         var style = box.Style;
         var basis = context.ContainingBlock.Width;
         var build = Build(box, basis, context);
-        var contentWidth = Math.Max(0, borderBox.Width - build.InsetsH);
+
+        // A fragment of a broken table draws only the edges it owns: the border on an edge it was
+        // cut at belongs to the fragment that really has that edge (CSS Break 3 §4.7).
+        var border = slice?.Border ?? build.Border;
+        var padding = slice?.Padding ?? build.Padding;
+        var contentWidth = Math.Max(0, borderBox.Width - border.Horizontal - padding.Horizontal);
 
         MeasureCaptions(build, contentWidth, context);
         MeasureOthers(build, contentWidth, context);
 
         // The box the table was given already accounts for the height it declared, so whatever the
         // captions do not claim is the height the rows have to fill.
-        var gridHeight = Math.Max(0, borderBox.Height - build.InsetsV - build.CaptionTop - build.CaptionBottom);
+        var gridHeight = Math.Max(0, borderBox.Height - border.Vertical - padding.Vertical - build.CaptionTop - build.CaptionBottom);
         CompleteGrid(build, contentWidth, context, gridHeight);
 
         var layout = new LayoutBox(box, LayoutKind.Table)
         {
             Margin = BoxModel.UsedMargin(style, basis, borderBox.Width),
-            Border = build.Border,
-            Padding = build.Padding,
+            Border = border,
+            Padding = padding,
             BorderBox = borderBox,
             Flow = box.Flow,
+            SlicesBlockStart = slice is { Starts: false },
+            SlicesBlockEnd = slice is { Ends: false },
+            BackgroundOrigin = slice is null || slice.Value.Starts && slice.Value.Ends
+                ? null
+                : slice.Value.Whole,
         };
 
         var gridX = borderBox.X + build.Border.Left + build.Padding.Left;

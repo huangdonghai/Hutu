@@ -1459,7 +1459,7 @@ internal sealed record LayoutProfile(
             BoxKind.Flex => _flex.Arrange(box, borderBox, context, slice),
             BoxKind.Grid => _grid.Arrange(box, borderBox, context),
             BoxKind.Masonry => _masonry.Arrange(box, borderBox, context),
-            BoxKind.Table => _table.Arrange(box, borderBox, context),
+            BoxKind.Table => _table.Arrange(box, borderBox, context, slice),
             _ => box.IsReplaced
                 ? ArrangeReplaced(box, borderBox, context)
                 : _block.Arrange(box, borderBox, context, definiteHeight, lines, slice, start),
