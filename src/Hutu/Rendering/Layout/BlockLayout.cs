@@ -217,9 +217,28 @@ internal sealed class BlockLayout
         }
         else if (HasBlockChildren(box))
         {
-            var column = MeasureColumnChildren(box, childInline, childBlock, context, flow);
-            contentBlock = column.Block;
-            childInline = Math.Max(childInline, column.Inline);
+            // A container of columns is as wide as its widest column, not as wide as all its children
+            // summed: the children are shared over the strips the columns make, so what the band takes
+            // along the block axis is one strip's own content (CSS Multicol 2 §3, measured:
+            // break-inside-avoid-min-block-size-2, whose two boxes of 40 in a `columns: 3` container of
+            // `inline-size: 500px` make a band 40 wide in Chrome and 80 when the children are summed).
+            if (ColumnsOf(box, childInline, out var columns, out var share))
+            {
+                contentBlock = MeasureMulticolChildren(
+                    box,
+                    share,
+                    childBlock,
+                    childBlock,
+                    declaredBlock is not null,
+                    columns,
+                    context);
+            }
+            else
+            {
+                var column = MeasureColumnChildren(box, childInline, childBlock, context, flow);
+                contentBlock = column.Block;
+                childInline = Math.Max(childInline, column.Inline);
+            }
         }
         else
         {
@@ -5247,7 +5266,7 @@ internal sealed class BlockLayout
                 Math.Max(1, counts.Count),
                 share,
                 multi.Gap,
-                boxHeight,
+                content.Width,
                 box.Flow.BlockIsRightToLeft,
                 childContext);
         }

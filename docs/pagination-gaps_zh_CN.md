@@ -1572,3 +1572,13 @@ CSS Tables 3 §6.2 原文："user agents must repeat header rows and footer rows
 代码：`Build` 把举起的那两组记进 `build.HeadGroup/FootGroup`（§3.1 举的只是**第一**组，同角色的后面那些是正文），`SectionBand(build, role)` 换成 `RepeatedBand(build, role)`——只量那一组自己的行（旧代码把同角色的两组一起跨进去，混序表因此量出 220 的假带高），并要求它的 `Style.Breaks.Inside == BreakValue.Avoid`。一处判据喂两边：画的复制（`RepeatSections`）与栏为它让出的房间（`Measure` 记进 `_repeatedBands`，`AddBoxCut` 取用），所以没有 avoid 的表既不再画页眉、也不再为它腾房间。
 
 门禁：全量 **1995** finding（HEAD 基线 1996）、**0 新增失败名**、**0 对变差**、`wpt/css-break` 26 → **25** 对；单测 **2190**（新增 `AHeaderGroupFreeToBreakStandsInNoColumnButItsOwn` 与 `AHeaderGroupThatMustNotBreakIsCopiedIntoTheColumnAfter`）；打印 **189/198** 九条同名。
+
+### 9.117 竖排多栏的两条轴：栏带取最宽一栏，内容从块向起点边往回排（`break-inside-avoid-min-block-size-2` 133840 → 绿）
+
+Chrome 量的（`build/_mb2probe.html` → `build/_mb2chrome.txt`，`vertical-rl` + `columns:3` + `inline-size:500px`，两个块向 40 的孩子）：容器是 **40x500** —— 栏带只有"最宽那一栏"那么宽。Hutu 答 80x500，因为 `MeasureColumn` 把块向孩子一律交给 `MeasureColumnChildren` 沿块向**累加**（`BlockLayout.cs:318`），那里根本不问 `Multi.IsMultiColumn`；横排走的是 `MeasureMulticolChildren` → `MulticolExtent`，取的是最高的那一栏。补上竖排分支（`ColumnsOf` 给栏数与每栏的内向长度，块向可用长度作 declaredHeight，`heightStated` 只在页面真写了块向长度时为真）之后，四组容器的尺寸全部对上 Chrome：auto→40、30→30、60→60。
+
+同一对里剩下的 25600 px 是第二条轴：`ArrangeMulticolRunAcross` 的块向起点取的是 `boxHeight`（内容平衡出来的长度）而不是容器自己的块向长度——60 宽的栏带里放 40 的孩子，起点算成 `content.X + 40` 而非 `content.X + 60`，孩子于是贴到了左边，也就是块向**终点**边。改传 `content.Width` 后 `vertical-rl` 的孩子从右边往回排（`Flow.BlockIsRightToLeft` 只看书写模式关键字、不看 `direction`，这一条本来就是对的）。参考页用 `margin-block-end: 40px` 模拟的正是"孩子站在起点边"，所以测试侧一站对，两页即重合。
+
+顺带记下：横排孪生对 `-1` 之前的绿是**空的**——Hutu 同样把它的 avoid 盒子切成 30 + 10，只是 ref 拿 margin 模拟之后像素恰好重合；这次改动没让它变差（`-1`、`-3` 仍无 finding）。Chrome 在 30 宽的栏带里确实会切开装不下的 avoid 盒子（它的 rect 是跨两栏的并集），所以"切"本身是对的，本对缺的只是摆位。
+
+门禁：全量 1995 → **1994** finding、**0 新增失败名**、**0 对变差**、`wpt/css-break` 25 → **24** 对；单测 **2192**（新增 `AVerticalBandIsNoWiderThanItsWidestColumn`、`AChildOfAWiderVerticalBandStandsAtTheBlockStartEdge`）；打印 **189/198** 九条同名。

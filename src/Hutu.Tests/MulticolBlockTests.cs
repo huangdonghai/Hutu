@@ -238,6 +238,46 @@ public sealed class MulticolBlockTests
         Assert.That(Find(view, "c").BorderBox.Height, Is.EqualTo(90), "the container is as tall as every row it holds");
     }
 
+    [Test]
+    public async Task AVerticalBandIsNoWiderThanItsWidestColumn()
+    {
+        using var view = await Render(
+            "<style>#c { writing-mode: vertical-rl; inline-size: 300px; columns: 3; column-gap: 0 }" +
+            " .b { min-block-size: 40px; inline-size: 100px }</style>" +
+            "<div id='c'><div class='b'></div><div class='b'></div></div>");
+
+        // The children are shared over the strips the columns make, so the band the container takes
+        // along the block axis is the widest strip's own content rather than the sum of the children
+        // (CSS Multicol 2 §3, measured: break-inside-avoid-min-block-size-2, whose two boxes of 40
+        // make a band 40 wide in Chrome and 80 when they are summed).
+        Assert.That(Blocks(view).Count, Is.EqualTo(2), "both children are laid out");
+        Assert.That(Find(view, "c").BorderBox.Width, Is.EqualTo(40), "the band is one column wide");
+    }
+
+    [Test]
+    public async Task AChildOfAWiderVerticalBandStandsAtTheBlockStartEdge()
+    {
+        using var view = await Render(
+            "<style>#c { writing-mode: vertical-rl; block-size: 60px; inline-size: 300px;" +
+            " columns: 3; column-gap: 0 } .b { min-block-size: 40px; inline-size: 100px }</style>" +
+            "<div id='c'><div class='b'></div><div class='b'></div></div>");
+
+        var box = Find(view, "c").BorderBox;
+
+        // A band wider than what stands in it keeps its own block-start edge: `vertical-rl` names that
+        // edge the right one whatever the direction says, so each column's content runs back from the
+        // right rather than starting at the left (CSS Writing Modes 3 §5.1, measured as above).
+        Assert.Multiple(() =>
+        {
+            Assert.That(box.Width, Is.EqualTo(60), "the band keeps the width the page stated");
+
+            foreach (var child in Blocks(view))
+            {
+                Assert.That(child.BorderBox.Right, Is.EqualTo(box.Right), "the child runs back from the right edge");
+            }
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
