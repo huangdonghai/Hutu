@@ -1036,6 +1036,19 @@ Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一�
 
 同一次探针还确认 `at-boundary`（§9.80 之后仍差 2540）的表结构：片段 `21,21 92x100 | 123,21 … | 225,21 … | 327,21 … | 429,21 92x85`；第一栏只有 caption（150 切 100+50），行 0 落在第二栏 `y=76`（在续来的 50 之后）；行 1 起新栏 `232.5,21 77x100`——左线是 15px 黑（整线取最宽、单元格 rect 内缩 7.5 = 15/2），而 2540 的残差签名 `225,21` test lime / ref black 正是**片段起始处的角**：竖线（黑 15）应盖住那条被切开的横线（lime 半线）的带，即片段第一行的侧带不得上伸，且角要按较宽的线让位。
 
+### 9.82 嵌套 fragmentainer 那三对：外层栏数被“子项本身是多栏”这条否决挡住
+
+`repeated-section/variable-fragmentainer-size-001`（2400）、`-002`（800）、`balanced-inner-multicol`（700）三对同源。Hutu 今天的树（`build/_lookvf1.txt`）里外层 `columns:3; height:100; column-fill:auto` 根本没分栏——唯一的子项是 `columns:1; height:250` 的嵌套多栏，`ColumnsOf` 里“多栏子项要在自己的栏里再平衡，外层先退回普通堆叠”那一句直接 `return false`，于是内层被铺成 300 宽一整块（表 20x170 只画一份）。
+
+Chrome 的片段（`build/_probe_vf1.dom`、`build/_probe_vf2.dom`，`getClientRects`）：
+
+- **001**：内层 3 片 `100x100 | 100x100 | 100x50`——它自己声明的 250 被外层栏**按每栏剩余高度切开**（100+100+50）；表随内层切片一起分片，**表头在每片顶部重复、表脚在每片底部重复**：`head` 3 个矩形、`foot` 3 个矩形、`body` 60/60/10 ✓（每片 = 20 + 剩余 + 20；最后一片 50 = 20+10+20）。
+- **002**：外层第一栏先被 50 高的空白占掉，于是内层 3 片是 `50 | 100 | 100`；表片 = 50（表头 + body 30）/ 100（body 100）/ 20（只有表脚）。这里 `head` **只有 1 个矩形**、`foot` 只有 1 个（在第三片）——即第二片（纯 body 延续）**没有**重复表头。两对的差别只在“某片里除了 body 之外还有没有别的表内容”，重复段的落点规则要按这个口径写，不能照 §9.55 那句“每个后续片段顶部都放表头”硬推。
+
+做法已试（`build/_nested-multicol.patch`，20 行，删掉 `ColumnsOf` 那条否决后全量跑）：外层确实分栏了，但**只这一半不够**——`CutsAsBox`、`DividesAcross`、`DividesUnits`、`AddBoxCut` 四处各自把“多栏子项”挡在门外，内层还是不被切开。实测：`variable-fragmentainer-size-001` 2400 不动、`-002` **800 → 1600（更差）**、`balanced-inner-multicol` 700 不动，而绿着的 `wpt/css-multicol/multicol-rule-nested-balancing-003` 变成 115164（嵌套平衡容器的栏规则整个散架），失败名集 2008 → 2009 ⇒ 按门禁回退。剩下的另一半写清楚才动：内层作为子项要被外层切成 100/100/50 这样的片，每片把**自己的房间**当 fragmentainer（`FragmentSlice.Offset/Height` 已有），且嵌套的**平衡**容器仍走 §9.5x 的平衡规则（003 就是被这条绊住的）。
+
+`widows-orphans-021/022`（6250 / 8750）同源但更难：Chrome 里绿色 div 被切成两片、**每片都撑满整栏**（`g [8,50 50x100 | 58,50 50x100]`，`build/_probe_wo21.dom`），浮动块落到第二片的第二行（`f [58,75 50x25]`）。Hutu 今天整块 125 高只待在第一栏。要做的是“**带背景的普通块**也按子项边界递归切”，而 `IsBareWrapper`/`IsOversetWrapper` 都明确拒绝有背景色、有浮动子的盒（`BackgroundColor is { A: > 0 }`、`IsFloat(grandchild)`）——也就是 §9.34 那次“非裁剪盒的内容切片 +7 净亏、浮动散架”缺的正是**片段里的浮动重摆**那一半。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
