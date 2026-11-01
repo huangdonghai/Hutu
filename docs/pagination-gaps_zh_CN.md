@@ -1592,3 +1592,13 @@ Chrome 量的（`build/_mb2probe.html` → `build/_mb2chrome.txt`，`vertical-rl
 剩下的 7400 px 与阴影无关：参考页用 `position:absolute` 加 `inset-inline-start` 模拟每一片的环，而 Hutu 把这些 abs 子元素的**静态块向位置**摆到了容器块向起点之外（x=158..257 而不是 58..158）——就是已记录的竖排 abs 静态位置问题（Chrome 从右边缘往左长，Hutu 各调用点递的锚点不一致）。那是一条独立的切片，需要单独量，已记进 #18。
 
 门禁：全量 finding 数不变、**0 新增失败名**、**0 对变差**，`box-shadow-003` 10860 → **7400**；单测 **2193**（新增 `AFragmentOfABrokenVerticalBoxKeepsItsShadowAtTheEdgeTheWritingModeStartsAt`）；打印 **189/198** 九条同名。
+
+### 9.119 量清楚但没落：竖排 abs 静态位置挂在块向起点边（`box-shadow-003` 7400 → 0，但门禁不放）
+
+Chrome 量的（`build/_spprobe.html` → `build/_sp-chrome.txt`，八例）：`vertical-rl` 容器里**没写块向 inset** 的 abs 子元素，把**自己的右边**贴到容器的块向起点边、往左长（100x40 容器里的 30x20 落在 `[70,0]`）；容器宽度为 0 时同样成立（`build/_tstprobe.html`：容器 `[766,8 0x484]`、子元素 `[254,8 512x80]`）。`vertical-lr` 与横排本来就对。
+
+实现方式（已验证可行，补丁存在 `build/_abs-static-position.patch`，170 行）：给 `LayoutEngine.ArrangePositioned` / `PositionedLayout.Arrange` 加 `staticFromHigh`，只在**递的是块向起点边**的调用点置真——`ArrangeColumnChildren` 的 out-of-flow 表，以及 `InlineLayout.cs:2005`、`:4152` 不带 `line` 的那次；`PositionedLayout.Horizontal` 的静态分支取 `x = staticX - margin.Right - width`。flex（`FlexFormattingContext.cs:862`）、grid（`GridFormattingContext.cs:233`）、masonry、多栏 OOF（`BlockLayout.cs:5330`）递的是内容盒左上角，保持假——不区分地全局应用会把 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse` 弄红。区分之后：`box-shadow-003` **0 finding**（该对只差这一条规则；先前记的“还要 OOF flow-space”其实说的是阴影，已在 `182e9065` 单独落地）、`abs-pos-border-offset-001` 9614→6426、`-002` 22085→14685、`align-self-static-position-002` 33210→28750。
+
+不放行的原因：门禁按**新增失败名**计数，而这一改动揭穿两对**空过**的自造变体——`wpt-variants/text-spacing-trim/text-spacing-trim-colon-001-{chws,halt}-vrl` 从 0 变 6783 px。它们之前绿，是因为摆错的 abs 栏被推到 800 窗口之外、两页都画不出东西；Chrome 用同样的贴边规则且这两对 0 px 通过，所以暴露出来的是**竖排 text-spacing-trim 的栏宽缺陷**（Hutu 的栏 463.36，Chrome 512），与摆位无关。另有一对 `css-anchor-position/position-area-alignment-overflow-001` 变差 14875→15500。
+
+结论：这条与 trim 栏宽一起落（或在其之后）。判据记下：**凡是新红的对，先查它是否本来就在画空东西**（两页各跑一次 `HUTU_PROBE_PAGE`，看盒子是否落在窗口内）。
