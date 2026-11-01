@@ -1102,6 +1102,27 @@ margin 片段是**纯占位**：零高度、不带 `before`、`startInset` 为 0
 
 下一步照这个顺序做：先补 2 与 3（画侧不动几何），`htb-ltr` 应回 0；再看 4。截图扫带这条手段以后优先于 paint 清单猜：两页 PNG 逐行比对能一次区分"谁的哪条线宽了多少"。
 
+### 9.87 折叠边框：三种组合都量过了，最好的把 `at-boundary` 打到 110 但 `htb-ltr` 退 200
+
+按 §9.86 的像素模型做了三轮实测（HEAD 未动，三个版本都留在 `build/`）：
+
+| 版本 | 内容 | `at-boundary` | `htb-ltr` | 其它 |
+|---|---|---|---|---|
+| A（`_collapsed-inline-halves.patch` 200 行）| 规则 1（inline 外半进表盒几何）+ 表盒照旧画四条外半 + 逐段宽（`SideWidths`）+ 上下环向内斜接 `border.Left/Right` | **2540 → 110** | 0 → **200** ✗ | `large-rowgroup-001` 绿 ✓、`006` 17500 ✓（不变）、`subpixel-003` 1392 ✓、`rowgroup-002` 904 → 929 |
+| B（在 A 上把表盒的左右外半**不画**，改由单元侧带向外跨）| 同 A + 侧带向外 `sides/2` + 环斜接 `sides/2` | 110 → 4735 ✗ | 200 → 5200 ✗ | — |
+| C（在 B 上把向外跨做成"仅当该段比上下两条横线宽"）| 条件 straddle，环不收 | 4735 ✗ | 5200 ✗（`226,21` 该处变白 ⇒ 表盒左右外半必须画）| 补丁 `_collapsed-inline-halves-v2.patch` 245 行 |
+
+像素给出的判定（`build/_ht_test.png` / `_ht_ref.png` 逐行扫，两页一致）：`htb-ltr` 在 `y=21` 处黑线是 **226..235（整条 10 全在盒内）** ⇒ **表盒必须画 inline 的外半**（B/C 把它取消 ⇒ `226,21` 就白了 ✗✗）；而在 `y=36..40` 黑横线跨 **329..420 = 覆盖整段竖线** ⇒ **等宽时横线吃掉角**、不收斜边 ✓；`at-boundary` 的 `y=22` 黑线 **225..239（15）**、lime 横线 **240..304** ⇒ **竖线更宽时才收斜边** ✓。A 版本已经含这三条里的"收 `border.Left`"（=几何内半，不是段宽一半）⇒ 对 `at-boundary` 正好、对 `htb-ltr` 多收了 5px（那 200 就是 `226..232` 与 `329..333` 这类等宽角 ✗）。
+
+**差最后一步**：斜接量要按边取 `min(border.Left, sides.Left > 该处横线整宽 ? sides.Left/2 : 0)` —— 也就是"等宽不收、宽者收自己的一半"，而外半始终由表盒画（B/C 的教训）。
+
+又量了两版（都不翻对 ⇒ 已回退，代码在 `build/_collapsed-side-bands-conditional.patch` 188 行）：
+
+- **D1 逐边侧带 + 条件角**：`SideBand` 拆成 `LeftBand`/`RightBand`（每条带自己一个矩形、宽 = 该段宽，绘制顺序 = 先上下环、再左、再右 ⇒ 谁后画谁得角），顶沿 `firstRow ? -topHalf : (seg > topWhole ? 0 : topHalf)`。实测 `at-boundary` **2540 → 2340**、`htb-ltr` **0** ✓、`006` 17500 ✓、`large-rowgroup-001` 绿 ✓、`subpixel-00{1,2,3}` 不变 ✓、`rowgroup-002` 904 → 919（仍红，只涨像素）。⇒ 无新增失败名但也**没翻对** ⇒ 按门禁规则回退。
+- **D2 无条件收角**（`top = firstRow ? -topHalf : 0`）：`htb-ltr` 退 **200**（首差 `329,41` test 蓝 / ref 黑 ⇒ 那里的角该归横线）✗ 直接否。
+
+于是"等宽时谁得角"在两页里答案相反，宽度不是判据：**at-boundary** 在 `y=21` 的黑色右边线（10）压住同宽的 lime 横线（黑 305..314、lime 只到 304 ✓ 竖线赢），而 **htb-ltr** 的 `y=36..40` 黑横线整跨 329..420（横线赢）。两者差在**冲突序**：at-boundary 那处横线是"行 0 的 lime 底边"与竖线"行 1 的黑右边"，宽与式样都同、来源同为单元格 ⇒ 按 §17.6.2.1 的余下一条定胜负（下一步该把这两处的四个候选边框逐个抄出来比对，而不是再试宽度规则）；htb-ltr 那处横线是**上一行的整条底边**（它在 ref 里就是 10 宽整条归上行 ✓）。也就是说候选"是否属于上一行"可能是真正的判据 —— 待量。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
