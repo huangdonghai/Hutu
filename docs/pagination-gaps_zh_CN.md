@@ -1188,3 +1188,13 @@ Hutu 的排序在 `TableFormattingContext.CollectRows` 里读的是**标签名**
 范围线：打印口径里 `PageSequence` 三处仍用 `LocalName` 判 thead/tfoot（1513、1518、1620），display 写的分片在"按页重复"那一侧还不认；那条要连带"只有第一个才重复"的语义，打印语料没有覆盖，单独一刀。
 
 门禁：屏幕全量两侧同为 1376 个失败名（**0 新增**），`mixed-order` 899 → 87；单测 2180；打印 189/198，九条同名。
+
+### 9.90 打印口径也按 display 认段（同一条规则的第二处）
+
+`PageSequence` 用 `Element.LocalName` 判 thead/tfoot（原 1513、1515、1620 三处）决定"哪一段在每页顶/底重复"。CSS Tables 3 §3.1 同一条规则：角色看 computed display，而且**只有第一个** header 组、**只有第一个** footer 组保得住这个角色，后面的按普通行组走。
+
+- 规则收一处：`TableStyle.SectionRole(display)`，`TableFormattingContext.RoleOf` 改成调它；
+- `CollectTable` 只把第一个角色组记成 header/footer（原先用 `Union` 把多个 thead 并成一条带，`Union` 随之无用，删掉），第二个 thead/tfoot 落回 body 分支、按可行的行去切；
+- footer"整段不切"那条判断改成 `CollectTable` 传下来的 `repeatsAsFooter`，不再读标签名。
+
+诚实记一条：这一处在**任何语料上都画不出差别**——打印 189/198 九条同名、屏幕全量 1932 条 finding 与 `cf223564` 逐名相同（0 新增、0 转绿）、单测 2180。想做正面证明也不成立：`build/_probe_role_print.html`（`display:table-header-group` 的 div）与 `build/_probe_role_print2.html`（真 `<thead>`）在 `@page 100x100` 探针里表头都只画一次，说明探针没触到"重复带"那条分支，因此这一步只能按"同一条规则不留半个"落地，靠三道门禁保证不回归。

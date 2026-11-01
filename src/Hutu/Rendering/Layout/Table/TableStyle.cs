@@ -90,6 +90,19 @@ internal readonly struct TableStyle
     /// <summary>Gets the cell's vertical alignment. Meaningful on a cell box.</summary>
     public CellVerticalAlignment VerticalAlign { get; }
 
+    /// <summary>
+    /// Gets which of a table's three sections a box stands in, read from the display it computes to: a
+    /// <c>div</c> told to be a <c>table-header-group</c> is a header as much as a <c>thead</c> is, and a
+    /// <c>thead</c> told to be a <c>table-row-group</c> is not (CSS Tables 3 §3.1). 0 is the header, 2 the
+    /// footer and anything else an ordinary group of rows.
+    /// </summary>
+    internal static Int32 SectionRole(String? display) => display?.ToLowerInvariant() switch
+    {
+        "table-header-group" => 0,
+        "table-footer-group" => 2,
+        _ => 1,
+    };
+
     internal static TableStyle Read(ComputedStyle style, Double spacing, Boolean collapses)
     {
         var (horizontal, vertical) = ReadSpacing(style, spacing);

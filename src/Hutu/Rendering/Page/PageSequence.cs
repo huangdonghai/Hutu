@@ -1491,6 +1491,7 @@ internal static class PageSequence
             var flow = new List<LayoutBox>(table.Children.Count);
             Rect? header = null;
             Rect? footer = null;
+            LayoutBox? foot = null;
             var rows = Double.MaxValue;
             var lastRow = Double.MinValue;
 
@@ -1504,20 +1505,22 @@ internal static class PageSequence
 
                 flow.Add(child);
 
-                // The header and the footer are the row groups the page called such; the rest are
-                // the rows a page cuts between, and where they begin says whether a page shows rows
-                // of its own: a header repeated over the first fragment would stand where it
-                // already stands, and one repeated over a fragment holding no row but the last
-                // one's edge would be inventing content the page does not carry.
-                if (child.Kind == LayoutKind.TableRowGroup &&
-                    String.Equals(child.Source.Element?.LocalName, "thead", StringComparison.OrdinalIgnoreCase))
+                // The header and the footer are the table's first group of each of those two roles, read
+                // from the display the page computes to rather than the tag it wrote: a further header or
+                // footer group is an ordinary body of rows and keeps its place (CSS Tables 3 §3.1). Where
+                // they begin says whether a page shows rows of its own: a header repeated over the first
+                // fragment would stand where it already stands, and one repeated over a fragment holding
+                // no row but the last one's edge would be inventing content the page does not carry.
+                if (child.Kind == LayoutKind.TableRowGroup && header is null &&
+                    TableStyle.SectionRole(child.Source.Style.Display) == 0)
                 {
-                    header = header is { } band ? Union(band, child.BorderBox) : child.BorderBox;
+                    header = child.BorderBox;
                 }
-                else if (child.Kind == LayoutKind.TableRowGroup &&
-                    String.Equals(child.Source.Element?.LocalName, "tfoot", StringComparison.OrdinalIgnoreCase))
+                else if (child.Kind == LayoutKind.TableRowGroup && footer is null &&
+                    TableStyle.SectionRole(child.Source.Style.Display) == 2)
                 {
-                    footer = footer is { } band ? Union(band, child.BorderBox) : child.BorderBox;
+                    footer = child.BorderBox;
+                    foot = child;
                 }
                 else if (child.Kind is LayoutKind.TableRowGroup or LayoutKind.TableRow)
                 {
@@ -1561,7 +1564,7 @@ internal static class PageSequence
 
                 if (child.Kind == LayoutKind.TableRowGroup)
                 {
-                    CollectRowGroup(child, units, childBefore, childAfter, inside, name, pageNames);
+                    CollectRowGroup(child, units, childBefore, childAfter, inside, name, pageNames, ReferenceEquals(child, foot));
                 }
                 else if (child.Kind == LayoutKind.TableRow)
                 {
@@ -1601,7 +1604,8 @@ internal static class PageSequence
             BreakValue inheritedAfter,
             Int32[] avoid,
             String? pageName,
-            Boolean pageNames)
+            Boolean pageNames,
+            Boolean repeatsAsFooter)
         {
             var source = group.Source;
             var name = source.Flow.IsVertical == _axis.IsVertical && source.Style.PageName is { } own
@@ -1615,9 +1619,10 @@ internal static class PageSequence
 
             var first = units.Count;
 
-            // A footer is repeated whole at the bottom of every fragment, so a page may not end
-            // inside a row of it: the rows are one piece of the flow.
-            if (String.Equals(group.Source.Element?.LocalName, "tfoot", StringComparison.OrdinalIgnoreCase))
+            // The footer is repeated whole at the bottom of every fragment, so a page may not end
+            // inside a row of it: the rows are one piece of the flow. Only the table's first
+            // footer-role group is one - a later one is an ordinary body of rows (CSS Tables 3 §3.1).
+            if (repeatsAsFooter)
             {
                 units.Add(BoxUnit(group, before, after, inside, name));
                 return;
@@ -1758,12 +1763,6 @@ internal static class PageSequence
                 }
             }
         }
-
-        private static Rect Union(Rect one, Rect other) => new(
-            Math.Min(one.X, other.X),
-            Math.Min(one.Y, other.Y),
-            Math.Max(one.Right, other.Right) - Math.Min(one.X, other.X),
-            Math.Max(one.Bottom, other.Bottom) - Math.Min(one.Y, other.Y));
 
         private static Boolean HasFlowContent(LayoutBox line)
         {

@@ -433,16 +433,8 @@ internal sealed partial class TableFormattingContext
         CollectColumnHints(build, basis);
     }
 
-    /// <summary>
-    /// Gets which of the table's three sections a row group is, from the display it computes to - a
-    /// <c>div</c> told to be a <c>table-header-group</c> is a header as much as a <c>thead</c> is.
-    /// </summary>
-    private static Int32 RoleOf(Box? group) => group?.Style.Display.ToLowerInvariant() switch
-    {
-        "table-header-group" => 0,
-        "table-footer-group" => 2,
-        _ => 1,
-    };
+    /// <summary>Gets which of the table's three sections a row group is.</summary>
+    private static Int32 RoleOf(Box? group) => TableStyle.SectionRole(group?.Style.Display);
 
     /// <summary>
     /// Settles the border of every cell. In the separated model a cell keeps its own border. In the
