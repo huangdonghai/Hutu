@@ -1489,3 +1489,15 @@ Hutu 的树（`build/_probe-vwm001.txt`）：容器 `60,60 92x142 vertical` 正�
 legend 单独立了排除（HTML rendering §15.3.12 由 fieldset 自己贴边框放），但真正的兜底是第 3 条——`IsLegend` 那条没挡住 ref 里的绝对定位表头。
 
 门禁：单测 2185；打印 189/198、九条同名；屏幕全量 finding 1923 → **1922**、**0 新增失败名**、`wpt/css-break` **28 → 27**，其余变化只有 harness 记过的文本抖动（css-lists +144、word-break +7、font-face +1，成对复跑会回到原位）。045 未受影响（它要的是"位移与裁剪"那一半，见 §9.98/§9.107）。
+
+### 9.110 打印口径复核 + 三条候选机制量死（abs 内容重排 / 变换片段裁剪 / 单行 row flex 按 item 分栏）
+
+**打印侧本族已全绿**：`build/reftest-print-score.md` 189/198，九条失败名是 `gecko/pagination/fieldset-001-grid-print`、三条 `wpt/css-cascade/scope-implicit-*-print`、`wpt/css-page/monolithic-overflow-032-print`、`wpt/mediaqueries/scripting-print-script`、`wpt/printing/{input-password,mask-image,select-combobox}-print` —— **没有一条是 css-break 对**。所以目标里"打印口径"这半边对本族已经是满足状态，剩下 27 对全在屏幕侧。（`monolithic-overflow-032-print` 也不在本族范围，且它是"0 像素差、只差页数 7 vs 9"，别当成本族指标。）
+
+本轮把三个候选逐个量到"能写出改哪里"的深度，结论都不是局部改：
+
+1. **`block-end-aligned-abspos-with-overflow`（3000，任务 #12）** —— Chrome 矩形（`build/_bea_probe.html`）：`abs r0 (8,78,20x10)` + `r1 (58,8,20x0)`；`hp r0 (8,78,20x30)` + `r1 (58,8,20x50)`；`gn r0 (58,8,50x50)`。即：abs 盒**自己的高度**只界定它自己的片段，它的**内容**按 fragmentainer 续排；里面 `break-inside:avoid` 的 50 高整块**挪到下一栏**（不是被裁）。Hutu 现在是"整棵 abs 子树重画一遍 + 按栏裁"，所以绿色留在第一栏、第二栏少 20 px 高。要的是逐 fragmentainer 重排（任务 #5 那一层）。
+2. **`transform-006/008`（45771 / 19929）** —— Chrome 把每个片段当"自己的盒"旋转（ref 用假栏各给 `.transformed` 自己的高度，origin 在其 bottom-right）。要同时动两处：原点取片段矩形，**并且**裁剪要在**变换前**的元素空间里做（Hutu 是整盒画完后在父空间裁，于是留下的是"旋转后的交集"而不是"交集旋转后的形状"）。差分带三簇（`build/_look-t006.txt`）：`test=#ffff00 / ref=绿黄混` x=271..467 y=50..140；`test=#ffff00 / ref=粉黄混` x=17..269 y=50..127；`test=粉 / ref=白` x=164..353 y=10..48 —— 形状不同，不是单纯位移。
+3. **`single-line-row-flex-fragmentation-044`（1000）** —— 不用量 Chrome，ref 自己就是答案：`orange left:50`（留在第一栏）+ `pink left:100`（进第二栏、且 margin-top 被断点吃掉）⇒ **每个 item 保有自己的主流向内偏移，只是被分到不同栏**。现在的 `_flex.Windows` 返回的是 cross 轴分带 `(Offset, Height, Cut)`，表达不了"按 item 分栏"；要给 relays 一条 item 级窗口 + 目标栏的通道（并把 `room <= 0` 的拒绝改掉——本对的容器 `height:0`）。
+
+三条都已立成任务：#12（abs 内容重排）、#14（变换片段的裁剪空间与原点）、#15（单行 row flex 按 item 分栏）。
