@@ -997,6 +997,19 @@ Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一�
 
 `abspos-in-opacity-003`（6000 像素差，test 在栏 1..3 画 #008000、ref 画 #1a7200）两页的绘制命令清单**形状一致**，差别只在谁铺那块 100×100 的绿地：test 的第一条就是 `fill 8,49.72 100x100 #ff008000`（不透明），ref 的同位绿地之后才被“被淡显的红切片”盖上 10% 的红（#1a7200 = 绿 89% + 红 10%）。可疑之处写在 `Painter.PaintFaded`：它用 `box.BorderBox` 作 `PushLayerCommand` 的界，而被栏切开的包装片在 003 里是 **20 宽 × 0 高**（`PushLayerCommand 68,49.72 20x0`）——零面积 save-layer 在 Skia 里可能被当成空矩形处理，组就不生效（内容与 ref 的差别正是“组没乘上去”）。已试并**量否**：把 `PaintFaded` 的 `PushLayerCommand` 界改为 `CutOf(box) ?? box.BorderBox`（片段裁剪带）后，`abspos-in-opacity-003` 仍 6000 不变、`abspos-in-opacity-000/001/002` 保持绿——零面积层不是病因。剩下的差别在“test 的第一条命令就是 100×100 不透明绿”这一事实本身：要先弄清那条绿方块在 test 里由哪个盒铺出（应为 `.abs`，但它应是 10% 淡显组里的内容、且只有 50 宽），也就是 OOF 子盒在**包含它的淡显组被切开时该由哪个片段承载**，这与 §9.72 的结论同一（OOF 子盒自身要进栏的分片队列）。
 
+### 9.79 把折叠边框的两半拆开量：外半线+侧带**无回退**，逐段定色才是 `border-collapse-006` 的元凶
+
+`build/_collapsed-band-noColor.patch` = side-band 版去掉“纵向线逐段定色”。实测（对 HEAD 逐项复算）：
+
+- `table-collapsed-borders-paint-htb-ltr` 8000 → **4200**、`-at-boundary` 10105 → **6320**、`CSS2/tables/border-collapse-006` **17500 不变**（即回到基线）、竖排两对不变；**单测只红 4 条**（下面）。
+- 两对的残差签名相同：`x=225/226, y=21` 处 test 画 lime、ref 画 black——即**同一条纵向线在不同行片段要换色**。这正是逐段定色能修的部分，而逐段定色又把 006 从 17500 推到 25000。
+- 为什么 006 会被逐段定色伤到（本量已经定位到具体那一条线）：006 只有两行一行列，行 1 的单元要 `border-left:150 green`、行 2 的要 `border-right:100 green`；**行 2 片段的左线、行 1 片段的右线没有任何候选**。Hutu 原来的整线解析让绿色沿整条线走（006 靠这个铺满绿色才没有红）；按片段解析后那两段落到 `outer[b]`（行/列/表候选）= None → 不上色 → 露红。所以 Chrome 在这里必定是“线整条按胜者上色”，而 htb-ltr 又确实按片段换色。二者的分界只能是：**片段有候选时用片段，没候选时退回整线胜者**——这一步还没试。
+
+4 条单测的失败值已量清，两类原因：
+
+1. 取值器：`TableLayoutTests.Painted(view,id)` 按 `Bounds == box.BorderBox` 选命令，侧带把左右边移到另一条命令上 → `Widths.Left` 读到 **0**（`AColumnGroupDrawsTheLinesAtItsEdges` 期望 2、`AColumnsBorderMeetsTheLinesBesideItsCells` 期望 4）。
+2. 表示变了：外半线改由表盒画之后，行 0 单元的 `Widths.Top` 从整条 2 变成内半 1（`ACellWinsTheLineItSharesWithItsRow`、`ARowsBorderMeetsTheLinesAboveAndBelowIt`），可观察的“该边上那条 2px 双线”总量不变。落地时这两条要改成断言“单元内半 + 表盒外半 = 整条，线型仍是胜者的 double”，而不是单元吃满。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
