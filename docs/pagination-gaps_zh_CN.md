@@ -1123,6 +1123,16 @@ margin 片段是**纯占位**：零高度、不带 `before`、`startInset` 为 0
 
 于是"等宽时谁得角"在两页里答案相反，宽度不是判据：**at-boundary** 在 `y=21` 的黑色右边线（10）压住同宽的 lime 横线（黑 305..314、lime 只到 304 ✓ 竖线赢），而 **htb-ltr** 的 `y=36..40` 黑横线整跨 329..420（横线赢）。两者差在**冲突序**：at-boundary 那处横线是"行 0 的 lime 底边"与竖线"行 1 的黑右边"，宽与式样都同、来源同为单元格 ⇒ 按 §17.6.2.1 的余下一条定胜负（下一步该把这两处的四个候选边框逐个抄出来比对，而不是再试宽度规则）；htb-ltr 那处横线是**上一行的整条底边**（它在 ref 里就是 10 宽整条归上行 ✓）。也就是说候选"是否属于上一行"可能是真正的判据 —— 待量。
 
+### 9.88 骑跨式侧带把 `at-boundary` 打到 1365，只差"横线段的胜者属于哪一行"
+
+E = D1（逐边侧带）+ inline 外半几何（`OuterLeft/OuterRight` 进 `build.Border` 与 `InsetsH`，单元盒只留内半）+ 侧带矩形骑跨网格线（`X = rect.X ± width/2`）+ 上下环**不再收边**（靠"环先画、竖带后画"的次序定角）+ 顶沿条件 `firstRow ? -topHalf : (seg > topWhole ? 0 : topHalf)`。
+
+实测（`build/_collapsed-straddle-bands-E.patch` 238 行，已回退）：`at-boundary` **2540 → 1365**（D1 是 2340、A 是 110 但 A 破两绿）；`large-rowgroup-001` **回到绿** ✓（A 曾 16 px，条件斜接把它消掉了）；`border-collapse-006` 17500 ✓、`subpixel-001/002` ✓ 不变；`rowgroup-002` 904 → 1025。但 `htb-ltr` **0 → 100** ✗（首差 `329,41` test lime / ref black）⇒ 破绿 pair，按门禁回退。把顶沿改成无条件 0（骑跨版 D2）：`at-boundary` 1315、`htb-ltr` 200 ✗ ⇒ 条件版更好，已回退到条件版再整体回退。
+
+**剩下的唯一未知已排除两个假设**：`329,41` 那格不是几何/角的问题。E 的 100 px 残差里，Hutu 在 `x=329..338`（该片段竖线的位置）画 **蓝**，Chrome 画 **黑** ⇒ 同一条纵向线在**这一行**的胜者候选选错了（`outer[]` 与 `cellLeft/cellRight` 的次序，或行/列候选与单元格候选的优先序），与 §9.79 那次"逐段定色"的候选序同一族。又试了"横线段的胜者若属本行则横线吃角"（`cell.TopIsOwn = StandsFor(cell.Top, horizontal[Row])` ⇒ `BandOf` 顶沿改判据，补丁 `build/_collapsed-E-topisown.patch` 266 行）：`at-boundary` 仍 1365、`htb-ltr` 反而 100 → **250** ✗ ⇒ 角假设不成立，已回退。
+
+于是这条路剩下的活分两件、都可单测：(1) **竖线段候选序**——把 htb-ltr 第 2 行左线（Chrome 黑 10 / Hutu 蓝 10）的四个候选抄出来对一遍；(2) 之后再回到 E（`build/_collapsed-straddle-bands-E.patch` 238 行 = 目前最好的几何基：at-boundary 2540 → **1365**、`large-rowgroup-001` 绿、006/subpixel 不变，仅 htb-ltr 因 (1) 剩 100 px）。(1) 一旦修好，E 就可能同时翻 `at-boundary` 并保持全绿；三个几何补丁都在 `build/`：`_collapsed-inline-halves.patch`（200）、`_collapsed-side-bands-conditional.patch`（188）、`_collapsed-straddle-bands-E.patch`（238）。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
