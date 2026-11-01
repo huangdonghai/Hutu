@@ -1455,3 +1455,14 @@ Hutu 的树（`build/_probe-vwm001.txt`）：容器 `60,60 92x142 vertical` 正�
 4. `RepeatSections` 早退条件从 `Offset > 0.001` 改成只要求 `Height > 0.001`，表头 copy 改按 `!fragment.Starts` 判——**第一片也该画表脚 copy**；段高不再在栏的计划里重新 `Build`，而是 `Measure` 走完 `CompleteGrid` 后存进 `ConditionalWeakTable<Box, Bands>`，栏再问取（`LayoutEngine.TableRepeats`）。实测第二次 `Build` 不是 `text-in-nested-multicol` 翻红的原因（改完仍 156），真正原因还是第 3 点的裁剪。
 
 实测：`wpt/css-break/table/repeated-section/variable-fragmentainer-size-001.html` **转绿**（2000 → 0）。三道门禁：单测 **2185**；打印 **189/198**、九条同名；屏幕全量连跑两遍 finding 1924 → **1923**、两遍逐对像素一字不差、与 HEAD 基线相比**只有这一对消失**、**0 新增失败名**（上一版看到的 css-lists/word-break/first-line ±2..144 在复跑里归零，确认那是跑动噪声）。`css-break` 剩 **28** 对。
+
+### 9.107 OOF 那五对：两条猜测已量死并排除（clip 随位移、clip 沿行内向放宽），缺的是"abs 盒自己进栏队列"
+
+在 `fb0636de` 之后试了 OOF 簇的两条便宜改法，都量过、都不成立，记死免得再试：
+
+1. **`FragmentClip` 跟着 `RelativeDisplacement` 走**（`build/_clip-move.patch`，73 行，四处块站点）。对 045/073/090 **数字一字未动**。原因：被切、被 clip 的是**没有位移的外层 wrapper**，带位移的是里面的 `.rel`——补丁平移的是"片自己的位移"，外层片位移为零，所以是 no-op。
+2. **把片的裁剪从"本栏宽"放宽到"整行栏宽"**（fragmentainer 只在该切的方向上切，行内向溢出照画——听起来很合 CSS Break 3 §4.1）。实测：045 仍 10000、073/090 仍 11600，一点没变；反而把原本绿的 `out-of-flow-in-multicolumn-001` 打红 **640 px**（`x=50, y=50` 该白处画了灰）⇒ **栏在内向确实要裁**，Chrome 那个"abs 宽 50 > 栏宽 40 还不被裁"不是靠放宽父片裁剪做到的。两次试验都已回退，树回到 `fb0636de`。
+
+真正的缺口还是 §9.98 量的那条：**abs 盒自己要进栏的切片队列**。`abspos-in-opacity-003` 最干净：容器 `columns:5; width:100px; height:100px; column-fill:auto`（五栏各 20 宽），子是 300 高空块 + `position:relative; opacity:.1`，其内 `top:-300px; width:100%` 的 abs 装 500 高红块。Chrome：abs 出 **5 片** `x=8/28/48/68/88, y=8, 20x100`——**包含 CB 之前的三栏**（CB 自己在第 4 栏 `[48,108 20x0]`）；Hutu 只从 CB 所在栏往后切，于是少三栏 = 3×20×100 = **6000 px**，与残差一字不差。也就是：abs 的矩形跨到哪些 fragmentainer，就在哪些 fragmentainer 里各画一片、按该 fragmentainer 的块向窗口裁；它前面的栏也要有片。这一条同时是 045/073/090 缺的"abs 自己分栏"那一半，已记成任务 #11。
+
+当前：`dev-paged` HEAD `fb0636de`（工作树对 HEAD 干净），屏幕 1923 finding、css-break **28** 对、打印 189/198 九条同名、单测 2185。
