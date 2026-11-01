@@ -164,6 +164,8 @@ internal sealed partial class TableFormattingContext
             Padding = padding,
             BorderBox = borderBox,
             Flow = box.Flow,
+            BorderColors = box.Style.Table.Collapse ? build.OuterColors : null,
+            BorderStyles = box.Style.Table.Collapse ? build.OuterStyles : null,
             SlicesBlockStart = slice is { Starts: false },
             SlicesBlockEnd = slice is { Ends: false },
             BackgroundOrigin = slice is null || slice.Value.Starts && slice.Value.Ends
@@ -211,7 +213,11 @@ internal sealed partial class TableFormattingContext
             captionY += caption.OuterHeight;
         }
 
-        var gridY = borderBox.Y + build.Border.Top + build.Padding.Top + build.CaptionTop;
+        // The captions stand in the wrapper around the table box, so under the collapsing model the
+        // outer halves of the table's own lines fall between the caption and the first row.
+        var gridY = box.Style.Table.Collapse
+            ? borderBox.Y + build.CaptionTop + build.Border.Top + build.Padding.Top
+            : borderBox.Y + build.Border.Top + build.Padding.Top + build.CaptionTop;
         ArrangeRows(build, layout, gridX, gridY, childContext);
         ArrangeColumnBands(build, layout, gridX, gridY);
 
@@ -701,6 +707,18 @@ internal sealed partial class TableFormattingContext
         {
             layout.BorderColors = colors;
             layout.BorderStyles = cell.LineStyles;
+
+            // The line a cell's two vertical edges run along reaches to the further side of the
+            // horizontal lines it meets: the shared line goes whole with the row above it, while the
+            // table's own outer halves belong to its first and last rows (CSS 2.1 §17.6.2, measured:
+            // table-collapsed-borders-paint-htb-ltr, whose lime band runs 120..180 over a row whose box
+            // is 125..175).
+            var overhang = cell.Row == 0 ? -cell.UsedBorder.Top : cell.UsedBorder.Top;
+            layout.SideBand = new Rect(
+                rect.X,
+                rect.Y + overhang,
+                rect.Width,
+                Math.Max(0, rect.Height - overhang + cell.UsedBorder.Bottom));
         }
 
         var hide = build.Style.HideEmptyCells && !build.Style.Collapse && cell.IsEmpty;

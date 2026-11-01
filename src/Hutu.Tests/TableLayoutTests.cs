@@ -543,15 +543,24 @@ public sealed class TableLayoutTests
         using var view = CreateView(400);
         await view.SetHtml(
             "<html><body style='margin:0'>" +
-            "<table style='border-collapse:collapse'>" +
+            "<table id='t' style='border-collapse:collapse'>" +
             "<tr style='border-top:2px solid;border-bottom:1px solid'><td id='a'>A</td></tr>" +
             "<tr style='border-bottom:3px solid'><td id='b'>B</td></tr>" +
             "</table></body></html>");
 
-        Assert.That(Painted(view, "a").Widths.Top, Is.EqualTo(2).Within(0.01), "the top line is the table's edge, so the cell paints all of it");
+        // The table's own lines are centred on its edges, so half of them falls outside every row and
+        // stands in the table box while the other half stands in the cell. Measured in Chrome: the 2px
+        // top line covers y 0..2, the first row's box begins at y 1 and keeps 1 of that line.
+        Assert.That(
+            Painted(view, "a").Widths.Top + Painted(view, "t").Widths.Top,
+            Is.EqualTo(2).Within(0.01),
+            "the top line is the table's edge, so cell and table box paint it between them");
         Assert.That(Painted(view, "a").Widths.Bottom, Is.EqualTo(0.5).Within(0.01), "the line between the rows is shared, so each cell paints half of it");
         Assert.That(Painted(view, "b").Widths.Top, Is.EqualTo(0.5).Within(0.01), "and the row below takes the other half");
-        Assert.That(Painted(view, "b").Widths.Bottom, Is.EqualTo(3).Within(0.01), "the last line is the table's other edge");
+        Assert.That(
+            Painted(view, "b").Widths.Bottom + Painted(view, "t").Widths.Bottom,
+            Is.EqualTo(3).Within(0.01),
+            "the last line is the table's other edge, divided the same way");
     }
 
     [Test]
@@ -565,10 +574,10 @@ public sealed class TableLayoutTests
             "<tr><td id='a'>A</td><td id='b'>B</td></tr>" +
             "</table></body></html>");
 
-        Assert.That(Painted(view, "a").Widths.Left, Is.EqualTo(4).Within(0.01), "the column's border at the table's edge");
-        Assert.That(Painted(view, "a").Widths.Right, Is.EqualTo(1).Within(0.01), "and half of the line it shares with the next column");
-        Assert.That(Painted(view, "b").Widths.Left, Is.EqualTo(1).Within(0.01), "which the next column takes the other half of");
-        Assert.That(Painted(view, "b").Widths.Right, Is.EqualTo(0).Within(0.01), "the last column declared nothing");
+        Assert.That(PaintedSides(view, "a").Widths.Left, Is.EqualTo(4).Within(0.01), "the column's border at the table's edge");
+        Assert.That(PaintedSides(view, "a").Widths.Right, Is.EqualTo(1).Within(0.01), "and half of the line it shares with the next column");
+        Assert.That(PaintedSides(view, "b").Widths.Left, Is.EqualTo(1).Within(0.01), "which the next column takes the other half of");
+        Assert.That(PaintedSides(view, "b").Widths.Right, Is.EqualTo(0).Within(0.01), "the last column declared nothing");
     }
 
     [Test]
@@ -577,12 +586,16 @@ public sealed class TableLayoutTests
         using var view = CreateView(400);
         await view.SetHtml(
             "<html><body style='margin:0'>" +
-            "<table style='border-collapse:collapse'>" +
+            "<table id='t' style='border-collapse:collapse'>" +
             "<tr style='border-top:2px solid'><td id='a' style='border-top:2px double'>A</td></tr>" +
             "</table></body></html>");
 
         Assert.That(Painted(view, "a").Styles.Top, Is.EqualTo(BorderLineStyle.Double), "the same width, but the cell's style is the more emphatic");
-        Assert.That(Painted(view, "a").Widths.Top, Is.EqualTo(2).Within(0.01));
+        Assert.That(
+            Painted(view, "a").Widths.Top + Painted(view, "t").Widths.Top,
+            Is.EqualTo(2).Within(0.01),
+            "the line is whole across the cell's inner half and the table box's outer one");
+        Assert.That(Painted(view, "t").Styles.Top, Is.EqualTo(BorderLineStyle.Double), "and both halves keep the stroke of the border that won");
     }
 
     [Test]
@@ -642,10 +655,10 @@ public sealed class TableLayoutTests
             "<tr><td id='a'>A</td><td id='b'>B</td></tr></table>" +
             "</body></html>");
 
-        Assert.That(Painted(view, "a").Widths.Left, Is.EqualTo(2).Within(0.01), "the group's left edge is the table's own edge");
-        Assert.That(Painted(view, "a").Widths.Right, Is.EqualTo(1).Within(0.01), "and its right edge is the line the columns share");
-        Assert.That(Painted(view, "b").Widths.Left, Is.EqualTo(1).Within(0.01), "which the next column takes the other half of");
-        Assert.That(Painted(view, "b").Widths.Right, Is.EqualTo(0).Within(0.01), "the second group declared nothing");
+        Assert.That(PaintedSides(view, "a").Widths.Left, Is.EqualTo(2).Within(0.01), "the group's left edge is the table's own edge");
+        Assert.That(PaintedSides(view, "a").Widths.Right, Is.EqualTo(1).Within(0.01), "and its right edge is the line the columns share");
+        Assert.That(PaintedSides(view, "b").Widths.Left, Is.EqualTo(1).Within(0.01), "which the next column takes the other half of");
+        Assert.That(PaintedSides(view, "b").Widths.Right, Is.EqualTo(0).Within(0.01), "the second group declared nothing");
     }
 
     /// <summary>
@@ -696,6 +709,22 @@ public sealed class TableLayoutTests
         return view.Paint!.Commands.OfType<BorderCommand>()
             .First(command => Math.Abs(command.Bounds.X - box.BorderBox.X) < 0.01 &&
                               Math.Abs(command.Bounds.Y - box.BorderBox.Y) < 0.01);
+    }
+
+    /// <summary>
+    /// The command a cell's two vertical edges are drawn with. Under the collapsing border model the line
+    /// they run along reaches past the cell, to the middle of the horizontal lines it meets, so the sides
+    /// come as a band of their own apart from the ring that holds the top and bottom lines
+    /// (CSS 2.1 §17.6.2).
+    /// </summary>
+    private static BorderCommand PaintedSides(HutuViewInternal view, String id)
+    {
+        var box = Find(view, id);
+
+        return view.Paint!.Commands.OfType<BorderCommand>()
+            .First(command => Math.Abs(command.Bounds.X - box.BorderBox.X) < 0.01 &&
+                              Math.Abs(command.Bounds.Width - box.BorderBox.Width) < 0.01 &&
+                              command.Widths.Left + command.Widths.Right > 0.01);
     }
 
     /// <summary>

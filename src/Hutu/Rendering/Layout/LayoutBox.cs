@@ -424,6 +424,13 @@ internal sealed class LayoutBox
     public BorderStyles? BorderStyles { get; set; }
 
     /// <summary>
+    /// Gets the band a box's left and right borders are drawn over, where that is not the box's own
+    /// rectangle: under the collapsing border model the line a cell runs along reaches to the middle of
+    /// the horizontal lines above and below it (CSS 2.1 §17.6.2). Null everywhere else.
+    /// </summary>
+    public Rect? SideBand { get; set; }
+
+    /// <summary>
     /// Gets or sets the decorations the container laid out its gaps with. Only a context that makes gaps
     /// - and knows how many of them there are and where each one stands - can say which of the container's
     /// rule list a gap takes, so it hands the finished bands to the painter here.

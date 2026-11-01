@@ -1010,6 +1010,32 @@ Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一�
 1. 取值器：`TableLayoutTests.Painted(view,id)` 按 `Bounds == box.BorderBox` 选命令，侧带把左右边移到另一条命令上 → `Widths.Left` 读到 **0**（`AColumnGroupDrawsTheLinesAtItsEdges` 期望 2、`AColumnsBorderMeetsTheLinesBesideItsCells` 期望 4）。
 2. 表示变了：外半线改由表盒画之后，行 0 单元的 `Widths.Top` 从整条 2 变成内半 1（`ACellWinsTheLineItSharesWithItsRow`、`ARowsBorderMeetsTheLinesAboveAndBelowIt`），可观察的“该边上那条 2px 双线”总量不变。落地时这两条要改成断言“单元内半 + 表盒外半 = 整条，线型仍是胜者的 double”，而不是单元吃满。
 
+### 9.80 折叠边框落地：外半线归表盒 + 逐段定色（无候选退回整线）+ 侧带外沿
+
+三条一起做才闭合（§9.75–§9.79 的分量过程）：
+
+- **外半线归表盒**（CSS 2.1 §17.6.2）：每条横向线的中点在网格线上，故外侧那半落在所有行之外。`ResolveBorders` 末尾 `build.OuterTop = horizontal[0].Width * 0.5`、`OuterBottom = horizontal[rows].Width * 0.5`，并把 `build.Border` 改成这两半（只吃块轴内缩：横向两半由边缘单元整条画出，声明宽度已含）。`TableFormattingContext.Measure` 的 `gridY` 在折叠模型下把 caption 排在表盒边框之前——caption 站在表盒外的 wrapper 里。
+- **纵向线逐段定色**：新增 `outer[]`（行/行组/列/列组/表的候选，沿整条线累积）与每行的 `cellLeft[r][b]`/`cellRight[r][b]`（`rowspan` 覆盖的每一行都记），单元格的左右颜色/线型取 `Resolve(Resolve(outer[线], cellRight), cellLeft)`。**关键退回规则**：这一段没有任何候选时（`Width <= 0.001`）退回整条线的胜者——`border-collapse-006` 只有两行一列，行 2 的左线、行 1 的右线无候选，逐段独走会让绿线断掉、露出底色（17500 → 25000），退回整线后回到 17500 基线。
+- **侧带**：单元格的左右边沿那条线 reach 到它与上下横向线相交处（`LayoutBox.SideBand`，`rect.Y + (行 0 ? -top : top)`、高度加上下半），绘制时拆成两条命令：上下环（`Thickness(top, 0, bottom, 0)`）+ 侧带（`Thickness(0, right, 0, left)`）。
+
+实测（逐对复算）：`wpt/css-break/table/table-collapsed-borders-paint-htb-ltr` **8000 → 0**（绿）、`wpt/css-tables/collapsed-border-large-rowgroup-001` **绿**、`-at-boundary.tentative` **10105 → 2540**、`wpt/CSS2/tables/border-collapse-006` **25000 → 17500**（回到基线，仍红）、竖排 `table-collapsed-borders-paint-vlr-rtl` **19380**、`-vrl-ltr` **20350** 不变（竖排表仍缺轴支持，见 §9.40）。
+
+4 条自测按可观察量重写（不是放宽）：新增 `TableLayoutTests.PaintedSides(view,id)`——按 `Bounds.X`/`Width` 等于单元盒、且 `Widths.Left + Widths.Right > 0` 选侧带命令（`AColumnsBorderMeetsTheLinesBesideItsCells`、`AColumnGroupDrawsTheLinesAtItsEdges` 用它读左右）；上下两半改成断言“单元内半 + 表盒外半 = 整条”（2 与 3），并加一条“表盒那半仍是胜者的 `double`”（`ACellWinsTheLineItSharesWithItsRow`）。
+
+全量门禁：单测 **2180** 绿；打印 **189/198**（九个失败名一字不差）；屏幕全量失败名集 **2010 → 2008**，`--- regressed ---` 为空，`--- fixed ---` 正是 `wpt/css-break/table/table-collapsed-borders-paint-htb-ltr` 与 `wpt/css-tables/collapsed-border-large-rowgroup-001`，`wpt/css-break` **38 → 37**。基线由 `_diff_full.sh` 现跑现取（回退切片跑 HEAD、再复原跑切片），报告存 `build/_score-head-cl.md` 与 `build/_score-cl2.md`。
+
+### 9.81 竖排表的轴（下一片的地面真值，Chrome 已量）
+
+竖排表那 8 对（`table-grid/row/col/section-paint-vlr-rtl|vrl-rtl`、`table-collapsed-borders-paint-vlr-rtl|vrl-ltr`）的根因是 `TableFormattingContext` 完全不看 `Flow.IsVertical`：行永远沿 y 堆、列永远沿 x 排。Chrome 对 `table-grid-paint-vlr-rtl`（body `vertical-lr` + `direction: rtl`，`.multicol { inline-size:400; block-size:100; columns:4; gap:0 }`）的探针（`build/_probe_vtable.dom`）给出该片的轴：
+
+- **块轴 = 物理 x，自左向右**（`vertical-lr` 定块轴，`direction` 只反转 inline）；**inline 轴 = 物理 y，自下而上**（rtl）→ 栏是横条，第一栏在最下面：表盒 4 个片段 `0,380 / 0,280 / 0,180 / 0,80`，各 `100x100`。
+- 上 caption（`block-size:140`）沿块轴占 140：片段 `[0,380 100x100]` + `[0,280 40x100]`——即块轴填满第一栏后在第二栏从 x=0 续 40。
+- 行（唯一 td `block-size:225`）沿块轴 50 + 100 + 75 = 225：`[50,290 50x80] | [0,190 100x80] | [0,90 75x80]`；**行的 inline 延伸 80 = 栏的 inline 延伸 100 减去表自身 10px 边框的两半**（表 `inline-size:100%`）。
+- 下 caption（15）在第四栏 `x=85..100`：75（行）+ **10（表块轴末端的那条边框）** + 15 ✓ → 表盒的块轴内缩要按逻辑轴向作用在 x 上。
+- 对照 ref：同一 4 栏容器里三个普通块（140 / 245 = 225+2×10 / 15）总和 400 正好铺满 4 栏，与上面的分片一致——ref 不需要任何表语义，只需引擎把轴的分配做对。
+
+同一次探针还确认 `at-boundary`（§9.80 之后仍差 2540）的表结构：片段 `21,21 92x100 | 123,21 … | 225,21 … | 327,21 … | 429,21 92x85`；第一栏只有 caption（150 切 100+50），行 0 落在第二栏 `y=76`（在续来的 50 之后）；行 1 起新栏 `232.5,21 77x100`——左线是 15px 黑（整线取最宽、单元格 rect 内缩 7.5 = 15/2），而 2540 的残差签名 `225,21` test lime / ref black 正是**片段起始处的角**：竖线（黑 15）应盖住那条被切开的横线（lime 半线）的带，即片段第一行的侧带不得上伸，且角要按较宽的线让位。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。

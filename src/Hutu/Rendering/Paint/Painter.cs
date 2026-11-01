@@ -2069,6 +2069,32 @@ internal sealed class Painter
         // (CSS 2.1 §17.4, measured: table-grid-paint-htb-ltr).
         var framed = box.Kind == LayoutKind.Table && box.TableBox is { } table ? table : box.BorderBox;
 
+        // Where the sides run along a band of their own, the four of them are not one ring mitred at the
+        // corners but two rectangles, each drawn over the place its own lines reach (CSS 2.1 §17.6.2).
+        if (box.SideBand is { } band)
+        {
+            target.Add(new BorderCommand(
+                framed,
+                new Thickness(border.Top, 0, border.Bottom, 0),
+                box.BorderStyles ?? style.BorderStyles,
+                default,
+                colors?.Top ?? ToArgb(style.BorderTopColor ?? style.Color),
+                0u,
+                colors?.Bottom ?? ToArgb(style.BorderBottomColor ?? style.Color),
+                0u));
+
+            target.Add(new BorderCommand(
+                band,
+                new Thickness(0, border.Right, 0, border.Left),
+                box.BorderStyles ?? style.BorderStyles,
+                default,
+                0u,
+                colors?.Right ?? ToArgb(style.BorderRightColor ?? style.Color),
+                0u,
+                colors?.Left ?? ToArgb(style.BorderLeftColor ?? style.Color)));
+            return;
+        }
+
         target.Add(new BorderCommand(
             framed,
             border,

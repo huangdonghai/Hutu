@@ -61,6 +61,15 @@ internal sealed partial class TableFormattingContext
 
         public Thickness Border;
 
+        /// <summary>Gets the outer halves of the table's top and bottom grid lines, which fall outside
+        /// the rows and are carried by the table box (CSS 2.1 §17.6.2).</summary>
+        public Double OuterTop;
+        public Double OuterBottom;
+
+        /// <summary>Gets the colour and the style of the table box's own outer halves.</summary>
+        public BorderColors OuterColors;
+        public BorderStyles OuterStyles;
+
         public Double InsetsH;
 
         public Double InsetsV;
@@ -131,6 +140,16 @@ internal sealed partial class TableFormattingContext
 
         CollectRows(build, basis);
         ResolveBorders(build);
+
+        // Under the collapsing model the table's own border is the outer halves of its top and bottom
+        // lines. It insets the block axis only: the width the author stated already covers the left and
+        // right lines, whose halves the edge cells keep (CSS 2.1 §17.5.2.2, §17.6.2).
+        if (tableStyle.Collapse && build.OuterTop + build.OuterBottom > 0.001)
+        {
+            border = new Thickness(build.OuterTop, 0, build.OuterBottom, 0);
+            build.Border = border;
+            build.InsetsV = border.Vertical + padding.Vertical;
+        }
         ResolveCellIntrinsics(build, context);
         build.Grid.Prepare();
         build.Grid.ApplyColumnHints(build.ColumnHints);
@@ -452,10 +471,33 @@ internal sealed partial class TableFormattingContext
         }
 
         var rows = grid.Rows.Count;
-        var vertical = new CollapsedBorder[grid.Columns + 1];
+        var bounds = grid.Columns + 1;
+        var vertical = new CollapsedBorder[bounds];
         var horizontal = new CollapsedBorder[rows + 1];
         Array.Fill(vertical, CollapsedBorder.None);
         Array.Fill(horizontal, CollapsedBorder.None);
+
+        // A vertical line's colour and style belong to the segment a row makes, not to the whole line:
+        // the cell on one side and the cell on the other meet there for that row only, while the row,
+        // the row group, the column and the table ask for the same thing along every line they cover.
+        // So the cells' own edges are kept per row and the rest is kept as one candidate per line
+        // (CSS 2.1 §17.6.2.1, measured: table-collapsed-borders-paint-htb-ltr, whose left line is lime
+        // beside the first row and black beside the second).
+        var outer = new CollapsedBorder[bounds];
+        Array.Fill(outer, CollapsedBorder.None);
+        var cellLeft = new CollapsedBorder[rows][];
+        var cellRight = new CollapsedBorder[rows][];
+
+        for (var r = 0; r < rows; r++)
+        {
+            cellLeft[r] = new CollapsedBorder[bounds];
+            cellRight[r] = new CollapsedBorder[bounds];
+            Array.Fill(cellLeft[r], CollapsedBorder.None);
+            Array.Fill(cellRight[r], CollapsedBorder.None);
+        }
+
+        void AskOuter(Int32 line, CollapsedBorder candidate) =>
+            outer[line] = CollapsedBorder.Resolve(outer[line], candidate);
 
         foreach (var row in grid.Rows)
         {
@@ -471,6 +513,13 @@ internal sealed partial class TableFormattingContext
 
                 vertical[cell.Column] = CollapsedBorder.Resolve(vertical[cell.Column], cell.Left);
                 vertical[lastColumn] = CollapsedBorder.Resolve(vertical[lastColumn], cell.Right);
+                var through = Math.Min(cell.Row + cell.RowSpan, rows);
+
+                for (var r = cell.Row; r < through; r++)
+                {
+                    cellLeft[r][cell.Column] = CollapsedBorder.Resolve(cellLeft[r][cell.Column], cell.Left);
+                    cellRight[r][lastColumn] = CollapsedBorder.Resolve(cellRight[r][lastColumn], cell.Right);
+                }
                 horizontal[cell.Row] = CollapsedBorder.Resolve(horizontal[cell.Row], cell.Top);
                 horizontal[lastRow] = CollapsedBorder.Resolve(horizontal[lastRow], cell.Bottom);
             }
@@ -489,7 +538,9 @@ internal sealed partial class TableFormattingContext
             horizontal[r] = CollapsedBorder.Resolve(horizontal[r], CollapsedBorder.Of(rowStyle, BorderSide.Top, CollapsedBorder.OriginRow));
             horizontal[r + 1] = CollapsedBorder.Resolve(horizontal[r + 1], CollapsedBorder.Of(rowStyle, BorderSide.Bottom, CollapsedBorder.OriginRow));
             vertical[0] = CollapsedBorder.Resolve(vertical[0], CollapsedBorder.Of(rowStyle, BorderSide.Left, CollapsedBorder.OriginRow));
+            AskOuter(0, CollapsedBorder.Of(rowStyle, BorderSide.Left, CollapsedBorder.OriginRow));
             vertical[grid.Columns] = CollapsedBorder.Resolve(vertical[grid.Columns], CollapsedBorder.Of(rowStyle, BorderSide.Right, CollapsedBorder.OriginRow));
+            AskOuter(grid.Columns, CollapsedBorder.Of(rowStyle, BorderSide.Right, CollapsedBorder.OriginRow));
 
             if (row.Group is { } group)
             {
@@ -500,12 +551,14 @@ internal sealed partial class TableFormattingContext
                 {
                     horizontal[r] = CollapsedBorder.Resolve(horizontal[r], CollapsedBorder.Of(group.Style, BorderSide.Top, CollapsedBorder.OriginRowGroup));
                     vertical[0] = CollapsedBorder.Resolve(vertical[0], CollapsedBorder.Of(group.Style, BorderSide.Left, CollapsedBorder.OriginRowGroup));
+                    AskOuter(0, CollapsedBorder.Of(group.Style, BorderSide.Left, CollapsedBorder.OriginRowGroup));
                 }
 
                 if (last)
                 {
                     horizontal[r + 1] = CollapsedBorder.Resolve(horizontal[r + 1], CollapsedBorder.Of(group.Style, BorderSide.Bottom, CollapsedBorder.OriginRowGroup));
                     vertical[grid.Columns] = CollapsedBorder.Resolve(vertical[grid.Columns], CollapsedBorder.Of(group.Style, BorderSide.Right, CollapsedBorder.OriginRowGroup));
+                    AskOuter(grid.Columns, CollapsedBorder.Of(group.Style, BorderSide.Right, CollapsedBorder.OriginRowGroup));
                 }
             }
         }
@@ -515,7 +568,9 @@ internal sealed partial class TableFormattingContext
             if (c < build.ColumnBoxes.Count && build.ColumnBoxes[c] is { } column)
             {
                 vertical[c] = CollapsedBorder.Resolve(vertical[c], CollapsedBorder.Of(column.Style, BorderSide.Left, CollapsedBorder.OriginColumn));
+                AskOuter(c, CollapsedBorder.Of(column.Style, BorderSide.Left, CollapsedBorder.OriginColumn));
                 vertical[c + 1] = CollapsedBorder.Resolve(vertical[c + 1], CollapsedBorder.Of(column.Style, BorderSide.Right, CollapsedBorder.OriginColumn));
+                AskOuter(c + 1, CollapsedBorder.Of(column.Style, BorderSide.Right, CollapsedBorder.OriginColumn));
                 horizontal[0] = CollapsedBorder.Resolve(horizontal[0], CollapsedBorder.Of(column.Style, BorderSide.Top, CollapsedBorder.OriginColumn));
                 horizontal[rows] = CollapsedBorder.Resolve(horizontal[rows], CollapsedBorder.Of(column.Style, BorderSide.Bottom, CollapsedBorder.OriginColumn));
             }
@@ -528,12 +583,14 @@ internal sealed partial class TableFormattingContext
                 if (first)
                 {
                     vertical[c] = CollapsedBorder.Resolve(vertical[c], CollapsedBorder.Of(columnGroup.Style, BorderSide.Left, CollapsedBorder.OriginColumnGroup));
+                    AskOuter(c, CollapsedBorder.Of(columnGroup.Style, BorderSide.Left, CollapsedBorder.OriginColumnGroup));
                     horizontal[0] = CollapsedBorder.Resolve(horizontal[0], CollapsedBorder.Of(columnGroup.Style, BorderSide.Top, CollapsedBorder.OriginColumnGroup));
                 }
 
                 if (last)
                 {
                     vertical[c + 1] = CollapsedBorder.Resolve(vertical[c + 1], CollapsedBorder.Of(columnGroup.Style, BorderSide.Right, CollapsedBorder.OriginColumnGroup));
+                    AskOuter(c + 1, CollapsedBorder.Of(columnGroup.Style, BorderSide.Right, CollapsedBorder.OriginColumnGroup));
                     horizontal[rows] = CollapsedBorder.Resolve(horizontal[rows], CollapsedBorder.Of(columnGroup.Style, BorderSide.Bottom, CollapsedBorder.OriginColumnGroup));
                 }
             }
@@ -543,9 +600,17 @@ internal sealed partial class TableFormattingContext
         // origin and therefore only wins when no cell asked for something wider.
         var style = build.Box.Style;
         vertical[0] = CollapsedBorder.Resolve(vertical[0], CollapsedBorder.Of(style, BorderSide.Left, CollapsedBorder.OriginTable));
+        AskOuter(0, CollapsedBorder.Of(style, BorderSide.Left, CollapsedBorder.OriginTable));
         vertical[grid.Columns] = CollapsedBorder.Resolve(vertical[grid.Columns], CollapsedBorder.Of(style, BorderSide.Right, CollapsedBorder.OriginTable));
+        AskOuter(grid.Columns, CollapsedBorder.Of(style, BorderSide.Right, CollapsedBorder.OriginTable));
         horizontal[0] = CollapsedBorder.Resolve(horizontal[0], CollapsedBorder.Of(style, BorderSide.Top, CollapsedBorder.OriginTable));
         horizontal[rows] = CollapsedBorder.Resolve(horizontal[rows], CollapsedBorder.Of(style, BorderSide.Bottom, CollapsedBorder.OriginTable));
+        build.OuterTop = horizontal[0].Width * 0.5;
+        build.OuterBottom = horizontal[rows].Width * 0.5;
+        build.OuterColors = new BorderColors(
+            horizontal[0].Color, vertical[grid.Columns].Color, horizontal[rows].Color, vertical[0].Color);
+        build.OuterStyles = new BorderStyles(
+            horizontal[0].Line, vertical[grid.Columns].Line, horizontal[rows].Line, vertical[0].Line);
 
         foreach (var row in grid.Rows)
         {
@@ -556,20 +621,52 @@ internal sealed partial class TableFormattingContext
 
                 var left = cell.Column == 0 ? vertical[0].Width : vertical[cell.Column].Width * 0.5;
                 var right = lastColumn == grid.Columns ? vertical[grid.Columns].Width : vertical[lastColumn].Width * 0.5;
-                var top = cell.Row == 0 ? horizontal[0].Width : horizontal[cell.Row].Width * 0.5;
-                var bottom = lastRow == rows ? horizontal[rows].Width : horizontal[lastRow].Width * 0.5;
+
+                // Every horizontal line is shared: half stands in the row above and half in the row
+                // below, the table's outer halves included - those fall outside the rows, and the table
+                // box carries them (CSS 2.1 §17.6.2, measured in Chrome: a row of 50 stated with a 10px
+                // line begins 5 below the caption, and its own box keeps the stated 50 with 40 of it
+                // left for the content).
+                var top = horizontal[cell.Row].Width * 0.5;
+                var bottom = horizontal[lastRow].Width * 0.5;
 
                 cell.UsedBorder = new Thickness(top, right, bottom, left);
+
+                // The colour and the style of the two vertical edges come from this row's segment of
+                // the line, where the cells that meet there are counted with the candidates that run
+                // the whole way down (CSS 2.1 §17.6.2.1).
+                var leftLine = CollapsedBorder.Resolve(
+                    CollapsedBorder.Resolve(outer[cell.Column], cellRight[cell.Row][cell.Column]),
+                    cellLeft[cell.Row][cell.Column]);
+                var rightLine = CollapsedBorder.Resolve(
+                    CollapsedBorder.Resolve(outer[lastColumn], cellRight[cell.Row][lastColumn]),
+                    cellLeft[cell.Row][lastColumn]);
+
+                // Where this row's stretch of the line asks for nothing at all, the line is still one
+                // line and carries the colour and the stroke the whole of it settled on: a table whose
+                // first row borders the left edge and whose second borders the right keeps one green
+                // line down each side (CSS 2.1 §17.6.2.1, measured: border-collapse-006, which shows
+                // red through the empty stretch as soon as the segment is answered on its own).
+                if (leftLine.Width <= 0.001)
+                {
+                    leftLine = vertical[cell.Column];
+                }
+
+                if (rightLine.Width <= 0.001)
+                {
+                    rightLine = vertical[lastColumn];
+                }
+
                 cell.Colors = new BorderColors(
                     horizontal[cell.Row].Color,
-                    vertical[lastColumn].Color,
+                    rightLine.Color,
                     horizontal[lastRow].Color,
-                    vertical[cell.Column].Color);
+                    leftLine.Color);
                 cell.LineStyles = new BorderStyles(
                     horizontal[cell.Row].Line,
-                    vertical[lastColumn].Line,
+                    rightLine.Line,
                     horizontal[lastRow].Line,
-                    vertical[cell.Column].Line);
+                    leftLine.Line);
                 cell.Insets = Add(cell.Padding, cell.UsedBorder);
             }
         }
