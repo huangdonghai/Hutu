@@ -1540,7 +1540,9 @@ internal sealed class BlockLayout
             Double startInset = 0,
             Boolean relays = false,
             IReadOnlyList<PieceUnit>? breaks = null,
-            Double reach = 0)
+            Double reach = 0,
+            Double lead = 0,
+            Double trail = 0)
         {
             Box = box;
             Size = size;
@@ -1555,6 +1557,8 @@ internal sealed class BlockLayout
             Relays = relays;
             Breaks = breaks;
             Reach = reach > 0 ? reach : fragment.Height;
+            Lead = lead;
+            Trail = trail;
         }
 
         public Box Box { get; }
@@ -1608,6 +1612,18 @@ internal sealed class BlockLayout
         /// pushed on by five pixels of room and kept by ten).
         /// </summary>
         public Double StartInset { get; }
+
+        /// <summary>
+        /// Gets the room this column gives up to a repeated table section before the piece's own content
+        /// begins - the header group a column after the first shows at its top (CSS Tables 3 §6.1). With
+        /// <see cref="Trail"/> this is what a repeated group costs the column: the piece's content sits
+        /// between the two, so the column holds lead + content + trail while the box only advances by the
+        /// content.
+        /// </summary>
+        public Double Lead { get; }
+
+        /// <summary>Gets the room a repeated footer group costs at the bottom of this piece's column.</summary>
+        public Double Trail { get; }
 
         /// <summary>
         /// Gets the border box height the child would have had unbroken, for a piece of a broken child.
@@ -2177,6 +2193,11 @@ internal sealed class BlockLayout
             var breaks = child.Style.Breaks;
             var (before, after) = BoundaryBreaks(child);
 
+            // What a table's repeated header and footer groups cost every column it stands in, asked of
+            // the table itself before its rows are shared out (CSS Tables 3 §6.1, measured:
+            // variable-fragmentainer-size-001, whose columns give up 20 at the bottom and 20 at the top).
+            var (repeatHead, repeatFoot) = _engine.TableRepeats(child);
+
             // A child that can be broken contributes one piece per line of its own, so the column ends
             // between two of them (CSS Multicol 3 §3.1). The lines are those the plan makes at the width
             // of a column, which is the plan the arrangement lays out again - the same container at the
@@ -2220,7 +2241,9 @@ internal sealed class BlockLayout
                             ? BorderOf(child).Vertical + child.Style.Padding.Resolve(share).Vertical
                             : 0.0,
                         BorderOf(child).Top + child.Style.Padding.Resolve(share).Top,
-                        vertical))
+                        vertical,
+                        repeatHead,
+                        repeatFoot))
                     {
                         continue;
                     }
@@ -2322,7 +2345,9 @@ internal sealed class BlockLayout
                             ? BorderOf(child).Vertical + child.Style.Padding.Resolve(share).Vertical
                             : 0.0,
                         BorderOf(child).Top + child.Style.Padding.Resolve(share).Top,
-                        vertical))
+                        vertical,
+                        repeatHead,
+                        repeatFoot))
             {
                 continue;
             }
@@ -2478,7 +2503,9 @@ internal sealed class BlockLayout
         Boolean nested,
         Double clonedInsets,
         Double startInset,
-        Boolean vertical)
+        Boolean vertical,
+        Double repeatHead = 0,
+        Double repeatFoot = 0)
     {
         // Only a box that holds nothing is cut here, and only where the room a piece stands in is a
         // fixed one: a container that fills its columns, or one that states the height its
@@ -2540,6 +2567,30 @@ internal sealed class BlockLayout
         var pieces = 0;
         var top = startInset;
 
+        // A table's repeated header and footer groups cost the column room of their own: a column after
+        // the first gives its top to the copy of the header and a column the table carries on from gives
+        // its bottom to the copy of the footer, and only what is left between them is the table's own
+        // content (CSS Tables 3 §6.1, measured: variable-fragmentainer-size-001, whose 170 of rows come
+        // out 80 / 60 / 30 in three columns of 100). Whether a table repeats at all is settled by the
+        // room it finds in its FIRST column: Chrome repeats nothing once that room falls short of twice
+        // the groups' height - measured across rooms 100 / 90 / 80 (three copies of each group) against
+        // 70 / 60 / 50 / 40 (one, with no copy in the later full columns) in build/_repeat_matrix3.html -
+        // which is why -002, whose first column keeps only 50 for the table, is drawn with nothing
+        // repeated anywhere.
+        var flowed = 0.0;
+
+        foreach (var earlier in children)
+        {
+            flowed += earlier.Fragment.Height;
+        }
+
+        var groups = repeatHead + repeatFoot;
+        var repeats = !vertical && fills && child.Kind == BoxKind.Table && groups > 0.001 &&
+            columnHeight - flowed % columnHeight >= 2 * groups - 0.001 &&
+            (left <= columnHeight - repeatFoot ||
+             1 + (Int32)Math.Ceiling((left - (columnHeight - repeatFoot)) /
+                 Math.Max(1.0, columnHeight - groups)) <= columns);
+
         while (left > 0.001)
         {
             var first = pieces == 0;
@@ -2553,8 +2604,17 @@ internal sealed class BlockLayout
             // its own and a four-hundred box to the four columns after it).
             var pushed = first && margin.Top >= columnHeight - clonedInsets;
             var headMargin = pushed || !first ? 0.0 : margin.Top;
-            var room = Math.Max(1, columnHeight - clonedInsets - headMargin);
+            var head = repeats && !first ? repeatHead : 0.0;
+            var room = Math.Max(1, columnHeight - clonedInsets - headMargin - head);
             var content = Math.Min(left, room);
+            var tail = 0.0;
+
+            if (repeats && left - content > 0.001)
+            {
+                content = Math.Min(content, Math.Max(1.0, room - repeatFoot));
+                tail = repeatFoot;
+            }
+
             var height = content + clonedInsets;
             var last = left - content <= 0.001;
 
@@ -2582,7 +2642,7 @@ internal sealed class BlockLayout
                     last ? margin.Bottom : 0,
                     margin.Left),
                 new FragmentChild(
-                    height + headMargin + (last ? margin.Bottom : 0),
+                    height + head + tail + headMargin + (last ? margin.Bottom : 0),
                     first ? before : BreakValue.Auto,
                     last ? after : BreakValue.Auto,
                     child.Style.Breaks.Inside),
@@ -2590,7 +2650,9 @@ internal sealed class BlockLayout
                 last,
                 blockExtent,
                 offset,
-                startInset: first || child.Style.ClonesDecoration ? top : 0.0));
+                startInset: first || child.Style.ClonesDecoration ? top : 0.0,
+                lead: head,
+                trail: tail));
 
             left -= content;
             offset += height;
@@ -5774,7 +5836,15 @@ internal sealed class BlockLayout
                     to = next.Line + 1;
                 }
 
-                var rect = new Rect(x + child.Margin.Left, y, width, height);
+                // The room this piece stands in, from the top of the column's flow to the bottom of what
+                // the column gave it - which for a table piece includes the strips its repeated sections
+                // are copied into, since those copies are clipped by the piece as well (CSS Tables 3
+                // §6.1, CSS Break 3 §4.3).
+                var rect = new Rect(
+                    x + child.Margin.Left,
+                    y,
+                    width,
+                    height + child.Lead + child.Trail);
                 FragmentSlice? slice = null;
 
                 // A piece cut through the box itself owns the edges that fall inside its slice, and its
@@ -5792,8 +5862,14 @@ internal sealed class BlockLayout
                     // where its content stands, and drawn only where the fragment holds it. A box that
                     // clones its decoration stands as a box of its own in each column instead, so its
                     // piece is its whole (CSS Break 3 §4.7).
+                    //
+                    // A repeated table section stands between the column's top and this piece's own
+                    // content, so the box begins that much lower while the slice says where the copied
+                    // groups begin and end: at the column's top, and at the bottom of the room the
+                    // column gave the piece (CSS Tables 3 §6.1).
                     var holds = child.Box.Children.Count > 0 && !cutClones;
-                    var whole = cutClones ? rect : new Rect(rect.X, y - child.Offset, rect.Width, child.Whole);
+                    var standing = y + child.Lead;
+                    var whole = cutClones ? rect : new Rect(rect.X, standing - child.Offset, rect.Width, child.Whole);
                     var piece = _engine.Arrange(
                         child.Box,
                         holds ? whole : rect,
@@ -5813,8 +5889,8 @@ internal sealed class BlockLayout
                             cutStarts,
                             cutEnds,
                             whole,
-                            child.Offset,
-                            height));
+                            child.Offset - child.Lead,
+                            child.Lead + height + child.Trail));
 
                     if (holds)
                     {
@@ -5827,7 +5903,8 @@ internal sealed class BlockLayout
 
                     parent.Children.Add(piece);
 
-                    y += height + child.Margin.Bottom;
+                    // The column holds the piece between the two copied groups it gives room to.
+                    y += child.Lead + height + child.Trail + child.Margin.Bottom;
                     continue;
                 }
 

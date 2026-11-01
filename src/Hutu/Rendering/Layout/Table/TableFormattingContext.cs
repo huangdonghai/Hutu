@@ -1,6 +1,7 @@
 using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using AngleSharp.Css.Dom;
 
 namespace Hutu.Rendering.Layout;
@@ -26,6 +27,15 @@ internal sealed partial class TableFormattingContext
     private const Double Epsilon = 0.0001;
 
     private readonly LayoutEngine _engine;
+
+    // The heights of the table's repeating groups, kept from the measure that completed the grid: the
+    // columns ask for them before they share the table out, and building the grid a second time to
+    // answer would settle it against whatever width and context happened to be at hand then rather
+    // than the ones the table was measured at (CSS Tables 3 §6.1).
+    private readonly ConditionalWeakTable<Box, Bands> _repeatedBands = new();
+
+    /// <summary>The height of the two groups a table repeats in each of its fragments.</summary>
+    private sealed record Bands(Double Head, Double Foot);
 
     public TableFormattingContext(LayoutEngine engine)
     {
@@ -73,6 +83,14 @@ internal sealed partial class TableFormattingContext
         var gridHeight = declared;
 
         CompleteGrid(build, contentWidth, context, gridHeight);
+
+        // The grid is complete here, which is the one place the repeating groups' heights are known at
+        // the width and context the table was measured at.
+        _repeatedBands.AddOrUpdate(
+            box,
+            new Bands(
+                SectionBand(build, role: 0)?.Height ?? 0.0,
+                SectionBand(build, role: 2)?.Height ?? 0.0));
 
         var othersHeight = build.OtherHeights.Count > 0
             ? build.OtherHeights.Sum()
@@ -263,6 +281,17 @@ internal sealed partial class TableFormattingContext
     }
 
     /// <summary>
+    /// Gets the height the table's repeating groups take in every fragment it is drawn in: the header
+    /// group that stands at each fragment's top and the footer group that stands at its bottom. The
+    /// columns ask this before they share the table out, since a repeated group is not painted over the
+    /// room the rows took - it takes room of its own (CSS Tables 3 §6.1). The measure that completed the
+    /// grid left the two heights behind; a table that has not been measured has nothing for the columns
+    /// to give up room to, which is a table they share out whole.
+    /// </summary>
+    internal (Double Head, Double Foot) RepeatedBands(Box box) =>
+        _repeatedBands.TryGetValue(box, out var bands) ? (bands.Head, bands.Foot) : (0.0, 0.0);
+
+    /// <summary>
     /// Draws the table's repeating sections again where a fragment after the first needs them: the header
     /// group at the fragment's top and, where the table goes on, the footer group at its bottom. The copy
     /// is the table laid out whole, shifted so the section stands where the fragment begins (or ends),
@@ -278,7 +307,7 @@ internal sealed partial class TableFormattingContext
         LayoutContext context,
         FragmentSlice? slice)
     {
-        if (slice is not { Offset: > 0.001, Height: > 0.001 } fragment)
+        if (slice is not { Height: > 0.001 } fragment)
         {
             return;
         }
@@ -286,7 +315,10 @@ internal sealed partial class TableFormattingContext
         var top = borderBox.Y + fragment.Offset;
         var bottom = top + fragment.Height;
 
-        if (SectionBand(build, role: 0) is { } head && head.Height <= fragment.Height + 0.001)
+        // The header group is copied where the fragment begins without it: the first fragment shows the
+        // group it really has, and a later one shows the copy at its top - which is also where the piece's
+        // own content starts once the column has given up room for the copy (CSS Tables 3 §6.1).
+        if (!fragment.Starts && SectionBand(build, role: 0) is { } head && head.Height <= fragment.Height + 0.001)
         {
             Repeat(head, top, bandAt: top);
         }

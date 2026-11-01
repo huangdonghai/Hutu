@@ -1444,3 +1444,14 @@ Hutu 的树（`build/_probe-vwm001.txt`）：容器 `60,60 92x142 vertical` 正�
 门禁按规矩不过（新增 1 个失败名），整片回滚；`git diff` 存 `build/_repeat-room.patch`（277 行），回滚后重编译并复核：`repeated-section` 回到 0 / 700 / 2000 / 0，`css-break/table` 全族与 `93d2527b` 一字相同，单测 2185 绿。
 
 下一片的两条入手点（已经排除掉的假设也记着）：(a) 段高从测量阶段带出来，别二次 `Build`；(b) 1600 是四个 400 px 方块的**位置**问题，拿 `build/look/variable-fragmentainer-size-001-{test,ref}.png` 与残差带对着量，别再猜"没画重复"。
+
+### 9.106 重复表头/表脚占栏空间落地：`variable-fragmentainer-size-001` 转绿（css-break 29 → 28）
+
+按 §9.104/§9.105 记的做法落地，四点：
+
+1. `MulticolChild` 加 `Lead`/`Trail`——本栏为重复段让出的房间。`AddBoxCut` 里 `head`（非首片）与 `tail`（表还往下走）从房间里扣：`room = columnHeight - clonedInsets - headMargin - head`，还要往下走时再 `content = min(content, room - repeatFoot)`、`tail = repeatFoot`；`Fragment.Height` = lead + content + trail（栏切片器看的），而 `offset` 只按**内容**推进。
+2. 阈值同 §9.102 量死的：`columnHeight - 已流入高度 % columnHeight >= 2*(head+foot)` 才启用；`-002`（第一栏只剩 50）因此仍走"整表不重复"那一支，一字未动 ✓。另加一条"扣完空间后片数不能超栏数"的自等式，超了就不扣（保持旧行为）。
+3. 摆放与裁剪分开，这是转绿的关键：整盒仍按 `standing = y + Lead` 平移，但**片子的 `FragmentClip` 必须是画高（lead + content + trail）而不是内容窗**。上一版把裁剪留成内容窗，`-001` 卡 1600、`text-in-nested-multicol` 还翻红 156——因为重复段的 copy 是这个片的**子节点**，父 clip 从 `y+Lead` 起就把它们整条裁掉了。`FragmentSlice` 相应传 `Offset = child.Offset - Lead`、`Height = Lead + content + Trail`，`RepeatSections` 的 `top = borderBox.Y + Offset`、`bottom = top + Height` 于是仍正好落在栏顶与栏底。
+4. `RepeatSections` 早退条件从 `Offset > 0.001` 改成只要求 `Height > 0.001`，表头 copy 改按 `!fragment.Starts` 判——**第一片也该画表脚 copy**；段高不再在栏的计划里重新 `Build`，而是 `Measure` 走完 `CompleteGrid` 后存进 `ConditionalWeakTable<Box, Bands>`，栏再问取（`LayoutEngine.TableRepeats`）。实测第二次 `Build` 不是 `text-in-nested-multicol` 翻红的原因（改完仍 156），真正原因还是第 3 点的裁剪。
+
+实测：`wpt/css-break/table/repeated-section/variable-fragmentainer-size-001.html` **转绿**（2000 → 0）。三道门禁：单测 **2185**；打印 **189/198**、九条同名；屏幕全量连跑两遍 finding 1924 → **1923**、两遍逐对像素一字不差、与 HEAD 基线相比**只有这一对消失**、**0 新增失败名**（上一版看到的 css-lists/word-break/first-line ±2..144 在复跑里归零，确认那是跑动噪声）。`css-break` 剩 **28** 对。

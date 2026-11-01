@@ -1455,6 +1455,13 @@ internal sealed record LayoutProfile(
         _positioned.Arrange(box, staticPosition, context, standing, line);
 
     /// <summary>
+    /// Gets the height the table's repeating header and footer groups take in every fragment the table is
+    /// drawn in, or nothing for a box that is not a table (CSS Tables 3 §6.1).
+    /// </summary>
+    internal (Double Head, Double Foot) TableRepeats(Box box) =>
+        box.Kind == BoxKind.Table ? _table.RepeatedBands(box) : (0.0, 0.0);
+
+    /// <summary>
     /// Gets the windows a fragmentainer of the given room cuts a wrapping row flex into: the lines it
     /// holds and where each window begins along the container's block axis (CSS Flexbox 1 §6).
     /// </summary>
