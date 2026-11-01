@@ -958,6 +958,12 @@ Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一�
 - `8ce5e4c7`：`FragmentsInColumns` 估算“需要几栏”时改回只看 `Fragment.Height`（不看 reach）。000/001 仍绿（2 栏就够），而 `gecko/flexbox/pagination/flexbox-single-column-6` 7600 → **6300**、`flexbox-single-column-2` 15150 → **14400**，其余 18 对靠近绿与 0 新增失败名不变，`wpt/css-break` 仍 39。
 - 试过后回退的假设：把分片盒的绝对子盒**移回整盒坐标**（`OversetOutOfFlow`，只移“有自身 inset 解析”的 OOF 子树，静态位置子盒不动，023 因此不受影响）。实测 `abspos-in-opacity-003` 6000、`out-of-flow-in-multicolumn-045` 10000 都**一点没动**，而 `block-end-aligned-abspos-with-overflow` 3000 → 3500 变差——说明这几对缺的不是“片段内 OOF 该用哪套坐标”，而是 OOF 子盒**自身**要被外层栏切开（它的盒要进入 `PlanMulticolRun` 的分片队列，而不是跟着包含它的块一起被裁）。回退，未提交。
 
+### 9.74 `table-border-008` 闭合：没有行的表仍按声明高度撑起表盒
+
+一行改在 `TableFormattingContext.Measure`：内容高度原先是 `网格高 + 上下 caption + 其它`，而**网格没有行可长**时 `CompleteGrid` 分不出声明高度，`height:180px` 就被丢成 0——于是表盒只剩 20（上下边框），环只框住一条空网格，整盒 320 高。改为 `max(声明高度, 网格高) + caption + 其它` 后：整盒 = 180 + 20 边框 + 300 caption = **500**，`TableBox`（ arranging 侧按 `borderBox.Height - caption` 算，无需改）= **200** ✓ 与 CSS 2.1 §17.5.3“声明高度是下限”以及 Chrome 的分片实况一致：caption 0..150 占满第一栏并在第二栏吃掉 50，表盒 150..350 切成 `50 + 100 + 50` 三片（边框按 slice 只在首片带上边、末片带下边），下 caption 继续到第五栏。实测 `table-border-008` 13100 → **0**。
+
+顺带量到一条门禁事实：全量屏幕的**失败名集合**稳定，但少数文本敏感的页在两遍之间的像素数会抖 ±1…±144（`gecko/bidi/712600-1/2`、`wpt/css-lists/inline-block-list{,-marker}`、`css-text/word-break-normal-ethiopic`、`css-pseudo/first-line-line-height-002`、`gecko/font-face/local-styled-1`、`line-edge-white-space-collapse-002`）——判断“变差”要以**名字集合**为准，单看像素增减会把噪声当成回退。两遍对照本改动都是：新增失败名 **0**、修复 `table-border-008`、`wpt/css-break` 39 → **38**、屏幕失败 2011 → **2010**、单测 2180、打印 189/198。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。

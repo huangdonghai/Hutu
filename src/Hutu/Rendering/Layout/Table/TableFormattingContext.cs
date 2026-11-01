@@ -78,7 +78,12 @@ internal sealed partial class TableFormattingContext
             ? build.OtherHeights.Sum()
             : 0.0;
 
-        var contentHeight = build.Grid.Height + build.CaptionTop + build.CaptionBottom + othersHeight;
+        // A grid with no rows to grow has nothing to take the height the table declared, and the table
+        // box is still that tall: its border and background frame the declared height, with the captions
+        // standing around it in the wrapper (CSS 2.1 §17.5.3, measured: table-border-008, a table of two
+        // captions and no rows).
+        var contentHeight = Math.Max(declared ?? 0, build.Grid.Height) + build.CaptionTop +
+            build.CaptionBottom + othersHeight;
 
         // A declared height is a floor, as CSS 2.1 §17.5.3 has it: a table asked to be shorter than its
         // rows need is as tall as the rows make it. The width answers the same way, one step further up:
