@@ -4347,8 +4347,7 @@ internal sealed class BlockLayout
         {
             if (child.Divides)
             {
-                needed = Math.Max(
-                    needed, (Int32)Math.Ceiling(Math.Max(child.Reach, child.Fragment.Height) / boxHeight - 0.001) + 1);
+                needed = Math.Max(needed, (Int32)Math.Ceiling(child.Fragment.Height / boxHeight - 0.001) + 1);
             }
             else if (child.Offset >= 0)
             {
