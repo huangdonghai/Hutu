@@ -328,11 +328,23 @@ public sealed class MulticolBoxCutTests
     private static Int32 HeadOfSecondColumn(HutuViewInternal view) =>
         Of(view, "h").Count(head => head.BorderBox.X == 100 && head.BorderBox.Y == 0);
 
-    private static String Table(String inside) =>
+    [Test]
+    public async Task ASectionTallerThanAQuarterOfTheColumnIsCopiedNowhere()
+    {
+        using var view = await Render(Table(inside: "avoid", head: 30));
+
+        // The clause that asks for the copy caps it: a repeated header or footer is only wanted where it
+        // reaches no further than a quarter of the fragmentainer's block size, so a header of 30 in a
+        // column of 100 is left where its rows stand (CSS Tables 3 §6.2, measured: build/_repthresh.html,
+        // where a header of 20 or 25 shows in every column and one of 26 shows in the first only).
+        Assert.That(HeadOfSecondColumn(view), Is.EqualTo(0), "the column keeps no copy of a header that tall");
+    }
+
+    private static String Table(String inside, Double head = 20) =>
         "<style>#c { width: 200px; columns: 2; column-gap: 0; column-fill: auto; height: 100px }" +
         " table { border-spacing: 0; width: 100px }</style>" +
         "<div id='c'><table><thead id='h' style='break-inside:" + inside + "'>" +
-        "<tr><td><div style='height:20px'></div></td></tr></thead>" +
+        "<tr><td><div style='height:" + head.ToString(System.Globalization.CultureInfo.InvariantCulture) + "px'></div></td></tr></thead>" +
         "<tbody><tr><td><div style='height:130px'></div></td></tr></tbody></table></div>";
 
     private static async Task<HutuViewInternal> Render(String content)

@@ -89,8 +89,8 @@ internal sealed partial class TableFormattingContext
         _repeatedBands.AddOrUpdate(
             box,
             new Bands(
-                RepeatedBand(build, role: 0)?.Height ?? 0.0,
-                RepeatedBand(build, role: 2)?.Height ?? 0.0));
+                RepeatedBand(build, role: 0, RepeatRoom(context, box))?.Height ?? 0.0,
+                RepeatedBand(build, role: 2, RepeatRoom(context, box))?.Height ?? 0.0));
 
         var othersHeight = build.OtherHeights.Count > 0
             ? build.OtherHeights.Sum()
@@ -319,12 +319,14 @@ internal sealed partial class TableFormattingContext
         // The header group is copied where the fragment begins without it: the first fragment shows the
         // group it really has, and a later one shows the copy at its top - which is also where the piece's
         // own content starts once the column has given up room for the copy (CSS Tables 3 §6.2).
-        if (!fragment.Starts && RepeatedBand(build, role: 0) is { } head && head.Height <= fragment.Height + 0.001)
+        var room = RepeatRoom(context, box);
+
+        if (!fragment.Starts && RepeatedBand(build, role: 0, room) is { } head && head.Height <= fragment.Height + 0.001)
         {
             Repeat(head, top, bandAt: top);
         }
 
-        if (!fragment.Ends && RepeatedBand(build, role: 2) is { } foot &&
+        if (!fragment.Ends && RepeatedBand(build, role: 2, room) is { } foot &&
             foot.Height <= fragment.Height + 0.001)
         {
             Repeat(foot, bottom - foot.Height, bandAt: bottom - foot.Height);
@@ -351,6 +353,15 @@ internal sealed partial class TableFormattingContext
     }
 
     /// <summary>
+    /// Gets the block size the fragmentainer this table stands in states for its fragments, which is the
+    /// room a repeated group is measured against: a column's height for a table that runs down the page,
+    /// its width for one whose lines run across it. Zero says nothing was stated, and a balanced
+    /// container of an automatic height comes out that way (CSS Tables 3 §6.2).
+    /// </summary>
+    private static Double RepeatRoom(LayoutContext context, Box box) =>
+        box.Flow.IsVertical ? context.ContainingBlock.Width : context.ContainingBlock.Height;
+
+    /// <summary>
     /// Gets the band the group a fragment repeats takes inside the grid, in grid coordinates, or null
     /// where the table repeats nothing of that kind. Only the group the table hoists - its first header
     /// or its first footer - is ever copied, and only when that group itself asks not to be broken: a
@@ -359,8 +370,16 @@ internal sealed partial class TableFormattingContext
     /// measured: sections-and-captions-mixed-order, whose header shows once although the table runs
     /// over four columns, against variable-fragmentainer-size-001, whose header shows in every one).
     /// A further group of the same role is body content and is not copied either.
+    /// <para>
+    /// The same clause caps what a fragment may copy: the copy is asked for only where it reaches no
+    /// further than a quarter of the fragmentainer's own block size, which is what Chrome answers for a
+    /// 20 or 25 tall header in a column a hundred tall and refuses for a 26, and repeats a 40 in a
+    /// column two hundred tall and refuses a 51 (measured: build/_repthresh.html). A fragmentainer that
+    /// states no block size - a balanced container of an automatic height - has no quarter to be a
+    /// quarter of, and the copy is asked for on the room alone.
+    /// </para>
     /// </summary>
-    private static (Double Top, Double Height)? RepeatedBand(TableBuild build, Int32 role)
+    private static (Double Top, Double Height)? RepeatedBand(TableBuild build, Int32 role, Double room)
     {
         var group = role == 0 ? build.HeadGroup : role == 2 ? build.FootGroup : null;
 
@@ -387,7 +406,20 @@ internal sealed partial class TableFormattingContext
             bottom = row.Y + row.Height;
         }
 
-        return Double.IsNaN(top) || bottom <= top ? null : (top, bottom - top);
+        if (Double.IsNaN(top) || bottom <= top)
+        {
+            return null;
+        }
+
+        var band = (Top: top, Height: bottom - top);
+
+        // A header or footer taller than a quarter of the fragmentainer is left to its own place.
+        if (room > 0.001 && band.Height > room / 4 + Epsilon)
+        {
+            return null;
+        }
+
+        return band;
     }
 
     private LayoutBox ArrangeCaption(CaptionEntry caption, Double x, Double y, Double width, LayoutContext context)

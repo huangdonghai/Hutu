@@ -1602,3 +1602,13 @@ Chrome 量的（`build/_spprobe.html` → `build/_sp-chrome.txt`，八例）：`
 不放行的原因：门禁按**新增失败名**计数，而这一改动揭穿两对**空过**的自造变体——`wpt-variants/text-spacing-trim/text-spacing-trim-colon-001-{chws,halt}-vrl` 从 0 变 6783 px。它们之前绿，是因为摆错的 abs 栏被推到 800 窗口之外、两页都画不出东西；Chrome 用同样的贴边规则且这两对 0 px 通过，所以暴露出来的是**竖排 text-spacing-trim 的栏宽缺陷**（Hutu 的栏 463.36，Chrome 512），与摆位无关。另有一对 `css-anchor-position/position-area-alignment-overflow-001` 变差 14875→15500。
 
 结论：这条与 trim 栏宽一起落（或在其之后）。判据记下：**凡是新红的对，先查它是否本来就在画空东西**（两页各跑一次 `HUTU_PROBE_PAGE`，看盒子是否落在窗口内）。
+
+### 9.120 重复表头/表脚的第二道闸：不超过分栏器块向长度的四分之一（`d1f169a5` 的后半）
+
+CSS Tables 3 §6.2 对复制表头表脚提了四个条件：页是表的 fragmentainer、**组自身写了 `break-inside: avoid`**、所需高度不超过页高的两个四分之一（表头、表脚各不超过一个四分之一）、且不会因此让同一行在一页上出现两次。前半（avoid）已在 `d1f169a5` 落地，这一片补上四分之一那道闸。
+
+Chrome 量的阈值（`build/_repthresh.html`，三栏 fill:auto）：一栏 100 高时，表头 20、25 会重复，26 不重复；一栏 200 高时，表头 40 会重复，51 不重复 —— 正是分栏器块向长度的四分之一。
+
+代码：`TableFormattingContext` 新增 `RepeatRoom(context, box)`（横排取 `ContainingBlock.Height`、竖排取 `ContainingBlock.Width`；多栏把子元素上下文换成栏盒，打印换成页内容盒），`RepeatedBand(build, role, room)` 在 avoid 之外再加 `band.Height > room / 4` 即返回 null。同一条判据同时管画（`RepeatSections`）与栏让出的房间（`Measure` 记进 `_repeatedBands` → `AddBoxCut`），所以一个过高的组既不再被复制、也不再占房间。分栏器没写块向长度（自动高度的平衡容器）时阈值为 0，闸门不开。
+
+门禁：全量 1994 finding、**0 新增失败名、0 对变差、0 对改善**（语料里没有超过四分之一的重复组）；`repeated-section/*` 与 `sections-and-captions-mixed-order`、`table-border-008` 六对全部仍无 finding；单测 **2194**（新增 `ASectionTallerThanAQuarterOfTheColumnIsCopiedNowhere`：100 高的栏里 30 高的表头不再被复制到第二栏 —— 去掉闸门该测即红）；打印 **189/198** 九条同名。按既定判据（量过、引规格、0 新增失败，即使不翻对也可落）收入本族。
