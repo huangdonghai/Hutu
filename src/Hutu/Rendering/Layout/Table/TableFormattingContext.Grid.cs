@@ -249,8 +249,9 @@ internal sealed partial class TableFormattingContext
 
         // The table's first header group is rendered before every row and its first footer after them,
         // however early or late the page writes them; any further header or footer is an ordinary body
-        // group and keeps its place. That is the HTML table model, and a page that writes its groups out
-        // of order relies on it. The whole group moves, not a row of it.
+        // group and keeps its place (CSS Tables 3 §3.1). The role is the one the display computes to, so
+        // a `div` told to be a `table-header-group` moves exactly as a `thead` does. The whole group
+        // moves, not a row of it.
         Box? head = null;
         Box? foot = null;
 
@@ -261,12 +262,12 @@ internal sealed partial class TableFormattingContext
                 continue;
             }
 
-            if (head is null && Section(group) == 0)
+            if (head is null && RoleOf(group) == 0)
             {
                 head = group;
             }
 
-            if (foot is null && Section(group) == 2)
+            if (foot is null && RoleOf(group) == 2)
             {
                 foot = group;
             }
@@ -286,7 +287,12 @@ internal sealed partial class TableFormattingContext
 
             foreach (var entry in source)
             {
-                if (!ReferenceEquals(entry.Group, head) && !ReferenceEquals(entry.Group, foot))
+                // A row of no group at all - a bare `tr`, an anonymous row made around loose content -
+                // is neither the header nor the footer, however the two of them are settled.
+                var isHead = head is not null && ReferenceEquals(entry.Group, head);
+                var isFoot = foot is not null && ReferenceEquals(entry.Group, foot);
+
+                if (!isHead && !isFoot)
                 {
                     ordered.Add(entry);
                 }
@@ -435,14 +441,6 @@ internal sealed partial class TableFormattingContext
     {
         "table-header-group" => 0,
         "table-footer-group" => 2,
-        _ => 1,
-    };
-
-    /// <summary>Gets where a row group stands in the rendering order: header, body, footer.</summary>
-    private static Int32 Section(Box? group) => group?.Element?.LocalName.ToLowerInvariant() switch
-    {
-        "thead" => 0,
-        "tfoot" => 2,
         _ => 1,
     };
 

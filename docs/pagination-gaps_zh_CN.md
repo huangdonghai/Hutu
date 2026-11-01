@@ -1175,7 +1175,16 @@ measure 侧还有一处要小心：`LineWidths` 会重新规划行，若对每�
 
 实测：`box-decoration-break-clone-009`、`flexbox/multi-line-column-flex-fragmentation-041` 转绿，`transform-006` 从 45771 降到 **7226**（变换盒有了自己的分片，但 ref 还要求每片各自算 `transform-origin`，残差仍在）。整族 +7：`CSS2/floats-clear-multicol-001` 变红——它的 ref 页 `.container`（250 高、只有空白文本子节点）因此被切，test 页同一个 `.container` 里是两个 float 加一个 `br`、高度由 float 撑出（auto），后一道门槛把它留在不切，两侧发散；再把 float 从"断点"里排除、给 float 撑高的盒子开口，仍差 9510 px（`.clear` 落点与 aqua 位置不对）。这条要靠 **block 内 float 跨栏分片**才解得掉，与 `float-009`、`float-017`、`widows-orphans-021/022`、`floats-clear-multicol-001` 是同一块。整片回滚。
 
+### 9.89 段的角色看 display，不看标签名（mixed-order 899 → 87）
 
+`table/sections-and-captions-mixed-order` 的九个 `<div style="display:table-...">` 里有两个 footer：Chrome 把"7"排在"8..13"之前，分行与不分行两种口径都量过（`build/_mo1.html`：单栏不分行时 1,2,3,4,5-6,7,8-13,14,15-20）。理由在 CSS Tables 3 §3.1：`table-header-group` 只有**第一个**当真表头（提到所有行之前），`table-footer-group` 只有**第一个**当真表尾（放到所有行之后），后面的那些按 `table-row-group` 处理、留在原处——所以 DOM 里第二个 footer"7"只是普通行组，跟着文档序走。
 
+Hutu 的排序在 `TableFormattingContext.CollectRows` 里读的是**标签名**（`thead`/`tfoot`），`display:table-header-group` 的 `div` 因此从不被提起；同一个文件里已有按 computed display 判角色的 `RoleOf`（`RepeatSections` 用它），只有排序没用。改成 `RoleOf` 后 899 → 87。
 
+**同一改动逼出的第二条规则**：重排中间那一遍原先写 `!ReferenceEquals(entry.Group, head) && !ReferenceEquals(entry.Group, foot)`，没先问 `foot` 在不在——于是"有表头、无表尾"的表里，`Group` 为 null 的行（裸 `tr`、围绕散落内容生成的匿名行）与 null 相等，整条被丢掉。实测：`table/repeated-section/text-in-nested-multicol` 由绿转红 156 px，dump 里表格从 16x220 塌成 16x20，200 高那一行不见了。补上两个守卫后恢复，与上一条同片落地。
 
+残差 87 px 全在 col3/col4 首行的"11"与"16"：Hutu 量得 15.41 宽（两个数字各 7.705），Chrome 是 16.0——数字之间的字距（pair kerning）差别，属"不追亚像素"那一档，不动。
+
+范围线：打印口径里 `PageSequence` 三处仍用 `LocalName` 判 thead/tfoot（1513、1518、1620），display 写的分片在"按页重复"那一侧还不认；那条要连带"只有第一个才重复"的语义，打印语料没有覆盖，单独一刀。
+
+门禁：屏幕全量两侧同为 1376 个失败名（**0 新增**），`mixed-order` 899 → 87；单测 2180；打印 189/198，九条同名。
