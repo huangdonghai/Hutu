@@ -1254,3 +1254,13 @@ Chrome 地面真值（逐子盒着色 + PIL 逐列扫描：`build/_c021.html`、
 三道门禁：屏幕全量 1929 条两侧同名、**0 新增失败名、0 转绿**（`overflowing-block-003` 8300 → 5000），单测 2180，打印 189/198 九条同名；`floats-clear`、`flexbox-multi-row` 模块口径与 HEAD 一致。
 
 `overflowing-block-003` 还剩 2500，全是第二个盒子：`.outer{height:0}` 套一个 100 高的普通块——Chrome 把**这个盒**也切成 50+50。试过在常规路径的填充循环里加一条"涂得比栏底还低就得切"（`used + Painted > limit` 而 `used + height <= limit` 时不整块放下），但它会顺手把 `flexbox/flex-item-content-overflow-001a/001b/002a/002b`（各 5300）打红：那四对的栏内子盒正是**由弹性容器展开来的弹性项**（`MulticolChildren` 的 `flexItems` 展开），弹性项的溢出内容按 Chrome 是不切的。加 `Box.Kind == Block` / `!Relays` 两道限定仍挡不住，因为弹性项本身就是 Block。下次要么给展开来的弹性项一个显式标记再排除，要么把这条断只放在"盒自身声明高度为 0 且超出部分来自声明了高度的普通子块"上——并且必须连 `flex-item-content-overflow-*` 一起量。
+
+### 9.95 裸壳的水平 margin 不再挡住展开：`overflowing-block-003` 转绿
+
+上一刀留下 2500 px，全在第二个盒子。两形状对照（`build/_shapeA.html` / `_shapeB.html`）说明差别只有一条：A（`.clip{height:2}` 套 150 高的块，栏高 100）被 `SpliceOverset` 展开，内容按栏切；B（`.outer{margin-right:25px; height:0}` 套 100 高的块，栏高 50）不展开——因为 `IsOversetWrapper` 与 `IsBareWrapper` 都把 `margin.Horizontal != 0` 当作"这壳有自己的边界"而拒绝。但水平 margin 只是**让位**，不是边界：Chrome 给该页的矩形是 `outer [21,53 50x0][96,53 50x0]`、`inner [21,53 50x50][96,53 50x50]`，即壳被展开、内容被切成两个 50x50，且宽度仍是 50（那 25px 的窄化必须留住）。
+
+改法两条一起：
+1. `IsOversetWrapper` 只拒绝**垂直** margin（水平 margin 允许，壳仍是"什么都不画"）；
+2. `SpliceOverset` 展开壳时把它的水平 margin **携带**到顶替它的子上（首子拿 start 边、末子拿 end 边），`MulticolChildren` 在量这个子时从 `share` 里扣掉这份携带、摆放时再把它加回 `margin`。
+
+实测：`_shapeB` 现在画 `11,11 50x50` 与 `86,11 50x50`（Chrome 同值）。门禁：屏幕全量 1929 → **1928** 条、**0 新增失败名**、**`wpt/css-break/overflowing-block-003.html` 转绿**（css-break 34 → 33）；单测 2180；打印 189/198 九条同名；`flex-item-content-overflow-*` 模块 0 失败（上一刀在填充循环里加"越界即切"时它们各红 5300，这条展开路径不碰它们）。

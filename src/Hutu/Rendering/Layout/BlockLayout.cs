@@ -1818,8 +1818,14 @@ internal sealed class BlockLayout
     /// column has to cut, and the wrapper brings nothing of its own to the cut (CSS Break 3 §4.1).
     /// </summary>
     private IReadOnlyList<Box> SpliceOverset(
-        IReadOnlyList<Box> source, Double share, LayoutContext context, Double fragmentHeight)
+        IReadOnlyList<Box> source,
+        Double share,
+        LayoutContext context,
+        Double fragmentHeight,
+        out Dictionary<Box, Thickness>? carried)
     {
+        carried = null;
+
         // Only the last member is opened: what a wrapper states in height is what the boxes after it
         // stand past, and the column keeps that room for a wrapper it does not open.
         var last = source.Count - 1;
@@ -1844,8 +1850,29 @@ internal sealed class BlockLayout
         }
 
         var members = new List<Box>(source);
+        var wrapper = members[members.Count - 1];
+        var edges = wrapper.Style.Margin.Resolve(share);
+
         members.RemoveAt(last);
-        members.AddRange(source[last].Children);
+        members.AddRange(wrapper.Children);
+
+        // What the wrapper stood aside from goes with the content it handed up: its inline margins move
+        // to the boxes that now take its place, the first from the start edge and the last from the end
+        // one, so the room the column shares out is the room the wrapper left (CSS 2.1 §10.3.3).
+        if (wrapper.Children.Count > 0 && (edges.Left != 0 || edges.Right != 0))
+        {
+            carried = new Dictionary<Box, Thickness>
+            {
+                [wrapper.Children[0]] = new Thickness(0, 0, 0, edges.Left),
+            };
+
+            var end = wrapper.Children[wrapper.Children.Count - 1];
+
+            carried[end] = carried.TryGetValue(end, out var begun)
+                ? new Thickness(0, edges.Right, 0, begun.Left)
+                : new Thickness(0, edges.Right, 0, 0);
+        }
+
         return members;
     }
 
@@ -1878,9 +1905,13 @@ internal sealed class BlockLayout
         var padding = style.Padding.Resolve(share);
         var margin = style.Margin.Resolve(share);
 
+        // A wrapper that only stands aside from one edge - a margin that narrows it rather than a border,
+        // padding or background it would paint - still lends nothing of its own to the stack: the room it
+        // leaves is carried to the content the column takes instead (measured: overflowing-block-003's
+        // second box, `.outer { margin-right: 25px; height: 0 }` around a block of 100).
         if (border.Horizontal != 0 || border.Vertical != 0 ||
             padding.Horizontal != 0 || padding.Vertical != 0 ||
-            margin.Horizontal != 0 || margin.Vertical != 0)
+            margin.Vertical != 0)
         {
             return false;
         }
@@ -1985,7 +2016,7 @@ internal sealed class BlockLayout
         var constraints = vertical
             ? MeasureConstraints.Unconstrained.WithHeight(share)
             : MeasureConstraints.FitWidth(share);
-        var source = SpliceOverset(members ?? box.Children, share, childContext, fragmentHeight);
+        var source = SpliceOverset(members ?? box.Children, share, childContext, fragmentHeight, out var carried);
 
         // A bare column flex taller than the column is fragmented between its items - and inside one
         // that does not fit - so the column is handed the items rather than the container (CSS Flexbox
@@ -2047,7 +2078,16 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            var size = _engine.Measure(child, constraints, childContext);
+            // What a lifted wrapper stood aside from comes along with the box it handed up.
+            var aside = carried is not null && carried.TryGetValue(child, out var extra)
+                ? extra
+                : Thickness.Zero;
+            var size = _engine.Measure(
+                child,
+                vertical || aside.Horizontal == 0
+                    ? constraints
+                    : MeasureConstraints.FitWidth(Math.Max(0.0, share - aside.Horizontal)),
+                childContext);
             var isFlexItem = flexItems is not null && flexItems.Contains(child);
             var used = BoxModel.UsedMargin(child.Style, share, vertical ? size.Height : size.Width);
 
@@ -2058,9 +2098,9 @@ internal sealed class BlockLayout
             // lines run down the page stands its inline margins above and below instead of beside it.
             var margin = new Thickness(
                 CollapsedStart(child, box.Flow, share),
-                vertical ? used.Bottom : used.Right,
+                vertical ? used.Bottom : used.Right + aside.Right,
                 CollapsedEnd(child, box.Flow, share),
-                vertical ? used.Top : used.Left);
+                vertical ? used.Top : used.Left + aside.Left);
             var breaks = child.Style.Breaks;
             var (before, after) = BoundaryBreaks(child);
 
