@@ -468,7 +468,8 @@ internal sealed partial class FlexFormattingContext
         Rect whole,
         Double offset,
         Double height,
-        FragmentSlice? slice)
+        FragmentSlice? slice,
+        Int32 only = -1)
     {
         var style = box.Style;
         var flex = style.Flex;
@@ -524,6 +525,12 @@ internal sealed partial class FlexFormattingContext
         var members = new List<FlexItem>();
         var shift = Double.NaN;
 
+        // A single-line row flex splits by ITEM rather than by window: each item begins at the
+        // container's own block start, so a fragmentainer that cannot hold the item where it stands
+        // takes it whole into the one after it, at the offset the main axis gave it (CSS Flexbox 1 §6,
+        // measured: single-line-row-flex-fragmentation-044). The rest of the line stays where it was.
+        var claimed = only >= 0 && only < box.Children.Count ? box.Children[only] : null;
+
         // The window runs along the block axis, whatever the main axis is: a column flex's items
         // follow one another down it, and a row flex's lines stand across it.
         var blockIsY = !box.Flow.IsVertical;
@@ -538,8 +545,11 @@ internal sealed partial class FlexFormattingContext
             // where its box stands wholly above them (CSS Fragmentation 3 §4.3).
             if (at < end - 0.001 && at + ItemReach(item, blockIsY, itemContext) > start + 0.001)
             {
-                members.Add(item);
-                shift = Double.IsNaN(shift) ? at : Math.Min(shift, at);
+                if (only < 0 || ReferenceEquals(item.Box, claimed))
+                {
+                    members.Add(item);
+                    shift = Double.IsNaN(shift) ? at : Math.Min(shift, at);
+                }
             }
         }
 

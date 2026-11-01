@@ -1484,8 +1484,9 @@ internal sealed record LayoutProfile(
         Rect whole,
         Double offset,
         Double height,
-        FragmentSlice? slice) =>
-        _flex.ArrangeFragment(box, borderBox, context, whole, offset, height, slice);
+        FragmentSlice? slice,
+        Int32 only = -1) =>
+        _flex.ArrangeFragment(box, borderBox, context, whole, offset, height, slice, only);
 
     /// <summary>Produces the geometry of a measured box inside the given border box.</summary>
     private LayoutBox ArrangeCore(

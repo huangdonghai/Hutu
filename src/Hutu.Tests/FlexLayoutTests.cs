@@ -700,6 +700,54 @@ public sealed class FlexLayoutTests
         });
     }
 
+    /// <summary>
+    /// A row flex that does not wrap sets every item at the container's own block start, so a column
+    /// with no room at all holds none of them where the container stands: each item takes a column of
+    /// its own and keeps the offset the main axis gave it, and the block-start margin that pushed an
+    /// item past the break is spent on the break rather than carried into the next column
+    /// (CSS Flexbox 1 §6, measured: wpt/css-break/flexbox/single-line-row-flex-fragmentation-044).
+    /// </summary>
+    [Test]
+    public async Task AColumnWithNoRoomTakesTheItemsOfASingleLineRowFlexOneByOne()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='columns:2; column-gap:0; column-fill:auto; height:0; width:200px'>" +
+            "<div style='display:flex; width:100px'>" +
+            "<div id='behind' style='width:50px; height:10px; margin-top:5px'></div>" +
+            "<div id='atop' style='width:50px; height:20px'></div>" +
+            "</div></div></body></html>");
+
+        var atTop = Pieces(view, "atop");
+        var behind = Pieces(view, "behind");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(atTop, Has.Count.EqualTo(1), "the item that begins at the top keeps the first column");
+            Assert.That(
+                (atTop[0].BorderBox.X, atTop[0].BorderBox.Y, atTop[0].BorderBox.Width),
+                Is.EqualTo((50.0, 0.0, 50.0)),
+                "standing where the main axis put it, and overflowing the column's end");
+            Assert.That(behind, Has.Count.EqualTo(1), "the item behind a block-start margin takes the next column");
+            Assert.That(
+                (behind[0].BorderBox.X, behind[0].BorderBox.Y),
+                Is.EqualTo((100.0, 0.0)),
+                "at that column's top, with the margin spent on the break");
+        });
+    }
+
+    /// <summary>Gets every fragment laid out for the box the page carries the given id on.</summary>
+    private static List<LayoutBox> Pieces(HutuViewInternal view, String id)
+    {
+        var root = view.Layout?.Root;
+
+        Assert.That(root, Is.Not.Null, "the document produced no layout");
+
+        return Walk(root!).Where(node => node.Source.Element?.GetAttribute("id") == id).ToList();
+    }
+
     private static HutuViewInternal CreateView(int viewportWidth)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

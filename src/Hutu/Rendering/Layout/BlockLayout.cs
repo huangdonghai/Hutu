@@ -1305,6 +1305,52 @@ internal sealed class BlockLayout
         return true;
     }
 
+    /// <summary>Gets the band each item of a single-line row flex claims along the container's block
+    /// axis, ordered as the fragments are to be filled, when the fragmentainer has no room at all for
+    /// any of them where the container stands; null for any other shape (CSS Flexbox 1 §6).</summary>
+    private List<(Int32 Item, Double From, Double To)>? ItemBandsForEmptyRoom(
+        Box child,
+        Boolean vertical,
+        Boolean fills,
+        Boolean nested,
+        Double share,
+        Double room,
+        LayoutContext context)
+    {
+        var flex = child.Style.Flex;
+
+        if (vertical || child.Flow.IsVertical || nested || !fills || room > 0.001 ||
+            child.Kind != BoxKind.Flex || !flex.IsRow || flex.Wraps || child.Children.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var item in child.Children)
+        {
+            if (!item.IsBlockLevel || PositionedLayout.IsOutOfFlow(item) || IsFloat(item) ||
+                Fragmentainer.Forced(item.Style.Breaks.Before) ||
+                Fragmentainer.Forced(item.Style.Breaks.After))
+            {
+                return null;
+            }
+        }
+
+        var bands = new List<(Int32, Double, Double)>();
+
+        for (var index = 0; index < child.Children.Count; index++)
+        {
+            var item = child.Children[index];
+            var size = _engine.Measure(item, MeasureConstraints.FitWidth(share), context);
+            var margin = BoxModel.UsedMargin(item.Style, share, size.Width);
+
+            bands.Add((index, margin.Top, margin.Top + BlockExtentOf(size, vertical)));
+        }
+
+        return bands.OrderBy(band => band.Item2).ThenBy(band => band.Item1)
+            .Select(band => (band.Item1, band.Item2, band.Item3))
+            .ToList();
+    }
+
     /// <summary>Gets how far a box's out-of-flow descendants reach below its own top, which is how
     /// long a column has to carry the box before the content is spent. A box that names no offset
     /// stands where the flow would have left it, so the content before it is counted in; a fixed one
@@ -1542,7 +1588,8 @@ internal sealed class BlockLayout
             IReadOnlyList<PieceUnit>? breaks = null,
             Double reach = 0,
             Double lead = 0,
-            Double trail = 0)
+            Double trail = 0,
+            Int32 item = -1)
         {
             Box = box;
             Size = size;
@@ -1559,6 +1606,7 @@ internal sealed class BlockLayout
             Reach = reach > 0 ? reach : fragment.Height;
             Lead = lead;
             Trail = trail;
+            Item = item;
         }
 
         public Box Box { get; }
@@ -1624,6 +1672,11 @@ internal sealed class BlockLayout
 
         /// <summary>Gets the room a repeated footer group costs at the bottom of this piece's column.</summary>
         public Double Trail { get; }
+
+        /// <summary>Gets which item of a row flex this piece paints, or -1 for a piece that holds the
+        /// container's own window: a single-line row flex splits by item, since every item begins at the
+        /// container's block start and none of them re-flows into the fragmentainer after it.</summary>
+        public Int32 Item { get; }
 
         /// <summary>
         /// Gets the border box height the child would have had unbroken, for a piece of a broken child.
@@ -2353,6 +2406,47 @@ internal sealed class BlockLayout
             }
 
             var extent = BlockExtentOf(size, vertical);
+
+            // A row flex that does not wrap sets every item at the container's own block start, so a
+            // fragmentainer with no room at all can hold none of them where the container stands: each
+            // item then takes a fragmentainer of its own, in the order their block starts fall, and
+            // keeps the place the main axis gave it - nothing re-flowes, and the fill does not go
+            // looking for columns for ever (CSS Flexbox 1 §6, measured:
+            // single-line-row-flex-fragmentation-044, where the item that begins at the top stays in
+            // the first column and overflows it, and the one behind a five-pixel block-start margin
+            // begins the next, standing at its top with that margin spent on the break).
+            if (ItemBandsForEmptyRoom(
+                    child, vertical, box.Style.Multi.Fills, context.InFragmentainer,
+                    share, fragmentHeight, childContext) is { Count: > 0 } bands)
+            {
+                for (var index = 0; index < bands.Count; index++)
+                {
+                    var (claimed, from, to) = bands[index];
+                    var ends = index == bands.Count - 1;
+
+                    children.Add(new MulticolChild(
+                        child,
+                        size,
+                        new Thickness(
+                            from > 0.001 ? 0 : margin.Top,
+                            margin.Right,
+                            ends ? margin.Bottom : 0,
+                            margin.Left),
+                        new FragmentChild(
+                            to - from,
+                            index == 0 ? before : BreakValue.Column,
+                            ends ? after : BreakValue.Auto,
+                            breaks.Inside),
+                        -1,
+                        ends,
+                        whole: BlockExtentOf(size, vertical),
+                        offset: from,
+                        relays: true,
+                        item: claimed));
+                }
+
+                continue;
+            }
 
             // A wrapping row flex is cut window by window: each window begins at the first line the one
             // before it could not hold, so a gap the break fell in is dropped rather than kept whole.
@@ -5843,7 +5937,8 @@ internal sealed class BlockLayout
                         windowWhole,
                         child.Offset,
                         windowHeight,
-                        windowSlice);
+                        windowSlice,
+                        child.Item);
 
                     // A window is one fragmentainer's: a line a break cut through stands above the next
                     // window and is not drawn here, so what the window holds is clipped to its own box
@@ -5897,7 +5992,8 @@ internal sealed class BlockLayout
                                     flexPadding.Left),
                                 flexStarts,
                                 portion.Last,
-                                flexWhole)));
+                                flexWhole,
+                                child.Item)));
 
                         y += portion.Height + flexEdge + (portion.Last ? child.Margin.Bottom : 0);
                         continue;
@@ -5986,7 +6082,9 @@ internal sealed class BlockLayout
                 // The room this piece stands in, from the top of the column's flow to the bottom of what
                 // the column gave it - which for a table piece includes the strips its repeated sections
                 // are copied into, since those copies are clipped by the piece as well (CSS Tables 3
-                // §6.1, CSS Break 3 §4.3).
+                // §6.1, CSS Break 3 §4.3). A piece that shows only its own band of the box - one item
+                // of a row flex - begins where that band begins, because the strip above it belongs to
+                // the item before it, in the fragmentainer before this one (CSS Flexbox 1 §6).
                 var rect = new Rect(
                     x + child.Margin.Left,
                     y,

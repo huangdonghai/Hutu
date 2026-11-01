@@ -1501,3 +1501,15 @@ legend 单独立了排除（HTML rendering §15.3.12 由 fieldset 自己贴边�
 3. **`single-line-row-flex-fragmentation-044`（1000）** —— 不用量 Chrome，ref 自己就是答案：`orange left:50`（留在第一栏）+ `pink left:100`（进第二栏、且 margin-top 被断点吃掉）⇒ **每个 item 保有自己的主流向内偏移，只是被分到不同栏**。现在的 `_flex.Windows` 返回的是 cross 轴分带 `(Offset, Height, Cut)`，表达不了"按 item 分栏"；要给 relays 一条 item 级窗口 + 目标栏的通道（并把 `room <= 0` 的拒绝改掉——本对的容器 `height:0`）。
 
 三条都已立成任务：#12（abs 内容重排）、#14（变换片段的裁剪空间与原点）、#15（单行 row flex 按 item 分栏）。
+
+### 9.111 单行 row flex 按 item 分栏落地：`single-line-row-flex-fragmentation-044` 转绿（css-break 27 → 26）
+
+判据（`ItemBandsForEmptyRoom`）：横排、非嵌套、`column-fill:auto`、`fragmentHeight <= 0`、`Kind == Flex && Flex.IsRow && !Wraps`、子里全是流内块且不带强制断 ⇒ 交出每个 item 沿块轴的带 `[margin-top, margin-top + height]`，按带起点升序。这就是 §9.98.3 当初立的口径："块起点（含 margin）已越过 fragmentainer 末端的项从下一栏起站，起点还在房间内的项留下并溢出"。
+
+一片一个 item：`MulticolChild(offset = 带起点, whole = 容器块轴向长度, relays = true, item = 序号)`，片高 = 带高；**除首片外每片带 `break-before: column`**。第二点是最先踩的坑：不加强制栏断时两片会被同一栏吞下（零高栏的"每栏至少推进一个"规则让它们挤在 x=13），差分从 1000 变 2000。
+
+新的 `item` 通道（`FlexFormattingContext.ArrangeFragment(..., Int32 only)`）在窗口挑成员时只留 `box.Children[only]` 那一个。必须是"同一个布局、每片只画一个 item"，**不能靠裁剪分离**：单行 row flex 里各 item 的块轴向带互相重叠（pink [5,15] 落在 orange [0,20] 里），任何矩形裁剪都分不开 —— 先前给 `MulticolChild` 加 `Lead` 平移裁剪窗的做法（已回退）就是撞在这上面。两个 relay 调用点（窗口片 / portion 片）都把 `child.Item` 往下传，缺一处就会出现"两片都画整条 flex"。
+
+结果：橙（起点 0）留第一栏 x=50 并越过栏底，粉（起点 5）进第二栏顶格 x=100、margin 花在断点上，与 ref 的 `left:50 / left:100` 逐值相同。
+
+三道门禁：单测 **2186**（新增 `FlexLayoutTests.AColumnWithNoRoomTakesTheItemsOfASingleLineRowFlexOneByOne` 钉住这条）；打印 **189/198**、九条同名；屏幕全量 1923 → **1921**、**0 新增失败名**、**0 对变差**（GREW 为空），且 `abspos-in-opacity-003` 在这次全量里仍绿；flex 命名集单模块复跑除 044 消失外一字不差 ⇒ 触发面足够窄。
