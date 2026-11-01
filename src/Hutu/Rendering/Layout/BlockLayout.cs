@@ -2052,13 +2052,15 @@ internal sealed class BlockLayout
                     childContext,
                     fragmentHeight);
 
-                // A container that takes its block size from its lines is cut only where a line holds a
-                // single item: a line with several of them would have to be split at the break, which
-                // the windows do not do yet (measured:
-                // gecko/flexbox/pagination/flexbox-multi-row-1a against multi-line-row-flex-fragmentation-065).
+                // A container that takes its block size from its lines is cut where a line holds a
+                // single item, and where a window cuts a line in two and the window after it carries
+                // the rest: a line of several items that the break falls between goes whole to the
+                // next window (measured: gecko/flexbox/pagination/flexbox-multi-row-1a against
+                // multi-line-row-flex-fragmentation-065, and -093 for the window that cuts a line).
                 var autoBlock = BlockSizeIsAuto(child, vertical);
 
-                if (windows.Count > 1 && (!autoBlock || windows.Count == child.Children.Count))
+                if (windows.Count > 1 &&
+                    (!autoBlock || windows.Count == child.Children.Count || windows.Any(static w => w.Cut)))
                 {
                     for (var index = 0; index < windows.Count; index++)
                     {

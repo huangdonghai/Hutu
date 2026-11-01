@@ -1458,7 +1458,7 @@ internal sealed record LayoutProfile(
     /// Gets the windows a fragmentainer of the given room cuts a wrapping row flex into: the lines it
     /// holds and where each window begins along the container's block axis (CSS Flexbox 1 §6).
     /// </summary>
-    internal IReadOnlyList<(Double Offset, Double Height)> FlexWindows(
+    internal IReadOnlyList<(Double Offset, Double Height, Boolean Cut)> FlexWindows(
         Box box,
         Rect borderBox,
         LayoutContext context,

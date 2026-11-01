@@ -253,14 +253,15 @@ internal sealed partial class FlexFormattingContext
     /// are taken in the order they stand, as many to a window as the room holds; a gap a break falls in
     /// is truncated, so the line after it stands at the top of the window after (CSS Flexbox 1 §6).
     /// </summary>
-    /// <returns>Each window's start in the container's content coordinates and the room it takes.</returns>
-    public IReadOnlyList<(Double Offset, Double Height)> Windows(
+    /// <returns>Each window's start in the container's content coordinates, the room it takes, and
+    /// whether it ends by cutting a line in two rather than at the gap before it.</returns>
+    public IReadOnlyList<(Double Offset, Double Height, Boolean Cut)> Windows(
         Box box,
         Rect borderBox,
         LayoutContext context,
         Double room)
     {
-        var windows = new List<(Double Offset, Double Height)>();
+        var windows = new List<(Double Offset, Double Height, Boolean Cut)>();
         var style = box.Style;
         var flex = style.Flex;
 
@@ -335,7 +336,7 @@ internal sealed partial class FlexFormattingContext
             if (index < lines.Count && end > start && lines[index].Start < start + room - 0.001)
             {
                 carry = start + room - lines[index].Start;
-                windows.Add((start, room));
+                windows.Add((start, room, true));
                 continue;
             }
 
@@ -352,10 +353,105 @@ internal sealed partial class FlexFormattingContext
             // A window is a fragmentainer's: its box is the whole room, even where the lines it holds
             // end before it, which is what lets the container's background fill the column to its foot
             // (measured: multi-line-row-flex-fragmentation-065).
-            windows.Add((start, room));
+            windows.Add((start, room, false));
+        }
+
+        // An item whose content hangs below its own box leaves the columns more to show after the
+        // lines are spent, and the windows go on until that part is spent too (CSS Fragmentation 3
+        // §4.3, measured: multi-line-row-flex-fragmentation-093).
+        if (!box.Flow.IsVertical)
+        {
+            var reach = 0.0;
+
+            foreach (var item in plan.Items)
+            {
+                reach = Math.Max(reach, item.OffsetY + ItemReach(item, true, itemContext));
+            }
+
+            for (var spent = windows.Count > 0 ? windows[^1].Offset + room : 0.0;
+                 spent < reach - 0.001;
+                 spent += room)
+            {
+                windows.Add((spent, room, false));
+            }
         }
 
         return windows;
+    }
+
+    /// <summary>
+    /// Gets how far a flex item reaches along the container's block axis, counted from the item's own
+    /// start: its box where that holds all it shows, and further where a descendant hangs past a box
+    /// that does not clip it, which is the length the pieces after this one still carry (CSS
+    /// Fragmentation 3 §4.3). Only the horizontal block axis is reached through: a vertical container
+    /// is not cut window by window yet.
+    /// </summary>
+    private Double ItemReach(FlexItem item, Boolean blockIsY, LayoutContext context)
+    {
+        var own = blockIsY ? item.BorderBoxHeight : item.BorderBoxWidth;
+
+        if (!blockIsY || item.Box.Style.ClipsOverflow)
+        {
+            return own;
+        }
+
+        return Math.Max(own, ChildrenReach(item.Box, item.BorderBoxWidth, own, context));
+    }
+
+    /// <summary>
+    /// Gets how far a box's children reach along its block axis, counted from the top of its border
+    /// box, or zero where the box does not stack its children in that axis and so shows nothing here.
+    /// A box keeps its own size where it clips what it holds; otherwise it keeps the furthest bottom
+    /// any child of it paints, which is past the box wherever a declared height left the content no
+    /// room to stand.
+    /// </summary>
+    private Double ChildrenReach(Box box, Double inlineSize, Double blockSize, LayoutContext context)
+    {
+        if (box.Kind != BoxKind.Block || box.Flow.IsVertical)
+        {
+            return 0;
+        }
+
+        foreach (var child in box.Children)
+        {
+            if (!PositionedLayout.IsOutOfFlow(child) && !child.IsBlockLevel)
+            {
+                return 0;
+            }
+        }
+
+        var basis = context.ContainingBlock.Width;
+        var border = BlockLayout.BorderOf(box);
+        var padding = box.Style.Padding.Resolve(basis);
+        var contentInline = Math.Max(0, inlineSize - border.Horizontal - padding.Horizontal);
+        var childContext = context.ForContainingBlock(new Size(
+            contentInline,
+            Math.Max(0, blockSize - border.Vertical - padding.Vertical)));
+        var reach = 0.0;
+        var cursor = 0.0;
+        var start = border.Top + padding.Top;
+
+        foreach (var child in box.Children)
+        {
+            if (PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            var size = _engine.Measure(child, MeasureConstraints.FitWidth(contentInline), childContext);
+            var margin = BoxModel.UsedMargin(child.Style, basis, size.Width);
+            var top = start + cursor + margin.Top;
+
+            cursor = top - start + size.Height + margin.Bottom;
+
+            reach = Math.Max(
+                reach,
+                top + (child.Style.ClipsOverflow
+                    ? size.Height
+                    : Math.Max(size.Height, ChildrenReach(child, size.Width, size.Height, childContext))));
+        }
+
+        return reach;
     }
 
     /// <summary>
@@ -435,11 +531,12 @@ internal sealed partial class FlexFormattingContext
         foreach (var item in plan.Items)
         {
             var at = blockIsY ? item.OffsetY : item.OffsetX;
-            var size = blockIsY ? item.BorderBoxHeight : item.BorderBoxWidth;
 
             // An item the window falls over belongs to it, including one the window before it was cut
-            // through: that one stands above the window's top and only its tail shows.
-            if (at < end - 0.001 && at + size > start + 0.001)
+            // through: that one stands above the window's top and only its tail shows. An item whose
+            // content hangs past its own box belongs to the windows that carry the hanging part, even
+            // where its box stands wholly above them (CSS Fragmentation 3 §4.3).
+            if (at < end - 0.001 && at + ItemReach(item, blockIsY, itemContext) > start + 0.001)
             {
                 members.Add(item);
                 shift = Double.IsNaN(shift) ? at : Math.Min(shift, at);
