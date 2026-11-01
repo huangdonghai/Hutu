@@ -939,6 +939,16 @@ Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一�
 - 还差两条：①被切盒的**片段绘制范围按“内容 reach”**（140-70=70，故第二片的裁剪是 70 而不是盒自身的 10），而**后续兄弟的流前进量仍按盒自身的 80**（子盒2 = 80-40 → 栏内 -30）；②栏的裁剪只在块尾方向生效，块首之上溢出照画（Hutu 的 `FragmentClip` 是整窗矩形，会把 -30..0 裁掉）。
 - 这两条与 `abspos-in-opacity-003`／OOF 流坐标簇同源（也是“绘制 extent ≠ 流 extent”），要一起做才可能翻绿；`widows-orphans-021/022` 还多一条“栏内有 float 时的单元排序”。
 
+### 9.71 `overflowed-block-with-no-room-after-000/001` 闭合：片段的绘制范围按内容 reach，流的前进量按盒自身高度
+
+§9.70 量到的两条缺口一起补上后转绿。做法：
+
+1. **允许切**：`MulticolChildren` 里先算 `PieceBreaks`（单元终点），普通块盒只要单元可枚举（无 float、无行内、无强制断点、`break-inside` 不 avoid、块向 margin 为 0、非嵌套栏内、横排）就允许被栏切开——判据是“**栏放不下就得在单元之间落点**”，不是“盒自己比栏高”。
+2. **绘制与推进分离**：`MulticolChild.Reach`（片段可画到的深度 = max(盒高, 最后一个单元终点)）与 `Fragment.Height`（流前进量 = 盒自身）分成两个数；`PlanMulticolRun` 用 `Painted()` 决定 `take`/`last`，用 `Held()` 给出 `MulticolPiece.Cursor`，`ArrangeMulticolRun` 的 `y` 按 Cursor 前进、`FragmentClip` 仍按 `take`。于是 000 的 80 高盒（内含 140）在 70 高的两栏里画成 `0..70` + `70..140`，而 `margin-top:-40` 的后继盒落在第二栏**上方** -30..0 并照常可见（整盒片段才裁剪，整块片段不裁）。
+3. `FragmentsInColumns` 里“需要几栏”的估算同步用 `max(Reach, Fragment.Height)`。
+
+实测：000/001 **8000 → 0**。18 对同时大幅靠近绿：`gecko/flexbox/pagination/flexbox-{single,multi}-column-1a..1f` 37600 → 14450、`-single-column-2` 22450 → 15150、`gecko/pagination/border-breaking-000-cols` 52500 → 7500、`-003-cols` 6450 → 2700、`css-align/blocks/align-content-block-break-overflow-010` 109932 → 64780、`css-multicol/column-rule-002` 3600 → 2400、`multicol-list-item-008` 781 → 756 等。**三对变差但仍在红**：`gecko/flexbox/pagination/flexbox-single-column-6` 1050 → 7600、`gecko/pagination/border-breaking-001-cols` 46000 → 76000、`css-anchor-position/anchor-position-multicol-nested-001` 5540 → 5700——收紧判据（只允许“内容比盒自身还长”的盒被切）能保住这两对的原值，但那样 001 的外层自动高盒就不再被切、且 `flexbox-single-column-2` 等 16 对的改进全部消失，故取“通用可切”这一条，把这三对记为后续要按单元终点细分的靶子。全量屏幕 2013 → 2011、新增失败名 **0**（`wpt/css-break` 41 → 39）；单测 2180；打印 189/198。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。

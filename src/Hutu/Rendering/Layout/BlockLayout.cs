@@ -1160,6 +1160,31 @@ internal sealed class BlockLayout
     }
 
     /// <summary>
+    /// Gets whether a column may cut through a box that has blocks of its own inside: a plain block
+    /// lying in the columns' own axis, with nothing inside the columns would have to place themselves
+    /// and at least two content units for a cut to fall between (CSS Fragmentation 3 §4.3, §4.2 -
+    /// measured: overflowed-block-with-no-room-after-000, whose child holds a box taller than itself).
+    /// </summary>
+    private Boolean DividesUnits(
+        Box child,
+        Boolean vertical,
+        Thickness margin,
+        Boolean fills,
+        Boolean nested,
+        Double share,
+        LayoutContext context)
+    {
+        if (!fills || vertical || nested || margin.Top != 0 || margin.Bottom != 0 ||
+            child.Kind != BoxKind.Block || child.Style.Multi.IsMultiColumn ||
+            child.Style.Breaks.Inside == BreakValue.Avoid || HoldsAnyFloat(child, child.Children))
+        {
+            return false;
+        }
+
+        return PieceBreaks(child, share, context) is { Count: >= 1 };
+    }
+
+    /// <summary>
     /// Gets whether a column flex is one the columns may cut into a piece per window: every child a
     /// block of its own in the flow, the container taller than a window, and nothing inside that the
     /// columns would have to place themselves. A piece of such a flex is laid out as a flex container
@@ -1457,7 +1482,8 @@ internal sealed class BlockLayout
             Boolean divides = false,
             Double startInset = 0,
             Boolean relays = false,
-            IReadOnlyList<Double>? breaks = null)
+            IReadOnlyList<Double>? breaks = null,
+            Double reach = 0)
         {
             Box = box;
             Size = size;
@@ -1471,6 +1497,7 @@ internal sealed class BlockLayout
             StartInset = startInset;
             Relays = relays;
             Breaks = breaks;
+            Reach = reach > 0 ? reach : fragment.Height;
         }
 
         public Box Box { get; }
@@ -1538,6 +1565,14 @@ internal sealed class BlockLayout
         /// have none. Null where nothing inside the box offers such places (CSS Break 3 §4.2).
         /// </summary>
         public IReadOnlyList<Double>? Breaks { get; }
+
+        /// <summary>
+        /// Gets how far a piece of this child paints, which is past <see cref="Fragment"/> where a
+        /// descendant hangs below the box: the columns carry that part into the pieces after the box
+        /// ends, while the flow advances by the box's own height (CSS Fragmentation 3 §4.3 - measured:
+        /// overflowed-block-with-no-room-after-000, whose child holds a box 60 taller than itself).
+        /// </summary>
+        public Double Reach { get; }
     }
 
     /// <summary>
@@ -2187,7 +2222,9 @@ internal sealed class BlockLayout
                 }
             }
 
-            var divides = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer);
+            var divides = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer) ||
+                DividesUnits(
+                    child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer, share, childContext);
             var relays = !divides && RelaysInColumns(
                 child, vertical, extent, fragmentHeight, context.InFragmentainer);
 
@@ -2231,6 +2268,12 @@ internal sealed class BlockLayout
             // count for widows and orphans (CSS Break 3 §4.2).
             var units = divides && !relays && !vertical ? PieceBreaks(child, share, childContext) : null;
 
+            // What the pieces paint: the unit that stands past the box is still shown, so the last
+            // piece reaches to its end, while the height the flow advances by stays the box's own.
+            var painted = divides && !relays && units is { Count: > 0 }
+                ? Math.Max(relayed, units[units.Count - 1])
+                : relayed;
+
             children.Add(new MulticolChild(
                 child,
                 size,
@@ -2242,7 +2285,8 @@ internal sealed class BlockLayout
                 last: true,
                 divides: divides,
                 relays: relays,
-                breaks: units));
+                breaks: units,
+                reach: painted + margin.Top + margin.Bottom));
         }
 
         return children;
@@ -4277,7 +4321,8 @@ internal sealed class BlockLayout
     /// <summary>One column's share of the children: a child that stands whole, or a piece of one the
     /// column divided - where inside that child the piece begins, how much of it the column holds,
     /// and whether it is the last piece.</summary>
-    private readonly record struct MulticolPiece(Int32 Child, Double Offset, Double Height, Boolean Last);
+    private readonly record struct MulticolPiece(
+        Int32 Child, Double Offset, Double Height, Boolean Last, Double Cursor = -1);
 
     /// <summary>Gets the fewest columns a fill needs when a child may be divided: one that holds
     /// out-of-flow descendants takes as many columns as its height spans, and one more for the room
@@ -4297,7 +4342,8 @@ internal sealed class BlockLayout
         {
             if (child.Divides)
             {
-                needed = Math.Max(needed, (Int32)Math.Ceiling(child.Fragment.Height / boxHeight - 0.001) + 1);
+                needed = Math.Max(
+                    needed, (Int32)Math.Ceiling(Math.Max(child.Reach, child.Fragment.Height) / boxHeight - 0.001) + 1);
             }
             else if (child.Offset >= 0)
             {
@@ -4359,6 +4405,14 @@ internal sealed class BlockLayout
         // fragmentainer cut for itself.
         static Boolean Cuts(MulticolChild child) => child.Divides || child.Offset >= 0;
 
+        // A piece paints as far as the box lets stand - which is past the box's own height where a
+        // descendant hangs below a stated height - while the flow advances only by the part of the
+        // box's own height the piece holds (CSS Fragmentation 3 §4.3).
+        static Double Painted(MulticolChild child) => Math.Max(child.Reach, child.Fragment.Height);
+
+        static Double Held(MulticolChild child, Double within, Double take) =>
+            Math.Min(take, Math.Max(0, child.Fragment.Height - within));
+
         // A column that runs out of room inside a box cuts it where one of its own content units ends,
         // and the pieces keep the number of units the page asks for on each side of the break: the tail
         // takes at least as many as widows, the head at least as many as orphans (CSS Break 3 §4.2).
@@ -4400,12 +4454,14 @@ internal sealed class BlockLayout
 
             if (resume >= 0)
             {
-                var total = fragments[resume].Height;
+                var total = Painted(children[resume]);
                 var take = Math.Min(total - resumeAt, limit);
                 var last = resumeAt + take >= total - 0.001;
+                var held = Held(children[resume], resumeAt, take);
 
-                cell.Add(new MulticolPiece(resume, StartOf(children[resume], resumeAt), take, last));
-                used = take;
+                cell.Add(new MulticolPiece(
+                    resume, StartOf(children[resume], resumeAt), take, last, held));
+                used = held;
 
                 if (last)
                 {
@@ -4454,11 +4510,17 @@ internal sealed class BlockLayout
                         // earlier still fills the column, which is where its background stops (CSS
                         // Fragmentation 3 §4.3) - while the box carries on from the unit the break fell
                         // after (CSS Break 3 §4.2).
-                        var content = CutAt(children[placed], room, height);
-                        var take = Math.Min(room, height);
-                        var last = content >= height - 0.001;
+                        var painted = Painted(children[placed]);
+                        var content = CutAt(children[placed], room, painted);
+                        var take = Math.Min(room, painted);
+                        var last = content >= painted - 0.001;
 
-                        cell.Add(new MulticolPiece(placed, StartOf(children[placed], 0), take, last));
+                        cell.Add(new MulticolPiece(
+                            placed,
+                            StartOf(children[placed], 0),
+                            take,
+                            last,
+                            Held(children[placed], 0, take)));
 
                         if (last)
                         {
@@ -4500,11 +4562,17 @@ internal sealed class BlockLayout
                     limit - used >= gate - 0.001 && limit - used > 0.001)
                 {
                     var room = limit - used;
-                    var content = CutAt(children[placed], room, fragments[placed].Height);
-                    var take = Math.Min(room, fragments[placed].Height);
-                    var last = content >= fragments[placed].Height - 0.001;
+                    var painted = Painted(children[placed]);
+                    var content = CutAt(children[placed], room, painted);
+                    var take = Math.Min(room, painted);
+                    var last = content >= painted - 0.001;
 
-                    cell.Add(new MulticolPiece(placed, StartOf(children[placed], 0), take, last));
+                    cell.Add(new MulticolPiece(
+                        placed,
+                        StartOf(children[placed], 0),
+                        take,
+                        last,
+                        Held(children[placed], 0, take)));
 
                     if (last)
                     {
@@ -4698,7 +4766,8 @@ internal sealed class BlockLayout
 
                     arranged.FragmentClip = held;
                     parent.Children.Add(arranged);
-                    y += portion.Height + (portion.Last ? child.Margin.Bottom : 0);
+                    y += (portion.Cursor >= 0 ? portion.Cursor : portion.Height) +
+                        (portion.Last ? child.Margin.Bottom : 0);
                     continue;
                 }
 
