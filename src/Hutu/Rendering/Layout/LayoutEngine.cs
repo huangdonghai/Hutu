@@ -1310,7 +1310,11 @@ internal sealed record LayoutProfile(
 
         if (hasTransform || hasOffset)
         {
-            var frame = layout.BorderBox;
+            // A piece of a box the fragmentainer divided turns about its OWN corner: the transform's
+            // reference box is the stretch of the box this piece holds, not the whole it was cut from
+            // (CSS Transforms 1 §transform-origin, CSS Fragmentation 3 §4.1, measured: transform-006,
+            // whose fragments each stand rotated about the bottom right of their own column's stretch).
+            var frame = slice?.Piece is { } piece ? piece : layout.BorderBox;
             var dimensions = box.Style.Dimensions;
             var fontSize = box.Style.FontSize;
 
@@ -1384,7 +1388,7 @@ internal sealed record LayoutProfile(
             // block, so it is marked for the painter even when the matrix is an identity (a
             // translate(0,0)): the wrapping is what keeps its out-of-flow descendants inside it.
             layout.Transform = matrix;
-            layout.TransformOrigin = new Offset(originLeft - frame.X, originTop - frame.Y);
+            layout.TransformOrigin = new Offset(originLeft - layout.BorderBox.X, originTop - layout.BorderBox.Y);
 
             // A plane turned away from the viewer is seen from behind, which is what a box with
             // backface-visibility: hidden is not drawn at all for. A matrix that cannot be undone has no

@@ -91,7 +91,8 @@ internal readonly record struct FragmentSlice(
     Boolean Ends,
     Rect Whole,
     Double Offset = 0,
-    Double Height = 0);
+    Double Height = 0,
+    Rect? Piece = null);
 
 /// <summary>
 /// Works out how many of a block's children a fragment takes (CSS Break 3 §4.1-4.4): a child that does

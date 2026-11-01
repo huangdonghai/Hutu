@@ -1513,3 +1513,19 @@ legend 单独立了排除（HTML rendering §15.3.12 由 fieldset 自己贴边�
 结果：橙（起点 0）留第一栏 x=50 并越过栏底，粉（起点 5）进第二栏顶格 x=100、margin 花在断点上，与 ref 的 `left:50 / left:100` 逐值相同。
 
 三道门禁：单测 **2186**（新增 `FlexLayoutTests.AColumnWithNoRoomTakesTheItemsOfASingleLineRowFlexOneByOne` 钉住这条）；打印 **189/198**、九条同名；屏幕全量 1923 → **1921**、**0 新增失败名**、**0 对变差**（GREW 为空），且 `abspos-in-opacity-003` 在这次全量里仍绿；flex 命名集单模块复跑除 044 消失外一字不差 ⇒ 触发面足够窄。
+
+### 9.112 带块向 margin 的盒也能被栏按单元切开，片各自的矩形成了变换原点：transform-006 45771 → 30376、transform-008 19929 → 10531
+
+三条一起才动（分开都不够）：
+
+1. **`DividesUnits` 不再因 `margin.Top != 0` 拒绝**。旧排除写的是"margin 从首片占掉多少房间这里还没算"——而房间算法早就有了（`AddBoxCut` 的 `headMargin` / `pushed`）。放开后 006 的 `.transformed`（`margin-top:50; height:175`）不再整块站在第一栏，而是切成 4 片，与 ref 的四个假栏一一对应。
+2. **片自己的矩形成了变换的 reference 盒**：`FragmentSlice` 加 `Rect? Piece`，两处切片站点把 `rect`/`held` 传进去；`LayoutEngine` 的变换块用 `slice.Piece ?? BorderBox` 解析 `transform-origin`、translate 的百分比与 offset-path，并把 `layout.TransformOrigin` 一律按 `layout.BorderBox` 存偏移（Painter 仍用 `BorderBox + TransformOrigin` 取绝对点，两者不然大就错位）。CSS Transforms 1 §transform-origin 读 CSS Fragmentation 3 §4.1：每片绕自己的 right-bottom 转。
+3. **栏给盒的房间要先让出它自己的块向起始 margin**：`room = limit - (used - height) - children[placed-1].Margin.Top`（CSS 2.1 §8.3.1：margin 在盒开始处花一次，不是每片都花）。这条把 006 第一片的裁剪从 100 高修成 50 高，与 ref 的 `height:50` 对上。
+
+门禁（`build/_score-f.md` 对 `build/_score-044.md`）：全量 **0 新增失败名**、0 对转绿/转红，**16 对改善共 62968 px**（除 006/008 外，`gecko/flexbox/pagination/flexbox-{single,multi}-column-1a..1f` 14 对 14450 → 11475）；css-break 仍 **26** 对；单测 2186；打印 189/198 九条同名。
+
+一处已知变差：`gecko/flexbox/pagination/flexbox-single-column-6` 6300 → **9350**（+3050）。该对 §9.72 起就被记为"等更细的 unit/边框带判据"（`8ce5e4c7` 当年也只把它 7600 推到 6300），这次是放开切分后的连带；仍红，不进名字集。
+
+试过并撤销的两条（都无测量效果，别再来一遍）：最后一片的 `painted` 减 `Margin.Vertical`（全量 0 变化）；只对非 relay 片让 margin（0 变化）。
+
+剩下的：006 的 30376 = 第三片该 25 高却仍拿 100（`last`/`content` 用 `Painted` 时连同 `.child` 的 300 高溢出与 `break-inside:avoid` 一起算），008 的 10531 = §9.66 记的"abspos 要站在片自己的包含块上"。

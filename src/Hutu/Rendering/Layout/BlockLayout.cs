@@ -1215,7 +1215,7 @@ internal sealed class BlockLayout
         Double share,
         LayoutContext context)
     {
-        if (!fills || vertical || nested || margin.Top != 0 || margin.Bottom != 0 ||
+        if (!fills || vertical || nested || margin.Bottom != 0 ||
             child.Kind != BoxKind.Block || child.Style.Multi.IsMultiColumn ||
             child.Style.Breaks.Inside == BreakValue.Avoid)
         {
@@ -5735,7 +5735,12 @@ internal sealed class BlockLayout
                     Cuts(children[placed - 1]) && used > limit + 0.001)
                 {
                     var height = fragments[placed - 1].Height;
-                    var room = Math.Max(0, limit - (used - height));
+
+                    // The room this column gives the box is what is left of it once the box's own
+                    // block-start margin stands in: the margin sits inside the column, so the piece the
+                    // column holds is shorter than the column by that much (CSS Break 3 §4.3, CSS 2.1
+                    // §8.3.1 - the margin is spent where the box begins, not on every piece of it).
+                    var room = Math.Max(0, limit - (used - height) - children[placed - 1].Margin.Top);
 
                     cell.RemoveAt(cell.Count - 1);
                     placed--;
@@ -6024,7 +6029,8 @@ internal sealed class BlockLayout
                                 cutPadding.Left),
                             cutStarts,
                             cutEnds,
-                            whole));
+                            whole,
+                            Piece: held));
 
                     // The last piece of a box the column cut by its own content units is clipped to the
                     // column, not to the box's bottom edge: a float that piece's flow placed stands
@@ -6135,7 +6141,8 @@ internal sealed class BlockLayout
                             cutEnds,
                             whole,
                             child.Offset - child.Lead,
-                            child.Lead + height + child.Trail));
+                            child.Lead + height + child.Trail,
+                            Piece: rect));
 
                     if (holds)
                     {
