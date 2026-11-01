@@ -953,6 +953,11 @@ Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一�
 
 `9f41abb6` 之后把 `MulticolChild.Reach` 的赋予限定到 `DividesUnits` 触发的盒；因 `DividesAcross`（含绝对子盒、grid）而被切的盒仍只带**单元表**（023 的 widows 落点要用它，撤掉就红回去 1250）。实测：`css-anchor-position/anchor-position-multicol-nested-001` 5700 → **5540**（回到基线值），其余数字与 `9f41abb6` 相同——修复 000/001、18 对靠近绿、新增失败名 0、`wpt/css-break` 39、单测 2180、打印 189/198。仍有两对因“允许切”本身变差但仍在红：`gecko/flexbox/pagination/flexbox-single-column-6` 1050 → 7600（`article` 是列向 flex 的项，项的断点应由容器定；但 `flexItems` 标记只在容器被展开成成员时才打上，带背景的容器不展开，所以按“是不是 flex 项”加护栏**实测无效**，7600 不变）、`gecko/pagination/border-breaking-001-cols` 46000 → 76000。这两对要在“单元终点”与“盒的边框带”之间再细分判据，留作下一片。
 
+### 9.73 两处收口：栏数按盒自身高度算；OOF “整盒坐标”假设被否
+
+- `8ce5e4c7`：`FragmentsInColumns` 估算“需要几栏”时改回只看 `Fragment.Height`（不看 reach）。000/001 仍绿（2 栏就够），而 `gecko/flexbox/pagination/flexbox-single-column-6` 7600 → **6300**、`flexbox-single-column-2` 15150 → **14400**，其余 18 对靠近绿与 0 新增失败名不变，`wpt/css-break` 仍 39。
+- 试过后回退的假设：把分片盒的绝对子盒**移回整盒坐标**（`OversetOutOfFlow`，只移“有自身 inset 解析”的 OOF 子树，静态位置子盒不动，023 因此不受影响）。实测 `abspos-in-opacity-003` 6000、`out-of-flow-in-multicolumn-045` 10000 都**一点没动**，而 `block-end-aligned-abspos-with-overflow` 3000 → 3500 变差——说明这几对缺的不是“片段内 OOF 该用哪套坐标”，而是 OOF 子盒**自身**要被外层栏切开（它的盒要进入 `PlanMulticolRun` 的分片队列，而不是跟着包含它的块一起被裁）。回退，未提交。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
