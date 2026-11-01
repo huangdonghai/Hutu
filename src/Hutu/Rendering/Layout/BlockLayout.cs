@@ -1072,6 +1072,94 @@ internal sealed class BlockLayout
         (HoldsPositioned(child) || child.Kind == BoxKind.Grid);
 
     /// <summary>
+    /// Gets the places along a box's block axis where the units of its own content end, which is where a
+    /// column that cuts the box may fall: the lines of a child that breaks at them, and the ends of the
+    /// children that have none. Null where something inside refuses the reckoning - a float, an inline
+    /// run, a forced break, another formatting context - and an empty list where the box holds nothing to
+    /// break between (CSS Break 3 §4.2).
+    /// </summary>
+    private IReadOnlyList<Double>? PieceBreaks(Box box, Double width, LayoutContext context)
+    {
+        if (box.Kind != BoxKind.Block || box.Flow.IsVertical || box.Style.ClipsOverflow)
+        {
+            return null;
+        }
+
+        var basis = context.ContainingBlock.Width;
+        var border = BorderOf(box);
+        var padding = box.Style.Padding.Resolve(basis);
+        var contentWidth = Math.Max(0, width - border.Horizontal - padding.Horizontal);
+        var content = context.ForContainingBlock(new Size(
+            contentWidth,
+            Math.Max(0, context.ContainingBlock.Height - border.Vertical - padding.Vertical)));
+        var offsets = new List<Double>();
+        var cursor = border.Top + padding.Top;
+
+        foreach (var child in box.Children)
+        {
+            if (PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            var (before, after) = BoundaryBreaks(child);
+
+            if (!child.IsBlockLevel || IsFloat(child) || child.IsReplaced ||
+                child.Kind is BoxKind.Table or BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry ||
+                Fragmentainer.Forced(before) || Fragmentainer.Forced(after) ||
+                child.Style.Breaks.Inside == BreakValue.Avoid)
+            {
+                return null;
+            }
+
+            var size = _engine.Measure(child, MeasureConstraints.FitWidth(contentWidth), content);
+            var margin = BoxModel.UsedMargin(child.Style, basis, size.Width);
+
+            cursor += margin.Top;
+
+            var inner = FragmentsInColumns(child)
+                ? LineBreaks(child, contentWidth, content)
+                : PieceBreaks(child, contentWidth, content);
+
+            if (inner is { Count: > 0 })
+            {
+                foreach (var at in inner)
+                {
+                    offsets.Add(cursor + at);
+                }
+            }
+            else
+            {
+                offsets.Add(cursor + size.Height);
+            }
+
+            cursor += size.Height + margin.Bottom;
+        }
+
+        return offsets;
+    }
+
+    /// <summary>Gets where a box's own lines end along its block axis, counted from the top of its
+    /// border box.</summary>
+    private IReadOnlyList<Double> LineBreaks(Box box, Double width, LayoutContext context)
+    {
+        var border = BorderOf(box);
+        var padding = box.Style.Padding.Resolve(context.ContainingBlock.Width);
+        var lines = _inline.LineHeights(
+            box, width, box.Flow, new InlineContext(_engine, context, context, context));
+        var offsets = new List<Double>(lines.Count);
+        var at = border.Top + padding.Top;
+
+        foreach (var height in lines)
+        {
+            at += height;
+            offsets.Add(at);
+        }
+
+        return offsets;
+    }
+
+    /// <summary>
     /// Gets whether a column flex is one the columns may cut into a piece per window: every child a
     /// block of its own in the flow, the container taller than a window, and nothing inside that the
     /// columns would have to place themselves. A piece of such a flex is laid out as a flex container
@@ -1368,7 +1456,8 @@ internal sealed class BlockLayout
             Double offset = -1,
             Boolean divides = false,
             Double startInset = 0,
-            Boolean relays = false)
+            Boolean relays = false,
+            IReadOnlyList<Double>? breaks = null)
         {
             Box = box;
             Size = size;
@@ -1381,6 +1470,7 @@ internal sealed class BlockLayout
             Divides = divides;
             StartInset = startInset;
             Relays = relays;
+            Breaks = breaks;
         }
 
         public Box Box { get; }
@@ -1441,6 +1531,13 @@ internal sealed class BlockLayout
         /// running down every piece (CSS Break 3 §4.7).
         /// </summary>
         public Double Whole { get; }
+
+        /// <summary>
+        /// Gets how far inside the box the units of its own content end, which is where a column that
+        /// cuts the box may fall: the lines of a child that has them and the ends of the children that
+        /// have none. Null where nothing inside the box offers such places (CSS Break 3 §4.2).
+        /// </summary>
+        public IReadOnlyList<Double>? Breaks { get; }
     }
 
     /// <summary>
@@ -2129,6 +2226,11 @@ internal sealed class BlockLayout
                 ? Math.Max(0, extent - BorderOf(child).Vertical - child.Style.Padding.Resolve(share).Vertical)
                 : extent;
 
+            // Where a column may fall inside the box it divides: the ends of the box's own content
+            // units, which is what keeps a piece from ending in the middle of a line the page has to
+            // count for widows and orphans (CSS Break 3 §4.2).
+            var units = divides && !relays && !vertical ? PieceBreaks(child, share, childContext) : null;
+
             children.Add(new MulticolChild(
                 child,
                 size,
@@ -2139,7 +2241,8 @@ internal sealed class BlockLayout
                 -1,
                 last: true,
                 divides: divides,
-                relays: relays));
+                relays: relays,
+                breaks: units));
         }
 
         return children;
@@ -4256,6 +4359,39 @@ internal sealed class BlockLayout
         // fragmentainer cut for itself.
         static Boolean Cuts(MulticolChild child) => child.Divides || child.Offset >= 0;
 
+        // A column that runs out of room inside a box cuts it where one of its own content units ends,
+        // and the pieces keep the number of units the page asks for on each side of the break: the tail
+        // takes at least as many as widows, the head at least as many as orphans (CSS Break 3 §4.2).
+        // Where the room holds no such place, the cut stays where the room ends.
+        static Double CutAt(MulticolChild child, Double room, Double height)
+        {
+            var units = child.Breaks;
+
+            if (units is null || units.Count < 2 || room >= height - 0.001)
+            {
+                return Math.Min(room, height);
+            }
+
+            var orphans = Math.Max(1, child.Box.Style.Breaks.Orphans);
+            var widows = Math.Max(1, child.Box.Style.Breaks.Widows);
+            var best = -1.0;
+
+            for (var index = 0; index < units.Count - 1; index++)
+            {
+                var at = units[index];
+
+                if (at <= 0.001 || at > room + 0.001 ||
+                    index + 1 < orphans || units.Count - index - 1 < widows)
+                {
+                    continue;
+                }
+
+                best = at;
+            }
+
+            return best > 0 ? best : Math.Min(room, height);
+        }
+
         for (var number = 0; number < extents.Count; number++)
         {
             var limit = extents[number];
@@ -4314,8 +4450,13 @@ internal sealed class BlockLayout
 
                     if (room > 0.001)
                     {
+                        // What the column shows is its own room - the piece of a box whose content ends
+                        // earlier still fills the column, which is where its background stops (CSS
+                        // Fragmentation 3 §4.3) - while the box carries on from the unit the break fell
+                        // after (CSS Break 3 §4.2).
+                        var content = CutAt(children[placed], room, height);
                         var take = Math.Min(room, height);
-                        var last = take >= height - 0.001;
+                        var last = content >= height - 0.001;
 
                         cell.Add(new MulticolPiece(placed, StartOf(children[placed], 0), take, last));
 
@@ -4326,7 +4467,7 @@ internal sealed class BlockLayout
                         else
                         {
                             resume = placed;
-                            resumeAt = take;
+                            resumeAt = content;
                         }
                     }
                     else
@@ -4358,8 +4499,10 @@ internal sealed class BlockLayout
                 if (!cut.Forced && Cuts(children[placed]) &&
                     limit - used >= gate - 0.001 && limit - used > 0.001)
                 {
-                    var take = limit - used;
-                    var last = take >= fragments[placed].Height - 0.001;
+                    var room = limit - used;
+                    var content = CutAt(children[placed], room, fragments[placed].Height);
+                    var take = Math.Min(room, fragments[placed].Height);
+                    var last = content >= fragments[placed].Height - 0.001;
 
                     cell.Add(new MulticolPiece(placed, StartOf(children[placed], 0), take, last));
 
@@ -4370,7 +4513,7 @@ internal sealed class BlockLayout
                     else
                     {
                         resume = placed;
-                        resumeAt = take;
+                        resumeAt = content;
                     }
 
                     break;

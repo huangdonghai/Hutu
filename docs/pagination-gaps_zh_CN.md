@@ -918,6 +918,18 @@ probe 一页 `table-row-paint-vlr-rtl` 就看清了：表格 34x100、行按 y �
 
 
 
+### 9.69 栏切盒要落在盒自身的内容单元之间：widows/orphans 进入多栏切片（`widows-orphans-023`）
+
+Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一个 50 高空中盒、四个 `<br>` 行和一个 abspos 子盒）的实测：绿盒两个片段是 `(8,50,50x100)` 与 `(58,50,50x75)`，绝对子盒 `(58,125,50x25)`。**首片段仍铺满整栏**（100 高，背景画到栏底），但它的**内容只到 75**——断点被 `widows:3` 从“栏的尽头 100”前移到“尾部还剩三行”的那个行界；续排片段因此从盒内 75 开始（位移 -75），行尾落在 125，abspos 的静态位置随之落到 `(58,125)`，整幅 100×100 全绿。
+
+三条规则合起来才闭合，缺一会留下 1250 或 6250 像素差：
+
+1. **断点候选**：`PieceBreaks(box, width, ctx)` 沿块轴量出盒自身内容单元的结束位置——子盒若 `FragmentsInColumns`（无块子、高度自适应、不裁剪、非竖排）就取其**逐行行高**（`_inline.LineHeights`），否则递归其子盒；叶子盒整体算一个单元。遇到 float、行内内容、强制断点、`break-inside:avoid`、替换元素、其它格式化上下文（flex/grid/masonry/table）时返回 null（不猜）。
+2. **选点**：`PlanMulticolRun` 的 `CutAt(child, room, height)` 在候选里取**不超过 room 的最大者**，并要求“头部单元数 ≥ orphans、尾部单元数 ≥ widows”；没有候选满足就退回 room（旧行为）。候选存在 `MulticolChild.Breaks` 里，只在 `divides && !relays && !vertical` 时计算。
+3. **片段框与内容分离**：切片的**绘制高仍是栏给出的 room**（`take = min(room, height)`），**续排位移用内容切点**（`resumeAt = content`）。两处原先都用 room，所以把断点前移之后首片段只剩 75 高、栏底 25 露红——实测该改动单独使用时 1250 → 6250 变差，加上这一条才到 0。
+
+实测：`023` 1250 → **0**；整个 `css-break` 族 209 对逐对复看，除 023 外**无任何像素变化**（`021/022` 仍 6250/8750——它们要的是“只有块子盒的盒**允许**被栏切开”，`DividesAcross` 目前只放行含绝对子盒或 grid 的盒，那是下一件事）。全量屏幕 2014 → 2013、新增失败名 **0**（`wpt/css-break` 42 → 41）；单测 2180；打印 189/198。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
