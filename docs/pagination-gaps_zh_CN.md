@@ -1466,3 +1466,13 @@ Hutu 的树（`build/_probe-vwm001.txt`）：容器 `60,60 92x142 vertical` 正�
 真正的缺口还是 §9.98 量的那条：**abs 盒自己要进栏的切片队列**。`abspos-in-opacity-003` 最干净：容器 `columns:5; width:100px; height:100px; column-fill:auto`（五栏各 20 宽），子是 300 高空块 + `position:relative; opacity:.1`，其内 `top:-300px; width:100%` 的 abs 装 500 高红块。Chrome：abs 出 **5 片** `x=8/28/48/68/88, y=8, 20x100`——**包含 CB 之前的三栏**（CB 自己在第 4 栏 `[48,108 20x0]`）；Hutu 只从 CB 所在栏往后切，于是少三栏 = 3×20×100 = **6000 px**，与残差一字不差。也就是：abs 的矩形跨到哪些 fragmentainer，就在哪些 fragmentainer 里各画一片、按该 fragmentainer 的块向窗口裁；它前面的栏也要有片。这一条同时是 045/073/090 缺的"abs 自己分栏"那一半，已记成任务 #11。
 
 当前：`dev-paged` HEAD `fb0636de`（工作树对 HEAD 干净），屏幕 1923 finding、css-break **28** 对、打印 189/198 九条同名、单测 2185。
+
+### 9.108 OOF 那五对不是一个机制：量完拆成三条，各自记死（本轮不动代码）
+
+探针 + 差分带把 045/073/090/003/block-end-aligned 分开了，三条互不相干：
+
+1. **abs 要拿到"自己矩形跨到的每一栏"的片段，含 CB 之前的栏**（任务 #11）。`abspos-in-opacity-003`：容器 `columns:5; width:100px; height:100px; column-fill:auto`，子里 300 高空块 + `position:relative; opacity:.1`，后者装 `position:absolute; top:-300px; width:100%` 的 500 高红块。Chrome 给 abs **五片** `x=8/28/48/68/88, y=8, 20x100`。Hutu（`build/_probe-oof003.txt`）：300 块正确占 1-3 栏；`.rel` 因 `PositionedReach = top+height = -300+500 = 200` 只拿到 **4、5 两栏**的片段，每片把自己那份 abs 画在**本栏 x**（这点已经对），但 CB 之前那三栏根本没有它的片段 ⇒ 少 3×20×100 = **6000**，与残差一字不差。045 是同一件事 + 相对位移。要的是一条**覆盖式成员**：不占流、按指定栏落位——现在线性 plan（`MulticolChildren` → `RunCells` 按累计 extent 排栏）表达不了"同一个盒在若干栏各有一片且不推流"。
+2. **底锚定 abs 的内容要按 fragmentainer 续切**（任务 #12）。`block-end-aligned-abspos-with-overflow`：差分带只有两条（`build/_look-bea.txt`）——第一栏 `x=8..57, y=138..157` test 绿 / ref 粉；第二栏 `x=58..107, y=68..107` test 白 / ref 绿。Hutu（`build/_probe-bea.txt`）把 abs 盒量成 `20x10`（只取首子），60 高内容整体往下溢；第二栏那片 CB 又把整个 abs 重画一遍。Chrome 是把 abs 的**内容**切开：第一栏留粉尾、第二栏顶上放整块 50x50 绿。
+3. **嵌套 fixed 受定位祖先影响**（任务 #13）。073/090 标题都是 "Nested fixedpos should be affected by relative positioned offset"，容器带负 margin；Hutu 的红（在 `PushTransformCommand` 里）与绿 fixed 画在**同一个矩形** `-42,149.72 50x200`，整块在页面可视区外 ⇒ ref 的绿看不见（11600）。这两对是 Chromium-bug 参照，按 ref 的理想落位做，别照抄 Chrome 的怪癖。
+
+结论：003 那半是 plan 的表达力问题（覆盖式 OOF 成员），不是一行判据能改对的；已按三条分开立任务，各自带本节量的矩形/差分带，免得下次重新考古。仓库状态未动：`dev-paged` HEAD `a7b2623a`，屏幕 1923 finding、css-break **28** 对、打印 189/198、单测 2185。
