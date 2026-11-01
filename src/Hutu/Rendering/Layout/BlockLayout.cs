@@ -43,9 +43,13 @@ internal sealed class BlockLayout
     /// Measures a block box, returning the size of its <em>border</em> box. No geometry is produced:
     /// the children are only asked for their sizes, which is why the result can be cached.
     /// </summary>
-    public Size Measure(Box box, MeasureConstraints constraints, LayoutContext context) =>
+    public Size Measure(
+        Box box,
+        MeasureConstraints constraints,
+        LayoutContext context,
+        Thickness? inlineMarginOverride = null) =>
         box.Flow.IsVertical
-            ? MeasureColumn(box, constraints, context, box.Flow)
+            ? MeasureColumn(box, constraints, context, box.Flow, inlineMarginOverride)
             : MeasureRow(box, constraints, context);
 
     private Size MeasureRow(Box box, MeasureConstraints constraints, LayoutContext context)
@@ -158,7 +162,12 @@ internal sealed class BlockLayout
     /// is only as wide as the columns it needs, which is the opposite of the <c>auto</c> width of a
     /// block in a row.
     /// </summary>
-    private Size MeasureColumn(Box box, MeasureConstraints constraints, LayoutContext context, WritingModeInfo flow)
+    private Size MeasureColumn(
+        Box box,
+        MeasureConstraints constraints,
+        LayoutContext context,
+        WritingModeInfo flow,
+        Thickness? inlineMarginOverride)
     {
         var style = box.Style;
         var border = BorderOf(box);
@@ -187,7 +196,11 @@ internal sealed class BlockLayout
         // width a row resolves: `ResolveWidth` is where a row subtracts them, and this is the same
         // rule with the axes exchanged. A percentage height still resolves against the whole extent
         // the box was given rather than against what its margins leave, which is also what a row does.
-        var (inlineBefore, inlineAfter) = flow.InlineMargins(style.Margin.Resolve(percentBasis));
+        // The root can inherit a page flow from the body while keeping its own horizontal computed
+        // margins. Its placement maps those margins onto the page flow, so measurement must use the
+        // same mapping or the page starts outside the viewport and extends past it by that margin.
+        var (inlineBefore, inlineAfter) = flow.InlineMargins(
+            inlineMarginOverride ?? style.Margin.Resolve(percentBasis));
         var childInline = declaredInline ?? Math.Max(0, basisInline - inlineBefore - inlineAfter - insetsInline);
         var childBlock = declaredBlock ?? context.ContainingBlock.Width;
 

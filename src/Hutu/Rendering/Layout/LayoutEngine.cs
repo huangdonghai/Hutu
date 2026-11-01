@@ -130,7 +130,7 @@ internal sealed class LayoutEngine
         _registeredMarginNotes.Clear();
         _marginNoteOrder = 0;
 
-        var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+        var size = MeasureRoot(root, width, context);
         var margin = RootMargin(root.Style, root.Flow, width, size.Width);
 
         // The root is the one box whose containing block is the initial containing block, and that
@@ -265,14 +265,14 @@ internal sealed record LayoutProfile(
         {
             ResetCaches();
             var before = GC.GetTotalAllocatedBytes(false);
-            Measure(root, MeasureConstraints.FitWidth(width), context);
+            MeasureRoot(root, width, context);
             measureAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
         }
 
         for (var iteration = 0; iteration < allocRuns; iteration++)
         {
             ResetCaches();
-            var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+            var size = MeasureRoot(root, width, context);
             var before = GC.GetTotalAllocatedBytes(false);
             Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
             arrangeAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
@@ -281,7 +281,7 @@ internal sealed record LayoutProfile(
         for (var iteration = 0; iteration < allocRuns; iteration++)
         {
             ResetCaches();
-            var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+            var size = MeasureRoot(root, width, context);
             var rootBox = Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
             var before = GC.GetTotalAllocatedBytes(false);
             ResolveDecorations(rootBox);
@@ -291,7 +291,7 @@ internal sealed record LayoutProfile(
         for (var iteration = 0; iteration < allocRuns; iteration++)
         {
             ResetCaches();
-            var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+            var size = MeasureRoot(root, width, context);
             var rootBox = Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
             ResolveDecorations(rootBox);
             var content = ScrollableOverflow.Of(rootBox, new Rect(0, 0, width, viewport.Height));
@@ -326,7 +326,7 @@ internal sealed record LayoutProfile(
         ResetCaches();
 
         measure?.Start();
-        var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+        var size = MeasureRoot(root, width, context);
         measure?.Stop();
 
         arrange?.Start();
@@ -359,6 +359,30 @@ internal sealed record LayoutProfile(
         _marginNotes.Clear();
         _registeredMarginNotes.Clear();
         _marginNoteOrder = 0;
+    }
+
+    /// <summary>
+    /// Measures the document element in the page flow its body establishes. When that flow differs
+    /// from the root's own writing mode, the margins that place the root and define its page band are
+    /// mapped onto the page flow before the content is sized.
+    /// </summary>
+    private Size MeasureRoot(Box root, Double width, LayoutContext context)
+    {
+        var constraints = MeasureConstraints.FitWidth(width);
+        var size = Measure(root, constraints, context);
+        var own = BoxModel.UsedMargin(root.Style, width, size.Width);
+        var margin = RootMargin(root.Style, root.Flow, width, size.Width);
+        var ownInline = root.Flow.InlineMargins(own);
+        var mappedInline = root.Flow.InlineMargins(margin);
+
+        if (ownInline.Start == mappedInline.Start && ownInline.End == mappedInline.End)
+        {
+            return size;
+        }
+
+        // This is the same root box at the same available width, with only the page-flow margin
+        // interpretation changed. Measuring it directly avoids confusing the ordinary cache entry.
+        return MeasureCore(root, constraints, context, margin);
     }
 
     /// <summary>The root's border box, exactly as <see cref="Layout"/> computes it.</summary>
@@ -1957,7 +1981,11 @@ internal sealed record LayoutProfile(
         };
     }
 
-    private Size MeasureCore(Box box, MeasureConstraints constraints, LayoutContext context)
+    private Size MeasureCore(
+        Box box,
+        MeasureConstraints constraints,
+        LayoutContext context,
+        Thickness? inlineMarginOverride = null)
     {
         return box.Kind switch
         {
@@ -1967,7 +1995,7 @@ internal sealed record LayoutProfile(
             BoxKind.Table => _table.Measure(box, constraints, context),
             _ => box.IsReplaced
                 ? MeasureReplaced(box, constraints, context)
-                : _block.Measure(box, constraints, context),
+                : _block.Measure(box, constraints, context, inlineMarginOverride),
         };
     }
 

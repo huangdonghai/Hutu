@@ -344,6 +344,8 @@ public sealed class MarginNoteTests
             Assert.That(noteRuns.Select(run => run.BorderBox.X).Distinct().Count(), Is.GreaterThan(1),
                 $"the note wraps across vertical columns: {note.BorderBox.Width}x{note.BorderBox.Height}; " +
                 $"{String.Join(" | ", noteRuns.Select(run => $"{run.BorderBox.X},{run.BorderBox.Y}"))}");
+            Assert.That(view.Layout.Height, Is.EqualTo(200).Within(0.5),
+                "the note band comes out of the viewport instead of extending the document below it");
         });
     }
 
