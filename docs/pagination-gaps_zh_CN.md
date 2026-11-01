@@ -1298,3 +1298,15 @@ Chrome 的 `widows-orphans-021` 矩形（`build/_wo21_probe.html`）：`green [8
 门禁：屏幕全量 finding 1927 → **1926**、**0 新增失败名**、**`wpt/css-break/widows-orphans-021.html` 转绿**（css-break 32 → **31**）；单测 2180；打印 189/198 九条同名；`floats-clear` 16、`flexbox-multi-row` 5、`multicol` 107、`flex-item-content-overflow` 0 与 HEAD 一致。
 
 余下：`fragmented-autowidth-fc-root-beside-floats` 34400 与 `float-017` 663 等「高流内盒被栏切开 + 每片与旁边浮动求自由宽」；abspos 一族（`abspos-in-opacity-003` 6000、`out-of-flow-in-multicolumn-045/073/090` 10000/11600/11600、`block-end-aligned-abspos-with-overflow` 3000）需要**绝对定位盒自己进栏的切片队列**：045 的探针显示 Hutu 把 `.rel` 切成两片、每片都重画整条 abs（`fill 8,49.72 50x200` 与 `fill 58,-50.28 50x200`），绿盖住了红，但两片的 abs 各自被本栏 clip 裁掉一段，仍差 10000 px（正好一整栏的面积）。
+### 9.98 三条线索的现场测量（OOF 045/003、flex 044、竖排 min-block-size 2）：本轮不动代码，只把缺口写死
+
+本会话落地两刀（`7395b92e` 段落浮动推栏、`51216991` orphans/widows 只数行盒）后，用 Chrome DOM 探针把余下几族的**确切缺口**量清，避免下次从像素反推：
+
+1. **`out-of-flow-in-multicolumn-045`（10000，整盒全差）**。Chrome：`mc [-102,-50 100x100]`；被切的 wrapper 两片 `[-92,-50 40x100]`、`[-42,-50 40x100]`；里面的 `.rel`（`top:100;left:100`）两片 `[8,50 40x100]`、`[58,50 40x100]`；孙子 abs 两片 `[8,50 50x100]`、`[58,50 50x100]`。即**相对位移把整个片段连同它的裁剪带一起搬走**，而 abs 只按 CB 片段在**块向**被切（栏向不裁，所以 abs 宽 50 > 片宽 40）。Hutu 今天裁剪带仍停在未位移的栏位置 `[-92/-42,-50.28 40x100]`，内容画在位移后的 `(8/58,49.72)` → 两片全被裁光，整块什么都不画。试落“`FragmentClip` 随 `RelativeDisplacement` 平移”（`build/_clip-move.patch`，73 行，改三处块站点），**实测对 045 无效**——位移在内层 `.rel` 上，不在被切的 wrapper 上，故未落地、存为补丁。缺的那半是 **OOF 后代自身的分栏**（每个 CB 片段产出一个 abs 片段，只在块向裁剪）。
+2. **`abspos-in-opacity-003`（6000）**。Chrome：`rel [48,108 20x0]`（CB 自己掉到容器下方），而 `top:-300` 的 abs 出 **5 个片段** `[8/28/48/68/88, 8 20x100]`——**包含 CB 之前的三栏**。Hutu 只从 CB 所在栏往后切片，于是前三栏是纯绿 `#008000`，ref 是叠了 10% 红的 `#1a7200`，差 3×20×100=6000。要的是“OOF 盒自身的矩形向上越界时，也要给它之前的 fragmentainer 产出片段”（backward pieces），与 §9.34 的 reach（只算块向下）成对。
+3. **`flexbox/single-line-row-flex-fragmentation-044`（1000）**。ref 里橙色项留在第一栏 `x=50..100`，粉色项进第二栏 `x=100..150`；Hutu 两项都留在第一栏。`RelaysInColumns` 见到 `IsRow` 就拒、`RowRelaysInColumns` 要求 `Wraps`，且两者都先撞 `columnHeight <= 0` 直接拒绝——本对的容器 `height:0`。规则口径应是：**块起点（含 margin）已越过 fragmentainer 末端的项，从下一栏起站；起点还在房间内的项留下并溢出**。
+4. **`break-inside-avoid-min-block-size-2`（133840）**。竖排 `columns:3` + `break-inside:avoid` + `min-block-size:40px`。Hutu 树里同栏两个子盒被**沿行内轴堆叠**（`720,0 40x160` 与 `720,170 40x160`），而不是按块轴向栏内分配；即 §9.40 那句“竖排的块向边映射、`HoldsPositioned` 与表格豁免都只在横排生效”在这里还成立，avoid 的竖排栏分配整体缺席。
+
+同一轮复看：`float-017`（663）与 `fragmented-autowidth-fc-root-beside-floats`（34400）仍在等“比一栏还高的流内盒被切开、每一片各自与旁边浮动求自由宽”——`FloatFlowColumns` 那条“有比栏还高的流内盒就退回常规路径”的排除仍有效。
+
+代码未动，HEAD 仍是 `51216991`：屏幕 1926 条 finding、css-break **31** 对、单测 2180、打印 189/198 九条同名。
