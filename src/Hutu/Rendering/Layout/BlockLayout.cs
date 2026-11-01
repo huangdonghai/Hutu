@@ -5168,6 +5168,27 @@ internal sealed class BlockLayout
                 new Dictionary<Box, Double>());
         }
 
+        // An absolutely positioned descendant can reach back over columns that its containing block's
+        // own pieces never stand in - a `top` that pulls it above where the block flow put the box.
+        // Each column whose window that descendant's rect crosses takes a piece of the containing
+        // block, cut to the column, which carries the descendant and the block's own layer with it:
+        // the opacity or filter the box establishes belongs to the fragment, not to the column the
+        // flow happened to reach (CSS Position 3 §5.5, CSS Fragmentation 3 §4.6, measured:
+        // abspos-in-opacity-003, whose top:-300px absolute shows in all five columns while its
+        // containing block stands in the fourth).
+        if (!box.Flow.IsVertical && !multi.Wraps && multi.Fills && fragmentHeight > 0)
+        {
+            ArrangeBackwardFragments(
+                children,
+                parent,
+                content,
+                Math.Max(1, counts.Count),
+                share,
+                multi.Gap,
+                boxHeight,
+                childContext);
+        }
+
         _engine.PublishFloats(box, null);
 
         // The rules of the gaps the columns left, worked out here where the columns are known. A
@@ -5203,6 +5224,132 @@ internal sealed class BlockLayout
                 : new List<(Double, Double)> { (content.Y, content.Y + runHeight) });
 
         return extent;
+    }
+
+    /// <summary>
+    /// Places a piece of each box whose absolutely positioned descendant reaches above the box itself,
+    /// in every column that stands before the one the box's own pieces fill - the columns whose window
+    /// that descendant's rect crosses. The piece is the containing block, stood where its own top
+    /// stands inside that column's window, and cut to the window: the descendant comes with it, and so
+    /// does the layer the block establishes (CSS Position 3 §5.5, CSS Fragmentation 3 §4.6).
+    /// </summary>
+    private void ArrangeBackwardFragments(
+        List<MulticolChild> children,
+        LayoutBox parent,
+        Rect content,
+        Int32 columns,
+        Double share,
+        Double gap,
+        Double columnHeight,
+        LayoutContext childContext)
+    {
+        if (columnHeight <= 0)
+        {
+            return;
+        }
+
+        var flowed = 0.0;
+
+        foreach (var child in children)
+        {
+            var start = flowed;
+
+            flowed += child.Fragment.Height;
+
+            // Only a box that brings no height of its own to the flow is a pure home for its
+            // out-of-flow child: such a box has nothing standing in the column beside the descendant,
+            // so a fragment of it there is nothing but that descendant. A box with content of its own
+            // keeps its content in its own column and overflows the earlier ones as any other box
+            // does - which is how a fieldset's legend or a paragraph's absolute child stays put.
+            if (!HoldsPositioned(child.Box) || child.Size.Height > 0.001)
+            {
+                continue;
+            }
+
+            var border = BorderOf(child.Box);
+            var padding = child.Box.Style.Padding.Resolve(share);
+
+            foreach (var (above, below) in BackwardRects(child.Box, share, childContext))
+            {
+                // Only the part that stands above the box's own top is missing from the columns: what
+                // reaches down is already carried by the box's own pieces.
+                var from = start + above;
+                var to = Math.Min(start + below, start);
+
+                if (to <= from + 0.001)
+                {
+                    continue;
+                }
+
+                for (var column = Math.Max(0, (Int32)Math.Floor(from / columnHeight));
+                    column * columnHeight < to - 0.001 && column < columns;
+                    column++)
+                {
+                    var window = column * columnHeight;
+                    var top = Math.Max(from, window);
+                    var bottom = Math.Min(to, window + columnHeight);
+                    var x = content.X + column * (share + gap) + child.Margin.Left;
+                    var standing = content.Y + start - window;
+
+                    var piece = _engine.Arrange(
+                        child.Box,
+                        new Rect(x, standing, share, child.Size.Height),
+                        childContext,
+                        definiteHeight: false,
+                        slice: new FragmentSlice(
+                            new Thickness(border.Top, border.Right, border.Bottom, border.Left),
+                            new Thickness(padding.Top, padding.Right, padding.Bottom, padding.Left),
+                            true,
+                            child.Last,
+                            new Rect(x, standing, share, child.Size.Height)));
+
+                    // The column shows only the band the descendant itself covers: the rest of this
+                    // fragmentainer belongs to the content that stands there.
+                    piece.FragmentClip = new Rect(
+                        x,
+                        content.Y + top - window,
+                        child.Size.Width,
+                        bottom - top);
+
+                    parent.Children.Add(piece);
+                }
+            }
+        }
+    }
+
+    /// <summary>Gets the rectangles, measured from a box's own top edge, that its absolutely positioned
+    /// children claim <em>above</em> it - the part of them no column holding the box itself can show,
+    /// because it stands before the box's first fragmentainer (CSS Position 3 §5.5). A legend is not
+    /// one of these: it is laid against its fieldset's border by that box's own pass. Nothing is
+    /// measured here unless a child writes a negative <c>top</c>, so the ordinary box pays nothing for
+    /// the question.</summary>
+    private List<(Double Above, Double Below)> BackwardRects(Box box, Double width, LayoutContext context)
+    {
+        var rects = new List<(Double, Double)>();
+
+        foreach (var child in box.Children)
+        {
+            var position = child.Style.Position;
+
+            if (child.IsLegend ||
+                position.Position != PositionMode.Absolute || position.Top.IsAuto)
+            {
+                continue;
+            }
+
+            var at = position.Top.Resolve(0);
+
+            if (at >= -0.001)
+            {
+                continue;
+            }
+
+            var size = _engine.Measure(child, MeasureConstraints.FitWidth(width), context);
+
+            rects.Add((at, at + size.Height));
+        }
+
+        return rects;
     }
 
     /// <summary>

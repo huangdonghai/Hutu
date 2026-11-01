@@ -1476,3 +1476,16 @@ Hutu 的树（`build/_probe-vwm001.txt`）：容器 `60,60 92x142 vertical` 正�
 3. **嵌套 fixed 受定位祖先影响**（任务 #13）。073/090 标题都是 "Nested fixedpos should be affected by relative positioned offset"，容器带负 margin；Hutu 的红（在 `PushTransformCommand` 里）与绿 fixed 画在**同一个矩形** `-42,149.72 50x200`，整块在页面可视区外 ⇒ ref 的绿看不见（11600）。这两对是 Chromium-bug 参照，按 ref 的理想落位做，别照抄 Chrome 的怪癖。
 
 结论：003 那半是 plan 的表达力问题（覆盖式 OOF 成员），不是一行判据能改对的；已按三条分开立任务，各自带本节量的矩形/差分带，免得下次重新考古。仓库状态未动：`dev-paged` HEAD `a7b2623a`，屏幕 1923 finding、css-break **28** 对、打印 189/198、单测 2185。
+
+### 9.109 abs 盒"往前栏"落地：空的定位祖先按片段铺进它越过的栏，`abspos-in-opacity-003` 转绿（css-break 28 → 27）
+
+做法（§9.108 那条设计的落地版）：`ArrangeMulticolChildren` 排完正常栏后调 `ArrangeBackwardFragments`——对每个计划成员按累计 `Fragment.Height` 算出它在线性坐标里的起点 `start`，再取出它**直接**的 `position:absolute` 子里写了负 `top` 的那些矩形 `[start+top, start+height)`，只取其中**高于 `start`** 的那一段；这一段跨到的每一栏（下标夹到 ≥0，且 < 容器实际栏数）各放一片：片是**祖先盒**摆在自己那条栏里的原位（`standing = content.Y + start − 栏窗起点`，因此 abs 子自然落在正确高度），裁剪带取 `[max(from,窗顶), min(to,窗底)]`——只露出该 abs 子覆盖的那一条，栏里别的内容归它自己的片段。祖先的 `opacity`/`filter` 层随这片一起过去（003 要的正是 `opacity:.1` 的红叠在绿上）。
+
+三条判据都是量出来的，缺一条就翻车：
+1. **栏下标夹到 ≥ 0**：容器的第一栏之前没有 fragmentainer，越出去的内容就是普通溢出。不夹时 fieldset 那条会往 `col=-1`（容器左边的页面上）画三片。
+2. **裁剪带用 abs 子自己的矩形**，不是整栏窗口：`fieldset-001-ref` 用 `legend{position:absolute; top:-18px}` 模拟表头，整窗裁剪会把祖先的正文一起搬进前一栏（实测 +2640 px）。
+3. **只对"自己没有高度"的祖先生效**（`child.Size.Height <= 0.001`）：003 的 `.rel` 是个空的相对定位盒，它的全部画高就是那个 abs 孩子；有正文的盒（段落、fieldset）越出去的部分属于它自己的溢出，Chrome 不会替它在前一栏重画。这条一加，`fieldset-001` 回到基线一字不差。
+
+legend 单独立了排除（HTML rendering §15.3.12 由 fieldset 自己贴边框放），但真正的兜底是第 3 条——`IsLegend` 那条没挡住 ref 里的绝对定位表头。
+
+门禁：单测 2185；打印 189/198、九条同名；屏幕全量 finding 1923 → **1922**、**0 新增失败名**、`wpt/css-break` **28 → 27**，其余变化只有 harness 记过的文本抖动（css-lists +144、word-break +7、font-face +1，成对复跑会回到原位）。045 未受影响（它要的是"位移与裁剪"那一半，见 §9.98/§9.107）。
