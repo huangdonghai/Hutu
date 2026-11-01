@@ -1198,3 +1198,18 @@ Hutu 的排序在 `TableFormattingContext.CollectRows` 里读的是**标签名**
 - footer"整段不切"那条判断改成 `CollectTable` 传下来的 `repeatsAsFooter`，不再读标签名。
 
 诚实记一条：这一处在**任何语料上都画不出差别**——打印 189/198 九条同名、屏幕全量 1932 条 finding 与 `cf223564` 逐名相同（0 新增、0 转绿）、单测 2180。想做正面证明也不成立：`build/_probe_role_print.html`（`display:table-header-group` 的 div）与 `build/_probe_role_print2.html`（真 `<thead>`）在 `@page 100x100` 探针里表头都只画一次，说明探针没触到"重复带"那条分支，因此这一步只能按"同一条规则不留半个"落地，靠三道门禁保证不回归。
+
+### 9.91 让栏切开"带浮动的普通块"：022 转绿，但两处绿对被打红，整片回滚
+
+两条规则一起量（补丁留在 `build/_divide-and-clip-floats.patch`，112 行）：
+
+1. `PieceBreaks` 遇到 float 子节点改为**跳过**（它不给出断点，也不再否决整段裁切），`DividesUnits` 去掉 `HoldsAnyFloat` 那条否决——栏因此可以按子项边界切开一个"里面有浮动"的普通块；
+2. 切出来的片段裁剪到**栏盒**而不是片段自己的底边：新增 `HungBelow(piece)` 量该片段直接子里浮动伸出盒底多少，裁剪带向下延到 `min(栏底, held.Bottom + hang)`。
+
+Chrome 地面真值（逐子盒着色 + PIL 逐列扫描：`build/_c021.html`、`build/_c022.html`、`shot-_c021.png`、`shot-_c022.png`）：022 的 `g` 两片是 50x100 与 50x75，浮动在绝对 58,83（第二列的 75..100）——**浮动伸出盒底但仍然画出来**，整块 100x100 全绿；021 是 col1 = d1+A+B+C=100、col2 = 末行 D(0..25) + 被推来的浮动(25..50)，且 `g` 的第二片矩形是 50x100（整列被覆盖，这条还没解释清）。顺带把"末尾 `<br>` 是否造空行"钉死（`build/_tailbr.html`：Chrome `A<br>B<br>`=40、四个 `<br>`=80、`A<br>`=20），Hutu 的盒高 150 = 50+4×25 与之一致，行数不是差异来源。
+
+全量口径实测（合并两条那一版）：css-break 36 → **35**，`widows-orphans-022` 转绿、`widows-orphans-021` 6250 → 2500；但**两个本已绿的名字变红**——`wpt/CSS2/floats-clear/floats-clear-multicol-001`、`gecko/flexbox/pagination/flexbox-multi-row-1a`，且 `flexbox-multi-row-1b` 7250 → 32700。单测 2180 与打印 189/198（九条同名）都过。按"打红绿对就回滚"处理，`git checkout -- src/` 后重建并复核：css-break 回到 36、021=6250、022=8750。
+
+第二版（只在 `columnBottom > held.Bottom` 时才用栏底封顶、否则纯延长，避免把越栏片段的裁剪**缩小**）只在**模块口径**里量过，模块与全量对这几对不一致，故未当作门禁；回滚后未再跑全量。
+
+下一步的收敛点已命名：变红的三对都是"盒底以下有浮动、而 ref 要求把它剪掉"。要区分 022 与它们，候选判据是①只对**该片段的最后一块**（`portion.Last`）延长、②盒子不能是自裁的（`ClipsOverflow`）、③浮动必须是这段流自己摆下的那一支（而非更深一层）。先从 `floats-clear-multicol-001` 的 dump 读它到底多画了 9510 px 里的哪一块，再决定加哪一条。
