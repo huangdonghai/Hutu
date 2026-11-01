@@ -42,7 +42,7 @@
 边注区不读取宿主是否分页，也不搜索正文祖先的 padding 或 margin。所有宿主统一使用**根元素 `html`** 的 margin 空白：
 
 1. 边注区来自页面／初始包含块边缘到 `html` border box 之间的 margin 区域，不包含 `body` 或正文内层元素的 margin。
-2. `inline-start` 侧取 `html` 的 `margin-inline-start` 区，`inline-end` 侧取 `html` 的 `margin-inline-end` 区；两侧按 `html` 的书写模式和 `direction` 解析。
+2. `inline-start` 侧取 `html` 的 `margin-inline-start` 区，`inline-end` 侧取 `html` 的 `margin-inline-end` 区；两侧按**正文块容器**的书写模式和 `direction` 解析。若 `html` 自身仍按另一书写模式计算了这些逻辑边（常见于只在 `body` 声明竖排的页面），应把它们映射到正文的 inline 轴后再作为边注带。
 3. 零或负 margin 不形成可用边注空白。`margin: auto` 先按普通布局解析为 used margin，再参与厚度比较。
 4. `html` 一侧 margin 为零时，该侧边注区宽度为零；边注仍从 §3.2 的起点建立，并按自然流继续延伸。
 

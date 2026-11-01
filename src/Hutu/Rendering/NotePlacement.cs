@@ -15,3 +15,16 @@ internal enum NotePlacement : Byte
     /// <summary>An annotation in the page or container margin.</summary>
     Margin,
 }
+
+/// <summary>The side of the page margin where a margin note is placed.</summary>
+internal enum NoteSide : Byte
+{
+    /// <summary>Uses the wider static inline-axis margin of the root element.</summary>
+    Auto,
+
+    /// <summary>The inline-start margin side: left in a row, top in a column.</summary>
+    InlineStart,
+
+    /// <summary>The inline-end margin side: right in a row, bottom in a column.</summary>
+    InlineEnd,
+}

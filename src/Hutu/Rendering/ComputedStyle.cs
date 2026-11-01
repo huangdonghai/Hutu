@@ -154,6 +154,9 @@ internal readonly struct ComputedStyle
     /// <summary>Gets how this element places the note it defines.</summary>
     public NotePlacement NotePlacement => _values.Fused?.NotePlacement ?? NotePlacement.None;
 
+    /// <summary>Gets which page-margin side a margin note uses.</summary>
+    public NoteSide NoteSide => _values.Fused?.NoteSide ?? NoteSide.Auto;
+
     /// <summary>Reads the note placement keyword an element declared.</summary>
     public static NotePlacement ResolveNotePlacementFused(ICssProperty? declared) =>
         declared?.Value?.Trim().ToLowerInvariant() switch
@@ -162,6 +165,15 @@ internal readonly struct ComputedStyle
             "interline" => NotePlacement.Interline,
             "margin" => NotePlacement.Margin,
             _ => NotePlacement.None,
+        };
+
+    /// <summary>Reads the side a margin note declared.</summary>
+    public static NoteSide ResolveNoteSideFused(ICssProperty? declared) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            "inline-start" => NoteSide.InlineStart,
+            "inline-end" => NoteSide.InlineEnd,
+            _ => NoteSide.Auto,
         };
 
     /// <summary>
@@ -3255,6 +3267,7 @@ internal readonly struct ComputedStyle
         internal Layout.WritingMode WritingMode = Layout.WritingMode.HorizontalTb;
         internal TextDirection Direction = TextDirection.LeftToRight;
         internal NotePlacement NotePlacement;
+        internal NoteSide NoteSide;
 
         /// <summary>
         /// Gets the language the element's text is written in, or null where neither it nor any
@@ -4454,7 +4467,8 @@ internal readonly struct ComputedStyle
         ReferenceEquals(_values.Border, other._values.Border) &&
         ReferenceEquals(_values.DisplayPositioning, other._values.DisplayPositioning) &&
         ReferenceEquals(_values.List, other._values.List) &&
-        NotePlacement == other.NotePlacement;
+        NotePlacement == other.NotePlacement &&
+        NoteSide == other.NoteSide;
 
     /// <summary>
     /// Gets whether this style hands a descendant exactly what <paramref name="other"/> handed it:

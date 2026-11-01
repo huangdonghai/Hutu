@@ -408,7 +408,8 @@ internal static partial class BoxBuilder
         // A note's placement replaces the display the element would otherwise have had: whether it is
         // written as a span or a block, it stands at one inline position and contributes a note there.
         if (!style.IsDisplayNone &&
-            (style.NotePlacement is NotePlacement.Inline or NotePlacement.Interline))
+            (style.NotePlacement is NotePlacement.Inline or
+                NotePlacement.Interline or NotePlacement.Margin))
         {
             return BoxKind.Inline;
         }

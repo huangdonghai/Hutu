@@ -164,7 +164,7 @@
 | 边注书写模式 | 强制使用正文块容器的 `writing-mode`／`direction`；注文元素自身的对应声明忽略 | 边注落侧、行内方向、换行和堆叠必须共享正文的一套轴 |
 | 边注侧 | 按正文块容器的 inline-start／inline-end 解析；横排为左／右，竖排为上／下 | 边注位于正文行起始／结束方向的页边，不把竖排的天头地脚误当成 CSS block 轴 |
 | 边注 auto | 比较根元素 `html` 两侧 margin 沿正文 inline 轴的静态厚度，取较大者；相等取 `inline-start`；已放置边注不影响选择 | 不声明侧时稳定地优先使用更宽的横排左右页边或更高的竖排上下页边 |
-| 边注区 | 页面／初始包含块边缘到 `html` border box 之间的对应侧 margin | 边注落在页面自身的空白 margin 中，不被 `body` 或正文内层元素的 margin／padding 抢走 |
+| 边注区 | 页面／初始包含块边缘到 `html` border box 之间的对应侧 margin；`html` 的逻辑 margin 按正文书写模式映射 | 边注落在页面自身的空白 margin 中，不被 `body` 或正文内层元素的 margin／padding 抢走，也不因 `html` 与 `body` 的 writing-mode 不同而丢失页边 |
 | 边注堆叠 | 同侧按声明行 line box 的正文 block 轴位置排序，同一行再按 DOM 顺序 | 视觉边注顺序跟随正文行顺序，不受浮动、表格或定位造成的 DOM 顺序偏差影响 |
 | 边注盒模型 | 自然流式块；`width:auto` 使用边注区可用 inline 尺寸，不做 shrink-to-fit；margin box 参与堆叠 | 不引入内容宽度测量和收缩算法，边注与普通块的自然断行保持一致 |
 | 边注排版核心 | 复用普通行内断行、禁则、挤压、悬挂、bidi、shaping 和文本装饰，只替换可用宽度、外部起点与书写轴来源 | 基础排版规则只实现一次，边注不维护第二套文字处理逻辑 |

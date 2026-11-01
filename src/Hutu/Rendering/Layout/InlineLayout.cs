@@ -1215,6 +1215,65 @@ internal sealed class InlineLayout
         return Math.Max(0, extent - trimStart - trimEnd);
     }
 
+    /// <summary>
+    /// Builds the line flow of one margin-note group at the inline extent the page margin offers.
+    /// Margin notes use the ordinary line composer but are placed as one block after the document
+    /// layout has settled.
+    /// </summary>
+    internal MarginNoteFlow BuildMarginNoteFlow(
+        Box note,
+        Double inlineExtent,
+        WritingModeInfo flow,
+        InlineContext context)
+    {
+        var source = NoteSource.Read(note);
+        var items = NoteItems(
+            source,
+            0,
+            source.Text.Length,
+            inlineExtent,
+            flow,
+            upright: false);
+        var lines = items.Count == 0
+            ? new List<Line>()
+            : BuildLines(
+                items,
+                inlineExtent,
+                flow,
+                context,
+                note.Style,
+                Indentation(note, flow, inlineExtent),
+                emergency: false,
+                settleEdges: true);
+
+        AlignLastLines(lines, inlineExtent);
+        DistributeSpace(lines);
+
+        var block = 0.0;
+
+        foreach (var line in lines)
+        {
+            block += Math.Max(0, line.Height) + line.GapBefore;
+        }
+
+        return new MarginNoteFlow(note, lines, flow, block, this);
+    }
+
+    /// <summary>Places a margin-note flow into its already-positioned content rectangle.</summary>
+    internal void PlaceMarginNoteFlow(
+        MarginNoteFlow flow,
+        LayoutBox parent,
+        Rect contentBox,
+        InlineContext context)
+    {
+        if (flow.BlockSize <= 0)
+        {
+            return;
+        }
+
+        flow.Place(parent, contentBox, context);
+    }
+
     /// <summary>Gets the heights the lines take when stacked, the gaps a float made included.</summary>
     private static List<Double> Heights(List<Line> lines)
     {
@@ -1305,6 +1364,14 @@ internal sealed class InlineLayout
                 Flow = flow,
             };
 
+            foreach (var marker in line.Fragments)
+            {
+                if (marker.MarginNote is { } margin)
+                {
+                    context.Engine.RegisterMarginNote(margin.Box, lineBox);
+                }
+            }
+
             var open = new List<OpenInline>();
             var origin = line.Offset + line.Left;
             var last = line.Fragments[^1];
@@ -1316,7 +1383,8 @@ internal sealed class InlineLayout
                 // content after it begins (CSS Text 3 §8.2.1).
                 var box = fragment.HangSide == HangStart ? origin - fragment.Width : origin;
 
-                if (fragment.InterlineGap || fragment.InterlineNote is not null)
+                if (fragment.InterlineGap || fragment.InterlineNote is not null ||
+                    fragment.MarginNote is not null)
                 {
                     origin = box + fragment.Width;
                     continue;
@@ -1619,7 +1687,8 @@ internal sealed class InlineLayout
             if (fragment.Length == 0 || fragment.IsReplaced || fragment.Atomic is not null ||
                 fragment.Ruby is not null || fragment.OutOfFlow)
             {
-                if (fragment.InterlineGap || fragment.InterlineNote is not null)
+                if (fragment.InterlineGap || fragment.InterlineNote is not null ||
+                    fragment.MarginNote is not null)
                 {
                     fragment.Level = baseLevel;
                 }
@@ -2466,13 +2535,13 @@ internal sealed class InlineLayout
                 child.Style.NotePlacement == NotePlacement.Inline &&
                 !InsideRubyText(chain))
             {
-                var note = NoteSource.Read(child, hoistInterline: true);
+                var note = NoteSource.Read(child, hoistInterline: true, hoistMargin: true);
 
                 if (note.Text.Length > 0 && note.HasInk)
                 {
                     items.Add(InlineItem.CreateNote(note, child, chain));
                 }
-                else if (note.NestedInterline.Count > 0)
+                else
                 {
                     foreach (var nested in note.NestedInterline)
                     {
@@ -2480,6 +2549,11 @@ internal sealed class InlineLayout
                             nested.Note.Content,
                             nested.Note.Box,
                             chain));
+                    }
+
+                    foreach (var nested in note.NestedMargin)
+                    {
+                        items.Add(InlineItem.CreateMarginNote(nested.Note.Box, chain));
                     }
                 }
 
@@ -2490,11 +2564,25 @@ internal sealed class InlineLayout
                 child.Style.NotePlacement == NotePlacement.Interline &&
                 !InsideRubyText(chain))
             {
-                var note = NoteSource.Read(child);
+                var note = NoteSource.Read(child, hoistMargin: true);
 
                 if (note.Text.Length > 0 && note.HasInk)
                 {
                     items.Add(InlineItem.CreateInterlineNote(note, child, chain));
+                }
+
+                continue;
+            }
+
+            if (child.Kind == BoxKind.Inline &&
+                child.Style.NotePlacement == NotePlacement.Margin &&
+                !InsideRubyText(chain))
+            {
+                var note = NoteSource.Read(child);
+
+                if (note.Text.Length > 0 && note.HasInk)
+                {
+                    items.Add(InlineItem.CreateMarginNote(child, chain));
                 }
 
                 continue;
@@ -2875,6 +2963,12 @@ internal sealed class InlineLayout
                 (marker.Position < end || (marker.Position == end && end == source.Text.Length)))
             .ToList();
         var markerIndex = 0;
+        var marginMarkers = source.NestedMargin
+            .Where(marker =>
+                marker.Position >= start &&
+                (marker.Position < end || (marker.Position == end && end == source.Text.Length)))
+            .ToList();
+        var marginIndex = 0;
 
         InlineAncestor? ChainFor(IReadOnlyList<Box> boxes)
         {
@@ -2900,11 +2994,38 @@ internal sealed class InlineLayout
                 ChainFor(marker.Ancestors)));
         }
 
+        void AddMarginMarker(NestedMarginNote marker)
+        {
+            items.Add(InlineItem.CreateMarginNote(
+                marker.Note.Box,
+                ChainFor(marker.Ancestors)));
+        }
+
         void AddMarkersThrough(Int32 position)
         {
-            while (markerIndex < markers.Count && markers[markerIndex].Position <= position)
+            while (true)
             {
-                AddMarker(markers[markerIndex++]);
+                var interlinePosition = markerIndex < markers.Count
+                    ? markers[markerIndex].Position
+                    : Int32.MaxValue;
+                var marginPosition = marginIndex < marginMarkers.Count
+                    ? marginMarkers[marginIndex].Position
+                    : Int32.MaxValue;
+                var next = Math.Min(interlinePosition, marginPosition);
+
+                if (next > position)
+                {
+                    return;
+                }
+
+                if (interlinePosition <= marginPosition)
+                {
+                    AddMarker(markers[markerIndex++]);
+                }
+                else
+                {
+                    AddMarginMarker(marginMarkers[marginIndex++]);
+                }
             }
         }
 
@@ -2944,11 +3065,32 @@ internal sealed class InlineLayout
 
             AddMarkersThrough(from);
 
-            while (markerIndex < markers.Count && markers[markerIndex].Position < to)
+            while (true)
             {
-                var at = markers[markerIndex].Position;
+                var interlinePosition = markerIndex < markers.Count
+                    ? markers[markerIndex].Position
+                    : Int32.MaxValue;
+                var marginPosition = marginIndex < marginMarkers.Count
+                    ? marginMarkers[marginIndex].Position
+                    : Int32.MaxValue;
+                var at = Math.Min(interlinePosition, marginPosition);
+
+                if (at >= to)
+                {
+                    break;
+                }
+
                 AddText(span, from, at);
-                AddMarker(markers[markerIndex++]);
+
+                if (interlinePosition <= marginPosition)
+                {
+                    AddMarker(markers[markerIndex++]);
+                }
+                else
+                {
+                    AddMarginMarker(marginMarkers[marginIndex++]);
+                }
+
                 from = at;
             }
 
@@ -3313,6 +3455,12 @@ internal sealed class InlineLayout
                 continue;
             }
 
+            if (item.MarginNote is { } marginNote)
+            {
+                builder.AddMarginNote(item.Box, item.Style, flow, item.Inline, marginNote);
+                continue;
+            }
+
             // Only runs of text are kept for the line after the box the loop is about to place: a box
             // is placed where it stands and hands the line back only to the opportunity before the
             // element it belongs to, so the cut a later run looks for never stands past it.
@@ -3392,6 +3540,8 @@ internal sealed class InlineLayout
                 var offset = 0;
                 var firstFragment = true;
                 var measured = new Dictionary<(Int32 Start, Int32 End, Double Basis), Line?>();
+                var hoistedMarginNotes = new HashSet<Box>();
+                var hoistedInterlineNotes = new HashSet<Box>();
 
                 Line? MeasuredLine(Int32 start, Int32 end, Double basis)
                 {
@@ -3822,16 +3972,32 @@ internal sealed class InlineLayout
                         {
                             if (marker.InterlineNote is not { } nested)
                             {
+                                if (marker.MarginNote is { } margin)
+                                {
+                                    if (hoistedMarginNotes.Add(margin.Box))
+                                    {
+                                        builder.AddMarginNote(
+                                            marker.Box,
+                                            marker.Style,
+                                            flow,
+                                            marker.Inline,
+                                            margin);
+                                    }
+                                }
+
                                 continue;
                             }
 
                             var at = InterlineAnchorPosition(row, marker, 0);
-                            builder.AddMappedInterlineNote(
-                                marker.Box,
-                                marker.Style,
-                                noteFlow,
-                                nested,
-                                noteContentStart + at);
+                            if (hoistedInterlineNotes.Add(nested.Box))
+                            {
+                                builder.AddMappedInterlineNote(
+                                    marker.Box,
+                                    marker.Style,
+                                    noteFlow,
+                                    nested,
+                                    noteContentStart + at);
+                            }
                         }
                     }
 
@@ -4460,6 +4626,14 @@ internal sealed class InlineLayout
             {
                 foreach (var noteLine in notes)
                 {
+                    foreach (var marker in noteLine.Fragments
+                        .Where(fragment => fragment.MarginNote is not null)
+                        .ToList())
+                    {
+                        bodyLine.Fragments.Add(marker);
+                        noteLine.Fragments.Remove(marker);
+                    }
+
                     lines.Add(noteLine);
                 }
 
@@ -4818,7 +4992,7 @@ internal sealed class InlineLayout
             var fragment = line.Fragments[index];
 
             if (fragment.OutOfFlow || fragment.InterlineGap ||
-                fragment.InterlineNote is not null)
+                fragment.InterlineNote is not null || fragment.MarginNote is not null)
             {
                 continue;
             }
@@ -4890,6 +5064,7 @@ internal sealed class InlineLayout
     private static Boolean HasInk(TextFragment fragment) =>
         !fragment.InterlineGap &&
         fragment.InterlineNote is null &&
+        fragment.MarginNote is null &&
         (fragment.IsReplaced ||
             fragment.Atomic is not null ||
             fragment.Ruby is not null ||
@@ -5455,6 +5630,50 @@ internal sealed class InlineLayout
     /// then takes the held boxes along with the text, exactly as it takes the fragments themselves.
     /// </para>
     /// </remarks>
+    /// <summary>The ordinary line flow belonging to one margin-note group.</summary>
+    internal sealed class MarginNoteFlow
+    {
+        internal MarginNoteFlow(
+            Box note,
+            Object lines,
+            WritingModeInfo flow,
+            Double blockSize,
+            InlineLayout owner)
+        {
+            _owner = owner;
+            Note = note;
+            _lines = (List<Line>)lines;
+            Flow = flow;
+            BlockSize = blockSize;
+        }
+
+        private readonly InlineLayout _owner;
+        private readonly List<Line> _lines;
+
+        public Box Note { get; }
+
+        public WritingModeInfo Flow { get; }
+
+        public Double BlockSize { get; }
+
+        internal void Place(LayoutBox parent, Rect contentBox, InlineContext context)
+        {
+            var placement = new Placement(context.Engine);
+            _owner.PlaceLines(
+                Note,
+                parent,
+                _lines,
+                0,
+                _lines.Count,
+                contentBox,
+                Flow,
+                context,
+                0,
+                placement);
+            placement.Finish(Flow);
+        }
+    }
+
     private sealed class Placement
     {
         private readonly LayoutEngine _engine;
@@ -7676,6 +7895,7 @@ internal sealed class InlineLayout
             NoteSource? noteSource = null,
             InterlineNoteSource? interlineNote = null,
             InterlineFlowAnchor? interlineAnchor = null,
+            MarginNoteSource? marginNote = null,
             WritingModeInfo? flow = null)
         {
             Text = text;
@@ -7693,6 +7913,7 @@ internal sealed class InlineLayout
             NoteSource = noteSource;
             InterlineNote = interlineNote;
             InterlineAnchor = interlineAnchor;
+            MarginNote = marginNote;
             Flow = flow;
         }
 
@@ -7740,6 +7961,9 @@ internal sealed class InlineLayout
 
         /// <summary>Gets the midpoint target that begins an interline note in its shared flow.</summary>
         public InterlineFlowAnchor? InterlineAnchor { get; }
+
+        /// <summary>Gets the margin note whose zero-width declaration this item marks.</summary>
+        public MarginNoteSource? MarginNote { get; }
 
         /// <summary>Gets the flow this run uses where it differs from its source box's flow.</summary>
         public WritingModeInfo? Flow { get; }
@@ -7799,6 +8023,10 @@ internal sealed class InlineLayout
         public static InlineItem CreateInterlineAnchor(Int32 slot, Double position, Box box) =>
             new(null, box.Style, box, null, false, false,
                 interlineAnchor: new InterlineFlowAnchor(slot, position));
+
+        public static InlineItem CreateMarginNote(Box box, InlineAncestor? inline) =>
+            new(null, box.Style, box, inline, false, false,
+                marginNote: new MarginNoteSource(box));
     }
 
     private sealed record InterlineNoteSource(NoteSource Content, Box Box);
@@ -7811,11 +8039,13 @@ internal sealed class InlineLayout
         private NoteSource(
             String text,
             IReadOnlyList<NoteSpan> spans,
-            IReadOnlyList<NestedInterlineNote> nestedInterline)
+            IReadOnlyList<NestedInterlineNote> nestedInterline,
+            IReadOnlyList<NestedMarginNote> nestedMargin)
         {
             Text = text;
             Spans = spans;
             NestedInterline = nestedInterline;
+            NestedMargin = nestedMargin;
         }
 
         public String Text { get; }
@@ -7824,6 +8054,9 @@ internal sealed class InlineLayout
 
         /// <summary>Gets the interline notes hoisted out of this inline note's text.</summary>
         public IReadOnlyList<NestedInterlineNote> NestedInterline { get; }
+
+        /// <summary>Gets the margin notes hoisted out of this note's text.</summary>
+        public IReadOnlyList<NestedMarginNote> NestedMargin { get; }
 
         /// <summary>Gets the styled span holding the character at the text position.</summary>
         public NoteSpan SpanAt(Int32 position)
@@ -7877,14 +8110,18 @@ internal sealed class InlineLayout
             }
         }
 
-        public static NoteSource Read(Box note, Boolean hoistInterline = false)
+        public static NoteSource Read(
+            Box note,
+            Boolean hoistInterline = false,
+            Boolean hoistMargin = false)
         {
             var text = new System.Text.StringBuilder();
             var spans = new List<NoteSpan>();
             var nested = new List<NestedInterlineNote>();
-            Append(note, text, spans, nested, new List<Box>(), hoistInterline);
+            var nestedMargin = new List<NestedMarginNote>();
+            Append(note, text, spans, nested, nestedMargin, new List<Box>(), hoistInterline, hoistMargin);
 
-            return new NoteSource(text.ToString(), spans, nested);
+            return new NoteSource(text.ToString(), spans, nested, nestedMargin);
         }
 
         private static void Append(
@@ -7892,8 +8129,10 @@ internal sealed class InlineLayout
             System.Text.StringBuilder text,
             List<NoteSpan> spans,
             List<NestedInterlineNote> nested,
+            List<NestedMarginNote> nestedMargin,
             List<Box> ancestors,
-            Boolean hoistInterline)
+            Boolean hoistInterline,
+            Boolean hoistMargin)
         {
             if (box.Kind == BoxKind.Text)
             {
@@ -7932,10 +8171,21 @@ internal sealed class InlineLayout
                 box.Kind == BoxKind.Inline &&
                 box.Style.NotePlacement == NotePlacement.Interline)
             {
-                var content = Read(box);
+                var content = Read(box, hoistMargin: true);
                 nested.Add(new NestedInterlineNote(
                     text.Length,
                     new InterlineNoteSource(content, box),
+                    ancestors.ToArray()));
+                return;
+            }
+
+            if (hoistMargin &&
+                box.Kind == BoxKind.Inline &&
+                box.Style.NotePlacement == NotePlacement.Margin)
+            {
+                nestedMargin.Add(new NestedMarginNote(
+                    text.Length,
+                    new MarginNoteSource(box),
                     ancestors.ToArray()));
                 return;
             }
@@ -7954,8 +8204,10 @@ internal sealed class InlineLayout
                     text,
                     spans,
                     nested,
+                    nestedMargin,
                     ancestors,
-                    hoistInterline);
+                    hoistInterline,
+                    hoistMargin);
 
                 if (isNested)
                 {
@@ -7977,6 +8229,13 @@ internal sealed class InlineLayout
         Int32 Position,
         InterlineNoteSource Note,
         IReadOnlyList<Box> Ancestors);
+
+    private readonly record struct NestedMarginNote(
+        Int32 Position,
+        MarginNoteSource Note,
+        IReadOnlyList<Box> Ancestors);
+
+    private sealed record MarginNoteSource(Box Box);
 
     /// <summary>One outer fragment of a two-line inline note.</summary>
     private sealed class NoteRun
@@ -8065,7 +8324,8 @@ internal sealed class InlineLayout
             NoteRun? note = null,
             InterlineNoteSource? interlineNote = null,
             Boolean interlineGap = false,
-            Double? interlinePosition = null)
+            Double? interlinePosition = null,
+            MarginNoteSource? marginNote = null)
         {
             Source = source;
             Start = start;
@@ -8085,6 +8345,7 @@ internal sealed class InlineLayout
             InterlineNote = interlineNote;
             InterlineGap = interlineGap;
             InterlinePosition = interlinePosition;
+            MarginNote = marginNote;
         }
 
         /// <summary>Gets whether the fragment is a box that left the flow, placed but not drawn here.</summary>
@@ -8101,6 +8362,9 @@ internal sealed class InlineLayout
 
         /// <summary>Gets the line-relative position a hoisted interline-note marker stands at.</summary>
         public Double? InterlinePosition { get; }
+
+        /// <summary>Gets the margin note whose zero-width declaration this fragment marks.</summary>
+        public MarginNoteSource? MarginNote { get; }
 
         /// <summary>
         /// Gets or sets whether the run reads right to left at the level the bidi algorithm gave it, or
@@ -9240,7 +9504,8 @@ internal sealed class InlineLayout
                 {
                     if (_fragments[index].OutOfFlow ||
                         _fragments[index].InterlineGap ||
-                        _fragments[index].InterlineNote is not null)
+                        _fragments[index].InterlineNote is not null ||
+                        _fragments[index].MarginNote is not null)
                     {
                         continue;
                     }
@@ -9332,7 +9597,7 @@ internal sealed class InlineLayout
                     var fragment = _fragments[index];
 
                     if (fragment.OutOfFlow || fragment.InterlineGap ||
-                        fragment.InterlineNote is not null)
+                        fragment.InterlineNote is not null || fragment.MarginNote is not null)
                     {
                         continue;
                     }
@@ -9471,6 +9736,26 @@ internal sealed class InlineLayout
                 flow,
                 inline,
                 interlineNote: note));
+        }
+
+        /// <summary>Adds a zero-width marker for a margin note declared in the line.</summary>
+        public void AddMarginNote(
+            Box box,
+            ComputedStyle style,
+            WritingModeInfo flow,
+            InlineAncestor? inline,
+            MarginNoteSource note)
+        {
+            _fragments.Add(new TextFragment(
+                String.Empty,
+                0,
+                0,
+                0,
+                style,
+                box,
+                flow,
+                null,
+                marginNote: note));
         }
 
         /// <summary>Adds fixed empty room used to place an interline note's midpoint.</summary>
@@ -10097,7 +10382,7 @@ internal sealed class InlineLayout
                     continue;
                 }
 
-                if (fragment.InterlineNote is not null)
+                if (fragment.InterlineNote is not null || fragment.MarginNote is not null)
                 {
                     inFlow = true;
                     above[position] = 0;
@@ -10309,7 +10594,8 @@ internal sealed class InlineLayout
                         continue;
                     }
 
-                    if (fragment.InterlineGap || fragment.InterlineNote is not null)
+                    if (fragment.InterlineGap || fragment.InterlineNote is not null ||
+                        fragment.MarginNote is not null)
                     {
                         continue;
                     }
