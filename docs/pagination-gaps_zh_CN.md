@@ -1374,3 +1374,29 @@ Chrome 的 `widows-orphans-021` 矩形（`build/_wo21_probe.html`）：`green [8
 - Hutu 本形给两片：第一片是**整盒 40 高**站在 `0,20`（越过栏底 10），第二片在第二栏——与 Chrome 的 30+20 不一致。本轮不补这条：没有任何 css-break 对靠它，且判据（哪种断点才受 orphans 管）还得再量一组变体才能立住，写单测就会是红的。
 
 门禁：单测由 2180 增到 2183（三条全绿）；本轮 `src/Hutu` 未动，屏幕/打印两个口径沿用 `14af60d2` 的量：全量 1925 条 pixel-diff finding、css-break 30 对、打印 189/198 九条同名。
+
+### 9.102 单列填充的嵌套壳被外层展开：`variable-fragmentainer-size-002` 转绿，-001 2400 → 2000
+
+`ColumnsOf` 有一条老排除：子盒自己也是多栏就整个容器退回普通堆叠（"它要在本层的一栏里平衡自己的几栏"）。这条把 001/002 整对挡在分栏之外——探针对 `variable-fragmentainer-size-001` 量过：外层的 300x100 里那个 `columns:1; column-fill:auto; height:250px` 壳站成 `8,49.72 300x250`，**连栏宽都没拿到**，里面 170 高的表整块画在第一栏。
+
+新加的判据是 `IsSingleColumnFragmentainer`：单子列、`column-fill:auto`、不 `column-wrap`、无 border/padding/margin/背景/裁剪、无强制断与 `break-inside:avoid`、子里只有流内块。这种壳**没有要在栏里平衡的几栏**——它就是一间给内容的房，房本身什么都不画，切的是内容（CSS Multicol 3 §7.4、CSS Break 3 §4.1）。两处一起改：`ColumnsOf` 不再为它拒绝分栏（栏宽正常发给它），`SpliceOverset` 的"裸壳展开"接受它（`IsBareWrapper || IsSingleColumnFragmentainer`，配合"壳比栏还高"那条原有条件）。
+
+实测：
+- `wpt/css-break/table/repeated-section/variable-fragmentainer-size-002.html` **转绿**（800 → 0）；
+- `-001` 2400 → **2000**（表进了三栏，重复表头已经在第二栏顶上画出来了；残差见下）。
+
+**下一片的判据已经量死**（`build/_repeat_matrix.html`、`build/_repeat_matrix3.html`；表 = 20 高 header(avoid) + 130 高 row + 20 高 footer(avoid)，外层 `columns:4; column-fill:auto; height:100px`，内层 `columns:1; column-fill:auto; height:250px`，前置一个 N 高的块）：
+
+| 前置块 N | 表在第一栏拿到的房间 | Chrome 画的 header / footer 矩形数 |
+| --- | --- | --- |
+| 0 | 100 | 3 / 3 |
+| 10 | 90 | 3 / 3 |
+| 20 | 80 | 3 / 3 |
+| 30 | 70 | **1 / 1** |
+| 40 | 60 | 1 / 1 |
+| 50 | 50 | 1 / 1 |
+| 60 | 40 | 1 / 1 |
+
+即两条：①**重复段要占栏空间**——001 的三栏内容分配是 80 / 60 / 30（第一栏 20 header + 60 row + 20 重复 footer = 100），而 Hutu 的 `AddBoxCut` 按整栏高切内容（100 / 70），重复段是叠画不占位；②**第一栏的房间不足 2×(header+footer) 就整表不重复**——阈值实测落在 80（≥ 40×2 画，70 不画），且一旦第一栏不给，后面 100 高的栏也不补画（`lead30` 的 header 只有 1 个矩形）。要做这半，得把重复段高度从 `TableFormattingContext.Build`/`SectionBand` 暴露给 `AddBoxCut`，并让 piece 的**画高**（含重复段）与 slice offset 的**推进**（只走内容）分开；002 现在能过，正是因为它的分配恰好等于"不重复"那一支，改的时候必须把这条阈值一起写进去，否则 002 会翻红。
+
+三道门禁：屏幕全量 finding 1925 → **1924**、**0 新增失败名**、0 对变差、**`variable-fragmentainer-size-002` 转绿**（css-break 30 → **29**）；单测 2183；打印 189/198 九条同名。

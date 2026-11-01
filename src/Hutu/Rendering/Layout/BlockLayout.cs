@@ -982,8 +982,13 @@ internal sealed class BlockLayout
             }
 
             // A multi-column child balances its own columns inside one column of this one, which the
-            // columns do not do yet, so the box keeps the ordinary stack until they can.
-            if (!child.Flow.IsVertical && child.Style.Multi.IsMultiColumn)
+            // columns do not do yet, so the box keeps the ordinary stack until they can. A child of a
+            // single filled column has no columns to balance: it is one room for what it holds, and the
+            // columns around it open it into their own members (CSS Multicol 3 §7.4, measured:
+            // repeated-section/variable-fragmentainer-size-001, whose header and footer come back once
+            // in each outer column).
+            if (!child.Flow.IsVertical && child.Style.Multi.IsMultiColumn &&
+                !IsSingleColumnFragmentainer(child, contentInline))
             {
                 return false;
             }
@@ -1833,6 +1838,51 @@ internal sealed class BlockLayout
         return true;
     }
 
+    /// <summary>Gets whether a nested multi-column container is one the columns around it may open into
+    /// their own members: exactly one column of its own that it fills rather than balances, nothing it
+    /// paints or bounds by itself, and only boxes of the flow inside. Such a container is a room for what
+    /// it holds - the columns around it are the fragmentainers that content flows through, each of them
+    /// as wide as its own single column would have been (CSS Multicol 3 §1.2, §7.4, CSS Break 3 §4.1,
+    /// measured: repeated-section/variable-fragmentainer-size-001, whose header and footer come back
+    /// once per outer column, and -002 where the first outer column leaves too little room for a
+    /// header at all).</summary>
+    private static Boolean IsSingleColumnFragmentainer(Box child, Double share)
+    {
+        var multi = child.Style.Multi;
+
+        if (child.Kind != BoxKind.Block || child.Flow.IsVertical || child.Children.Count == 0 ||
+            !multi.IsMultiColumn || multi.Count != 1 || !multi.Fills || multi.Wraps ||
+            child.Style.ClipsOverflow || ContainsBlockSize(child) ||
+            child.Style.Breaks.Before != BreakValue.Auto ||
+            child.Style.Breaks.After != BreakValue.Auto ||
+            child.Style.Breaks.Inside != BreakValue.Auto ||
+            child.Style.BackgroundColor is { A: > 0 } || child.Style.Backgrounds.Count > 0)
+        {
+            return false;
+        }
+
+        var border = BorderOf(child);
+        var padding = child.Style.Padding.Resolve(share);
+        var margin = child.Style.Margin.Resolve(share);
+
+        if (border.Horizontal != 0 || border.Vertical != 0 ||
+            padding.Horizontal != 0 || padding.Vertical != 0 ||
+            margin.Horizontal != 0 || margin.Vertical != 0)
+        {
+            return false;
+        }
+
+        foreach (var grandchild in child.Children)
+        {
+            if (!grandchild.IsBlockLevel || PositionedLayout.IsOutOfFlow(grandchild) || IsFloat(grandchild))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>Gets the members a column really holds: a bare wrapper that is shorter than what
     /// it holds is opened into them, because the box that walks past the wrapper is the one the
     /// column has to cut, and the wrapper brings nothing of its own to the cut (CSS Break 3 §4.1).
@@ -1857,12 +1907,15 @@ internal sealed class BlockLayout
 
         // A wrapper that paints nothing and holds more than a column is opened too: the content is what
         // the column has to cut, and the wrapper lends it no boundary of its own (CSS Break 3 §4.1,
-        // measured: widows-block-in-inline-001).
-        var opens = IsOversetWrapper(source[last], share, context) ||
-            (fragmentHeight > 0 && IsBareWrapper(source[last], share) &&
-             BlockExtentOf(
-                 _engine.Measure(source[last], MeasureConstraints.FitWidth(share), context), false) >
-                 fragmentHeight + 0.001);
+        // measured: widows-block-in-inline-001). A nested container of a single filled column is opened
+        // by the same leave-nothing-behind test.
+        var candidate = source[last];
+
+        var opens = IsOversetWrapper(candidate, share, context) ||
+            (fragmentHeight > 0 &&
+             (IsBareWrapper(candidate, share) || IsSingleColumnFragmentainer(candidate, share)) &&
+             BlockExtentOf(_engine.Measure(candidate, MeasureConstraints.FitWidth(share), context), false) >
+             fragmentHeight + 0.001);
 
         if (!opens)
         {
