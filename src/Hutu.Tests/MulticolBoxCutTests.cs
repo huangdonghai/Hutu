@@ -255,6 +255,52 @@ public sealed class MulticolBoxCutTests
         Assert.That(Of(view, "t"), Has.Count.EqualTo(1), "and what it holds is not shared out");
     }
 
+    [Test]
+    public async Task ABoxWithItsOwnBlockStartMarginDividesAtTheRoomLeftAfterIt()
+    {
+        using var view = await Render(
+            "<style>#c { width: 200px; columns: 2; column-gap: 0; column-fill: auto; height: 100px }" +
+            " #g { margin-top: 60px; height: 120px } .unit { height: 200px }</style>" +
+            "<div id='c'><div id='g'><div class='unit'></div></div></div>");
+
+        var pieces = Of(view, "g");
+
+        // The margin stands in the column that holds the box, so that column only gets what is left of
+        // it; the box carries on at the top of the next. The margin is spent once, where the box begins
+        // - not again on every piece of it (CSS 2.1 §8.3.1, CSS Break 3 §4.3).
+        Assert.That(pieces, Has.Count.EqualTo(3), "the box and what it lets overflow span three columns");
+        Assert.That(
+            pieces.Select(piece => (piece.FragmentClip?.X, piece.FragmentClip?.Y, piece.FragmentClip?.Height))
+                .ToList(),
+            Is.EqualTo(new List<(Double?, Double?, Double?)> { (0, 60, 40), (100, 60, 100), (200, 60, 100) }),
+            "the first column holds only the room its margin left");
+    }
+
+    [Test]
+    public async Task EachPieceOfADividedTransformedBoxTurnsAboutItsOwnRectangle()
+    {
+        using var view = await Render(
+            "<style>#c { width: 200px; columns: 2; column-gap: 0; column-fill: auto; height: 100px }" +
+            " #g { margin-top: 60px; height: 120px; transform: rotate(25deg) } .unit { height: 200px }</style>" +
+            "<div id='c'><div id='g'><div class='unit'></div></div></div>");
+
+        var pieces = Of(view, "g");
+
+        // The transform reads the fragment, not the whole: each column's origin stands in the middle of
+        // the stretch it holds, where the whole box would give every piece the same 60 pixels down
+        // (CSS Transforms 1 §transform-origin read against CSS Fragmentation 3 §4.1, measured:
+        // transform-006, whose fragments each stand rotated about a corner of their own stretch).
+        Assert.That(pieces, Has.Count.EqualTo(3), "the box divides");
+        Assert.That(
+            pieces.Select(piece => (piece.TransformOrigin.X, piece.TransformOrigin.Y)).ToList(),
+            Is.EqualTo(new List<(Double, Double)> { (50, 20), (50, 90), (50, 190) }),
+            "each origin is the middle of the stretch that column holds, in the box's own coordinates");
+        Assert.That(
+            pieces[0].TransformOrigin.Y,
+            Is.Not.EqualTo(60),
+            "not the middle of the whole box, which every piece would then share");
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

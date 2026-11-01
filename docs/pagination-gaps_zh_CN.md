@@ -1529,3 +1529,11 @@ legend 单独立了排除（HTML rendering §15.3.12 由 fieldset 自己贴边�
 试过并撤销的两条（都无测量效果，别再来一遍）：最后一片的 `painted` 减 `Margin.Vertical`（全量 0 变化）；只对非 relay 片让 margin（0 变化）。
 
 剩下的：006 的 30376 = 第三片该 25 高却仍拿 100（`last`/`content` 用 `Painted` 时连同 `.child` 的 300 高溢出与 `break-inside:avoid` 一起算），008 的 10531 = §9.66 记的"abspos 要站在片自己的包含块上"。
+
+### 9.113 `0ecda5e4` 补了两条单测；顺手量到"空尾片"：`Painted` 把 margin 算进了延伸长度
+
+`MulticolBoxCutTests` 新增两条（单测 2186 → **2188**）：
+- `ABoxWithItsOwnBlockStartMarginDividesAtTheRoomLeftAfterIt`：容器 `columns:2; height:100px; column-fill:auto`，子 `margin-top:60; height:120`，内装 200 高的普通子 ⇒ 三片的裁剪必须是 `(0,60,h40) (100,60,h100) (200,60,h100)`（第一栏只拿到 margin 之后的 40）。
+- `EachPieceOfADividedTransformedBoxTurnsAboutItsOwnRectangle`：同一形状加 `transform: rotate(25deg)`（不写 origin ⇒ 默认 50% 50%）⇒ 三片的 `TransformOrigin` 分别 `(50,20) (50,90) (50,190)`，即各自那一段的中心；若是整盒中心，三片都会是 `(50,60)`，测试里专门断言第一片 **不等于** 60，防回归到整盒。
+
+顺带量到一个小缺陷（未修，别当成本族阻塞）：把内子换成**不溢出**（`height:120`，与盒同高）时，仍是三片，第三片裁剪 `(200,60,100x40)` 对应盒的行 `[140..180]` —— 盒只到 120，所以这一片**什么都不画**。原因：栏内推进用的是 `Painted(child) = max(Reach, Fragment.Height)`，而 `Fragment.Height` 含 `margin.Top/Bottom` ⇒ 延伸长度被 margin 又算了一遍。试过 `Painted - Margin.Vertical`：对 `css-break` 全模块 0 变化（所以当时被当"无效果"撤了），但它正是这条空片的成因；要修得同时看 `last`/`resumeAt` 的坐标口径（`resumeAt` 是盒内行号，不该含 margin），别只动一处。
