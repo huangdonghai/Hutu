@@ -2635,7 +2635,13 @@ internal sealed class BlockLayout
                 !child.Style.ClipsOverflow && child.Kind != BoxKind.Table &&
                 (!HoldsPositioned(child) || vertical) ||
             BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) &&
-                !HasBlockMaximum(child, vertical) && (child.Kind != BoxKind.Table || vertical || HoldsPositioned(child)) ||
+                // A table sizes its block extent from its rows, and the rows are the break points the
+                // column needs - along either axis: a vertical container's table runs its captions and
+                // rows across the block axis (the physical x) and each column holds what fits of them,
+                // the same way a horizontal one cuts down the page (measured: table-grid-paint-vrl-rtl
+                // and -vlr-rtl, whose 140-tall caption and 225-tall row each come out 100 / 100 / 40 and
+                // 50 / 100 / 75 across the four columns).
+                !HasBlockMaximum(child, vertical) && (child.Kind != BoxKind.Table || HoldsPositioned(child)) ||
             !cutsHere ||
             child.Style.Multi.IsMultiColumn ||
             child.Kind is BoxKind.Grid or BoxKind.Masonry ||

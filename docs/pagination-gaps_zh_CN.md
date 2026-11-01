@@ -1546,3 +1546,11 @@ legend 单独立了排除（HTML rendering §15.3.12 由 fieldset 自己贴边�
 2. **竖排容器根本不切表**：`ArrangeMulticolChildren` 给竖排走 `ArrangeMulticolRunAcross`，但没有任何判据会把 Table 子在**块向（x）**切开 —— `DividesAcross`/`DividesUnits`/`RelaysInColumns`/`RowRelaysInColumns`/`BreaksAtLines` 全部显式 `!vertical`；`AddBoxCut` 虽然带 `vertical` 形参并会用 `BlockExtentOf(size, vertical)`，但对有子的表它要求 `ClonesDecoration` 或 `HoldsPositioned`。Chrome 的 4 个 `100x100` 片段（y=380/280/180/80，块轴向 x 各自从 0 起算）说明：竖排的切片是"每栏一块 x∈[0,100] 的窗口 + 续片从栏头重画"，与横排同构，只是轴换了。⇒ 任务 #8 的真实工作量 = (a) 让竖排的分栏判据接受"块向超栏"的子（含表），(b) 表 caption/行的 cross 尺寸按所在轴取；这两条都要跟 8 对竖排表一起量，别只对着 `table-grid-paint-*` 调。
 
 **045（10000 px）**：`build/_oof45_real.html`/§9.98 的 Chrome 矩形说清楚了模型 —— **每个盒子有自己的片段裁剪**：wrapper 的两片在 `[-92,-50 40x100]`、`[-42,-50 40x100]`（未位移），`.rel` 的两片在 `[8,50 40x100]`、`[58,50 40x100]`（位移后），abs 再按 `.rel` 的片段各画一片 `[8,50 50x100]`、`[58,50 50x100]`（宽 50 > 栏宽 40，只被块向切）。Hutu 是"一片一 clip"：clip 挂在最外层片上并作用于整棵子树，所以 `build/_clip-move.patch`（把片的 clip 随片自身 `RelativeDisplacement` 平移）对它无效 —— 位移在里面 `.rel` 上。要修得先有"片内每个被位移的盒各自一条裁剪带"的模型（`LayoutBox.FragmentClip` 目前只能有一个、且由父级 `_cuts` 栈继承），不是再加一次平移。
+
+### 9.115 任务 #8 的第一半落地：竖排容器现在也切表（`table-grid-paint-vrl/vlr-rtl` 各 48980 → 37580）
+
+`AddBoxCut` 的拒绝表里有一条"`BlockSizeIsAuto && 无 min/max && (不是表 || vertical || HoldsPositioned)`"——对表来说它只在**横排**放行（`Kind != Table` 那一项把表除外），`|| vertical` 又把竖排的表挡回去：于是竖排容器里的表永远整块站着，四栏各 100 的块向窗口根本没用上。去掉 `|| vertical` 后，Chrome 量的分布立刻对上：140 高的 caption 出 `100 + 40`，225 高的行出 `50 + 100 + 75`（`build/_probe_vtable.dom`、§9.81）；Hutu 的片现在也是这个分配（`table-grid-paint-*` 两对各减 11400 px）。
+
+门禁：全量 1921 finding **同名集合不变**、**0 新增失败名**、**0 对变差**（只有这两对改善），css-break 仍 26 对；单测 **2188**；打印 **189/198** 九条同名。
+
+#8 剩下的第二半（已定位，下一片）：**caption 的内向长度**。Hutu 现在是 `caption 547,192 140x0`（块向 140 ✓、内向 0 ✗），Chrome 是 `[0,380 100x100] + [0,280 40x100]` —— 内向（竖排里是 y）要铺满表的内向长度（栏的 100）。`MeasureCaptions(TableBuild, contentWidth, ctx)` 与 `ArrangeCaption(caption, x, y, width, ctx)` 都按**物理宽度**传内向尺寸，竖排得换成物理高度；同一条也影响 `table-row/col/section-paint-vrl/vlr-*` 那 6 对（它们现在还没被切，切了以后同样要 caption/单元的内向尺寸跟上）。
