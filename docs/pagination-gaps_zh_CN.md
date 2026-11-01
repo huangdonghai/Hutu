@@ -949,6 +949,10 @@ Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一�
 
 实测：000/001 **8000 → 0**。18 对同时大幅靠近绿：`gecko/flexbox/pagination/flexbox-{single,multi}-column-1a..1f` 37600 → 14450、`-single-column-2` 22450 → 15150、`gecko/pagination/border-breaking-000-cols` 52500 → 7500、`-003-cols` 6450 → 2700、`css-align/blocks/align-content-block-break-overflow-010` 109932 → 64780、`css-multicol/column-rule-002` 3600 → 2400、`multicol-list-item-008` 781 → 756 等。**三对变差但仍在红**：`gecko/flexbox/pagination/flexbox-single-column-6` 1050 → 7600、`gecko/pagination/border-breaking-001-cols` 46000 → 76000、`css-anchor-position/anchor-position-multicol-nested-001` 5540 → 5700——收紧判据（只允许“内容比盒自身还长”的盒被切）能保住这两对的原值，但那样 001 的外层自动高盒就不再被切、且 `flexbox-single-column-2` 等 16 对的改进全部消失，故取“通用可切”这一条，把这三对记为后续要按单元终点细分的靶子。全量屏幕 2013 → 2011、新增失败名 **0**（`wpt/css-break` 41 → 39）；单测 2180；打印 189/198。
 
+### 9.72 收紧一处：只有“因内容而被切”的盒才带 reach
+
+`9f41abb6` 之后把 `MulticolChild.Reach` 的赋予限定到 `DividesUnits` 触发的盒；因 `DividesAcross`（含绝对子盒、grid）而被切的盒仍只带**单元表**（023 的 widows 落点要用它，撤掉就红回去 1250）。实测：`css-anchor-position/anchor-position-multicol-nested-001` 5700 → **5540**（回到基线值），其余数字与 `9f41abb6` 相同——修复 000/001、18 对靠近绿、新增失败名 0、`wpt/css-break` 39、单测 2180、打印 189/198。仍有两对因“允许切”本身变差但仍在红：`gecko/flexbox/pagination/flexbox-single-column-6` 1050 → 7600（`article` 是列向 flex 的项，项的断点应由容器定；但 `flexItems` 标记只在容器被展开成成员时才打上，带背景的容器不展开，所以按“是不是 flex 项”加护栏**实测无效**，7600 不变）、`gecko/pagination/border-breaking-001-cols` 46000 → 76000。这两对要在“单元终点”与“盒的边框带”之间再细分判据，留作下一片。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。

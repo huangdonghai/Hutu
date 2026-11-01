@@ -2222,9 +2222,11 @@ internal sealed class BlockLayout
                 }
             }
 
-            var divides = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer) ||
+            var byShape = DividesAcross(child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer);
+            var divides = byShape ||
                 DividesUnits(
                     child, vertical, margin, box.Style.Multi.Fills, context.InFragmentainer, share, childContext);
+            var byUnits = !byShape && divides;
             var relays = !divides && RelaysInColumns(
                 child, vertical, extent, fragmentHeight, context.InFragmentainer);
 
@@ -2268,9 +2270,12 @@ internal sealed class BlockLayout
             // count for widows and orphans (CSS Break 3 §4.2).
             var units = divides && !relays && !vertical ? PieceBreaks(child, share, childContext) : null;
 
-            // What the pieces paint: the unit that stands past the box is still shown, so the last
-            // piece reaches to its end, while the height the flow advances by stays the box's own.
-            var painted = divides && !relays && units is { Count: > 0 }
+            // What the pieces paint: the unit that stands past the box is still shown, so the last piece
+            // reaches to its end, while the height the flow advances by stays the box's own. Only for a
+            // box cut because of what it holds: a box the shape rule divided - one that holds positioned
+            // descendants, or a grid - keeps the pieces that rule was measured with (CSS Fragmentation 3
+            // §4.3, CSS Position 3 §5.5).
+            var painted = byUnits && !relays && units is { Count: > 0 }
                 ? Math.Max(relayed, units[units.Count - 1])
                 : relayed;
 
