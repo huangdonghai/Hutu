@@ -977,6 +977,16 @@ Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一�
 
 第三条（决定这两对能否翻绿）：**侧边整条 10px 色带的竖向外沿要画到相邻水平线的中心**，于是各行侧带首尾相接：行1 `120..180`、行2 `180..325`、行3 `325..375`、行4 `375..400`——恰是 ref 的假 div 序列（共享线整条归**上方**行；表首行向外 5）。Hutu 现在把侧带画在行盒 `125..175` 上，蓝/黑分界比 ref 高 5px（残差 `x=329..338 test=#0000ff ref=#000000 y=41..60`）。要做的是**绘制带**而不是布局盒（否则盒内文字会位移 5px）：给折叠单元的左右边框一个 `rowTop ± half(上线)`→`rowBottom + half(下线)` 的延伸带。
 
+### 9.76 折叠边框第三条做成了但门禁不过：完整测量与冲突点
+
+把 §9.75 的第三条（侧带外沿）接上后 `build/_collapsed-side-band.patch`（299 行，含 §9.75 三条 + 侧带）实测：
+
+- **翻绿 2 对**：`wpt/css-break/table/table-collapsed-borders-paint-htb-ltr`（8000 → 0）、`wpt/css-tables/collapsed-border-large-rowgroup-001`；`at-boundary` 10105 → 2540；另有 15 对大幅靠近绿：`gecko/table-bordercollapse/borderhandling-rules-border-{cols,rows}-{quirks,strict}` 216/178 → 60/90、`ttwf-reftest-borderRadius` 3121 → 372、`box-shadow-table-border-collapse-001` 8100 → 6980、`gecko/bugs/494667-2` 1616 → 816、`background-image-{row,column}-collapsed` 18583/36800 → 16507/35800、`table-cell-width-0` 882 → 576、`356774-1` 805 → 464 等。
+- **变差 7 对（都仍红）**：`wpt/CSS2/tables/border-collapse-006` 17500 → 25000、`border-collapse-spanning-cells-004` 36400 → 39200、`border-collapse-empty-row` 18075 → 19650、`gecko/table-bordercollapse/double_borders` 226 → 423、`collapsed-border-large-rowgroup-002` 888 → 904、`229591-1` 1829 → 1861、`ruby-inlinize-blocks-003` 3451 → 3463。
+- **门禁不过**：4 条单测红——`ACellWinsTheLineItSharesWithItsRow`、`ARowsBorderMeetsTheLinesAboveAndBelowIt` 断言**首/末行的单元吃满整条外侧线**（`Widths.Top == 2`），`AColumnGroupDrawsTheLinesAtItsEdges`、`AColumnsBorderMeetsTheLinesBesideItsCells` 断言左侧整宽；本改动把上下外侧改成“半条 + 表盒带外半”，并且 `SideBand` 把一条 `BorderCommand` 拆成上下/左右两条，`Painted()` 取到的那条左右宽为 0。
+
+冲突点要说清：Chrome 对 `htb-ltr` 的实测是**行盒 = 声明高（50）、其上下各被半条线咬住、整条线画在行的外沿**（tbody 起点在 flow 125、侧带 120..180），而上面 4 条单测记的是“外侧整线归首/末行单元吃满”。两者只在“表自身没有边框”时才同解；`border-collapse-006`/`spanning-cells-004` 变差说明“单元吃满外侧整线”在那些形状上仍是需要的。所以下一步要么把两种读法按“外侧线是否有对手（表边框/行组边框）”分流，要么先只保留**不影响线宽**的两件（逐段定色 + 表盒外半线的颜色）把 `htb-ltr` 之外能拿的收益拿走。屏幕新增失败名在两遍对照里仍是 0（文本抖动 ±1…±144 属噪声，见 §9.74）。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
