@@ -964,6 +964,19 @@ Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一�
 
 顺带量到一条门禁事实：全量屏幕的**失败名集合**稳定，但少数文本敏感的页在两遍之间的像素数会抖 ±1…±144（`gecko/bidi/712600-1/2`、`wpt/css-lists/inline-block-list{,-marker}`、`css-text/word-break-normal-ethiopic`、`css-pseudo/first-line-line-height-002`、`gecko/font-face/local-styled-1`、`line-edge-white-space-collapse-002`）——判断“变差”要以**名字集合**为准，单看像素增减会把噪声当成回退。两遍对照本改动都是：新增失败名 **0**、修复 `table-border-008`、`wpt/css-break` 39 → **38**、屏幕失败 2011 → **2010**、单测 2180、打印 189/198。
 
+### 9.75 回退但完整的测量：折叠边框要“表盒上下外半线 + 逐段线色 + 侧带外沿延伸”三条一起做完
+
+补丁 `build/_collapsed-outer-half.patch`（225 行，含前两条半，实测后回退因为没翻绿）。Chrome 真值（`getClientRects` 实测 `table-collapsed-borders-paint-htb-ltr`）：表盒四片段各 `93x100` 在 x=21/124/226/329；caption `(21,21,93x100)+(124,21,93x20)`；**tbody 起点在 flow 125**（不是 120）；TR 片段 `(129,46,83x50)`、`(129,96,83x25)+(231,21,83x100)+(334,21,83x20)`、`(334,41,83x50)`、`(334,91,83x25)`。合起来 = caption 120 + 上外半线 5 + 声明行高之和 270 + 下外半线 5 = **400**。
+
+已量对的两条：
+
+1. **表盒带上/下外半线**：折叠时 `build.Border = Thickness(halfTop, 0, halfBottom, 0)`、`InsetsV = halfTop+halfBottom`（横向不动：声明宽度已含左右线），`gridY` 改成 **caption 先、再 Border**，`Measure` 的 `usedHeight + InsetsV` 自然把整盒抬到 400；单元格的上下各拿**半**条线（含首末行的外侧半）。
+2. **纵向线逐段定色**：`outer[b]` 只累积非单元候选（行/行组/列/列组/表），`cellLeft[r][b]`/`cellRight[r][b]` 按该行覆盖登记单元两侧，单元的左右颜色/线型 = `Resolve(Resolve(outer[b], cellRight[r][b]), cellLeft[r][b])`；**线宽仍取整线**（不动列几何）。表盒外环那两条带的颜色取解析后的 `horizontal[0]/horizontal[rows]`（`build.OuterColors/OuterStyles`），不是元素自身 style。
+
+做完这两条：`htb-ltr` 8000 → **200**、`at-boundary` 10105 → **2415**，而 css-break 表格族其余 38 对逐对复看不变、无一对变红。
+
+第三条（决定这两对能否翻绿）：**侧边整条 10px 色带的竖向外沿要画到相邻水平线的中心**，于是各行侧带首尾相接：行1 `120..180`、行2 `180..325`、行3 `325..375`、行4 `375..400`——恰是 ref 的假 div 序列（共享线整条归**上方**行；表首行向外 5）。Hutu 现在把侧带画在行盒 `125..175` 上，蓝/黑分界比 ref 高 5px（残差 `x=329..338 test=#0000ff ref=#000000 y=41..60`）。要做的是**绘制带**而不是布局盒（否则盒内文字会位移 5px）：给折叠单元的左右边框一个 `rowTop ± half(上线)`→`rowBottom + half(下线)` 的延伸带。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
