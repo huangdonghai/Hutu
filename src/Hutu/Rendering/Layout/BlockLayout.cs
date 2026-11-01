@@ -3273,11 +3273,23 @@ internal sealed class BlockLayout
 
     /// <summary>
     /// Gets the band the paragraph's own floats leave for the lines of its inner block: the floats are
-    /// placed at the paragraph's content top, which is where the column begins them.
+    /// placed at the paragraph's content top, which is where the column begins them. <paramref name="reach"/>
+    /// is how far below that top the deepest of them reaches, and <paramref name="linesBelowBand"/> says whether
+    /// the row the band begins in is left no width at all, which is when every line of the paragraph has to
+    /// stand below it rather than beside it (CSS 2.1 §9.5.1-§9.5.2).
     /// </summary>
-    private FloatBand? FloatHostBand(FloatHost host, Double share, LayoutContext context, Double contentX, Double contentY)
+    private FloatBand? FloatHostBand(
+        FloatHost host,
+        Double share,
+        LayoutContext context,
+        Double contentX,
+        Double contentY,
+        out Double reach,
+        out Boolean linesBelowBand)
     {
         var tracks = TracksFor(host.Paragraph, share, contentX);
+        reach = 0.0;
+        linesBelowBand = false;
 
         if (tracks is null)
         {
@@ -3291,6 +3303,11 @@ internal sealed class BlockLayout
                 PlaceFloat(child, tracks, contentY, share, context);
             }
         }
+
+        reach = Math.Max(0.0, tracks.Bottom - contentY);
+
+        var (freeStart, freeEnd) = tracks.FreeSpanAt(contentY, 0.001);
+        linesBelowBand = freeEnd - freeStart <= 0.001;
 
         var margin = host.Host.Style.Margin.Resolve(share);
 
@@ -3338,7 +3355,7 @@ internal sealed class BlockLayout
         var bottom = border.Bottom + padding.Bottom;
 
         var childContext = context.ForContainingBlock(new Size(content, declaredHeight ?? 0));
-        var band = FloatHostBand(host, content, childContext, 0, 0);
+        var band = FloatHostBand(host, content, childContext, 0, 0, out var reach, out var linesBelowBand);
         var bandedContext = childContext.WithFloats(band);
         var banded = new InlineContext(_engine, bandedContext, bandedContext, bandedContext);
         var first = _inline.LineHeights(host.Host, content, host.Host.Flow, banded);
@@ -3360,7 +3377,9 @@ internal sealed class BlockLayout
         if (declaredHeight is { } stated)
         {
             // A fill lets its last column overflow rather than move content past the columns it has.
-            var filled = Fill(host, content, first, banded, plain, stated, columns, top, bottom, clones, orphans, widows, mayOverflow: true);
+            var filled = Fill(
+                host, content, first, banded, plain, stated, columns, top, bottom, clones, orphans, widows,
+                reach, linesBelowBand, mayOverflow: true);
 
             return filled is null ? whole : filled with { Extent = stated };
         }
@@ -3373,7 +3392,9 @@ internal sealed class BlockLayout
         for (var step = 0; step < 40; step++)
         {
             var middle = (low + high) / 2;
-            var plan = Fill(host, content, first, banded, plain, middle, columns, top, bottom, clones, orphans, widows, mayOverflow: false);
+            var plan = Fill(
+                host, content, first, banded, plain, middle, columns, top, bottom, clones, orphans, widows,
+                reach, linesBelowBand, mayOverflow: false);
 
             if (plan is null)
             {
@@ -3392,8 +3413,10 @@ internal sealed class BlockLayout
     /// <summary>
     /// Cuts a float paragraph's text into columns of at most <paramref name="extent"/>: each column
     /// plans what is left of the text at its own width, takes the lines that fit with the orphans and
-    /// widows the paragraph states, and the next plan resumes from where this one broke. Null says the
-    /// text does not fit in the columns it was given.
+    /// widows the paragraph states, and the next plan resumes from where this one broke. The paragraph's
+    /// float begins the first column that has room for the band it needs, and a column that leaves none
+    /// for a line hands it on rather than overflowing. Null says the text does not fit in the columns it
+    /// was given.
     /// </summary>
     private FloatParagraphPlan? Fill(
         FloatHost host,
@@ -3408,6 +3431,8 @@ internal sealed class BlockLayout
         Boolean clones,
         Int32 orphans,
         Int32 widows,
+        Double reach,
+        Boolean linesBelowBand,
         Boolean mayOverflow)
     {
         var result = new List<FloatColumn>();
@@ -3416,6 +3441,15 @@ internal sealed class BlockLayout
         InlineStart? start = null;
         var highest = 0.0;
 
+        // A float the room left below the paragraph's own top edge cannot hold begins the column after
+        // it, where a whole column is free for it, and the columns before it hold only the edge the
+        // paragraph brought (CSS Multicol 3 §7, CSS Fragmentation 3 §4.3, measured:
+        // line-after-unbreakable-float-after-padding, whose 75px float with break-inside:avoid stands at
+        // the top of the second 101px column while the 100px padding-top fills the first).
+        var bandColumn = mayOverflow && reach > 0.001 && reach <= extent + 0.001 && top + reach > extent + 0.001
+            ? 1
+            : 0;
+
         for (var column = 0; column < columns; column++)
         {
             // A cloned box owns both edges on every fragment; a sliced one owns the top on its first
@@ -3423,7 +3457,49 @@ internal sealed class BlockLayout
             var starts = clones || column == 0;
             var endsEdge = clones || column == columns - 1;
             var room = extent - (starts ? top : 0) - (endsEdge ? bottom : 0);
+
+            if (column < bandColumn)
+            {
+                result.Add(new FloatColumn(new InlineStart(host.Host, 0), heights, 0));
+                highest = Math.Max(highest, (starts ? top : 0) + (endsEdge ? bottom : 0));
+                continue;
+            }
+
+            // The band belongs to the one column that holds its float, and a line with no room beside the
+            // band stands below it: where the column has no room for that either, the float keeps the
+            // column to itself and the text begins the next one at the full width
+            // (CSS 2.1 §9.5.2, CSS Multicol 3 §7).
+            if (column == bandColumn && linesBelowBand && Height(heights, 1) > room + 0.001)
+            {
+                result.Add(new FloatColumn(start, heights, 0));
+                highest = Math.Max(highest, reach + (starts ? top : 0) + (endsEdge ? bottom : 0));
+                heights = _inline.LineHeights(host.Host, width, host.Host.Flow, plain);
+                inline = plain;
+                start = new InlineStart(host.Host, 0);
+                continue;
+            }
+
             var count = FragmentSlicer.Fitting(heights, room, orphans, widows);
+
+            if (count == 0 && column < columns - 1)
+            {
+                // Nothing of the text fits the room this column has left: it stands in a column after
+                // this one, which begins at its own top. The band belongs to the column that holds the
+                // float alone, so the text from there on is planned at the column's full width.
+                result.Add(new FloatColumn(start, heights, 0));
+                highest = Math.Max(
+                    highest,
+                    (column == bandColumn ? reach : 0.0) + (starts ? top : 0) + (endsEdge ? bottom : 0));
+
+                if (column == bandColumn)
+                {
+                    heights = _inline.LineHeights(host.Host, width, host.Host.Flow, plain);
+                    inline = plain;
+                    start = new InlineStart(host.Host, 0);
+                }
+
+                continue;
+            }
 
             if (count == 0)
             {

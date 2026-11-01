@@ -1264,3 +1264,24 @@ Chrome 地面真值（逐子盒着色 + PIL 逐列扫描：`build/_c021.html`、
 2. `SpliceOverset` 展开壳时把它的水平 margin **携带**到顶替它的子上（首子拿 start 边、末子拿 end 边），`MulticolChildren` 在量这个子时从 `share` 里扣掉这份携带、摆放时再把它加回 `margin`。
 
 实测：`_shapeB` 现在画 `11,11 50x50` 与 `86,11 50x50`（Chrome 同值）。门禁：屏幕全量 1929 → **1928** 条、**0 新增失败名**、**`wpt/css-break/overflowing-block-003.html` 转绿**（css-break 34 → 33）；单测 2180；打印 189/198 九条同名；`flex-item-content-overflow-*` 模块 0 失败（上一刀在填充循环里加"越界即切"时它们各红 5300，这条展开路径不碰它们）。
+### 9.96 段落里装不下的浮动推到下一栏：`line-after-unbreakable-float-after-padding` 转绿
+
+该对的形状是"多栏容器只有一个段落子，段落里一个 `float:left; width:100%; height:75px; break-inside:avoid` 再加一行文本"，容器 `columns:3; column-fill:auto; height:101px; width:6ch`，段落的 `padding-top:100px` 使第一栏只剩 1px。Chrome 的矩形（`build/_la_probe.html` DOM 探针）：
+
+- `para rect0 x=8 y=8 15.59x101`——只有 padding，没有内容；
+- `float rect0 x=23.59 y=8 15.59x75`——浮动整块站在第二栏顶上；
+- `para rect2 x=39.20 y=8 15.59x50` 与 `SS rect0 x=39.20 y=25 15.61x15`——文本在第三栏。
+
+段落路径（`FloatHostOf` / `PlanFloatParagraph` / `Fill`）改了三处：
+
+1. `FloatHostBand` 多报两个数：band 的下沿 `reach`，以及 band 起始那一行是否被浮动占满宽度 `linesBelowBand`（占满就一行也并排不了，只能垂在浮动底下）；
+2. `Fill` 里当 `top + reach > extent` 而一整栏装得下 `reach` 时令 `bandColumn = 1`：浮动从第二栏起站，它前面的栏只放段落自己带上边界的那一片（0 行）；band 那一栏若连第一行也放不下，就把文本整条让到下一栏并按整栏宽重排。续接片用 `new InlineStart(host.Host, 0)` 作记号，因为 `ArrangeBlockLines` 只在 `start is null` 的那一片画浮动——空白的起点正是"续接但还没开始"；
+3. 非末栏的 `Fitting` 返回 0（`orphans >= 2` 时会）时，文本让给下一栏，不再套用"fill 的末栏吞掉其余全部"那条。
+
+量出来的一个坑：`LineHeights(..., banded)` 返回的第一行高度**已经**含 band 的垂下（该页 125 = 75 + 50），所以 `room` 里不能再扣一次 `reach`；第一版扣了，`FragmentSlicer.Fitting` 的"片段必须推进一行"规则照样返回 1，文本仍留在浮动那一栏。
+
+这条路径的覆盖面是量出来的：临时把 plan 的栏数/`reach`/`linesBelowBand` 落到 `build/_floathost.txt` 跑一遍全量屏幕语料，整张语料只有这一对走 `FloatHostOf`。
+
+门禁：屏幕全量 finding 2003 → **2002**、**0 新增失败名**、**`wpt/css-break/line-after-unbreakable-float-after-padding.html` 转绿**（css-break 33 → **32**）；单测 2180；打印 189/198 九条同名。
+
+余下的浮动对，`widows-orphans-021`（2500）已量过：Chrome 给 `green [8,8 50x100][58,8 50x100]`、`float [58,33 50x25]`——`orphans:3` 把三行整条逼进第二栏，浮动跟着站在第二栏 flow 位 25（即 L1 之后），而 Hutu 把绿盒当成整块切成两片各 125 高、第二片从 y=-25 起画，栏里只露出 50。另两对 `float-017` 663、`fragmented-autowidth-fc-root-beside-floats` 34400 仍待"高盒被栏切开 + 每片各自与旁边浮动求自由宽"。
