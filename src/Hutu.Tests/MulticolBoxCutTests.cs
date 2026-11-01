@@ -147,6 +147,77 @@ public sealed class MulticolBoxCutTests
         Assert.That(pieces[0].BorderBox.Height, Is.EqualTo(250), "and stands whole past the bottom of them");
     }
 
+    [Test]
+    public async Task ABoxThatContainsItsBlockSizeIsNotCutEvenWhereItOverflows()
+    {
+        using var view = await Render(
+            "<style>#c { width: 200px; columns: 2; column-gap: 0; column-fill: auto; height: 100px }" +
+            " .solid { contain: size; height: 250px }</style>" +
+            "<div id='c'><div class='solid' id='t'></div></div>");
+
+        var pieces = Of(view, "t");
+
+        Assert.Multiple(() =>
+        {
+            // A box that contains its size is monolithic - its own declared extent, with nothing of what
+            // it holds reaching it - so it has no break point for a column to fall on, however empty it
+            // is and however far it reaches past the column (CSS Contain 1 §3.1.1, CSS Break 3 §4.1).
+            Assert.That(pieces, Has.Count.EqualTo(1), "no column is cut through it");
+            Assert.That(
+                (pieces[0].BorderBox.X, pieces[0].BorderBox.Y, pieces[0].BorderBox.Height),
+                Is.EqualTo((0.0, 0.0, 250.0)),
+                "it stands whole in the column it reached and overflows from there");
+        });
+    }
+
+    [Test]
+    public async Task AFloatNoColumnCanHoldIsPushedWholeAndStandsThereOverflowing()
+    {
+        using var view = await Render(
+            "<style>#c { width: 200px; columns: 2; column-gap: 0; column-fill: auto; height: 100px }</style>" +
+            "<div id='c'><div style='height:80px'></div>" +
+            "<div id='f' style='float:right; contain:size; width:50px; height:200px'></div></div>");
+
+        var pieces = Of(view, "f");
+
+        // The room the box above left was 20 of a column, so the float begins the next one; it is
+        // monolithic, so that column cuts nothing through it either - it is measured as one 200-tall
+        // band there, and the flow it stands beside is pushed below the whole of it (CSS 2.1 §9.5.1,
+        // CSS Contain 1 §3.1.1, measured: wpt/css-break/float-017 against the same float with
+        // contain:paint, which Chrome does cut down the columns).
+        Assert.That(pieces, Has.Count.EqualTo(1), "the pushed float is not continued down the columns");
+        Assert.That(
+            (pieces[0].BorderBox.X, pieces[0].BorderBox.Y, pieces[0].BorderBox.Height),
+            Is.EqualTo((150.0, 0.0, 200.0)),
+            "it stands at the top of the column it was pushed to, at its own side");
+    }
+
+    [Test]
+    public async Task EachPieceOfATallFlowBoxTakesTheRoomItsOwnColumnLeaves()
+    {
+        using var view = await Render(
+            "<style>#c { width: 300px; columns: 3; column-gap: 0; column-fill: auto; height: 100px }</style>" +
+            "<div id='c'><div style='float:right; width:80px; height:20px'></div>" +
+            "<div style='float:right; clear:both; break-inside:avoid; width:60px; height:90px'></div>" +
+            "<div id='f' style='display:flow-root; height:300px'></div></div>");
+
+        var pieces = Of(view, "f");
+
+        // The first float fits the column it is written in; the second has no room left under it, so it
+        // begins the next column and leaves the flow where it stood - and a root of a formatting context
+        // may not reach over a float, so each piece is as wide as its own column leaves (CSS 2.1 §9.4.1,
+        // §9.5.1, measured: wpt/css-break/fragmented-autowidth-fc-root-beside-floats).
+        Assert.That(pieces, Has.Count.EqualTo(3), "the columns share the box one piece each");
+        Assert.That(
+            pieces.Select(piece => (piece.BorderBox.X, piece.BorderBox.Width)).ToList(),
+            Is.EqualTo(new List<(Double, Double)> { (0, 20), (100, 40), (200, 100) }),
+            "each piece takes the width its column has left beside the float standing there");
+        Assert.That(
+            pieces.Select(piece => piece.FragmentClip?.Height ?? 0.0).ToList(),
+            Is.EqualTo(new List<Double> { 100, 100, 100 }),
+            "and each shows one column's height of the box");
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
