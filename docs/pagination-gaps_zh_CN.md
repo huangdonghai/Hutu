@@ -1049,6 +1049,17 @@ Chrome 的片段（`build/_probe_vf1.dom`、`build/_probe_vf2.dom`，`getClientR
 
 `widows-orphans-021/022`（6250 / 8750）同源但更难：Chrome 里绿色 div 被切成两片、**每片都撑满整栏**（`g [8,50 50x100 | 58,50 50x100]`，`build/_probe_wo21.dom`），浮动块落到第二片的第二行（`f [58,75 50x25]`）。Hutu 今天整块 125 高只待在第一栏。要做的是“**带背景的普通块**也按子项边界递归切”，而 `IsBareWrapper`/`IsOversetWrapper` 都明确拒绝有背景色、有浮动子的盒（`BackgroundColor is { A: > 0 }`、`IsFloat(grandchild)`）——也就是 §9.34 那次“非裁剪盒的内容切片 +7 净亏、浮动散架”缺的正是**片段里的浮动重摆**那一半。
 
+### 9.83 `at-boundary` 的角要按边算，且切处的横线整条留在前一片
+
+在已落地的侧带模型上试了“**片段起始处竖线吃掉角**”：`FragmentSlice.Offset/Height` 在整盒切片那处（BlockLayout `slice: new FragmentSlice(...)`，`arranged.FragmentClip = held;` 之前）填上 `portion.Offset/portion.Height`，`TableBuild.FragmentTop = borderBox.Y + slice.Offset`，`ArrangeCell` 里 `rect.Y ≈ FragmentTop` 时 `overhang = 0`（今天中段是 `+top`、首行是 `-top`）。实测 `table-collapsed-borders-paint-at-boundary` **2540 → 2415**：左角对了（`225,21` 的 15px 黑线角 ✓），但**右角反了**——`302,21` test 画 `#000000`、ref 画 `#00ff00`：那里竖线 10、横线 10 **平手，按 §17.6.2.1 横线（上方）赢**，而左边是 15 > 10 才该竖线赢。`table-collapsed-borders-paint-htb-ltr` 仍绿（顺带量清：先试的“带 = 单元格自己的盒、只在外沿外扩”变体把它打到 **200**，首差 `329,41` test 蓝 / ref 黑 ⇒ 中段必须继续 `+top/+bottom` 铺满共享线，回退）。不翻对 ⇒ 按规则回退，改动存 `build/_atboundary-corner.patch`（66 行）。
+
+剩下的两半写死在这里：
+
+1. **角按边判**：左右两侧各自比较**整线宽度**（`horizontal[row].Width` 与 `vertical[col].Width`，不是内半），宽者得角、平手归横线；因此侧带要拆成 `LeftBand`/`RightBand` 两个矩形，`Painter.AddBorder` 相应发三条命令（上下环 + 左带 + 右带）。
+2. **切处的横线归属**：残差的主体不是角，是每片顶端那 5px 一行：`y=21..25` 上 `x=327..341`（test 蓝、ref 白）、`429..431`、`519..520`。ref 里下一段 div 写的是 `border-top: 0`（`table-collapsed-borders-paint-at-boundary.tentative-ref.html`），即被切那一刀的横线**整条归前一片**，后一片连角都不画；这与 `table-border-008` 悬着的“哪个片段在切处拥有边框”是同一半，做的时候两处一起定。
+
+竖排那两对（`-vlr-rtl` 19380、`-vrl-ltr` 20350）在本次试验中一字未动 ⇒ 仍等 §9.81 的轴向那半。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
