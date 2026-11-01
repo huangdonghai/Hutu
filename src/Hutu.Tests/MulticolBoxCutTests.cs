@@ -218,6 +218,43 @@ public sealed class MulticolBoxCutTests
             "and each shows one column's height of the box");
     }
 
+    [Test]
+    public async Task ANestedContainerOfOneFilledColumnIsOpenedIntoTheColumnsAroundIt()
+    {
+        using var view = await Render(
+            "<style>#c { width: 200px; columns: 2; column-gap: 0; column-fill: auto; height: 100px }" +
+            " .shell { columns: 1; column-fill: auto; height: 250px } .tall { height: 200px }</style>" +
+            "<div id='c'><div class='shell' id='s'><div class='tall' id='t'></div></div></div>");
+
+        var pieces = Of(view, "t");
+
+        // A container of a single filled column that paints nothing brings no boundary the cut could
+        // stop at: what the columns around it divide is its content, at their own width - which is
+        // what Chrome does with each piece of a nested fragmentainer (CSS Multicol 3 §7.4, CSS Break 3
+        // §4.1, measured: repeated-section/variable-fragmentainer-size-002).
+        Assert.That(Of(view, "s"), Has.Count.EqualTo(0), "the shell itself stands in no column");
+        Assert.That(pieces, Has.Count.EqualTo(2), "the box it holds is shared between the outer columns");
+        Assert.That(
+            pieces.Select(piece => (piece.BorderBox.X, piece.BorderBox.Width, piece.BorderBox.Height)).ToList(),
+            Is.EqualTo(new List<(Double, Double, Double)> { (0, 100, 100), (100, 100, 100) }),
+            "each piece takes one column's width and height");
+    }
+
+    [Test]
+    public async Task ANestedContainerOfTwoColumnsIsStillLeftWhole()
+    {
+        using var view = await Render(
+            "<style>#c { width: 200px; columns: 2; column-gap: 0; column-fill: auto; height: 100px }" +
+            " .shell { columns: 2; column-gap: 0; column-fill: auto; height: 250px } .tall { height: 200px }</style>" +
+            "<div id='c'><div class='shell' id='s'><div class='tall' id='t'></div></div></div>");
+
+        // Where the nested container has columns of its own to balance, the columns around it still step
+        // around it: each piece of the shell would need its own column layout again, which the outer
+        // columns do not do yet (measured edge of the rule: balanced-inner-multicol stays whole).
+        Assert.That(Of(view, "s"), Has.Count.EqualTo(1), "the two-column shell stands as one box");
+        Assert.That(Of(view, "t"), Has.Count.EqualTo(1), "and what it holds is not shared out");
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
