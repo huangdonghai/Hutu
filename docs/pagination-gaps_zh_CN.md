@@ -1554,3 +1554,21 @@ legend 单独立了排除（HTML rendering §15.3.12 由 fieldset 自己贴边�
 门禁：全量 1921 finding **同名集合不变**、**0 新增失败名**、**0 对变差**（只有这两对改善），css-break 仍 26 对；单测 **2188**；打印 **189/198** 九条同名。
 
 #8 剩下的第二半（已定位，下一片）：**caption 的内向长度**。Hutu 现在是 `caption 547,192 140x0`（块向 140 ✓、内向 0 ✗），Chrome 是 `[0,380 100x100] + [0,280 40x100]` —— 内向（竖排里是 y）要铺满表的内向长度（栏的 100）。`MeasureCaptions(TableBuild, contentWidth, ctx)` 与 `ArrangeCaption(caption, x, y, width, ctx)` 都按**物理宽度**传内向尺寸，竖排得换成物理高度；同一条也影响 `table-row/col/section-paint-vrl/vlr-*` 那 6 对（它们现在还没被切，切了以后同样要 caption/单元的内向尺寸跟上）。
+
+### 9.116 重复表头/表脚的第二判据：只有 `break-inside: avoid` 的组才会被复制（`sections-and-captions-mixed-order` 87 → 绿）
+
+`RepeatSections` 过去只看角色号（`RoleOf(row.Group) == 0/2`），于是任何一张带 thead/tfoot 的表被分栏切开时，后面每一栏都再画一份页眉。`sections-and-captions-mixed-order` 的第二栏因此把 "6" 与 "3" 叠在同一处画：像素上是一片同形但更深的绿（test=#007500 对 ref=#008000），87 px 全是同一字符的两层 AA。
+
+Chrome 量出来的判据（`build/_repvar.html`：一栏 100 高，表头/表脚各 20）：
+- 组上写 `break-inside: avoid` → 每栏再画一份（A：三栏各有蓝与粉；D：嵌一层栏也一样）；
+- 组上不写 → 一份都不再画，只在它自然的行位置出现（B/C）；
+- `avoid` 写在组里的那一行上不算，只认组自己（G：无重复）；
+- 打印同理：`@page 200 100` 下带 avoid 的表每页一份表头表脚（P），不带的只有自然位置那一份（Q）——见 `build/_repprint.pdf` 逐页取样。
+
+CSS Tables 3 §6.2 原文："user agents must repeat header rows and footer rows on each page spanned by a table **if the page is the table's fragmentainer, if the header/footer has avoid break-inside applied to it**, if the height required to do so is inferior to two quarters of the page height (up to one quarter for header rows, and up to one quarter for footer rows), and if that doesn't cause a row to be displayed twice on that page." 同节末也允许扩到别的分栏上下文："User agents may decide to extend this behavior to more fragmentation contexts, for instance repeat headers/rows across columns in addition to pages."——Chrome 扩到了栏，并把 avoid 这个前提一起带了过去。
+
+同一批量测还给了阈值：一栏 100 时表头 20、25 会重复，26 不重复；一栏 200 时表头 40 会重复，51 不重复——正是"不超过分栏器块向长度的四分之一"。这一条本片没做：`RepeatSections` 手上只有片自身的 `slice.Height`，而最后一栏的片高小于栏高，拿它当分母会把该重复的判成不重复，需要把分栏器的长度传进来（任务 #16）。
+
+代码：`Build` 把举起的那两组记进 `build.HeadGroup/FootGroup`（§3.1 举的只是**第一**组，同角色的后面那些是正文），`SectionBand(build, role)` 换成 `RepeatedBand(build, role)`——只量那一组自己的行（旧代码把同角色的两组一起跨进去，混序表因此量出 220 的假带高），并要求它的 `Style.Breaks.Inside == BreakValue.Avoid`。一处判据喂两边：画的复制（`RepeatSections`）与栏为它让出的房间（`Measure` 记进 `_repeatedBands`，`AddBoxCut` 取用），所以没有 avoid 的表既不再画页眉、也不再为它腾房间。
+
+门禁：全量 **1995** finding（HEAD 基线 1996）、**0 新增失败名**、**0 对变差**、`wpt/css-break` 26 → **25** 对；单测 **2190**（新增 `AHeaderGroupFreeToBreakStandsInNoColumnButItsOwn` 与 `AHeaderGroupThatMustNotBreakIsCopiedIntoTheColumnAfter`）；打印 **189/198** 九条同名。

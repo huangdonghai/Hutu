@@ -89,8 +89,8 @@ internal sealed partial class TableFormattingContext
         _repeatedBands.AddOrUpdate(
             box,
             new Bands(
-                SectionBand(build, role: 0)?.Height ?? 0.0,
-                SectionBand(build, role: 2)?.Height ?? 0.0));
+                RepeatedBand(build, role: 0)?.Height ?? 0.0,
+                RepeatedBand(build, role: 2)?.Height ?? 0.0));
 
         var othersHeight = build.OtherHeights.Count > 0
             ? build.OtherHeights.Sum()
@@ -284,7 +284,8 @@ internal sealed partial class TableFormattingContext
     /// Gets the height the table's repeating groups take in every fragment it is drawn in: the header
     /// group that stands at each fragment's top and the footer group that stands at its bottom. The
     /// columns ask this before they share the table out, since a repeated group is not painted over the
-    /// room the rows took - it takes room of its own (CSS Tables 3 §6.1). The measure that completed the
+    /// room the rows took - it takes room of its own (CSS Tables 3 §6.2: "When the header rows are being
+    /// repeated, user agents must leave room"). The measure that completed the
     /// grid left the two heights behind; a table that has not been measured has nothing for the columns
     /// to give up room to, which is a table they share out whole.
     /// </summary>
@@ -317,13 +318,13 @@ internal sealed partial class TableFormattingContext
 
         // The header group is copied where the fragment begins without it: the first fragment shows the
         // group it really has, and a later one shows the copy at its top - which is also where the piece's
-        // own content starts once the column has given up room for the copy (CSS Tables 3 §6.1).
-        if (!fragment.Starts && SectionBand(build, role: 0) is { } head && head.Height <= fragment.Height + 0.001)
+        // own content starts once the column has given up room for the copy (CSS Tables 3 §6.2).
+        if (!fragment.Starts && RepeatedBand(build, role: 0) is { } head && head.Height <= fragment.Height + 0.001)
         {
             Repeat(head, top, bandAt: top);
         }
 
-        if (!fragment.Ends && SectionBand(build, role: 2) is { } foot &&
+        if (!fragment.Ends && RepeatedBand(build, role: 2) is { } foot &&
             foot.Height <= fragment.Height + 0.001)
         {
             Repeat(foot, bottom - foot.Height, bandAt: bottom - foot.Height);
@@ -350,17 +351,30 @@ internal sealed partial class TableFormattingContext
     }
 
     /// <summary>
-    /// Gets the band a section's rows take inside the grid, in grid coordinates, or null where the table
-    /// has no section of that role.
+    /// Gets the band the group a fragment repeats takes inside the grid, in grid coordinates, or null
+    /// where the table repeats nothing of that kind. Only the group the table hoists - its first header
+    /// or its first footer - is ever copied, and only when that group itself asks not to be broken: a
+    /// header or footer free to split across fragments is left where its rows fall, which is what a
+    /// table of `display:table-header-group` blocks with no `break-inside` draws (CSS Tables 3 §6.2,
+    /// measured: sections-and-captions-mixed-order, whose header shows once although the table runs
+    /// over four columns, against variable-fragmentainer-size-001, whose header shows in every one).
+    /// A further group of the same role is body content and is not copied either.
     /// </summary>
-    private static (Double Top, Double Height)? SectionBand(TableBuild build, Int32 role)
+    private static (Double Top, Double Height)? RepeatedBand(TableBuild build, Int32 role)
     {
+        var group = role == 0 ? build.HeadGroup : role == 2 ? build.FootGroup : null;
+
+        if (group is null || group.Style.Breaks.Inside != BreakValue.Avoid)
+        {
+            return null;
+        }
+
         var top = Double.NaN;
         var bottom = 0.0;
 
         foreach (var row in build.Grid.Rows)
         {
-            if (RoleOf(row.Group) != role)
+            if (!ReferenceEquals(row.Group, group))
             {
                 continue;
             }

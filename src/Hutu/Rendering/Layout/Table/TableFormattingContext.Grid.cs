@@ -106,6 +106,12 @@ internal sealed partial class TableFormattingContext
         public Double CaptionTop;
 
         public Double CaptionBottom;
+
+        /// <summary>Gets the group the table hoists to the head of its grid, or null where none does.</summary>
+        public Box? HeadGroup;
+
+        /// <summary>Gets the group the table hoists to the foot of its grid, or null where none does.</summary>
+        public Box? FootGroup;
     }
 
     /// <summary>
@@ -272,6 +278,12 @@ internal sealed partial class TableFormattingContext
                 foot = group;
             }
         }
+
+        // The two groups the table hoists are also the only ones a fragment may copy: the copy rule
+        // reads the group that stands at the head or the foot of the grid, not any further group of
+        // the same role (CSS Tables 3 §6.2).
+        build.HeadGroup = head;
+        build.FootGroup = foot;
 
         if (head is not null || foot is not null)
         {

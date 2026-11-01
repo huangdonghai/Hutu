@@ -301,6 +301,40 @@ public sealed class MulticolBoxCutTests
             "not the middle of the whole box, which every piece would then share");
     }
 
+    [Test]
+    public async Task AHeaderGroupFreeToBreakStandsInNoColumnButItsOwn()
+    {
+        using var view = await Render(Table(inside: "auto"));
+
+        // A fragment copies the table's header only when the header itself asks not to be broken; a
+        // header free to split is left where its rows fall, so a table over two columns shows it once
+        // (CSS Tables 3 §6.2, measured: sections-and-captions-mixed-order, whose header of one line
+        // shows in none of the three columns after the first).
+        Assert.That(HeadOfSecondColumn(view), Is.EqualTo(0), "the second column takes no copy of the header");
+    }
+
+    [Test]
+    public async Task AHeaderGroupThatMustNotBreakIsCopiedIntoTheColumnAfter()
+    {
+        using var view = await Render(Table(inside: "avoid"));
+
+        // The same table with `break-inside: avoid` on the group: the second column carries a copy of
+        // the header at its own top, and gives up the room for it (CSS Tables 3 §6.2, measured:
+        // variable-fragmentainer-size-001, whose header shows in every column the table spans).
+        Assert.That(HeadOfSecondColumn(view), Is.EqualTo(1), "the header stands again at the head of the column");
+    }
+
+    /// <summary>Counts the copies of the header group standing at the top of the second column.</summary>
+    private static Int32 HeadOfSecondColumn(HutuViewInternal view) =>
+        Of(view, "h").Count(head => head.BorderBox.X == 100 && head.BorderBox.Y == 0);
+
+    private static String Table(String inside) =>
+        "<style>#c { width: 200px; columns: 2; column-gap: 0; column-fill: auto; height: 100px }" +
+        " table { border-spacing: 0; width: 100px }</style>" +
+        "<div id='c'><table><thead id='h' style='break-inside:" + inside + "'>" +
+        "<tr><td><div style='height:20px'></div></td></tr></thead>" +
+        "<tbody><tr><td><div style='height:130px'></div></td></tr></tbody></table></div>";
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
