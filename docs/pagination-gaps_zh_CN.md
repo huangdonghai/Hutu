@@ -987,6 +987,12 @@ Chrome 对 023（`columns:2; height:100; widows:3`；绿盒 150 高，内含一�
 
 冲突点要说清：Chrome 对 `htb-ltr` 的实测是**行盒 = 声明高（50）、其上下各被半条线咬住、整条线画在行的外沿**（tbody 起点在 flow 125、侧带 120..180），而上面 4 条单测记的是“外侧整线归首/末行单元吃满”。两者只在“表自身没有边框”时才同解；`border-collapse-006`/`spanning-cells-004` 变差说明“单元吃满外侧整线”在那些形状上仍是需要的。所以下一步要么把两种读法按“外侧线是否有对手（表边框/行组边框）”分流，要么先只保留**不影响线宽**的两件（逐段定色 + 表盒外半线的颜色）把 `htb-ltr` 之外能拿的收益拿走。屏幕新增失败名在两遍对照里仍是 0（文本抖动 ±1…±144 属噪声，见 §9.74）。
 
+### 9.77 折叠边框第二种读法也记一笔：把环画在“半线外扩带”上会与 5 条自测的内部断言相撞
+
+`build/_collapsed-paint-band.patch`（316 行）= 上一条的三条 + 把“上下边线减半”换成**布局内缩保持原样、只把绘制的环**换成（整条线宽、盒外扩半条线的带），且仍只发一条 `BorderCommand`（带 = `LayoutBox.BorderBand` + `BandWidths`）。结果：单测从 4 条红变 **5 条红**——多出的 `AHiddenTableBorderHidesTheTablesOwnEdge` 断言 `Widths.Bottom == 1`（表自身 2px 边在 hidden 后剩**半条**），也就是说这几条自测钉的是 Hutu **内部表示**（经 `Painted()` 读到的那条命令的 `Widths`），而不是 Chrome 的可观察像素。
+
+两条路都要动这 5 条自测的**取值方式**（它们读的是命令的 Widths，不是几何），且必须先判定：`CSS2/tables/border-collapse-006`（17500，减半方案下变 25000）到底在说“减半错”还是另有原因——那对的差异在 `at-boundary` 里也出现过。**下一步的入口**：先把 `border-collapse-006` 单独量清（它的行/列结构与 htb-ltr 的差别：是否有 colspan、是否有表自身边框），再决定“半线内缩”与“整线外扩带”哪一个才是通用读法；两版补丁都在 `build/`。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
