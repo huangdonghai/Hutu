@@ -1400,3 +1400,15 @@ Chrome 的 `widows-orphans-021` 矩形（`build/_wo21_probe.html`）：`green [8
 即两条：①**重复段要占栏空间**——001 的三栏内容分配是 80 / 60 / 30（第一栏 20 header + 60 row + 20 重复 footer = 100），而 Hutu 的 `AddBoxCut` 按整栏高切内容（100 / 70），重复段是叠画不占位；②**第一栏的房间不足 2×(header+footer) 就整表不重复**——阈值实测落在 80（≥ 40×2 画，70 不画），且一旦第一栏不给，后面 100 高的栏也不补画（`lead30` 的 header 只有 1 个矩形）。要做这半，得把重复段高度从 `TableFormattingContext.Build`/`SectionBand` 暴露给 `AddBoxCut`，并让 piece 的**画高**（含重复段）与 slice offset 的**推进**（只走内容）分开；002 现在能过，正是因为它的分配恰好等于"不重复"那一支，改的时候必须把这条阈值一起写进去，否则 002 会翻红。
 
 三道门禁：屏幕全量 finding 1925 → **1924**、**0 新增失败名**、0 对变差、**`variable-fragmentainer-size-002` 转绿**（css-break 30 → **29**）；单测 2183；打印 189/198 九条同名。
+
+### 9.103 竖排那两对卡在"竖排容器从不切块向超栏的盒"——量死，留给轴向那一片（不动代码）
+
+`gecko/css-break/vertical-wm-001/002`（27468 / 24688）看着像"块向边映射"没做，探针量下来更前面一步就没走通：页面是 `columns:2; column-gap:0; column-fill:auto; block-size:90px; inline-size:140px` 的 `writing-mode: vertical-lr` 容器，里面一个 `div.inner`（`border-block-start:25 blue` + `border-block-end:17 grey` + `inline-size:70`，装两个 `break-inside:avoid` 的 20x20）。竖排里块轴是横向，所以**每栏宽 45**，而这个盒沿块轴占 82。
+
+Hutu 的树（`build/_probe-vwm001.txt`）：容器 `60,60 92x142 vertical` 正常（block-size 90 + 边框 = 92 宽 ✓），但它的子**整块站成一个** `101,61 82x70 vertical m:0/0/0/40`——x 从 101 到 183，越过容器右缘 152；绘制里 `border 101,61 82x70 w:0/17/0/25` 一条命令同时画了蓝（101..126）和灰（166..183）。ref 是把这些子拆成独立块，让 Chrome 在栏边上的**竖向切线**自然落位：第一片拿蓝边，第二片拿灰边。残差签名（test 在 `x=101..125` 画蓝而 ref 白）正是"两片都认领了块开始边"。
+
+方向没错、判据也不缺——缺的是**入口**：竖排容器的分栏计划里没有一条会去切"块向长度超过栏宽"的子。所有 divide/relay 判据都显式拒绝竖排：`DividesAcross`（`fills && !vertical && …`）、`RelaysInColumns`、`RowRelaysInColumns`、`FloatFlowColumns`（`box.Flow.IsVertical` 即退）、`BreaksAtLines`（`!child.Flow.IsVertical`）；`AddBoxCut` 反而带 `vertical` 形参、`BlockExtentOf(size, vertical)` 也按轴取值——也就是竖排的"切空盒/切片"半边已经有几何（`ArrangeMulticolRunAcross` 里 `child.Offset >= 0` 那一支已经按 `blockReversed` 映射了切片边距），但没有谁会为一竖排的子调用它。这与 §9.40/§9.81 记的是同一条轴向缺口，也正是 8 对竖排表（`table-grid-paint-vrl/vlr-*`、`table-section/row/col-paint-*`、`table-collapsed-borders-paint-vrl/vlr-*`）等的同一半——任务 #8。同一条还压着 `break-inside-avoid-min-block-size-2`（133840，§9.98 第 4 条：竖排 avoid 的两个子在栏内**沿行内向轴**堆叠）。
+
+所以本轮不动代码：把竖排的轴向做进分栏判据，是一片的量（判据 5 处 + 竖排表的行/列带），且必须与 8 对竖排表一起量，不能只对着这两对调。
+
+当前基线（`93d2527b`）：屏幕全量 1924 条 pixel-diff finding、css-break **29** 对；单测 **2183**；打印 **189/198**、九条同名（无 css-break）。
