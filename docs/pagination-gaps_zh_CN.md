@@ -1227,3 +1227,18 @@ Chrome 地面真值（逐子盒着色 + PIL 逐列扫描：`build/_c021.html`、
 全量口径门禁：屏幕 0 新增失败名、**`wpt/css-break/widows-orphans-022` 转绿**（css-break 36 → 35）、`widows-orphans-021` 6250 → 2500；单测 2180；打印 189/198 九条同名。注释收束之后的最后一次改动只动注释、行为不变，重跑单测与三个族口径确认数字一致。
 
 021 剩下的 2500 是"放不下的浮动被推到下一栏、后面的内容仍留在本栏"那一半（Chrome：col1 = d1+A+B+C=100，col2 = 末行 D + 被推来的浮动 25..50），仍未写。
+
+### 9.93 混排浮动的栏：新路径按 Chrome 逐值落位，tall-float-002 转绿
+
+`tall-float-pushed-to-next-fragmentainer-002` 那类"栏里既有浮动又有普通块"的形状，原来走的是把浮动当流内盒**逐个占高堆叠**的路子：Chrome 却让左右浮动**共用同一条带**、浮动不占流的高度、放不下时才换栏。用 DOM 探针取到 Chrome 真值（`build/_tf002.html`）：`8,50 50x100` / `98,50 10x100`（右浮动贴第二栏右边）/ `58,50 40x60`（左浮动贴第二栏左边，与右浮动同带）/ `58,110 50x40`（`clear:left` 的块落在左浮动之下、右浮动仍可与之重叠）。
+
+新增一条自足路径（`FloatFlowColumns` 判据 + `PlaceFloatFlowColumns` 走一遍 + measure/arrange 两个包装）：
+- 浮动：`tracks.Place(side,…)` 取边（左 = 栏左、右 = 栏右），带顶 = 当前流位置，**不推进流**；
+- 流内盒：先 `ClearBelow(clear, flow)`；带行盒的（`BreaksAtLines`）再 `FitBelow(..., width)`——块盒可以压过浮动，行盒放不下才走到浮动底下（这条同时解释了 002 的 clear 块为什么在 60 而不是 100，以及 `widows-orphans-020` 的 `&nbsp;` 行为什么被整条挤到第二栏）；
+- 谁的落点超出栏高就换栏重开一条 track（浮动"推到下一个 fragmentainer"由此自然成立）；容器高度**保持声明值**，不被内容撑大。
+
+判据里排掉两件事，都是量出来的：①盒子里有比一栏还高的**流内**盒 —— 那种要被切开，本路径不切（否则 `fragmented-autowidth-fc-root-beside-floats` 从 34400 恶化到 89000，`float-017` 也从 663 变 653）；②竖排、`column-wrap`、未声明高度、非 `column-fill:auto` 的容器。第一版没排掉①时，`widows-orphans-020` 被 `FitBelow` 那条补上之前也打红过 1000 px。
+
+全量口径门禁：屏幕 0 新增失败名，**`tall-float-pushed-to-next-fragmentainer-002` 转绿**、附带 `wpt/css-multicol/multicol-gap-fraction-002`（20 px）转绿，css-break 35 → **34**；单测 2180；打印 189/198 九条同名。
+
+余下的浮动对：`widows-orphans-021` 2500（orphan 逼出的浮动推移 + Chrome 那侧第二片矩形高 100 的机制未解）、`overflowing-block-003` 8300 与 `fragmented-autowidth-fc-root-beside-floats` 34400（都要"高盒被栏切开 + 每片各自与旁边浮动求自由宽"）、`float-017` 663、`line-after-unbreakable-float-after-padding` 312。

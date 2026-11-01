@@ -1438,6 +1438,14 @@ internal sealed class BlockLayout
             return MeasureFloatColumns(box, share, declaredHeight, heightStated, context);
         }
 
+        // A container that mixes floats with boxes of its own shares them over its stated columns the
+        // same way the flow does beside a float: the float takes no room of the flow's own and the
+        // column that has none left for it carries it on, with clearance asked where it is asked.
+        if (FloatFlowColumns(box, heightStated, declaredHeight, share, context))
+        {
+            return MeasureFloatFlowColumns(box, share, declaredHeight, context);
+        }
+
         // A paragraph broken across the columns keeps the float in its first column: the first plan
         // carries the float's band, and the column after it plans the remaining text at full width.
         if (FloatHostOf(box) is { } floatHost &&
@@ -2634,6 +2642,187 @@ internal sealed class BlockLayout
         _engine.PublishFloats(box, null);
 
         return height;
+    }
+
+    /// <summary>One box a column took in the float-and-flow sharing: where it stands inside the column
+    /// and how big it came out.</summary>
+    private readonly record struct FloatFlowItem(Box Child, Double X, Double Y, Size Size, Thickness Margin);
+
+    /// <summary>Gets whether a container is the shape the float-and-flow columns handle: a horizontal
+    /// container that fills columns of a stated height and holds both a float of its own and a box that
+    /// stands in the flow (CSS 2.1 §9.5, CSS Multicol 3 §7, CSS Fragmentation 3 §4.3).</summary>
+    private Boolean FloatFlowColumns(
+        Box box,
+        Boolean heightStated,
+        Double declaredHeight,
+        Double share,
+        LayoutContext context)
+    {
+        if (!heightStated || declaredHeight <= 0 || box.Flow.IsVertical ||
+            !box.Style.Multi.Fills || box.Style.Multi.Wraps)
+        {
+            return false;
+        }
+
+        var childContext = context.ForContainingBlock(new Size(share, declaredHeight));
+        var floats = 0;
+        var flowing = 0;
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (IsFloat(child))
+            {
+                floats++;
+                continue;
+            }
+
+            flowing++;
+
+            // A box of the flow taller than a column of its own has to be cut across them, which this
+            // sharing does not do: the ordinary columns keep it, divide it, and place the floats beside
+            // the pieces (CSS Fragmentation 3 §4.3).
+            var size = _engine.Measure(child, MeasureConstraints.FitWidth(share), childContext);
+            var margin = BoxModel.UsedMargin(child.Style, share, size.Width);
+
+            if (size.Height + margin.Vertical > declaredHeight + 0.001)
+            {
+                return false;
+            }
+        }
+
+        return floats > 0 && flowing > 0;
+    }
+
+    /// <summary>
+    /// Shares a container's floats and flow boxes over its columns. The flow moves down the column and
+    /// stands clear of the floats it refuses to sit beside; a float takes no room of the flow's own and
+    /// stands at the edge its side names, so a left and a right one fill the same band; and whatever
+    /// finds no room left below it in this column begins the next one (CSS 2.1 §9.5.1-§9.5.2, CSS
+    /// Fragmentation 3 §4.3, measured: tall-float-pushed-to-next-fragmentainer-002, whose two floats
+    /// share the second column at 98,50 and 58,50 while the box that clears them comes to 58,110).
+    /// </summary>
+    private List<List<FloatFlowItem>> PlaceFloatFlowColumns(
+        Box box,
+        Double share,
+        Double columnHeight,
+        LayoutContext context)
+    {
+        var childContext = context.ForContainingBlock(new Size(share, columnHeight));
+        var runs = new List<List<FloatFlowItem>>();
+        var cell = new List<FloatFlowItem>();
+        var tracks = new FloatTracks(0, share);
+        var flow = 0.0;
+
+        foreach (var child in EffectiveMembers(box.Children, share))
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            var size = _engine.Measure(child, MeasureConstraints.FitWidth(share), childContext);
+            var margin = BoxModel.UsedMargin(child.Style, share, size.Width);
+            var floating = IsFloat(child);
+
+            // A float's own band begins where the flow stands, since nothing of the flow's is spent on
+            // it; a box of the flow begins where it clears the floats it will not stand beside, and a
+            // box that holds lines begins where those lines first find their width - a block box may
+            // overlap a float, but a line that has no room beside one goes below it
+            // (CSS 2.1 §9.5.2, measured: widows-orphans-020 against
+            // tall-float-pushed-to-next-fragmentainer-002, whose cleared box keeps overlapping the
+            // narrow right-hand float rather than going below it).
+            var top = floating
+                ? flow + margin.Top
+                : BreaksAtLines(child)
+                    ? tracks.FitBelow(tracks.ClearBelow(child.Style.Clear, flow), size.Width)
+                    : tracks.ClearBelow(child.Style.Clear, flow);
+            var reach = top + size.Height + margin.Bottom;
+
+            if (cell.Count > 0 && reach > columnHeight + 0.001)
+            {
+                runs.Add(cell);
+                cell = new List<FloatFlowItem>();
+                tracks = new FloatTracks(0, share);
+                flow = 0.0;
+                top = floating ? margin.Top : tracks.ClearBelow(child.Style.Clear, 0.0);
+            }
+
+            if (floating)
+            {
+                var placed = tracks.Place(child.Style.Float, size.Width, size.Height, margin, flow, owner: child);
+                cell.Add(new FloatFlowItem(child, placed.X, placed.Y, size, margin));
+                continue;
+            }
+
+            cell.Add(new FloatFlowItem(child, margin.Left, top, size, margin));
+            flow = top + size.Height + margin.Bottom;
+        }
+
+        if (cell.Count > 0)
+        {
+            runs.Add(cell);
+        }
+
+        return runs;
+    }
+
+    /// <summary>Measures that sharing: the container keeps the height it was told to be, and what does
+    /// not fit overflows it the way a browser lets it overflow (CSS Multicol 3 §7).</summary>
+    private Double MeasureFloatFlowColumns(
+        Box box,
+        Double share,
+        Double declaredHeight,
+        LayoutContext context)
+    {
+        return declaredHeight;
+    }
+
+    /// <summary>Arranges that sharing: each run stands in its own column, with the column's rules drawn
+    /// across the height the container came to.</summary>
+    private Double ArrangeFloatFlowColumns(
+        Box box,
+        LayoutBox parent,
+        Rect content,
+        Int32 columns,
+        Double share,
+        Double declaredHeight,
+        LayoutContext context)
+    {
+        var multi = box.Style.Multi;
+        var runs = PlaceFloatFlowColumns(box, share, declaredHeight, context);
+        var childContext = context.ForContainingBlock(new Size(share, declaredHeight));
+
+        for (var run = 0; run < runs.Count && run < columns; run++)
+        {
+            var originX = content.X + run * (share + multi.Gap);
+
+            foreach (var item in runs[run])
+            {
+                parent.Children.Add(_engine.Arrange(
+                    item.Child,
+                    new Rect(
+                        originX + item.X,
+                        content.Y + item.Y,
+                        item.Size.Width,
+                        item.Size.Height),
+                    childContext));
+            }
+        }
+
+        MulticolRules.Add(
+            parent,
+            box.Style,
+            content,
+            new List<(Double, Double)> { (content.Y, content.Y + declaredHeight) });
+
+        _engine.PublishFloats(box, null);
+
+        return declaredHeight;
     }
 
     /// <summary>A block whose lines live in the one in-flow block it holds, with floats beside them.</summary>
@@ -4135,6 +4324,11 @@ internal sealed class BlockLayout
         if (AllFloats(box))
         {
             return ArrangeFloatColumns(box, parent, content, columns, share, heightStated, declaredHeight, context);
+        }
+
+        if (FloatFlowColumns(box, heightStated, declaredHeight, share, context))
+        {
+            return ArrangeFloatFlowColumns(box, parent, content, columns, share, declaredHeight, context);
         }
 
         // A paragraph broken across the columns keeps its float in the first one and resumes the text
