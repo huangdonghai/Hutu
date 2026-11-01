@@ -1242,3 +1242,15 @@ Chrome 地面真值（逐子盒着色 + PIL 逐列扫描：`build/_c021.html`、
 全量口径门禁：屏幕 0 新增失败名，**`tall-float-pushed-to-next-fragmentainer-002` 转绿**、附带 `wpt/css-multicol/multicol-gap-fraction-002`（20 px）转绿，css-break 35 → **34**；单测 2180；打印 189/198 九条同名。
 
 余下的浮动对：`widows-orphans-021` 2500（orphan 逼出的浮动推移 + Chrome 那侧第二片矩形高 100 的机制未解）、`overflowing-block-003` 8300 与 `fragmented-autowidth-fc-root-beside-floats` 34400（都要"高盒被栏切开 + 每片各自与旁边浮动求自由宽"）、`float-017` 663、`line-after-unbreakable-float-after-padding` 312。
+
+### 9.94 装不下任何一栏的浮动续切；`overflowing-block-003` 从 8300 到 2500
+
+混排栏那条路补了三种情形，都用 DOM 探针对着 Chrome 逐值核过（`build/_ob3.html`：`outer [21,53 50x0][96,53 50x0]`、`inner [21,53 50x50][96,53 50x50]`）：
+
+1. **裸浮动壳提升**：一个盒子若自身无装饰、无声明尺寸、内容只有浮动，栏看到的不是它而是它里面的浮动，宽度沿用壳留给浮动的room（`overflowing-block-003` 第一个盒子 `.outer{margin-right:25}` 让 75 栏里的浮动只有 50 宽）；
+2. **装得下就整块推栏、哪儿都装不下才续切**：`CutDownColumns` 只在浮动高度超过一整栏时才按浮动自己的行边界切成一片一栏；100 高的浮动在剩 20 的栏里仍是整块推到下一栏（保住 `tall-float-pushed-to-next-fragmentainer-002`），100 高的浮动落在 50 高的栏里就分成 50+50（`overflowing-block-003` 第一个盒子由此转绿）；
+3. **片段裁剪**：混排路径的每一片现在都带 `FragmentSlice` + `FragmentClip`，盒子铺在整盒坐标上、只显示本栏那一段。
+
+三道门禁：屏幕全量 1929 条两侧同名、**0 新增失败名、0 转绿**（`overflowing-block-003` 8300 → 5000），单测 2180，打印 189/198 九条同名；`floats-clear`、`flexbox-multi-row` 模块口径与 HEAD 一致。
+
+`overflowing-block-003` 还剩 2500，全是第二个盒子：`.outer{height:0}` 套一个 100 高的普通块——Chrome 把**这个盒**也切成 50+50。试过在常规路径的填充循环里加一条"涂得比栏底还低就得切"（`used + Painted > limit` 而 `used + height <= limit` 时不整块放下），但它会顺手把 `flexbox/flex-item-content-overflow-001a/001b/002a/002b`（各 5300）打红：那四对的栏内子盒正是**由弹性容器展开来的弹性项**（`MulticolChildren` 的 `flexItems` 展开），弹性项的溢出内容按 Chrome 是不切的。加 `Box.Kind == Block` / `!Relays` 两道限定仍挡不住，因为弹性项本身就是 Block。下次要么给展开来的弹性项一个显式标记再排除，要么把这条断只放在"盒自身声明高度为 0 且超出部分来自声明了高度的普通子块"上——并且必须连 `flex-item-content-overflow-*` 一起量。

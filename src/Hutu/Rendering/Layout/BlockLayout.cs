@@ -2644,9 +2644,221 @@ internal sealed class BlockLayout
         return height;
     }
 
-    /// <summary>One box a column took in the float-and-flow sharing: where it stands inside the column
-    /// and how big it came out.</summary>
-    private readonly record struct FloatFlowItem(Box Child, Double X, Double Y, Size Size, Thickness Margin);
+    /// <summary>One box a column took in the float-and-flow sharing: where its piece stands inside the
+    /// column, how much of it the column shows, and how far inside the box that piece begins. A whole
+    /// box shows all of itself from zero.</summary>
+    private readonly record struct FloatFlowItem(
+        Box Child,
+        Double X,
+        Double Y,
+        Size Size,
+        Thickness Margin,
+        Double Visible = 0,
+        Double Slice = 0,
+        Double Whole = 0);
+
+    /// <summary>A child of a float-and-flow container: the box the column takes and the width it is
+    /// measured at, which is the column's own except for a float lifted out of a box that only stands
+    /// aside it.</summary>
+    private readonly record struct FloatFlowMember(Box Child, Double Width);
+
+    /// <summary>Gets whether a box is nothing but a room for the floats it holds: a plain block with no
+    /// decoration, no size of its own and no content except floats, so the floats are what the column
+    /// places and the box only narrows them (measured: overflowing-block-003, whose 25px right margin
+    /// makes its float 50 wide in a 75px column).</summary>
+    private static Boolean FloatHostWrapper(Box child, Double share)
+    {
+        if (child.Kind != BoxKind.Block || child.Children.Count == 0 || child.Flow.IsVertical)
+        {
+            return false;
+        }
+
+        var style = child.Style;
+
+        if (style.Multi.IsMultiColumn || style.ClipsOverflow ||
+            !style.Width.IsAuto || !style.Height.IsAuto ||
+            style.BackgroundColor is { A: > 0 } || style.Backgrounds.Count > 0 ||
+            style.Breaks.Before != BreakValue.Auto || style.Breaks.After != BreakValue.Auto ||
+            style.Breaks.Inside != BreakValue.Auto)
+        {
+            return false;
+        }
+
+        var border = BorderOf(child);
+        var padding = style.Padding.Resolve(share);
+
+        if (border.Horizontal != 0 || border.Vertical != 0 ||
+            padding.Horizontal != 0 || padding.Vertical != 0)
+        {
+            return false;
+        }
+
+        var floats = 0;
+
+        foreach (var inner in child.Children)
+        {
+            if (!inner.IsBlockLevel || PositionedLayout.IsOutOfFlow(inner))
+            {
+                continue;
+            }
+
+            if (!IsFloat(inner))
+            {
+                return false;
+            }
+
+            floats++;
+        }
+
+        return floats > 0;
+    }
+
+    /// <summary>The children the float-and-flow columns take: the container's own, with a box that is
+    /// only a room for its floats giving up its place to them.</summary>
+    private List<FloatFlowMember> FloatFlowMembers(Box box, Double share, LayoutContext context)
+    {
+        var members = new List<FloatFlowMember>();
+
+        foreach (var child in EffectiveMembers(box.Children, share))
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
+            {
+                continue;
+            }
+
+            if (FloatHostWrapper(child, share))
+            {
+                var room = Math.Max(
+                    0.0,
+                    share - BoxModel.UsedMargin(child.Style, share, share).Horizontal);
+
+                foreach (var inner in child.Children)
+                {
+                    if (inner.IsBlockLevel && !PositionedLayout.IsOutOfFlow(inner) && IsFloat(inner))
+                    {
+                        members.Add(new FloatFlowMember(inner, room));
+                    }
+                }
+
+                continue;
+            }
+
+            members.Add(new FloatFlowMember(child, share));
+        }
+
+        return members;
+    }
+
+    /// <summary>Gets the furthest end of a box's own content units that stands within the room given,
+    /// which is where a column that runs out of room cuts it (CSS Break 3 §4.2).</summary>
+    private static Double LastBreakAtMost(IReadOnlyList<Double>? units, Double room)
+    {
+        if (units is null)
+        {
+            return 0.0;
+        }
+
+        var best = 0.0;
+
+        foreach (var at in units)
+        {
+            if (at > 0.001 && at <= room + 0.001)
+            {
+                best = Math.Max(best, at);
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>Cuts a box down the columns it stands in: each column shows the part of it it has room
+    /// for, the cut stays where the box's own content units end, and what is left begins at the top of
+    /// the next column (CSS Fragmentation 3 §4.3, §4.5). Each piece comes back with how far inside the
+    /// box it begins, how tall the column shows it, where it stands in that column, and whether it
+    /// opens a new column.</summary>
+    private static List<(Double Slice, Double Visible, Double Y, Boolean Fresh)> CutDownColumns(
+        Double height,
+        IReadOnlyList<Double>? units,
+        Double startY,
+        Double columnHeight,
+        Thickness margin)
+    {
+        var pieces = new List<(Double Slice, Double Visible, Double Y, Boolean Fresh)>();
+        var left = height;
+        var slice = 0.0;
+        var y = startY;
+        var fresh = false;
+        var tries = 2 + (Int32)Math.Ceiling(height / Math.Max(1.0, columnHeight));
+
+        for (var taken = 0; taken < tries && left > 0.001; taken++)
+        {
+            var room = columnHeight - y - margin.Bottom;
+
+            if (room < 0.001)
+            {
+                y = margin.Top;
+                room = columnHeight - y - margin.Bottom;
+
+                if (room < 0.001)
+                {
+                    break;
+                }
+
+                fresh = true;
+            }
+
+            var show = left;
+
+            if (show > room)
+            {
+                show = LastBreakAtMost(units, room);
+
+                if (show < 0.001)
+                {
+                    show = room;
+                }
+            }
+
+            pieces.Add((slice, show, y, fresh));
+            slice += show;
+            left -= show;
+            y += show;
+            fresh = false;
+        }
+
+        return pieces;
+    }
+
+    /// <summary>Gets how far a box's own in-flow content reaches below its top, which is further than
+    /// the height it states whenever that height is less than what it holds: the column that shows the
+    /// box paints as far as the content reaches while the flow it stands in advances only by the height
+    /// the box states (CSS 2.1 §10.6.3, CSS Fragmentation 3 §4.3).</summary>
+    private Double ContentReach(Box box, Double width, LayoutContext context)
+    {
+        var border = BorderOf(box);
+        var padding = box.Style.Padding.Resolve(width);
+        var available = Math.Max(0, width - border.Horizontal - padding.Horizontal);
+        var content = context.ForContainingBlock(new Size(available, 0));
+        var cursor = border.Top + padding.Top;
+        var reach = cursor;
+
+        foreach (var child in box.Children)
+        {
+            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child) || IsFloat(child))
+            {
+                continue;
+            }
+
+            var size = _engine.Measure(child, MeasureConstraints.FitWidth(available), content);
+            var margin = BoxModel.UsedMargin(child.Style, width, size.Width);
+
+            cursor += margin.Top;
+            reach = Math.Max(reach, cursor + size.Height);
+            cursor += size.Height + margin.Bottom;
+        }
+
+        return reach;
+    }
 
     /// <summary>Gets whether a container is the shape the float-and-flow columns handle: a horizontal
     /// container that fills columns of a stated height and holds both a float of its own and a box that
@@ -2666,7 +2878,6 @@ internal sealed class BlockLayout
 
         var childContext = context.ForContainingBlock(new Size(share, declaredHeight));
         var floats = 0;
-        var flowing = 0;
 
         foreach (var child in box.Children)
         {
@@ -2681,21 +2892,29 @@ internal sealed class BlockLayout
                 continue;
             }
 
-            flowing++;
+            // A box that is only a room for its floats brings no flow of its own: what the column
+            // shares out are the floats it holds.
+            if (FloatHostWrapper(child, share))
+            {
+                floats += child.Children.Count(inner => IsFloat(inner));
+                continue;
+            }
+
+            var size = _engine.Measure(child, MeasureConstraints.FitWidth(share), childContext);
+            var margin = BoxModel.UsedMargin(child.Style, share, size.Width);
 
             // A box of the flow taller than a column of its own has to be cut across them, which this
             // sharing does not do: the ordinary columns keep it, divide it, and place the floats beside
             // the pieces (CSS Fragmentation 3 §4.3).
-            var size = _engine.Measure(child, MeasureConstraints.FitWidth(share), childContext);
-            var margin = BoxModel.UsedMargin(child.Style, share, size.Width);
-
             if (size.Height + margin.Vertical > declaredHeight + 0.001)
             {
                 return false;
             }
         }
 
-        return floats > 0 && flowing > 0;
+        // A container whose floats are all it has to share - wrapped or not - comes here too: the one
+        // of nothing but floats written straight stands handled by the packing above.
+        return floats > 0;
     }
 
     /// <summary>
@@ -2718,15 +2937,19 @@ internal sealed class BlockLayout
         var tracks = new FloatTracks(0, share);
         var flow = 0.0;
 
-        foreach (var child in EffectiveMembers(box.Children, share))
+        void NextColumn()
         {
-            if (!child.IsBlockLevel || PositionedLayout.IsOutOfFlow(child))
-            {
-                continue;
-            }
+            runs.Add(cell);
+            cell = new List<FloatFlowItem>();
+            tracks = new FloatTracks(0, share);
+            flow = 0.0;
+        }
 
-            var size = _engine.Measure(child, MeasureConstraints.FitWidth(share), childContext);
-            var margin = BoxModel.UsedMargin(child.Style, share, size.Width);
+        foreach (var member in FloatFlowMembers(box, share, childContext))
+        {
+            var child = member.Child;
+            var size = _engine.Measure(child, MeasureConstraints.FitWidth(member.Width), childContext);
+            var margin = BoxModel.UsedMargin(child.Style, member.Width, size.Width);
             var floating = IsFloat(child);
 
             // A float's own band begins where the flow stands, since nothing of the flow's is spent on
@@ -2741,22 +2964,116 @@ internal sealed class BlockLayout
                 : BreaksAtLines(child)
                     ? tracks.FitBelow(tracks.ClearBelow(child.Style.Clear, flow), size.Width)
                     : tracks.ClearBelow(child.Style.Clear, flow);
-            var reach = top + size.Height + margin.Bottom;
-
-            if (cell.Count > 0 && reach > columnHeight + 0.001)
-            {
-                runs.Add(cell);
-                cell = new List<FloatFlowItem>();
-                tracks = new FloatTracks(0, share);
-                flow = 0.0;
-                top = floating ? margin.Top : tracks.ClearBelow(child.Style.Clear, 0.0);
-            }
-
             if (floating)
             {
-                var placed = tracks.Place(child.Style.Float, size.Width, size.Height, margin, flow, owner: child);
-                cell.Add(new FloatFlowItem(child, placed.X, placed.Y, size, margin));
+                var outerHeight = size.Height + margin.Top + margin.Bottom;
+
+                // A column with no room left for a float carries the float on to the next one, while
+                // the flow it stood in stays behind (CSS Fragmentation 3 §4.3, measured:
+                // tall-float-pushed-to-next-fragmentainer-002, whose 100-tall float leaves the first
+                // column's 20 pixels behind and stands whole at the top of the next).
+                if (cell.Count > 0 && top + size.Height + margin.Bottom > columnHeight + 0.001)
+                {
+                    NextColumn();
+                    top = margin.Top;
+                }
+
+                if (outerHeight <= columnHeight + 0.001)
+                {
+                    var whole = tracks.Place(
+                        child.Style.Float,
+                        size.Width,
+                        size.Height,
+                        margin,
+                        top - margin.Top,
+                        owner: child);
+
+                    cell.Add(new FloatFlowItem(child, whole.X, whole.Y, size, margin));
+                    continue;
+                }
+
+                // A float taller than a column of its own is not left to overflow the sheet whole: the
+                // column shows what it has room for, cut where the float's own lines end, and the rest
+                // begins at the top of the next one (CSS Fragmentation 3 §4.5, measured:
+                // overflowing-block-003, whose 100-tall float comes to 50x50 in each of two columns).
+                var cuts = BreaksAtLines(child)
+                    ? LineBreaks(child, member.Width, childContext)
+                    : null;
+
+                foreach (var piece in CutDownColumns(
+                    size.Height,
+                    cuts,
+                    top,
+                    columnHeight,
+                    margin))
+                {
+                    if (piece.Fresh && cell.Count > 0)
+                    {
+                        NextColumn();
+                    }
+
+                    var placed = tracks.Place(
+                        child.Style.Float,
+                        size.Width,
+                        piece.Visible,
+                        margin,
+                        piece.Y - margin.Top,
+                        owner: child);
+
+                    cell.Add(new FloatFlowItem(
+                        child,
+                        placed.X,
+                        placed.Y,
+                        size,
+                        margin,
+                        piece.Visible,
+                        piece.Slice));
+                }
+
                 continue;
+            }
+
+            // A box whose own content reaches past the height it states is cut down the columns the same
+            // way, while the flow it stands in advances only by that stated height (CSS 2.1 §10.6.3,
+            // CSS Fragmentation 3 §4.3; measured: overflowing-block-003, whose second box wraps a
+            // 100-tall block in a height of 0 and still comes to two 50x50 squares).
+            var reach = ContentReach(child, member.Width, childContext);
+
+            if (reach > size.Height + 0.001)
+            {
+                foreach (var piece in CutDownColumns(
+                    reach,
+                    PieceBreaks(child, member.Width, childContext),
+                    top,
+                    columnHeight,
+                    margin))
+                {
+                    if (piece.Fresh && cell.Count > 0)
+                    {
+                        NextColumn();
+                    }
+
+                    cell.Add(new FloatFlowItem(
+                        child,
+                        margin.Left,
+                        piece.Y,
+                        size,
+                        margin,
+                        piece.Visible,
+                        piece.Slice,
+                        reach));
+                }
+
+                flow = top + size.Height + margin.Bottom;
+                continue;
+            }
+
+            if (cell.Count > 0 && top + size.Height + margin.Bottom > columnHeight + 0.001)
+            {
+                NextColumn();
+                top = BreaksAtLines(child)
+                    ? tracks.FitBelow(tracks.ClearBelow(child.Style.Clear, flow), size.Width)
+                    : tracks.ClearBelow(child.Style.Clear, flow);
             }
 
             cell.Add(new FloatFlowItem(child, margin.Left, top, size, margin));
@@ -2803,14 +3120,44 @@ internal sealed class BlockLayout
 
             foreach (var item in runs[run])
             {
-                parent.Children.Add(_engine.Arrange(
+                var visible = item.Visible > 0.001 ? item.Visible : item.Size.Height;
+                var wholeHeight = item.Whole > 0.001 ? item.Whole : item.Size.Height;
+                var starts = item.Slice < 0.001;
+                var ends = item.Slice + visible >= wholeHeight - 0.001;
+                var border = BorderOf(item.Child);
+                var padding = item.Child.Style.Padding.Resolve(item.Size.Width);
+                var whole = new Rect(
+                    originX + item.X,
+                    content.Y + item.Y - item.Slice,
+                    item.Size.Width,
+                    wholeHeight);
+                var held = new Rect(originX + item.X, content.Y + item.Y, item.Size.Width, visible);
+                var arranged = _engine.Arrange(
                     item.Child,
-                    new Rect(
-                        originX + item.X,
-                        content.Y + item.Y,
-                        item.Size.Width,
-                        item.Size.Height),
-                    childContext));
+                    whole,
+                    childContext,
+                    definiteHeight: false,
+                    slice: new FragmentSlice(
+                        new Thickness(
+                            starts ? border.Top : 0,
+                            border.Right,
+                            ends ? border.Bottom : 0,
+                            border.Left),
+                        new Thickness(
+                            starts ? padding.Top : 0,
+                            padding.Right,
+                            ends ? padding.Bottom : 0,
+                            padding.Left),
+                        starts,
+                        ends,
+                        whole,
+                        item.Slice,
+                        visible));
+
+                // The piece is drawn only where its column stands, which is what lets a float taller
+                // than the column be carried on in the next one (CSS Fragmentation 3 §4.1).
+                arranged.FragmentClip = held;
+                parent.Children.Add(arranged);
             }
         }
 
