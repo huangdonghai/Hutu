@@ -22,7 +22,8 @@ public readonly struct FontMetrics
         Double overlineOffset = 0,
         Double overlineThickness = 0,
         Double xHeight = 0,
-        Double capHeight = 0)
+        Double capHeight = 0,
+        Double emDescent = 0)
     {
         Ascent = ascent;
         Descent = descent;
@@ -35,6 +36,7 @@ public readonly struct FontMetrics
         OverlineThickness = overlineThickness;
         XHeight = xHeight;
         CapHeight = capHeight;
+        EmDescent = emDescent;
     }
 
     /// <summary>Gets the distance from the baseline to the top of the em box, as a positive value.</summary>
@@ -78,4 +80,10 @@ public readonly struct FontMetrics
 
     /// <summary>Gets the distance from the baseline to the top of a capital letter, or zero where the face does not say.</summary>
     public Double CapHeight { get; }
+
+    /// <summary>
+    /// Gets the distance from the baseline to the bottom of the typographic em box, used by a
+    /// horizontal <c>text-underline-position: under</c>.
+    /// </summary>
+    public Double EmDescent { get; }
 }

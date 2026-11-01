@@ -1384,16 +1384,12 @@ public sealed class SkiaPaintExecutor
                 var extra = decoration.UnderlineOffset ?? 0;
                 var fontOffset = placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset);
 
-                // Across a row of CJK text the alphabetic underline often crosses the glyphs - the
-                // bottom stroke of an ideograph sits on the baseline - so the face's own position is
-                // not a position a reader can see. `auto` and `under` may sit at the text-under edge
-                // instead, which is where a CJK reader expects the rule and what the specification's
-                // note about Asian scripts asks a UA to consider (CSS Text Decoration 4 §2.7).
-                if (alongLine &&
-                    decoration.Position is TextUnderlinePosition.Auto or TextUnderlinePosition.Under &&
-                    TextClusters.StandsAcrossTheLine(command.Text))
+                // Across a row, `under` stands at the bottom of the decorating box's normalized em
+                // box, not at the face's alphabetic underline or its full hhea descent (CSS Text
+                // Decoration 4 §2.7). A column keeps its own position and is handled below.
+                if (alongLine && decoration.Position is TextUnderlinePosition.Under)
                 {
-                    fontOffset = Math.Max(fontOffset, Math.Abs(metrics.Descent));
+                    fontOffset = _measurer.GetMetrics(decoration.Font).EmDescent;
                 }
 
                 // Along a row the line stands its settled distance from the baseline the whole line

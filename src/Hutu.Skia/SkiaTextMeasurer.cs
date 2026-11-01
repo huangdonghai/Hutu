@@ -156,7 +156,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             primary.UnderlineThickness,
             primary.StrikeoutOffset,
             primary.StrikeoutThickness,
-            capHeight: primary.CapHeight);
+            capHeight: primary.CapHeight,
+            emDescent: primary.EmDescent);
     }
 
     /// <summary>
@@ -532,7 +533,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 
         if (usedSize <= 0)
         {
-            return new FontMetrics(0, 0, 0, 0, 0, 0, 0, xHeight: 0, capHeight: 0);
+            return new FontMetrics(0, 0, 0, 0, 0, 0, 0, xHeight: 0, capHeight: 0, emDescent: 0);
         }
 
         // GetFontMetrics reports the recommended line spacing; the metrics themselves are always
@@ -551,7 +552,12 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             // Skia's metrics carry no x-height, so the face itself is asked what it stands its lowercase
             // at; a font that does not say leaves the field empty and the layout guesses from the em.
             xHeight: _openType.GetXHeight(font.Typeface, (Single)usedSize) ?? 0,
-            capHeight: metrics.CapHeight);
+            capHeight: metrics.CapHeight,
+            emDescent: _openType.GetEmDescent(
+                font.Typeface,
+                (Single)usedSize,
+                -metrics.Ascent,
+                metrics.Descent));
     }
 
     private SKFont CreateFont(FontStyle style) => new(_resolver.Resolve(style), (Single)EffectiveSize(style));

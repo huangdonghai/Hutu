@@ -58,6 +58,34 @@ public sealed class TextDecorationPaintTests
     }
 
     [Test]
+    public async Task HorizontalCjkAutoUnderlineUsesTheFontPosition()
+    {
+        const String cjk = "font-family:Microsoft JhengHei;font-size:40px;" +
+            "text-decoration-color:red;text-decoration-skip-ink:none;text-decoration-thickness:2px";
+        var auto = await Ink("中", "underline", cjk + ";text-underline-position:auto");
+        var fromFont = await Ink("中", "underline", cjk + ";text-underline-position:from-font");
+
+        Assert.That(
+            auto.Bottommost,
+            Is.EqualTo(fromFont.Bottommost).Within(2),
+            "auto must not move a horizontal CJK underline down to the font descent");
+    }
+
+    [Test]
+    public async Task HorizontalCjkUnderUsesTheBottomOfTheEmBox()
+    {
+        const String cjk = "font-family:Microsoft JhengHei;font-size:40px;" +
+            "text-decoration-color:red;text-decoration-skip-ink:none;text-decoration-thickness:8px";
+        var auto = await Ink("中", "underline", cjk + ";text-underline-position:auto");
+        var under = await Ink("中", "underline", cjk + ";text-underline-position:under");
+
+        Assert.That(
+            under.Bottommost,
+            Is.EqualTo(auto.Bottommost).Within(2),
+            "under must use the em-box bottom, not the font's full hhea descent");
+    }
+
+    [Test]
     public async Task ADoubleDecorationDrawsTwoBandsOfInk()
     {
         var solid = await Ink(Text, "underline solid");
