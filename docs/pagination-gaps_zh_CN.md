@@ -1537,3 +1537,12 @@ legend 单独立了排除（HTML rendering §15.3.12 由 fieldset 自己贴边�
 - `EachPieceOfADividedTransformedBoxTurnsAboutItsOwnRectangle`：同一形状加 `transform: rotate(25deg)`（不写 origin ⇒ 默认 50% 50%）⇒ 三片的 `TransformOrigin` 分别 `(50,20) (50,90) (50,190)`，即各自那一段的中心；若是整盒中心，三片都会是 `(50,60)`，测试里专门断言第一片 **不等于** 60，防回归到整盒。
 
 顺带量到一个小缺陷（未修，别当成本族阻塞）：把内子换成**不溢出**（`height:120`，与盒同高）时，仍是三片，第三片裁剪 `(200,60,100x40)` 对应盒的行 `[140..180]` —— 盒只到 120，所以这一片**什么都不画**。原因：栏内推进用的是 `Painted(child) = max(Reach, Fragment.Height)`，而 `Fragment.Height` 含 `margin.Top/Bottom` ⇒ 延伸长度被 margin 又算了一遍。试过 `Painted - Margin.Vertical`：对 `css-break` 全模块 0 变化（所以当时被当"无效果"撤了），但它正是这条空片的成因；要修得同时看 `last`/`resumeAt` 的坐标口径（`resumeAt` 是盒内行号，不该含 margin），别只动一处。
+
+### 9.114 竖排表两对与 045 的"缺哪两块"量清了：竖排容器从不切表、片的裁剪是"一片一 clip"而非"一盒一 clip"
+
+**竖排表（`table-grid/row/col/section-paint-vrl/vlr-*` 共 8 对 + `table-collapsed-borders-paint-vrl/vlr-*` 2 对）**：探针 `build/_probe-vtb.txt`（`table-grid-paint-vrl-rtl`）显示 **表的内部轴已经是对的** —— `tablerow 225x80 vertical`（块轴 = x：行自身沿 x 占 225 ✓ Chrome 也是 50+100+75 = 225；行内向 = y 占 80 ✓ Chrome 的 `100 − 表边框 10+10 = 80` ✓），容器 `692,192 100x400 vertical` ✓。缺的是两块：
+
+1. **caption 的内向长度成了 0**：`caption 547,192 140x0 vertical`（x 140 ✓ = `block-size:140`），但 y 应当铺满表的内向长度（Chrome 给 `[0,380 100x100]`，y = 栏内向长度 100）；表的 `inline-size:100%` 走的是所在栏的内向长度，Hutu 的 `TableFormattingContext` 算 caption 的 cross 尺寸时按 `contentWidth`（横排语义）取，竖排下该取内向（y）方向。
+2. **竖排容器根本不切表**：`ArrangeMulticolChildren` 给竖排走 `ArrangeMulticolRunAcross`，但没有任何判据会把 Table 子在**块向（x）**切开 —— `DividesAcross`/`DividesUnits`/`RelaysInColumns`/`RowRelaysInColumns`/`BreaksAtLines` 全部显式 `!vertical`；`AddBoxCut` 虽然带 `vertical` 形参并会用 `BlockExtentOf(size, vertical)`，但对有子的表它要求 `ClonesDecoration` 或 `HoldsPositioned`。Chrome 的 4 个 `100x100` 片段（y=380/280/180/80，块轴向 x 各自从 0 起算）说明：竖排的切片是"每栏一块 x∈[0,100] 的窗口 + 续片从栏头重画"，与横排同构，只是轴换了。⇒ 任务 #8 的真实工作量 = (a) 让竖排的分栏判据接受"块向超栏"的子（含表），(b) 表 caption/行的 cross 尺寸按所在轴取；这两条都要跟 8 对竖排表一起量，别只对着 `table-grid-paint-*` 调。
+
+**045（10000 px）**：`build/_oof45_real.html`/§9.98 的 Chrome 矩形说清楚了模型 —— **每个盒子有自己的片段裁剪**：wrapper 的两片在 `[-92,-50 40x100]`、`[-42,-50 40x100]`（未位移），`.rel` 的两片在 `[8,50 40x100]`、`[58,50 40x100]`（位移后），abs 再按 `.rel` 的片段各画一片 `[8,50 50x100]`、`[58,50 50x100]`（宽 50 > 栏宽 40，只被块向切）。Hutu 是"一片一 clip"：clip 挂在最外层片上并作用于整棵子树，所以 `build/_clip-move.patch`（把片的 clip 随片自身 `RelativeDisplacement` 平移）对它无效 —— 位移在里面 `.rel` 上。要修得先有"片内每个被位移的盒各自一条裁剪带"的模型（`LayoutBox.FragmentClip` 目前只能有一个、且由父级 `_cuts` 栈继承），不是再加一次平移。
