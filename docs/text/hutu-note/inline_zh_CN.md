@@ -176,7 +176,7 @@
 12. **探针 + Reftest**：注文片段到达外层行尾，且该行按 `text-align`／`text-align-last` 的普通规则适用 justify 时，注文 margin box 到达外层行尾，两条子行均铺满扣除注文 inline 装饰后的剩余宽度；未到达行尾，或在 `text-align-last: auto` 下属于最后一行／强制换行行时，子行保持自然宽度，不 justify、不悬挂标点。到达行尾时，`hanging-punctuation`／`text-spacing-trim` 与普通行尾一致。
 13. **探针 + Reftest**：整行只有夹注且该行不是最后一行时，执行 `text-align: justify`，注文盒必须到达外层行尾；若它就是最后一行，`text-align-last: auto` 下保持自然宽度，只有 `text-align-last: justify` 才拉满。无论是否 justify，最后一行仍按夹注自身行尾处理 `hanging-punctuation: last`、`force-end`、`allow-end`。
 14. **探针 + Reftest**：夹注因后续字素放不下而截断时，即使还剩余少量宽度或该行不是段落最后一行，也执行行尾 justify／悬挂；双行切分和外层片段边界不得把逗号、句号等禁则标点放到行首。
-15. **探针 + Reftest**：夹注内部声明行间注时，夹注仍只有两条子行，内部不得出现行间注流；该注文出现在对应正文片段的注文流中，并按其零宽位置映射的 `P` 参与中点定位、冲突推进和续行，同时保留原 DOM 位置的 computed style；`writing-mode`／`direction` 改用正文块容器的值。
+15. **探针 + Reftest**：夹注内部声明行间注时，夹注仍只有两条子行，内部不得出现行间注流；该注文出现在对应正文片段的注文流中，并按其零宽位置映射的 `P` 作为起点参与冲突推进和续槽，同时保留原 DOM 位置的 computed style；`writing-mode`／`direction` 改用正文块容器的值。
 
 ## 7. 样例
 

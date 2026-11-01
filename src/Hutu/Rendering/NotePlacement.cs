@@ -9,7 +9,7 @@ internal enum NotePlacement : Byte
     /// <summary>A two-line annotation at the note's inline position.</summary>
     Inline,
 
-    /// <summary>An annotation block after the line the note stands on.</summary>
+    /// <summary>A shared note flow on the line-over side of the line the note stands on.</summary>
     Interline,
 
     /// <summary>An annotation in the page or container margin.</summary>
