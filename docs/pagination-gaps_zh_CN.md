@@ -1310,3 +1310,22 @@ Chrome 的 `widows-orphans-021` 矩形（`build/_wo21_probe.html`）：`green [8
 同一轮复看：`float-017`（663）与 `fragmented-autowidth-fc-root-beside-floats`（34400）仍在等“比一栏还高的流内盒被切开、每一片各自与旁边浮动求自由宽”——`FloatFlowColumns` 那条“有比栏还高的流内盒就退回常规路径”的排除仍有效。
 
 代码未动，HEAD 仍是 `51216991`：屏幕 1926 条 finding、css-break **31** 对、单测 2180、打印 189/198 九条同名。
+### 9.99 混排栏改成“一栏一态”：被推走的浮动不再把流带走，比栏还高的流内盒按栏切开、每片读自己栏里的自由宽
+
+`fragmented-autowidth-fc-root-beside-floats`（34400）的 ref 是三个 200 宽假栏里的三块热粉：宽 **100 / 10 / 200**，各 100 高。页面是 `columns:3; column-gap:10px; column-fill:auto; height:100px` 里两个右浮动（100x60，以及 `clear:both; break-inside:avoid` 的 190x60）后面跟一个 `display:flow-root; height:300px`。也就是说：300 高的 BFC 根要被三栏切成三片，每片的宽取决于**它所在那一栏**还剩多少自由空间（第一栏旁边是留下的 100 宽浮动 → 100；第二栏旁边是被推过来的 190 宽浮动 → 10；第三栏没有浮动 → 200）。
+
+旧模型两处不到位，都是量出来的：
+
+1. 混排栏只有一条 `cell/tracks/flow` 游标，`NextColumn()` 把三者一起清零 —— 于是**被推到下一栏的浮动把“流”也带走了**，后面的流内盒从第二栏起站，第一栏白白空着；
+2. 浮动的“放不下”判据用的是 `flow + margin.Top`，而 `clear:both` 的下沉是 `tracks.Place` 内部偷偷做的 —— 判据看不到下沉后的真实 y，本该推栏的浮动留在原栏叠到了 120 高。
+   还有一条判据直接把这个形状挡在门外：`FloatFlowColumns` 见到“流内盒比栏还高”就整容器退回常规路径（上一轮量过：只放开判据而不做每片取宽，会从 34400 恶化到 89000）。
+
+改法：把混排栏换成**每栏一份状态**（`FloatFlowColumn`：该栏的 `tracks`、该栏装的 `items`、该栏走到的 `flow`），`at` 只表示“流所在的那一栏”。
+
+- 浮动放不下时只把自己搬到后面的栏（栏按需创建，流留在原栏不动），后面流走到该栏时自然遇见这颗浮动。搬过去的那一栏未必装得下它：`gecko/bugs/563584-9d`（三个 200 宽、栏宽也是 200 的浮动）量出这一点 —— 只搬一栏会把第三颗浮动叠到第二栏的浮动底下（60000 px 全红），所以要在 `at+1、at+2…` 里找**第一栏装得下整颗**的：`tracks.FitBelow(0, width)` 先按现有浮动下沉到能容下它宽度的带，再看栏高够不够；装不下一栏的超高浮动（`outer > columnHeight`）仍按老路子搬到下一栏后 `CutDownColumns` 续切；
+- 带 `clear` 的浮动起点改成 `tracks.ClearBelow(clear, flow) + margin.Top`（CSS 2.1 §9.5.1：没有 clear 才谈得上“接着流站”），推栏判据因此看得见真实落点；
+- 比一栏还高、自身不是行盒容器的流内盒走 `CutDownColumns` 一片一栏，每一片的宽取所在栏的 `tracks.FreeSpanAt(y, visible)`（BFC 根不得压过浮动，CSS 2.1 §9.4.1），左右再各让出自己的水平 margin。有行盒的盒子仍交回常规栏，因为每一片都得重新断行。
+
+实测：`wpt/css-break/fragmented-autowidth-fc-root-beside-floats.html` **转绿**（34400 → 0），三片宽 100/10/200 与 ref 逐值相同；`float-017` 仍 663（它的残差不在这条路上）。`overflowing-block`（2 对）与 `flex-item-content-overflow`（4 对）模块 0 失败，`floats-clear` 16、`gecko/flexbox/flexbox-multi-row` 5 与 HEAD 一致。
+
+门禁：单测 2180；打印 189/198 九条同名；屏幕全量 finding 1926 → **1925**、**0 新增失败名**（第一次未加“找装得下的栏”那条时被 `gecko/bugs/563584-9d` 挡下，补上后回归消失）。
