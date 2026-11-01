@@ -1582,3 +1582,13 @@ Chrome 量的（`build/_mb2probe.html` → `build/_mb2chrome.txt`，`vertical-rl
 顺带记下：横排孪生对 `-1` 之前的绿是**空的**——Hutu 同样把它的 avoid 盒子切成 30 + 10，只是 ref 拿 margin 模拟之后像素恰好重合；这次改动没让它变差（`-1`、`-3` 仍无 finding）。Chrome 在 30 宽的栏带里确实会切开装不下的 avoid 盒子（它的 rect 是跨两栏的并集），所以"切"本身是对的，本对缺的只是摆位。
 
 门禁：全量 1995 → **1994** finding、**0 新增失败名**、**0 对变差**、`wpt/css-break` 25 → **24** 对；单测 **2192**（新增 `AVerticalBandIsNoWiderThanItsWidestColumn`、`AChildOfAWiderVerticalBandStandsAtTheBlockStartEdge`）；打印 **189/198** 九条同名。
+
+### 9.118 竖排碎片的阴影带：块向起点是高坐标（`box-shadow-003` 10860 → 7400）
+
+`BandOf` 过去把 `SlicesBlockStart` 一律对应到 `low`、`SlicesBlockEnd` 对应到 `high`——这对 horizontal-tb 与 vertical-lr 成立，对 vertical-rl 恰好颠倒：竖排的块向起点在**右**边（`Flow.BlockSign < 0`）。于是 `box-shadow-003` 的第一片把阴影留在左边（x=0..57，画到容器之外），而 Chrome 留在右边（x=158..167）。按 `BlockSign` 交换两端之后三片全部对上：band 依次是 58..168、58..158、98..158（`build/_bs3-hutu3.txt` 里新加的 `area/shape/band` 转储直接可读）。
+
+顺带把 `LayoutDumper` 的阴影行补成 `area/shape/band`：阴影画在一个矩形上、又被另一个矩形裁掉，只给 bounds 时图上那条边没有理由可查。
+
+剩下的 7400 px 与阴影无关：参考页用 `position:absolute` 加 `inset-inline-start` 模拟每一片的环，而 Hutu 把这些 abs 子元素的**静态块向位置**摆到了容器块向起点之外（x=158..257 而不是 58..158）——就是已记录的竖排 abs 静态位置问题（Chrome 从右边缘往左长，Hutu 各调用点递的锚点不一致）。那是一条独立的切片，需要单独量，已记进 #18。
+
+门禁：全量 finding 数不变、**0 新增失败名**、**0 对变差**，`box-shadow-003` 10860 → **7400**；单测 **2193**（新增 `AFragmentOfABrokenVerticalBoxKeepsItsShadowAtTheEdgeTheWritingModeStartsAt`）；打印 **189/198** 九条同名。

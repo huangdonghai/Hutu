@@ -708,11 +708,17 @@ internal sealed class Painter
         var vertical = box.Flow.IsVertical;
         var low = vertical ? fragment.X : fragment.Y;
         var high = vertical ? fragment.Right : fragment.Bottom;
+        var boundsLow = vertical ? bounds.X : bounds.Y;
+        var boundsHigh = vertical ? bounds.Right : bounds.Bottom;
 
         // The band of a cut edge stops at the cut; an edge the box owns lets the shadow out to the
-        // bounds it was drawn to.
-        var from = box.SlicesBlockStart ? low : vertical ? bounds.X : bounds.Y;
-        var to = box.SlicesBlockEnd ? high : vertical ? bounds.Right : bounds.Bottom;
+        // bounds it was drawn to. Which coordinate each of the two edges sits at is the writing mode's
+        // answer: a column that runs the page rightwards begins at the high one, so the edge cut off
+        // the end of the box is the low one (CSS Writing Modes 3 §5.1, measured: box-shadow-003, whose
+        // first fragment shows the ring across the block-start edge and none at the cut).
+        var beginsAtHigh = box.Flow.BlockSign < 0;
+        var from = (beginsAtHigh ? box.SlicesBlockEnd : box.SlicesBlockStart) ? low : boundsLow;
+        var to = (beginsAtHigh ? box.SlicesBlockStart : box.SlicesBlockEnd) ? high : boundsHigh;
 
         return vertical
             ? new Rect(from, bounds.Y, to - from, bounds.Height)

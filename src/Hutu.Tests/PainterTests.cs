@@ -127,6 +127,30 @@ public sealed class PainterTests
         Assert.That(view.Paint!.Bounds.Height, Is.EqualTo(700).Within(0.5));
     }
 
+    [Test]
+    public async Task AFragmentOfABrokenVerticalBoxKeepsItsShadowAtTheEdgeTheWritingModeStartsAt()
+    {
+        var view = CreateView();
+        await view.SetHtml(
+            "<html><body style='margin:0'><div id='c' style='writing-mode:vertical-rl;columns:2;column-gap:0;" +
+            "column-fill:auto;block-size:100px;inline-size:200px'>" +
+            "<div style='box-shadow:0 0 0 10px;block-size:150px;inline-size:50px'></div></div></body></html>");
+
+        var shadows = view.Paint!.Commands.OfType<BoxShadowCommand>().ToList();
+
+        // A piece of a broken box casts the whole box's shadow, kept inside the band of the piece it
+        // stands in. Which edge of the band the box begins at is the writing mode's answer, and a
+        // column that runs the page rightwards begins at the high coordinate: the first piece owns the
+        // right edge and lets the ring fall out there while the cut stops it on the left, and the
+        // second piece is the other way about (CSS Break 3 §4.7, CSS Writing Modes 3 §5.1, measured:
+        // box-shadow-003).
+        Assert.That(shadows, Has.Count.EqualTo(2), "each column casts the shadow of the whole box");
+        Assert.That((shadows[0].Band!.Value.X, shadows[0].Band.Value.Right), Is.EqualTo((0.0, 110.0)),
+            "the first piece stops the ring at the cut and lets it fall out at the edge it owns");
+        Assert.That((shadows[1].Band!.Value.X, shadows[1].Band.Value.Right), Is.EqualTo((40.0, 100.0)),
+            "the last piece owns the other edge, which for this writing mode is the low one");
+    }
+
     private static HutuViewInternal CreateView()
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

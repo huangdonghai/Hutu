@@ -222,6 +222,19 @@ internal static class LayoutDumper
                 SideInk(text, "b", border.TopColor, border.BottomColor);
                 SideInk(text, "l", border.TopColor, border.LeftColor);
                 break;
+            case BoxShadowCommand shadow:
+                // A shadow is drawn from one rectangle and cut by another: a fragment of a broken box
+                // casts the whole box's shadow kept inside the band of the piece it stands in, and
+                // without both the picture's edge has no reason next to it.
+                text.Append(" area ").Append(Place(shadow.Area))
+                    .Append(" shape ").Append(Place(shadow.Shape));
+
+                if (shadow.Band is { } band)
+                {
+                    text.Append(" band ").Append(Place(band));
+                }
+
+                break;
             case TextCommand run:
                 text.Append(" \"").Append(Quote(run.Text))
                     .Append("\" base ").Append(Number(run.Baseline))
@@ -301,6 +314,9 @@ internal static class LayoutDumper
 
     private static String Size(Double width, Double height) =>
         Number(width) + "x" + Number(height);
+
+    private static String Place(Rect area) =>
+        Number(area.X) + "," + Number(area.Y) + " " + Size(area.Width, area.Height);
 
     private static String Number(Double value) =>
         value.ToString("0.##", CultureInfo.InvariantCulture);
