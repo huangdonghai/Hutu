@@ -1075,6 +1075,33 @@ margin 片段是**纯占位**：零高度、不带 `before`、`startInset` 为 0
 
 全量门禁（基线 = `5859926b` 那份报告 `build/_score-cl2.md`，名单 `/tmp/mine-cl.txt` 2008）：单测 **2180** 绿；打印 **189/198**、九个失败名逐字不变；屏幕 **2008 → 2007**，`--- regressed ---` 空，`--- fixed ---` = `wpt/css-break/flexbox/flex-container-fragmentation-006`，`wpt/css-break` **37 → 36**。报告存 `build/_score-fc6b.md`，切片补丁 `build/_fc6-margin-piece.patch`。
 
+### 9.85 折叠边框又量否两条：片段起始的侧带上伸、以及逐段取宽
+
+`at-boundary` 2540 的真相不是"角"，也不是"宽度分段"，两条都已实量并回退（HEAD 仍是 `11b2bf16` 的形状）：
+
+1. **片段起始处让侧带上伸到片段顶**（`build/_atboundary-corner.patch` 66 行）：2540 → **2415**，左角 `225,21` 对了，右角 `302,21` 反而把黑画进了本该 lime 的地方 ⇒ 不翻对，回退。规则要按边比较整线宽（15 > 10 竖线赢、10 = 10 平手横线赢），侧带得拆成左右两条矩形。
+2. **纵线按片段取宽**（`build/_collapsed-segment-widths.patch` 92 行：`TableCellInfo.Sides` + `LayoutBox.SideWidths` + `Painter` 侧带用它，几何仍按整线最宽分列）：`at-boundary` 2540 → **2490**（几乎没动）、`collapsed-border-large-rowgroup-002` **904 → 911（更差）**、`htb-ltr`/`large-rowgroup-001` 仍绿、`border-collapse-006` 17500 与 `subpixel-collapsed-borders-003` 1392 不变 ⇒ 不翻对且两对更远，回退。
+
+残差的形状（`build/_lookab3.txt` 的 paint 比对）是**每条片段左右两端各 2–3px 的细条，沿约 190 行**：`x=315..316 / 327..329 / 302..304 / 429..431 / 506..508 / 519..520`（test 画线、ref 画白）加 lime 一侧的 `123..125 / 136..137 / 200..202 / 213..214`。Hutu 的命令是 `border 21,226 92x100 w:0/15/0/15`（侧带 = 单元格盒 92 宽、两端各 15）加 `border 21,221 92x100 w:5/0/5/0`（上下环），而 Chrome 探针给的是 `t [225,21 92x100]`、`r1 [232.5,21 77x100]` —— 单元盒内缩 7.5，竖线整条 15 骑在网格线上 ⇒ 两者**表面上等宽**，差别只在**片段边界那几像素归谁**：需要 Chrome 实际**画出来**的像素扫描才定得下来（`chrome --headless=new --screenshot=… --window-size=…` + Python 按行扫色带；§9.6x 给 `table-border-008` 定案时用的就是这个办法，别再靠像素推断）。
+
+同一族剩下的竖排两对（`-vlr-rtl` 19380、`-vrl-ltr` 20350）在这两次试验里数字一字未动 ⇒ 仍等 §9.81 的轴向那半。
+
+### 9.86 用 Chrome 截图扫色带定下折叠边框的完整模型（四条一起做才闭合）
+
+像素扫描这条路子终于把 `at-boundary` 说清楚了：`chrome --headless=new --screenshot=<绝对路径> --window-size=800,600 --hide-scrollbars file:///...`（相对路径会被 Chrome 拒写 ✗）+ PIL 按行扫（`build/_ab_test.png`、`build/_ab_ref.png` ✓ 两页逐行完全一致 ⇒ ref 诚实 ✓✓）：
+
+- `y=60`（行 1 所在的片段）：`225..239 黑(15)` `305..314 黑(10)` ⇒ **纵线按它自己那一段的宽度画**，且**骑在网格线上**（左右各半）。左线 15 中心 232.5、右线 10 中心 309.5 ⇒ Chrome 的 `r1` rect `232.5,21 77x100` = 表盒 92 减左右各 7.5 ✓✓ 即**inline 方向也有外半**，外半在表盒里、不在单元格里。
+- `y=22`（片段顶上那 5 行）：`225..239 黑` `240..304 lime` `305..314 黑` ⇒ **横线被斜接**：从左边线的外沿结束处画到右边线的外沿之前，斜进量 = **该段线宽的一半**（不是几何半宽、也不是整段宽）。
+
+四条规则合起来才是完整模型（先实量了前两条的组合：`at-boundary` 2540 → **6415（更差）**、`htb-ltr` 0 → **4700**、`large-rowgroup-001` 绿 → 16、`subpixel-003` 1392 → 1704，只有 `border-collapse-006` **17500 → 15000** 在变好 ⇒ 已回退，改动存 `build/_collapsed-inline-halves.patch` 200 行 + `build/_collapsed-segment-widths.patch` 92 行）：
+
+1. **几何**：折叠表盒的 `InsetsH` 也含左右外半（`build.OuterLeft/OuterRight = vertical[0].Width*0.5 / vertical[cols].Width*0.5`，`left/right = vertical[线].Width*0.5`）——这条把 006 从 17500 推到 15000，说明 §9.79 记的"006 咬住整条内半"并不是反证 ✓ 值得单独立片。
+2. **表盒只画上下外半**：左右的**外半要由每一行的侧带向外伸**（外半宽度逐行不同：行 1 是 5、行 2 是 7.5）⇒ 侧带必须拆成 `LeftBand`/`RightBand` 两个矩形、中心贴在格子线上、宽取该段宽（今天只有一条 `SideBand`，宽度取几何 ⇒ 外半永远按整线最宽画 ✗）。
+3. **上下环斜接**：环的矩形向内收 `sides.Left/2`、`sides.Right/2`（`sides` = 该段宽，见 2）。
+4. **上下线宽是否也按列分段**还没量（`htb-ltr` 的 4700 全在 `226,21` 一带 ⇒ 多半与 2/3 未做全同源）；做 2+3 之后要重看。
+
+下一步照这个顺序做：先补 2 与 3（画侧不动几何），`htb-ltr` 应回 0；再看 4。截图扫带这条手段以后优先于 paint 清单猜：两页 PNG 逐行比对能一次区分"谁的哪条线宽了多少"。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
