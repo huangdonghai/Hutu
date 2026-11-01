@@ -163,6 +163,9 @@ internal sealed class LayoutBox
     /// <summary>Gets the text of a text node, or null for anything else.</summary>
     public String? Text { get; set; }
 
+    /// <summary>Gets which edge of its note subline this run hangs from, or zero for none.</summary>
+    internal Int32 HangSide { get; set; }
+
     /// <summary>
     /// Gets or sets which characters of <see cref="Text"/> the line set half-width, one code per
     /// UTF-16 unit; null when the run has nothing to trim (CSS Text 4 §8.5).

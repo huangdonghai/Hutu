@@ -2054,7 +2054,9 @@ internal sealed class BlockLayout
     }
 
     /// <summary>Gets whether the child is pinned to an edge of its container instead of stacked in it.</summary>
-    private static Boolean IsFloat(Box child) => child.Style.Float != FloatSide.None;
+    private static Boolean IsFloat(Box child) =>
+        child.Style.Float != FloatSide.None &&
+        child.Style.NotePlacement != NotePlacement.Inline;
 
     /// <summary>
     /// Gets the line an inline-level out-of-flow box would have joined, or null when its specified

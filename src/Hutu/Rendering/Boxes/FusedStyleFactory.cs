@@ -1043,6 +1043,7 @@ internal static class FusedStyleFactory
             WritingMode = writingMode,
             Direction = direction,
             Language = language,
+            NotePlacement = ComputedStyle.ResolveNotePlacementFused(cascade.Find("-hutu-note-placement")),
 
             // `unicode-bidi` is not inherited (CSS Writing Modes 3 §5.2): an element that writes none
             // takes no embedding of its own, and its text is resolved in the paragraph its block

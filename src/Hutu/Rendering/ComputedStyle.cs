@@ -151,6 +151,19 @@ internal readonly struct ComputedStyle
     /// </summary>
     public Int32 Order => _values.Fused?.Order ?? 0;
 
+    /// <summary>Gets how this element places the note it defines.</summary>
+    public NotePlacement NotePlacement => _values.Fused?.NotePlacement ?? NotePlacement.None;
+
+    /// <summary>Reads the note placement keyword an element declared.</summary>
+    public static NotePlacement ResolveNotePlacementFused(ICssProperty? declared) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            "inline" => NotePlacement.Inline,
+            "interline" => NotePlacement.Interline,
+            "margin" => NotePlacement.Margin,
+            _ => NotePlacement.None,
+        };
+
     /// <summary>
     /// Reads the order from the element's own cascaded declaration, for the fused path. A value that is
     /// not a number is not an order, and a box left with none is the initial zero.
@@ -3230,6 +3243,7 @@ internal readonly struct ComputedStyle
         // until one is asked for, since a list that asks for nothing is already the answer.
         internal IReadOnlyList<Shadow>? BoxPaint;
         internal IReadOnlyList<Shadow>? TextPaint;
+
     }
 
     /// <summary>
@@ -3240,6 +3254,7 @@ internal readonly struct ComputedStyle
     {
         internal Layout.WritingMode WritingMode = Layout.WritingMode.HorizontalTb;
         internal TextDirection Direction = TextDirection.LeftToRight;
+        internal NotePlacement NotePlacement;
 
         /// <summary>
         /// Gets the language the element's text is written in, or null where neither it nor any
@@ -4438,7 +4453,8 @@ internal readonly struct ComputedStyle
         ReferenceEquals(_values.Text, other._values.Text) &&
         ReferenceEquals(_values.Border, other._values.Border) &&
         ReferenceEquals(_values.DisplayPositioning, other._values.DisplayPositioning) &&
-        ReferenceEquals(_values.List, other._values.List);
+        ReferenceEquals(_values.List, other._values.List) &&
+        NotePlacement == other.NotePlacement;
 
     /// <summary>
     /// Gets whether this style hands a descendant exactly what <paramref name="other"/> handed it:

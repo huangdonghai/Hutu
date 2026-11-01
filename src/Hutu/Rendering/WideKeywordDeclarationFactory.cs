@@ -54,6 +54,9 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         "-webkit-text-stroke-width",
         "-webkit-text-stroke-color",
         "-webkit-text-fill-color",
+        // The note placement is an engine keyword every placement reads from the element's own cascade.
+        // AngleSharp has no grammar for it, so without this the declaration would be dropped at parse.
+        "-hutu-note-placement",
         // Text Decoration 4's inset, which AngleSharp has no grammar for at all: without this the whole
         // declaration is dropped and the line runs to the edges of the text however the page asked.
         "text-decoration-inset",
