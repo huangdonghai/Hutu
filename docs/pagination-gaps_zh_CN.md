@@ -1412,3 +1412,15 @@ Hutu 的树（`build/_probe-vwm001.txt`）：容器 `60,60 92x142 vertical` 正�
 所以本轮不动代码：把竖排的轴向做进分栏判据，是一片的量（判据 5 处 + 竖排表的行/列带），且必须与 8 对竖排表一起量，不能只对着这两对调。
 
 当前基线（`93d2527b`）：屏幕全量 1924 条 pixel-diff finding、css-break **29** 对；单测 **2183**；打印 **189/198**、九条同名（无 css-break）。
+
+### 9.104 `variable-fragmentainer-size-001` 剩下的 2000 需要"内容窗"和"画高"分成两个数——管道摸清了，不动代码
+
+把这条要动的地方逐处量清了（省得下次再考古）：
+
+1. 表的片是 `AddBoxCut` 切出来的（`child.Offset >= 0` 的那些片），竖排走 `ArrangeMulticolRunAcross` 的 `child.Offset >= 0` 支、横排走 `MulticolChildren` 之后的 `child.Offset >= 0` 支（`BlockLayout.cs:5798` 起）；这一支给 `_table.Arrange` 的 `FragmentSlice` **已经带** `Offset = child.Offset`、`Height = height`。
+2. `RepeatSections` 的定位是 `top = borderBox.Y + fragment.Offset`、`bottom = top + fragment.Height`。因为摆放用的是"整盒上移 Offset"（`whole = rect.X, y - child.Offset, width, child.Whole`）+ `FragmentClip = rect`（画高 `height`），所以 `top` 恰好等于栏顶 ✓，而 **同一个 `Height` 既当裁剪窗、又当表脚重复带的下沿**。
+3. Chrome 要的是两个数：内容窗 = 房间 − 重复表头 − 重复表脚（001 是 80 / 60 / 30），画高 = 房间（100 / 100 / 50）。表头重复画在栏顶（现在就是这样），表脚重复要画在**画高**的底；裁剪却只该露出**内容窗**。今天这两个数是同一个 `height`，所以扣了空间就会把重复段裁进内容里（表脚压在最后 20 的内容上），不扣就什么都不占（现状）。
+
+要落这条，最小改动是：`FragmentSlice` 再加一个"内容窗外还要展示多少"（例如 `Shown`/`Room`），`AddBoxCut` 对**有重复段的表**把片的内容extent按房间扣掉 `head`（非首片）与 `foot`（非末片），`MulticolChild` 的 `Size.Height` 继续带画高、`offset` 只按内容推进；`RepeatSections` 的 `bottom` 用画高、裁剪用内容窗。重复段高度要从 `TableFormattingContext.Build`/`SectionBand` 暴露（现在只有 arrange 内部用）。
+
+阈值（§9.102 的矩阵）必须同批进来：表在第一栏拿到的房间 ≥ 2×(head+foot) 才启用重复并扣空间，否则整表不重复——`variable-fragmentainer-size-002` 现在过的就是"不重复"那一支，只加扣空间不加阈值会把它翻红。竖排那两对（§9.103）与本条无关，别一起改。
