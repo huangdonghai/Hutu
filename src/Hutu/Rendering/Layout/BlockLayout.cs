@@ -1996,6 +1996,14 @@ internal sealed class BlockLayout
         }
         var children = new List<MulticolChild>(source.Count);
 
+        // The room a cut is measured against: a container that fills its columns takes them one after
+        // another, and one that states the height its fragmentainers have gives a balanced chain the
+        // same fixed room - which is what lets a column end inside an empty box of a stated height and
+        // the pieces march on past the count the page asked for (CSS Multicol 1 §1.2, §3.4, CSS
+        // Fragmentation 3 §4.3, measured: flex-container-fragmentation-006, whose flex of 400 stands in
+        // four hundred-tall columns while the container states a hundred and asks for four).
+        var roomStated = !box.Style.Height.IsAuto || box.Style.MaxHeight.HasValue;
+
         // Which child a run of lines belongs to, so that the slicer can tell one block's lines from its
         // neighbour's and keep the orphans and widows each of them asks for.
         var runs = 0;
@@ -2061,6 +2069,7 @@ internal sealed class BlockLayout
                         fragmentHeight,
                         columns,
                         box.Style.Multi.Fills,
+                        roomStated,
                         context.InFragmentainer,
                         child.Style.ClonesDecoration
                             ? BorderOf(child).Vertical + child.Style.Padding.Resolve(share).Vertical
@@ -2162,6 +2171,7 @@ internal sealed class BlockLayout
                         fragmentHeight,
                         columns,
                         box.Style.Multi.Fills,
+                        roomStated,
                         context.InFragmentainer,
                         child.Style.ClonesDecoration
                             ? BorderOf(child).Vertical + child.Style.Padding.Resolve(share).Vertical
@@ -2319,17 +2329,25 @@ internal sealed class BlockLayout
         Double columnHeight,
         Int32 columns,
         Boolean fills,
+        Boolean roomStated,
         Boolean nested,
         Double clonedInsets,
         Double startInset,
         Boolean vertical)
     {
-        // Only a box that holds nothing is cut here, and only in a container that fills its columns:
-        // a box with children of its own breaks inside those first, and a balanced one finds its own
-        // height rather than being cut at one (CSS Fragmentation 3 §4.3). An empty box has no content
-        // to keep whole, so its height is all its own sizing - what it states, what its minimum
-        // makes it, what its border and padding add - and a column shorter than that has to be cut
-        // through it.
+        // Only a box that holds nothing is cut here, and only where the room a piece stands in is a
+        // fixed one: a container that fills its columns, or one that states the height its
+        // fragmentainers have. A balanced container of an automatic height finds its own height from
+        // what it holds instead, and cutting it would cut at a room that is not settled yet (CSS
+        // Fragmentation 3 §4.3). An empty box has no content to keep whole, so its height is all its
+        // own sizing - what it states, what its minimum makes it, what its border and padding add -
+        // and a column shorter than that has to be cut through it.
+        //
+        // The stated height alone is room enough to cut an empty box, and no more: a balanced container
+        // still leaves a box that holds children to those children's own breaks, which is what keeps a
+        // clipping container whole (measured: overflow-clip-margin-mul-column-border-box, whose box of
+        // content states its height inside a body that does too).
+        var cutsHere = fills || (roomStated && child.Children.Count == 0);
 
 
         if (columnHeight <= 0 ||
@@ -2347,7 +2365,7 @@ internal sealed class BlockLayout
                 (!HoldsPositioned(child) || vertical) ||
             BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) &&
                 !HasBlockMaximum(child, vertical) && (child.Kind != BoxKind.Table || vertical || HoldsPositioned(child)) ||
-            !fills ||
+            !cutsHere ||
             child.Style.Multi.IsMultiColumn ||
             child.Kind is BoxKind.Grid or BoxKind.Masonry ||
 
@@ -2377,22 +2395,44 @@ internal sealed class BlockLayout
             var first = pieces == 0;
 
             // The margin only stands in front of the first piece; a piece that carries on in another
-            // column has the whole column to stand in.
-            var room = Math.Max(1, columnHeight - clonedInsets - (first ? margin.Top : 0));
+            // column has the whole column to stand in. A margin the column cannot hold is spent on the
+            // column it stands in, and the box begins the next fragmentainer with nothing of it left:
+            // the margin is therefore its own zero-height piece, since a piece that holds content may
+            // not be pushed out of the way by the room in front of it (CSS Fragmentation 3 §4.3,
+            // measured: flex-container-fragmentation-006, whose two-hundred margin leaves a column of
+            // its own and a four-hundred box to the four columns after it).
+            var pushed = first && margin.Top >= columnHeight - clonedInsets;
+            var headMargin = pushed || !first ? 0.0 : margin.Top;
+            var room = Math.Max(1, columnHeight - clonedInsets - headMargin);
             var content = Math.Min(left, room);
             var height = content + clonedInsets;
             var last = left - content <= 0.001;
+
+            if (pushed)
+            {
+                // The margin's own piece holds no content and draws none of the box's edges: those
+                // belong to the first piece that shows the box (CSS Break 3 §4.3, §4.7).
+                children.Add(new MulticolChild(
+                    child,
+                    vertical ? new Size(0, size.Height) : new Size(size.Width, 0),
+                    new Thickness(columnHeight - clonedInsets, margin.Right, 0, margin.Left),
+                    new FragmentChild(columnHeight, BreakValue.Auto, BreakValue.Auto, child.Style.Breaks.Inside),
+                    -1,
+                    false,
+                    blockExtent,
+                    0));
+            }
 
             children.Add(new MulticolChild(
                 child,
                 vertical ? new Size(height, size.Height) : new Size(size.Width, height),
                 new Thickness(
-                    first ? margin.Top : 0,
+                    first ? headMargin : 0,
                     margin.Right,
                     last ? margin.Bottom : 0,
                     margin.Left),
                 new FragmentChild(
-                    height + (first ? margin.Top : 0) + (last ? margin.Bottom : 0),
+                    height + headMargin + (last ? margin.Bottom : 0),
                     first ? before : BreakValue.Auto,
                     last ? after : BreakValue.Auto,
                     child.Style.Breaks.Inside),

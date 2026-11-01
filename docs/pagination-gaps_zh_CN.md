@@ -1060,6 +1060,21 @@ Chrome 的片段（`build/_probe_vf1.dom`、`build/_probe_vf2.dom`，`getClientR
 
 竖排那两对（`-vlr-rtl` 19380、`-vrl-ltr` 20350）在本次试验中一字未动 ⇒ 仍等 §9.81 的轴向那半。
 
+### 9.84 `flex-container-fragmentation-006` 闭合：声明了高度的平衡容器也切，且超高 margin 自成一栏
+
+Chrome 实测（`build/_probe_fc6.dom`）：外层 `columns:4; width:100; height:100; margin-left:-25px; gap:0`（每栏 25 宽），子项是 `display:flex; height:400; margin-top:200` 的空盒 —— `.multicol` 在 `(-17,50) 100x100`，flex 的 `getClientRects()` = **四片** `(8,50) (33,50) (58,50) (83,50)` 各 `25x100` ✓：200 的 margin 吃掉第 1 栏（剩下的 100 随断栏丢掉），盒从第 2 栏起铺满 4 栏，**第 5 栏是超出 `column-count` 长出来的**（ref 就是一个 8..108 的绿方块 ✓✓ 两侧对齐 ✓）。
+
+两条规则，一条不够：
+
+1. **切不只属于 fill 容器**：`AddBoxCut` 原本要 `box.Style.Multi.Fills`；`column-fill: normal`（默认）但**声明了 fragmentainer 高度**（`height:100` / `max-height`）的容器同样有定房间可切 ⇒ 参数改名 `cutsAtRoom = Fills || !Height.IsAuto || MaxHeight.HasValue`（两个调用点都改）。只加这一条：12800 → **10825**（开始切了，但片段晚了两栏）。**这条不能宽到整个容器**：第一次全量门禁把绿着的 `wpt/css-overflow/overflow-clip-margin-mul-column-border-box`（3680）与 `-content-box`（4790）打红——那是"平衡容器 + 声明高度 + 有内容的裁剪盒"，正是 §9.6x 里"cutting a balance that states its height"同一对。收窄成 `cutsHere = fills || (roomStated && child.Children.Count == 0)`（`roomStated` 只回答"房间定没定"，只有**真空盒**才准在平衡容器里被切）⇒ 两对回到 the two agree ✓ 006 仍 0 ✓ 单测 2180 ✓。
+2. **超高 margin 自成一栏**：首片段前的 margin 若一栏装不下，它**花掉自己那一栏**，盒从下一栏整块开始。试过 `BreakValue.Column` 强制断栏 ⇒ 无效：`ChildSlicer.Fitting` 的强制断栏要看 `i > start`，而这是容器**唯一的子项**，首片段永远在 `start` 处 ⇒ 10825 不变。正解：在 `AddBoxCut` 的循环里，当 `first && margin.Top >= columnHeight - clonedInsets` 时**先塞一个零高度的片段**带 `Margin.Top = columnHeight - clonedInsets`、`FragmentChild.Height = columnHeight`、带 `before`/`startInset`，随后的内容片段 `headMargin = 0`、房间整栏 ⇒ 10825 → 3300 → **0**（中间一次把 margin 归零但没花栏，导致整体左移一栏：差 800 + 2500 = 3300 ✓ 正是那一栏的位移）。
+
+margin 片段是**纯占位**：零高度、不带 `before`、`startInset` 为 0 —— 盒的上边缘仍归第一个有内容的片段（CSS Break 3 §4.7：切出来的边属于显示该边的那一片）。这一点是在跑门禁前改定的：先前版本让占位片段带上 `before` 与顶边，会把盒的顶边画进 margin 那一栏；语料里没有“空盒有边框 + 超高 margin”的对，改法在 006 上同样 0，且单测 2180 不变。
+
+顺带把 `overflowing-block-003`（8300）的 Chrome 地面真值量下来存着（`build/_probe_ob3.dom`，两个用例各一对片段）：`.outer{height:0}` 装 100 高绿盒的两栏用例，outer 两片都是 `50x0`、inner 两片 `50x50` ⇒ 穿过头顶为 0 的父盒去切内容，这条走 `DividesUnits`（`fills` 为真、父盒无浮动子项 ⇒ 该切就已成立）；另一用例 `.outer{margin-right:25}` 里 `float:left` 的 50x50 绿块**在两栏各画一次**（`f1 [21,53 50x50 | 96,53 50x50]`）⇒ 差的是"放不下的浮动在后续 fragmentainer 里重摆"那一半，与 §9.34/§9.84 的"片段里的浮动重摆"同一个缺口。
+
+全量门禁（基线 = `5859926b` 那份报告 `build/_score-cl2.md`，名单 `/tmp/mine-cl.txt` 2008）：单测 **2180** 绿；打印 **189/198**、九个失败名逐字不变；屏幕 **2008 → 2007**，`--- regressed ---` 空，`--- fixed ---` = `wpt/css-break/flexbox/flex-container-fragmentation-006`，`wpt/css-break` **37 → 36**。报告存 `build/_score-fc6b.md`，切片补丁 `build/_fc6-margin-piece.patch`。
+
 ### 9.60 两次量过又回退：竖排阴影带与折叠边框分段
 
 **竖排阴影带（`box-shadow-003`）**。两处改动合起来能让它转绿（10860 → 0）：①`Painter.BandOf` 在 `BlockIsRightToLeft` 的块轴上把“起点/终点”对调（起点在高坐标一侧），10860 → 7400；②`PositionedLayout.Horizontal` 对“无块向 inset 的竖排绝对盒”改为 `x = staticX - width - margin.Right`，7400 → 0。Chrome 探针证实②的规则本身正确（vertical-rl 容器内三个无块向 inset 的绝对盒都落在 `x=60`，即右缘起向左生长）。但②同时弄红 `wpt-variants/text-spacing-trim-colon-001-{chws,halt}-vrl`（字形墨迹移 2–3px）与 `css-flexbox/alignment/flex-align-baseline-column-vert-rl-rtl-wrap-reverse`（绝对项移到容器左侧 100px）：`ArrangeFlow`、flex/grid 的静态位置调用方给出的是**不同含义的点**（块起点 vs 内容左上角），`Horizontal` 分不清；而且 003 的正解是“流坐标 OOF 分片”（ref 页与 test 页的阴影带要在同一坐标系里对齐），不是挪 ref。整体回退，等 OOF 流坐标模型一起做。
