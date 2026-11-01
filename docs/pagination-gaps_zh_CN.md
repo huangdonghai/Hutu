@@ -1424,3 +1424,23 @@ Hutu 的树（`build/_probe-vwm001.txt`）：容器 `60,60 92x142 vertical` 正�
 要落这条，最小改动是：`FragmentSlice` 再加一个"内容窗外还要展示多少"（例如 `Shown`/`Room`），`AddBoxCut` 对**有重复段的表**把片的内容extent按房间扣掉 `head`（非首片）与 `foot`（非末片），`MulticolChild` 的 `Size.Height` 继续带画高、`offset` 只按内容推进；`RepeatSections` 的 `bottom` 用画高、裁剪用内容窗。重复段高度要从 `TableFormattingContext.Build`/`SectionBand` 暴露（现在只有 arrange 内部用）。
 
 阈值（§9.102 的矩阵）必须同批进来：表在第一栏拿到的房间 ≥ 2×(head+foot) 才启用重复并扣空间，否则整表不重复——`variable-fragmentainer-size-002` 现在过的就是"不重复"那一支，只加扣空间不加阈值会把它翻红。竖排那两对（§9.103）与本条无关，别一起改。
+
+### 9.105 落了一遍"重复段占栏空间"：切分算式复现出 Chrome 的 80 / 60 / 30，但一条绿对翻红、-001 只剩画的问题，整片回滚
+
+补丁存 `build/_repeat-room.patch`（277 行，三处文件）。做法就是 §9.104 那条：
+
+1. `MulticolChild` 加 `Lead`/`Trail`（本栏为重复表头/表脚让出的房间）；`AddBoxCut` 里 `head`（非首片）与 `foot`（表还往下走）从房间里扣，`offset` 只按**内容**推进，而给栏切片器看的 `Fragment.Height` 带上 lead + trail；
+2. 阈值照 §9.102 的矩阵写死：`columnHeight - 已流入高度 % columnHeight >= 2 * (head + foot)` 才启用（这条把 `-002` 挡回"不重复"那一支，实测它仍绿 ✓）；
+3. 摆放处 `standing = y + Lead`：整盒放在 `standing - Offset`、裁剪窗 `(x, standing, width, content)`，`FragmentSlice` 传 `Offset = child.Offset - Lead`、`Height = Lead + content + Trail` —— 这样 `RepeatSections` 一行不改也能把表头重复放在栏顶、表脚重复放在栏底；
+4. 段高从 `TableFormattingContext.RepeatedBands`（`Build + MeasureCaptions + MeasureOthers + CompleteGrid` 之后读 `SectionBand`）经 `LayoutEngine.TableRepeats` 暴露给栏。
+
+逐对量下来（`HUTU_SCORE_LOOK=css-break/table`，全族 30 对）：
+
+- `-001` 2000 → **1600**，片分配已是 Chrome 的 80 / 60 / 30（第一栏 header 20 + 60 内容 + 重复 footer 20 = 100，第二栏重复 header 20 + 60 + 20，第三栏 20 + 30 = 50）；残差从"分错了"变成"画歪了"。
+- 把 `RepeatSections` 的早退从 `Offset > 0.001` 改成按 `!fragment.Starts` 判表头（第一片也该画表脚重复）之后，**1600 一字未动** ⇒ 这半不在"画没画"，在裁剪带/相位的算法上（`FragmentClip`、`BackgroundOrigin` 与新加的 `standing` 之间）。
+- `text-in-nested-multicol` 由绿 → **156**（首点 `25,54` 是头部那对嵌套两栏里第二个字母的 AA 灰）。这一对只有 header（20）没有 footer。第一片的算式与旧行为完全相同（foot = 0 ⇒ 内容仍占满 100），差别只可能是**计划阶段多跑了一次 `Build/CompleteGrid`**——怀疑它污染了表的测量缓存，而不是 lead 几何本身。这条要单独验：把 `head/foot` 改成从测量阶段已经算好的 `TableBuild` 里取（`Measure` 里 `CompleteGrid` 之后顺手记一段高），别在栏的计划里重新 `Build`。
+- 其余表对一字未动：`table-border-008`、`table-collapsed-borders-paint-htb-ltr`、`table-caption-and-cells(-fixed-width)`、`specified-block-size-007`、`abspos-uncontained-text`、八条 `table-fragmentation-*-print` 全都仍 "the two agree" ⇒ `!fragment.Starts` 那处判据改动无附带伤害（可以单独留用）。
+
+门禁按规矩不过（新增 1 个失败名），整片回滚；`git diff` 存 `build/_repeat-room.patch`（277 行），回滚后重编译并复核：`repeated-section` 回到 0 / 700 / 2000 / 0，`css-break/table` 全族与 `93d2527b` 一字相同，单测 2185 绿。
+
+下一片的两条入手点（已经排除掉的假设也记着）：(a) 段高从测量阶段带出来，别二次 `Build`；(b) 1600 是四个 400 px 方块的**位置**问题，拿 `build/look/variable-fragmentainer-size-001-{test,ref}.png` 与残差带对着量，别再猜"没画重复"。
