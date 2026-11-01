@@ -1213,3 +1213,17 @@ Chrome 地面真值（逐子盒着色 + PIL 逐列扫描：`build/_c021.html`、
 第二版（只在 `columnBottom > held.Bottom` 时才用栏底封顶、否则纯延长，避免把越栏片段的裁剪**缩小**）只在**模块口径**里量过，模块与全量对这几对不一致，故未当作门禁；回滚后未再跑全量。
 
 下一步的收敛点已命名：变红的三对都是"盒底以下有浮动、而 ref 要求把它剪掉"。要区分 022 与它们，候选判据是①只对**该片段的最后一块**（`portion.Last`）延长、②盒子不能是自裁的（`ClipsOverflow`）、③浮动必须是这段流自己摆下的那一支（而非更深一层）。先从 `floats-clear-multicol-001` 的 dump 读它到底多画了 9510 px 里的哪一块，再决定加哪一条。
+
+### 9.92 浮动参与分片第二版：三条判据各自挡住一次回归，022 转绿
+
+回滚那刀的活重新做了一次，用**模块口径当 A/B 仪器**（`HUTU_SCORE_ONLY=<族名>` 只跑 9 秒，先用 HEAD 标定：`flexbox-multi-row` 5 条、`floats-clear` 16 条、`css-break` 40 条），因此每加一条判据都能立刻知道是哪一条把哪一对打回。最终三条一起：
+
+1. **被切那层自己的浮动不给断点也不否决裁切**（`PieceBreaks` 遇到 `IsFloat(child)` 直接 `continue`），`DividesUnits` 去掉 `HoldsAnyFloat` 的一刀否决；
+2. **靠浮动撑长的盒只有一个自有单元时不切**：`HoldsAnyFloat(child, ...)` 时要求 `units.Count >= 2`（CSS Fragmentation 3 §4.2-§4.3）——这一条把 `wpt/CSS2/floats-clear/floats-clear-multicol-001`（`.container` 里两个 250 高浮动 + 一条 `<br clear=all>`，自有单元只有 1 个）从被打红救回；
+3. **往下一层仍按老规矩否决**：`PieceBreaks` 的循环里遇到"子盒内部再含浮动"就 `return null`——`gecko/flexbox/pagination/flexbox-multi-row-1a` 的 **ref 页**用 `float:left/right` 成对模拟每栏，测试页本身一字未动（HEAD 与补丁态的 test PNG 差 0 px，ref PNG 差 28625 px 是这么定位到的）。
+
+裁剪那半也收到最窄：**只有"按自有单元切开"的盒的最后一块**（`portion.Last && child.Last && child.Breaks is not null`）才把裁剪延到 `held.Bottom + HungBelow(piece)`，并以栏盒底封顶；A/B 证明单靠第 1 条不产生任何回归（multi-row 回到 5 条、1b 回到 7250），回归全部来自未加这道门槛的裁剪。
+
+全量口径门禁：屏幕 0 新增失败名、**`wpt/css-break/widows-orphans-022` 转绿**（css-break 36 → 35）、`widows-orphans-021` 6250 → 2500；单测 2180；打印 189/198 九条同名。注释收束之后的最后一次改动只动注释、行为不变，重跑单测与三个族口径确认数字一致。
+
+021 剩下的 2500 是"放不下的浮动被推到下一栏、后面的内容仍留在本栏"那一半（Chrome：col1 = d1+A+B+C=100，col2 = 末行 D + 被推来的浮动 25..50），仍未写。

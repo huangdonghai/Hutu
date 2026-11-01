@@ -1102,9 +1102,25 @@ internal sealed class BlockLayout
                 continue;
             }
 
+            // A float is no unit the flow advances by, and no reason to leave the box whole: the
+            // fragment whose flow it stands in places it, so it gives no cut point and refuses no
+            // reckoning (CSS Fragmentation 3 §4.3, measured: widows-orphans-022). One level down,
+            // though, a box that stands on floats is a thing of its own that the column cannot end
+            // inside, and the reckoning stops there (measured: flexbox-multi-row-1a's reference,
+            // whose lines are float pairs nested in the divided box).
+            if (IsFloat(child))
+            {
+                continue;
+            }
+
+            if (HoldsAnyFloat(child, child.Children))
+            {
+                return null;
+            }
+
             var (before, after) = BoundaryBreaks(child);
 
-            if (!child.IsBlockLevel || IsFloat(child) || child.IsReplaced ||
+            if (!child.IsBlockLevel || child.IsReplaced ||
                 child.Kind is BoxKind.Table or BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry ||
                 Fragmentainer.Forced(before) || Fragmentainer.Forced(after) ||
                 child.Style.Breaks.Inside == BreakValue.Avoid)
@@ -1176,12 +1192,20 @@ internal sealed class BlockLayout
     {
         if (!fills || vertical || nested || margin.Top != 0 || margin.Bottom != 0 ||
             child.Kind != BoxKind.Block || child.Style.Multi.IsMultiColumn ||
-            child.Style.Breaks.Inside == BreakValue.Avoid || HoldsAnyFloat(child, child.Children))
+            child.Style.Breaks.Inside == BreakValue.Avoid)
         {
             return false;
         }
 
-        return PieceBreaks(child, share, context) is { Count: >= 1 };
+        var units = PieceBreaks(child, share, context);
+
+        // A float gives no break point of its own, so a box that stands on floats for its length has
+        // nothing inside to cut between: with one unit of its own flow it moves whole, and only two
+        // units let a column end between them (CSS Fragmentation 3 §4.2-§4.3, measured:
+        // floats-clear-multicol-001 and the gecko flex references, whose columns are made of floats).
+        return HoldsAnyFloat(child, child.Children)
+            ? units is { Count: >= 2 }
+            : units is { Count: >= 1 };
     }
 
     /// <summary>
@@ -4647,6 +4671,26 @@ internal sealed class BlockLayout
         return cells;
     }
 
+    /// <summary>Gets how far the floats standing in a piece reach below the piece's own bottom edge.
+    /// A float is no part of its parent's height, yet the column that carries the flow that placed it
+    /// shows it (CSS 2.1 §9.5, CSS Fragmentation 3 §4.1).</summary>
+    private static Double HungBelow(LayoutBox piece)
+    {
+        var hang = 0.0;
+
+        foreach (var child in piece.Children)
+        {
+            if (child.Source is { } source &&
+                IsFloat(source) &&
+                !PositionedLayout.IsOutOfFlow(source))
+            {
+                hang = Math.Max(hang, child.BorderBox.Bottom - piece.BorderBox.Bottom);
+            }
+        }
+
+        return Math.Max(0.0, hang);
+    }
+
     private void ArrangeMulticolRun(
         List<MulticolChild> children,
         List<List<MulticolPiece>> cells,
@@ -4667,6 +4711,10 @@ internal sealed class BlockLayout
             var row = cell / columns;
             var x = originX + column * (share + gap);
             var y = originY + row * (boxHeight + rowGap);
+
+            // Where this column box ends: what a piece of a divided box may still show is clipped
+            // here rather than at the box's own bottom edge.
+            var columnBottom = y + boxHeight;
             var pieces = cells[cell];
 
             for (var index = 0; index < pieces.Count; index++)
@@ -4808,7 +4856,33 @@ internal sealed class BlockLayout
                             cutEnds,
                             whole));
 
-                    arranged.FragmentClip = held;
+                    // The last piece of a box the column cut by its own content units is clipped to the
+                    // column, not to the box's bottom edge: a float that piece's flow placed stands
+                    // below that edge and the column still shows it, while an earlier piece's float is
+                    // cut at the edge and carried on by the column after it (CSS 2.1 §9.5 against CSS
+                    // Fragmentation 3 §4.1, §4.3; measured: widows-orphans-022).
+                    var floatHang = portion.Last && child.Last && child.Breaks is not null
+                        ? HungBelow(arranged)
+                        : 0.0;
+
+                    if (floatHang > 0.001)
+                    {
+                        var reach = held.Bottom + floatHang;
+
+                        // The column box is the cap only where it really ends below the piece: a
+                        // piece that overflows its column keeps the clip it had.
+                        arranged.FragmentClip = new Rect(
+                            held.X,
+                            held.Y,
+                            held.Width,
+                            Math.Max(
+                                0.0,
+                                (columnBottom > held.Bottom ? Math.Min(reach, columnBottom) : reach) - held.Y));
+                    }
+                    else
+                    {
+                        arranged.FragmentClip = held;
+                    }
                     parent.Children.Add(arranged);
                     y += (portion.Cursor >= 0 ? portion.Cursor : portion.Height) +
                         (portion.Last ? child.Margin.Bottom : 0);
@@ -4879,6 +4953,10 @@ internal sealed class BlockLayout
 
                     if (holds)
                     {
+                        // The piece's own box ends where its in-flow content does, but a float this
+                        // piece places stands below that edge and the column still shows it: the clip
+                        // ends where the column box does, not where the box's height does
+                        // (CSS Fragmentation 3 §4.1, measured: widows-orphans-022).
                         piece.FragmentClip = rect;
                     }
 
