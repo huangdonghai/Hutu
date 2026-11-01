@@ -397,6 +397,15 @@ internal sealed class BlockLayout
     private static Boolean ContainsBlockSize(Box box) =>
         box.Style.Contain.Block && !IsInternalTable(box.Style);
 
+    /// <summary>Gets whether the box is monolithic along the axis a column cuts it: size containment on
+    /// that axis leaves no break point in the box at all, so a column with no room for the whole of it
+    /// carries it on and lets it overflow rather than cutting through it (CSS Contain 1 §3.1.1, CSS
+    /// Fragmentation 3 §4.1, measured: float-017, whose 200-tall float of <c>contain:size</c> stands
+    /// whole in the column it is pushed to, against the same float with <c>contain:layout</c>, which is
+    /// cut 80+100+20 down three columns).</summary>
+    private static Boolean IsMonolithic(Box box, Boolean vertical) =>
+        vertical ? ContainsInlineSize(box) : ContainsBlockSize(box);
+
     // Size containment does not apply to a table box or an internal table box: the table's own layout
     // decides those sizes (CSS Contain 2 §3.1.1). A table caption is not one of the internal boxes -
     // the chapter says so in as many words - so containment does apply to it.
@@ -1051,6 +1060,7 @@ internal sealed class BlockLayout
         columnHeight > 0 &&
         BlockExtentOf(size, vertical) > columnHeight + 0.001 &&
         !child.IsReplaced &&
+        !IsMonolithic(child, vertical) &&
         child.Children.Count == 0 &&
         !(BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) &&
             !HasBlockMaximum(child, vertical)) &&
@@ -2436,6 +2446,11 @@ internal sealed class BlockLayout
             BlockExtentOf(size, vertical) <= columnHeight + 0.001 ||
             child.IsReplaced ||
 
+            // A box that contains its size on the axis the column cuts has no break point in it at all,
+            // however empty it is: the room it states is its own, so the column carries it whole to where
+            // it stands and lets it overflow from there.
+            IsMonolithic(child, vertical) ||
+
             // A box whose children are only the whitespace between tags holds nothing to break at,
             // and one that clones its decoration can be cut through that nothing: every piece is a
             // box of its own, with its own edges, so no edge has to be shared out between them
@@ -3090,7 +3105,10 @@ internal sealed class BlockLayout
                     }
                 }
 
-                if (outer <= columnHeight + 0.001)
+                // A float that contains its block size is monolithic, so no column of its own cuts it
+                // either: it stands whole where the push left it and overflows from there (CSS Contain 1
+                // §3.1.1, measured: float-017).
+                if (outer <= columnHeight + 0.001 || IsMonolithic(child, false))
                 {
                     var whole = slot.Tracks.Place(
                         child.Style.Float,

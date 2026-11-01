@@ -1329,3 +1329,31 @@ Chrome 的 `widows-orphans-021` 矩形（`build/_wo21_probe.html`）：`green [8
 实测：`wpt/css-break/fragmented-autowidth-fc-root-beside-floats.html` **转绿**（34400 → 0），三片宽 100/10/200 与 ref 逐值相同；`float-017` 仍 663（它的残差不在这条路上）。`overflowing-block`（2 对）与 `flex-item-content-overflow`（4 对）模块 0 失败，`floats-clear` 16、`gecko/flexbox/flexbox-multi-row` 5 与 HEAD 一致。
 
 门禁：单测 2180；打印 189/198 九条同名；屏幕全量 finding 1926 → **1925**、**0 新增失败名**（第一次未加“找装得下的栏”那条时被 `gecko/bugs/563584-9d` 挡下，补上后回归消失）。
+
+### 9.100 声明 size 局限的盒子是 monolithic：栏不从它中间切；`float-017` 663 → 653
+
+用 DOM 探针对着 Chrome 量了一组只差 `contain` 的变体（`build/_f17_matrix.html`、`build/_f17_matrix2.html`；容器一律 `width:20em; columns:4; gap:0; column-fill:auto; height:100px`，即栏宽 80、栏高 100）：
+
+| 浮动的写法 | Chrome 给这个浮动的矩形 |
+| --- | --- |
+| `contain:size; width:100%; height:200`（float-017 原样，前面有一行"1"） | 一片 `x=81 y=1 80x200`——整块站在第二栏顶上，超出栏底 |
+| 同一个浮动去掉 `contain:size` | 三片 `80x80`(第一栏剩下的) + `80x100` + `80x20`——按栏边界切开 |
+| `contain:paint` | 与去掉 contain 相同：三片 |
+| `contain:layout` | 三片 |
+| `contain:size; width:10px; height:200`，浮动是首子 | 一片 `10x200` 站在第一栏，既不切也不推 |
+| `contain:size; height:150`，浮动是首子 | 一片 `10x150` |
+| 前面 30 高的块 + `contain:size; height:90`（第一栏只剩 70） | 一片 `10x90` 站在第二栏顶（整块推栏） |
+
+结论只有一条：**size 局限让盒子 monolithic**（CSS Contain 1 §3.1.1 原文 "Size containment boxes are monolithic"，并指向 CSS Break 3 §4.1 的可能断点），栏不从它中间切；它前面的地方放不下就整块推到下一栏，在新栏里照样溢出去。paint / layout 局限没有这个效果（上面两行实测）。
+
+改三处判据，同属"盒里没有可断的内容，就按栏边界切空盒"这一族：
+
+1. `AddBoxCut` 的拒绝表加 `IsMonolithic(child, vertical)`；
+2. `CutsAsBox`（弹性项那一处同样的判据）加 `!IsMonolithic(child, vertical)`；
+3. 混排栏 `PlaceFloatFlowColumns` 里"比一栏还高的浮动续切"之前，monolithic 浮动走整块那支（本路径只在横排进入，写 `IsMonolithic(child, false)`）。
+
+新加的 `IsMonolithic(box, vertical)` 按栏切的轴读局限：横排的栏切块向 → `ContainsBlockSize`，竖排的栏切行内向 → `ContainsInlineSize`（`contain:size` 两位都置，`contain:inline-size` 只置行内向）。`DividesUnits` 没动——那是"盒里有普通子块"的一族，Chrome 在**有内容**的 monolithic 盒上的切法本轮没量过，不凭空加规则。
+
+实测：`wpt/css-break/float-017.html` 663 → **653**。`f1` 现在画 `88,49.72 80x200`，与 Chrome 的 `88,50 80x200` 同值（原先是一片 80x200 再两片续切，把流带走了）。剩下 653 全在 `fr`：Chrome 给它四片 `8,70 80x80`（第一栏，行 2-5）、`88,201 80x0`（第二栏被浮动带挤到栏底之外，零高一片）、`168,50 80x100`（行 6-10）、`248,50 80x100`（空）；Hutu 的 `fr` 第一片落在第三栏顶 `168,49.72`——常规栏把块级浮动当成**占流的一员**，浮动推栏时把流一起带走。这正是混排栏 `e4bf3430` 已解决、而本容器进不了混排栏的那条排除：`FloatFlowColumns` 不收"自身比栏还高、且按行断的流内子"（§9.93 判据①；放开量过，`fragmented-autowidth-fc-root-beside-floats` 从 34400 恶化到 89000），因为每一片都得重新断行。要收掉这 653，要么让常规栏的浮动也不占流，要么给混排栏一个按片重排文本的能力（任务 #5），本轮记下不动。
+
+三道门禁：单测 2180；打印 189/198、九条同名；屏幕全量两侧同名 finding 2000 条（gecko 603 / wpt 1397 / wpt-variants 0），**0 新增失败名、0 转绿**。
