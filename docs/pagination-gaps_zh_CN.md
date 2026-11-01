@@ -1285,3 +1285,16 @@ Chrome 地面真值（逐子盒着色 + PIL 逐列扫描：`build/_c021.html`、
 门禁：屏幕全量 finding 2003 → **2002**、**0 新增失败名**、**`wpt/css-break/line-after-unbreakable-float-after-padding.html` 转绿**（css-break 33 → **32**）；单测 2180；打印 189/198 九条同名。
 
 余下的浮动对，`widows-orphans-021`（2500）已量过：Chrome 给 `green [8,8 50x100][58,8 50x100]`、`float [58,33 50x25]`——`orphans:3` 把三行整条逼进第二栏，浮动跟着站在第二栏 flow 位 25（即 L1 之后），而 Hutu 把绿盒当成整块切成两片各 125 高、第二片从 y=-25 起画，栏里只露出 50。另两对 `float-017` 663、`fragmented-autowidth-fc-root-beside-floats` 34400 仍待"高盒被栏切开 + 每片各自与旁边浮动求自由宽"。
+### 9.97 orphans/widows 只数行盒：`widows-orphans-021` 转绿
+
+`CutAt` 过去把「盒子里的内容单元数」当成 orphans/widows 的计数对象；CSS Break 3 §4.3 说的是 **line box** 的数量。二者只有在盒子里混了非行子元素时才分道扬镳。
+
+Chrome 的 `widows-orphans-021` 矩形（`build/_wo21_probe.html`）：`green [8,8 50x100][58,8 50x100]`、`d25 [8,8 50x25]`、`float [58,33 50x25]`。容器 `columns:2; height:100px; line-height:25px; orphans:3; widows:1`，绿盒内容 = 一个 25 高空盒 + `br` + 一个整宽 25 高浮动 + `&nbsp;`+`br` + `br`，共 **3 行**。第一栏的剩余空间放得下浮动，但 orphans:3 不许把 3 行拆开，于是三行整块挪到第二栏，浮动跟着站在第二栏的 flow 位（离栏顶 25）；第一栏只剩那个小盒，Chrome 仍把这一片拉到满栏高（背景占满）。Hutu 用单元数判定「第一片留了 3 个单元 ≥ 3」就把切点落在 75，第二片只剩 50 高，第二栏下半截红着（2500 px）。
+
+改法：`PieceBreaks` 的返回值不再是裸的 `Double` 列表，而是 `PieceUnit(Offset, IsLine)`——来自 `LineBreaks`（子元素按行断）的点是行，叶子子元素末尾的点是「整子元素」；`CutAt` 只对 `IsLine` 的点累加 head/tail 行数，并允许**一片里一行都没有**（整条 run 从下一片开始）。混排栏那条 `CutDownColumns` 只需要位置，故用新加的 `PieceOffsets` 取裸偏移。
+
+对纯文本盒子（单元全是行）这条规则与旧的一致：`widows-orphans-022/023`（`orphans:1; widows:3`）切点仍是 75，19 条 `widows-orphans` 全绿。
+
+门禁：屏幕全量 finding 1927 → **1926**、**0 新增失败名**、**`wpt/css-break/widows-orphans-021.html` 转绿**（css-break 32 → **31**）；单测 2180；打印 189/198 九条同名；`floats-clear` 16、`flexbox-multi-row` 5、`multicol` 107、`flex-item-content-overflow` 0 与 HEAD 一致。
+
+余下：`fragmented-autowidth-fc-root-beside-floats` 34400 与 `float-017` 663 等「高流内盒被栏切开 + 每片与旁边浮动求自由宽」；abspos 一族（`abspos-in-opacity-003` 6000、`out-of-flow-in-multicolumn-045/073/090` 10000/11600/11600、`block-end-aligned-abspos-with-overflow` 3000）需要**绝对定位盒自己进栏的切片队列**：045 的探针显示 Hutu 把 `.rel` 切成两片、每片都重画整条 abs（`fill 8,49.72 50x200` 与 `fill 58,-50.28 50x200`），绿盖住了红，但两片的 abs 各自被本栏 clip 裁掉一段，仍差 10000 px（正好一整栏的面积）。

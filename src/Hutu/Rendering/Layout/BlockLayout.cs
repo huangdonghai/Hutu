@@ -1071,6 +1071,16 @@ internal sealed class BlockLayout
         margin.Top == 0 && margin.Bottom == 0 &&
         (HoldsPositioned(child) || child.Kind == BoxKind.Grid);
 
+    /// <summary>One place where a column may end inside a divided box: the distance from the box's top
+    /// and whether that spot is the end of a line box (which orphans and widows count) rather than the
+    /// end of a whole child (CSS Break 3 §4.3).</summary>
+    private readonly record struct PieceUnit(Double Offset, Boolean IsLine);
+
+    /// <summary>Gets just the places a divided box may end, for a cut that asks nothing of orphans and
+    /// widows.</summary>
+    private static IReadOnlyList<Double>? PieceOffsets(IReadOnlyList<PieceUnit>? units) =>
+        units?.Select(unit => unit.Offset).ToList();
+
     /// <summary>
     /// Gets the places along a box's block axis where the units of its own content end, which is where a
     /// column that cuts the box may fall: the lines of a child that breaks at them, and the ends of the
@@ -1078,7 +1088,7 @@ internal sealed class BlockLayout
     /// run, a forced break, another formatting context - and an empty list where the box holds nothing to
     /// break between (CSS Break 3 §4.2).
     /// </summary>
-    private IReadOnlyList<Double>? PieceBreaks(Box box, Double width, LayoutContext context)
+    private IReadOnlyList<PieceUnit>? PieceBreaks(Box box, Double width, LayoutContext context)
     {
         if (box.Kind != BoxKind.Block || box.Flow.IsVertical || box.Style.ClipsOverflow)
         {
@@ -1092,7 +1102,7 @@ internal sealed class BlockLayout
         var content = context.ForContainingBlock(new Size(
             contentWidth,
             Math.Max(0, context.ContainingBlock.Height - border.Vertical - padding.Vertical)));
-        var offsets = new List<Double>();
+        var offsets = new List<PieceUnit>();
         var cursor = border.Top + padding.Top;
 
         foreach (var child in box.Children)
@@ -1134,19 +1144,19 @@ internal sealed class BlockLayout
             cursor += margin.Top;
 
             var inner = FragmentsInColumns(child)
-                ? LineBreaks(child, contentWidth, content)
+                ? LineBreaks(child, contentWidth, content).Select(at => new PieceUnit(at, true)).ToList()
                 : PieceBreaks(child, contentWidth, content);
 
             if (inner is { Count: > 0 })
             {
-                foreach (var at in inner)
+                foreach (var unit in inner)
                 {
-                    offsets.Add(cursor + at);
+                    offsets.Add(new PieceUnit(cursor + unit.Offset, unit.IsLine));
                 }
             }
             else
             {
-                offsets.Add(cursor + size.Height);
+                offsets.Add(new PieceUnit(cursor + size.Height, false));
             }
 
             cursor += size.Height + margin.Bottom;
@@ -1514,7 +1524,7 @@ internal sealed class BlockLayout
             Boolean divides = false,
             Double startInset = 0,
             Boolean relays = false,
-            IReadOnlyList<Double>? breaks = null,
+            IReadOnlyList<PieceUnit>? breaks = null,
             Double reach = 0)
         {
             Box = box;
@@ -1592,11 +1602,11 @@ internal sealed class BlockLayout
         public Double Whole { get; }
 
         /// <summary>
-        /// Gets how far inside the box the units of its own content end, which is where a column that
-        /// cuts the box may fall: the lines of a child that has them and the ends of the children that
-        /// have none. Null where nothing inside the box offers such places (CSS Break 3 §4.2).
+        /// Gets where the units of the box's own content end, which is where a column that cuts the box
+        /// may fall: each one says whether it is the end of a line (what orphans and widows count) or the
+        /// end of a whole child. Null where nothing inside offers such places (CSS Break 3 §4.2).
         /// </summary>
-        public IReadOnlyList<Double>? Breaks { get; }
+        public IReadOnlyList<PieceUnit>? Breaks { get; }
 
         /// <summary>
         /// Gets how far a piece of this child paints, which is past <see cref="Fragment"/> where a
@@ -2358,7 +2368,7 @@ internal sealed class BlockLayout
             // descendants, or a grid - keeps the pieces that rule was measured with (CSS Fragmentation 3
             // §4.3, CSS Position 3 §5.5).
             var painted = byUnits && !relays && units is { Count: > 0 }
-                ? Math.Max(relayed, units[units.Count - 1])
+                ? Math.Max(relayed, units[units.Count - 1].Offset)
                 : relayed;
 
             children.Add(new MulticolChild(
@@ -3083,7 +3093,7 @@ internal sealed class BlockLayout
             {
                 foreach (var piece in CutDownColumns(
                     reach,
-                    PieceBreaks(child, member.Width, childContext),
+                    PieceOffsets(PieceBreaks(child, member.Width, childContext)),
                     top,
                     columnHeight,
                     margin))
@@ -5138,9 +5148,12 @@ internal sealed class BlockLayout
         static Double Held(MulticolChild child, Double within, Double take) =>
             Math.Min(take, Math.Max(0, child.Fragment.Height - within));
 
-        // A column that runs out of room inside a box cuts it where one of its own content units ends,
-        // and the pieces keep the number of units the page asks for on each side of the break: the tail
-        // takes at least as many as widows, the head at least as many as orphans (CSS Break 3 §4.2).
+        // A column that runs out of room inside a box cuts it where one of the box's own units ends, and
+        // the pieces keep the number of LINE boxes the page asks for on each side of the break: orphans
+        // and widows count lines, not the whole children a box is stacked from, so a piece holding no
+        // line of the run at all is legal - the run simply begins in the fragment after it
+        // (CSS Break 3 §4.2-§4.3, measured: widows-orphans-021, whose orphans:3 moves all three lines
+        // and the float among them to the second column while the 25px box before them stays in the first).
         // Where the room holds no such place, the cut stays where the room ends.
         static Double CutAt(MulticolChild child, Double room, Double height)
         {
@@ -5153,19 +5166,28 @@ internal sealed class BlockLayout
 
             var orphans = Math.Max(1, child.Box.Style.Breaks.Orphans);
             var widows = Math.Max(1, child.Box.Style.Breaks.Widows);
+            var totalLines = units.Count(unit => unit.IsLine);
             var best = -1.0;
+            var headLines = 0;
 
             for (var index = 0; index < units.Count - 1; index++)
             {
-                var at = units[index];
+                var unit = units[index];
 
-                if (at <= 0.001 || at > room + 0.001 ||
-                    index + 1 < orphans || units.Count - index - 1 < widows)
+                if (unit.IsLine)
+                {
+                    headLines++;
+                }
+
+                var tailLines = totalLines - headLines;
+
+                if (unit.Offset <= 0.001 || unit.Offset > room + 0.001 ||
+                    (headLines > 0 && headLines < orphans) || (tailLines > 0 && tailLines < widows))
                 {
                     continue;
                 }
 
-                best = at;
+                best = unit.Offset;
             }
 
             return best > 0 ? best : Math.Min(room, height);
