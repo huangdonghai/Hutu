@@ -2995,17 +2995,13 @@ internal sealed class InlineLayout
         // fit it is asked about is made against the line as it really is (CSS Text 3 §8.2.1).
         var pendingGrace = 0.0;
 
-        Double Charge()
+        void Charge()
         {
-            var charged = pendingGrace;
-
             if (pendingGrace > 0)
             {
                 builder.Widen(pendingGrace);
                 pendingGrace = 0;
             }
-
-            return charged;
         }
 
         void Close(LineBuilder filled, Boolean forced = false, Boolean hyphen = false)
@@ -3088,7 +3084,7 @@ internal sealed class InlineLayout
 
             // Whatever comes beside the glyph the line was left short for takes that room back: the
             // glyph hangs only while it ends the line, and from here it does not.
-            var chargedGrace = Charge();
+            Charge();
 
             // Only runs of text are kept for the line after the box the loop is about to place: a box
             // is placed where it stands and hands the line back only to the opportunity before the
@@ -3219,9 +3215,10 @@ internal sealed class InlineLayout
                     }
 
                     var count = boundaries.Count - 1;
-                    // Charge() has just restored a punctuation advance to the running width, but the
-                    // built line counts that glyph from its text fragment instead of from this estimate.
-                    var available = room.Room - builder.ExtentFor(item.Inline) + chargedGrace;
+                    // Ask for the same extent Build() will account from these fragments. The running
+                    // estimate includes indent and temporary punctuation grace, which would otherwise
+                    // make this note choose too few characters for the room it really has.
+                    var available = room.Room - builder.Indent - builder.CurrentUsed();
                     var segmentIsEnd = segmentEnd == noteText.Length;
 
                     Boolean AllowsBreakAt(Int32 at)
@@ -8525,6 +8522,31 @@ internal sealed class InlineLayout
         /// <see cref="Build"/> works the extent it hands back out afresh instead of reusing this.
         /// </summary>
         public Double Width { get; private set; }
+
+        public Double Indent => _indent;
+
+        /// <summary>
+        /// Gets the room the runs already on the line take, using the same fragment accounting as
+        /// <see cref="Build"/> rather than the running wrapping estimate.
+        /// </summary>
+        public Double CurrentUsed()
+        {
+            var open = new List<OpenInline>();
+            var used = 0.0;
+
+            foreach (var fragment in _fragments)
+            {
+                used += Advance(open, fragment.Inline, _carried, origin: 0, apply: true, step: null);
+                used += fragment.Width;
+            }
+
+            foreach (var item in open)
+            {
+                used += item.Ancestor.InlineEndInset;
+            }
+
+            return used;
+        }
 
         /// <summary>
         /// Charges room the line had left off for a glyph that turned out to stand inside it: a stop

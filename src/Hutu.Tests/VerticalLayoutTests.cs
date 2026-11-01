@@ -845,6 +845,26 @@ public sealed class VerticalLayoutTests
     }
 
     [Test]
+    public async Task AnAutoHeightBlockDoesNotGrowForOverflowingText()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;" +
+            "width:200px;height:100px;margin:0;font-size:10px;line-height:1'>" +
+            "<p id='overflow' style='margin:0;white-space:nowrap'>" +
+            new String('あ', 20) +
+            "</p></div></body></html>");
+
+        var paragraph = Blocks(view, "p").Single();
+
+        Assert.That(
+            paragraph.BorderBox.Height,
+            Is.EqualTo(100),
+            "overflowing content does not enlarge the block's automatic inline size");
+    }
+
+    [Test]
     public async Task AShortColumnPageIsStillAsTallAsTheViewport()
     {
         using var view = CreateView(400);

@@ -216,10 +216,15 @@ internal sealed class BlockLayout
             var text = _inline.Measure(box, childInline, flow, new InlineContext(_engine, context));
             contentBlock = text.Block;
 
-            // Only a column that stated no length down the page takes one from its text; a declared
-            // length stays what the page said however much further the content runs, or a box that
-            // clips its overflow would be grown past the edge it clips at.
-            if (style.Height.IsAuto)
+            // A normal block fills its containing block along a column just as a normal block fills
+            // its width in a row. Content that cannot break overflows; it does not enlarge the
+            // containing block and give itself more room on the next measure. A float, positioned
+            // box or inline-block still shrinks to the inline extent its text asks for.
+            var fillsInline = box.IsBlockLevel &&
+                !IsFloat(box) &&
+                !PositionedLayout.IsOutOfFlow(box);
+
+            if (style.Height.IsAuto && !fillsInline)
             {
                 childInline = Math.Max(childInline, text.Inline);
             }

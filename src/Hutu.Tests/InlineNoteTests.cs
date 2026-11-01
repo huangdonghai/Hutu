@@ -352,6 +352,97 @@ public sealed class InlineNoteTests
     }
 
     [Test]
+    public async Task AColumnNoteDoesNotGrowItsAutoHeightContainingBlock()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div id='column' style='writing-mode:vertical-rl;" +
+            "width:200px;height:100px;margin:0;font-size:10px;line-height:10px;" +
+            "text-align:justify;text-justify:inter-character'>" +
+            "<p id='origin' style='margin:0'>" +
+            "初命晉晉大夫魏斯趙籍韓虔爲諸侯" +
+            "<span id='n' style='-hutu-note-placement:inline;font-size:10px;line-height:10px'>" +
+            "此溫公書法所由始也魏之先畢公高後與周同姓其苗裔曰畢萬始封於魏至魏舒始爲晉正卿" +
+            "</span></p></div></body></html>");
+
+        var column = Walk(view.Layout!.Root!)
+            .Single(box => box.Kind == LayoutKind.Block &&
+                box.Source.Element?.GetAttribute("id") == "column");
+        var origin = Walk(view.Layout.Root)
+            .Single(box => box.Kind == LayoutKind.Block &&
+                box.Source.Element?.GetAttribute("id") == "origin");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(column.BorderBox.Height, Is.EqualTo(100).Within(0.5));
+            Assert.That(origin.BorderBox.Height, Is.EqualTo(100).Within(0.5),
+                "an auto-height block fills its column instead of growing from overflowing note text");
+
+            var lines = Walk(origin)
+                .Where(box => box.Kind == LayoutKind.Line && box.Source.Style.NotePlacement == NotePlacement.None)
+                .ToList();
+            Assert.That(lines, Is.Not.Empty);
+            Assert.That(
+                lines.All(line => line.BorderBox.Bottom <= origin.BorderBox.Bottom + 0.5),
+                Is.True,
+                "no outer line reaches past the column's inline end");
+        });
+    }
+
+    [Test]
+    public async Task AHangingAdvanceIsNotReusedByLaterNoteFragments()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div id='column' style='writing-mode:vertical-rl;" +
+            "width:200px;height:100px;margin:0;font-size:10px;line-height:10px;" +
+            "text-align:justify;text-justify:inter-character;hanging-punctuation:force-end'>" +
+            "<p style='margin:0'>" +
+            "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午，" +
+            "<span id='n' style='-hutu-note-placement:inline;font-size:10px;line-height:10px'>" +
+            new String('注', 43) +
+            "</span></p></div></body></html>");
+
+        var column = Walk(view.Layout!.Root!)
+            .Single(box => box.Kind == LayoutKind.Block &&
+                box.Source.Element?.GetAttribute("id") == "column");
+        var fragments = Notes(view).ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(fragments, Has.Count.GreaterThan(1));
+            Assert.That(
+                fragments.All(note => note.BorderBox.Bottom <= column.BorderBox.Bottom + 0.5),
+                Is.True,
+                "only the first fragment belongs on the line that charged the hanging punctuation");
+        });
+    }
+
+    [Test]
+    public async Task AFirstNoteFragmentUsesTheSettledLineExtent()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div id='column' style='writing-mode:vertical-rl;" +
+            "width:200px;height:386px;margin:0;font-size:10px;line-height:10px;" +
+            "text-align:justify;text-justify:inter-character;hanging-punctuation:force-end'>" +
+            "<p id='origin' style='margin:0;text-indent:32px'>" +
+            new String('甲', 57) + "，" +
+            "<span id='n' style='-hutu-note-placement:inline;font-size:10px;line-height:10px'>" +
+            "此溫公書法所由始也魏之先畢公高後與周同姓其苗裔曰畢萬始封於魏至魏舒始爲晉正卿" +
+            "</span></p></div></body></html>");
+
+        var first = Notes(view).First();
+        var text = String.Concat(TextRuns(first).Select(run => run.Text));
+
+        Assert.That(text, Does.Contain("魏"),
+            $"the first note fragment should use the full remaining column ({text})");
+    }
+
+    [Test]
     public async Task AOneCharacterNoteKeepsAnEmptySecondSubline()
     {
         using var view = CreateView(400);
