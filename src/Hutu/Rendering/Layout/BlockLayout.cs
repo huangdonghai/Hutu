@@ -1610,6 +1610,7 @@ internal sealed class BlockLayout
             Double trail = 0,
             Int32 item = -1,
             Boolean floats = false,
+            Boolean defers = false,
             Boolean ownsEdges = true)
         {
             OwnsEdges = ownsEdges;
@@ -1630,6 +1631,7 @@ internal sealed class BlockLayout
             Trail = trail;
             Item = item;
             Floats = floats;
+            Defers = defers;
         }
 
         public Box Box { get; }
@@ -1708,6 +1710,15 @@ internal sealed class BlockLayout
         /// <c>wpt/css-break/float-017</c>).
         /// </summary>
         public Boolean Floats { get; }
+
+        /// <summary>
+        /// Gets whether the float that stands here spans the whole width of its column, so nothing of
+        /// the flow can ever stand beside it: a column the flow has already spent room in gives such a
+        /// float the head of the next one instead of the room it has left, and fills what is left of
+        /// this one with what was written after the float (CSS 2.1 9.5.1 with CSS Fragmentation 3 4.1,
+        /// measured: wpt/css-break/float-017).
+        /// </summary>
+        public Boolean Defers { get; }
 
         /// <summary>Gets whether this piece of the box owns the edges it carries. The piece that holds
         /// nothing but the margin a box opened with owns none: the box's borders and background belong
@@ -2302,7 +2313,9 @@ internal sealed class BlockLayout
                     new FragmentChild(0, before, after, breaks.Inside),
                     -1,
                     last: true,
-                    floats: true));
+                    whole: BlockExtentOf(size, false),
+                    floats: true,
+                    defers: size.Width + margin.Horizontal >= share - 0.001));
                 continue;
             }
 
@@ -5820,7 +5833,7 @@ internal sealed class BlockLayout
     {
         var cells = new List<List<MulticolPiece>>(counts.Count);
 
-        if (!children.Exists(child => child.Divides || child.Offset >= 0))
+        if (!children.Exists(child => child.Divides || child.Offset >= 0 || child.Defers))
         {
             var from = 0;
 
@@ -5917,16 +5930,48 @@ internal sealed class BlockLayout
             return best > 0 ? best : Math.Min(room, height);
         }
 
+        // A float that spans the whole column, and that the column the flow reached has no room left for,
+        // is set aside for the head of the next column - and the flow goes on filling the column it was
+        // written in with what came after it. This is the one arrangement a float makes that a linear
+        // share of the children cannot say: the float jumps the queue while what was written after it
+        // steps up (CSS 2.1 9.5.1 with CSS Fragmentation 3 4.1, measured: wpt/css-break/float-017, whose
+        // 200-tall full-width float stands at the head of the second column of four while the ten lines
+        // written around it fill the first and the third).
+        var opens = -1;
+        var opensRoom = 0.0;
+
         for (var number = 0; number < extents.Count; number++)
         {
             var limit = extents[number];
             var used = 0.0;
             var cell = new List<MulticolPiece>();
 
-            if (resume >= 0)
+            if (opens >= 0)
+            {
+                // The float opens the column it was pushed into, and what it stands for is room the
+                // column no longer offers the flow: a float taller than the column leaves it wholly to
+                // itself, which is where the flow after it begins the column beyond.
+                cell.Add(new MulticolPiece(opens, -1, 0, true));
+                used = Math.Min(opensRoom, limit);
+                opens = -1;
+
+                if (used >= limit - 0.001)
+                {
+                    // The column belongs to the float alone: nothing else may begin in it, not even a
+                    // piece the slicer would force through for the flow to make progress - that piece
+                    // would start the box over from its own top rather than carry on where the column
+                    // before left it.
+                    cells.Add(cell);
+                    continue;
+                }
+            }
+
+            // A column given wholly to the float that opens it leaves no room for the piece that
+            // was cut in the column before: that piece waits for the next head instead.
+            if (resume >= 0 && limit - used > 0.001)
             {
                 var total = Painted(children[resume]);
-                var take = Math.Min(total - resumeAt, limit);
+                var take = Math.Min(total - resumeAt, limit - used);
                 var last = resumeAt + take >= total - 0.001;
                 var held = Held(children[resume], resumeAt, take);
 
@@ -5959,6 +6004,20 @@ internal sealed class BlockLayout
 
                 for (var index = 0; index < fits; index++)
                 {
+                    // The float that the column the flow reached can no longer hold is set aside for
+                    // the next head: it spends none of this column's room either way, so the pieces the
+                    // slicer counted on after it still stand here. A column that has held nothing yet is
+                    // the float's own place, and a piece mid-cut would have to share the head with it,
+                    // so neither case defers.
+                    if (children[placed].Defers && resume < 0 && used > 0.001 && opens < 0 &&
+                        number < extents.Count - 1 && limit - used < children[placed].Whole - 0.001)
+                    {
+                        opens = placed;
+                        opensRoom = children[placed].Whole;
+                        placed++;
+                        continue;
+                    }
+
                     used += fragments[placed].Height;
                     cell.Add(new MulticolPiece(placed++, -1, 0, true));
                 }
@@ -6070,10 +6129,18 @@ internal sealed class BlockLayout
 
             cells.Add(cell);
 
-            if (placed >= children.Count && resume < 0)
+            // The flow is spent, but a float set aside for the next head still owes it that column.
+            if (placed >= children.Count && resume < 0 && opens < 0)
             {
                 break;
             }
+        }
+
+        if (opens >= 0)
+        {
+            // No extent was left to take the float the flow could not hold: give it a column of
+            // its own rather than lose the box the page wrote.
+            cells.Add(new List<MulticolPiece> { new MulticolPiece(opens, -1, 0, true) });
         }
 
         return cells;
