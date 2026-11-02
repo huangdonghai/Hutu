@@ -687,6 +687,18 @@ internal sealed class InlineLayout
                 // charged their opening edge again (CSS Break 3 4.6, measured:
                 // gecko/css-break/box-decoration-break-1, whose column asks for the whole margin box
                 // of a clone rather than for its left half).
+                // The break ends this line, so every element the break stands outside of closes here:
+                // its closing edge is room on the line that ends, not on the one after it. Without this
+                // the walk charges that edge when the next item's chain is walked - a line too late - and
+                // the line that really held the element reads short of it (measured: a cell holding
+                // `<span>b</span><br>c` came to 56.59 rather than the 119.97 the span's margin box asks
+                // for, and gecko/css-break/box-decoration-break-1's reference page is that arithmetic
+                // with three of them).
+                var left = Advance(open, item.Inline, carried: null, origin: 0, apply: true, step: null);
+
+                maxContent += left;
+                unbreakable += left;
+
                 var edge = ClonedEdge(open, start: false);
 
                 maxContent += edge;
@@ -980,8 +992,8 @@ internal sealed class InlineLayout
         // An element the stream ends inside still draws its closing edge, so it is charged for it here.
         foreach (var item in open)
         {
-            maxContent += item.Ancestor.InlineEndInset;
-            unbreakable += item.Ancestor.InlineEndInset;
+            maxContent += item.Ancestor.InlineEndInset + item.Ancestor.InlineEndMargin;
+            unbreakable += item.Ancestor.InlineEndInset + item.Ancestor.InlineEndMargin;
         }
 
         // The closing glyph of the block's final line hangs past it, so neither extent counts it
