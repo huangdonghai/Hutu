@@ -1739,3 +1739,18 @@ c1 [714,10 50x60]  c2 [714,80 50x60]  c3 [654,10 50x60]  c4 [654,80 50x60]
 
 门禁：屏幕全量 **0 新增失败名**、findings 1988 不变、失败对集合 1913 对不变；全语料像素 36 156 612 → **35 923 936**（**−232 676**）。本族：六对竖排表 `table-row/col/section-paint-vrl-rtl`/`-vlr-rtl` 各 −1400~1540（css-break 490 270 → **481 590**），两对已绿的 `table-grid-paint-*` 未受影响。族外一起受益：`gecko/writing-mode/tables/fixed-table-layout-025..031-vlr/vrl` 十六对从 30000/25000/26800 降到 6700/20000 一档（该组 −219 825），`wpt/css-writing-modes` 一族 −221 800（`table-cell-align-001` 9324 → 6889、`table-cell-valign-001`、`baseline-vertical` 26436 → 24248 等）。变大的十一对都是本来已红的竖排表（`table-cell-valign-002` 22772 → 33578、`table-progression-vrl-001` 30900 → 35970、`fixed-table-layout-005-*`、`table-cell-align-003/004/006`、`td-different-subpixel-padding-in-same-row-vertical-rl` 116 → 638），正是上面那句「尺寸仍按错轴取」的下游。单测 **2200** 全绿（没有一条竖排表格的既有断言被这次转置推翻）；打印 **189/198** 九条同名、无 css-break。
 
+### 9.130 量清楚但没落：把表格的**尺寸**也搬到自己的轴上（本族只值 -380，却把一条接近转绿的对推进 47 444）
+
+§9.129 只转置了摆位。这一次把**尺寸**也转置了：`TableBuild` 加 `Vertical`/`InlineInsets`/`BlockInsets`/`InlineSpacing`/`BlockSpacing`；`ResolveCellIntrinsics` 的 min/max 与 `Specified` 改按行内向轴取（竖排下 `inline-size`→物理高、`block-size`→物理宽，`HintedWidth`↔`HintedHeight`）；`MeasureCellHeights` 用 `Unconstrained.WithHeight(行内向房间)` 量、把块向长度读自 `measured.Width`；`Measure` 的 declared/clamp/返回的两个槽位按轴交换；`ResolveContentWidth`/`DeclaredContentWidth` 加 `vertical` 形参；`MeasureIntrinsic` 的 basis 与 insets 走行内向；`HorizontalSpacingTotal`/`CompleteGrid`/`ArrangeRows` 的两个 gap 用 `InlineSpacing`/`BlockSpacing`；`Build` 的 basis 也换成行内向。
+
+量到的效果（与 `05961d1a` 比）：
+
+- **2×2 竖排表**（`build/_vt22.html`）：表 130x150 ✓、两列沿 y 各 60 ✓（此前 50）、行沿 x ✓ —— 只剩行的块向长度量成 60，Chrome 是 50。
+- **族外**：`wpt/css-writing-modes` + `gecko/writing-mode/tables` 共 **−179 401 px**，`table-progression-vrl/srl-001` 35970 → 2373、`fixed-table-layout-027-vrl` 18125 → **0 转绿**、`-025/026-vrl` 20000 → 6700。
+- **本族**：只有 `table-collapsed-borders-paint-vrl-ltr`/`-vlr-rtl` 9090 → 8900（合计 −380）——那六对 `table-row/col/section-paint-*` 没动，因为它们卡的正是「行的块向长度被撑成列宽」这一条。
+- **退步**：`wpt/css-writing-modes/table-cell-valign-001` **1262 → 48706**（+47 444，一条几乎转绿的对），`table-cell-align-001` 6889 → 15880、`-align-006` 59196 → 76169、`orthogonal-cell-001` +3680。
+
+**为什么没落**：本族收益 380 px，代价是一条近绿对退 47 k。差的根因是两处没跟着转的下游：(a) `row.Height` 现在吃到了一个把行按列宽撑开的分配（应是「该行的格的块向长度最大值」= 50，Chrome 的 `r1 [714,10 50x130]`），(b) `AlignContent` 仍按物理 y 位移内容、并按 `BorderBox.Bottom` 量内容末端——竖排里块向是 x，`vertical-align` 因此把内容推到盒子之外。这两处补完，同一批改动才会既翻本族六对又不再伤 valign 一族；已按现状记回 `05961d1a`（脚本在 `build/_edit_size1.py`、`build/_edit_size2.py`，直接可重放）。
+
+顺带记一条**工具坑**（本会话第二次撞到）：`HUTU_SCORE_ONLY=<子串>` 写出的 `build/reftest-score.md` 只含该子串的对——拿它跟全量基线比会把「不在子串里」的对全看成 0 px；比较时要么两边都按同一子串过滤，要么跑全量。
+
