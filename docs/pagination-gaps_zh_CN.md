@@ -2177,3 +2177,15 @@ Q1 有了答案，方向和我猜的不同。三件事：
 - OOF/abspos 四对（045/073/090 与 `block-end-aligned-abspos-with-overflow`）：两边几何差已被逐值钉成两件事——(1) 我们的片是「整盒抬到 `栏头 - consumed` + 按栏矩形裁剪」，Chrome 是「每片站在自己栏头 + 内容自带 consumed」，差出整整一个 `consumed`；(2) 连续媒体里栏**不剪内联方向**的溢出（045 的 abs 比栏宽 10 px，Chrome 照画；我们剪掉）。裁剪落点：横向是 `BlockLayout.cs` 里 `arranged.FragmentClip = held`（带 `floatHang` 那一支），竖向是 `laidOut.FragmentClip = heldRect`（约 5726）。**尚未做的实验**：把横向 `held` 的内联范围放开，看这四对与全语料的反应——它能一次证伪/证实 (2)，但 (1) 仍需 §9.156 的片级 content-offset，所以这个实验只能定性，不能单独落；本轮剩余的验算预算不够跑完它的门禁，没有动代码。
 
 本轮无代码改动；HEAD 停在 `a504877f`，复跑 `css-break` 仍是 **21 对**（Gecko 2、WPT 19），三份族报告全数画出、`could not be drawn` 为 0。
+
+### 9.161 证伪一条：只放开栏的内联裁剪不能救 OOF 那一族（045 反而 10 000 → 12 500）
+
+按 §9.160 说的「尚未做的实验」真跑了一遍：把横向多列里窗口片的 `arranged.FragmentClip = held` 改成「块向仍按栏的那一段，内向我放开到该片自己各盒的左右并集」（新增一个走子树取 x 范围的辅助，落点 `BlockLayout.cs` 的 `arranged.FragmentClip = held`；另一处同名站点在 `ArrangeFloatFlowColumns`，未动）。结果：
+
+- `out-of-flow-in-multicolumn-045`：10 000 → **12 500**（变差）。
+- `-073`、`-090`：11 600 不变；`block-end-aligned-abspos-with-overflow`：3 000 不变。
+- `css-break` 计数不变（2 + 19 = 21），即没有新红也没有转绿。
+
+结论：这一族的主矛盾不是内向裁剪，而是**片自身的块向落点**——我们的窗口模型把整盒摆在 `栏头 - consumed`，Blink 把每一片摆在 `栏头` 并让片内内容自带 `consumed` 偏移；相对偏移（045 的 `top:100px/left:100px`）在后者是按片重复施加的绝对位移，在前者只是把已经错位的东西再搬一次。放开内向裁剪只是多露出我们本来就不该画的东西 ⇒ 数字变大。实验已回退（工作树仍是 `f6e38079` 的状态，复跑 `css-break` 21 对、045 回到 10 000）。
+
+所以 §9.156 那条路线要**从片的落点开始**做，裁剪是它的下游：先让片矩形成为「栏头 + 自己那一段的高度」并让 `Arrange` 把内容按 `consumed` 偏移（`FragmentSlice` 已经有 `Offset`/`Height` 两个字段在等人用），再把「栏不剪内溢出」这条一起处理；顺序反了就得到本轮这种「更正确但更难看」的数。
