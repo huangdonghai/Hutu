@@ -1988,3 +1988,29 @@ AngleSharp 早就把 `@scope` 解析成分组规则，缺的是引擎这一侧�
 门禁：单测 **2209 → 2212**（`MenuListTests` 三条钉住按钮、被标的项、列表框）；打印 **192 → 193/198**；屏幕全量失败名相对 `_full-scope` 只少 `select-combobox-print` 一条，其余增减都是上面那三条超时在通过表/超时表之间跳动，**无真实新增**。
 
 当前基线：打印 **193/198**（剩 5 条：`fieldset-001-grid-print`、`scope-implicit-005-print`、`monolithic-overflow-032-print`、`input-password-print`、`mask-image-print`）；屏幕 `css-break` **23 对**（Gecko 3、WPT 20）。`input-password-print` 与 `select-combobox-print` 原本同属「表单控件不画」一族，这一条通了，密码框那条要的是 `<input>` 真的把值画出来（我们现在 0x0 空盒），仍属另开的一仗。
+
+### 9.149 `floats-clear-multicol` 一族的差因量成了三截，并且量出「先动哪一半会砸掉一条绿的」
+
+屏幕全量里这一族有 6 条红：`wpt/CSS2/floats-clear/floats-clear-multicol-{000,002,003}`（各 510 px）与 `-balancing-{000,002,003}`（各 850 px），`-001` 与 `-balancing-001` 现在是绿的。这一族不在 `css-break` 名字里，所以之前那 23 对的账没盖住它；它就是「栏里的 float 与 clear」，属分片。
+
+Chrome 的两页逐值（`build/_query` 量的）：
+
+- **ref**（`.container` 是一个 250 高、左右各 15px aqua 边框、里面只有标签间空白的盒；`.clear` 空、只有 3px 橙色下边）：`container` 切三栏 `100x100 | 100x100 | 100x50`，`clear` 一块 `100x3` 落在 `227,111`。
+- **test**（`.container` 里是两个 15x250 的左右 float，`.clear` 里放 `<br clear=all>`）：`container` 每栏 `100x0`（float 不给自己长高），**float 自己被切**：`15x100 | 15x100 | 15x50`，每栏贴自己那侧的栏边；`clear` 被 `<br>` 的 250 净空顶到 250 之后，并且它自己也切：`100x100 | 100x100 | 100x53`。⇒ Chrome 允许**从一条行盒中间切过去**（那条带净空的行 250 高比栏还高）。
+
+我们这边：float 只画在 `.container` 所在的那一栏（`15x250` 一整条，向下溢出整个多列框），`.clear` 是一整块 `100x20.72`（我们的 `<br clear=all>` 根本没看见那些 float——多列的 `childContext` 不发布 float tracks），ref 那一侧 `AddBoxCut`（`BlockLayout.cs:2724` 那条 `child.Children.Count > 0 && ...`）拒绝切「有孩子」的盒，于是 `container` 一整块 250 站在第 1 栏，`.clear` 跑到第 2 栏栏头。
+
+**实测的落位次序**（这一步最值钱）：只把 `AddBoxCut` 那条收紧成「孩子只是标签间空白 = 视作空盒可切」（Chrome 对 ref 的逐值已证这条本身正确），复跑这一族：
+
+- `000` 510 → **9510**，`002` 510 → **9510**，`003` 同；
+- **原本绿的 `001` 变成 9510**（它的 ref 也一起被切，而 test 的 float 仍只画在第一栏）。
+
+⇒ 这一族必须**先（或同时）落「栏里 float 的续切」**，再动 `AddBoxCut`；否则是把一栏的红搬到另一栏。已回退，代码停在 `b92900ef`。
+
+float 续切真正难的地方在归属：test 的 float 不是多列容器的直接孩子（它在 `.container` 里，而 `.container` 高 0 且不是 BFC），Chrome 却把它交给**栏的** fragmentainer 切片。我们的 float 放置走的是普通块的 tracks/band（`ColumnFloats`/`StandBeside`/`BandFor`），多列路线只在「直接孩子就是 float」时接管（`MulticolChildren` 给 `FragmentChild(0,…)`），嵌套那一层目前没有栏的概念。`FloatFlowColumns` 那条band路线本来最接近，但它在遇到「有自己行盒、又比栏高」的流盒时主动退出（`BlockLayout.cs:3331` 的 `return false`），而 float-017 的 flow-root 正是这种形状。
+
+顺带把 `float-017`（482 px）的判据钉住：Chrome 四栏是 `1: 1,2,3,4,5 / 2: 满宽 float(200, 从栏头溢到 258) / 3: 6,7,8,9,10 / 4: 空`。也就是说满宽 float 跳去下一栏栏头之后，**它后面**的流内容回填它跳出来的那一栏——这个「插队 + 回填空位」用 `Fragmentainer.Fill` 的线性 counts 表达不出来（上一轮给它记整段高度得 653 就是这么错的）。要做的是两阶段：先把满宽 float 从线性序列里摘出去参与 packing， packing 完再按「前驱落在第 k 栏且余量 < float 高度」把它塞进第 k+1 栏栏头，并把 k+1 栏的起始余量记成 `min(高度, 栏高)` 重 pack 一次。触发面已量清：全语料里「多列直接子 float 且 `width:100%`」只有 `float-017` 与 `widows-orphans-020`（后者 80≤80 装得下，规则不该触发），其余 7 页的 float 都在嵌套盒里，不经这条路。
+
+`transform-006` 余下 1361 px 都是旋转边的 AA（`test #fff3f9 / ref #ffd0e7` 之类），几何已近；我们的每一片仍是**整盒 100x175** + 栏窗裁剪（clip 分别 50/100/100/25），且 `PushTransformCommand` 递的参照矩形就是这个整盒；ref 却是 50/100/25/0 四块各自绕**自己**的右下角转。⇒ 下一刀该核的是「每片的 transform-origin 取片自己的底边还是取未切盒的底边」，而不是裁剪。
+
+本轮除此之外没有落代码；上一条落地的仍是 `b92900ef`（打印 193/198、`css-break` 23 对、单测 2212）。
