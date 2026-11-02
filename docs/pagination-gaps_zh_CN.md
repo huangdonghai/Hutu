@@ -1659,4 +1659,6 @@ Hutu 现状与此相反：竖排 test 页 `国；（国` = 28.96x**70**，而它
 
 门禁不放：把 `TrimsInAxis` 加上去后，屏幕跑出 **24 条新增失败名**，全是 `wpt-variants/text-spacing-trim/*-vrl` 自造变体（`text-spacing-trim-001-{chws,halt}-vrl` 各 4109、`start-001-trim-start-*` 各 6156、`trim-all-001-*` 2805、`start-oof-001-*` 3515、`quote-001-*` 与 `span-001-space-first/trim-start-*` 各 866 …）。这些 ref 是早先把横排 ref 转置出来的，编码的是「竖排也减半」，与上面两路 Chrome 测量相反。float-017 那 171 px 的改善与本改动无关（已落在 1cb017b3）。
 
-**需要作者定夺**（语料级改动，不擅自动手）：若认 Chrome 的竖排不减半为准，就得重做这 24 条自造 vrl 参考页（把 `<span class=halt>` 的期望 advance 从半角改回全角，或改用 `vhal` 声明），之后 `build/_vertical-no-trim.patch` 才能落；这一步落完，`build/_abs-static-position.patch`（#18）才不再新增失败名，`wpt/css-break/box-shadow-003` 的 7400 px 才会翻绿。
+**作者已定（2026-11-02）：不以 Chrome 为准。** text-spacing-trim 我们的实现比 Chrome 更完善——竖排也做半角 trim 是有意的，Chrome 竖排根本不做 `halt`/`chws` 减半。因此 `build/_vertical-no-trim.patch` **不落**，24 条 `*-vrl` 参考页也不改；这条族的标准仍是「语料参考页 + 作者判断」，Chrome 的数只能用来定位差异、不能用来判对错。连带结果：`build/_abs-static-position.patch`（#18）在没有别的收窄之前不能落——那 24 页今天绿，只是因为摆位错了、abs 栏跑到 800 窗口之外两边都画不出东西；摆位一修它们就开始比真墨迹（test 70 对 ref 80），会新增 24 条名。`wpt/css-break/box-shadow-003` 的 7400 px 因此挂起，除非把摆位规则收窄到这 24 页不具备的形状。
+
+（原文，保留作记录）**需要作者定夺**（语料级改动，不擅自动手）：若认 Chrome 的竖排不减半为准，就得重做这 24 条自造 vrl 参考页（把 `<span class=halt>` 的期望 advance 从半角改回全角，或改用 `vhal` 声明），之后 `build/_vertical-no-trim.patch` 才能落；这一步落完，`build/_abs-static-position.patch`（#18）才不再新增失败名，`wpt/css-break/box-shadow-003` 的 7400 px 才会翻绿。
