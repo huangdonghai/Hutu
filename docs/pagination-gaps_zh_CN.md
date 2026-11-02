@@ -1662,3 +1662,14 @@ Hutu 现状与此相反：竖排 test 页 `国；（国` = 28.96x**70**，而它
 **作者已定（2026-11-02）：不以 Chrome 为准。** text-spacing-trim 我们的实现比 Chrome 更完善——竖排也做半角 trim 是有意的，Chrome 竖排根本不做 `halt`/`chws` 减半。因此 `build/_vertical-no-trim.patch` **不落**，24 条 `*-vrl` 参考页也不改；这条族的标准仍是「语料参考页 + 作者判断」，Chrome 的数只能用来定位差异、不能用来判对错。连带结果：`build/_abs-static-position.patch`（#18）在没有别的收窄之前不能落——那 24 页今天绿，只是因为摆位错了、abs 栏跑到 800 窗口之外两边都画不出东西；摆位一修它们就开始比真墨迹（test 70 对 ref 80），会新增 24 条名。`wpt/css-break/box-shadow-003` 的 7400 px 因此挂起，除非把摆位规则收窄到这 24 页不具备的形状。
 
 （原文，保留作记录）**需要作者定夺**（语料级改动，不擅自动手）：若认 Chrome 的竖排不减半为准，就得重做这 24 条自造 vrl 参考页（把 `<span class=halt>` 的期望 advance 从半角改回全角，或改用 `vhal` 声明），之后 `build/_vertical-no-trim.patch` 才能落；这一步落完，`build/_abs-static-position.patch`（#18）才不再新增失败名，`wpt/css-break/box-shadow-003` 的 7400 px 才会翻绿。
+
+### 9.125 更正 9.124 的一处混账：abs 摆位补丁新增的是 2 条名，不是 24 条（重跑量清）
+
+作者质疑「那 24 页看起来没用 position:absolute」，复查语料后确认我 9.124 末段把两次实验的账并到了一起。逐文件 grep `position: *absolute`：那 24 页里只有 `text-spacing-trim-start-oof-001-{chws,halt}-vrl` 两页有 abs 构造；`colon-001-*-vrl` 与 `dot-001-*-vrl` 才有（`#container > div { position: absolute }`）。两批名字来自两个补丁：
+
+- **24 条**来自本会话那个「竖排不做 trim」的补丁（`build/_vertical-no-trim.patch`）——它改的是墨迹本身，跟摆位无关。按作者裁定不落。
+- **2 条**才是 abs 摆位补丁（`build/_abs-static-position.patch`，#18）的代价。为把数定死，今天重跑了一遍全量：新增 `text-spacing-trim-colon-001-chws-vrl` 与 `-halt-vrl`，各 **6783 px**；翻绿 `wpt/css-break/box-shadow-003` **7400 → 0**；变好 4 对：`wpt/CSS2/visuren/abs-pos-border-offset-001` 9614 → 6426、`-002` 22085 → 14685、`wpt/css-align/abspos/align-self-static-position-002` 33210 → 28750、`wpt/css-anchor-position/position-area-alignment-inset-001` 3900 → 3800；变差 2 对：`wpt/css-anchor-position/position-area-alignment-overflow-001` 14875 → 15500、`gecko/bugs/562835-1` 4985 → 4986。跑完已 `git checkout -- .` 回退并重建，工作树干净。
+
+这 2 条为什么会红（读两页的树，不是猜）：摆位一修，两页的 abs 栏从容器块向起点边往左长、进了 800 窗口，于是开始比真墨迹；test 页那一行被我们的竖排 trim 减成 70，而 ref 页是拿 `<span class="halt">（</span>` 显式模拟半角——同一个 span 在竖排量到 20（字体自身的竖排 advance），整行就成了 80。所以缺的是**参考页的模拟手法在竖排不成立**，不是 trim 判据之争：按作者定的「trim 以我们为准」，test 页的 70 是对的，ref 页要能表达同样的 70 才配得上这一对。
+
+于是 #18 的真实代价是「改 2 条自造参考页的竖排模拟」，而不是先前记的 24 条。等作者点头就照这个做，之后 `box-shadow-003` 直接翻绿，顺带那 4 对竖排 abs 对也变小。
