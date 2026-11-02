@@ -1722,3 +1722,20 @@ Chrome 量的 `table-grid-paint-vrl-rtl`（`build/_vtbchrome.txt`）：整张表
 
 门禁：屏幕全量 **0 新增失败名**、findings 1988 不变；`wpt/css-break/transform-006.html` **30376 → 1361**（css-break 族 519 285 → 490 270）；变大的两对 gecko flex 分页都是已红对，共 +2700，族外净收益 −26 315。单测 **2200**：`ABoxWithItsOwnBlockStartMarginDividesAtTheRoomLeftAfterIt` 与 `EachPieceOfADividedTransformedBoxTurnsAboutItsOwnRectangle` 的期望改按 Chrome 实测值钉（片段窗口 40/100/100、盒自己 40/80/0、支点 (50,20)/(50,80)；第三片的支点现在是 140，而 Chrome 那一片是 100x0（旋转包围盒 90.6x42.3），该对余下 1361 px，留在 #14）；打印 **189/198** 九条同名。
 
+### 9.129 表格的行列落到自己的轴上：列沿行内向展开、行沿块向从栏头堆（六对竖排表 −8680，族外竖排表 −441 625）
+
+Chrome 量的 2×2 竖排表（`build/_vt22.html`，`vertical-rl`，`border-spacing:10`，格 `.a` = `inline-size:40; block-size:30`、`.b` = `60/50`）：
+
+```
+表 [644,0 130x150]   r1 [714,10 50x130]   r2 [654,10 50x130]
+c1 [714,10 50x60]  c2 [714,80 50x60]  c3 [654,10 50x60]  c4 [654,80 50x60]
+```
+
+即**行沿块轴（x，从右边往左）堆，列沿行内向轴（y）展开**，格子的块向长度 = 它那一行的块向长度（50 = max(30,50)），行内向长度 = 它那一列的行内向长度（60 = max(40,60)）。Hutu 之前把列排在 x、行排在 y（两格落在 x=680 与 x=740），这就是 §9.40 记的「`TableFormattingContext` 从不读 `Flow.IsVertical`」，也是竖排表十对共同的根。
+
+代码：一个 `FlowRect(vertical, blockReversed, inlineStart, inlineAt, inlineExtent, blockStart, blockAt, blockExtent)` 把**流向矩形**映射成物理矩形——横排时 (inline→x, block→y)，竖排时 (inline→y, block→x)，且块向从书写模式命名的起点边起算（vertical-rl 是右边，故行往左长）。用处：`Arrange` 里 `gridX` 改为块的起点边、`contentWidth`/`gridHeight` 各归行内向/块向、`ArrangeRows` 的组框/行框/abs 锚框与 `ExpandGroupAcross`（沿块向长大）、`ArrangeCell` 的格子框、`ArrangeColumnBands` 的列背景带。§9.127 已把 caption 与表盒放到块轴上，这一片把网格也放上去，两者合起来才是完整的轴转置。
+
+**尺寸仍差一轴**（下一步）：`MeasureCellHeights` 用 `measured.Height − styleInsetsV` 当格子的块向长度，并用 `cell.Box.Style.Height` 读声明的 floor——竖排里这两个都是**行内向**。所以 `build/_vt22.html` 现在量到行 60 宽（Chrome 50）、格 60x60（Chrome 50x60）：轴的摆放对了，块向长度取错了。Hutu 里 `block-size` 在竖排下映射到物理 `Style.Width`（`BlockLayout.BlockSizeIsAuto` 正是 `vertical ? Style.Width.IsAuto : Style.Height.IsAuto`），所以那一处也要按轴取。
+
+门禁：屏幕全量 **0 新增失败名**、findings 1988 不变、失败对集合 1913 对不变；全语料像素 36 156 612 → **35 923 936**（**−232 676**）。本族：六对竖排表 `table-row/col/section-paint-vrl-rtl`/`-vlr-rtl` 各 −1400~1540（css-break 490 270 → **481 590**），两对已绿的 `table-grid-paint-*` 未受影响。族外一起受益：`gecko/writing-mode/tables/fixed-table-layout-025..031-vlr/vrl` 十六对从 30000/25000/26800 降到 6700/20000 一档（该组 −219 825），`wpt/css-writing-modes` 一族 −221 800（`table-cell-align-001` 9324 → 6889、`table-cell-valign-001`、`baseline-vertical` 26436 → 24248 等）。变大的十一对都是本来已红的竖排表（`table-cell-valign-002` 22772 → 33578、`table-progression-vrl-001` 30900 → 35970、`fixed-table-layout-005-*`、`table-cell-align-003/004/006`、`td-different-subpixel-padding-in-same-row-vertical-rl` 116 → 638），正是上面那句「尺寸仍按错轴取」的下游。单测 **2200** 全绿（没有一条竖排表格的既有断言被这次转置推翻）；打印 **189/198** 九条同名、无 css-break。
+

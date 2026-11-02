@@ -189,9 +189,15 @@ internal sealed partial class TableFormattingContext
         var tableBlockExtent = Math.Max(
             0,
             (vertical ? borderBox.Width : borderBox.Height) - build.CaptionTop - build.CaptionBottom);
+        // The columns are shared out along the inline axis - the table's height when the table runs
+        // across the page - and the rows fill what the captions leave of the block axis (CSS Writing
+        // Modes 3 §4.1, measured: build/_vt22.html, whose two columns are 60 tall each inside a table
+        // 150 tall, and whose rows are 50 wide each inside one 130 wide).
         var contentWidth = Math.Max(
             0,
-            (vertical ? tableBlockExtent : borderBox.Width) - border.Horizontal - padding.Horizontal);
+            (vertical ? borderBox.Height : borderBox.Width) -
+                (vertical ? border.Vertical + padding.Vertical
+                    : border.Horizontal + padding.Horizontal));
         MeasureOthers(build, contentWidth, context);
 
         var tableBox = vertical
@@ -229,7 +235,13 @@ internal sealed partial class TableFormattingContext
             TableBox = tableBox,
         };
 
-        var gridX = (vertical ? tableBox.X : borderBox.X) + build.Border.Left + build.Padding.Left;
+        // The grid's origins, read along the table's own axes: where the inline axis begins, and the
+        // edge the block axis grows from - the right one for vertical-rl.
+        var gridX = vertical
+            ? blockReversed
+                ? tableBox.Right - build.Border.Right - build.Padding.Right
+                : tableBox.X + build.Border.Left + build.Padding.Left
+            : borderBox.X + build.Border.Left + build.Padding.Left;
 
         // A positioned table anchors the absolutely positioned descendants the captions and cells hand
         // up to it, the same way a positioned block does: a static caption is not a containing block,
@@ -475,6 +487,41 @@ internal sealed partial class TableFormattingContext
     }
 
     /// <summary>
+    /// Turns a place in the table's own axes into the rectangle the page draws it in. A table that runs
+    /// down the page measures its columns along x and stacks its rows along y; one that runs across the
+    /// page measures its columns along y and stacks its rows along x, from the block-start edge the
+    /// writing mode names - the right one for vertical-rl, so a row grows back towards the left
+    /// (CSS Writing Modes 3 §4.1, measured: build/_vt22.html, a 2x2 table in vertical-rl whose rows
+    /// stand at x=714 and x=654 fifty wide each and whose columns stand at y=10 and y=80 sixty tall
+    /// each, inside a table 130 wide and 150 tall).
+    /// </summary>
+    private static Rect FlowRect(
+        Boolean vertical,
+        Boolean blockReversed,
+        Double inlineStart,
+        Double inlineAt,
+        Double inlineExtent,
+        Double blockStart,
+        Double blockAt,
+        Double blockExtent)
+    {
+        if (!vertical)
+        {
+            return new Rect(
+                inlineStart + inlineAt,
+                blockStart + blockAt,
+                inlineExtent,
+                blockExtent);
+        }
+
+        return new Rect(
+            blockReversed ? blockStart - blockAt - blockExtent : blockStart + blockAt,
+            inlineStart + inlineAt,
+            blockExtent,
+            inlineExtent);
+    }
+
+    /// <summary>
     /// Places one caption of a table that runs across the page: its own extent along the stack is its
     /// width, the side it straddles is its height, and the edge it begins at is the block-start edge the
     /// writing mode names - the right one for vertical-rl, from which it grows back towards the left
@@ -547,6 +594,10 @@ internal sealed partial class TableFormattingContext
         }
 
         var bands = new List<LayoutBox>();
+        var vertical = build.Box.Flow.IsVertical;
+        var blockReversed = vertical && build.Box.Flow.BlockIsRightToLeft;
+        var inlineStart = vertical ? gridY : gridX;
+        var blockStart = vertical ? gridX : gridY;
 
         for (var column = 0; column < grid.Columns; column++)
         {
@@ -558,19 +609,24 @@ internal sealed partial class TableFormattingContext
                 continue;
             }
 
-            var x = gridX + grid.ColumnX[column];
-            var width = grid.Widths[column];
+            var columnAt = grid.ColumnX[column];
+            var columnExtent = grid.Widths[column];
 
             foreach (var row in grid.Rows)
             {
+                var place = FlowRect(
+                    vertical, blockReversed,
+                    inlineStart, columnAt, columnExtent,
+                    blockStart, row.Y, row.Height);
+
                 if (Paints(group))
                 {
-                    bands.Add(Band(group!, x, gridY + row.Y, width, row.Height));
+                    bands.Add(Band(group!, place.X, place.Y, place.Width, place.Height));
                 }
 
                 if (Paints(own))
                 {
-                    bands.Add(Band(own!, x, gridY + row.Y, width, row.Height));
+                    bands.Add(Band(own!, place.X, place.Y, place.Width, place.Height));
                 }
             }
         }
@@ -619,6 +675,10 @@ internal sealed partial class TableFormattingContext
         // explicitly" - which is what the borrowed pages state in their own asserts: the same `top: 100%`
         // resolves to a row's ten pixels and not to the hundred the row was grown to by its content).
         var tableHeight = StatedHeight(build.Box, 0.0);
+        var vertical = build.Box.Flow.IsVertical;
+        var blockReversed = vertical && build.Box.Flow.BlockIsRightToLeft;
+        var inlineStart = vertical ? gridY : gridX;
+        var blockStart = vertical ? gridX : gridY;
 
         foreach (var row in grid.Rows)
         {
@@ -641,7 +701,10 @@ internal sealed partial class TableFormattingContext
                     ? null
                     : new LayoutBox(groupBox, LayoutKind.TableRowGroup)
                     {
-                        BorderBox = new Rect(gridX, gridY + row.Y, grid.Width, row.Height),
+                        BorderBox = FlowRect(
+                            vertical, blockReversed,
+                            inlineStart, 0.0, grid.Width,
+                            blockStart, row.Y, row.Height),
                         // The part says its own position, as every other box built by the engine does: a
                         // row group standing `relative` is drawn among the positioned descendants rather
                         // than with the in-flow content, which is what puts its ground over the marker a
@@ -659,7 +722,10 @@ internal sealed partial class TableFormattingContext
 
             var rowLayout = new LayoutBox(row.Box, LayoutKind.TableRow)
             {
-                BorderBox = new Rect(gridX, gridY + row.Y, grid.Width, row.Height),
+                BorderBox = FlowRect(
+                    vertical, blockReversed,
+                    inlineStart, 0.0, grid.Width,
+                    blockStart, row.Y, row.Height),
                 Position = row.Box.Style.Position.Position,
             };
 
@@ -673,7 +739,15 @@ internal sealed partial class TableFormattingContext
             else
             {
                 group.Children.Add(rowLayout);
-                ExpandGroup(group, gridY + row.Y, row.Height, spacing);
+
+                if (vertical)
+                {
+                    ExpandGroupAcross(group, blockStart + row.Y, row.Height, spacing, blockReversed);
+                }
+                else
+                {
+                    ExpandGroup(group, gridY + row.Y, row.Height, spacing);
+                }
             }
 
             // A positioned row - or, failing that, the row group around it - is what an absolutely
@@ -691,11 +765,10 @@ internal sealed partial class TableFormattingContext
 
             if (PositionedLayout.IsPositioned(row.Box))
             {
-                anchored = new Rect(
-                    gridX + inset,
-                    gridY + row.Y,
-                    Math.Max(0, grid.Width - 2 * inset),
-                    row.Height);
+                anchored = FlowRect(
+                    vertical, blockReversed,
+                    inlineStart, inset, Math.Max(0, grid.Width - 2 * inset),
+                    blockStart, row.Y, row.Height);
             }
             else if (group is { } around && PositionedLayout.IsPositioned(groupBox!))
             {
@@ -791,6 +864,31 @@ internal sealed partial class TableFormattingContext
         }
     }
 
+    /// <summary>
+    /// Grows a row group's box along the block axis of a table that runs across the page, so that it
+    /// covers the rows it has received: the axis the rows stack along is the width there, and it runs
+    /// back from the edge vertical-rl begins at.
+    /// </summary>
+    private static void ExpandGroupAcross(
+        LayoutBox group, Double blockAt, Double blockExtent, Double spacing, Boolean reversed)
+    {
+        var edge = reversed
+            ? Math.Min(group.BorderBox.X, blockAt - blockExtent - spacing / 2)
+            : Math.Max(group.BorderBox.Right, blockAt + blockExtent + spacing / 2);
+
+        group.BorderBox = reversed
+            ? new Rect(
+                edge,
+                group.BorderBox.Y,
+                Math.Max(0.0, group.BorderBox.Right - edge),
+                group.BorderBox.Height)
+            : new Rect(
+                group.BorderBox.X,
+                group.BorderBox.Y,
+                Math.Max(0.0, edge - group.BorderBox.X),
+                group.BorderBox.Height);
+    }
+
     /// <summary>Grows a row group's box so that it covers the rows it has received so far.</summary>
     private static void ExpandGroup(LayoutBox group, Double rowY, Double rowHeight, Double spacing)
     {
@@ -813,14 +911,26 @@ internal sealed partial class TableFormattingContext
         LayoutContext context)
     {
         var grid = build.Grid;
-        var x = gridX + grid.ColumnX[cell.Column];
-        var y = gridY + grid.Rows[cell.Row].Y;
+        var vertical = build.Box.Flow.IsVertical;
+        var blockReversed = vertical && build.Box.Flow.BlockIsRightToLeft;
         var width = ColumnSpanWidth(grid, cell, inlineSpacing);
         var height = RowSpanHeight(grid, cell, spacing);
-        var rect = new Rect(x, y, width, height);
 
-        var contentWidth = Math.Max(0, width - cell.Insets.Horizontal);
-        var contentHeight = Math.Max(0, height - cell.Insets.Vertical);
+        // A cell stands at its column along the inline axis and at its row along the block one, whichever
+        // way the table is turned: for a table that runs across the page that puts the columns down the
+        // page and the rows across it (CSS Writing Modes 3 §4.1, measured: build/_vt22.html, where the
+        // two cells of a row come back at y=10 and y=80 rather than side by side in x).
+        var rect = FlowRect(
+            vertical, blockReversed,
+            vertical ? gridY : gridX, grid.ColumnX[cell.Column], width,
+            vertical ? gridX : gridY, grid.Rows[cell.Row].Y, height);
+        var x = rect.X;
+        var y = rect.Y;
+
+        // The room the cell's own content has, on the axes the page draws in: the insets are physical, so
+        // what they take off is the physical pair the rectangle is drawn with.
+        var contentWidth = Math.Max(0, rect.Width - cell.Insets.Horizontal);
+        var contentHeight = Math.Max(0, rect.Height - cell.Insets.Vertical);
         var cellContext = context.ForContainingBlock(new Size(contentWidth, contentHeight));
 
         // A cell written `position: relative` is displaced by the table rather than by the general path,
@@ -884,8 +994,12 @@ internal sealed partial class TableFormattingContext
         layout.SuppressBackground = hide;
         layout.SuppressBorder = hide;
 
-        // The alignment belongs to the cell, not to the table it sits in.
-        AlignContent(layout, cell.Box.Style.Table.VerticalAlign, contentHeight);
+        // The alignment belongs to the cell, not to the table it sits in, and it runs along the block
+        // axis - the width of a table that runs across the page.
+        AlignContent(
+            layout,
+            cell.Box.Style.Table.VerticalAlign,
+            vertical ? Math.Max(0, rect.Width - cell.Insets.Horizontal) : contentHeight);
 
         return layout;
     }
