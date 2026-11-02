@@ -1875,3 +1875,14 @@ i0 [100,34 20x12]    i1 [100,128 20x12]
 
 这一页就是 #8 下一步的靶子：先把 3 修对（画法不受影响的空/实内容都能验），再回放 §9.135 A + §9.136 的 ①②③，然后才轮到 css-break 那六对 —— 它们多出来的差不在这三项里，而在**行的 `repeating-linear-gradient` 平铺原点**（参考页 tile 是 `110x80` 的条带，见 §9.136 的画法比对），要用 `table-row-paint-*` 自己的 abs 条带作第二个靶子。
 
+### 9.139 尺寸转置的边界量清了：单列表安全、2×2 靶子基本对上，坏在「碎片里的多列分配」
+
+把 §9.135 A + §9.136 ①②③ 一次装齐（`build/_edit_size1.py`、`build/_edit_size2.py`，加行声明读 `Style.Width`、`RowsInlineExtent`、`gridHeight` 用块向房间；另加 `AlignContent` 的轴向参数），在两张靶子上分别量：
+
+- **`build/_vtcontent.html`（不切栏的 2×2）**：表 `130x150` ✓、行 `50x130` ✓（Chrome 同值）、格 `c1 [70,10 50x60]`、`c2 [70,80 50x60]` ✓✓ 与 Chrome 逐值一致 —— 尺寸转置本身是对的。只剩格内容沿块向的位置：`i1`（`vertical-align: bottom`）还在 x=100（块向起点边），Chrome 在 70（终点边），`AlignContent` 的位移没落地（算式复核过：`used=20`、`free=30`、`delta=-30` 应该正好推到 70），要再查的是 `VerticalAlign` 的取值或 `ContentBox` 在竖排格里的实际形状。
+- **css-break 的六对竖排多列表**：合计 **+111 370**（`table-row/col-paint-vrl-rtl` 各 29 350 → 49 050、`table-col-paint-*` 50 900、`table-section-paint-*` 49 750/41 650），而**两对已绿的 `table-grid-paint-vrl-rtl`、`-vlr-rtl` 在这一整套改动下仍然绿** ✓。
+
+⇒ 边界清楚了：转置对「一列一行」的竖排表无害且正确（含被分栏切的两对），坏的只在**多列且被切栏**那一类。给这一类的原因我还**没有**测出来：碎片是整盒 400 长 × 100 宽 handed 进来的，`contentWidth = borderBox.Height - insetsV = 100` 本该等于 Chrome 的每栏窗口 ✓，可是装完后该类的差反而从 29 k 涨到 49 k，说明错在别处。下一步要核的第一件事很具体：装着整套转置时，再取一次 `table-row-paint-vrl-rtl` 的画法条目，与参考页那五条逐值对（§9.136 里的比对显示行带当时是 `110x100 tile 110x100`，若 `RowsInlineExtent` 生效后仍是 100，就说明行内向的修正在碎片路径上没走到；若已经变成 80 而像素仍差，则差在渐变 tile 的原点或格的填充边界上）。
+
+四套脚本与结论都留在 `build/`（`_edit_size1.py`、`_edit_size2.py`、`_edit_align.py` 与 `build/_vtcontent.html` 靶子页）和本节，代码退回 `6172c8c4`（= 34f8ec9a 的代码 + 日志）。
+
