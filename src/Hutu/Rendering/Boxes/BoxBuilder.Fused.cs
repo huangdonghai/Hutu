@@ -430,8 +430,30 @@ internal static partial class BoxBuilder
         var itemChildren = inItemContainer && displayContents ||
             kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry;
 
+        // A select that shows itself as a menu list - one line tall and not a picker of several - is a
+        // button rather than a list: it shows one option and no other, and what stands in it that is not
+        // an option is never shown (HTML 5.13.5 names the selected option and falls back to the first the
+        // list offers when none was marked; 15.4 keeps the list itself inside the widget; measured:
+        // printing/select-combobox-print, whose reference is that one option's label alone). The walk
+        // below is the hottest recursion the builder has, so the rule skips children rather than
+        // handing the loop a collection of its own.
+        var shown = (IElement)null;
+        var menuList = false;
+
+        if (element is IHtmlSelectElement picker && !picker.IsMultiple && picker.Size < 2)
+        {
+            menuList = true;
+            shown = picker.Options.FirstOrDefault(option => option.IsSelected) ??
+                picker.Options.FirstOrDefault();
+        }
+
         foreach (var child in skipsContents ? Enumerable.Empty<INode>() : element.ChildNodes)
         {
+            if (menuList && !ReferenceEquals(child, shown))
+            {
+                continue;
+            }
+
             switch (child)
             {
                 case IElement elementChild:
