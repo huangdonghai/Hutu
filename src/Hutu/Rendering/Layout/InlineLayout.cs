@@ -2006,7 +2006,8 @@ internal sealed class InlineLayout
                     fragment.Box,
                     new Offset(stood.X, stood.Y),
                     against,
-                    line: hang));
+                    line: hang,
+                    staticFromHigh: flow.IsVertical && flow.BlockSign < 0));
             }
             else
             {
@@ -4149,7 +4150,12 @@ internal sealed class InlineLayout
                     : held.Against.WithAbsoluteContainingBlock(frame);
                 var node = held.Frame is { } area
                     ? _engine.Arrange(held.Box, area, against)
-                    : _engine.ArrangePositioned(held.Box, held.Stood, against, line: held.Line);
+                    : _engine.ArrangePositioned(
+                        held.Box,
+                        held.Stood,
+                        against,
+                        line: held.Line,
+                        staticFromHigh: flow.IsVertical && flow.BlockSign < 0);
 
                 // The siblings placed while the box waited are not the ones it stood among, so the place it
                 // was counted at moves along by the boxes already put back into that owner.

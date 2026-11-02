@@ -48,6 +48,41 @@ public sealed class PositionedLayoutTests
     }
 
     [Test]
+    public async Task AColumnThatRunsRightwardsHangsAnUnoffsetBoxFromItsRightEdge()
+    {
+        using var view = CreateView(300);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:relative;writing-mode:vertical-rl;width:100px;height:40px'>" +
+            "<div id='a' style='position:absolute;width:30px;height:20px'></div></div></body></html>");
+
+        // The static position names the edge the box begins at, and a column that runs the page
+        // rightwards begins at the high coordinate: the box hangs its right edge on the containing
+        // block's right edge and grows leftwards (CSS 2.1 §10.3.7 read against CSS Writing Modes 3
+        // §5.1, measured in Chrome: [70,0 30x20] inside a 100x40 container).
+        var a = Find(view, "a");
+
+        Assert.That(
+            (a.BorderBox.X, a.BorderBox.Right),
+            Is.EqualTo((70.0, 100.0)),
+            "the box hangs from the right edge rather than growing past it");
+    }
+
+    [Test]
+    public async Task AColumnThatRunsLeftwardsHangsAnUnoffsetBoxFromItsLeftEdge()
+    {
+        using var view = CreateView(300);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='position:relative;writing-mode:vertical-lr;width:100px;height:40px'>" +
+            "<div id='a' style='position:absolute;width:30px;height:20px'></div></div></body></html>");
+
+        // The same rule read the other way: `vertical-lr` starts at the low coordinate, so the box
+        // stands at the left edge exactly as a row does (measured in Chrome: [0,0 30x20]).
+        Assert.That(Find(view, "a").BorderBox.X, Is.EqualTo(0), "the box grows rightwards from the left edge");
+    }
+
+    [Test]
     public async Task RelativeMovesTheBoxButNotItsSiblings()
     {
         using var view = CreateView(400);

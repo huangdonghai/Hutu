@@ -6699,7 +6699,12 @@ internal sealed class BlockLayout
 
         foreach (var (child, staticPosition) in outOfFlow)
         {
-            parent.Children.Add(_engine.ArrangePositioned(child, staticPosition, context));
+            // The place the run reached is the column's block-start edge, which `vertical-rl` puts on
+            // the right: an unset edge falls back to that corner rather than to the left one, so the
+            // caller says which corner it handed (CSS 2.1 §10.3.7, CSS Writing Modes 3 §5.1, measured:
+            // box-shadow-003, whose abs rings stand inside the column that holds them).
+            parent.Children.Add(_engine.ArrangePositioned(
+                child, staticPosition, context, staticFromHigh: flow.IsVertical && flow.BlockSign < 0));
         }
 
         // The extent the children occupied along the column, in the same units the box states its own

@@ -1901,3 +1901,17 @@ test 第1栏: fill 842,292 50x100 | gradient 722,302 110x80   ← 正确
 
 已退回（代码停在 `34f8ec9a`）。可重放的脚本：`build/_edit_size1.py`、`build/_edit_size2.py`、`build/_edit_align.py`（`AlignContent` 的轴向参数）；行的 `RowsInlineOffset`（起点补一份 `InlineSpacing`）与 `RowsInlineExtent`（只到列）两处的改动内容在 §9.136/§9.139 与本节。**落地的顺序**：先修 `wholeRect` 的偏移符号（配一条单元测：竖排表、行带比栏宽，断言第二栏里 caption 的 x 落在栏内），再回放转置，最后才谈那六对的绿。
 
+### 9.141 再量竖排表转置：几何靶页补齐了，六对碎片却更红，继续回退
+
+按 §9.140 的顺序把表格尺寸、行声明块向长度、行的内向范围与 `AlignContent` 一起做完，`build/_vtcontent.html` 现在逐项对上 Chrome：表 `130x150`、两行 `50x130`、格 `50x60` 在 `y=10/80`，`vertical-align: bottom` 的内容也站到格自身的块向终点边。新增单测 `TableLayoutTests.ATableAcrossThePageKeepsItsRowsAndAlignmentOnItsOwnAxes` 钉住这组数。
+
+语料却没有兑现这份几何：六对 `table-{col,row,section}-paint-vrl/vlr-rtl` 合计约 **+125 000 px**（约每对 `30 050` 退到 `50 900`），只有折叠边框两对小降。真正的新缺口不是再猜栏窗，而是转置后 **caption 在碎片序列里的归属与 tile origin 一起暴露**：test 的第一片在栏头补出红 caption，ref 的对应带却从后续片开始；可见矩形仍由同一栏窗裁剪，差异集中到红带与行带各自的平铺相位。故整片回退，只保留本节的新靶页和判据。下一步要先把“表内每一片究竟认领哪一段 caption/行带、背景按未切盒还是按片重设原点”用 `table-row-paint-vrl-rtl` 的逐条画命令量成一棵可断言的树，不能再按 2×2 靶页直接落。
+
+### 9.142 `box-shadow-003` 闭合：竖排 abs 的静态位置从块向起点边起算；两条 vrl 参考页改用引擎 trim
+
+作者已裁定竖排 `halt/chws` 由我们的 `text-spacing-trim` 实现负责，所以旧参考页拿 `<halt>` 模拟 OpenType `vhal` 的编码不再作准。`build/_abs-static-position.patch` 落地：`vertical-rl` 的无块向内绝对盒从静态位置的**高边**起算（盒的右缘落在栏/包含块的块向起点，向左生长），`vertical-lr` 保持低边；普通块、行内逃逸与网格/flex 给 area 的路径分开，不能让静态位置改写已定的对齐区域。新增 `PositionedLayoutTests` 两条。
+
+两条 `colon-001-{chws,halt}-vrl-ref` 去掉 `text-spacing-trim: space-all` 的抑制、去掉 `<halt>`/`<novhal>` 模拟层，改为与 test 相同的普通文本，由引擎自己的竖排 trim 给同一结果。`wpt/css-break/box-shadow-003` 7400 → **0**；两道自造参考页不再新增失败名，且 `the two agree`。
+
+门禁：单测 **2202**；打印 **189/198**（九条同名）；屏幕全量失败集合相对 `build/_score-vt.md` **0 新增名**（已知 4 条文本 timeout 仍在），总 `did not` **1987**；`css-break` 族 **25 → 24** 对（WPT 20、Gecko 4）。
+

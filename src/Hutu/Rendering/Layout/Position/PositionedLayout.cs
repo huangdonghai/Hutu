@@ -132,7 +132,8 @@ internal sealed class PositionedLayout
         Offset staticPosition,
         LayoutContext context,
         StaticStanding? standing = null,
-        StaticLine? line = null)
+        StaticLine? line = null,
+        Boolean staticFromHigh = false)
     {
         var position = box.Style.Position;
 
@@ -188,7 +189,8 @@ internal sealed class PositionedLayout
         }
 
         var (width, x) = Horizontal(
-            position, style, containingBlock, staticPosition.X, measured.Width, margin, insetWidth, standing, intrinsicWidth, line);
+            position, style, containingBlock, staticPosition.X, measured.Width, margin, insetWidth, standing, intrinsicWidth, line,
+            staticFromHigh);
         var (height, y) = Vertical(
             position, style, containingBlock, staticPosition.Y, measured.Height, margin, insetHeight, standing, intrinsicHeight);
 
@@ -353,7 +355,8 @@ internal sealed class PositionedLayout
         Double insets,
         StaticStanding? standing,
         Double? intrinsicWidth = null,
-        StaticLine? line = null)
+        StaticLine? line = null,
+        Boolean hangsFromHigh = false)
     {
         var hasLeft = position.Left.HasValue;
         var hasRight = position.Right.HasValue;
@@ -405,11 +408,24 @@ internal sealed class PositionedLayout
             // A box whose specified display was inline-level hangs from the insertion point its line
             // would have given it instead - after the floats shortened the line and shifted by the
             // line's alignment - and grows from there the way the line reads.
+            //
+            // Which edge of the box the flow's static position names is the writing mode's answer: the
+            // box begins at its own start edge, and a column that runs the page rightwards begins at the
+            // high coordinate, so the box hangs its right edge there and grows to the left (§10.3.7,
+            // CSS Writing Modes 3 §5.1, measured: an abs box with no block inset inside a
+            // `vertical-rl` container stands with its right edge on the container's). A box lent an
+            // area by a grid or flex container is not placed from the flow's point at all - the area
+            // and the alignment it asks for settle the edge, which is why the reversal is the plain
+            // path's only.
+            var align = standing is { } area
+                ? StaticStanding.Stand(area.Horizontal, area.Area.Width - width - margin.Horizontal)
+                : 0.0;
+
             x = line is { } hang
                 ? hang.Anchor(width, margin)
-                : staticX + margin.Left + (standing is { } area
-                    ? StaticStanding.Stand(area.Horizontal, area.Area.Width - width - margin.Horizontal)
-                    : 0);
+                : standing is null && hangsFromHigh
+                    ? staticX - margin.Right - width
+                    : staticX + margin.Left + align;
         }
 
         return (width, x);
