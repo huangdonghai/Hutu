@@ -1608,7 +1608,8 @@ internal sealed class BlockLayout
             Double reach = 0,
             Double lead = 0,
             Double trail = 0,
-            Int32 item = -1)
+            Int32 item = -1,
+            Boolean floats = false)
         {
             Box = box;
             Size = size;
@@ -1626,6 +1627,7 @@ internal sealed class BlockLayout
             Lead = lead;
             Trail = trail;
             Item = item;
+            Floats = floats;
         }
 
         public Box Box { get; }
@@ -1696,6 +1698,14 @@ internal sealed class BlockLayout
         /// container's own window: a single-line row flex splits by item, since every item begins at the
         /// container's block start and none of them re-flows into the fragmentainer after it.</summary>
         public Int32 Item { get; }
+
+        /// <summary>
+        /// Gets whether the child is a float the column holds directly: it stands at the column's edge
+        /// where the flow reached and takes none of that flow's room, so the boxes written after it go on
+        /// filling the column as if it were not there (CSS 2.1 §9.5.1, measured:
+        /// <c>wpt/css-break/float-017</c>).
+        /// </summary>
+        public Boolean Floats { get; }
 
         /// <summary>
         /// Gets the border box height the child would have had unbroken, for a piece of a broken child.
@@ -2269,6 +2279,24 @@ internal sealed class BlockLayout
             // the table itself before its rows are shared out (CSS Tables 3 §6.1, measured:
             // variable-fragmentainer-size-001, whose columns give up 20 at the bottom and 20 at the top).
             var (repeatHead, repeatFoot) = _engine.TableRepeats(child);
+
+            // A float the column holds directly spends none of the column's room: the plan gives it no
+            // height of its own, so the boxes the flow carries after it go on filling the column in order
+            // and the float overflows the column it was written in (CSS 2.1 §9.5.1, measured:
+            // wpt/css-break/float-017). A column that reads sideways leaves its floats to the stack, as
+            // they have always been placed there.
+            if (!vertical && IsFloat(child))
+            {
+                children.Add(new MulticolChild(
+                    child,
+                    size,
+                    margin,
+                    new FragmentChild(0, before, after, breaks.Inside),
+                    -1,
+                    last: true,
+                    floats: true));
+                continue;
+            }
 
             // A child that can be broken contributes one piece per line of its own, so the column ends
             // between two of them (CSS Multicol 3 §3.1). The lines are those the plan makes at the width
@@ -5926,6 +5954,27 @@ internal sealed class BlockLayout
 
                 var width = child.Size.Width;
                 var height = child.Size.Height;
+
+                // A float the column holds stands at the column's own edge, where the flow had reached,
+                // and the flow goes on from that place: the float spends none of the column's room, and
+                // its margin does not join the run the boxes of the flow fold into one another
+                // (CSS 2.1 §9.5.1, §8.3.1, measured: wpt/css-break/float-017, whose 100%-wide, 200-tall
+                // size-contained float leaves the ten lines written around it to fill the columns in order).
+                if (child.Floats)
+                {
+                    var edge = child.Box.Style.Float == FloatSide.Right
+                        ? x + share - width - child.Margin.Right
+                        : x + child.Margin.Left;
+
+                    parent.Children.Add(_engine.Arrange(
+                        child.Box,
+                        new Rect(edge, y, width, height),
+                        childContext,
+                        definiteHeight: false));
+
+                    y -= child.Margin.Top;
+                    continue;
+                }
 
                 // A window of a wrapping row flex is laid out as a flex container of the window's own
                 // size: its lines keep the distances the whole container laid them at, the first of them

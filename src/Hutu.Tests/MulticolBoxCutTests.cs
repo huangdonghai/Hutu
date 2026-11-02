@@ -347,6 +347,35 @@ public sealed class MulticolBoxCutTests
         "<tr><td><div style='height:" + head.ToString(System.Globalization.CultureInfo.InvariantCulture) + "px'></div></td></tr></thead>" +
         "<tbody><tr><td><div style='height:130px'></div></td></tr></tbody></table></div>";
 
+    /// <summary>
+    /// A float the column holds directly spends none of that column's room: the boxes the flow carries
+    /// after it go on filling the same column, and the float overflows the column it was written in
+    /// (CSS 2.1 §9.5.1, measured: wpt/css-break/float-017, whose ten lines stand in the columns around a
+    /// 100%-wide, 200-tall float rather than one per column after it). The flow here is a box of lines
+    /// taller than a column, which is the shape the columns share out the ordinary way rather than
+    /// through the float-and-flow packing - and the ordinary way is where the float's room was spent.
+    /// </summary>
+    [Test]
+    public async Task AFloatTheColumnHoldsSpendsNoneOfItsFlowRoom()
+    {
+        using var view = await Render(
+            "<style>#c { columns:2; width:200px; height:100px; column-fill:auto; column-gap:0 }" +
+            " #f { float:right; width:100%; height:200px }</style>" +
+            "<div id='c'><div id='f'></div>" +
+            "<div id='t'>a<br>a<br>a<br>a<br>a<br>a<br>a<br>a<br>a<br>a<br>a<br>a</div></div>");
+
+        var flowed = Find(view, "t");
+        var floated = Find(view, "f");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(flowed.BorderBox.X, Is.EqualTo(0), "the lines begin in the first column...");
+            Assert.That(flowed.BorderBox.Y, Is.EqualTo(0), "...at its top, under nothing the float spent");
+            Assert.That(floated.BorderBox.X, Is.EqualTo(0), "a float as wide as the column fills it");
+            Assert.That(floated.BorderBox.Height, Is.EqualTo(200), "and overflows the column it stands in");
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

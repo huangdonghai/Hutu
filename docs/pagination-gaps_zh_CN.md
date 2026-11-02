@@ -1634,3 +1634,15 @@ Chrome 的图（`build/_006-chrome.png`，与 Hutu 改后的 `build/_006-hutu2.p
 门禁：单测 2196 通过；屏幕 0 新增失败名，全量仍 1990。收益 `transform-006` 30376 → **13780**（没翻绿：剩下的差是最后一段的窗口高度，Chrome 的第四栏只画溢出的 lime，Hutu 把盒的窗口继续铺满）、`flexbox-multi-column-2` 15350 → 14000。代价 **15 对变差**：`gecko/flexbox/pagination/flexbox-{single,multi}-column-1{a..f}` 各 11475 → 13200（+1725）、`flexbox-single-column-2` 12525 → 13650、`-6` 9350 → 9850、`transform-008` 10531 → 10567。合计 +24k 换 -17k，且目标对没翻绿，按既定判据回退。
 
 判据记下：这 13 对是 **flex 容器被切成窗口**（`child.Relays` → `ArrangeFlexFragment`）的形状，它们的 margin 记账与「同一个盒被栏切开」不同——要么窗口每栏重付一次 margin 才是 Chrome 的图，要么它们另有别的差（这 13 对基线就红 11k，本来就还没对）。下一步先量 flex 窗口那几对到底差在哪，再决定这条规则按 `Relays` 分流还是只在 `portion.Offset > 0` 的切割段生效。
+
+### 9.123 栏里的浮点不占 flow 的空间（普通分栏路线补上，`float-017` 653 → 482）
+
+CSS 2.1 §9.5.1：浮点从它被写入的那条线上离开，后面的 in-flow 盒子由 flow 自己推进。Hutu 的**普通**分栏路线（`BlockLayout.MulticolChildren` → `ArrangeMulticolRun`）把栏的直属浮点当普通块记账，于是一个 200 高的浮点把后面十行文字整体推到别的栏去。
+
+两条路线的分工是关键：`FloatFlowColumns`（BlockLayout.cs:3182）早就懂这条规则（`PlaceFloatFlowColumns` 里 “a float takes no room in the stack”），但它在 3226–3230 遇到「比栏还高、自身又带行」的 flow 盒就弃权交给普通路线；`wpt/css-break/float-017` 恰好是这个形状（flow-root 里十行 = 240 高 > 100 的栏）。
+
+代码：`MulticolChild` 加 `Floats`；`MulticolChildren` 在算完 margin 与重复表组之后，对 `!vertical && IsFloat(child)` 的直属子元素发一条 `Fragment(0)` 的条目并 continue；`ArrangeMulticolRun` 看到 `child.Floats` 就把浮点摆在**该栏的边缘**（`float:right` 取 `x + share - width - margin.Right`）当前游标处，安排完 `y -= child.Margin.Top`，游标不推进。竖排栏保持原样（`TracksFor` 的注释说明侧向块轴不玩这套）。
+
+门禁：屏幕全量 1990 finding 不变、**0 新增失败名、0 对变差**，`float-017` 653 → **482**；单测 **2197**（新增 `AFloatTheColumnHoldsSpendsNoneOfItsFlowRoom`：十二行文字的盒子必须从第一栏顶端开始；去掉该规则它跑到 x=200、浮点自身高度被切成 100，测试即红）；打印 **189/198** 九条同名、无 css-break。
+
+**剩下的 482 px 也已量清**（task #23）：Chrome 把浮点推到它落下的那一栏，并让**那一栏对 flow 关闭**——100% 宽的浮点不留任何可并排的行，所以 Chrome 的图是 1–5 行在第一栏、6–10 行在**第三**栏（ref 的 `168,49.72` 正是第三栏，第二栏整栏被浮点占住）。普通路线只有一个游标，表达不了「当前栏继续用、下一栏整栏关闭」，要么把 tracks（`FloatTracks`/`FitBelow`）搬进普通路线，要么让 `FloatFlowColumns` 自己会切带行的 flow 盒。
