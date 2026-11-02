@@ -291,7 +291,7 @@ internal sealed partial class TableFormattingContext
             ? borderBox.Y + build.CaptionTop + build.Border.Top + build.Padding.Top
             : borderBox.Y + build.Border.Top + build.Padding.Top +
                 (vertical ? 0 : build.CaptionTop);
-        ArrangeRows(build, layout, gridX, gridY, childContext);
+        ArrangeRows(build, layout, gridX, gridY, childContext, slice?.Piece);
         ArrangeColumnBands(build, layout, gridX, gridY);
 
         var bottomY = gridY + build.Grid.Height;
@@ -651,7 +651,7 @@ internal sealed partial class TableFormattingContext
     /// Lays the rows out, nesting each run of rows that share a row group inside the group's box so
     /// that a row group background can be painted behind its rows.
     /// </summary>
-    private void ArrangeRows(TableBuild build, LayoutBox table, Double gridX, Double gridY, LayoutContext context)
+    private void ArrangeRows(TableBuild build, LayoutBox table, Double gridX, Double gridY, LayoutContext context, Rect? piece)
     {
         var grid = build.Grid;
         var spacing = build.Style.Collapse ? 0.0 : build.Style.VerticalSpacing;
@@ -783,7 +783,7 @@ internal sealed partial class TableFormattingContext
 
             foreach (var cell in row.Cells)
             {
-                rowLayout.Children.Add(ArrangeCell(build, cell, gridX, gridY, inlineSpacing, spacing, rowContext));
+                rowLayout.Children.Add(ArrangeCell(build, cell, gridX, gridY, inlineSpacing, spacing, rowContext, piece));
             }
 
             // The row is moved whole, content and all, once it has been placed: what stands inside a row
@@ -908,7 +908,7 @@ internal sealed partial class TableFormattingContext
         Double gridY,
         Double inlineSpacing,
         Double spacing,
-        LayoutContext context)
+        LayoutContext context, Rect? piece)
     {
         var grid = build.Grid;
         var vertical = build.Box.Flow.IsVertical;
@@ -982,7 +982,17 @@ internal sealed partial class TableFormattingContext
             // table's own outer halves belong to its first and last rows (CSS 2.1 §17.6.2, measured:
             // table-collapsed-borders-paint-htb-ltr, whose lime band runs 120..180 over a row whose box
             // is 125..175).
-            var overhang = cell.Row == 0 ? -cell.UsedBorder.Top : cell.UsedBorder.Top;
+            // The upper half of a shared line goes with the row above - unless that row is not in this
+            // fragment at all: a cell whose top edge is the fragment's own top edge still shows the
+            // mitre its wide vertical edges reach above the line, so the band begins at that edge rather
+            // than half a line below it (CSS 2.1 17.6.2, measured:
+            // wpt/css-break/table/table-collapsed-borders-paint-at-boundary, whose continued fragments
+            // open with the 15-pixel-wide vertical rather than with the horizontal line's colour).
+            var cutAbove = piece is { } band && cell.Row > 0 && rect.Y <= band.Y + 0.001;
+
+            var overhang = cell.Row == 0 || cutAbove
+                ? -cell.UsedBorder.Top
+                : cell.UsedBorder.Top;
             layout.SideBand = new Rect(
                 rect.X,
                 rect.Y + overhang,

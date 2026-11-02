@@ -2216,3 +2216,11 @@ Q1 有了答案，方向和我猜的不同。三件事：
 原因落在 `TableFormattingContext.cs:985-990`：`overhang = cell.Row == 0 ? -UsedBorder.Top : UsedBorder.Top`、`SideBand` 从 `rect.Y + overhang` 起。而 `rect` 是**整盒**的位置（我们的窗口模型把整盒摆在 `栏头 - consumed`），所以这条越界带永远落在上一个碎片里、在这一片被剪。要修的是：**竖边的越界量要按这一片的顶边算**，即被切开的那一页里，每个继续的碎片都在自己的栏头重画一次那 5 px 的 mitre 越界（横带本身仍按共享线分配，颜色/宽度不动——`htb-ltr` 与 `Resolve` 的平手判据都不受影响，`>=` 那条已经证伪）。
 
 本轮仍无代码落地（这条改动的判定面只在「表被栏切开且宽竖边正好跨边界」的 3 对上，改错了会直接砸 htb-ltr 与两条已绿的表画法，需要先看清 `Cell` 拿到的 `rect`/`slice` 是哪一层再动）。工作树等于 `cbdfb194`，`css-break` 21 对、打印 193/198、单测 2216。
+
+### 9.164 落下一半：fragment 顶上的 cell 现在重画自己竖边的 mitre 越界（at-boundary 2 540 → 2 415）
+
+§9.163 那条规则可以落：`TableFormattingContext.ArrangeCell` 的 `overhang` 过去只看 `cell.Row == 0`；现在多一个条件——**这一片的顶边正好压在 cell 自己的顶边上**（上一行不在这片里）时也按「首行」那支把竖带往上越出半条共享线。片矩形从 `Arrange` 的 `slice?.Piece` 经 `ArrangeRows` 传到 `ArrangeCell`（两处签名各加一个 `Rect? piece`）。
+
+实测：`table-collapsed-borders-paint-at-boundary.tentative` 2 540 → **2 415**；`table-collapsed-borders-paint-{htb-ltr,vrl-ltr,vlr-rtl}` 分别保持 0 / 9 090 / 9 090；四对 htb 表画法（`table-{grid,row,section,col}-paint-htb-ltr`）全绿不动。门禁：单测 **2216**、`css-break` **21 对**、打印 **193/198**、屏幕全量 `2335 of 2335`/`5845 of 5845` 全画出，`did not` 与上一份清跑基线逐族相同（gecko 600、wpt 1376）⇒ 没有任何绿被换掉。
+
+**没有转绿，所以这条只是半步**：差的 2 415 仍是那几条 15 px 段与右侧 12 px 段，形状已经不在「越界归属」上了（下一步大概率是不等宽边框之间的 **45° mitre 斜接线**——`UsedBorder` 现在把左右竖边各自画成矩形，交界处的斜切没算；Blink 在 collapsed 模型里对不等宽相邻边做斜接）。这条落下来的价值是：那块斜接要判「谁的半条线在fragment顶」，没有本条就无从下手；以及 `htb-ltr` 的钉在改动里被反复验证过，规则边界是清楚的。
