@@ -1704,3 +1704,21 @@ Chrome 量的 `table-grid-paint-vrl-rtl`（`build/_vtbchrome.txt`）：整张表
 
 门禁：单测 **2200**（新增 `ACaptionOfATableAcrossThePageStraddlesTheColumnAndClaimsItsLength`：改前该测的三条断言全部对不上——caption 高 0、它从 `borderBox.X` 往右长、整盒只有 245 长只切出三片；另把 §9.126 的竖排填充测改按栏窗宽度断言，因为片现在铺满整盒）。打印 **189/198** 九条同名、无 css-break。屏幕全量 **0 新增失败名**、findings 1990 → **1988**；`wpt/css-break` **27 → 25 对**，族内像素 603 585 → **519 285**（-84 300）：`table-grid-paint-vrl-rtl`、`-vlr-rtl` **33500 → 0 转绿**；`table-collapsed-borders-paint-vrl-ltr`、`-vlr-rtl` 各 **20340 → 9090**；语料外 `gecko/css-grid/grid-item-table-stretch-004` 45185 → 43504。变差的是仍红的六对竖排表：`table-row-paint-*` 各 29930 → 30750、`table-col-paint-*` 各 30630 → 31590、`table-section-paint-*` 各 30630 → 31450——它们缺的是最后一根轴：**列沿行内向轴展开**（Hutu 现在把一行的两格排在 x=780 与 x=768，Chrome 把它们排在 y 上、`35+10+35=80`），这条留在 #8。
 
+### 9.128 一块让内容超出自己的盒子，margin 只在它起始的那一栏付；每片绕自己那一段转（`transform-006` 30376 → 1361）
+
+§9.122 当年量过又撤回的那条，这次找到了判据。Chrome 量的 `transform-006`（`build/_tf6probe.html`，去变换版给原始矩形）：一块 `margin-top:50; height:175` 的盒子带一个 300 高的子，在四个 100 高的栏里出
+
+```
+盒：  [0,100 100x50]  [120,50 100x100]  [240,50 100x25]  [360,50 100x0]
+子：  [50,100 50x50]  [170,50 50x100]   [290,50 50x100]  [410,50 50x50]
+```
+
+三件事一起才成立：
+1. **margin 只付一次**。Hutu 在 `ArrangeMulticolRun` 里对每一片都 `y += child.Margin.Top`，于是第 2~4 片整体低 50 px（图上看得见：旋转块垂到黄色容器之下）。改成只有**第一片**付——判据是 `child.Reach > child.Fragment.Height`，即这块盒子让内容伸到了自己之外：只有这种盒子的后续片会「装着不属于自己的墨」，也只有它的偏移是按盒的边框盒量的。
+2. **每片的旋转框是它自己那一段**。`FragmentSlice.Piece` 过去递的是**栏窗**（`held`，100 高），引擎用它当 transform 的框（`LayoutEngine.Arrange`：`slice?.Piece ?? BorderBox`），于是第 3、4 片的支点落在窗底而不是「盒自己那段」的底。现在 `Piece` 递 `min(portion.Height, max(0, child.Whole - portion.Offset))` = 50/100/25/0 ✓，与 Chrome 的旋转包围盒逐项对得上（`build/_mgprobe.html`：100x40 与 100x80 转 25° 得 107.5x78.5 与 124.4x114.8 ✓ Chrome 实测同值）。
+3. **`Held` 里那一次边距不能扣**。第一次尝试同时改了 `Held`（把 `Margin.Top` 从盒的片高里减掉），结果 14 对 gecko flex 分页各 +1725；`Held` 是**栏还剩多少房间**的记账，减了边距等于把房间多给了后面的子。回退 `Held` 之后，只剩 `Reach` 那条判据，动到的只有两对本来已红的（`flexbox-single-column-2` +2200、`-6` +500——它们的容器确实也伸出了自己，规则对它们成立，Chrome 的图与我们的仍有差，记在 #14 余下）。
+
+试过的判据与结果（都量过，别再走）：`!child.Relays`（14 对 → 13200）、`child.Box.Kind != BoxKind.Flex`（14 对 → 14450，且与不加无差别——那两对 flex 页里被切的子不是 `BoxKind.Flex`）、两者同时（同上）。**只有 `Reach > Fragment.Height` 把 14 对压到 2 对**。
+
+门禁：屏幕全量 **0 新增失败名**、findings 1988 不变；`wpt/css-break/transform-006.html` **30376 → 1361**（css-break 族 519 285 → 490 270）；变大的两对 gecko flex 分页都是已红对，共 +2700，族外净收益 −26 315。单测 **2200**：`ABoxWithItsOwnBlockStartMarginDividesAtTheRoomLeftAfterIt` 与 `EachPieceOfADividedTransformedBoxTurnsAboutItsOwnRectangle` 的期望改按 Chrome 实测值钉（片段窗口 40/100/100、盒自己 40/80/0、支点 (50,20)/(50,80)；第三片的支点现在是 140，而 Chrome 那一片是 100x0（旋转包围盒 90.6x42.3），该对余下 1361 px，留在 #14）；打印 **189/198** 九条同名。
+

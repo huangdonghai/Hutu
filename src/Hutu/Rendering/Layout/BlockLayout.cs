@@ -5625,6 +5625,17 @@ internal sealed class BlockLayout
                     var wholeWidth = child.Whole > 0 ? child.Whole : pieceWidth;
                     var blockX = blockReversed ? start - pieceWidth : start;
                     var heldRect = new Rect(blockX, y + child.Margin.Left, pieceWidth, height);
+
+                    // The fragment's own box, which its transform turns about - the part of the block
+                    // extent the box holds in this column, not the whole window it is shown through
+                    // (measured: transform-006 read on the axes a vertical column stacks along).
+                    var fragmentRect = new Rect(
+                        blockReversed
+                            ? blockX + pieceWidth - (portion.Cursor >= 0 ? portion.Cursor : portion.Height)
+                            : blockX,
+                        y + child.Margin.Left,
+                        portion.Cursor >= 0 ? portion.Cursor : portion.Height,
+                        height);
                     var wholeRect = new Rect(
                         blockReversed ? blockX + offset + pieceWidth - wholeWidth : blockX - offset,
                         y + child.Margin.Left,
@@ -5656,7 +5667,7 @@ internal sealed class BlockLayout
                             cutStarts,
                             cutEnds,
                             wholeRect,
-                            Piece: heldRect));
+                            Piece: fragmentRect));
 
                     if (portion.Offset >= 0)
                     {
@@ -5801,8 +5812,17 @@ internal sealed class BlockLayout
         // box's own height the piece holds (CSS Fragmentation 3 §4.3).
         static Double Painted(MulticolChild child) => Math.Max(child.Reach, child.Fragment.Height);
 
+        // How much of the box itself the column holds: where inside the box is counted from its border
+        // box, while a piece's outer height carries the margin that opened the box in the column where it
+        // began, so that margin comes back out - otherwise a box that lets its content overflow is
+        // advanced past its own end and the next column is handed a piece of a box that has none left
+        // (measured: transform-006, whose box of 175 with a 50 margin comes out 50 / 100 / 25 / 0 across
+        // four columns of 100). A window of a flex container keeps its own accounting: each window is a
+        // container of its own, margin and all.
         static Double Held(MulticolChild child, Double within, Double take) =>
-            Math.Min(take, Math.Max(0, child.Fragment.Height - within));
+            Math.Min(
+                take,
+                Math.Max(0, child.Fragment.Height - (child.Relays ? 0 : child.Margin.Top) - within));
 
         // A column that runs out of room inside a box cuts it where one of the box's own units ends, and
         // the pieces keep the number of LINE boxes the page asks for on each side of the break: orphans
@@ -6063,8 +6083,20 @@ internal sealed class BlockLayout
                 var child = children[portion.Child];
 
                 // A column box begins a fresh stack: what a child brings to its top edge is added there
-                // rather than folded into the margin run the box before ended with.
-                y += child.Margin.Top;
+                // rather than folded into the margin run the box before ended with - but only in the
+                // column where the child begins. A piece that carries on from the column before stands at
+                // the head of its column with nothing of its margin left to pay, because the room the
+                // first column gave it was already cut by that margin (CSS Fragmentation 3 §4.3,
+                // measured: transform-006, whose reference page starts every one of its four fragments at
+                // the top of its column although the box carries margin-top:50). Only a box that lets its
+                // content reach past itself is paid this way: the pieces of a box that stands no taller
+                // than what it holds keep the margin their column gives them, which is what the windows of
+                // a painted-over flex container do (gecko/flexbox/pagination/flexbox-single-column-1a
+                // through -1f and -multi-column-1a through -1f stay as they were; -2 and -6, whose
+                // containers do reach past themselves, move +2200 and +500 and are still red).
+                y += portion.Offset > 0.001 && child.Reach > child.Fragment.Height + 0.001
+                    ? 0
+                    : child.Margin.Top;
 
                 var width = child.Size.Width;
                 var height = child.Size.Height;
@@ -6195,6 +6227,25 @@ internal sealed class BlockLayout
                     var wholeHeight = child.Whole > 0 ? child.Whole : height;
                     var whole = new Rect(x + child.Margin.Left, y - portion.Offset, width, wholeHeight);
                     var held = new Rect(x + child.Margin.Left, y, width, portion.Height);
+
+                    // The fragment's own box, which is what its transform turns about: the column shows
+                    // through the window it has, but the box ends where its own part of the stack ends,
+                    // and a child that overflows past it rides on that fragment's transform (CSS Break 3
+                    // §4.7 against CSS Transforms 1 §transform-origin, measured: transform-006, whose
+                    // reference page stands four boxes of 50, 100, 25 and 0 with children of 50, 100,
+                    // 100 and 50 inside them - the last two fragments being shorter than the column
+                    // they stand in and still carrying the lime that reaches past them).
+                    var fragment = new Rect(
+                        x + child.Margin.Left,
+                        y,
+                        width,
+                        child.Relays
+                            ? portion.Height
+                            : Math.Min(
+                                portion.Height,
+                                Math.Max(
+                                    0,
+                                    (child.Whole > 0 ? child.Whole : height) - portion.Offset)));
                     var cutBorder = BorderOf(child.Box);
                     var cutPadding = child.Box.Style.Padding.Resolve(share);
                     var cutStarts = portion.Offset < 0.001;
@@ -6218,7 +6269,7 @@ internal sealed class BlockLayout
                             cutStarts,
                             cutEnds,
                             whole,
-                            Piece: held));
+                            Piece: fragment));
 
                     // The last piece of a box the column cut by its own content units is clipped to the
                     // column, not to the box's bottom edge: a float that piece's flow placed stands
