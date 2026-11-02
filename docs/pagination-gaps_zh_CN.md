@@ -1842,3 +1842,13 @@ ref:  fill     577,337 255x10  #ffffff                    ← 列间距归表底
 
 **处置**：三步（连同 §9.135 A）都退回，代码留在 `b493afc4`。要重放：`build/_edit_size1.py`、`build/_edit_size2.py`，再加本次会话的另两处（行 `Style.Width` 读声明块向尺寸、`RowsInlineExtent`）——脚本没落盘，改动内容已在本节写清。落它的**前提**是先补画法那两条，否则本族只会更红。
 
+### 9.137 三次数到的收支：clone 保两边（+1573）、fieldset 的 margin 守卫（+22239）、竖排列序按行内向方向（再 +16650）
+
+**① `box-decoration-break: clone` 的碎片保留两侧 padding/border/圆角**（`InlineLayout.OpenBox`：`clones` 时把 `cutStart/cutEnd` 压成假）。画法差原本能对上：`gecko/css-break/box-decoration-break-with-bidi` 的 test 每段只带一侧 padding（27、33，参考页 30、40 = `padding: 11px 3px 5px 7px` 的左右两侧）。改后该对 6813 → **6770** ✓ 方向对；但 `box-decoration-break-1` 63 794 → **65 410** ✗（该页 span 还有 `margin: 13 17 19 23` 与 `border-radius:17px` 的四宽不等虚线框），族内净 **+1573** ⇒ 退回。⇒ clone 这一族还差**每段自己的 margin 盒与虚线相位**，只改边的归属会把另一族推远；两者要一起做。
+
+**② fieldset-001**（本族最大单对 84 755）。唯一的拦截点是 `DividesUnits` 的 `margin.Bottom != 0`（注释：带块向 margin 的盒子整块放行，因为 margin 让出的房间没算）。去掉后 Chrome 做的它做了——fieldset 被切成片；但 84 755 → **106 994**（§9.133），且量 Chrome 后发现根本不是分片规则的问题：Chrome 的 `fieldset-001` 里**图例整体坐在块向起点边之内**（`lg [15,93 110x49]`、内容从 `c [15,152 …]` 起 = 93 + 49 + 10 padding ✓，整盒 197 高），而我们的模型把图例上移了半个越程、盒高 175.5 ⇒ 断点自然差 20+ px。那套「越程半移」的 Gecko 图例模型正撑着另外 23 对绿的对，不能为这一对改；要改的是**在有 `overflow` 子盒（本页 `c` 是 108 高蓝块）时图例的流内占位**，属 #24 的下游，先不动。
+
+**③ 竖排多栏的栏序是否随 `direction: rtl` 反向**。画法比对里参考页的条带在 y=302/392 而 test 的首片在 y=292，像是栏应从行内向起点（下方）起排。给 `ArrangeMulticolRunAcross` 加 `inlineReversed` 后：`table-row/col/section-paint-vrl-rtl`、`-vlr-rtl` 从（含尺寸转置的）49 050/50 900/49 750 变成 **51 050/53 700/51 750** ✗ 更差；单独看不含尺寸转置时该假设也无收益 ⇒ 参考页那组 abs 条带的 y 不等于「第一栏」，我的坐标读法错了；退回。**两对已绿的 `table-grid-paint-*` 在这一整轮实验里始终保持绿**（含尺寸转置与栏序改动），这一点值得记下：竖排表格的整盒+栏窗模型对「单列」形状已经正确。
+
+至此，本族剩下的六个竖排表对（约 176 k px）需要的是**片内内容**（单元格的子盒沿哪根轴排、`AlignContent` 沿块向、行带只到列）而不是再次的轴猜测；三条被否证的判据都留有数，别再重复试。
+
