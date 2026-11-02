@@ -2152,3 +2152,19 @@ Q1 有了答案，方向和我猜的不同。三件事：
 落地与门禁：`wpt/css-sizing/clone-nowrap-intrinsic-size.html` 与 `-bidi.html` **转绿**（这两对本来就在考同一个问题，直接当回归用）；`box-decoration-break-1` 49 293 → **25 328**；单测 **2214** 全绿；`css-break` 22 对；打印 193/198；屏幕全量 `5845 of 5845` 全画出、无真实新增失败（动的 4 个名字全在那族 5 秒字体回退超时里）。提交 `53f2931d`。
 
 `box-decoration-break-1` 剩下的 25 328 已经换到另一处，且方向反了过来：**不是 clone 少算，而是我们未切开的行内盒多算**。同一对里两侧逐值：test（clone，现在）`line = 119.97`、`td = 141.97`；ref（三个独立 span，未切开）`line = 127.97`、`td = 149.97`。span 盒两侧同为 79.97（= 内容 47.97 + 左右 padding 16 + 左右 border 16 ✓ 右边距已经在盒里），margin 23/17 ⇒ 正确应为 119.97。ref 多的 8.0 恰是 `border-right 3 + padding-right 5`：也就是**结束边被收了两次**（一次随 `Advance` 的离开元素，一次随别处——`MeasureIntrinsicCore` 末尾那圈 `open` 的 `InlineEndInset` 收法，或放置侧 `closing` 的 margin 通道）。下一刀就在 `Advance`/关闭那条路径上把这一笔找出来；它与 clone 无关，属于普通行内盒的内在测量，风险面比本轮这条大（35+ 个含 dashed/inline margin 的通过页都在它下游），要单独量。
+
+### 9.159 上一节点出的双收/漏收都修了：`box-decoration-break-1` 与 `css-sizing/slice-nowrap-intrinsic-size`（含 bidi）转绿
+
+§9.158 剩下的那 8.0 不是「结束边被收两次」这么简单，而是内在测量里**三处各错一格**（`MeasureIntrinsicCore`）：
+
+1. 元素在 `<br>` **之前**就闭合时，闭合边要到**下一个 item 的 chain 被走时**才收 ⇒ 记到了后一行上：真正持有它的那行短了，后一行长了一份 inset（`<span>d</span><br><span>e</span>` 那格量到 89.59，而 span 的 margin 盒只有 81.59）。
+2. item 流在元素仍开着时结束，末尾那圈 `open` 只收 `InlineEndInset`、不收 `InlineEndMargin` ⇒ 又一种数（`<span>a</span>` 一格 64.59，少 17）。
+3. clone 跨行时两侧边一概不收（§9.158 已处理，这一条与上面两条是同一个不对称的三面）。
+
+修法是把「行尾」这件事交给走 chain 的那一步：`item.IsBreak` 分支里先用 `Advance(open, item.Inline, carried:null, origin:0, apply:true, step:null)` 把**该 break 已经走出来的元素**结掉、把闭合边记在**结束的那一行**上，再按 clone 规则给下一行补起始边；流末尾同样补上 margin。放置侧本来就一直算对（span 盒 79.97、x=47 这些逐值两侧一致），错的只有内在尺寸——所以这处偏差只在**自动列宽/收缩到内容**这类要靠 extent 的地方露头，也解释了为什么 35+ 个带 inline margin 的页能通过：它们两边同样偏。
+
+落地：`gecko/css-break/box-decoration-break-1`（49 293，竖排表之外最大的一条分片对）**转绿**；`wpt/css-sizing/slice-nowrap-intrinsic-size.html` 与 `-bidi.html` 同时**转绿**（上一轮那对 clone 的镜像题）。新增 `src/Hutu.Tests/InlineIntrinsicEdgesTests.cs` 两条：三种写法（只有 span / span 后带 `<br>` / `<br>` 两侧各一个 span）的格宽必须相等；同一份两行内容，clone 要比 slice 宽（每行各带自己的两侧边）。
+
+门禁：单测 **2214 → 2216** 全绿；`css-break` **22 → 21 对**（Gecko 2、WPT 19）；打印 **193/198** 不变；屏幕全量 `5845 of 5845`、`2335 of 2335` 全画出，真实只差这三条转绿，名字跳动的是那族 5 秒字体回退超时。提交 `2a620629`。
+
+剩下 21 对的分布没变：竖排碎片表 6、折叠边框 3、OOF/abspos 4、`vertical-wm` 2、`fieldset-001`、`flexbox-069`、`balanced-inner-multicol`、`transform-006/008`、`oof-093`，加上 CSS2 的 `floats-clear-multicol` 6 条与打印 5 条；主墙仍是 §9.156 写的递归分片（每片站在栏头 + 自带 content offset），本轮这条 intrinsic 修复把它需要的「边记在该记的那一片」也一起摆正了。
