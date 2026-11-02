@@ -2235,3 +2235,53 @@ Q1 有了答案，方向和我猜的不同。三件事：
 - `at-boundary` 那 2 415 是另一件独立的事，也不是裁剪问题：cell 的四条 used 半边现在被画成「横带矩形 + 竖带矩形」（`Painter.AddBorder` 的 `SideBand` 分支），htb-ltr 需要竖带**越过**共享线（`overhang`），而 Chrome 在不等宽相邻边之间画的是 45° 斜接。一个 `BorderCommand` 的环带不了这两件事——要么竖带越过共享线但没有斜角，要么有斜角但丢掉越界。要同时得到两者，需要给折叠模型单独画**梯形/三角形路径**（`SkiaPaintExecutor` 现在只有一般盒的 mitre 环路径，见其 723 行附近）。这是半天到一天的活，且判定面是所有含折叠边框的页（当前绿的表画法很多）。
 
 所以下一步不再是从这批里挑一条量出「小修」的活儿，而是二选一的工程：要么开「按 fragmentainer 重新布局」这条改造（真正的根治，跨多次会话，中途只能靠开关/逐族验证保绿），要么把 `at-boundary` 与折叠边框的斜接路径当作独立目标做掉（只值这几对）。两者都不该在同一个改动里混着做。本轮代码零改动，工作树仍是 `cecafb5f`，门禁未变（单测 2216、`css-break` 21、打印 193/198）。
+
+### 9.166 045 的差额是「窗口归谁」：拆 CDATA、画师侧平移、布局侧站栏头三条都实测过，全部回退
+
+先把 Chrome 的真值钉住，因为这一条改了前面几节的判断。新工具 `build/_pix` 能把一页（Chromium 现渲）或一
+张 PNG（`build/look/` 里我们自己的产物）在一个区域里按颜色成串、按字母成图打出来；`PIX_RAW=1` 关掉
+`html,body{overflow:hidden !important}` 那一条注入。注入必须关掉的理由是实测出来的：`build/_ink` 报
+`out-of-flow-in-multicolumn-045.html` 两侧都「只画正文、differ=0」，那是注入把 abs/负边距的内容按 body 的高
+度剪掉了。raw 之下 Chrome 画的是 `8,50 50x100` 与 `58,50 50x100` 两片绿，拼成和参考页一样的 100x100 方块。
+
+- **同一批 Talbot XHTML 参考页的 `<![CDATA[` 在 Chrome 里确实是整份作废**：`document.styleSheets[0].cssRules
+.length === 0`、`getComputedStyle(div).backgroundColor = rgba(0,0,0,0)`、rect `784x0`（`abspos-017-ref`、
+`out-of-flow-in-multicolumn-045/073/090-ref`、`fixed-in-multicol-with-transform-container-ref` 全一样）。上游
+对照：`css/css-break/out-of-flow-in-multicolumn-045-ref.html` 在 master 已经 404，测试现在
+`rel=match ../reference/ref-filled-green-100px-square.xht`（GitHub contents API 读到）⇒ 我们导入的是上游修
+参考页**之前**的版本。
+- 所以 `WithoutCdataInStyles`（`12e5707b`）不是缺陷而是替那张废参考页代工的兼容层。拆掉它的全量实测（gecko
+`did not` 600→599、wpt 1377→1379）：转绿 3 条 `CSS21-t100801-vertical-align`(240)、
+`out-of-flow-in-multicolumn-045`(10 000)、`aspect-ratio/abspos-021`(10 000)，`-073/-090` 11 600→1 600；同时
+新红 4 条 `abspos-017`、`flex-minimum-height-flex-items-017/-018`、
+`row-subgrid-standalone-column-axis-size-001`（各 10 000），`abspos-018` 10 000→20 000。更关键：045 的那条
+「绿」是**两侧都不画**换来的，而 Chrome 真值里测试页必须画满方块。⇒ 兼容层保留，已回退；真要清这类对，正路
+是按上游现况重导那 14 对，而不是改引擎的 CSS 解析。
+- **画师侧「窗口随位移走」不成立**（`_cuts` 记 `Fragment` 标记，`PaintBox`/`Collect` 里 pop 掉栏窗再 push
+平移后的窗）：045 一分未动。原因是 abs 那格是**延迟绘制**的——它带走的链里是平移后的窗，可画布上外层那格
+**未平移**的窗已经 push 过，只能与它相交、不能加宽。真要做，得把「片段窗」从「祖先链上的裁剪」改成「每个被
+画盒自带、按其累积位移平移」，那是画线管的重排，不是多加一条规则。已回退。
+- **布局侧「片站栏头 + 自带 content offset」单独落地是纯代价**（`ArrangeMulticolRun` 递 `standing` 矩形与
+`slice.Offset`；`BlockLayout.Arrange` 把 in-flow 起点回退 `Offset`，`childBox`/abs 包含块仍用片自己的原点；
+`FragmentClip = arranged.BorderBox` 让窗随该片位移走）：
+    - `out-of-flow-in-multicolumn-045/073/090` **一分未动**；`fieldset-001` 84 755→79 605（仍红）；
+      `block-end-aligned-abspos-with-overflow` 3 000→3 500；`transform-006` 1 361→**7 809**、
+      `transform-008` 10 531→**12 206**。
+    - 新红 9 条：`abspos-in-opacity-002`(10 000)、`-003`(4 000)、`grid/grid-item-oof-013`(4 500)、
+      `out-of-flow-in-multicolumn-004`(2 400)、`overflow-clip-012`(5 000)、
+      `overflowed-block-with-no-room-after-000/-001`(3 000/3 000)、
+      `table/repeated-section/variable-fragmentainer-size-002`(1 600)、`widows-orphans-023`(1 250)。
+      `css-break` 21→30。已回退。
+
+为什么两条路都没动 045：两个引擎都把 `top:100;left:100` 作用在**内层 `.rel` 盒**上，而窗是外层那一格（没有
+位移）的栏窗。Blink 的 paint offset 覆盖「含该 clip 的那个 chunk」，于是窗和内容一起走；我们把窗留在流位置
+⇒ 两片各差 100 px 而全被剪掉，差额正好是整块 10 000。
+
+所以切口不在「让片站栏头」，而在「窗记在谁身上」：把 `held` 从被剪内容的外层祖先挪到**被剪子树自己**身上，
+并且和 Chrome 的量一起看第二条——内联方向不剪（abs 50 宽在 40 宽的栏里画满，`8..58` 与 `58..108` 正好铺满参
+考方块）。判定面：`out-of-flow-in-multicolumn-045/073/090/093`、`block-end-aligned-abspos-with-overflow`、
+`abspos-in-opacity-*`、`overflow-clip-012`、`grid-item-oof-013`；回归面是所有依赖栏窗剪溢出的绿对
+（`widows-orphans-*`、`overflowing-block-*`、`overflowed-block-with-no-room-after-*`）。
+
+本轮代码零改动（三处实验全部回退，工作树仍在 `1b5797f2`），门禁不变：单测 2216、`css-break` 21 对、打印
+193/198。
