@@ -1624,3 +1624,13 @@ Chrome 的边界（量的：`build/_bisplit.html` 的 `getClientRects` 四例，
 门禁：单测 **2196**（新增 `ABlockBreaksTheInlineThatHoldsItIntoTwoRings`、`ARunOnOneSideOfTheBlockLeavesTheInlineOneBox`）；打印 **189/198** 九条同名、无 css-break；屏幕全量 1994 → **1990**，**0 新增失败名**。翻绿 4 对：`wpt/css-break/box-decoration-break-clone-split-inline` 35314 → 0（本族 24 → 23）、`wpt/css-backgrounds/box-shadow/block-in-inline-fragmentation-001` 28251 → 0、`gecko/position-sticky/block-in-inline-1` 17200 → 0、`wpt/CSS2/normal-flow/block-in-inline-first-line-001` 1001 → 0。变好 4 对：`wpt/CSS2/linebox/split-inline-borders` 34494 → 3333、`wpt/css-position/position-absolute-in-inline-008b` 39600 → 31200、`wpt/css-lists/inline-list-with-table-child` 57732 → 53048、`wpt/CSS2/visuren/split-inner-inline-1` 1424 → 1126。
 
 变差 3 对（原本就红，留下待查）：`wpt/css-text-decor/text-decoration-inset-orthogonal-block-001` 88 → 6732 —— `u { writing-mode: sideways-lr }` 断开后碎片被按横排行内测成 191.75 宽，而 ref 里同一段文字是 70.88x191.75 的竖带，缺的是**正交行内的量法**，不是断开本身；`wpt/css-position/position-absolute-in-inline-007b` 28800 → 33600、`wpt/css-anchor-position/anchor-position-inline-007` 2000 → 2800 —— 两页的 `span` 都写了 `position: relative`，但把“碎片的相对位移带到逃逸的块上”这套机制（`LayoutEngine` 里的 `BrokenFrom` 累加）整段删掉后重跑，三对数字与现在**完全一致**，说明变差与位移无关，是断块之后行盒重新分组。§9.2.1.1 另有一句“行内的相对位移也影响它包含的块”，语料里没有对考它，机制未加。
+
+### 9.122 量清楚但没落：一块被栏切开后的块向 margin 只在首段计一次（`transform-006` 30376 → 13780，但 13 对 flex 分页变差）
+
+Chrome 的图（`build/_006-chrome.png`，与 Hutu 改后的 `build/_006-hutu2.png` 并排看过）：`columns:4; column-fill:auto; height:100` 里一个 `margin-top:50; height:175` 的盒，被切成 50 / 100 / 25 三段，**第二段起各栏都从自己的顶边开始**——margin 只在盒开始的那一栏付一次。Hutu 原来在每一栏都加一次 `child.Margin.Top`（`BlockLayout.cs` 的 “A column box begins a fresh stack” 那行），于是第 2、3、4 段整体低 50 像素，旋转后的碎块全部掉到容器下沿之外。
+
+改法（补丁 `build/_piece-margin-once.patch`，37 行）：`portion.Offset > 0.001` 的段不再加顶 margin；同时把 `MulticolBoxCutTests.ABoxWithItsOwnBlockStartMarginDividesAtTheRoomLeftAfterIt` 的期望从 `(0,60,40),(100,60,100),(200,60,100)` 改成 `(0,60,40),(100,0,100),(200,0,100)`——那条断言本来就和它自己的注释（“The margin is spent once, where the box begins - not again on every piece of it”）矛盾。
+
+门禁：单测 2196 通过；屏幕 0 新增失败名，全量仍 1990。收益 `transform-006` 30376 → **13780**（没翻绿：剩下的差是最后一段的窗口高度，Chrome 的第四栏只画溢出的 lime，Hutu 把盒的窗口继续铺满）、`flexbox-multi-column-2` 15350 → 14000。代价 **15 对变差**：`gecko/flexbox/pagination/flexbox-{single,multi}-column-1{a..f}` 各 11475 → 13200（+1725）、`flexbox-single-column-2` 12525 → 13650、`-6` 9350 → 9850、`transform-008` 10531 → 10567。合计 +24k 换 -17k，且目标对没翻绿，按既定判据回退。
+
+判据记下：这 13 对是 **flex 容器被切成窗口**（`child.Relays` → `ArrangeFlexFragment`）的形状，它们的 margin 记账与「同一个盒被栏切开」不同——要么窗口每栏重付一次 margin 才是 Chrome 的图，要么它们另有别的差（这 13 对基线就红 11k，本来就还没对）。下一步先量 flex 窗口那几对到底差在哪，再决定这条规则按 `Relays` 分流还是只在 `portion.Offset > 0` 的切割段生效。
