@@ -2014,3 +2014,19 @@ float 续切真正难的地方在归属：test 的 float 不是多列容器的�
 `transform-006` 余下 1361 px 都是旋转边的 AA（`test #fff3f9 / ref #ffd0e7` 之类），几何已近；我们的每一片仍是**整盒 100x175** + 栏窗裁剪（clip 分别 50/100/100/25），且 `PushTransformCommand` 递的参照矩形就是这个整盒；ref 却是 50/100/25/0 四块各自绕**自己**的右下角转。⇒ 下一刀该核的是「每片的 transform-origin 取片自己的底边还是取未切盒的底边」，而不是裁剪。
 
 本轮除此之外没有落代码；上一条落地的仍是 `b92900ef`（打印 193/198、`css-break` 23 对、单测 2212）。
+
+### 9.150 满宽 float 没有余量时「插队」：`float-017` 转绿，`css-break` 23 → 22
+
+落地的规则：一个把自己那栏占满的 float（直接孩子，`size.Width + margin >= share`），如果流已经在这栏里付过房间、而余量装不下它，那么它不在这里溢出——它去**下一栏的栏头**，那一栏归它（起始 `used = min(自己的高, 栏高)`），而写在它**后面**的内容回填它跳出来的那一栏。这正是 §9.148 说的「线性 packing 表达不了」：float 插队、后面的内容补位。所以实现不在 `Fragmentainer.Fill` 的 counts 里，而在本来就会切盒子的 `PlanMulticolRun` 主路径上（`MulticolChild.Defers` 一存在就强制走这条路）。
+
+三处细节值得记住，都是量出来的：
+
+1. set-aside 必须放在**批次循环内部**：`ChildSlicer.Fitting` 一次数进来的是一串整孩子（float 高记 0，一定「装得下」），在 while 顶部判断永远轮不到 float。
+2. 被 float 占满的那一栏要**整格封口**（`cells.Add(cell); continue;`）：否则 `Fitting` 的「至少推进一个孩子」会把那个被切开的盒子**从第 0 行重画**（`#b` 一度宽 0 又在第三栏重演），而不是继续上一栏没画完的行。
+3. 收尾条件加上 `opens < 0`，并且在 extents 用完后仍要把 pending 的 float 补一栏——`wpt/CSS2/floats/float-in-nested-multicol-001` 是 **mismatch** 对（只要画面非空），float 被 set aside 后又没落进任何格 = 整页空白 = 把绿的弄红。这条是它替我们抓出来的。
+
+门禁：单测 **2212 → 2214**（`FullWidthFloatTests` 钉住「无余量则插队」与「有余量则留在流到达处」两侧）；打印 **193/198** 不变；`css-break` **23 → 22**；屏幕全量名字差只有 `float-017` 一条真实转绿，新增两条都在那族 5 秒超时里（见下）。
+
+**跑批纪律（这轮踩到）**：有一次全量跑在负载下出现 `wpt: 5757 of 5845 pairs drawn`、`could not be drawn` 从 4 涨到 88+，名字差里凭空多出 10 条「修好」（`transform3d-sorting-001`、`display-flow-root-001`、`line-breaking-026/027`…），复跑单对时它们全都还是红的（例如 10 000 / 73 645 px）。所以算差值之前必须先看 `## … of N pairs drawn` 三个族是否都是满数、以及 `### Could not be drawn` 段里是不是只有那族超时名；否则这份报告不能当基线用。
+
+`floats-clear-multicol` 六对不受这次改动影响（三条仍 510、三条仍 850，`-001`/`balancing-001` 仍绿），§9.149 的落位次序不变：还缺「窄 float 在栏间的续切」，之后才能放 `AddBoxCut` 那条空白盒的放宽。顺带把 float 在其它族的规模记下来，免得下次又从零量：`gecko/flexbox/flexbox-float-2a/2b` 各 60 474、`wpt/CSS2/floats/new-fc-beside-adjoining-float-2`/`new-fc-separates-from-float-2` 各 20 000、`wpt/css-multicol/multicol-span-float-002/003` 各 11 200、`wpt/css-inline/initial-letter/initial-letter-float-002..005` 5 000–18 180——「栏里的 float band」是一条比分页本身更大的活。
