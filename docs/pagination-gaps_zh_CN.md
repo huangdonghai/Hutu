@@ -2128,3 +2128,15 @@ Q1 有了答案，方向和我猜的不同。三件事：
 1. 让 `FragmentSlice` 携带 `Offset`/`Visible`（普通块 arrange 与 `PositionedLayout` 的静态位置、abs 包含块、transform 参照矩形都改从片矩形算）。
 2. 把 6300 附近「整盒 + `held` 裁剪」的两处 piece 改成 `standing = 栏头`、`height = room`、`Offset = consumed`，并把 `FragmentClip` 由栏窗改成片自己的矩形（内联方向不裁，连续媒体下栏不剪溢出：045 的 abs 比栏还宽 10 px，Chrome 不剪）。
 3. 验收面：`out-of-flow-in-multicolumn-045/073/090`、`block-end-aligned-abspos-with-overflow`、`transform-006/008`；回归面：所有带 `position:relative`/abs 后代的碎片（`abspos-in-opacity-*`、`positioned-*`、`css-position` 族）与 `widows-orphans-*`。
+
+### 9.157 `box-decoration-break-1` 的 49 293 不是虚线相位，而是**表的列宽**：clone 的行内碎片没把自己的 margin 盒算进 max-content
+
+逐值对照同一对的两侧盒树（`LooksAtOnePairClosely` 的两份 dump），差在哪一层一目了然：
+
+- 两侧每一个 `span.o0` / `span.o10` 的盒**完全相同**：test `span.o0 47,36.94 79.97x36.13 radii:17/17`，ref 同为 `47,36.94 79.97x36.13`；里面的 `b` 也都是 `71,46.94 47.97x18.13`（test 那边多标了 `sliced:end/both/start`，因为它是**同一个** span/b 被切成三片，§9.143 的 clone 修边已经生效）。
+- 差的是**容器**：test `td = 116.97x214`、`line = 94.97x64`、`table = 337.91x220`；ref `td = 149.97x214`、`line = 127.97x64`、`table = 426.91x220`。每一列都窄了 33.0 px，第二列同样窄 33.0（test 的 line 71.97 已经比里面 span 的 79.97 还窄，span 直接撑出线上），于是从第二列起整片内容横移 ⇒ 49 293 px 全是这个平移的产物，不是虚线相位、也不是圆角。
+- 所以缺的是：行内盒被 `box-decoration-break: clone` 切开时，**每一片都要带着自己的 margin 盒**去参加父层的内在尺寸（本例是表的列 max-content）。span 的 margin 是 `13 17 19 23`（左右不等），§9.143 在**放置**一侧补齐了两侧（`Advance` 补起始、行尾补终止），但**测量**一侧没有：盒被切片后，列宽只按未 clone 的那一条边算，短了 33.0。
+- 与旧记录的修正：§9.143 说余下的是「不等 margin 盒与四边虚线/圆角的逐片相位」。虚线那条可以排掉——语料里提到 dashed 边框且当前通过的页有 35 个（例如 `gecko/border-radius/border-value-interpret`、`gecko/flexbox/pagination/flexbox-empty-1*`），说明直边的 dash 图形与 Chrome 够近；而 clone 片的 margin 盒在**测量**里缺席，正是那 33.0 的来源。
+- 下一刀位置：`LineBuilder` 的内在宽度路径与 `InlineLayout` 里给 span 记 slice 的地方（本会话早前一次「把 clone 的结束 margin 加进内在路径」的尝试把数字推到 57 449，方向对但加错了边/加了不该加的片——要从「每一片各自带自己那一段的左右 margin，取最大」重新量，而不是给整条线加 margin）。
+
+本轮没有落代码；HEAD 仍是 `0cb77915` 的绿状态：`css-break` 22 对、打印 193/198、单测 2214。
