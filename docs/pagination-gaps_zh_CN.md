@@ -1807,3 +1807,13 @@ c1 [714,10 50x60]  c2 [714,80 50x60]  c3 [654,10 50x60]  c4 [654,80 50x60]
 
 两条都已退回，代码在 `34f8ec9a`+`71b8c77e`+`9c87bf25` 的原状。三次数到的共同点：**竖排分栏要再往前一步，缺的是「片落在哪一栏、那一栏还剩多少」这本账**（`MulticolChild` 的 margin 已按流向相对放好，但 `PlanMulticolRun` 只有单一游标，说不清「这一栏的头已经被这个 margin 占了」）。#11/#25 先修这本账，再重放 §9.132/§9.134 的四条变体（脚本 `build/_edit_vdivide2.py`、`_edit_vdivide3.py`、`_BlockLayout-hoisted.cs`），因为它们互为收支。
 
+### 9.135 两条实测过而没落的下一步：表格尺寸转置（2×2 全对、本族 +8300）与「窗口只从栏头开始」（069 +3550）
+
+**A. 尺寸层的轴转置（脚本 `build/_edit_size1.py`、`build/_edit_size2.py`，可直接重放）。**把 `TableBuild` 加上 `Vertical`/`InlineInsets`/`BlockInsets`/`InlineSpacing`/`BlockSpacing`，让列沿行内向分、行沿块向累加，格子测量按轴取（`Measure` 的 declared/clamp/返回槽、`MeasureIntrinsic`、`ResolveContentWidth`/`DeclaredContentWidth` 加 `vertical`、`MeasureCellHeights` 用 `WithHeight(行内向房间)` 并把块向长度读自 `measured.Width`、`Arrange` 的两个 gap 走 `InlineSpacing`/`BlockSpacing`、行的拉伸目标用块向房间）——**`build/_vt22.html` 的 2×2 竖排表逐值对上 Chrome**：表 `130x150`、行 `50x130`、格 `50x60` 在 y=10/80（改前是格 `60x60`、行 `60x130`）。单测 2201 全绿，flexbox/pagination 子集一位未动。
+
+但本族 **+8300**：`table-row/col/section-paint-vrl-rtl`/`-vlr-rtl` 六对各 +1440~1560，只有两对折叠边框各 −190。这三对的第一差仍在 `(692,192)`（test 画红、ref 画白），跟基线同一个位置——即**片内子盒的内容还没转置**（一个碎片里单元格的内容沿哪根轴排、`AlignContent` 沿块向移、折叠边框的角方归属都还是横排的写法）。所以这一条是**必要但不充分**：与 §9.131 的图例、§9.113 的 #19 属同一批下游。落它的正确姿势是把「片内内容轴」一起做完再量。
+
+**B. 「窗口不被截断，只从栏头开始」。**给 `PlanMulticolRun` 的 `gate` 加一条 `child.Relays → 要整窗高度`：`multi-line-row-flex-fragmentation-069` 17 750 → **21 300** ✗（其余 css-break 未动）。⇒ 参考页 `div.flex 186,53.72 142x100` 里两格紧挨着，我读成「容器整块挪到第二栏、间距在断裂处被截断」；这个判据把它推得更远，说明 Chrome 的次序是**先按窗口分栏、再在窗口内截断间距**，而不是先整体挪栏。069 的正解要 Chrome 的直接矩形量（`getClientRects` 对 flex 行不给未变换盒，需要另想探针），已在 #26 记录。
+
+两条都退回，代码停在 `b493afc4`（= 34f8ec9a 的代码 + 三份日志）。今日已落地并推送的代码片：`034bbb27`、`9dea55eb`、`05961d1a`、`34f8ec9a`、`13694a25`；css-break 27 → 25 对、610 795 → 453 030 px。
+
