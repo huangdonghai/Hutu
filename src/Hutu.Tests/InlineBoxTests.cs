@@ -664,6 +664,69 @@ public sealed class InlineBoxTests
         Assert.That(bounds.Y + bounds.Height, Is.EqualTo(20), "and that edge sits on the line's baseline");
     }
 
+    /// <summary>
+    /// A block written inside an inline does not make that inline a block: it breaks it, so the runs on
+    /// either side each carry a fragment of the element - a ring of its own border and padding - and the
+    /// block stands beside them in the box the element stood in (CSS 2.1 §9.2.1.1, which is what
+    /// <c>wpt/css-break/box-decoration-break-clone-split-inline</c> draws).
+    /// </summary>
+    [Test]
+    public async Task ABlockBreaksTheInlineThatHoldsItIntoTwoRings()
+    {
+        using var view = CreateView();
+
+        // A paragraph could not hold the test: the document parser closes a `p` at a `div`, so the block
+        // would never have been written inside the inline at all.
+        await view.SetHtml(
+            "<html><body style='margin:0'><div id='w' style='font-size:10px;line-height:2'>" +
+            "ab<span style='border:2px solid;padding:3px'>cd<div id='b' style='height:5px'></div>ef</span>" +
+            "</div></body></html>");
+
+        var rings = Inlines(view, "span").ToList();
+        var held = Walk(view).Single(node => node.Source.Element?.Id == "b");
+        var split = Walk(view).Any(node => node.Kind == LayoutKind.Block && Name(node) == "span");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(rings, Has.Count.EqualTo(2), "the run before the block and the run after it each carry the element");
+            Assert.That(rings[0].BorderBox.X, Is.EqualTo(10), "a ring stands where its own run does, after the text before it");
+            Assert.That(rings[0].BorderBox.Width, Is.EqualTo(20), "and is that run plus the padding and the border");
+            Assert.That(held.BorderBox.X, Is.EqualTo(0), "the block leaves the inline and stands at the box's own edge");
+            Assert.That(held.BorderBox.Y, Is.EqualTo(20), "below the line the first run stood on");
+            Assert.That(rings[1].BorderBox.X, Is.EqualTo(0), "the run after the block opens a line of its own");
+            Assert.That(rings[1].BorderBox.Y, Is.EqualTo(25), "below the block that broke the inline");
+            Assert.That(split, Is.False, "and the element comes to no block box that could ring the whole of it");
+        });
+    }
+
+    /// <summary>
+    /// A run on one side of the block only leaves the inline alone: the element still comes to one box
+    /// that rings the block it holds, which is what <c>gecko/ib-split/relpos-inline-1a</c> and
+    /// <c>wpt/css-display/display-contents-list-001</c> draw - the block breaks the inline only where a
+    /// run stands on each side of it.
+    /// </summary>
+    [Test]
+    public async Task ARunOnOneSideOfTheBlockLeavesTheInlineOneBox()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='font-size:10px;line-height:2'>" +
+            "<span id='c' style='border:2px solid;padding:3px'>ab<div id='b' style='height:5px'></div></span>" +
+            "</div></body></html>");
+
+        var ring = Walk(view).Single(node => node.Kind == LayoutKind.Block && node.Source.Element?.Id == "c");
+        var held = Walk(view).Single(node => node.Source.Element?.Id == "b");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Inlines(view, "span"), Is.Empty, "the element is not broken into fragments");
+            Assert.That(ring.BorderBox.Width, Is.EqualTo(600), "one box rings the whole of it");
+            Assert.That(held.BorderBox.X, Is.EqualTo(5), "and the block stands inside that ring, not beside it");
+            Assert.That(held.BorderBox.X, Is.EqualTo(ring.ContentBox.X));
+        });
+    }
+
     private static String Document(String content, String lineHeight = "2", Int32 width = 0) =>
         "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:" + lineHeight +
         (width > 0 ? ";width:" + width + "px" : String.Empty) +

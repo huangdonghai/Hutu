@@ -263,6 +263,16 @@ internal sealed class Box
     public Boolean IsContents { get; init; }
 
     /// <summary>
+    /// Gets whether this inline box is broken around the block-level content it holds. The element keeps
+    /// its inline role and generates no box of its own in the block chain: each run of inline content it
+    /// held is carried by a fragment of it, and the blocks stand beside those runs, in the box this one
+    /// stood in (CSS 2.1 §9.2.1.1). <see cref="Children"/> is what the walk found; the grouping pass is
+    /// what breaks it, and the fragments carry the border, padding and background the element said - a
+    /// ring around each run, never one around the block between them.
+    /// </summary>
+    public Boolean IsBrokenInline { get; init; }
+
+    /// <summary>
     /// Gets whether this box is the letter an <c>initial-letter</c> made into a float. It stands on the
     /// block's first line even though it has left it, so <c>::first-line</c> still reaches it.
     /// </summary>

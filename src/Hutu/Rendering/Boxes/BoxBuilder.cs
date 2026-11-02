@@ -160,6 +160,50 @@ internal static partial class BoxBuilder
     }
 
     /// <summary>
+    /// Gets whether the children hold a run of inline content on both sides of a block in normal flow,
+    /// which is the shape that breaks the box. A run only before the block, or only after it, leaves the
+    /// box standing for the blocks it holds the way it always has (CSS 2.1 §9.2.1.1; measured: each side
+    /// of <c>wpt/css-break/box-decoration-break-clone-split-inline</c> rings itself, while
+    /// <c>gecko/ib-split/relpos-inline-1a</c> and <c>wpt/css-display/display-contents-list-001</c> - text
+    /// on one side of the block and nothing on the other - keep one box around the whole of it).
+    /// </summary>
+    private static Boolean HasRunsAroundBlocks(List<Box> children)
+    {
+        var before = false;
+        var holdsBlock = false;
+
+        foreach (var child in children)
+        {
+            if (BreaksRun(child))
+            {
+                holdsBlock = true;
+                continue;
+            }
+
+            if (!RunsOnTheLine(child))
+            {
+                continue;
+            }
+
+            if (holdsBlock && before)
+            {
+                return true;
+            }
+
+            before = true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Gets whether a child is content that stands on a line: it is inline-level, it did not leave the
+    /// flow, and it is more than the white space the line rules fold away.
+    /// </summary>
+    private static Boolean RunsOnTheLine(Box child) =>
+        child.IsInlineLevel && !PositionedLayout.IsOutOfFlow(child) && ShowsContent(child);
+
+    /// <summary>
     /// Builds the box for an image. The picture that arrived answers the intrinsic size, and the
     /// <c>width</c>/<c>height</c> attributes are kept beside it as the presentational hint they are - so
     /// a box of usable geometry always exists whatever happened to the resource, and a box whose
@@ -667,6 +711,10 @@ internal static partial class BoxBuilder
         // and becomes the fieldset's first child box (HTML rendering §15.3.12).
         RenderedLegend(parent, children);
 
+        // An inline that broke around block-level content stands for the fragments and the blocks it came
+        // to, not for itself: what is grouped below is what the element left behind (CSS 2.1 §9.2.1.1).
+        children = BreakInlines(children);
+
         // A child that left the flow is not one of them: it is laid out against a containing block of its
         // own and takes no part in the lines or the stack this box forms. Counting it would wrap the
         // inline content beside it in an anonymous block for no reason - and the box would then be placed
@@ -777,6 +825,166 @@ internal static partial class BoxBuilder
             parent.Children.Add(anonymous);
             firstRun = false;
         }
+    }
+
+    /// <summary>
+    /// Replaces every inline box that breaks around block-level content with the boxes it came to stand
+    /// for, and leaves everything else where it was.
+    /// </summary>
+    private static List<Box> BreakInlines(List<Box> children)
+    {
+        var any = false;
+
+        foreach (var child in children)
+        {
+            if (child.IsBrokenInline)
+            {
+                any = true;
+                break;
+            }
+        }
+
+        if (!any)
+        {
+            return children;
+        }
+
+        var pieces = new List<Box>(children.Count);
+
+        foreach (var child in children)
+        {
+            if (child.IsBrokenInline)
+            {
+                pieces.AddRange(BreakInline(child));
+            }
+            else
+            {
+                pieces.Add(child);
+            }
+        }
+
+        return pieces;
+    }
+
+    /// <summary>
+    /// Gets the boxes an inline that holds block-level content stands for, in the order they stand: a
+    /// fragment of itself around every run of its inline content, and the blocks between those runs. An
+    /// inline inside it breaks this one too, since the block deeper down leaves the line both are written
+    /// on; a box that left the flow stays on the run it would have stood in, and a float leaves the flow
+    /// for the line it is placed on without breaking the run it was written in (CSS 2.1 §9.2.1.1, §9.5).
+    /// </summary>
+    private static IEnumerable<Box> BreakInline(Box source)
+    {
+        var pieces = new List<Box>();
+        var run = InlineFragment(source);
+
+        foreach (var child in source.Children)
+        {
+            if (child.IsBrokenInline)
+            {
+                foreach (var piece in BreakInline(child))
+                {
+                    if (piece.IsBlockLevel)
+                    {
+                        EndInlineRun(pieces, run);
+                        run = InlineFragment(source);
+                        pieces.Add(piece);
+                    }
+                    else
+                    {
+                        run.Children.Add(piece);
+                    }
+                }
+
+                continue;
+            }
+
+            if (child.IsBlockLevel && !BreaksRun(child))
+            {
+                run.Children.Add(child);
+                continue;
+            }
+
+            if (child.IsBlockLevel)
+            {
+                EndInlineRun(pieces, run);
+                run = InlineFragment(source);
+                pieces.Add(child);
+                continue;
+            }
+
+            run.Children.Add(child);
+        }
+
+        EndInlineRun(pieces, run);
+
+        return pieces;
+    }
+
+    /// <summary>
+    /// Gets whether a child is a block in normal flow, which is what an inline breaks around. A box that
+    /// left the flow, and a float that the line is drawn around instead of broken by, both stay where they
+    /// were written (CSS 2.1 §9.2.1.1 names out-of-flow boxes as what does not separate the siblings, §9.5
+    /// places a float out of the flow it was written in).
+    /// </summary>
+    private static Boolean BreaksRun(Box child) =>
+        child.IsBlockLevel
+        && !PositionedLayout.IsOutOfFlow(child)
+        && child.Style.Float == FloatSide.None;
+
+    /// <summary>Gets one fragment of the inline that is being broken, ready to hold a run of its content.</summary>
+    /// <remarks>
+    /// The fragment is the element's own box, not an anonymous one: the specification breaks the inline
+    /// box rather than replacing it, so the border, padding and background the element stated belong to
+    /// every fragment, and the line each stands on is trimmed the way the element's own lines are.
+    /// </remarks>
+    private static Box InlineFragment(Box source) =>
+        new(BoxKind.Inline, source.Style)
+        {
+            Element = source.Element,
+            Flow = source.Flow,
+            Quotes = source.Quotes,
+            TextTransform = source.TextTransform,
+        };
+
+    /// <summary>
+    /// Ends a run of a broken inline: a fragment that holds nothing the page measures leaves no box, so
+    /// the white space between two blocks does not stand between two rings.
+    /// </summary>
+    private static void EndInlineRun(List<Box> pieces, Box run)
+    {
+        if (run.Children.Count > 0 && ShowsContent(run))
+        {
+            pieces.Add(run);
+        }
+    }
+
+    /// <summary>
+    /// Gets whether a box holds content that is laid out: text that is more than white space, or anything
+    /// that is not an inline box. An inline box shows what its own children show, which is how a fragment
+    /// of nothing but folded white space reads as empty.
+    /// </summary>
+    private static Boolean ShowsContent(Box box)
+    {
+        if (box.Kind == BoxKind.Text)
+        {
+            return box.Text is { Length: > 0 } text && !TextChunker.IsCollapsible(text);
+        }
+
+        if (box.Kind != BoxKind.Inline)
+        {
+            return true;
+        }
+
+        foreach (var child in box.Children)
+        {
+            if (ShowsContent(child))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

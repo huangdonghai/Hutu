@@ -536,7 +536,24 @@ internal static partial class BoxBuilder
             counters = among;
         }
 
-        if (kind == BoxKind.Inline && HasInFlowBlockLevel(children))
+        // An inline that holds block-level content is not made into a block. It is broken around that
+        // content: the runs of inline content keep fragments of the inline itself, and the blocks stand
+        // beside those runs in the box the inline stood in (CSS 2.1 §9.2.1.1). The box below therefore
+        // holds what the walk found rather than a structure of its own, and the grouping pass breaks it.
+        //
+        // Only a box with a run on each side of the block is broken, and only by a block in normal flow:
+        // measured Chrome keeps one box around the blocks a `span` holds with a run on one side only, or
+        // holds nothing but, and places the float a `span` holds beside the line without breaking it
+        // (`gecko/bugs/424236-1`, `gecko/ib-split/relpos-inline-1a` and
+        // `wpt/CSS2/floats/float-in-inline-001` against
+        // `wpt/css-break/box-decoration-break-clone-split-inline`). A box that says `contents` generates
+        // nothing to break, so the block rule reaches it as it did.
+        var holdsBlockLevel = kind == BoxKind.Inline && HasInFlowBlockLevel(children);
+        var brokenInline = holdsBlockLevel
+                           && !displayContents
+                           && HasRunsAroundBlocks(children);
+
+        if (holdsBlockLevel && !brokenInline)
         {
             kind = BoxKind.Block;
         }
@@ -572,6 +589,7 @@ internal static partial class BoxBuilder
             Quotes = quoted,
             TextTransform = transform,
             IsContents = displayContents,
+            IsBrokenInline = brokenInline,
             IsInlineOuter = inlineOuter,
             TableRole = tableRole,
             IsInTable = inTable,
