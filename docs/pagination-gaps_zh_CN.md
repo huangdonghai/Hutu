@@ -2114,3 +2114,17 @@ Q1 有了答案，方向和我猜的不同。三件事：
 那 Chrome 与我们的真正差额，用它的逐值说清楚：`container no1` 是 `133x48 | 136,3 133x0`（**两个片**：第一栏里 48 高，第二栏里一个 0 高的片），它的子 `overflow` 是 `133x240 | 136,3 133x148`。我们的 `.container` 只有一片（48 高，装在栏里绰绰有余），子盒的 388 就在这一片里向下溢出、被栏的 x 范围困住。⇒ 缺的不是「paint 多远」，而是 **packer 不肯为一个装得下的盒多发一片**：要按 Chrome 那样，父盒必须能在自己的高度用尽之后**再拿到一个零高度的片**，让子内容的剩余部分在下一栏栏头继续布局（子盒自己的 fragment 链 = 父盒的 fragment 链 ∘ 子在父内的偏移）。这一层不在 `MulticolChildren` 里，动的是 `PlanMulticolRun`/`Held`/`Fitting` 的推进记账（一片的 `Held` 用声明高度、但允许再多一片只用来承载 reach），所以要与 `widows-orphans-*`、`overflowing-block-*`、`transform-*`、`AddBoxCut` 那批既有判据一起量。
 
 本轮除此之外没有别的改动：工作树仍是 `a51f71c6` 的代码状态，`css-break` 22 对、打印 193/198、单测 2214 全绿。
+
+### 9.156 下一刀的设计定下来了：让窗口片「站在栏头 + 自带 content offset」，flex 那条路已经是这个形状
+
+把 045 的数值与我们的模型对齐后，差额只剩一项，而且它同时是 OOF 4 对、`transform-006/008` 与若干竖排碎片表残差的共同原因：
+
+- Blink：一个被切开的盒，每一片**站在自己 fragmentainer 的栏头**，盒内内容按 `consumed` 偏移，片自己的矩形只有 `room` 高；相对偏移、绝对后代、transform-origin 都是从**这一片的矩形**上算的。
+- 我们：把整盒摆到 `栏头 - consumed`，再用栏窗裁回来。两者对盒自身的背景/边框逐像素等价（这就是这套窗口模型能用到现在的原因），但只要盒里有「相对盒自身定位的东西」就差出 `consumed`：`out-of-flow-in-multicolumn-045` 的第二片因此比 Chrome 高 100 px（我们 -50.28，Chrome 49.72），而 `transform-006` 的每片仍拿整盒 100x175 当变换参照矩形。
+- 现成的证据是这条路已经存在：`ArrangeFloatFlowColumns` 走的 `_engine.ArrangeFlexFragment(child, windowRect/*栏头*/, childContext, windowWhole, child.Offset, windowHeight, windowSlice, item)` 与 `MulticolChildren` 里那条 `windowRect/windowWhole` 的构造，正是「盒在栏头 + 带 offset + 带可见高度」的形状；普通块那条 `new FragmentSlice(border, padding, starts, ends, whole, Piece: fragment)` 少的是把 `Offset`/`Visible` 交给 `Arrange` 去偏移内容。
+
+所以下一刀的清单（不需要改 packer，需要给普通块补 content offset 这一层）：
+
+1. 让 `FragmentSlice` 携带 `Offset`/`Visible`（普通块 arrange 与 `PositionedLayout` 的静态位置、abs 包含块、transform 参照矩形都改从片矩形算）。
+2. 把 6300 附近「整盒 + `held` 裁剪」的两处 piece 改成 `standing = 栏头`、`height = room`、`Offset = consumed`，并把 `FragmentClip` 由栏窗改成片自己的矩形（内联方向不裁，连续媒体下栏不剪溢出：045 的 abs 比栏还宽 10 px，Chrome 不剪）。
+3. 验收面：`out-of-flow-in-multicolumn-045/073/090`、`block-end-aligned-abspos-with-overflow`、`transform-006/008`；回归面：所有带 `position:relative`/abs 后代的碎片（`abspos-in-opacity-*`、`positioned-*`、`css-position` 族）与 `widows-orphans-*`。
