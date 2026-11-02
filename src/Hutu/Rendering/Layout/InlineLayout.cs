@@ -4848,6 +4848,7 @@ internal sealed class InlineLayout
             // naturally ending fragment leaves some trailing room. That trailing room is outside
             // the note, just as the remaining part of a line box is outside a short final line.
             var fullNoteLine = note.ReachedLineEnd || (hasVisible && allNotes);
+            note.EndsOuterLine = fullNoteLine;
 
             var rows = new List<Line>(2);
 
@@ -4876,23 +4877,12 @@ internal sealed class InlineLayout
             var justified = alignLast.Equals("justify", StringComparison.OrdinalIgnoreCase) ||
                 (!lastSpokenFor &&
                     last.Style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase));
-            var content = naturalContent;
-
-            if (justified)
-            {
-                // A justified note line reaches the outer line's inline-end edge, not merely the
-                // wider of its two natural sublines. Whatever stands before the note, including
-                // another note fragment or an inline edge, still owns its room.
-                var before = Math.Max(0, line.Used - last.Width);
-                var available = Math.Max(0, line.Extent - line.Indent - before);
-                content = Math.Max(naturalContent, available - note.InlineEdges);
-            }
 
             foreach (var row in rows)
             {
                 row.Left = 0;
                 row.Indent = 0;
-                row.Extent = content;
+                row.Extent = naturalContent;
                 row.Offset = 0;
 
                 if (justified)
@@ -4901,20 +4891,7 @@ internal sealed class InlineLayout
                 }
             }
 
-            if (justified)
-            {
-                DistributeSpace(rows);
-
-                // DistributeSpace changes the fragments but leaves the line's accounted extent for
-                // its caller. A note row that has no expansion place still gives its line the full
-                // target width; only the glyphs inside it remain at their natural advances.
-                foreach (var row in rows)
-                {
-                    row.Used = content;
-                }
-            }
-
-            var grown = content + note.InlineEdges;
+            var grown = naturalContent + note.InlineEdges;
             line.Used += grown - last.Width;
             last.Width = grown;
             line.Offset = Aligned(line, line.Extent);
@@ -7578,11 +7555,8 @@ internal sealed class InlineLayout
             var line = lines[position];
 
             // A plan is kept and asked again, and the room a line was given can be different the next
-            // time round: what was folded in last time comes back out before anything is folded in now.
-            foreach (var fragment in line.Fragments)
-            {
-                fragment.Expand(0, 0);
-            }
+            // time round: every expansion, including the two rows of a note, comes back out first.
+            ResetExpansion(line);
 
             if (line.Fragments.Count == 0 ||
                 !line.Alignment.Equals("justify", StringComparison.OrdinalIgnoreCase))
@@ -7590,43 +7564,238 @@ internal sealed class InlineLayout
                 continue;
             }
 
-            var places = 0;
-
-            for (var index = 0; index < line.Fragments.Count; index++)
-            {
-                places += Places(line, index);
-            }
-
-            var free = (line.Extent - line.Indent) - line.Used;
-
-            if (places == 0 || free <= 0)
-            {
-                continue;
-            }
-
-            var share = free / places;
-            var owed = 0.0;
-            var given = 0.0;
+            var bodyPlaces = 0;
+            var notes = new List<NoteExpansion>();
 
             for (var index = 0; index < line.Fragments.Count; index++)
             {
                 var fragment = line.Fragments[index];
-                var count = Places(line, index);
 
-                if (count == 0)
+                if (fragment.Note is not { } note)
                 {
+                    bodyPlaces += Places(line, index);
                     continue;
                 }
 
-                // The room is owed out on a running total, so the fractions of a share that does not
-                // divide evenly fall on the places one after another and the last word still lands
-                // exactly on the edge the line was given.
-                owed += share * count;
+                var firstWidth = note.First?.Used ?? 0;
+                var secondWidth = note.Second?.Used ?? 0;
+                var naturalContent = Math.Max(firstWidth, secondWidth);
 
-                fragment.Expand((owed - given) / count, count);
-                given = owed;
+                notes.Add(new NoteExpansion(
+                    fragment,
+                    note.First,
+                    note.Second,
+                    Math.Max(0, fragment.Width - naturalContent),
+                    note.EndsOuterLine,
+                    note.First is null ? 0 : LinePlaces(note.First),
+                    note.Second is null ? 0 : LinePlaces(note.Second),
+                    firstWidth,
+                    secondWidth));
+            }
+
+            var free = (line.Extent - line.Indent) - line.Used;
+
+            if (free <= 0)
+            {
+                foreach (var note in notes)
+                {
+                    if (note.EndsLine)
+                    {
+                        ApplyNoteExpansion(note, 0);
+                    }
+                }
+
+                continue;
+            }
+
+            if (notes.Count == 0)
+            {
+                if (bodyPlaces > 0)
+                {
+                    ExpandByShare(line, free / bodyPlaces);
+                }
+
+                continue;
+            }
+
+            Double Growth(Double share)
+            {
+                var growth = bodyPlaces * share;
+
+                foreach (var note in notes)
+                {
+                    var first = note.FirstWidth + (note.FirstPlaces * share);
+                    var second = note.SecondWidth + (note.SecondPlaces * share);
+                    growth += Math.Max(first, second) - Math.Max(note.FirstWidth, note.SecondWidth);
+                }
+
+                return growth;
+            }
+
+            if (bodyPlaces == 0 &&
+                !notes.Exists(note => note.FirstPlaces > 0 || note.SecondPlaces > 0))
+            {
+                continue;
+            }
+
+            var high = 1.0;
+
+            while (Growth(high) < free && high < 1_000_000_000)
+            {
+                high *= 2;
+            }
+
+            var low = 0.0;
+
+            for (var step = 0; step < 60; step++)
+            {
+                var middle = (low + high) / 2;
+
+                if (Growth(middle) < free)
+                {
+                    low = middle;
+                }
+                else
+                {
+                    high = middle;
+                }
+            }
+
+            var share = (low + high) / 2;
+
+            if (share <= 0)
+            {
+                continue;
+            }
+
+            ExpandByShare(line, share);
+
+            foreach (var note in notes)
+            {
+                ApplyNoteExpansion(note, share);
             }
         }
+    }
+
+    /// <summary>Restores every fragment and note subline to the extent it had before justification.</summary>
+    private static void ResetExpansion(Line line)
+    {
+        if (line.NaturalUsed is { } used)
+        {
+            line.Used = used;
+        }
+        else
+        {
+            line.NaturalUsed = line.Used;
+        }
+
+        if (line.NaturalExtent is { } extent)
+        {
+            line.Extent = extent;
+        }
+        else
+        {
+            line.NaturalExtent = line.Extent;
+        }
+
+        foreach (var fragment in line.Fragments)
+        {
+            fragment.Expand(0, 0);
+
+            if (fragment.Note is { First: { } first })
+            {
+                ResetExpansion(first);
+            }
+
+            if (fragment.Note is { Second: { } second })
+            {
+                ResetExpansion(second);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gives every expansion place on a line the same share and returns the width it added. The room is
+    /// owed out on a running total so fractions fall on different places and the last one lands exactly.
+    /// </summary>
+    private static Double ExpandByShare(Line line, Double share)
+    {
+        var owed = 0.0;
+        var given = 0.0;
+
+        for (var index = 0; index < line.Fragments.Count; index++)
+        {
+            var fragment = line.Fragments[index];
+            var count = Places(line, index);
+
+            if (count == 0)
+            {
+                continue;
+            }
+
+            owed += share * count;
+            fragment.Expand((owed - given) / count, count);
+            given = owed;
+        }
+
+        return given;
+    }
+
+    /// <summary>
+    /// Expands a note's two sublines with the line-wide share. A subline that reaches the outer line
+    /// end also fills the natural width of the wider subline, which is the room inside the note box.
+    /// </summary>
+    private static void ApplyNoteExpansion(NoteExpansion note, Double share)
+    {
+        var target = Math.Max(
+            note.FirstWidth + (note.FirstPlaces * share),
+            note.SecondWidth + (note.SecondPlaces * share));
+        var firstShare = note.EndsLine &&
+            note.First is not null &&
+            note.FirstPlaces > 0 &&
+            note.FirstWidth < target
+            ? (target - note.FirstWidth) / note.FirstPlaces
+            : share;
+        var secondShare = note.EndsLine &&
+            note.Second is not null &&
+            note.SecondPlaces > 0 &&
+            note.SecondWidth < target
+            ? (target - note.SecondWidth) / note.SecondPlaces
+            : share;
+        var firstGrowth = note.First is null ? 0 : ExpandByShare(note.First, firstShare);
+        var secondGrowth = note.Second is null ? 0 : ExpandByShare(note.Second, secondShare);
+        var firstUsed = note.FirstWidth + firstGrowth;
+        var secondUsed = note.SecondWidth + secondGrowth;
+        var content = Math.Max(firstUsed, secondUsed);
+
+        if (note.First is { } first)
+        {
+            first.Used = firstUsed;
+            first.Extent = content;
+            first.Offset = 0;
+        }
+
+        if (note.Second is { } second)
+        {
+            second.Used = secondUsed;
+            second.Extent = content;
+            second.Offset = 0;
+        }
+
+        note.Fragment.SetJustifiedWidth(content + note.Edges);
+    }
+
+    /// <summary>Gets every expansion place held by the fragments of one line.</summary>
+    private static Int32 LinePlaces(Line line)
+    {
+        var places = 0;
+
+        for (var index = 0; index < line.Fragments.Count; index++)
+        {
+            places += Places(line, index);
+        }
+
+        return places;
     }
 
     /// <summary>
@@ -8237,6 +8406,17 @@ internal sealed class InlineLayout
 
     private sealed record MarginNoteSource(Box Box);
 
+    private readonly record struct NoteExpansion(
+        TextFragment Fragment,
+        Line? First,
+        Line? Second,
+        Double Edges,
+        Boolean EndsLine,
+        Int32 FirstPlaces,
+        Int32 SecondPlaces,
+        Double FirstWidth,
+        Double SecondWidth);
+
     /// <summary>One outer fragment of a two-line inline note.</summary>
     private sealed class NoteRun
     {
@@ -8284,6 +8464,9 @@ internal sealed class InlineLayout
 
         /// <summary>Gets whether more content in this segment was pushed to the next outer line.</summary>
         public Boolean ReachedLineEnd { get; }
+
+        /// <summary>Gets or sets whether this note is the last visible content on its outer line.</summary>
+        public Boolean EndsOuterLine { get; set; }
 
         /// <summary>Gets this fragment's inline margin, padding and border.</summary>
         public Double InlineEdges
@@ -8515,6 +8698,13 @@ internal sealed class InlineLayout
             Justify = share;
             Expansions = places;
             Width = Measured.Value + (share * places);
+        }
+
+        /// <summary>Sets the width justification gave a fragment whose growth is not one repeated share.</summary>
+        public void SetJustifiedWidth(Double width)
+        {
+            Measured ??= Width;
+            Width = width;
         }
 
         public ComputedStyle Style { get; }
@@ -9074,6 +9264,12 @@ internal sealed class InlineLayout
 
         /// <summary>Gets the extent the line's fragments take along the inline axis, before alignment.</summary>
         public Double Used { get; set; }
+
+        /// <summary>Gets or sets the used extent before justification, which every later pass starts from.</summary>
+        public Double? NaturalUsed { get; set; }
+
+        /// <summary>Gets or sets the extent the line was broken at before justification, which a later pass restores.</summary>
+        public Double? NaturalExtent { get; set; }
 
         /// <summary>
         /// Gets or sets how much of the last fragment's width hangs past the line's advance. The spaces

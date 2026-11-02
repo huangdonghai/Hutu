@@ -872,6 +872,71 @@ public sealed class InlineNoteTests
     }
 
     [Test]
+    public async Task BodyAndBothNoteSublinesShareOneJustificationIncrement()
+    {
+        using var view = CreateView(80);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:20px;" +
+            "text-align:justify;text-align-last:justify;text-justify:inter-character'>" +
+            "天地<span id='n' style='-hutu-note-placement:inline;font-size:10px;line-height:10px'>" +
+            "甲乙丙丁</span>玄黄</p></body></html>");
+
+        var outer = OuterLines(view).Single();
+        var note = Notes(view).Single();
+        var body = outer.Children
+            .Where(box => box.Kind == LayoutKind.Text && box.Text is { Length: > 0 })
+            .ToList();
+        var rows = TextRuns(note).ToList();
+        var shares = body.Concat(rows).Select(run => run.Justification).ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(body.Select(run => run.Text), Is.EqualTo(new[] { "天地", "玄黄" }));
+            Assert.That(rows, Has.Count.EqualTo(2));
+            Assert.That(shares, Is.All.GreaterThan(0),
+                "body text and both note sublines all take part in the line's justification");
+            Assert.That(shares, Is.All.EqualTo(50.0 / 3).Within(0.01),
+                "every expansion place on the line receives the same increment");
+            Assert.That(note.BorderBox.Width, Is.EqualTo(10 + (50.0 / 3)).Within(0.01),
+                "the note grows by the increment of its wider subline, not by both rows added together");
+            Assert.That(body.Single(run => run.Text == "玄黄").BorderBox.Right, Is.EqualTo(80).Within(0.01),
+                "the whole outer line still lands exactly on its end edge");
+        });
+    }
+
+    [Test]
+    public async Task UnevenNoteSublinesStillShareTheWholeLineIncrement()
+    {
+        using var view = CreateView(80);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:20px;" +
+            "text-align:justify;text-align-last:justify;text-justify:inter-character'>" +
+            "天地<span id='n' style='-hutu-note-placement:inline;font-size:10px;line-height:10px'>" +
+            "甲乙丙丁戊</span>玄黄</p></body></html>");
+
+        var outer = OuterLines(view).Single();
+        var note = Notes(view).Single();
+        var body = outer.Children
+            .Where(box => box.Kind == LayoutKind.Text && box.Text is { Length: > 0 })
+            .ToList();
+        var rows = TextRuns(note).ToList();
+        var shares = body.Concat(rows).Select(run => run.Justification).ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(shares, Is.All.EqualTo(11.25).Within(0.01),
+                "the shorter natural subline still receives the same line-wide increment");
+            Assert.That(rows.Select(run => run.BorderBox.Width),
+                Is.EqualTo(new[] { 37.5, 21.25 }).Within(0.01),
+                "each subline grows by its own number of places, and the note uses their wider result");
+            Assert.That(note.BorderBox.Width, Is.EqualTo(37.5).Within(0.01));
+            Assert.That(body.Single(run => run.Text == "玄黄").BorderBox.Right, Is.EqualTo(80).Within(0.01));
+        });
+    }
+
+    [Test]
     public async Task AContinuingAllNoteLineJustifiesButItsLastLineStaysRagged()
     {
         using var view = CreateView(25);
