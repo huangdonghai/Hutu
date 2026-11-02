@@ -2140,3 +2140,15 @@ Q1 有了答案，方向和我猜的不同。三件事：
 - 下一刀位置：`LineBuilder` 的内在宽度路径与 `InlineLayout` 里给 span 记 slice 的地方（本会话早前一次「把 clone 的结束 margin 加进内在路径」的尝试把数字推到 57 449，方向对但加错了边/加了不该加的片——要从「每一片各自带自己那一段的左右 margin，取最大」重新量，而不是给整条线加 margin）。
 
 本轮没有落代码；HEAD 仍是 `0cb77915` 的绿状态：`css-break` 22 对、打印 193/198、单测 2214。
+
+### 9.158 落地下：clone 的每一行都要为自己带的装饰要房间（`css-sizing/clone-nowrap-intrinsic-size` 两对转绿，`box-decoration-break-1` 49 293 → 25 328）
+
+`InlineLayout.MeasureIntrinsicCore` 过去只在「进入元素」时收它的起始边、在「离开元素」时收它的结束边——这对 slice 的盒子是对的（只有真的有那条边的片段才要它），但 clone 的每一片都带着自己的边，于是被 `<br>` 切断的 clone 在后面那些行上**完全不再为装饰要房间**：一行只算了 23 + 47.97 + 起始边，等于把盒子的右半边（border-right 3 + padding-right 5 + margin-right 17 = 25）整个丢掉。表列的 max-content 因此比同样内容写成三个独立 clone 窄 33.0 px ⇒ 列错位，半个 `box-decoration-break-1` 就是它。
+
+修法与放置侧对齐（`8b8b906e` 起，放置侧就按片重复两侧边距）：在 `IsBreak` 分支里，结束的那一行补收「仍开着的 clone 元素的结束边（inset + margin）」，开始的那一行把 `maxContent`/`unbreakable` 从 0 改为「这些 clone 元素的起始边（inset + margin）」；新增 `ClonedEdge(open, start)` 只做这一件事，slice 的元素一律不计。
+
+对 Chrome 复核过口径：Chrome 两边 td 宽完全相同（130/107/125/130/113/119，表 371），且 `td = span 盒 + 左右 margin`，即结束边只收一次；我们的 clone 侧现在正是这个算法。
+
+落地与门禁：`wpt/css-sizing/clone-nowrap-intrinsic-size.html` 与 `-bidi.html` **转绿**（这两对本来就在考同一个问题，直接当回归用）；`box-decoration-break-1` 49 293 → **25 328**；单测 **2214** 全绿；`css-break` 22 对；打印 193/198；屏幕全量 `5845 of 5845` 全画出、无真实新增失败（动的 4 个名字全在那族 5 秒字体回退超时里）。提交 `53f2931d`。
+
+`box-decoration-break-1` 剩下的 25 328 已经换到另一处，且方向反了过来：**不是 clone 少算，而是我们未切开的行内盒多算**。同一对里两侧逐值：test（clone，现在）`line = 119.97`、`td = 141.97`；ref（三个独立 span，未切开）`line = 127.97`、`td = 149.97`。span 盒两侧同为 79.97（= 内容 47.97 + 左右 padding 16 + 左右 border 16 ✓ 右边距已经在盒里），margin 23/17 ⇒ 正确应为 119.97。ref 多的 8.0 恰是 `border-right 3 + padding-right 5`：也就是**结束边被收了两次**（一次随 `Advance` 的离开元素，一次随别处——`MeasureIntrinsicCore` 末尾那圈 `open` 的 `InlineEndInset` 收法，或放置侧 `closing` 的 margin 通道）。下一刀就在 `Advance`/关闭那条路径上把这一笔找出来；它与 clone 无关，属于普通行内盒的内在测量，风险面比本轮这条大（35+ 个含 dashed/inline margin 的通过页都在它下游），要单独量。
