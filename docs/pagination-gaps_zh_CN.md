@@ -1976,3 +1976,15 @@ AngleSharp 早就把 `@scope` 解析成分组规则，缺的是引擎这一侧�
 4. `wpt/printing/input-password-print` — mismatch 对：打印时密码框必须与文本框画得不同，我们两者相同。
 5. `wpt/printing/mask-image-print` — mismatch 对：打印时 `mask-image` 必须生效，我们的打印把遮罩丢了。
 6. `wpt/printing/select-combobox-print` — `select` 该作为 menu-list 只显示选中的那一项；我们现在把每个 `<option>` 都排成行内，于是多打了 “FAIL”。顺带量到：全语料含 `<select` 的页面 141 条，当前失败 12 条（`css-display/select-4-option-optgroup-display-none`、`css-ui/appearance-menulist-*`、`gecko/forms/select/arrow-color` 等），表单控件的真实缺失比这一对大得多，另开一仗合算。
+
+### 9.148 `select` 作为 menu-list 只画它选中的那一项；顺带把四条「文本 timeout」钉成另一族
+
+打印语料的 `wpt/printing/select-combobox-print` 之前多打了一行「FAIL」：盒构造把 `<select>` 的**每个** `<option>` 都排进它的行。HTML 的画法是：显示尺寸为 1 且非 `multiple` 的 select 是一个按钮，只画它「选中的那一项」，而选中的项是页面标了 `selected` 的那一条，若一条都没标就是列表给的**第一条**（5.13.5 selected option、15.4 rendering）——AngleSharp 的 `IsSelected` 只做后者之前的那半（`selected` 属性），默认选中这一条要引擎自己补。`multiple` 或显示尺寸大于 1 的仍是列表框，保留全部。
+
+**写法上的教训（已实测）**：第一版把「只显示选中项」写成 `ShownChildren(element)` 返回一条子序列，`foreach` 的静态类型于是从具体列表退化为 `IEnumerable<INode>`，全语料最热的这层递归每个元素多分配一个枚举器；那一轮跑完，`gecko/text/476378-soft-hyphen-fallback`、`gecko/text/initial-zwj-1`、`wpt/css-counter-styles/hiragana-iroha/css3-counter-styles-033`、`wpt/css-text/text-transform/text-transform-full-size-kana-007` 四条变成 TimeoutException。改成「仍走原来的 `element.ChildNodes`，只在循环里跳过不该显示的孩子」后，那四条在整轮里只余三条超时。
+
+**但「退化足以害死这四条」这个因果判断不成立，这里更正**：把本次改动整个摘掉、回到 HEAD 复跑，`initial-zwj-1` 与 `476378-soft-hyphen-fallback` 单独跑 3/3 仍然超时。⇒ 这四条（至少这两条）是**先前就存在的引擎缺陷**，与 select 无关；`docs/reftest-scoring_zh_CN.md:241` 把 `TimeoutException: drawing xxx was still going after 5 seconds` 判为「引擎缺陷：该页面布局不终止」。它们的共同形状是软连字符、ZWJ、假名计数样式这类**需要字体回退**的文本；`_full-HEAD-base`、`_full-abs`、`_full-clean-final`、`_full-scope` 几份留档里同一批名字有时在通过表、有时在超时表，说明这条路径的耗时贴着 5 秒的预算线，负载一高就翻。分页语料里没有这一族；要修得先量「一次布局里到底重复解析了几次字体」，另开一仗。
+
+门禁：单测 **2209 → 2212**（`MenuListTests` 三条钉住按钮、被标的项、列表框）；打印 **192 → 193/198**；屏幕全量失败名相对 `_full-scope` 只少 `select-combobox-print` 一条，其余增减都是上面那三条超时在通过表/超时表之间跳动，**无真实新增**。
+
+当前基线：打印 **193/198**（剩 5 条：`fieldset-001-grid-print`、`scope-implicit-005-print`、`monolithic-overflow-032-print`、`input-password-print`、`mask-image-print`）；屏幕 `css-break` **23 对**（Gecko 3、WPT 20）。`input-password-print` 与 `select-combobox-print` 原本同属「表单控件不画」一族，这一条通了，密码框那条要的是 `<input>` 真的把值画出来（我们现在 0x0 空盒），仍属另开的一仗。
