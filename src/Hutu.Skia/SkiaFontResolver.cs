@@ -38,6 +38,14 @@ internal sealed class SkiaFontResolver : IDisposable
     private readonly ConcurrentDictionary<String, SKTypeface> _fetched = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<FallbackKey, Fallback> _fallbacks = new();
     private readonly ConcurrentDictionary<ListedKey, Fallback> _familyFallbacks = new();
+
+    /// <summary>
+    /// The faces one family name offers, in the order the name is searched, per weight and slant.
+    /// Which files have to be opened and which families the platform knows are questions about the
+    /// name alone - asking them again for every character the family is handed a glyph for is what
+    /// made a page of unusual writing cost seconds per distinct character.
+    /// </summary>
+    private readonly ConcurrentDictionary<FaceKey, List<SKTypeface>> _candidates = new();
     private readonly List<(String Name, String Path)> _files = new(FontFiles.All());
 
     public SKTypeface Resolve(FontStyle style) =>
@@ -84,8 +92,6 @@ internal sealed class SkiaFontResolver : IDisposable
 
     private Fallback FindListed(FontStyle style, Int32 codepoint)
     {
-        var slant = CreateStyle(style.Weight, style.IsItalic);
-
         foreach (var family in FontStyle.Split(style.Family))
         {
             var name = FontStyle.Unquote(family);
@@ -95,36 +101,46 @@ internal sealed class SkiaFontResolver : IDisposable
                 continue;
             }
 
-            foreach (var stand in StandsFor(name))
+            foreach (var face in FacesFor(name, style.Weight, style.IsItalic))
             {
-                var match = SKFontManager.Default.MatchFamily(stand, slant);
-
-                if (match is null)
+                if (face.GetGlyph(codepoint) != 0)
                 {
-                    continue;
+                    return new Fallback(face);
                 }
-
-                if (match.GetGlyph(codepoint) != 0)
-                {
-                    return new Fallback(match);
-                }
-
-                match.Dispose();
-            }
-
-            if (Named(name) is { } named)
-            {
-                if (named.GetGlyph(codepoint) != 0)
-                {
-                    return new Fallback(named);
-                }
-
-                named.Dispose();
             }
         }
 
         return default;
     }
+
+    /// <summary>
+    /// Gets the faces a family name is searched through - the ones the platform offers under it and its
+    /// spellings, then the file whose name it is - in that order, opened once per name rather than once
+    /// per character asked of it. A face that answers to none of them is searched no further, as before.
+    /// </summary>
+    private List<SKTypeface> FacesFor(String family, Int32 weight, Boolean italic) =>
+        _candidates.GetOrAdd(
+            new FaceKey(family, weight, italic),
+            key =>
+            {
+                var slant = CreateStyle(key.Weight, key.Italic);
+                var faces = new List<SKTypeface>();
+
+                foreach (var stand in StandsFor(key.Family))
+                {
+                    if (SKFontManager.Default.MatchFamily(stand, slant) is { } match)
+                    {
+                        faces.Add(match);
+                    }
+                }
+
+                if (Named(key.Family) is { } named)
+                {
+                    faces.Add(named);
+                }
+
+                return faces;
+            });
 
     /// <summary>
     /// Raised when a fetched family lands, so the answers that were computed while it was still on the
@@ -433,6 +449,16 @@ internal sealed class SkiaFontResolver : IDisposable
         }
 
         _familyFallbacks.Clear();
+
+        foreach (var faces in _candidates.Values)
+        {
+            foreach (var face in faces)
+            {
+                face.Dispose();
+            }
+        }
+
+        _candidates.Clear();
 
         foreach (var fetched in _fetched.Values)
         {
