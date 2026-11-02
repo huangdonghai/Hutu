@@ -155,7 +155,12 @@ internal sealed class HutuRenderDevice : IRenderDevice, IRenderDevicePreferences
     public Boolean IsInterlaced => false;
 
     /// <inheritdoc />
-    public Boolean IsScripting => false;
+    /// <remarks>
+    /// The flag the <c>scripting</c> feature reads is the document's, not whether an engine runs a
+    /// script: a loaded document has scripting enabled, and printing it leaves it enabled. What that
+    /// costs us is the content of a <c>noscript</c> element, which the sheet hides for us.
+    /// </remarks>
+    public Boolean IsScripting => true;
 
     /// <inheritdoc />
     public Boolean IsGrid => false;

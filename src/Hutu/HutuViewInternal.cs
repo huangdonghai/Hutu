@@ -3,6 +3,7 @@ using AngleSharp.Css;
 using AngleSharp.Css.Dom;
 using AngleSharp.Dom;
 using AngleSharp.Html.Dom;
+using AngleSharp.Html.Parser;
 using AngleSharp.Io;
 using Hutu.Rendering;
 using Hutu.Rendering.Interaction;
@@ -757,7 +758,15 @@ public sealed class HutuViewInternal : IDisposable
             .WithOnly<IPseudoClassSelectorFactory>(new HutuLinkPseudoClassSelectorFactory())
             .WithCss()
             .WithOnly<IPseudoElementSelectorFactory>(new HutuPseudoElementSelectorFactory())
-            .WithRenderDevice(_renderDevice);
+            .WithRenderDevice(_renderDevice)
+            // Whether a `noscript` element holds anything at all is decided while the document is read,
+            // and the reader asks the context for a scripting engine rather than the document for its
+            // own state. The state we mean is the one the `scripting` media feature answers with and
+            // the sheet hides `noscript` by, so the reader is handed that flag instead of being left
+            // to guess it from the engines on offer - of which we have none, and want no more of.
+            .WithOnly<IHtmlParser>(context => new HtmlParser(
+                new HtmlParserOptions { IsScripting = _renderDevice.IsScripting },
+                context));
 
         configuration = configuration.With(CreateRequesterChain());
 

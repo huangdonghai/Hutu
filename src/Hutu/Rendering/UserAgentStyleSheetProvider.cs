@@ -173,6 +173,11 @@ ruby, rb, rt, rtc { display: inline }
 rt              { font-size: 50%; line-height: 1 }
 area, base, basefont, datalist, link, meta, noembed, noframes, param, rp, script, style, template, title { display: none }
 
+/* A noscript element holds what its document shows only while scripting is disabled. The engine
+ * reports scripting enabled - the same answer the scripting media feature gives - so its content
+ * stands aside with the elements above, whose places a script would have taken. */
+noscript        { display: none }
+
 /* Begin bidirectionality settings (do not change) */
 BDO[DIR='ltr']  { direction: ltr; unicode-bidi: isolate-override }
 BDO[DIR='rtl']  { direction: rtl; unicode-bidi: isolate-override }
