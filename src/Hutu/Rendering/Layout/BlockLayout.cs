@@ -2174,7 +2174,8 @@ internal sealed class BlockLayout
         Double fragmentHeight,
         Int32 columns,
         LayoutContext context,
-        IReadOnlyList<Box>? members = null)
+        IReadOnlyList<Box>? members = null,
+        Boolean plansAcross = false)
     {
         // What stands in a column is placed by it: a container of columns inside these ones is not
         // taken apart by its own, because the columns around it have nowhere to put the pieces.
@@ -2343,7 +2344,8 @@ internal sealed class BlockLayout
                         BorderOf(child).Top + child.Style.Padding.Resolve(share).Top,
                         vertical,
                         repeatHead,
-                        repeatFoot))
+                        repeatFoot,
+                        plansAcross))
                     {
                         continue;
                     }
@@ -2447,7 +2449,8 @@ internal sealed class BlockLayout
                         BorderOf(child).Top + child.Style.Padding.Resolve(share).Top,
                         vertical,
                         repeatHead,
-                        repeatFoot))
+                        repeatFoot,
+                        plansAcross))
             {
                 continue;
             }
@@ -2646,7 +2649,8 @@ internal sealed class BlockLayout
         Double startInset,
         Boolean vertical,
         Double repeatHead = 0,
-        Double repeatFoot = 0)
+        Double repeatFoot = 0,
+        Boolean plansAcross = false)
     {
         // Only a box that holds nothing is cut here, and only where the room a piece stands in is a
         // fixed one: a container that fills its columns, or one that states the height its
@@ -2704,6 +2708,40 @@ internal sealed class BlockLayout
             nested)
         {
             return false;
+        }
+
+        // A vertical column cuts a box the same way, but where a piece stands is only settled once the
+        // columns have shared the flow out, so the box is marked as one that divides and the plan does
+        // the cutting. Pre-cutting here fixed every piece to a whole column, which left the room a cut
+        // one did not use in a column to nobody: the box after it moved on to a fresh column instead of
+        // taking what its own column still had (CSS Fragmentation 3 §4.3, measured: the reference page
+        // of table-grid-paint-vrl-rtl, whose three boxes fill the room each column is left with).
+        //
+        // `plansAcross` is the container's say on this: it is not given to a run whose children bring
+        // margins, which a vertical box pays along the block axis the plan does not spend on, nor to one
+        // that asks not to be broken, since Chrome gives every piece of such a box the head of a column
+        // (measured: break-inside-avoid-min-block-size-2, whose two boxes of 40 in columns of 30 come out
+        // 30 + 10 at the heads of four columns, not 30 + 10 + 20 + 20 of three).
+        if (vertical && plansAcross)
+        {
+            var wholeAcross = BlockExtentOf(size, vertical);
+
+            children.Add(new MulticolChild(
+                child,
+                size,
+                margin,
+                new FragmentChild(
+                    wholeAcross + margin.Top + margin.Bottom,
+                    before,
+                    after,
+                    child.Style.Breaks.Inside),
+                -1,
+                last: true,
+                whole: wholeAcross,
+                divides: true,
+                startInset: startInset));
+
+            return true;
         }
 
         // A box that repeats its decoration at every break adds its border and padding to each piece,
@@ -5225,6 +5263,20 @@ internal sealed class BlockLayout
         }
 
         var fragmentHeight = FillsTo(box, parent, heightStated, declaredHeight);
+        var members = EffectiveMembers(box.Children, share) ?? box.Children;
+
+        // A vertical container that shares the room a cut box left in a column through the plan can say
+        // so for every piece in the run: a box that brings margins pays them along the block axis, which
+        // is not the axis the plan spends on, and a box that asks not to be broken is given the head of a
+        // column by Chrome and one piece per column here, which is what the counted cells already do.
+        // Where either holds, the run is laid out from the counted cells and the boxes keep the pieces the
+        // measuring pass made. (Measured: break-inside-avoid-min-block-size-2, whose `margin-block-end:
+        // 20px` is a distance along x and whose two avoid boxes come out 30 + 10 at the heads of four
+        // columns, never 30 + 10 + 20 + 20 of three.)
+        var plansAcross = box.Flow.IsVertical && members.All(member =>
+            !PositionedLayout.IsOutOfFlow(member) &&
+            member.Style.Breaks.Inside != BreakValue.Avoid &&
+            NoMargin(BoxModel.UsedMargin(member.Style, share, share)));
         var children = MulticolChildren(
                     box,
                     share,
@@ -5232,7 +5284,8 @@ internal sealed class BlockLayout
                     fragmentHeight,
                     columns,
                     context,
-                    EffectiveMembers(box.Children, share));
+                    members,
+                    plansAcross);
         var multi = box.Style.Multi;
         var extent = MulticolExtent(
             multi,
@@ -5285,13 +5338,17 @@ internal sealed class BlockLayout
         // column beside it), so the row's width is the number of columns the fill actually made.
         if (box.Flow.IsVertical)
         {
+            // The same flag that let the measuring pass leave a vertical box whole decides how the run is
+            // laid out, so the two passes speak of one set of pieces.
+            var run = plansAcross ? cells : PlainCells(children, counts);
+
             ArrangeMulticolRunAcross(
                 children,
-                counts,
+                run,
                 parent,
                 content.X,
                 content.Y,
-                Math.Max(1, counts.Count),
+                Math.Max(1, Math.Max(counts.Count, run.Count)),
                 share,
                 multi.Gap,
                 content.Width,
@@ -5515,7 +5572,7 @@ internal sealed class BlockLayout
     /// the next along the inline axis, and each stacks its children across the block one.</summary>
     private void ArrangeMulticolRunAcross(
         List<MulticolChild> children,
-        IReadOnlyList<Int32> counts,
+        List<List<MulticolPiece>> cells,
         LayoutBox parent,
         Double originX,
         Double originY,
@@ -5526,9 +5583,7 @@ internal sealed class BlockLayout
         Boolean blockReversed,
         LayoutContext childContext)
     {
-        var from = 0;
-
-        for (var cell = 0; cell < counts.Count; cell++)
+        for (var cell = 0; cell < cells.Count; cell++)
         {
             var column = cell % columns;
             var y = originY + column * (share + gap);
@@ -5536,30 +5591,43 @@ internal sealed class BlockLayout
             // The block axis starts at the box edge the writing mode names: the right one for
             // vertical-rl, where the pieces of a cut box run back towards the left.
             var x = blockReversed ? originX + boxExtent : originX;
+            var pieces = cells[cell];
 
-            for (var index = 0; index < counts[cell]; index++)
+            for (var index = 0; index < pieces.Count; index++)
             {
-                var child = children[from++];
+                var portion = pieces[index];
+                var child = children[portion.Child];
 
-                // The column starts a fresh stack, as a horizontal one does.
                 var width = child.Size.Width;
                 var height = child.Size.Height;
-                var start = blockReversed ? x - child.Margin.Top : x + child.Margin.Top;
-                var blockX = blockReversed ? start - width : start;
 
-                if (child.Offset >= 0)
+                // A column box begins a fresh stack, as a horizontal one does: the block-start margin of
+                // the box that begins there stands at the head of the column.
+                var start = blockReversed ? x - child.Margin.Top : x + child.Margin.Top;
+
+                // Where the column cut the box: how much of the block extent this column holds, and how
+                // far inside the whole box that piece begins. A piece the fragmentainer had already cut
+                // brings its own distance; one the plan left whole stands with none.
+                var held = portion.Offset >= 0 ? portion.Height : child.Offset >= 0 ? width : 0.0;
+                var offset = portion.Offset >= 0 ? portion.Offset : child.Offset;
+                var ends = portion.Offset >= 0 ? portion.Last && child.Last : child.Last;
+
+                if (child.Offset >= 0 || portion.Offset >= 0)
                 {
                     // A piece cut through the box owns the edges that fall inside its slice: the edges
                     // the cut fell on are the left and right ones, since the box runs across the page.
                     var cutBorder = BorderOf(child.Box);
                     var cutPadding = child.Box.Style.Padding.Resolve(height);
                     var cutClones = child.Box.Style.ClonesDecoration;
-                    var cutStarts = cutClones || child.Offset < 0.001;
-                    var cutEnds = cutClones || child.Last;
+                    var cutStarts = cutClones || offset < 0.001;
+                    var cutEnds = cutClones || ends;
+                    var pieceWidth = held > 0.001 ? held : width;
+                    var wholeWidth = child.Whole > 0 ? child.Whole : pieceWidth;
+                    var blockX = blockReversed ? start - pieceWidth : start;
 
                     parent.Children.Add(_engine.Arrange(
                         child.Box,
-                        new Rect(blockX, y + child.Margin.Left, width, height),
+                        new Rect(blockX, y + child.Margin.Left, pieceWidth, height),
                         childContext,
                         definiteHeight: false,
                         slice: new FragmentSlice(
@@ -5576,22 +5644,28 @@ internal sealed class BlockLayout
                             cutStarts,
                             cutEnds,
                             new Rect(
-                                blockReversed ? blockX + child.Offset + width - child.Whole : blockX - child.Offset,
+                                blockReversed
+                                    ? blockX + offset + pieceWidth - wholeWidth
+                                    : blockX - offset,
                                 y + child.Margin.Left,
-                                child.Whole,
+                                wholeWidth,
                                 height))));
 
-                    x = blockReversed ? blockX - child.Margin.Bottom : blockX + width + child.Margin.Bottom;
+                    x = blockReversed
+                        ? blockX - (ends ? child.Margin.Bottom : 0)
+                        : blockX + pieceWidth + (ends ? child.Margin.Bottom : 0);
                     continue;
                 }
 
                 parent.Children.Add(_engine.Arrange(
                     child.Box,
-                    new Rect(blockX, y + child.Margin.Left, width, height),
+                    new Rect(start - (blockReversed ? width : 0), y + child.Margin.Left, width, height),
                     childContext,
                     definiteHeight: false));
 
-                x = blockReversed ? blockX - child.Margin.Bottom : blockX + width + child.Margin.Bottom;
+                x = blockReversed
+                    ? start - width - child.Margin.Bottom
+                    : start + width + child.Margin.Bottom;
             }
         }
     }
@@ -5639,6 +5713,32 @@ internal sealed class BlockLayout
     /// the top of the next (CSS Position 3 §5.5). Every other child stands or moves whole, exactly as
     /// the plain fill places it.
     /// </summary>
+    /// <summary>Gets whether a box brings nothing to any edge of the stack it stands in.</summary>
+    private static Boolean NoMargin(Thickness margin) =>
+        margin.Top == 0 && margin.Right == 0 && margin.Bottom == 0 && margin.Left == 0;
+
+    /// <summary>Shares the children out one per column, as the fill counted them, without cutting any
+    /// of them further: the cells a vertical container of margined children is laid out from.</summary>
+    private static List<List<MulticolPiece>> PlainCells(List<MulticolChild> children, IReadOnlyList<Int32> counts)
+    {
+        var cells = new List<List<MulticolPiece>>(counts.Count);
+        var from = 0;
+
+        foreach (var count in counts)
+        {
+            var cell = new List<MulticolPiece>(count);
+
+            for (var index = 0; index < count; index++)
+            {
+                cell.Add(new MulticolPiece(from++, -1, 0, true));
+            }
+
+            cells.Add(cell);
+        }
+
+        return cells;
+    }
+
     private static List<List<MulticolPiece>> PlanMulticolRun(
         List<MulticolChild> children,
         IReadOnlyList<FragmentChild> fragments,

@@ -376,6 +376,81 @@ public sealed class MulticolBoxCutTests
         });
     }
 
+    /// <summary>
+    /// A vertical column that a divided box left part-empty is filled by the box that follows it: the
+    /// cut runs along the block axis, so the room the column still has belongs to the flow, the same way
+    /// a horizontal column's leftover does (CSS Fragmentation 3 §4.3, measured: the reference page of
+    /// wpt/css-break/table/table-grid-paint-vrl-rtl, whose three boxes share each column they reach).
+    /// </summary>
+    [Test]
+    public async Task AVerticalColumnFillsWhatTheBoxBeforeLeftInIt()
+    {
+        using var view = await Render(
+            "<style>#c { writing-mode: vertical-rl; inline-size: 400px; block-size: 100px;" +
+            " columns: 4; column-gap: 0; column-fill: auto }" +
+            " .short { block-size: 140px } .tall { block-size: 150px }</style>" +
+            "<div id='c'><div class='short' id='s'></div><div class='tall' id='t'></div></div>");
+
+        var band = Find(view, "c").BorderBox;
+        var head = Of(view, "s");
+        var tail = Of(view, "t");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                head.Select(piece => piece.BorderBox.Width).ToList(),
+                Is.EqualTo(new List<Double> { 100, 40 }),
+                "the first column is filled and what is left of the box carries on in the next");
+            Assert.That(
+                tail.Select(piece => piece.BorderBox.Width).ToList(),
+                Is.EqualTo(new List<Double> { 60, 90 }),
+                "the box after takes the room its column still has rather than a fresh one");
+            Assert.That(
+                tail[0].BorderBox.X + tail[0].BorderBox.Width,
+                Is.EqualTo(band.X + band.Width - 40),
+                "standing against the end of the piece the column already holds");
+            Assert.That(tail[0].BorderBox.Y, Is.EqualTo(band.Y + 100), "in the column the tail of the box before");
+            Assert.That(tail[1].BorderBox.Y, Is.EqualTo(band.Y + 200), "and the column after for the rest");
+        });
+    }
+
+    [Test]
+    public async Task EveryPieceOfABoxThatAvoidsBreakingTakesTheHeadOfAColumn()
+    {
+        using var view = await Render(
+            "<style>#c { writing-mode: vertical-rl; inline-size: 400px; block-size: 30px;" +
+            " columns: 4; column-gap: 0; column-fill: auto }" +
+            " .b { break-inside: avoid; min-block-size: 40px }</style>" +
+            "<div id='c'><div class='b' id='one'></div><div class='b' id='two'></div></div>");
+
+        var band = Find(view, "c").BorderBox;
+        var first = Of(view, "one");
+        var second = Of(view, "two");
+
+        Assert.Multiple(() =>
+        {
+            // A box longer than any column is broken after all, since no fragmentainer could hold it
+            // whole (CSS Break 3 §3.1). What the ask still buys is where the break falls: every piece
+            // of that box stands at the head of a column, so the box behind it is never started in the
+            // room its tail left (measured: break-inside-avoid-min-block-size-2, whose two boxes of 40
+            // in columns of 30 come out 30 + 10 at the heads of four columns, not three).
+            Assert.That(
+                first.Select(piece => piece.BorderBox.Width).ToList(),
+                Is.EqualTo(new List<Double> { 30, 10 }),
+                "the box is cut where the column ends");
+            Assert.That(
+                second.Select(piece => piece.BorderBox.Width).ToList(),
+                Is.EqualTo(new List<Double> { 30, 10 }),
+                "and its twin is cut the same way, from a column of its own");
+            Assert.That(second[0].BorderBox.Y, Is.EqualTo(band.Y + 200),
+                "the box behind begins at the head of the third column, not in the second's tail");
+            Assert.That(
+                first[0].BorderBox.X + first[0].BorderBox.Width,
+                Is.EqualTo(band.X + band.Width),
+                "and each piece stands at the edge vertical-rl begins its block axis at");
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

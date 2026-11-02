@@ -1673,3 +1673,22 @@ Hutu 现状与此相反：竖排 test 页 `国；（国` = 28.96x**70**，而它
 这 2 条为什么会红（读两页的树，不是猜）：摆位一修，两页的 abs 栏从容器块向起点边往左长、进了 800 窗口，于是开始比真墨迹；test 页那一行被我们的竖排 trim 减成 70，而 ref 页是拿 `<span class="halt">（</span>` 显式模拟半角——同一个 span 在竖排量到 20（字体自身的竖排 advance），整行就成了 80。所以缺的是**参考页的模拟手法在竖排不成立**，不是 trim 判据之争：按作者定的「trim 以我们为准」，test 页的 70 是对的，ref 页要能表达同样的 70 才配得上这一对。
 
 于是 #18 的真实代价是「改 2 条自造参考页的竖排模拟」，而不是先前记的 24 条。等作者点头就照这个做，之后 `box-shadow-003` 直接翻绿，顺带那 4 对竖排 abs 对也变小。
+
+### 9.126 竖排的分栏计划：被切的后继盒用掉本栏剩下的空间（`table-grid-paint-vrl-rtl`、`-vlr-rtl` 各 37580 → 33500）
+
+Chrome 量的分布（`build/_vtbchrome.txt`，`table-grid-paint-vrl-rtl` 的 test 页）：内容沿块轴（x）排，每栏是一块 100 的窗口，**前一个盒被切之后本栏剩下的空间由后一个盒接着用**——cap1 的 140 出 `100 | 40`，行 225 在同一栏里接着占 50（40 + 表边框 10 之后剩下的 50），再 `100 | 75`，cap2 的 15 与行的末片同栏。参考页是三条普通 div（140、245、15），Chrome 对两页逐像素相同（§9.115），所以同一分布也落在那三条 div 上。
+
+Hutu 的竖排路线不参与这个计划：`ArrangeMulticolChildren` 给竖排调的是 `ArrangeMulticolRunAcross(children, counts, ...)`——`Fragmentainer.Fill` 的**每栏几个子**，而横排吃 `cells`（每栏放哪几片、每片从盒子的何处起）。加上 `AddBoxCut` 的竖排放行（`5a2bd869`）是把盒子**预切成整栏长的片**，每片作为一个 `MulticolChild` 独占一栏，于是第二栏剩下的 60 谁也不占：参考页当时画成 `100 | 40 | 100 | 100 | 45+15`（五栏）。
+
+代码（两处共用一条判据）：
+1. `AddBoxCut` 对竖排不再预切，只给盒子打 `divides` 并记 `whole` = 块向长度，切片交给 `PlanMulticolRun` 的 resume/room 数学（`CutAt`、`Held`、`limit - used`）；
+2. `ArrangeMulticolRunAcross` 改吃 `cells`：每片按 `MulticolPiece(Offset, Height, Last)` 摆——块向长度取 `portion.Height`，游标从栏的块向起点边（vertical-rl 是右边）往回走，边缘归属仍按 `blockReversed` 挑左右两侧，`whole` 矩形把片在盒内的起点递下去。
+
+判据 `plansAcross`：竖排，且每个 in-flow 子**既不写 `break-inside: avoid` 也不带 margin**。两类例外各有一条实测理由，都留在旧的计数路线：
+- **带 margin 的竖排容器**：竖排盒子的 margin 付在块轴上，而计划花的房间仍按横排的轴读（`MulticolChild.Margin.Top` 被当块向起点距离用），于是 `margin-block-end: 20px` 在竖排里成了行内向的位移。`break-inside-avoid-min-block-size-2` 的参考页正是这一条；留回旧路线即与基线逐像素相同。轴要单独修，是本族下一条。
+- **`avoid` 的盒子**：Chrome 给它每片一个栏头——两个 40 的盒子在 30 的栏里出 `30+10 | 30+10`，占四个栏头（`build/_mb2meas.html` 的 C2/C3/C6/C7 全这样），不是 `30+10+20+20` 占三个。预切 + 计数给的正是这个分布；计划要表达「avoid 的盒子只在一栏之头才被切」需要把「栏头」与「剩下的空间」分开记账，已并入 #8 余下。
+
+门禁：屏幕全量 **0 新增失败名**，findings 1990（与 `build/_baseline-1cb017b3.md` 的同名集合一致；±2、±144 是已知文本对在两次相同运行间的抖动）；css-break 仍 27 对，族内像素 610 795 → **603 585**：`table-grid-paint-vrl-rtl` 与 `-vlr-rtl` 各 **37580 → 33500**；折叠边框两对 `vrl-ltr` 20350 → 20340、`vlr-rtl` 19380 → 20340——两页现在画成同一张图，一对减 10、另一对加 960，族内净减 7210，两条都仍红（#19 的角方归属未做）。单测 **2199**：`AVerticalColumnFillsWhatTheBoxBeforeLeftInIt` 在没有本条时红（后继盒量成 100 而不是 60，且落到第三栏），`EveryPieceOfABoxThatAvoidsBreakingTakesTheHeadOfAColumn` 钉住 avoid 盒的四个栏头。打印 **189/198** 九条同名、无 css-break。
+
+`table-grid-paint-*` 剩下的 33500 是 #8 的第二半，全在表格自己的轴上：caption 的内向长度（Hutu `140x0`，Chrome `[474,400 100x100]`，`MeasureCaptions`/`ArrangeCaption` 按物理宽度传内向尺寸）、表格内部沿块轴的堆叠（表盒、行、折叠边框都该从**栏的块向起点边**往回排），以及列沿行内向轴展开（`table-col-paint-*` 的两列现在仍排在 x 上：`td 780,202 2x35` 与 `td 768,202 2x35`）。
+
