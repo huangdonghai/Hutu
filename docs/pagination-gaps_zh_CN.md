@@ -1915,3 +1915,11 @@ test 第1栏: fill 842,292 50x100 | gradient 722,302 110x80   ← 正确
 
 门禁：单测 **2202**；打印 **189/198**（九条同名）；屏幕全量失败集合相对 `build/_score-vt.md` **0 新增名**（已知 4 条文本 timeout 仍在），总 `did not` **1987**；`css-break` 族 **25 → 24** 对（WPT 20、Gecko 4）。
 
+### 9.143 行内 clone 的每一片补齐两侧：`box-decoration-break-with-bidi` 转绿
+
+`OpenBox` 过去只看 `ContinuesFromPrevious/ToNext`，把被换行切断的行内边一律切成 `sliced`；clone 的语义却是每一片重新成为完整装饰盒。现在三个消费点一起读 `ClonesDecoration`：打开盒不再隐藏任一侧的 border/padding，`Advance` 在续排片补回行内向起始 inset/margin，行尾关闭也补回终止 inset/margin。几何与画状态必须一起改，只补画不补房间会让下一行压进前一片。
+
+新增 `InlineBoxTests.AClonedInlineCarriesEveryEdgeOnEachLineFragment` 钉住两片各自的 `Thickness(2,2,2,2)` border、`Thickness(4,4,4,4)` padding 与两个 `Slices*` 都为假。`gecko/css-break/box-decoration-break-with-bidi` 转绿；同族 `box-decoration-break-1` 从 **63 794 px** 降到 **49 293 px**，余下的不是切边归属，而是不等 margin 盒与四边虚线/圆角的逐片相位，留作该页下一刀。
+
+三道门禁：`css-break` **24 → 23**（Gecko 3、WPT 20），全量无新增失败名；打印 **189/198** 九条同名；单测 **2204**。
+

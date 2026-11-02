@@ -727,6 +727,39 @@ public sealed class InlineBoxTests
         });
     }
 
+    /// <summary>
+    /// A cloned inline repeats the edges it was broken at, rather than hiding them from the middle of
+    /// the element. Every line fragment still stands on its own line, but each one draws the complete
+    /// border and padding ring (CSS Break 3 §4.7, measured: gecko/css-break/box-decoration-break-*).
+    /// </summary>
+    [Test]
+    public async Task AClonedInlineCarriesEveryEdgeOnEachLineFragment()
+    {
+        using var view = CreateView(100);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='font-size:10px;line-height:20px;width:30px'>" +
+            "<span id='s' style='box-decoration-break:clone;border:2px solid;padding:4px'>aa<br>bb</span>" +
+            "</div></body></html>");
+
+        var fragments = Walk(view)
+            .Where(node => node.Kind == LayoutKind.Inline && node.Source.Element?.Id == "s")
+            .ToList();
+
+        Assert.That(fragments, Has.Count.EqualTo(2), "the break leaves one fragment on each line");
+        Assert.Multiple(() =>
+        {
+            foreach (var fragment in fragments)
+            {
+                Assert.That(fragment.SlicesInlineStart, Is.False, "no start edge is hidden from a cloned fragment");
+                Assert.That(fragment.SlicesInlineEnd, Is.False, "nor is an end edge");
+                Assert.That(fragment.Border, Is.EqualTo(new Hutu.Rendering.Layout.Thickness(2, 2, 2, 2)));
+                Assert.That(fragment.Padding, Is.EqualTo(new Hutu.Rendering.Layout.Thickness(4, 4, 4, 4)));
+            }
+        });
+    }
+
     private static String Document(String content, String lineHeight = "2", Int32 width = 0) =>
         "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:" + lineHeight +
         (width > 0 ? ";width:" + width + "px" : String.Empty) +

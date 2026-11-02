@@ -1353,7 +1353,8 @@ internal sealed class InlineLayout
             for (var index = open.Count - 1; index >= 0; index--)
             {
                 var left = open[index];
-                var cut = line.ContinuesToNext?.Contains(left.Ancestor) == true;
+                var cut = !left.Ancestor.Box.Style.ClonesDecoration &&
+                    line.ContinuesToNext?.Contains(left.Ancestor) == true;
 
                 origin += cut ? 0 : left.Ancestor.InlineEndInset;
                 CloseBox(left, origin, contentBox, flow, line, cursor, context, placement);
@@ -1865,8 +1866,9 @@ internal sealed class InlineLayout
     private static void OpenBox(OpenInline item, List<OpenInline> open, LayoutBox lineBox, WritingModeInfo flow, Line line)
     {
         var ancestor = item.Ancestor;
-        var cutStart = line.ContinuesFromPrevious?.Contains(ancestor) == true;
-        var cutEnd = line.ContinuesToNext?.Contains(ancestor) == true;
+        var clones = ancestor.Box.Style.ClonesDecoration;
+        var cutStart = !clones && line.ContinuesFromPrevious?.Contains(ancestor) == true;
+        var cutEnd = !clones && line.ContinuesToNext?.Contains(ancestor) == true;
 
         item.Node = new LayoutBox(ancestor.Box, LayoutKind.Inline)
         {
@@ -4003,7 +4005,8 @@ internal sealed class InlineLayout
             // break; only an element a line begins inside pays nothing for that edge here. Its margin
             // was charged at the start of the fragment the element began in too - a margin belongs to
             // the ends of the whole element, not to each piece a break cut it into.
-            var resumed = carried?.Contains(ancestor) == true;
+            var resumed = !ancestor.Box.Style.ClonesDecoration &&
+                carried?.Contains(ancestor) == true;
             var inset = resumed ? 0 : ancestor.InlineStartInset;
             var margin = resumed ? 0 : ancestor.InlineStartMargin;
             var item = new OpenInline(ancestor, position + margin, inset);
