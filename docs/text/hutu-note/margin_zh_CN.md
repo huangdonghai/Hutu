@@ -37,21 +37,24 @@
 
 ## 2. 边注区
 
-### 2.1 与宿主无关
+### 2.1 动态探测边注区
 
-边注区不读取宿主是否分页，也不搜索正文祖先的 padding 或 margin。所有宿主统一使用**根元素 `html`** 的 margin 空白：
+边注区不读取宿主是否分页。每条边注从根元素 `html` 的页边距开始，再向声明行所在的正文块动态探测实际可用的连续 margin 空白：
 
-1. 边注区来自页面／初始包含块边缘到 `html` border box 之间的 margin 区域，不包含 `body` 或正文内层元素的 margin。
-2. `inline-start` 侧取 `html` 的 `margin-inline-start` 区，`inline-end` 侧取 `html` 的 `margin-inline-end` 区；两侧按**正文块容器**的书写模式和 `direction` 解析。若 `html` 自身仍按另一书写模式计算了这些逻辑边（常见于只在 `body` 声明竖排的页面），应把它们映射到正文的 inline 轴后再作为边注带。
-3. 零或负 margin 不形成可用边注空白。`margin: auto` 先按普通布局解析为 used margin，再参与厚度比较。
-4. `html` 一侧 margin 为零时，该侧边注区宽度为零；边注仍从 §3.2 的起点建立，并按自然流继续延伸。
+1. **基线**：页面／初始包含块边缘到 `html` border box 之间的对应侧 margin 区始终可用。`inline-start`／`inline-end` 按正文块容器的 `writing-mode`／`direction` 解析；若 `html` 自身仍按另一书写模式计算了逻辑边，应先映射到正文 inline 轴。
+2. **声明块边界**：声明行所在的直接块容器的 border box 是该次探测的内容边界。可用的内边界取页面边缘到该 border box 对应侧外缘之间的空白。
+3. **取并集**：最终边注带厚度取 `max(根 margin 基线厚度, 页面边缘到声明块 border 外缘的厚度)`。探测只能加宽，不能因为内层元素外凸或负 margin 而缩到根 margin 以内。
+4. **只使用 clear margin**：探测不进入声明块的 border、padding、内容或背景绘制区。`body`、中间块和声明块依次形成的 margin 空白都可以计入；实际边界由布局后的 border box 几何决定，不另写 CSS 盒模型运算。
+5. 零或负 margin 不形成额外空白。`margin: auto` 先按普通布局解析为 used margin；块 border 落入根 margin 内或越出页面时，回退到根 margin 基线。
+6. `-hutu-note-side: auto` 的**选侧**仍然只比较 `html` 两侧 margin 的静态厚度，不因内层声明块的动态空白改侧；选侧后再在该侧执行动态加宽。
+7. 同一注文组的整个自然流使用同一个探测厚度。不同声明块可以有不同厚度；同侧堆叠仍按声明行的正文 block 轴位置排序。
 
 ### 2.2 边注区的轴
 
 边注区是一个矩形，外侧位置和带的长轴按**正文块容器**的书写模式解释：
 
-- 横排正文：边注带位于左边或右边，是沿正文 block 轴（向下）延伸的竖带；横轴厚度由 `html` 对应侧 margin 决定。
-- 竖排正文：边注带位于上边或下边，是沿正文 block 轴（`vertical-rl` 向左、`vertical-lr` 向右）延伸的横带；竖轴厚度由 `html` 对应侧 margin 决定。
+- 横排正文：边注带位于左边或右边，是沿正文 block 轴（向下）延伸的竖带；横轴厚度由根 margin 与声明块 margin 空白共同决定。
+- 竖排正文：边注带位于上边或下边，是沿正文 block 轴（`vertical-rl` 向左、`vertical-lr` 向右）延伸的横带；竖轴厚度由根 margin 与声明块 margin 空白共同决定。
 
 边注内容的行、列方向与正文块容器一致，注文自身的对应声明不参与布局。边注区在正文 inline 轴上的尺寸决定**一行（列）能排多长**；正文 block 轴是自然流式延伸方向，不用容量反推边注落侧。
 
@@ -141,14 +144,14 @@
 - **选区与复制**：按 DOM 顺序参与，边注文字出现在注文位置。
 - **注文隐藏**：注文元素被 `display:none`／移除时，边注消失。
 - **装饰**：`margin`／`padding`／`border`／`background` 全部尊重，计入边注占用的区间。
-- **多栏**：边注区始终取根元素 `html` 的 margin，不取任何栏容器的 padding 或 margin。
+- **多栏**：边注区先取根元素 `html` 的 margin，再按声明块探测栏内的连续 margin 空白；不进入声明块的 border、padding 或内容区。
 - **绝对定位**：注文元素上的 `position` 被忽略。
 
 ## 8. 验收点
 
 > 类型标记：**探针** = 数值几何断言；**Reftest** = 与参考页做带文字抗锯齿容差的截图比较；**探针 + Reftest** = 两者均必须。
 
-1. **探针**：边注区矩形等于根元素 `html` 对应侧的 margin 区，且不包含 `body` 或正文内层元素的 margin。
+1. **探针**：边注区至少覆盖根元素 `html` 对应侧的 margin 区；声明块 border box 比 `html` 更靠内时，边注带动态加宽到该 border 外缘。最终厚度 = `max(根 margin 基线, 页面边缘到声明块 border 外缘)`，且不进入 border、padding 或内容区。
 2. **探针 + Reftest**：横排正文的边注位于左／右 margin 区，竖排正文的边注位于上／下 margin 区；`inline-start`／`inline-end` 随正文 `writing-mode`／`direction` 解析；注文自身声明不同的 `writing-mode`／`direction` 不得改变落侧、行内方向或换行方向。
 3. **探针 + Reftest**：`-hutu-note-side: auto` 按 `html` 两侧正 margin 沿正文 inline 轴的静态厚度选择较大侧；已放置边注不得改变选择结果；相等时取 `inline-start`；显式侧不被自动改写。
 4. **探针 + Reftest**：注文组在正文 block 轴上的起始 margin edge 与声明行 line box 的 block-start 重合；横排、`vertical-rl`、`vertical-lr` 分别验证。
@@ -162,6 +165,7 @@
 12. **探针 + Reftest**：边注的 `text-align` 使用正常 CSS 继承后的注文 computed value，并在注文自身的可用 inline 尺寸内执行；正文行最终的 `text-align` used value不得覆盖它。
 13. **探针 + Reftest**：同一段文字作为正文和边注时，断行机会、标点禁则、`text-autospace`、`text-spacing-trim`、`hanging-punctuation`、bidi 和 shaping 结果一致；只有可用 inline 尺寸、外部落位和注文自身的 computed style 可以不同。
 14. **探针 + Reftest**：夹注和行间注内部声明的边注提升到页面边注区，零宽位置不占外层注文推进，并按对应外层注文的正文行确定声明行；边注内部再声明任何注文时，内层定义按普通节点忽略。
+15. **探针 + Reftest**：横排和竖排页面分别设置 `html` margin、`body`/中间块 margin 和声明块 margin；边注厚度逐层加宽到声明块 border 外缘。声明块 border 落入根 margin 内时不得窄于根 margin；`auto` 选侧结果仍只由 `html` 两侧 margin 决定。
 
 ## 9. 样例
 

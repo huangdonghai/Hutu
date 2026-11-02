@@ -1516,11 +1516,15 @@ internal sealed record LayoutProfile(
             noteContextLayout,
             noteContextLayout,
             noteContextLayout);
+        var initial = new Rect(0, 0, viewport.Width, viewport.Height);
+        var parents = ParentMap(root);
 
         foreach (var anchor in _marginNotes)
         {
             var side = ResolveMarginSide(anchor.Note.Style.NoteSide, startThickness, endThickness);
-            var thickness = side == NoteSide.InlineStart ? startThickness : endThickness;
+            var content = ContainingBorder(anchor.Line, root, parents);
+            var band = MarginBand(initial, content, flow, side, startThickness, endThickness);
+            var thickness = flow.IsVertical ? band.Height : band.Width;
             var margin = anchor.Note.Style.Margin.Resolve(thickness);
             var padding = anchor.Note.Style.Padding.Resolve(thickness);
             var border = BlockLayout.BorderOf(anchor.Note);
@@ -1564,7 +1568,6 @@ internal sealed record LayoutProfile(
             var outerBlock = contentBlock +
                 blockMarginStart + blockMarginEnd +
                 blockEdges;
-            var band = MarginBand(root.BorderBox, flow, side, startThickness, endThickness);
             var declaration = flow.BlockStart(anchor.Line.BorderBox);
             var progress = flow.BlockSign < 0 ? -declaration : declaration;
 
@@ -1682,27 +1685,81 @@ internal sealed record LayoutProfile(
         return new Thickness(top, physical.Right, bottom, physical.Left);
     }
 
+    /// <summary>Gets each layout box's parent without relying on a back pointer the tree does not keep.</summary>
+    private static Dictionary<LayoutBox, LayoutBox> ParentMap(LayoutBox root)
+    {
+        var parents = new Dictionary<LayoutBox, LayoutBox>();
+
+        void Walk(LayoutBox box)
+        {
+            foreach (var child in box.Children)
+            {
+                parents[child] = box;
+                Walk(child);
+            }
+        }
+
+        Walk(root);
+        return parents;
+    }
+
+    /// <summary>
+    /// Gets the border box of the block that holds the line a margin note was declared on. Its border
+    /// separates the block's margin - blank room the note may share - from its painted content.
+    /// </summary>
+    private static Rect ContainingBorder(
+        LayoutBox line,
+        LayoutBox root,
+        IReadOnlyDictionary<LayoutBox, LayoutBox> parents)
+    {
+        var current = line;
+
+        while (parents.TryGetValue(current, out var parent))
+        {
+            if (!parent.Source.IsAnonymous)
+            {
+                return parent.BorderBox;
+            }
+
+            current = parent;
+        }
+
+        return root.BorderBox;
+    }
+
+    /// <summary>
+    /// Gets the page-margin band on one side. The root margin is the floor; when the declaration
+    /// block's border stands farther in, the unnamed margin between it and the page is added too.
+    /// </summary>
     private static Rect MarginBand(
-        Rect root,
+        Rect page,
+        Rect content,
         WritingModeInfo flow,
         NoteSide side,
         Double start,
         Double end)
     {
+        var physicalStart = side == NoteSide.InlineStart
+            ? flow.InlineSign > 0
+            : flow.InlineSign < 0;
+        var floor = physicalStart ? start : end;
+
         if (!flow.IsVertical)
         {
-            var thickness = side == NoteSide.InlineStart ? start : end;
-            var x = side == NoteSide.InlineStart
-                ? flow.InlineSign > 0 ? root.X - thickness : root.Right
-                : flow.InlineSign > 0 ? root.Right : root.X - thickness;
-            return new Rect(x, 0, thickness, 0);
+            var room = physicalStart
+                ? content.X - page.X
+                : page.Right - content.Right;
+            var thickness = Math.Min(page.Width, Math.Max(floor, Math.Max(0, room)));
+            var x = physicalStart ? page.X : page.Right - thickness;
+            return new Rect(x, page.Y, thickness, 0);
         }
 
-        var verticalThickness = side == NoteSide.InlineStart ? start : end;
-        var y = side == NoteSide.InlineStart
-            ? flow.InlineSign > 0 ? root.Y - verticalThickness : root.Bottom
-            : flow.InlineSign > 0 ? root.Bottom : root.Y - verticalThickness;
-        return new Rect(0, y, 0, verticalThickness);
+        var verticalRoom = physicalStart
+            ? content.Y - page.Y
+            : page.Bottom - content.Bottom;
+        var verticalThickness = Math.Min(page.Height, Math.Max(floor, Math.Max(0, verticalRoom)));
+        var y = physicalStart ? page.Y : page.Bottom - verticalThickness;
+        return new Rect(page.X, y, 0, verticalThickness);
     }
 
     private static Rect MarginFrame(Rect band, WritingModeInfo flow, Double blockStart) =>

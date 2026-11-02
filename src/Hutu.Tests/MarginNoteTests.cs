@@ -34,6 +34,54 @@ public sealed class MarginNoteTests
     }
 
     [Test]
+    public async Task AMarginNoteUsesTheDeclarationBlocksMargin()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html style='margin:0 0 0 20px'>" +
+            "<body style='margin:0 0 0 10px;font-size:10px;line-height:20px'>" +
+            "<p style='margin:0 0 0 30px'>aa" +
+            "<span style='-hutu-note-placement:margin;-hutu-note-side:inline-start;" +
+            "font-size:10px;line-height:10px'>NN</span>bb</p></body></html>");
+
+        var note = Walk(view.Layout!.Root!)
+            .Single(box => box.Kind == LayoutKind.Block &&
+                box.Source.Style.NotePlacement == NotePlacement.Margin);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(note.BorderBox.X, Is.EqualTo(0));
+            Assert.That(note.BorderBox.Width, Is.EqualTo(60),
+                "the root, body and paragraph margins form one clear band");
+        });
+    }
+
+    [Test]
+    public async Task AnEndMarginNoteUsesTheDeclarationBlocksMargin()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html style='margin:0 20px 0 0'>" +
+            "<body style='margin:0 10px 0 0;font-size:10px;line-height:20px'>" +
+            "<p style='margin:0 30px 0 0'>aa" +
+            "<span style='-hutu-note-placement:margin;-hutu-note-side:inline-end;" +
+            "font-size:10px;line-height:10px'>NN</span>bb</p></body></html>");
+
+        var note = Walk(view.Layout!.Root!)
+            .Single(box => box.Kind == LayoutKind.Block &&
+                box.Source.Style.NotePlacement == NotePlacement.Margin);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(note.BorderBox.X, Is.EqualTo(140));
+            Assert.That(note.BorderBox.Width, Is.EqualTo(60),
+                "the inline-end side mirrors the start-side chain of clear margins");
+        });
+    }
+
+    [Test]
     public async Task AutoUsesTheLargerRootMarginSide()
     {
         using var view = CreateView(120);
@@ -159,6 +207,31 @@ public sealed class MarginNoteTests
             Assert.That(note.Flow.IsVertical, Is.True);
             Assert.That(note.BorderBox.Y, Is.LessThan(body.BorderBox.Y),
                 "vertical-rl puts the note in the top margin");
+        });
+    }
+
+    [Test]
+    public async Task AVerticalMarginNoteUsesTheDeclarationBlocksMargin()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(
+            "<html style='writing-mode:vertical-rl;margin:20px 0 0 0'>" +
+            "<body style='margin:0;font-size:10px;line-height:20px'>" +
+            "<p style='margin:0;margin-inline-start:30px;width:80px;height:100px'>aa" +
+            "<span style='-hutu-note-placement:margin;-hutu-note-side:inline-start;" +
+            "font-size:10px;line-height:10px'>NN</span>bb</p></body></html>");
+
+        var note = Walk(view.Layout!.Root!)
+            .Single(box => box.Kind == LayoutKind.Block &&
+                box.Source.Style.NotePlacement == NotePlacement.Margin);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(note.Flow.IsVertical, Is.True);
+            Assert.That(note.BorderBox.Y, Is.EqualTo(0));
+            Assert.That(note.BorderBox.Height, Is.EqualTo(50),
+                "the vertical page uses both the root and paragraph inline margins");
         });
     }
 
