@@ -2292,3 +2292,19 @@ Q1 有了答案，方向和我猜的不同。三件事：
 - 把 `FacesFor` 里的 `Named(key.Family)` 暂时短路掉再量：同一页 7.3 s → **0.8 s**，`476378-soft-hyphen-fallback` → **4.3 s**（已经进到 5 s 预算里）。所以热点是 `Named` 的 `Nearest(wanted)` 候选逐个 `SKTypeface.FromFile(path, index)`；`MatchFamily`、`MatchCharacter`、 shaping 都不在这个数量级上。
 - 试过的一条**不够**：只让 collection（`.ttc/.otc`）读 8 个 face、普通 ttf/otf 只读第 0 个 —— 两页仍是 7.7 s / 8.1 s，说明钱花在**开很多个文件**而不是同一个文件开很多次（改动已回退）。
 - 下次要动的形状（行为要逐页量，别猜）：给 `Nearest` 加一条"名字里至少要有 wanted 的若干字母对、且不低于最佳候选的一半"的门槛，把 12 个候选降到真正像的那几个；判定面除了这两页，还有 `gecko/text/*` 与任何靠 `Named` 兜底的页（改门槛会换字体，宽度就会动）。
+
+### 9.168 落一刀：窗归碎片、栏不剪内联 —— `out-of-flow-in-multicolumn-045` 转绿
+
+`9081e889` 落的两件事都是上一轮 `build/_pix` 量到的 Chrome 真值直接指的。
+
+- **窗随片走**：standing 链里每条裁剪记下「是谁站的、站到这儿已被相对位移走多远」（`Painter` 的 `Cut(Area, Fragment, Stood)` 加 `_travelled`），带 `top/left` 的碎片因此把自己的窗带走。要点是**替换**而不是叠加：延迟绘制的 out-of-flow 后代带着自己那份链，而画布上外层那份未位移的窗还在，两者相交＝什么都没画 —— 上一轮只做叠加式 pop/push 时 045 一分未动就是栽在这。
+- **栏窗只剪被切断那条轴**：`LayoutBox.FragmentCutsInline`（多列 9 处片段赋值置 false）。列盒说的是「这盒在这栏露哪一段」，侧向出栏的东西照画；页是画在纸面上，两向都剪。合成验证页 `build/_scratch/crossclip2.html`（100 宽两栏放 150 宽 in-flow 盒）里 Chrome 把红条画满 150 px。
+
+门禁：单测 2216；全量屏幕每对都画得出来，**少一条红名、零新增红名**；四处本来就红的略涨（transform-006 1 361→1 567、transform-008 10 531→11 900、anchor-name-multicol-003 4 600→4 900、anchor-position-multicol-nested-001 5 540→5 700），那是侧向溢出现在画得出来；gecko 600、wpt 1 377→1 376；`css-break` 21→20；打印 193/198 不变。
+
+同墙剩下三条本轮各自量清：
+
+- `out-of-flow-in-multicolumn-073/-090`（各 11 600）。Chrome：`.fixed` 两片 (8,58) 与 (58,58) 各 50x100，自己拼成参考方块。我们探针里 `.fixed` 在 `fixed` 层、(-42,149.72) 50x200 —— 层不对（没被栏窗剪）也不在正确栏头。试过「按栏多发一片」：诊断显示进不去 —— `extent=0`、`PositionedReach` 比两栏容量大，`FitsTheColumns` 把 `divides` 判回 false ⇒ 成员一片都没分。死代码已回退。⇒ 要的是「out-of-flow 后代在每个它落进的 fragmentainer 里各成一片」，不是成员自身的切分。
+- `out-of-flow-in-multicolumn-093`（28）。Chrome 两页这区域逐像素相同（两颗 `::before` 的 `left:-15px` 都在画外），我们差在测试页第二栏那颗 `top:-2px` 比参考页 `top:0` 那颗高 2 px —— 同一条墙，只是量级 28 px。
+
+下一刀的形状：**给 out-of-flow 后代建自己的碎片链** —— 一个 abs/fixed 盒，若它的包含块链穿过一个被切开的盒，就在该盒的每个片里各放一份，位置取自那片的内容头、块向剪到那片；这要求 out-of-flow 的摆放从「一次布局的绝对坐标」搬到「按片重放」。做完 045 那两轴规则正好复用；判定面 `-073/-090/-093`、`block-end-aligned-abspos-with-overflow`、`abspos-in-opacity-*`、`grid-item-oof-013`、`contain-size-fieldset-001`；回归面 `positioned-*`、`css-position`、`sticky`、`float-*` 与所有打印页。`fieldset-001`（84 755）、`vertical-wm-001/002`（12 988/10 608）仍是 §9.165 那堵「按 fragmentainer 重排」的墙；`at-boundary`（2 415）仍是折叠边框 45° 斜接的独立画法活。
