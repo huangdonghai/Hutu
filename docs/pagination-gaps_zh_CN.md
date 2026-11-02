@@ -2285,3 +2285,10 @@ Q1 有了答案，方向和我猜的不同。三件事：
 
 本轮代码零改动（三处实验全部回退，工作树仍在 `1b5797f2`），门禁不变：单测 2216、`css-break` 21 对、打印
 193/198。
+
+### 9.167 剩下两张超时页的账量到 `Named` 头上：候选文件的逐个 `FromFile` 就是那 6.5 秒
+
+- 用 `build/_enginelook` 逐族量（单族页，800x600）：`Arial` 0.7 s、`DejaVu Sans` 0.9 s、`NoSuchFont At All` 0.8 s，而 `Droid Sans Arabic` **7.5 s**、`Droid Arabic Naskh` **7.3 s** —— 只有那两页（`gecko/text/initial-zwj-1`、`gecko/text/476378-soft-hyphen-fallback`）超时，正是因为它们的列表里有平台不认识、但**大写字母对又能匹配上一批文件**的族名。
+- 把 `FacesFor` 里的 `Named(key.Family)` 暂时短路掉再量：同一页 7.3 s → **0.8 s**，`476378-soft-hyphen-fallback` → **4.3 s**（已经进到 5 s 预算里）。所以热点是 `Named` 的 `Nearest(wanted)` 候选逐个 `SKTypeface.FromFile(path, index)`；`MatchFamily`、`MatchCharacter`、 shaping 都不在这个数量级上。
+- 试过的一条**不够**：只让 collection（`.ttc/.otc`）读 8 个 face、普通 ttf/otf 只读第 0 个 —— 两页仍是 7.7 s / 8.1 s，说明钱花在**开很多个文件**而不是同一个文件开很多次（改动已回退）。
+- 下次要动的形状（行为要逐页量，别猜）：给 `Nearest` 加一条"名字里至少要有 wanted 的若干字母对、且不低于最佳候选的一半"的门槛，把 12 个候选降到真正像的那几个；判定面除了这两页，还有 `gecko/text/*` 与任何靠 `Named` 兜底的页（改门槛会换字体，宽度就会动）。
