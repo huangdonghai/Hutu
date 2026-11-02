@@ -493,6 +493,39 @@ public sealed class MulticolBoxCutTests
         });
     }
 
+    /// <summary>
+    /// A column that runs down the page spends a child's block-start margin along the block axis, the
+    /// same way a horizontal one spends it along the height: the room the margin takes is room the column
+    /// has lost, so a box that needs more than what the next column holds moves on rather than overflowing
+    /// the one it reached (CSS 2.1 §8.3.1 against CSS Writing Modes 3 §4.1, measured:
+    /// gecko/css-break/vertical-wm-001, whose box of 82 with a 40 margin-block-start stands whole at the
+    /// head of the second column while the first holds nothing but its margin).
+    /// </summary>
+    [Test]
+    public async Task AVerticalColumnSpendsTheMarginItBlocksItsBoxWith()
+    {
+        using var view = await Render(
+            "<style>#c { writing-mode: vertical-lr; columns: 2; column-gap: 0; column-fill: auto;" +
+            " block-size: 90px; inline-size: 140px }" +
+            " #b { margin-block-start: 40px; block-size: 82px; inline-size: 70px }</style>" +
+            "<div id='c'><div id='b'></div></div>");
+
+        var band = Find(view, "c").BorderBox;
+        var pieces = Of(view, "b");
+
+        Assert.Multiple(() =>
+        {
+            // The margin stands in the first column and nothing of the box follows it there: the box is
+            // too long for what that column has left, and a column that cannot hold the rest of a box
+            // hands it to the head of the next, where it stands whole (CSS Fragmentation 3 §4.3).
+            Assert.That(pieces, Has.Count.EqualTo(2), "the margin stands in one column, the box in the next");
+            Assert.That(pieces[0].BorderBox.Width, Is.EqualTo(0), "and the piece that only spent the margin draws no box");
+            Assert.That(pieces[1].BorderBox.Y, Is.EqualTo(band.Y + 70), "the box stands in the second column");
+            Assert.That(pieces[1].BorderBox.X, Is.EqualTo(band.X), "at that column's block-start edge, margin spent");
+            Assert.That(pieces[1].BorderBox.Width, Is.EqualTo(82), "whole, because a column of 90 holds it");
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

@@ -1609,8 +1609,10 @@ internal sealed class BlockLayout
             Double lead = 0,
             Double trail = 0,
             Int32 item = -1,
-            Boolean floats = false)
+            Boolean floats = false,
+            Boolean ownsEdges = true)
         {
+            OwnsEdges = ownsEdges;
             Box = box;
             Size = size;
             Margin = margin;
@@ -1706,6 +1708,11 @@ internal sealed class BlockLayout
         /// <c>wpt/css-break/float-017</c>).
         /// </summary>
         public Boolean Floats { get; }
+
+        /// <summary>Gets whether this piece of the box owns the edges it carries. The piece that holds
+        /// nothing but the margin a box opened with owns none: the box's borders and background belong
+        /// to the piece that shows the box (CSS Break 3 §4.7).</summary>
+        public Boolean OwnsEdges { get; }
 
         /// <summary>
         /// Gets the border box height the child would have had unbroken, for a piece of a broken child.
@@ -2456,6 +2463,38 @@ internal sealed class BlockLayout
             }
 
             var extent = BlockExtentOf(size, vertical);
+
+            // A box that a whole column could hold, but not the room this one has left after the margin
+            // it opens with, moves on as it stands: the margin stays spent where it stood, and the box
+            // begins the next column at its head - the same break the column makes when a margin is
+            // taller than it is, read one step earlier (CSS Fragmentation 3 §4.3, measured:
+            // gecko/css-break/vertical-wm-001, whose box of 82 with a 40 margin-block-start fills the
+            // second column from its edge while the first holds nothing but that margin).
+            if (fragmentHeight > 0 && margin.Top > 0.001 &&
+                extent <= fragmentHeight + 0.001 &&
+                extent + margin.Top > fragmentHeight + 0.001)
+            {
+                children.Add(new MulticolChild(
+                    child,
+                    vertical ? new Size(0, size.Height) : new Size(size.Width, 0),
+                    margin,
+                    new FragmentChild(margin.Top, before, BreakValue.Auto, breaks.Inside),
+                    -1,
+                    false,
+                    whole: extent,
+                    ownsEdges: false));
+
+                children.Add(new MulticolChild(
+                    child,
+                    size,
+                    new Thickness(0, margin.Right, margin.Bottom, margin.Left),
+                    new FragmentChild(extent + margin.Bottom, BreakValue.Auto, after, breaks.Inside),
+                    -1,
+                    last: true,
+                    whole: extent));
+
+                continue;
+            }
 
             // A row flex that does not wrap sets every item at the container's own block start, so a
             // fragmentainer with no room at all can hold none of them where the container stands: each
@@ -5619,8 +5658,8 @@ internal sealed class BlockLayout
                     var cutBorder = BorderOf(child.Box);
                     var cutPadding = child.Box.Style.Padding.Resolve(height);
                     var cutClones = child.Box.Style.ClonesDecoration;
-                    var cutStarts = cutClones || offset < 0.001;
-                    var cutEnds = cutClones || ends;
+                    var cutStarts = cutClones || (offset < 0.001 && child.OwnsEdges);
+                    var cutEnds = cutClones || (ends && child.OwnsEdges);
                     var pieceWidth = held > 0.001 ? held : width;
                     var wholeWidth = child.Whole > 0 ? child.Whole : pieceWidth;
                     var blockX = blockReversed ? start - pieceWidth : start;
@@ -5682,11 +5721,20 @@ internal sealed class BlockLayout
                     continue;
                 }
 
-                parent.Children.Add(_engine.Arrange(
+                var stood = _engine.Arrange(
                     child.Box,
                     new Rect(start - (blockReversed ? width : 0), y + child.Margin.Left, width, height),
                     childContext,
-                    definiteHeight: false));
+                    definiteHeight: false);
+
+                if (!child.OwnsEdges)
+                {
+                    // The piece spent the margin and nothing else: what the box holds is drawn by the
+                    // piece that shows the box.
+                    stood.FragmentClip = stood.BorderBox;
+                }
+
+                parent.Children.Add(stood);
 
                 x = blockReversed
                     ? start - width - child.Margin.Bottom
@@ -6248,8 +6296,8 @@ internal sealed class BlockLayout
                                     (child.Whole > 0 ? child.Whole : height) - portion.Offset)));
                     var cutBorder = BorderOf(child.Box);
                     var cutPadding = child.Box.Style.Padding.Resolve(share);
-                    var cutStarts = portion.Offset < 0.001;
-                    var cutEnds = portion.Last && child.Last;
+                    var cutStarts = portion.Offset < 0.001 && child.OwnsEdges;
+                    var cutEnds = portion.Last && child.Last && child.OwnsEdges;
                     var arranged = _engine.Arrange(
                         child.Box,
                         whole,
@@ -6439,13 +6487,22 @@ internal sealed class BlockLayout
                         new Rect(rect.X, wholeTop, rect.Width, child.Whole));
                 }
 
-                parent.Children.Add(_engine.Arrange(
+                var stood = _engine.Arrange(
                     child.Box,
                     rect,
                     childContext,
                     definiteHeight: false,
                     lines: child.Broken ? new LineRange(child.Line, to) : null,
-                    slice: slice));
+                    slice: slice);
+
+                if (!child.OwnsEdges)
+                {
+                    // The piece spent the margin a box opened with and shows none of the box: what the
+                    // box holds is drawn by the piece that carries it.
+                    stood.FragmentClip = stood.BorderBox;
+                }
+
+                parent.Children.Add(stood);
                 y += height + last.Margin.Bottom;
             }
         }

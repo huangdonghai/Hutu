@@ -1754,3 +1754,17 @@ c1 [714,10 50x60]  c2 [714,80 50x60]  c3 [654,10 50x60]  c4 [654,80 50x60]
 
 顺带记一条**工具坑**（本会话第二次撞到）：`HUTU_SCORE_ONLY=<子串>` 写出的 `build/reftest-score.md` 只含该子串的对——拿它跟全量基线比会把「不在子串里」的对全看成 0 px；比较时要么两边都按同一子串过滤，要么跑全量。
 
+### 9.131 装得下一栏、装不下「margin + 自己」的盒子整块挪到下一栏栏头，margin 留在原处（`vertical-wm-001/002` 合计 −28 560）
+
+`gecko/css-break/vertical-wm-001`（十条容器，`.col` 是 `columns:2; block-size:90; inline-size:140`，里面一块 `.inner` 带 `margin-block-start:40px`、`border-block-start:25px`、`border-block-end:17px`、内容 40）：Chrome 的参考页把第一栏画成**空的**，第二栏从栏头起依次是 25 的蓝边、两个 20 的方块、17 的灰边——即 margin 花在第一栏，盒子整块挪到下一栏的起点边，且**它自己的边归装得下它的那一片**。Hutu 之前把它摆在第一栏 x=40 处并溢出栏尾（82 > 剩下的 50），十条容器全这样，差 27 468 px。
+
+这条与 `AddBoxCut` 里「margin 比一栏还高时，margin 自己是它的零高一片」（§9.122 引的 `flex-container-fragmentation-006`）是同一件事，只是早一档：**margin 不必超过整栏，只要 `margin + 盒长 > 栏`** 而盒长本身装得下一栏，就断在 margin 与盒身之间。
+
+代码（`MulticolChildren` 一处 + 两条安排各一处）：
+1. 在算完 `extent = BlockExtentOf(size, vertical)` 之后，`margin.Top > 0 && extent <= fragmentHeight && extent + margin.Top > fragmentHeight` 时发两条：一条零块向尺寸、`Fragment.Height = margin.Top`、`ownsEdges: false`；一条 `Margin.Top = 0`、带 `whole`、`last: true`。切栏的 `ChildSlicer` 便自然把第二条送到下一栏（栏里只剩 50，装不下 82）✓。
+2. `MulticolChild.OwnsEdges` 新形参：两条安排路线（`ArrangeMulticolRun` 的普通子分支、`ArrangeMulticolRunAcross` 的普通子分支）在 `!OwnsEdges` 时把 `cutStarts/cutEnds` 压成假——盒子那两片边都不属于这片——并把 `FragmentClip` 收到这片自身零尺寸的矩形上，于是盒子的边框与它装的内容都不在第一栏出现 ✓。
+
+横排也吃这条（同一页的第二条容器是横排的 `columns:2`，Chrome 同样把盒子挪到第二栏）：判据不区分书写模式，`margin.Top` 在两条路线里都已是**流向相对**的块向 margin（`MulticolChildren` 把 `CollapsedStart/CollapsedEnd` 放进 Top/Bottom 槽，竖排的 `used.Left/Right` 转进 Top/Bottom，见该处注释）✓ 这也是 §9.126/§9.128 里「竖排的 margin 按横排的轴读」那条限制在**这一支**上的解除。
+
+门禁：屏幕全量 **0 新增失败名**、findings 1988 不变；打印 **189/198** 九条同名；单测 **2201**（新增 `AVerticalColumnSpendsTheMarginItBlocksItsBoxWith`：改前盒在 y=栏首、x=40、宽 82 溢出，四条断言全红）。css-break 像素 481 590 → **453 030**：`gecko/css-break/vertical-wm-001.html` 27468 → **12988**、`vertical-wm-002.html` 24688 → **10608**。族外顺带回收 §9.128 记下的退步：`flexbox-single-column-6` 9850 → 6450、`flexbox-single-column-vertical-lr-6`/`-rl-6` 各 3900 → 3500；变大的两条 `flexbox-multi-row-vertical-rl/lr-1a` 各 +1700（本来已红）。两对 `vertical-wm-*` 剩下的 12 988/10 608 出在后面的容器上，本轮没有逐条量（十条容器各自一条路），留作这两对的下一条。
+
