@@ -1692,3 +1692,15 @@ Hutu 的竖排路线不参与这个计划：`ArrangeMulticolChildren` 给竖排�
 
 `table-grid-paint-*` 剩下的 33500 是 #8 的第二半，全在表格自己的轴上：caption 的内向长度（Hutu `140x0`，Chrome `[474,400 100x100]`，`MeasureCaptions`/`ArrangeCaption` 按物理宽度传内向尺寸）、表格内部沿块轴的堆叠（表盒、行、折叠边框都该从**栏的块向起点边**往回排），以及列沿行内向轴展开（`table-col-paint-*` 的两列现在仍排在 x 上：`td 780,202 2x35` 与 `td 768,202 2x35`）。
 
+### 9.127 竖排表格落到自己的轴上：整盒 + 栏窗裁剪、caption 沿块轴记账、碎片的阴影逃出栏窗（`table-grid-paint-vrl-rtl`、`-vlr-rtl` 转绿）
+
+Chrome 量的 `table-grid-paint-vrl-rtl`（`build/_vtbchrome.txt`）：整张表是一块 400 长、100 宽（行内向）的盒，四栏各开一块 100×100 的窗口，`cap1 = [474,400 100x100] + [534,300 40x100]`、`tr = [474,310 50x80] + [474,210 100x80] + [499,110 75x80]`、`cap2 = [474,100 15x100]`——**每一片都是整盒被栏窗裁开**，续片从栏的块向起点边重画。参考页（三条普通 div）与它逐像素相同，所以这就是目标。
+
+三处一起改，缺一处都对不上：
+
+1. **竖排的片按整盒排布、由栏窗裁剪**（`BlockLayout.ArrangeMulticolRunAcross`）。横排路线一直是这个模型（`_engine.Arrange(child.Box, whole, slice)` + `FragmentClip = held`），竖排过去把片按片宽递给盒子——表格在里面只能拿 100 的宽度去分列、排行，永远排不出 Chrome 的 400。改完 `table` 的整盒是 `392,192 400x100` ✓。预切的片（`child.Offset >= 0`，竖排里就是 avoid 盒与 margin 片）仍按片宽排，那是 §9.126 留下的路线。
+2. **caption 沿块轴记账**（`TableFormattingContext`）。`MeasureCaptions` 过去把表的**物理宽度**当内向尺寸传给 caption，竖排里那是块向，于是 `caption 140x0`：既画不出（高 0），也不进账（`CaptionTop/Bottom` 加进 Height 槽）。现在 `CaptionEntry.Vertical` + `OuterBlock`（竖排取 `Margin.Horizontal + Width`），`MeasureCaptions(build, inlineExtent, ctx)` 用 `WithHeight(avail)` 量、再把内向长度抬到 `avail`（空 caption 铺满所在列，与横排的 auto-width 同理），`Measure` 的返回值把两份 claims 加到**块向槽**。摆放同轴换：`tableBlockExtent`/`tableBox` 沿 x 从块向起点边（vertical-rl 是右边）往里推，`contentWidth`/`gridHeight` 各自留在自己的物理轴上（只把 caption 的份额从块向扣），`ArrangeCaptionAcross` 竖排专用——量的结果：`caption 652,192 140x100`（Chrome 映射同值）、行 `417,202 225x80`、末 caption `392,192 15x100`，整盒 400 ✓ 四栏 ✓。
+3. **碎片的阴影不受栏窗裁剪**（`Painter.PaintGround`）。栏窗 `FragmentClip` 是给地、框、内容用的；一条自己拥有的边投出的环，Chrome 让它越过分栏器的边画出去（`box-shadow-004`：第一片的环在 `[48..58]`，正在黄色容器左边之外；参考页就是拿一块 110 宽的 abs div 模拟它）。把外阴影提到 `PushClipCommand` 之前发，`PaintPresentation` 收到 `shadowsOutside` 不再重发；匿名盒/`display:contents` 不发（它们本就没有 presentation）。同时 `BandOf` 把带再与栏窗取交：**栏窗是硬的**，切边那一侧的环由带挡住，own 边那一侧的环由带放到栏窗之外。这两条合起来才让 `box-shadow-004` 从新红 6400 回到绿，而 `box-shadow-003` 不动（它差的仍是 #18 那条竖排 abs 静态位置）。
+
+门禁：单测 **2200**（新增 `ACaptionOfATableAcrossThePageStraddlesTheColumnAndClaimsItsLength`：改前该测的三条断言全部对不上——caption 高 0、它从 `borderBox.X` 往右长、整盒只有 245 长只切出三片；另把 §9.126 的竖排填充测改按栏窗宽度断言，因为片现在铺满整盒）。打印 **189/198** 九条同名、无 css-break。屏幕全量 **0 新增失败名**、findings 1990 → **1988**；`wpt/css-break` **27 → 25 对**，族内像素 603 585 → **519 285**（-84 300）：`table-grid-paint-vrl-rtl`、`-vlr-rtl` **33500 → 0 转绿**；`table-collapsed-borders-paint-vrl-ltr`、`-vlr-rtl` 各 **20340 → 9090**；语料外 `gecko/css-grid/grid-item-table-stretch-004` 45185 → 43504。变差的是仍红的六对竖排表：`table-row-paint-*` 各 29930 → 30750、`table-col-paint-*` 各 30630 → 31590、`table-section-paint-*` 各 30630 → 31450——它们缺的是最后一根轴：**列沿行内向轴展开**（Hutu 现在把一行的两格排在 x=780 与 x=768，Chrome 把它们排在 y 上、`35+10+35=80`），这条留在 #8。
+

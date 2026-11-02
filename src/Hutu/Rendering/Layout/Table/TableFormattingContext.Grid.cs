@@ -46,6 +46,16 @@ internal sealed partial class TableFormattingContext
         /// table out of an <c>overflow: hidden</c> box that was sized to hold them.
         /// </summary>
         public Double OuterHeight => Margin.Vertical + Height;
+
+        /// <summary>Gets whether the table runs across the page, which turns the caption's own axes
+        /// around: its block extent is then its width and the side it straddles is its height.</summary>
+        public Boolean Vertical;
+
+        /// <summary>Gets what the caption claims of the stack the table's wrapper keeps for it: its
+        /// border box along the block axis plus the margin that opens it from what came before - the
+        /// height and the vertical margins in a horizontal table, the width and the horizontal margins
+        /// in a vertical one (CSS 2.1 §17.4 read through CSS Writing Modes 3 §4.1).</summary>
+        public Double OuterBlock => Vertical ? Margin.Horizontal + Width : OuterHeight;
     }
 
     /// <summary>Everything the table context computes for one table, shared by both phases.</summary>
@@ -778,8 +788,13 @@ internal sealed partial class TableFormattingContext
         }
     }
 
-    /// <summary>Measures the captions at the table's content width and splits them by side.</summary>
-    private void MeasureCaptions(TableBuild build, Double contentWidth, LayoutContext context)
+    /// <summary>Measures the captions at the table's extent along its inline axis and splits them by
+    /// side. What a caption claims of the stack is its block extent - the width of the box in a table
+    /// that runs across the page - and the side it straddles is its inline extent, which a caption left
+    /// to its own content fills (CSS Writing Modes 3 §4.1, measured: table-grid-paint-vrl-rtl, whose
+    /// 140-long caption shows 100 of itself in each column and is 100 wide across the column it stands
+    /// in, not the nothing an empty caption of a horizontal table would make of it).</summary>
+    private void MeasureCaptions(TableBuild build, Double inlineExtent, LayoutContext context)
     {
         build.CaptionTop = 0;
         build.CaptionBottom = 0;
@@ -789,24 +804,37 @@ internal sealed partial class TableFormattingContext
             return;
         }
 
-        var captionContext = context.ForContainingBlock(new Size(contentWidth, 0));
+        var vertical = build.Box.Flow.IsVertical;
+        var captionContext = context.ForContainingBlock(
+            vertical ? new Size(0, inlineExtent) : new Size(inlineExtent, 0));
 
         foreach (var caption in build.Captions)
         {
-            caption.Margin = caption.Box.Style.Margin.Resolve(contentWidth);
-            var avail = Math.Max(0, contentWidth - caption.Margin.Horizontal);
-            var size = _engine.Measure(caption.Box, MeasureConstraints.FitWidth(avail), captionContext);
+            caption.Vertical = vertical;
+            caption.Margin = caption.Box.Style.Margin.Resolve(inlineExtent);
+
+            // Percentages of the caption's own box read the containing block's inline size, which is the
+            // table's height when the table runs across the page.
+            var avail = Math.Max(
+                0,
+                inlineExtent - (vertical ? caption.Margin.Vertical : caption.Margin.Horizontal));
+            var size = _engine.Measure(
+                caption.Box,
+                vertical
+                    ? MeasureConstraints.Unconstrained.WithHeight(avail)
+                    : MeasureConstraints.FitWidth(avail),
+                captionContext);
 
             caption.Width = size.Width;
-            caption.Height = size.Height;
+            caption.Height = vertical ? Math.Max(size.Height, avail) : size.Height;
 
             if (caption.Side == CaptionSide.Top)
             {
-                build.CaptionTop += caption.OuterHeight;
+                build.CaptionTop += caption.OuterBlock;
             }
             else
             {
-                build.CaptionBottom += caption.OuterHeight;
+                build.CaptionBottom += caption.OuterBlock;
             }
         }
     }

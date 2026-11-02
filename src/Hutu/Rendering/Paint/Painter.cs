@@ -716,6 +716,16 @@ internal sealed class Painter
         // answer: a column that runs the page rightwards begins at the high one, so the edge cut off
         // the end of the box is the low one (CSS Writing Modes 3 §5.1, measured: box-shadow-003, whose
         // first fragment shows the ring across the block-start edge and none at the cut).
+        // The window the piece is shown through caps the shadow as hard as the cut does: a fragment laid
+        // over the whole box has its band on the whole's edges, and what falls outside the column is not
+        // painted there either (CSS Break 3 §4.7, measured: box-shadow-003, whose first fragment shows
+        // the ring across the block-start edge and none at the cut).
+        if (box.FragmentClip is { } window)
+        {
+            low = Math.Max(low, vertical ? window.X : window.Y);
+            high = Math.Min(high, vertical ? window.Right : window.Bottom);
+        }
+
         var beginsAtHigh = box.Flow.BlockSign < 0;
         var from = (beginsAtHigh ? box.SlicesBlockEnd : box.SlicesBlockStart) ? low : boundsLow;
         var to = (beginsAtHigh ? box.SlicesBlockStart : box.SlicesBlockEnd) ? high : boundsHigh;
@@ -771,7 +781,7 @@ internal sealed class Painter
     /// This is the part CSS 2.1 §Appendix E puts in a pass of its own, before the line the box's text
     /// stands on - which is why it is separated from what the box says rather than painted with it.
     /// </remarks>
-    private void PaintPresentation(LayoutBox box, List<PaintCommand> target)
+    private void PaintPresentation(LayoutBox box, List<PaintCommand> target, Boolean shadowsOutside = false)
     {
         var style = box.Source.Style;
 
@@ -804,7 +814,10 @@ internal sealed class Painter
         // table-caption-and-cells).
         var tableBox = box.Kind == LayoutKind.Table ? box.TableBox : null;
 
-        AddShadows(box, style, target, inset: false);
+        if (!shadowsOutside)
+        {
+            AddShadows(box, style, target, inset: false);
+        }
 
         // The shadow falls outside the box and is left whole; what is cut is the box's own ground.
         if (tableBox is { } band)
@@ -1250,12 +1263,22 @@ internal sealed class Painter
 
         if (cut is { } standing)
         {
+            // A fragment's shadow is ink of the box, not of the stretch the column shows it through: the
+            // ring an edge the box really owns casts falls past the fragmentainer's edge as far as it
+            // reaches, while the ground, the borders and whatever the box holds stay cut to the fragment
+            // (CSS Break 3 §4.7 against CSS Backgrounds 3 §6.1.3, measured: box-shadow-004, whose
+            // first fragment shows the ring ten pixels outside the column's edge).
+            if (!hidden && !box.Source.IsAnonymous && !box.Source.IsContents)
+            {
+                AddShadows(box, box.Source.Style, target, inset: false);
+            }
+
             target.Add(new PushClipCommand(standing, CornerRadii.None));
         }
 
         if (!hidden)
         {
-            PaintPresentation(box, target);
+            PaintPresentation(box, target, shadowsOutside: cut is not null);
         }
 
         // The clip covers what the box holds and never the box itself, which is what keeps a border from

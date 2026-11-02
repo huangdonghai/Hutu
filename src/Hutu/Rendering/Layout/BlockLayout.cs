@@ -5624,10 +5624,22 @@ internal sealed class BlockLayout
                     var pieceWidth = held > 0.001 ? held : width;
                     var wholeWidth = child.Whole > 0 ? child.Whole : pieceWidth;
                     var blockX = blockReversed ? start - pieceWidth : start;
+                    var heldRect = new Rect(blockX, y + child.Margin.Left, pieceWidth, height);
+                    var wholeRect = new Rect(
+                        blockReversed ? blockX + offset + pieceWidth - wholeWidth : blockX - offset,
+                        y + child.Margin.Left,
+                        wholeWidth,
+                        height);
 
-                    parent.Children.Add(_engine.Arrange(
+                    // A piece the column divided is the whole box seen through the column's window, which
+                    // is what the horizontal route does and what a box with content of its own needs: a
+                    // table laid inside one column's room would share its columns out over that room and
+                    // stack its rows from the wrong edge (CSS Fragmentation 3 §4.1, measured:
+                    // table-grid-paint-vrl-rtl, whose row of 225 comes out 50 / 100 / 75 down three
+                    // columns while each column is a 100-wide window on the same 400-long wrapper).
+                    var laidOut = _engine.Arrange(
                         child.Box,
-                        new Rect(blockX, y + child.Margin.Left, pieceWidth, height),
+                        portion.Offset >= 0 ? wholeRect : heldRect,
                         childContext,
                         definiteHeight: false,
                         slice: new FragmentSlice(
@@ -5643,13 +5655,15 @@ internal sealed class BlockLayout
                                 (blockReversed ? cutEnds : cutStarts) ? cutPadding.Left : 0),
                             cutStarts,
                             cutEnds,
-                            new Rect(
-                                blockReversed
-                                    ? blockX + offset + pieceWidth - wholeWidth
-                                    : blockX - offset,
-                                y + child.Margin.Left,
-                                wholeWidth,
-                                height))));
+                            wholeRect,
+                            Piece: heldRect));
+
+                    if (portion.Offset >= 0)
+                    {
+                        laidOut.FragmentClip = heldRect;
+                    }
+
+                    parent.Children.Add(laidOut);
 
                     x = blockReversed
                         ? blockX - (ends ? child.Margin.Bottom : 0)

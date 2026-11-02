@@ -50,6 +50,7 @@ internal sealed partial class TableFormattingContext
     public Size Measure(Box box, MeasureConstraints constraints, LayoutContext context)
     {
         var style = box.Style;
+        var vertical = box.Flow.IsVertical;
         var basisWidth = constraints.AvailableWidth ?? context.ContainingBlock.Width;
         var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var build = Build(box, basisWidth, context);
@@ -70,7 +71,10 @@ internal sealed partial class TableFormattingContext
         // left of it once they have taken their share is the height the rows have to fill. A caption
         // stands in the table's wrapper, so the room it is measured against is the table's outer width,
         // its own border and padding included (CSS 2.1 §17.4, measured: table-grid-paint-htb-ltr).
-        MeasureCaptions(build, contentWidth + build.InsetsH, context);
+        MeasureCaptions(
+            build,
+            vertical ? basisHeight : contentWidth + build.InsetsH,
+            context);
 
         // The children that are not table parts are blocks of the table's own content, and they are
         // measured against the width the table settled on.
@@ -100,15 +104,20 @@ internal sealed partial class TableFormattingContext
         // box is still that tall: its border and background frame the declared height, with the captions
         // standing around it in the wrapper (CSS 2.1 §17.5.3, measured: table-border-008, a table of two
         // captions and no rows).
-        var contentHeight = Math.Max(declared ?? 0, build.Grid.Height) + build.CaptionTop +
-            build.CaptionBottom + othersHeight;
+        // The captions stand in the wrapper along the block axis, which is the table's height when the
+        // table runs down the page and its width when it runs across it.
+        var contentHeight = Math.Max(declared ?? 0, build.Grid.Height) +
+            (vertical ? 0 : build.CaptionTop + build.CaptionBottom) + othersHeight;
 
         // A declared height is a floor, as CSS 2.1 §17.5.3 has it: a table asked to be shorter than its
         // rows need is as tall as the rows make it. The width answers the same way, one step further up:
         // a table asked to be narrower than its columns can go is as wide as the columns make it.
         var usedHeight = BoxModel.ClampHeight(style, Math.Max(declared ?? 0, contentHeight), basisHeight, build.InsetsV);
 
-        return new Size(Math.Max(contentWidth, build.Grid.Width) + build.InsetsH, usedHeight + build.InsetsV);
+        return new Size(
+            Math.Max(contentWidth, build.Grid.Width) + build.InsetsH +
+                (vertical ? build.CaptionTop + build.CaptionBottom : 0),
+            usedHeight + build.InsetsV);
     }
 
     /// <summary>
@@ -165,14 +174,42 @@ internal sealed partial class TableFormattingContext
                 : null;
         var border = ownEdges?.Border ?? build.Border;
         var padding = ownEdges?.Padding ?? build.Padding;
-        var contentWidth = Math.Max(0, borderBox.Width - border.Horizontal - padding.Horizontal);
+        var vertical = box.Flow.IsVertical;
+        var blockReversed = vertical && box.Flow.BlockIsRightToLeft;
 
-        MeasureCaptions(build, borderBox.Width, context);
-        MeasureOthers(build, contentWidth, context);
+        // The captions stand in the wrapper along the block axis, which is the width of a table that runs
+        // across the page: what is left of the handed box once they have taken their share is the room the
+        // grid has along that axis, and the side the captions straddle keeps all of it (CSS Writing Modes 3
+        // §4.1 against CSS 2.1 §17.4, measured: table-grid-paint-vrl-rtl).
+        MeasureCaptions(build, vertical ? borderBox.Height : borderBox.Width, context);
 
         // The box the table was given already accounts for the height it declared, so whatever the
-        // captions do not claim is the height the rows have to fill.
-        var gridHeight = Math.Max(0, borderBox.Height - border.Vertical - padding.Vertical - build.CaptionTop - build.CaptionBottom);
+        // captions do not claim is the room the rows have to fill - along the block axis, which is the
+        // width of a table that runs across the page.
+        var tableBlockExtent = Math.Max(
+            0,
+            (vertical ? borderBox.Width : borderBox.Height) - build.CaptionTop - build.CaptionBottom);
+        var contentWidth = Math.Max(
+            0,
+            (vertical ? tableBlockExtent : borderBox.Width) - border.Horizontal - padding.Horizontal);
+        MeasureOthers(build, contentWidth, context);
+
+        var tableBox = vertical
+            ? new Rect(
+                blockReversed
+                    ? borderBox.Right - build.CaptionTop - tableBlockExtent
+                    : borderBox.X + build.CaptionTop,
+                borderBox.Y,
+                tableBlockExtent,
+                borderBox.Height)
+            : new Rect(
+                borderBox.X,
+                borderBox.Y + build.CaptionTop,
+                borderBox.Width,
+                tableBlockExtent);
+        var gridHeight = Math.Max(
+            0,
+            borderBox.Height - border.Vertical - padding.Vertical - (vertical ? 0 : build.CaptionTop + build.CaptionBottom));
         CompleteGrid(build, contentWidth, context, gridHeight);
 
         var layout = new LayoutBox(box, LayoutKind.Table)
@@ -189,14 +226,10 @@ internal sealed partial class TableFormattingContext
             BackgroundOrigin = slice is null || slice.Value.Starts && slice.Value.Ends
                 ? null
                 : slice.Value.Whole,
-            TableBox = new Rect(
-                borderBox.X,
-                borderBox.Y + build.CaptionTop,
-                borderBox.Width,
-                Math.Max(0, borderBox.Height - build.CaptionTop - build.CaptionBottom)),
+            TableBox = tableBox,
         };
 
-        var gridX = borderBox.X + build.Border.Left + build.Padding.Left;
+        var gridX = (vertical ? tableBox.X : borderBox.X) + build.Border.Left + build.Padding.Left;
 
         // A positioned table anchors the absolutely positioned descendants the captions and cells hand
         // up to it, the same way a positioned block does: a static caption is not a containing block,
@@ -219,6 +252,7 @@ internal sealed partial class TableFormattingContext
         // table's own border and padding are inside the box the captions straddle, not around them
         // (CSS 2.1 §17.4, measured: table-grid-paint-htb-ltr).
         var captionY = borderBox.Y;
+        var blockCursor = blockReversed ? borderBox.Right : borderBox.X;
 
         foreach (var caption in build.Captions)
         {
@@ -227,15 +261,24 @@ internal sealed partial class TableFormattingContext
                 continue;
             }
 
-            layout.Children.Add(ArrangeCaption(caption, borderBox.X, captionY, borderBox.Width, childContext));
-            captionY += caption.OuterHeight;
+            if (vertical)
+            {
+                layout.Children.Add(ArrangeCaptionAcross(caption, blockCursor, borderBox.Y, childContext));
+                blockCursor += blockReversed ? -caption.OuterBlock : caption.OuterBlock;
+            }
+            else
+            {
+                layout.Children.Add(ArrangeCaption(caption, borderBox.X, captionY, borderBox.Width, childContext));
+                captionY += caption.OuterHeight;
+            }
         }
 
         // The captions stand in the wrapper around the table box, so under the collapsing model the
         // outer halves of the table's own lines fall between the caption and the first row.
         var gridY = box.Style.Table.Collapse
             ? borderBox.Y + build.CaptionTop + build.Border.Top + build.Padding.Top
-            : borderBox.Y + build.Border.Top + build.Padding.Top + build.CaptionTop;
+            : borderBox.Y + build.Border.Top + build.Padding.Top +
+                (vertical ? 0 : build.CaptionTop);
         ArrangeRows(build, layout, gridX, gridY, childContext);
         ArrangeColumnBands(build, layout, gridX, gridY);
 
@@ -263,6 +306,7 @@ internal sealed partial class TableFormattingContext
         // The bottom captions stand under the table box - under its bottom border - rather than under the
         // rows, and the wrapper ends with them (CSS 2.1 §17.4).
         var captionBottomY = borderBox.Bottom - build.CaptionBottom;
+        var bottomCursor = blockReversed ? tableBox.X : tableBox.Right;
 
         foreach (var caption in build.Captions)
         {
@@ -271,8 +315,16 @@ internal sealed partial class TableFormattingContext
                 continue;
             }
 
-            layout.Children.Add(ArrangeCaption(caption, borderBox.X, captionBottomY, borderBox.Width, childContext));
-            captionBottomY += caption.OuterHeight;
+            if (vertical)
+            {
+                layout.Children.Add(ArrangeCaptionAcross(caption, bottomCursor, borderBox.Y, childContext));
+                bottomCursor += blockReversed ? -caption.OuterBlock : caption.OuterBlock;
+            }
+            else
+            {
+                layout.Children.Add(ArrangeCaption(caption, borderBox.X, captionBottomY, borderBox.Width, childContext));
+                captionBottomY += caption.OuterHeight;
+            }
         }
 
         RepeatSections(build, box, layout, borderBox, gridY, context, slice);
@@ -420,6 +472,35 @@ internal sealed partial class TableFormattingContext
         }
 
         return band;
+    }
+
+    /// <summary>
+    /// Places one caption of a table that runs across the page: its own extent along the stack is its
+    /// width, the side it straddles is its height, and the edge it begins at is the block-start edge the
+    /// writing mode names - the right one for vertical-rl, from which it grows back towards the left
+    /// (CSS Writing Modes 3 §4.1 against CSS 2.1 §17.4, measured: table-grid-paint-vrl-rtl, whose
+    /// caption of 140 stands 652..792 in the wrapper that ends at the container's right edge).
+    /// </summary>
+    private LayoutBox ArrangeCaptionAcross(CaptionEntry caption, Double blockStart, Double crossStart, LayoutContext context)
+    {
+        var margin = caption.Margin;
+        var reversed = caption.Box.Flow.BlockIsRightToLeft;
+        var boxX = reversed ? blockStart - margin.Right - caption.Width : blockStart + margin.Left;
+        var boxY = crossStart + margin.Top;
+
+        var captionContext = context.ForContainingBlock(new Size(caption.Width, caption.Height));
+
+        if (PositionedLayout.IsPositioned(caption.Box))
+        {
+            captionContext = captionContext.WithAbsoluteContainingBlock(
+                new Rect(boxX, boxY, caption.Width, caption.Height));
+        }
+
+        return _engine.Arrange(
+            caption.Box,
+            new Rect(boxX, boxY, caption.Width, caption.Height),
+            captionContext,
+            definiteHeight: false);
     }
 
     private LayoutBox ArrangeCaption(CaptionEntry caption, Double x, Double y, Double width, LayoutContext context)

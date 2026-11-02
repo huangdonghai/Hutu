@@ -398,15 +398,15 @@ public sealed class MulticolBoxCutTests
         Assert.Multiple(() =>
         {
             Assert.That(
-                head.Select(piece => piece.BorderBox.Width).ToList(),
+                head.Select(Window).ToList(),
                 Is.EqualTo(new List<Double> { 100, 40 }),
                 "the first column is filled and what is left of the box carries on in the next");
             Assert.That(
-                tail.Select(piece => piece.BorderBox.Width).ToList(),
+                tail.Select(Window).ToList(),
                 Is.EqualTo(new List<Double> { 60, 90 }),
                 "the box after takes the room its column still has rather than a fresh one");
             Assert.That(
-                tail[0].BorderBox.X + tail[0].BorderBox.Width,
+                tail[0].FragmentClip!.Value.X + tail[0].FragmentClip!.Value.Width,
                 Is.EqualTo(band.X + band.Width - 40),
                 "standing against the end of the piece the column already holds");
             Assert.That(tail[0].BorderBox.Y, Is.EqualTo(band.Y + 100), "in the column the tail of the box before");
@@ -451,6 +451,43 @@ public sealed class MulticolBoxCutTests
         });
     }
 
+    /// <summary>
+    /// A table that runs across the page keeps its wrapper's stack along the block axis: the caption
+    /// claims its own length of it and straddles the whole of the column it stands in, the way a
+    /// caption of a horizontal table claims its height and fills the table's width.
+    /// </summary>
+    [Test]
+    public async Task ACaptionOfATableAcrossThePageStraddlesTheColumnAndClaimsItsLength()
+    {
+        using var view = await Render(
+            "<style>#c { writing-mode: vertical-rl; inline-size: 400px; block-size: 100px;" +
+            " columns: 4; column-gap: 0; column-fill: auto }" +
+            " table { inline-size: 100%; border-spacing: 0; border: 10px solid }" +
+            " caption { block-size: 140px } td { block-size: 225px; padding: 0 }</style>" +
+            "<div id='c'><table id='tab'><caption id='cap'></caption>" +
+            "<tbody><tr><td></td></tr></tbody>" +
+            "<caption id='tail' style='caption-side:bottom; block-size:15px'></caption></table></div>");
+
+        var band = Find(view, "c").BorderBox;
+        var head = Find(view, "cap");
+        var pieces = Of(view, "tab");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(head.BorderBox.Width, Is.EqualTo(140), "the caption's block-size is its width here");
+            Assert.That(head.BorderBox.Height, Is.EqualTo(100), "and it straddles the whole column, not nothing");
+            Assert.That(
+                head.BorderBox.X + head.BorderBox.Width,
+                Is.EqualTo(band.X + band.Width),
+                "it begins at the edge vertical-rl runs its block axis from");
+            Assert.That(pieces.Count, Is.EqualTo(4), "the wrapper is 400 long, so four columns hold it");
+            Assert.That(
+                Find(view, "tail").BorderBox.X,
+                Is.EqualTo(band.X + band.Width - 400),
+                "and the bottom caption closes the wrapper at its far end");
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
@@ -462,6 +499,11 @@ public sealed class MulticolBoxCutTests
     }
 
     private static LayoutBox Find(HutuViewInternal view, String id) => Of(view, id).First();
+
+    /// <summary>Gets how wide the piece looks through the window its column shows it through - a divided
+    /// box is laid over its whole extent and the column cuts it.</summary>
+    private static Double Window(LayoutBox piece) =>
+        (piece.FragmentClip ?? piece.BorderBox).Width;
 
     /// <summary>Gets every fragment of the box the page was given the id on, in the order they stand.</summary>
     private static List<LayoutBox> Of(HutuViewInternal view, String id) =>
