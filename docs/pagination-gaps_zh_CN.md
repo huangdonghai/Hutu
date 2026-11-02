@@ -2224,3 +2224,14 @@ Q1 有了答案，方向和我猜的不同。三件事：
 实测：`table-collapsed-borders-paint-at-boundary.tentative` 2 540 → **2 415**；`table-collapsed-borders-paint-{htb-ltr,vrl-ltr,vlr-rtl}` 分别保持 0 / 9 090 / 9 090；四对 htb 表画法（`table-{grid,row,section,col}-paint-htb-ltr`）全绿不动。门禁：单测 **2216**、`css-break` **21 对**、打印 **193/198**、屏幕全量 `2335 of 2335`/`5845 of 5845` 全画出，`did not` 与上一份清跑基线逐族相同（gecko 600、wpt 1376）⇒ 没有任何绿被换掉。
 
 **没有转绿，所以这条只是半步**：差的 2 415 仍是那几条 15 px 段与右侧 12 px 段，形状已经不在「越界归属」上了（下一步大概率是不等宽边框之间的 **45° mitre 斜接线**——`UsedBorder` 现在把左右竖边各自画成矩形，交界处的斜切没算；Blink 在 collapsed 模型里对不等宽相邻边做斜接）。这条落下来的价值是：那块斜接要判「谁的半条线在fragment顶」，没有本条就无从下手；以及 `htb-ltr` 的钉在改动里被反复验证过，规则边界是清楚的。
+
+### 9.165 为什么剩下的分页对不是「再找一个 bug」：我们的引擎是「排一次版、再把结果切成片」
+
+把 045 的画法命令逐条看完，加上这轮对 paged 路线的读码，结论是一句架构事实：
+
+- `src/Hutu/Rendering/Page/PagedLayout.cs` 开头就写着「把**一个已经排好版的**长布局切成页」；多列同一套（`ArrangeMulticolRun` 里 `whole = (x, y - portion.Offset, width, wholeHeight)` + `FragmentClip = held`）。也就是：**盒树只按完整尺寸布局一次，碎片是事后裁剪**。Blink 是**每个 fragmentainer 重新布局一次**，所以它的每一片有自己的尺寸、自己的相对位移、自己的 transform origin、自己的嵌套碎片。
+- 045 就是这条的教材：我们的两幅画法都是 `push-clip -92,-50.28 40x100` / `push-clip -42,-50.28 40x100`，而被 `left:100px` 推移后的内容落在 `8,49.72 50x200` 与 `58,-50.28 50x200` —— **两幅都被剪成完全不可见**（x 差 100、y 也差 100），所以差值正好是整块 10 000 px。而 Chrome 的 rel/abs 每一片都是「栏头 + 自己的位移」上的**独立 100 高碎片**（8,58 与 58,58，各 50x100）。这不是裁剪口径能修的：`left/right` 的位移必须先有「这一片自己的盒」才有地方施加。
+- 之前落地的五条（`scripting`、隐式 `@scope`、menu-list、满宽 float 插队、clone/fragment 的边与 mitre 归属）都能在「切一次」的模型里修好，是因为它们的问题本来就在**归属**（谁付、付几次、付在哪一栏）；而剩下的 21 对 css-break + 6 对 `floats-clear-multicol`，逐条查下来都要求**碎片自己参与布局**：OOF 4 对（每片带位移）、`transform-006/008`（每片自己的参照矩形与斜接线）、`balanced-inner-multicol`（嵌套多列各自重排）、`fieldset-001`（legend 占位 + 每片自己的边）、`vertical-wm-001/002`（声明块向尺寸后每片重新分配）。
+- `at-boundary` 那 2 415 是另一件独立的事，也不是裁剪问题：cell 的四条 used 半边现在被画成「横带矩形 + 竖带矩形」（`Painter.AddBorder` 的 `SideBand` 分支），htb-ltr 需要竖带**越过**共享线（`overhang`），而 Chrome 在不等宽相邻边之间画的是 45° 斜接。一个 `BorderCommand` 的环带不了这两件事——要么竖带越过共享线但没有斜角，要么有斜角但丢掉越界。要同时得到两者，需要给折叠模型单独画**梯形/三角形路径**（`SkiaPaintExecutor` 现在只有一般盒的 mitre 环路径，见其 723 行附近）。这是半天到一天的活，且判定面是所有含折叠边框的页（当前绿的表画法很多）。
+
+所以下一步不再是从这批里挑一条量出「小修」的活儿，而是二选一的工程：要么开「按 fragmentainer 重新布局」这条改造（真正的根治，跨多次会话，中途只能靠开关/逐族验证保绿），要么把 `at-boundary` 与折叠边框的斜接路径当作独立目标做掉（只值这几对）。两者都不该在同一个改动里混着做。本轮代码零改动，工作树仍是 `cecafb5f`，门禁未变（单测 2216、`css-break` 21、打印 193/198）。
