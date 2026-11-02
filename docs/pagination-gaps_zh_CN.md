@@ -2047,3 +2047,29 @@ HEAD 基线（本轮复跑核对）：`floats-clear-multicol-{000,002,003}` 各 
 - **进来的盒看不看得见本栏的 float**：`ArrangeFloatFlowColumns` 现在 arrange 每个成员只递 `childContext.ForContainingBlock(new Size(share, declaredHeight))`，没有 `WithFloats(栏的 tracks)`；于是 `.clear` 里 `<br clear=all>` 拿不到净空（Chrome 给它 250，我们只给一行 20.72）。`FloatFlowColumn.Tracks` 就是普通路线用的那个 `FloatTracks`，把它按 `BandFor(...)` 算出的带递进去是现成的下一步。
 
 顺带纠一处旧笔记的口径：`PlaceFloatFlowColumns` 已经有 `CutDownColumns` + `FreeSpanAt` + `ClearBelow`（`overflowing-block-003`、`tall-float-pushed-to-next-fragmentainer-002`、`fragmented-autowidth-fc-root-beside-floats`、`gecko/bugs/563584-9d` 都在用它），所以这一族的增量不在 band 数学本身，而在上面这两句准入与可见性。`-balancing-*` 三条另有门禁：`FloatFlowColumns` 要求 `box.Style.Multi.Fills`，平衡填充的容器根本不走这条路（放宽后它们数字未动，仍是 850）。
+
+### 9.152 把 band 路线的七条规则一次装上去试过：002 能绿，但 001 与 `gecko/bugs/379349-2a` 互相咬住
+
+一次成套装上七条并逐条回捞，数字都留在这里（HEAD 基线：000/002/003 各 510、balancing 各 850、001 与 balancing-001 绿）：
+
+1. `FloatHostWrapper` 接受「0 高 + 正好占满栏 + 写了 `width:100%`/背景」的纯 float 容器 → 000/002/003 的 `.container` 进 band 路线，两个 15x250 的 float 被 `CutDownColumns` 切成 `15x100 | 15x100 | 15x50`，贴在每栏左右两侧 —— **与 Chrome 的逐值完全一致**（Chrome：float L 27/127/227，float R 112/212/312，clip 100/100/50）。
+2. band 路线里「装不下就推到下一栏」加条件：整体比一栏还高的 float 不推。`MulticolBoxCutTests.AFloatNoColumnCanHoldIsPushedWholeAndStandsThereOverflowing` 立刻抓住这条过头了——那条钉的是 `contain:size` 的 float：单体**永远不被切**，所以它该被推到下一栏栏头再整体溢出；而同一个 float 换成 `contain:paint` 时 Chrome **会**沿栏切。正确写法是加 `IsMonolithic` 例外：`slot.Items.Count > 0 && (outer <= columnHeight || IsMonolithic(child)) && top + height > columnHeight`。
+3. `DividesUnits` 对「站在 float 上的盒」不再要求 ≥2 个单位（Chrome 对 001 的 `.container` 就是切 `100/100/50`，test 与 ref 两边都切才相等）。
+4. `PlaceFloatFlowColumns` 把每栏的 `FloatTracks` 交回 arrange；`ArrangeFloatFlowColumns` 给流盒递 `WithFloats(BandFor(...))`（float 自己不递）。
+5. 同一个 band 也用于**量高**：000 的 `.clear` 里 `<br clear=all>` 的净空因此可见；002 的 `clear:left` 盒被 push 循环（下一条）放对栏。
+6. push 由一次改成有界循环（`tries = members.Count`）：002 的 3 高净空盒第一次推到的那一栏仍然满（那里 float 片占满 100），必须继续推第三栏才落在 50。**这条单独就把 002 从 510 推到与 ref 只差 ref 那一半。**
+7. `AddBoxCut` 允许「只有标签间空白」的定高盒被栏切（000/002 的 ref 需要它）。
+
+组合结果（全部 OFF→ON 逐档量过）：
+
+- 1+2+4+5+6（不放 7）：000 9 510、002 9 510、003 9 000，而 **001 从绿变 9 510** —— 因为 3 让 001 的 `.container` 被切，它的 ref 却还不切。
+- 再加 7：002 **转绿**、001 回到绿、000 只剩 600、003 510 —— 但 `gecko/bugs/379349-2a` **由绿变红 2 136**。它那里 `.container { height:.5in }` 套着 `.overflow { height:800% }`（里面也只有标签间空白），Chrome 不切这个 overflow。
+- 把 7 摘掉再跑一遍这一族：000/002/003 回到 9 510/9 510/9 000、001 又红 ⇒ **7 与 3/4/5/6 是绑在一起的**，要么一起成立要么一起不成立。
+- 全程 `css-break` 一直稳在 22 对、打印 193/198 未动（band 路线不在 css-break 那 22 对的路上，这族在 `wpt/CSS2/floats-clear`）。
+
+⇒ 下一刀必须先回答两个问题，否则任何子集都会把一条绿的换一条红的：
+
+- **Q1**：`.overflow` 根本不是栏的成员（成员是 `.container`），为什么 `AddBoxCut` 的改动会动到它？把这条路径查清（`EffectiveMembers`/`SpliceOverset` 还是嵌套 arrange），再给 7 找正确的界（Chrome 切 000-ref 那种「px 定高 + 侧边框 + 栏的直接孩子」，不切「百分号高度、父盒更矮、嵌一层」那种）。
+- **Q2**：000 的 `.clear` 还差 600 px，差在 Chrome 的净空是按 float 在**流自身轴**上的整高（250）算的，所以那个盒从第一栏栏头起、250+3 高、再被切 `100/100/53`；我们按「本栏片段的底」算，于是它落在第三栏的 50 处只有一行高。
+
+本轮代码全部回退，工作树回到 `58de02c7`；上面七条规则里有四条（2 的 `IsMonolithic` 例外、3、6，以及 1/4/5 的接口形状）已被证明是能对上的，重做时不必再从零试。
