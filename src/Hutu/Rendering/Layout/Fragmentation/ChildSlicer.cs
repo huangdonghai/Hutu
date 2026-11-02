@@ -84,6 +84,11 @@ internal readonly record struct LineRange(Int32 From, Int32 To);
 /// <param name="Starts">Whether the box begins with this fragment, which owns its start edge.</param>
 /// <param name="Ends">Whether the box ends with this fragment, which owns its end edge.</param>
 /// <param name="Whole">The border box of the unbroken box, which its background is painted across.</param>
+/// <param name="AnchorAtPiece">Whether an absolute descendant is placed against the piece rather
+/// than against the whole box the piece is a stretch of. A column divides the box but each piece
+/// stands in a fragmentainer of its own, and an offset read against the whole box would be drawn
+/// in the column before the one that carries it (CSS Break 3 §4.5, measured:
+/// out-of-flow-in-multicolumn-073).</param>
 internal readonly record struct FragmentSlice(
     Thickness Border,
     Thickness Padding,
@@ -92,7 +97,8 @@ internal readonly record struct FragmentSlice(
     Rect Whole,
     Double Offset = 0,
     Double Height = 0,
-    Rect? Piece = null);
+    Rect? Piece = null,
+    Boolean AnchorAtPiece = false);
 
 /// <summary>
 /// Works out how many of a block's children a fragment takes (CSS Break 3 §4.1-4.4): a child that does

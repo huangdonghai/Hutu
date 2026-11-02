@@ -650,8 +650,19 @@ internal sealed class BlockLayout
 
         // A box that holds its descendants - positioned, transformed, filtered, contained - lends the
         // whole subtree its padding box, so an absolute descendant anchors to it rather than to an
-        // ancestor further up.
-        childContext = PositionedLayout.ForDescendants(childContext, box, layout.PaddingBox, layout.BorderBox);
+        // ancestor further up. A piece of a broken box lends it *its own* rectangle: the box was laid
+        // out over the whole of itself, but the fragment stands in a column of its own, and an
+        // absolute child measured against the whole would be drawn a column higher than the piece
+        // that carries it (CSS Break 3 §4.5 with CSS Position 3 §5.5, measured:
+        // out-of-flow-in-multicolumn-073, whose abs child with top:100px stands at the head of the
+        // second column and not 100 pixels above it).
+        childContext = PositionedLayout.ForDescendants(
+            childContext,
+            box,
+            slice is { AnchorAtPiece: true, Piece: { } piece }
+                ? PiecePadding(box, piece, border, padding)
+                : layout.PaddingBox,
+            slice is { AnchorAtPiece: true, Piece: { } anchored } ? anchored : layout.BorderBox);
 
         var content = new Rect(contentX, contentY, contentWidth, contentHeight);
         var used = 0.0;
@@ -2625,8 +2636,20 @@ internal sealed class BlockLayout
 
             if (divides)
             {
-                extent = Math.Max(extent, PositionedReach(child, share, childContext));
-                divides = FitsTheColumns(extent, fragmentHeight, columns);
+                var reach = PositionedReach(child, share, childContext);
+
+                // A box the columns hold whole, with only what stands out of the flow reaching past its
+                // last fragmentainer, is still cut: every fragmentainer paints the stretch of the
+                // descendant it has room for, and what is left past the last column is lost with it.
+                // Leaving the box whole instead loses all of it, because the piece that would have
+                // carried it stands off the columns its own box is drawn through (CSS Fragmentation 3
+                // §4.5 with CSS Position 3 §5.5, measured: out-of-flow-in-multicolumn-073, whose fixed
+                // box of 200 in two columns of 100 is drawn twice - 50x100 at each column head).
+                var reachesOut = byShape && fragmentHeight > 0.001 &&
+                    reach > extent + 0.001 && BlockExtentOf(size, vertical) <= fragmentHeight + 0.001;
+
+                extent = Math.Max(extent, reach);
+                divides = reachesOut || FitsTheColumns(extent, fragmentHeight, columns);
 
                 if (!divides)
                 {
@@ -3293,6 +3316,15 @@ internal sealed class BlockLayout
 
         return reach;
     }
+
+    /// <summary>Gets the content box of a fragment, measured from the piece's own rectangle - the
+    /// same insets the unbroken box would take, applied to the stretch this piece stands in.</summary>
+    private static Rect PiecePadding(Box box, Rect piece, Thickness border, Thickness padding) =>
+        new Rect(
+            piece.X + border.Left + padding.Left,
+            piece.Y + border.Top + padding.Top,
+            Math.Max(0, piece.Width - border.Horizontal - padding.Horizontal),
+            Math.Max(0, piece.Height - border.Vertical - padding.Vertical));
 
     /// <summary>Gets whether a container is the shape the float-and-flow columns handle: a horizontal
     /// container that fills columns of a stated height and holds both a float of its own and a box that
@@ -6389,7 +6421,9 @@ internal sealed class BlockLayout
                             cutStarts,
                             cutEnds,
                             whole,
-                            Piece: fragment));
+                            Piece: fragment,
+                            AnchorAtPiece: portion.Offset > 0.001));
+
 
                     // The last piece of a box the column cut by its own content units is clipped to the
                     // column, not to the box's bottom edge: a float that piece's flow placed stands
