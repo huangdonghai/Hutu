@@ -1852,3 +1852,26 @@ ref:  fill     577,337 255x10  #ffffff                    ← 列间距归表底
 
 至此，本族剩下的六个竖排表对（约 176 k px）需要的是**片内内容**（单元格的子盒沿哪根轴排、`AlignContent` 沿块向、行带只到列）而不是再次的轴猜测；三条被否证的判据都留有数，别再重复试。
 
+### 9.138 给下一步留的靶子：一张带内容与 `vertical-align` 的 2×2 竖排表，Chrome 与现在的差异逐条列清
+
+`build/_vtcontent.html`（`vertical-rl`，`border-spacing:10`，格 `.a` = `inline-size:40; block-size:30`、`.b` = `60/50` 且 `vertical-align: bottom`，每格放一个 20×12 的 `.i`）。Chrome 量到（同一页 `--virtual-time-budget=2000 --dump-dom`）：
+
+```
+t  [0,0 130x150]   r1 [70,10 50x130]   c1 [70,10 50x60]   c2 [70,80 50x60]
+i0 [85,10 20x12]   i1 [70,80 20x12]    i2 [10,10 20x12]   i3 [25,80 20x12]
+```
+
+Hutu 现状（同一页）：
+
+```
+tbody [60,0 60x150]  r1 [60,0 60x150]  c1 [60,10 60x60]  c2 [60,80 60x60]
+i0 [100,34 20x12]    i1 [100,128 20x12]
+```
+
+三处可分别验证的差异：
+1. **格与行的块向/行内向长度**：Chrome 格 `50x60`（x = 行块向长 50、y = 列行内向长 60），Hutu `60x60` —— §9.135/§9.136 的尺寸转置已能修对（2×2 空内容页已逐值验证 ✓）。
+2. **行/组的框**：Chrome `r1 [70,10 50x130]`（行只到列，130 = 10+60+10+60−10… 不含两端外间距 ✓），Hutu `60x150` —— `RowsInlineExtent` 那条 ✓（同样在 2×2 上空内容页验过）。
+3. **`vertical-align: bottom` 沿块向（x）位移内容**：Chrome 的 `i1` 在 c2 的**块向终点边**（x 70..90 ✓，c2 的 x 70..120），Hutu 的 `i1` 却在 x 100..120（贴着块向**起点**边，与 `i0` 同侧）——`AlignContent` 仍按物理 y 求内容末端与位移（`ContentBox.Y` / `BorderBox.Bottom` / `RelativeDisplacement.Y`），竖排里这三样都要换成 X/Right/`RelativeDisplacement.X`，且 reverse 方向决定 free 空间往哪边算。
+
+这一页就是 #8 下一步的靶子：先把 3 修对（画法不受影响的空/实内容都能验），再回放 §9.135 A + §9.136 的 ①②③，然后才轮到 css-break 那六对 —— 它们多出来的差不在这三项里，而在**行的 `repeating-linear-gradient` 平铺原点**（参考页 tile 是 `110x80` 的条带，见 §9.136 的画法比对），要用 `table-row-paint-*` 自己的 abs 条带作第二个靶子。
+
