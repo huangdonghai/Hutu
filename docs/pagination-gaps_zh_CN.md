@@ -1786,3 +1786,14 @@ c1 [714,10 50x60]  c2 [714,80 50x60]  c3 [654,10 50x60]  c4 [654,80 50x60]
 
 因此按 §9.124/§9.128 的同样处置：**不落，只记**。脚本留在 `build/_edit_vdivide2.py`、`build/_edit_vdivide3.py`、`build/_BlockLayout-hoisted.cs`（最初版本的整份文件），等 #11 的栏位账补齐后一次重放；那时要同时重测这三列数，因为收益与代价同源，任何一侧的变化都会改变取舍。
 
+### 9.133 量清楚但没落：`fieldset-001` 不切的原因在 `DividesUnits` 的 `margin.Bottom != 0`；放宽之后切了，但每片的断行还差 28 px
+
+`wpt/css-break/fieldset-001.html` 84 755 px，四块 `.cols`（`columns:3 / column-count:2`，`height:80/120`，`column-fill:auto`）里各一个 `<fieldset><legend></legend><c></c></fieldset>`（fieldset 的 border 6/3/10/7、margin 3/10/7/5、padding 10/7/20/3，legend 19 高也吃同一份 padding）。Hutu 把 fieldset 整块（175.5 高）塞进 80 高的栏里不切。
+
+拦路的是 `BlockLayout.DividesUnits` 的第一道：`!fills || vertical || nested || margin.Bottom != 0 || Kind != Block || IsMultiColumn || Inside == Avoid`——fieldset 的 `margin-bottom:7px` 就把它整块放行了（注释里说的是「带块向 margin 的盒子留整块，因为 margin 从第一片让出的房间还没算」）。去掉 `margin.Bottom != 0` 一项后：
+
+- 单测 **2201 全绿**、css-break 里**只有这一对动**（其余 24 对一位未变），说明这条守卫保护的其它形状其实由别处照顾；
+- 但该对 84 755 → **106 994**（+22 239）：片是切开了（三片，x = 5 / 210.33 / 415.67 ✓ 与参考页同栏位），**断点却不对**——Hutu 三片的 `BorderBox.Y` 是 3 / −62 / −142 ⇒ 断在整盒的第 65、145 行，参考页三片是 25 / −12 / −92 ⇒ 断在第 37、117 行，差 28。参考页用 `p{margin-top:25}` + `pad{height:21}` + `legend{position:absolute; top:-18px; padding:0}` 模拟「图例坐在块向起点边框上、并替内容让出 19+6」，而 test 页的 `<legend>` 是普通图例、还吃 `padding:10 7 20 3` ⇒ 我们的图例盒子量成 49 高、坐位 −18.5。也就是说：断点差的那 28 就是**图例在块流里的占位与坐位**（Hutu 的 Gecko 模型把 49 全算进流内，Chrome 只让图例的 19+6 参与），加上 `background-clip:content-box` 与逐片的边框归属。
+
+所以这条守卫可以放宽（它是唯一拦住 fieldset 分片的地方），但**必须与图例的块流占位一起落**，否则只会把这一对推远 22 239 px。已退回 `34f8ec9a`。要接着做的话，顺序是：①图例只按 `legend 高度 + 表块上边框`占位（不把自己的 padding 计进流）；②逐片按 `box-decoration-break: slice` 只画自己那段的边（第一片画上边、末片画下边）；③`content-box` 背景按片裁。任务 #24 保留这条队列。
+
