@@ -72,7 +72,7 @@
   - `vertical-rl`：位于注文所在行右侧；
   - `vertical-lr`：位于注文所在行左侧。
 - 在块向顺序上，每个注文槽位于对应正文行之前：该注文行的 block-end 紧接目标正文行的 block-start。
-- 加入注文槽时先按注文行高度 `h_i` 占位；注文与目标正文行之间再重叠 `min(G_note_i, G_body_i)`，所以正文行相对无注文时的净位移为 `h_i - min(G_note_i, G_body_i)`。
+- 加入注文槽时先按注文行高度 `h_i` 占位；注文再与正文侧的有效边界产生 `O_i` 的重叠，并使正文行向注文方向移动 `A_i`，所以正文行相对无注文时的净位移为 `h_i - A_i`。
 - 同一条注文流可以占用多个正文行的注文槽，因此整段正文会按实际占用的槽高逐行向 block-end 推移。
 - 段落被切开，但仍是同一段落；缩进、断行、对齐和标点悬挂继续按原段落规则处理。
 - 注文流不改变段落内其它正文行的断行位置；它只在对应行之前增加块向空间。
@@ -83,14 +83,17 @@
 |---|---|
 | 注文槽 line box inline 尺寸 | 第 `i` 槽取对应正文行位置的 `W_i` |
 | 注文槽 line box block 尺寸 `h_i` | 按普通行布局得到，使用该行各 run 自己的 computed `font-size`／`line-height` |
-| 注文与目标正文行间距 | `max(G_note_i, G_body_i)`，其中 `G = (line-height - font-size) / 2`；取注文行和对应正文行的 governing computed style |
+| 普通正文边界 | 无行内夹注时，有效边界是正文 line box 的 block-start；`O_i = min(G_note_i,G_body_i)`，`A_i=O_i` |
+| 夹注第一子行边界 | 有行内夹注时，有效边界是夹注第一子行的 border-box block-start；设它距正文 line box 边界为 `S_i`，`O_i = min(G_note_i,G_inline-first)`，`A_i=S_i+O_i` |
 | 注文与前一条正文行间距 | 保持两条普通相邻 line box 原有 leading，不做压缩 |
-| 段落新增 block 尺寸 | 在正常一注文槽一条注文行时，为 `Σ h_i - Σ min(G_note_i, G_body_i)`；槽耗尽后的退化见 §3.3 |
+| 段落新增 block 尺寸 | 在正常一注文槽一条注文行时，为 `Σ h_i - Σ A_i`；槽耗尽后的退化见 §3.3 |
 
-- 每个注文行的 block-end 与目标正文行的 block-start 之间只保留上述较大 gap；两条 line box 在几何上允许重叠 `min(G_note_i, G_body_i)`。
+- `G = (line-height - font-size) / 2`。普通正文边界和行间注边界按 `min(G_note_i,G_body_i)` 重叠，最终保留 `max` 对应的 gap。
+- 有行内夹注时，正文 line box 到第一子行边界之间的居中余量、block margin、border 和 padding 都汇总为 `S_i`。行间注先对齐到这个更靠内的夹注边界，再按 `O_i = min(G_note_i,G_inline-first)` 与它重叠；因此正文 line box 需要向注文移动 `A_i=S_i+O_i`。移动量大于正文 line box 高度时允许超出，不能改用外层正文 line box 的 `G_body` 顶替第一子行 gap。
+- 同一正文行有多个行内夹注时，分别计算 `A_i=S_i+min(G_note,G_inline-first)`，取其中较小值作为该边界的正文移动量，避免任何一个第一子行被越过其允许重叠量。
 - 注文之前的边界仍由两条现有 line box 的 leading 决定；引擎不额外插入空行或固定空隙。
 - 注文行和正文行使用各自的 computed `line-height` 与 `font-size`；不得用正文行高反算注文行高，也不得把两者的 `G` 相加后重复计入。
-- 遇到被双行夹注撑高的正文行时，使用撑高后的实际 line box 边界和 leading；不得回退到标称正文行高，也不得再额外补一份双行夹注的 `G`。
+- 遇到被双行夹注撑高的正文行时，使用撑高后的实际 line box 确定外层边界，但交界对齐改用第一子行的实际 block-start；不得回退到标称正文行高，也不得用外层膨胀后的 `G_body` 代替。
 
 ### 3.3 同一行多个注文
 
@@ -115,7 +118,7 @@
 - 注文每一行都按普通行布局使用该行各 run 自己的 computed `font-size`／`line-height`。注文内部嵌套元素直接声明的尺寸只影响它自身的 run，并按普通行高规则参与该注文行的 `h_i`。
 - 空注文行没有文字 run 时，以注文元素自身的 computed `line-height` 作为该行的基础高度。
 - 注文行盒不得为了省空间而压到正文行高以内，也不得被强制等于相邻正文行的高度。
-- 注文流自身的 line box 总高度按实际 `h_i` 计算，不按固定“一行”、注文个数或正文行高估算；段落净增高还要扣除每个目标正文行边界实际重叠的 `min(G_note_i, G_body_i)`。
+- 注文流自身的 line box 总高度按实际 `h_i` 计算，不按固定“一行”、注文个数或正文行高估算；段落净增高还要扣除每个目标正文行边界实际产生的正文移动量 `A_i`。
 - 建议注文字号 ≤ 正文 `font-size`，但规范不设硬上限（见总纲 §8）。
 
 ## 5. 行内排版核心
@@ -146,7 +149,7 @@
 
 > 类型标记：**探针** = 数值几何断言；**Reftest** = 与参考页做带文字抗锯齿容差的截图比较；**探针 + Reftest** = 两者均必须。
 
-1. **探针**：正常槽序列中，注文行的 block 起点和正文行位移必须由 `h_i - min(G_note_i, G_body_i)` 逐槽累加；目标正文行与注文行的实际边界间距等于 `max(G_note_i, G_body_i)`，注文与前一正文行的边界不被压缩。
+1. **探针**：正常槽序列中，注文行的 block 起点和正文行位移必须由 `h_i - A_i` 逐槽累加；无行内夹注时 `A_i=min(G_note_i,G_body_i)`，有行内夹注时 `A_i=S_i+min(G_note_i,G_inline-first)`，注文与前一正文行的边界不被压缩。
 2. **探针**：每个注文槽使用自己 block 位置浮动避让后的 `W_i`；单个注文按 `display: inline` 参与布局。
 3. **探针**：单条注文可完整排入一行且无冲突时，其 inline-start margin edge 与声明位置 `P` 重合；没有 inline-start margin／padding／border 时，第一个可见 run 也从 `P` 开始，而不是让注文盒中心与 `P` 重合。
 4. **探针 + Reftest**：多条注文按 DOM 顺序处理；后一条注文的起点与前序内容冲突或越过槽边界时，从前序内容的流游标处继续或换到下一正文行槽，不覆盖前序内容。起点定位产生的段间空白保持固定，不因 `text-align: justify` 拉伸。
@@ -163,7 +166,7 @@
 15. **探针 + Reftest**：一个注文元素在注文行中间结束时，不触发该注文自身末尾的两端对齐或标点悬挂；只有注文流真正到达行尾时才执行普通行尾规则。
 16. **探针 + Reftest**：行内夹注内声明行间注时，其零宽位置不占夹注子行推进，夹注内部不生成行间注流；注文提升到包含该位置的外层正文片段所在行，按映射后的 `P` 加入该正文行的共享注文流，并保留原 DOM 位置的 computed style，但 `writing-mode`／`direction` 改用正文块容器的值。
 17. **探针 + Reftest**：注文流可只在相邻注文 line box 之间分页；每个槽的最后一条注文 line box 与对应目标正文行尽量同页，放不下时整组移到下一页。
-18. **探针 + Reftest**：注文与目标正文行的边界间距为 `max(G_note, G_body)`；注文与前一条正文行的边界保留普通相邻 line box 的 leading。遇双行夹注撑高的正文行时使用撑高后的 line box，不额外重复加入 `G`。
+18. **探针 + Reftest**：无行内夹注时按正文 line box 边界和 `min(G_note,G_body)` 重叠；有行内夹注时以第一子行实际 border-box block-start 为边界，先计入居中/装饰偏移 `S`，再按 `min(G_note,G_inline-first)` 重叠并移动正文 `S+O`。同一行多个夹注取各自移动量的较小值。注文与前一条正文行的边界保留普通相邻 line box 的 leading。
 19. **探针 + Reftest**：正文首行有 `text-indent` 时，关联该行的注文流不额外缩进，但其 inline-start 不得进入首行缩进占掉的区间；关联后续正文行时不受该缩进区间限制，只使用各行自身浮动避让后的可用区间。
 20. **探针 + Reftest**：注文元素自身声明不同的 `writing-mode`／`direction` 时，注文流仍完全使用正文块容器的书写模式和 base direction；起点 `P`、续槽、页内推进和文字方向不因注文声明改变。
 21. **探针 + Reftest**：浮动只覆盖部分注文槽时，各槽按自身 block 位置得到不同 `W_i`，不得覆盖浮动；因挤窄产生的额外注文行必须按槽序列计入布局，不能改变“每槽至多一条注文行”的正常规则。

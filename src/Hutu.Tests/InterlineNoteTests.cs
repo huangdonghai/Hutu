@@ -1,3 +1,4 @@
+using Hutu.Rendering;
 using Hutu.Rendering.Layout;
 using NUnit.Framework;
 using System;
@@ -238,6 +239,37 @@ public sealed class InterlineNoteTests
                 bodyLine.BorderBox.Y - (noteLine.BorderBox.Y + noteLine.BorderBox.Height),
                 Is.EqualTo(-5),
                 "the two line boxes overlap by the smaller leading");
+        });
+    }
+
+    [Test]
+    public async Task AnInlineNoteOverlapsTheInterlineNoteAtItsFirstSublineGap()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Page(
+            "aa<span style='-hutu-note-placement:interline;font-size:10px;line-height:40px'>NN</span>" +
+            "bb<span style='-hutu-note-placement:inline;font-size:10px;line-height:30px'>XY</span>cc",
+            "font-size:16px;line-height:20px;"));
+
+        var noteLine = LineContaining(view, Text(view, "NN"));
+        var bodyLine = LineContaining(view, Text(view, "bb"));
+        var inlineFirst = Walk(view.Layout!.Root!)
+            .Where(box => box.Kind == LayoutKind.Line &&
+                box.Source.Style.NotePlacement == NotePlacement.Inline &&
+                Walk(box).Any(child => child.Kind == LayoutKind.Text && child.Text == "X"))
+            .OrderBy(box => box.BorderBox.Y)
+            .First();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(noteLine.BorderBox.Bottom - inlineFirst.BorderBox.Y,
+                Is.EqualTo(10).Within(0.5),
+                $"the first subline boundary overlaps the interline note by min(10, 15); " +
+                $"noteY={noteLine.BorderBox.Y}, noteBottom={noteLine.BorderBox.Bottom}, " +
+                $"bodyY={bodyLine.BorderBox.Y}, firstY={inlineFirst.BorderBox.Y}");
+            Assert.That(bodyLine.BorderBox.Y, Is.EqualTo(28).Within(0.5),
+                "the body line moves by the 2px centring offset plus the 10px overlap");
         });
     }
 

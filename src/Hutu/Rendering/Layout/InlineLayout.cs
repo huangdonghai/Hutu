@@ -3220,7 +3220,7 @@ internal sealed class InlineLayout
         IReadOnlyList<Double>? slotExtents = null,
         IReadOnlyList<Double>? minimumInlineStarts = null,
         Int32 initialSlot = 0,
-        IReadOnlyList<ComputedStyle>? slotBodyStyles = null)
+        IReadOnlyList<Line>? slotBodyLines = null)
     {
         var lines = new List<Line>();
 
@@ -3310,10 +3310,10 @@ internal sealed class InlineLayout
             {
                 var extent = slotExtents[slot];
 
-                if (slotBodyStyles is { } bodyStyles && slot < bodyStyles.Count)
+                if (slotBodyLines is { } bodyLines && slot < bodyLines.Count)
                 {
                     var noteStyle = line.Governing ?? strut;
-                    extent -= InterlineBodyOverlap(bodyStyles[slot], noteStyle);
+                    extent -= InterlineBodyAdjustment(bodyLines[slot], noteStyle);
                 }
 
                 room.Skip(Math.Max(0, extent));
@@ -4601,7 +4601,7 @@ internal sealed class InlineLayout
             slotExtents,
             minimumStarts,
             anchors[0].Slot,
-            bodyLines.Select(line => line.Governing ?? container.Style).ToList());
+            bodyLines);
         var bySlot = new Dictionary<Int32, List<Line>>();
 
         foreach (var noteLine in noteLines)
@@ -4638,7 +4638,7 @@ internal sealed class InlineLayout
                 }
 
                 notes[^1].KeepWithNext = true;
-                bodyLine.GapBefore -= InterlineBodyOverlap(container, bodyLine, notes[^1]);
+                bodyLine.GapBefore -= InterlineBodyAdjustment(container, bodyLine, notes[^1]);
             }
 
             lines.Add(bodyLine);
@@ -4707,26 +4707,76 @@ internal sealed class InlineLayout
     /// Gets the leading the note and body lines share at their boundary, which is removed from the
     /// ordinary gap between their two line boxes so the note stands nearer to the body it annotates.
     /// </summary>
-    private Double InterlineBodyOverlap(Box container, Line bodyLine, Line noteLine)
+    private Double InterlineBodyAdjustment(Box container, Line bodyLine, Line noteLine)
     {
-        var bodyStyle = bodyLine.Governing ?? container.Style;
         var noteStyle = noteLine.Governing ??
             noteLine.Fragments.LastOrDefault(fragment => !fragment.InterlineGap)?.Style ??
             container.Style;
 
-        return InterlineBodyOverlap(bodyStyle, noteStyle);
+        return InterlineBodyAdjustment(bodyLine, noteStyle);
     }
 
-    /// <summary>Gets the leading the note and body line boxes may overlap at their shared boundary.</summary>
-    private Double InterlineBodyOverlap(ComputedStyle bodyStyle, ComputedStyle noteStyle)
+    /// <summary>
+    /// Gets how far the body line moves toward its interline note. Without an inline note this is the
+    /// smaller of the two half-leadings; with one, the effective body boundary is the first subline's
+    /// block-start edge and that boundary is overlapped by the two half-leadings' smaller value.
+    /// </summary>
+    private Double InterlineBodyAdjustment(Line bodyLine, ComputedStyle noteStyle)
     {
-        Double Gap(ComputedStyle style)
+        var noteGap = HalfLeading(noteStyle);
+        var inline = InlineNoteFirstAdjustment(bodyLine, noteGap);
+
+        if (inline is { } adjustment)
         {
-            var font = style.GetFont();
-            return Math.Max(0, (LineBoxHeight(style, font) - style.FontSize) / 2);
+            return adjustment;
         }
 
-        return Math.Min(Gap(bodyStyle), Gap(noteStyle));
+        var bodyStyle = bodyLine.Governing ??
+            bodyLine.Fragments.FirstOrDefault()?.Style ??
+            noteStyle;
+        return Math.Min(HalfLeading(bodyStyle), noteGap);
+    }
+
+    /// <summary>
+    /// Gets the line movement needed to put an interline note against the nearest inline-note first
+    /// subline, including the centring and block decorations between the body edge and that subline.
+    /// </summary>
+    private Double? InlineNoteFirstAdjustment(Line bodyLine, Double noteGap)
+    {
+        Double? adjustment = null;
+
+        foreach (var fragment in bodyLine.Fragments)
+        {
+            if (fragment.Note is not { First: { } first } note)
+            {
+                continue;
+            }
+
+            var style = first.Governing ??
+                first.Fragments.FirstOrDefault(row => row.Length > 0)?.Style ??
+                fragment.Style;
+            var (blockMarginStart, _) = note.Flow.BlockMargins(note.Margin);
+            var (blockPaddingStart, _) = note.Flow.BlockMargins(note.Padding);
+            var (blockBorderStart, _) = note.Flow.BlockMargins(note.Border);
+            var boundary =
+                ((bodyLine.Height - note.BlockSize) / 2) +
+                blockMarginStart +
+                blockBorderStart +
+                blockPaddingStart;
+            var overlap = Math.Min(HalfLeading(style), noteGap);
+            var current = boundary + overlap;
+
+            adjustment = adjustment is { } existing ? Math.Min(existing, current) : current;
+        }
+
+        return adjustment;
+    }
+
+    /// <summary>Gets the space a line's leading adds above or below its glyphs.</summary>
+    private Double HalfLeading(ComputedStyle style)
+    {
+        var font = style.GetFont();
+        return Math.Max(0, (LineBoxHeight(style, font) - style.FontSize) / 2);
     }
 
     /// <summary>
@@ -4744,7 +4794,7 @@ internal sealed class InlineLayout
         IReadOnlyList<Double> slotExtents,
         IReadOnlyList<Double> minimumInlineStarts,
         Int32 firstSlot,
-        IReadOnlyList<ComputedStyle> slotBodyStyles)
+        IReadOnlyList<Line> slotBodyLines)
     {
         var items = new List<InlineItem>();
         ComputedStyle? strut = null;
@@ -4790,7 +4840,7 @@ internal sealed class InlineLayout
             slotExtents: slotExtents,
             minimumInlineStarts: minimumInlineStarts,
             initialSlot: firstSlot,
-            slotBodyStyles: slotBodyStyles);
+            slotBodyLines: slotBodyLines);
         var justify = container.Style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase);
 
         for (var index = 0; index < noteLines.Count; index++)
