@@ -6968,10 +6968,23 @@ internal sealed class InlineLayout
 
     /// <summary>Gets the room one trimmed character gives up along the line or column it is set on.</summary>
     private static Double TrimDelta(
-        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint, WritingModeInfo flow) =>
-        flow.IsVertical
-            ? style.FontSize / 2
-            : measurer.MeasureWidth(Char.ConvertFromUtf32(codePoint), style.GetFont()) / 2;
+        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint, WritingModeInfo flow)
+    {
+        if (!flow.IsVertical)
+        {
+            return measurer.MeasureWidth(Char.ConvertFromUtf32(codePoint), style.GetFont()) / 2;
+        }
+
+        var font = style.GetFont();
+        var advance = font.AsksForVerticalWidth
+            ? measurer.MeasureUprightAdvance(codePoint, font)
+            : measurer.MeasureAdvance(codePoint, font, flow);
+        var step = font.AsksForVerticalWidth && advance > 0
+            ? advance
+            : Math.Max(advance, font.Size);
+
+        return step / 2;
+    }
 
     /// <summary>
     /// Gets the room a closing punctuation can give up if it ends the line. The breaker keeps such a

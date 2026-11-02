@@ -741,41 +741,49 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
             var code = trims is not null && cell.Index < trims.Length ? trims[cell.Index] : '\0';
             var autoCode = autoSpaces is not null && cell.Index < autoSpaces.Length ? autoSpaces[cell.Index] : '\0';
-            var delta = style.Size / 2;
             var emStep = cell.ExactAdvance ? cell.Advance : Math.Max(cell.Advance, style.Size);
-            var step = emStep + letterSpacing;
+            var naturalStep = emStep + letterSpacing;
+            var step = naturalStep;
+            var trimmed = code != '\0' && emStep > 0;
+            var delta = trimmed ? emStep / 2 : 0;
             var shift = 0.0;
 
-            if (code != '\0')
+            if (trimmed)
             {
                 step = emStep - delta + letterSpacing;
-                shift = code switch
-                {
-                    '\u0001' => -delta,
-                    '\u0003' => -delta / 2,
-                    _ => 0,
-                };
             }
 
             // The room a boundary adds goes after the cell it follows, and a space the boundary
             // replaces stands in its own cell for the room instead of for its own advance.
             if (autoCode == AutoSpaceReplace)
             {
+                naturalStep = autoSpace + letterSpacing;
                 step = autoSpace + letterSpacing;
             }
             else if (autoCode == AutoSpaceAfter)
             {
+                naturalStep += autoSpace;
                 step += autoSpace;
+            }
+
+            var naturalBaseline = cell.BaselineOffset is { } offset
+                ? (cell.ExactAdvance && style.Size > 0 ? offset * (cell.Advance / style.Size) : offset)
+                : ((naturalStep - emBox) / 2) + metrics.Ascent;
+
+            if (trimmed)
+            {
+                // The column moves a trimmed punctuation out of the half it gives up. Where the
+                // glyph's ink actually stands decides how far it has to travel: a Songti colon is
+                // set against the head of its cell, and the old fixed quarter-em shift carried it
+                // into the character before it. The horizontal path already asks the glyph; this
+                // is the same question along the column.
+                shift = ColumnTrimShift(cell, naturalBaseline, emStep, delta, code);
             }
 
             reached = inline + (justification * crossed) + (wordSpacing * paid);
             end = (Single)(reached + step);
 
-            var baseline = cell.BaselineOffset is { } offset
-                ? (Single)(reached +
-                    (cell.ExactAdvance && style.Size > 0 ? offset * (cell.Advance / style.Size) : offset) +
-                    shift)
-                : (Single)(reached + ((step - emBox) / 2) + metrics.Ascent + shift);
+            var baseline = (Single)(reached + naturalBaseline + shift);
             var centre = (Single)((emBox - cell.CentreWidth) / 2);
 
             if (cell.DrawByGlyph)
@@ -794,6 +802,76 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
         return builder.Build();
     }
+
+    /// <summary>
+    /// Gets how far a trimmed punctuation has to move along a column so that it keeps the place its
+    /// ink had in the full cell. A centred mark is put in the middle of the half cell; an opening or
+    /// closing mark follows the side its ink already occupies, as the horizontal path does.
+    /// </summary>
+    private Single ColumnTrimShift(UprightCell cell, Double baseline, Double emStep, Double delta, Char code)
+    {
+        var glyph = cell.Glyph;
+
+        if (!cell.DrawByGlyph)
+        {
+            var glyphs = cell.Font.GetGlyphs(cell.Text);
+
+            if (glyphs.Length == 0)
+            {
+                return ColumnTrimFallback(code, delta);
+            }
+
+            glyph = glyphs[0];
+        }
+
+        if (glyph == 0)
+        {
+            return ColumnTrimFallback(code, delta);
+        }
+
+        var box = Bounds(cell.Font, glyph);
+
+        if (box.IsEmpty)
+        {
+            return ColumnTrimFallback(code, delta);
+        }
+
+        var start = baseline + box.Top;
+        var end = baseline + box.Bottom;
+
+        // A middle punctuation is centred in its half cell whether the face drew it centred or
+        // against one edge: Songti's upright colon is one of the latter.
+        if (code == '\u0003')
+        {
+            return (Single)(((emStep - delta) / 2) - ((start + end) / 2));
+        }
+
+        var half = delta;
+
+        if (end <= half)
+        {
+            return 0;
+        }
+
+        if (start >= half)
+        {
+            return (Single)(-delta);
+        }
+
+        if (end - start <= half && start >= half / 2)
+        {
+            return (Single)(-delta / 2);
+        }
+
+        return ColumnTrimFallback(code, delta);
+    }
+
+    private static Single ColumnTrimFallback(Char code, Double delta) => code switch
+    {
+        '\u0001' => (Single)(-delta),
+        '\u0003' => (Single)(-delta / 2),
+        _ => 0,
+    };
 
     private void AddGlyph(
         List<Placement> placements, SKFont font, UInt16 glyph, Single x, Single y, Single cell) =>

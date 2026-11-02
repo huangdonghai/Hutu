@@ -209,6 +209,36 @@ public sealed class SkiaRenderingTests
         });
     }
 
+    [TestCase('\uFF1A')]
+    [TestCase('\uFF1B')]
+    public async Task TrimAllCentresAnUprightPunctuationInItsTrimmedCell(Char punctuation)
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var typeface = SKTypeface.FromFile(SemicolonFont());
+
+        if (typeface is null)
+        {
+            Assert.Ignore("the subset face the corpus brings could not be opened");
+            return;
+        }
+
+        measurer.Fonts.Register("vertical-semicolon-font", typeface);
+
+        var trimmed = await RenderCharacter(
+            measurer,
+            punctuation,
+            ";font-family:vertical-semicolon-font;text-spacing-trim:trim-all",
+            margin: 40);
+        var inkCentre = (trimmed.Ink.Top + trimmed.Ink.Bottom) / 2;
+        var cellCentre = (trimmed.Cell.Top + trimmed.Cell.Bottom) / 2;
+
+        Assert.That(
+            inkCentre,
+            Is.EqualTo(cellCentre).Within(2),
+            $"U+{(Int32)punctuation:X4} stands in the middle of the half cell it was given " +
+            $"(ink {trimmed.Ink}, cell {trimmed.Cell})");
+    }
+
     [Test]
     public void TheProlongedSoundMarkStandsOnEndInAColumn()
     {
@@ -1526,14 +1556,16 @@ public sealed class SkiaRenderingTests
     /// Sets one character on its own in a column and paints it, which is how a glyph's placement is
     /// read back: the layout gives the character a cell, and the ink says where in that cell it went.
     /// </summary>
-    private static async Task<Rendered> RenderCharacter(SkiaTextMeasurer measurer, Char character)
+    private static async Task<Rendered> RenderCharacter(
+        SkiaTextMeasurer measurer, Char character, String declarations = "", Int32 margin = 0)
     {
         using var view = new HutuViewInternal(measurer);
         view.SetViewportSize(200, 200);
 
         await view.SetHtml(
-            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:100px;margin:0;" +
-            $"font-size:{ColumnFontSize}px;line-height:1'>{character}</div></body></html>");
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:100px;" +
+            $"margin:{margin}px;" +
+            $"font-size:{ColumnFontSize}px;line-height:1{declarations}'>{character}</div></body></html>");
 
         var paint = view.Paint!;
         var width = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Width));
