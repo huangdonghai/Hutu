@@ -457,15 +457,16 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             // a glyph of the same font, drawn where the font puts that glyph. The reserved forms are a
             // block of the BMP, so a character from the planes above has no form to be asked for.
             if (codePoint <= Char.MaxValue &&
-                VerticalForms.TryGet((Char)codePoint, out var replacement) && HasGlyph(style, replacement))
+                VerticalForms.TryGet((Char)codePoint, out var replacement) &&
+                font.Typeface?.GetGlyph(replacement) != 0)
             {
                 var replacementText = replacement.ToString();
-                var replacementFont = GetFont(style, replacement);
+                var replacementFont = font;
                 var replacementRun = _shaper.ShapeVertical(replacementFont, replacementText, style.Features);
                 var replacementHasOrigin = replacementRun.Succeeded && replacementRun.Glyphs.Length == 1;
                 var replacementCentre = style.Features is null
-                    ? MeasureWidth(replacementText, style)
-                    : MeasureWidth(replacementText, WithoutFeatures(style));
+                    ? MeasureWidthWith(replacementFont, replacementText, features: null)
+                    : MeasureWidthWith(replacementFont, replacementText, WithoutFeatures(style).Features);
 
                 cells.Add(new UprightCell(
                     replacementFont,
@@ -495,6 +496,13 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         }
 
         return cells;
+    }
+
+    /// <summary>Measures a stretch with the exact face and features the caller chose.</summary>
+    private Double MeasureWidthWith(SKFont font, String text, String? features)
+    {
+        var shaped = _shaper.Shape(font, text, features);
+        return shaped.Succeeded ? shaped.Advance : font.MeasureText(text);
     }
 
     /// <summary>Whether the font answered a vertical run with a glyph of its own rather than the one a line would use.</summary>

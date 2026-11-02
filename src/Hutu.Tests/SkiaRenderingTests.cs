@@ -120,7 +120,7 @@ public sealed class SkiaRenderingTests
     [Test]
     public void AColumnIsToldTheVerticalFormOfItsPunctuation()
     {
-        const String punctuation = "、。「」『』（）";
+        const String punctuation = "、。「」『』（）；：";
 
         using var measurer = new SkiaTextMeasurer();
         var style = new FontStyle("Arial", 18);
@@ -143,21 +143,70 @@ public sealed class SkiaRenderingTests
                 continue;
             }
 
+            var cell = measurer.DecomposeUpright(character.ToString(), style).Single();
+
+            Assert.That(
+                cell.Font.Typeface?.PostScriptName,
+                Is.EqualTo(font.Typeface?.PostScriptName),
+                $"U+{(Int32)character:X4} was moved to another face for its column form");
+
             if (IsSubstituted(measurer.Shaper, font, character))
             {
                 Assert.That(
                     measurer.Shaper.ShapeVertical(font, character.ToString()).Glyphs[0],
                     Is.Not.Zero,
                     $"U+{(Int32)character:X4} was answered with the null glyph");
+                Assert.That(cell.DrawByGlyph, Is.True);
                 continue;
             }
 
-            Assert.That(VerticalForms.TryGet(character, out var form), Is.True, $"U+{(Int32)character:X4} has no form to fall back on");
-            Assert.That(
-                measurer.HasGlyph(style, form),
-                Is.True,
-                $"U+{(Int32)character:X4} has neither a form the font declares nor one the column can name");
+            if (VerticalForms.TryGet(character, out var form) &&
+                font.Typeface?.GetGlyph(form) != 0)
+            {
+                Assert.That(cell.Text, Is.EqualTo(form.ToString()));
+            }
+            else
+            {
+                Assert.That(
+                    cell.Text,
+                    Is.EqualTo(character.ToString()),
+                    $"U+{(Int32)character:X4} kept neither its own glyph nor a form of the same face");
+            }
         }
+    }
+
+    [Test]
+    public void AColumnKeepsAFontsOwnSemicolonWhenTheFaceHasNoVerticalForm()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var typeface = SKTypeface.FromFile(SemicolonFont());
+
+        if (typeface is null)
+        {
+            Assert.Ignore("the subset face the corpus brings could not be opened");
+            return;
+        }
+
+        measurer.Fonts.Register("vertical-semicolon-font", typeface);
+
+        var style = new FontStyle("vertical-semicolon-font", 16);
+        var font = measurer.GetFont(style, '\uFF1B');
+        var vertical = measurer.Shaper.ShapeVertical(font, "\uFF1B");
+        var cell = measurer.DecomposeUpright("\uFF1B", style).Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(font.Typeface?.GetGlyph('\uFF1B'), Is.Not.Zero);
+            Assert.That(font.Typeface?.GetGlyph('\uFE14'), Is.Zero,
+                "the subset face has no Unicode semicolon presentation form");
+            Assert.That(vertical.Glyphs[0], Is.EqualTo(font.Typeface?.GetGlyph('\uFF1B')),
+                "the face has no vertical substitution for the semicolon");
+            Assert.That(cell.Font.Typeface?.PostScriptName, Is.EqualTo(typeface.PostScriptName),
+                "the column keeps the face that carries the written character");
+            Assert.That(cell.DrawByGlyph, Is.False);
+            Assert.That(cell.Text, Is.EqualTo("\uFF1B"),
+                "without a vertical form on the same face, the written glyph is the one Chrome draws");
+        });
     }
 
     [Test]
@@ -1452,6 +1501,26 @@ public sealed class SkiaRenderingTests
 
     /// <summary>What one character set alone in a column painted: the mark it left, and the cell it was given.</summary>
     private sealed record Rendered(Byte[] Pixels, SKRect Cell, SKRect Ink);
+
+    /// <summary>The checked-in CJK subset, which carries U+FF1B but no U+FE14.</summary>
+    private static String SemicolonFont()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null &&
+               !File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
+        {
+            directory = directory.Parent;
+        }
+
+        return Path.Combine(
+            directory?.FullName ?? AppContext.BaseDirectory,
+            "conformance",
+            "fonts",
+            "noto",
+            "cjk",
+            "NotoSansCJKjp-Regular-subset-halt.otf");
+    }
 
     /// <summary>
     /// Sets one character on its own in a column and paints it, which is how a glyph's placement is
