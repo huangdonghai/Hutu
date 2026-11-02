@@ -1797,3 +1797,13 @@ c1 [714,10 50x60]  c2 [714,80 50x60]  c3 [654,10 50x60]  c4 [654,80 50x60]
 
 所以这条守卫可以放宽（它是唯一拦住 fieldset 分片的地方），但**必须与图例的块流占位一起落**，否则只会把这一对推远 22 239 px。已退回 `34f8ec9a`。要接着做的话，顺序是：①图例只按 `legend 高度 + 表块上边框`占位（不把自己的 padding 计进流）；②逐片按 `box-decoration-break: slice` 只画自己那段的边（第一片画上边、末片画下边）；③`content-box` 背景按片裁。任务 #24 保留这条队列。
 
+### 9.134 两条死路，都有数：普通块也交给计划切（本族 0，flex +451 150）；`plansAcross` 去掉 margin 限制（新增一条失败名）
+
+§9.132 记下「表格 或 含出流后代」这一支的收支后，又量了两种切法：
+
+1. **只切「普通块 + 普通子盒」**（`Kind == Block`、子孙里没有 flex/grid/masonry、不含出流后代，其余守卫同 `AddBoxCut`），旧的那条标记分支原样留着：`wpt/css-break` **一位未动**（含 `gecko/css-break/vertical-wm-001/002`——它们的盒子里有子盒，但容器带 margin，被下面第 2 条的 `plansAcross` 挡在计划之外），而 `gecko/flexbox/pagination` 28 对 **+451 150**（如 `flexbox-single-column-vertical-rl-6` 3500 → 5650、`flexbox-multi-column-vertical-lr-1a` 11 850 → 29 900）。⇒ 零收益、纯代价，不落。
+   - 顺量出：旧分支（拒绝表之后那句 `if (vertical && plansAcross)`）是**承重**的——把它删掉只留这条窄版，两对已绿的 `table-grid-paint-vrl-rtl`/`-vlr-rtl` 立刻 0 → 46 500，本族 +206 910。任何「换掉」而非「加上」这条分支的做法都会塌这两对。
+2. **`plansAcross` 去掉「带 margin 就退回计数路线」这一条**（只保留 `avoid`）：flexbox/pagination 与单测（2201）都不动 ✓，但 `wpt/css-break/break-inside-avoid-min-block-size-2` **0 → 1800，新增一条失败名** ✗——正是 §9.126 记下的那对：它的参考页用 `margin-block-end: 20px` 模拟「每片各占一栏栏头」，走进计划后变成 `30+10+20+20` 挤进三栏。⇒ margin 这一条限制现在仍然需要，尽管 §9.131 已经把「margin 与盒身之间的断点」做对了：计划还分不清「一栏之头」与「一栏剩下的空间」，这跟 §9.132 要的是同一笔账（#11 的栏位记账）。
+
+两条都已退回，代码在 `34f8ec9a`+`71b8c77e`+`9c87bf25` 的原状。三次数到的共同点：**竖排分栏要再往前一步，缺的是「片落在哪一栏、那一栏还剩多少」这本账**（`MulticolChild` 的 margin 已按流向相对放好，但 `PlanMulticolRun` 只有单一游标，说不清「这一栏的头已经被这个 margin 占了」）。#11/#25 先修这本账，再重放 §9.132/§9.134 的四条变体（脚本 `build/_edit_vdivide2.py`、`_edit_vdivide3.py`、`_BlockLayout-hoisted.cs`），因为它们互为收支。
+
