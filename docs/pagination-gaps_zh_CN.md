@@ -1646,3 +1646,17 @@ CSS 2.1 §9.5.1：浮点从它被写入的那条线上离开，后面的 in-flow
 门禁：屏幕全量 1990 finding 不变、**0 新增失败名、0 对变差**，`float-017` 653 → **482**；单测 **2197**（新增 `AFloatTheColumnHoldsSpendsNoneOfItsFlowRoom`：十二行文字的盒子必须从第一栏顶端开始；去掉该规则它跑到 x=200、浮点自身高度被切成 100，测试即红）；打印 **189/198** 九条同名、无 css-break。
 
 **剩下的 482 px 也已量清**（task #23）：Chrome 把浮点推到它落下的那一栏，并让**那一栏对 flow 关闭**——100% 宽的浮点不留任何可并排的行，所以 Chrome 的图是 1–5 行在第一栏、6–10 行在**第三**栏（ref 的 `168,49.72` 正是第三栏，第二栏整栏被浮点占住）。普通路线只有一个游标，表达不了「当前栏继续用、下一栏整栏关闭」，要么把 tracks（`FloatTracks`/`FitBelow`）搬进普通路线，要么让 `FloatFlowColumns` 自己会切带行的 flow 盒。
+
+### 9.124 量清楚但没落：竖排不做半角 trim（Chrome 两路测量都是 80，但 24 条自造 vrl ref 编码的是 70）
+
+规则候选：引擎自己那套 trim（`TextSpacingTrim` + `InlineLayout` 的 `TrimWithin` / `TrimLineEnd` / `PlanTrim`）代表的是 OpenType 的 `halt` / `chws`，而这两个是**横排**特性；竖排的对应物是 `vhal` / `vpal`，那由字体 shaping 负责。补丁（`build/_vertical-no-trim.patch`，51 行）在三处入口加 `TrimsInAxis(flow) = !flow.IsVertical`。
+
+Chrome 两路测量都说竖排不减半：
+1. `build/_haltpage.html`（`file://` + data: 内联字体，脚本能跑）：`国；（国` 在 `horizontal-tb` 是 **70**（`国；`=40 + `（`=10 + `国`=20），在 `vertical-rl` 是 **80**；`chws-font` 同样 80。注意 `document.fonts.check('20px halt-font')` 报 false，所以这一路量的可能是系统里带 halt/chws 的 CJK 字体——但结论方向一致。
+2. `python -m http.server` 起在仓库根、探针追加到同目录副本（跑完即删，语料干净）：真正的 `text-spacing-trim-colon-001-chws-vrl.html` 每一行都是 `32.00x80.00`、单 run `26.00` —— 即 Chrome 用**语料子集字体**在竖排也完全不减半。
+
+Hutu 现状与此相反：竖排 test 页 `国；（国` = 28.96x**70**，而它的 ref（`<span class="halt">（</span>` 显式半角）在竖排量到 **20**、整行 80 —— 两页在 1cb017b3 之后仍然逐字节相同，只是因为 abs 栏长在窗口右边之外（`#18` 的摆位缺陷），所以这对**空过**。
+
+门禁不放：把 `TrimsInAxis` 加上去后，屏幕跑出 **24 条新增失败名**，全是 `wpt-variants/text-spacing-trim/*-vrl` 自造变体（`text-spacing-trim-001-{chws,halt}-vrl` 各 4109、`start-001-trim-start-*` 各 6156、`trim-all-001-*` 2805、`start-oof-001-*` 3515、`quote-001-*` 与 `span-001-space-first/trim-start-*` 各 866 …）。这些 ref 是早先把横排 ref 转置出来的，编码的是「竖排也减半」，与上面两路 Chrome 测量相反。float-017 那 171 px 的改善与本改动无关（已落在 1cb017b3）。
+
+**需要作者定夺**（语料级改动，不擅自动手）：若认 Chrome 的竖排不减半为准，就得重做这 24 条自造 vrl 参考页（把 `<span class=halt>` 的期望 advance 从半角改回全角，或改用 `vhal` 声明），之后 `build/_vertical-no-trim.patch` 才能落；这一步落完，`build/_abs-static-position.patch`（#18）才不再新增失败名，`wpt/css-break/box-shadow-003` 的 7400 px 才会翻绿。
