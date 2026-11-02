@@ -327,6 +327,19 @@ internal sealed class RuleBucketIndex
     private readonly Boolean[] _pseudoOnly;
 
     /// <summary>
+    /// For each flattened rule, the element its <c>@scope</c> block confines it to, or null for the rules
+    /// written outside any block. A scoped rule only reaches an element that stands inside that one.
+    /// </summary>
+    private readonly IElement?[] _scopes;
+
+    /// <summary>
+    /// Gets whether any rule of any sheet came out of a <c>@scope</c> block. The walk that keeps a rule
+    /// out of an element it cannot reach costs a step over the candidates of every element, and a page
+    /// with no block in it should not pay it.
+    /// </summary>
+    private readonly Boolean _anyScoped;
+
+    /// <summary>
     /// How many elements were answered from the match the last build left, and how many had to be
     /// matched again, since <see cref="ResetMatchCounters"/>. Counted always - a pair of increments
     /// is nothing next to a match - and read only by the probes.
@@ -346,6 +359,8 @@ internal sealed class RuleBucketIndex
         RuleOrigin[] origins,
         PseudoRuleIndex pseudo,
         Boolean[] pseudoOnly,
+        IElement?[] scopes,
+        Boolean anyScoped,
         CounterStyleTable counters,
         PageStyleTable pages)
     {
@@ -358,6 +373,8 @@ internal sealed class RuleBucketIndex
         _origins = origins;
         _pseudo = pseudo;
         _pseudoOnly = pseudoOnly;
+        _scopes = scopes;
+        _anyScoped = anyScoped;
         _counters = counters;
         _pages = pages;
     }
@@ -406,6 +423,7 @@ internal sealed class RuleBucketIndex
     {
         var collected = new List<ICssStyleRule>();
         var origins = new List<RuleOrigin>();
+        var scopes = new List<IElement?>();
         var styles = new List<ICssCounterStyleRule>();
         var pages = new List<PageRule>();
         var layers = new LayerOrder();
@@ -433,10 +451,15 @@ internal sealed class RuleBucketIndex
                     CollectPageRules(sheet.Rules[i], pages, device, layers, -1, null);
                 }
 
-                foreach (var rule in sheet.Rules.GetMatchingStyles(device))
-                {
-                    Flatten(rule, collected, origins, origin);
-                }
+                // The rules are walked here rather than taken from the styles the sheet matches, because
+                // a `@scope` block has to leave its mark on everything inside it: with nothing written
+                // before the block, its rules belong to the parent of the node that owns the sheet, which
+                // is the element a `<style>` stands among (CSS Cascade 6 §3.5.4, measured:
+                // scope-implicit-001, whose square is green only once the rule reaches the div written
+                // around that style). A block that names its root with a selector is left unread, as it
+                // was when no scope was walked at all - a rule let loose over the whole document would
+                // say more than the page wrote, while one kept out says nothing.
+                CollectStyles(sheet.Rules, device, ScopeRoot(sheet), null, collected, origins, scopes, origin);
 
                 // A selector naming a pseudo-element the CSS parser does not know is dropped whole,
                 // declarations and all. The scroll markers are the case that matters here: the
@@ -449,13 +472,15 @@ internal sealed class RuleBucketIndex
 
                     if (parser is not null)
                     {
-                        CollectScrollMarkerRules(style.TextContent, parser, collected, origins, origin);
+                        CollectScrollMarkerRules(style.TextContent, parser, collected, origins, scopes, origin);
                     }
                 }
             }
         }
 
         var flattened = collected;
+        var scoped = scopes.ToArray();
+        var anyScoped = Array.Exists(scoped, scope => scope is not null);
 
         var idBuckets = new Dictionary<String, List<Int32>>(StringComparer.Ordinal);
         var classBuckets = new Dictionary<String, List<Int32>>(StringComparer.Ordinal);
@@ -506,7 +531,7 @@ internal sealed class RuleBucketIndex
 
         return new RuleBucketIndex(
             flattened, idBuckets, classBuckets, tagBuckets, unkeyed, reaches, origins.ToArray(), PseudoRuleIndex.Build(flattened),
-            pseudoOnly, CounterStyleTable.Build(styles),
+            pseudoOnly, scoped, anyScoped, CounterStyleTable.Build(styles),
             new PageStyleTable(
                 pages,
                 device,
@@ -525,6 +550,7 @@ internal sealed class RuleBucketIndex
         ICssParser parser,
         List<ICssStyleRule> collected,
         List<RuleOrigin> origins,
+        List<IElement?> scopes,
         RuleOrigin origin)
     {
         var i = 0;
@@ -578,7 +604,7 @@ internal sealed class RuleBucketIndex
                     header.StartsWith("@supports", StringComparison.OrdinalIgnoreCase) ||
                     header.StartsWith("@layer", StringComparison.OrdinalIgnoreCase))
                 {
-                    CollectScrollMarkerRules(css[(atOpen + 1)..atClose], parser, collected, origins, origin);
+                    CollectScrollMarkerRules(css[(atOpen + 1)..atClose], parser, collected, origins, scopes, origin);
                 }
 
                 i = atClose + 1;
@@ -635,6 +661,7 @@ internal sealed class RuleBucketIndex
                     {
                         collected.Add(new SyntheticPseudoRule(inner, selectorText));
                         origins.Add(origin);
+                        scopes.Add(null);
                     }
                 }
             }
@@ -1317,6 +1344,21 @@ internal sealed class RuleBucketIndex
             Deduplicate(candidates);
         }
 
+        if (_anyScoped)
+        {
+            // What a `@scope` block holds is for its own subtree and no other: the block's root has to
+            // stand above the element on the way to the document's root. The arms written for the
+            // generated-content pseudo-elements are not cut this way - they are answered from the rules
+            // as they were gathered - which is a gap the block leaves open until its own index reads it.
+            for (var i = candidates.Count - 1; i >= 0; i--)
+            {
+                if (_scopes[candidates[i]] is { } root && !Within(element, root))
+                {
+                    candidates.RemoveAt(i);
+                }
+            }
+        }
+
         return candidates;
     }
 
@@ -1435,6 +1477,67 @@ internal sealed class RuleBucketIndex
     /// is empty - the same over-approximation <see cref="SheetApplies"/> makes for a whole sheet, since
     /// a medium this window answers to is not asked of the rule here.
     /// </summary>
+    /// <summary>
+    /// Gathers the style rules a sheet hands to the cascade, in the order they are to be matched, keeping
+    /// for each the subtree its <c>@scope</c> block confines it to. A media or supports block is read when
+    /// the device answers it, as the sheet's own walk does; a <c>@scope</c> with nothing written before it
+    /// hands what it holds the sheet's root, and one that names a root with a selector - or sets a limit
+    /// after a <c>|</c> - keeps what it holds out of the cascade, since nothing here can tell which
+    /// elements it meant.
+    /// </summary>
+    private static void CollectStyles(
+        ICssRuleList rules,
+        IRenderDevice device,
+        IElement? root,
+        IElement? scope,
+        List<ICssStyleRule> collected,
+        List<RuleOrigin> origins,
+        List<IElement?> scopes,
+        RuleOrigin origin)
+    {
+        for (var i = 0; i < rules.Length; i++)
+        {
+            switch (rules[i])
+            {
+                case ICssMediaRule media when media.IsValid(device):
+                    CollectStyles(media.Rules, device, root, scope, collected, origins, scopes, origin);
+                    break;
+                case ICssSupportsRule supports when supports.IsValid(device):
+                    CollectStyles(supports.Rules, device, root, scope, collected, origins, scopes, origin);
+                    break;
+                case ICssScopeRule block when String.IsNullOrWhiteSpace(block.ScopeText):
+                    CollectStyles(block.Rules, device, root, root, collected, origins, scopes, origin);
+                    break;
+                case ICssStyleRule style:
+                    Flatten(style, collected, origins, scopes, scope, origin);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the element an implicit <c>@scope</c> of a sheet is written under: the parent of the node that
+    /// owns the sheet, which is where a <c>&lt;style&gt;</c> element stands among what it styles. A sheet
+    /// no node owns - the reader's own - names no root, and its rules are left unscoped rather than kept
+    /// out of every page, since nothing about such a sheet says which subtree it meant.
+    /// </summary>
+    private static IElement? ScopeRoot(ICssStyleSheet sheet) =>
+        sheet.OwnerNode is IElement owner ? owner.ParentElement : null;
+
+    /// <summary>Gets whether an element stands in the subtree of another, that other included.</summary>
+    private static Boolean Within(IElement element, IElement root)
+    {
+        for (var node = element; node is not null; node = node.ParentElement)
+        {
+            if (ReferenceEquals(node, root))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static Boolean GroupApplies(ICssRule rule, IRenderDevice device) => rule switch
     {
         ICssMediaRule media => media.IsValid(device),
@@ -1444,10 +1547,17 @@ internal sealed class RuleBucketIndex
         _ => true,
     };
 
-    private static void Flatten(ICssStyleRule rule, List<ICssStyleRule> flattened, List<RuleOrigin> origins, RuleOrigin origin)
+    private static void Flatten(
+        ICssStyleRule rule,
+        List<ICssStyleRule> flattened,
+        List<RuleOrigin> origins,
+        List<IElement?> scopes,
+        IElement? scope,
+        RuleOrigin origin)
     {
         flattened.Add(rule);
         origins.Add(origin);
+        scopes.Add(scope);
 
         var subRules = rule.Rules;
 
@@ -1455,7 +1565,7 @@ internal sealed class RuleBucketIndex
         {
             if (subRules[i] is ICssStyleRule subRule)
             {
-                Flatten(subRule, flattened, origins, origin);
+                Flatten(subRule, flattened, origins, scopes, scope, origin);
             }
         }
     }
