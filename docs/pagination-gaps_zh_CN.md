@@ -2202,3 +2202,17 @@ Q1 有了答案，方向和我猜的不同。三件事：
   ⇒ 所以下一刀不是 tie-break，而是把碎片边界上的折叠边框**归并成 cell 碎片自己的那一个矩形**（`TableFormattingContext.cs:968-991` 已经是「cell 用 `UsedBorder` 覆盖自己的 border，并有 `SideBand` 让竖边越过共享线」）：要让一个被栏切开的 cell 的每一片都带**自己那份** `UsedBorder` 的四边，而不是整盒画两遍再剪。入口就在 `Cell`/`SideBand` 与片矩形（`TableFormattingContext.Grid.cs:637` 的半边分配）之间。
 
 本轮无代码落地；工作树回到 `20e1a2ba` 的状态，`css-break` 复跑 21 对、`htb-ltr` 与 `at-boundary` 回到原数（0 / 2 540）。
+
+### 9.163 更正 §9.162 的推论，并把 at-boundary 的差额缩到「mitre 越界要在每一片重画」
+
+先撤回一条错误推理：§9.162 说「参考页一个矩形带齐上 5/右 10/左 15 ⇒ Chrome 是按 cell 碎片画一个矩形」。**不成立**——那条命令来自参考页里一个**手写的 div**（`table-collapsed-borders-paint-at-boundary.tentative-ref.html` 根本不是表），它的矩形形状只说明参考页怎么写，不说明 Chrome 的画法结构。我们那两条 `SideBand` 分离矩形（横带 + 竖带）是 CSS 2.1 §17.6.2 的 mitre 画法、被 `table-collapsed-borders-paint-htb-ltr` 钉住，不是缺陷。
+
+把 2 540 px 的差额按 x 宽度重看，形状其实很干净：
+
+- 错的位置**全是 15 px 宽的段**：`y=21..23 x=225..239`（15）、`305..316`（12，右边线左移后的 15 段）、`404..418`（15），外加 2..3 px 的收尾（`327..329`、`429..431`、`519..520`）。
+- 15 正是那两条宽竖边的宽度（row2 的 `border-left-width:15`、row3 的 `border-right-width:15`）。
+- 我们的画法命令在那一段是 `225,21 92x100 w:5/0/5/0 上=lime 下=black` + `225,26 92x100 w:0/15/0/15`（竖带从 y=26 起）；参考页同处是黑。⇒ 15 px 段的**最上 3~5 px** 应由那条 15 px 宽的竖边盖住（竖边比自己那行线越界 outspread 半个共享线），我们把它画在了上一片里、被栏窗剪掉了。
+
+原因落在 `TableFormattingContext.cs:985-990`：`overhang = cell.Row == 0 ? -UsedBorder.Top : UsedBorder.Top`、`SideBand` 从 `rect.Y + overhang` 起。而 `rect` 是**整盒**的位置（我们的窗口模型把整盒摆在 `栏头 - consumed`），所以这条越界带永远落在上一个碎片里、在这一片被剪。要修的是：**竖边的越界量要按这一片的顶边算**，即被切开的那一页里，每个继续的碎片都在自己的栏头重画一次那 5 px 的 mitre 越界（横带本身仍按共享线分配，颜色/宽度不动——`htb-ltr` 与 `Resolve` 的平手判据都不受影响，`>=` 那条已经证伪）。
+
+本轮仍无代码落地（这条改动的判定面只在「表被栏切开且宽竖边正好跨边界」的 3 对上，改错了会直接砸 htb-ltr 与两条已绿的表画法，需要先看清 `Cell` 拿到的 `rect`/`slice` 是哪一层再动）。工作树等于 `cbdfb194`，`css-break` 21 对、打印 193/198、单测 2216。
