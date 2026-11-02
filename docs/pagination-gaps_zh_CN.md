@@ -1886,3 +1886,16 @@ i0 [100,34 20x12]    i1 [100,128 20x12]
 
 四套脚本与结论都留在 `build/`（`_edit_size1.py`、`_edit_size2.py`、`_edit_align.py` 与 `build/_vtcontent.html` 靶子页）和本节，代码退回 `6172c8c4`（= 34f8ec9a 的代码 + 日志）。
 
+### 9.140 那一类的差因点名了：竖排碎片把整盒摆到栏的块向起点边之外（转置后第一栏逐值全对）
+
+`table-row-paint-vrl-rtl` 装完转置 + 行起点补一份外间距后，**第一栏的画法与参考页逐值相同**：行带 `722,302 110x80` ✓、行2 `577,302 135x80` ✓、首尾 caption `842,292 50x100` / `492,292 75x100` ✓（参考页只有 5 条：abs 条带 + 每栏裁剪，见 `build/_rp-ref.txt`）。但整族仍 +114 620，因为**第二栏之后**的画法在 x 上越出了栏：
+
+```
+test 第2栏: fill 942,392 50x100 | gradient 822,402 110x80   ← 栏是 x∈[792,892]，caption 落在 942（外面）
+test 第1栏: fill 842,292 50x100 | gradient 722,302 110x80   ← 正确
+```
+
+即 `ArrangeMulticolRunAcross` 给「被计划切开的片」算整盒位置时，把该片的块向偏移加到了起点边的**外侧**（892 + 50 = 942），而它应当让「盒的第 offset 段」对齐到栏的块向起点边 892、向左展开。`table-grid-paint-vrl-rtl`/`-vlr-rtl` 两对绿的是**盒与栏同为 100**的形状（符号错了也重合），所以这一处一直没暴露；本次转置把行带变成 110/135 之后才显形。
+
+已退回（代码停在 `34f8ec9a`）。可重放的脚本：`build/_edit_size1.py`、`build/_edit_size2.py`、`build/_edit_align.py`（`AlignContent` 的轴向参数）；行的 `RowsInlineOffset`（起点补一份 `InlineSpacing`）与 `RowsInlineExtent`（只到列）两处的改动内容在 §9.136/§9.139 与本节。**落地的顺序**：先修 `wholeRect` 的偏移符号（配一条单元测：竖排表、行带比栏宽，断言第二栏里 caption 的 x 落在栏内），再回放转置，最后才谈那六对的绿。
+
