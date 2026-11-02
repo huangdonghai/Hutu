@@ -2030,3 +2030,20 @@ float 续切真正难的地方在归属：test 的 float 不是多列容器的�
 **跑批纪律（这轮踩到）**：有一次全量跑在负载下出现 `wpt: 5757 of 5845 pairs drawn`、`could not be drawn` 从 4 涨到 88+，名字差里凭空多出 10 条「修好」（`transform3d-sorting-001`、`display-flow-root-001`、`line-breaking-026/027`…），复跑单对时它们全都还是红的（例如 10 000 / 73 645 px）。所以算差值之前必须先看 `## … of N pairs drawn` 三个族是否都是满数、以及 `### Could not be drawn` 段里是不是只有那族超时名；否则这份报告不能当基线用。
 
 `floats-clear-multicol` 六对不受这次改动影响（三条仍 510、三条仍 850，`-001`/`balancing-001` 仍绿），§9.149 的落位次序不变：还缺「窄 float 在栏间的续切」，之后才能放 `AddBoxCut` 那条空白盒的放宽。顺带把 float 在其它族的规模记下来，免得下次又从零量：`gecko/flexbox/flexbox-float-2a/2b` 各 60 474、`wpt/CSS2/floats/new-fc-beside-adjoining-float-2`/`new-fc-separates-from-float-2` 各 20 000、`wpt/css-multicol/multicol-span-float-002/003` 各 11 200、`wpt/css-inline/initial-letter/initial-letter-float-002..005` 5 000–18 180——「栏里的 float band」是一条比分页本身更大的活。
+
+### 9.151 把 `floats-clear-multicol` 的四条规则分别量到底：任何子集都不能单独落，缺口收敛成两句
+
+HEAD 基线（本轮复跑核对）：`floats-clear-multicol-{000,002,003}` 各 510、`-balancing-{000,002,003}` 各 850，`-001` 与 `-balancing-001` 绿。照 §9.149 的次序试了三条规则，数字都留在这里：
+
+1. `FloatHostWrapper` 放宽：一个 0 高、正好占满整栏、但写了 `width:100%` 或有背景的盒，仍然只是「给 float 腾的地方」（000/002/003 的 `.container` 就是这个形状，过去因为 `!style.Width.IsAuto` 与背景被判成有自己内容的盒，走不进 band 路线）。
+2. `PlaceFloatFlowColumns` 里「装不下就把 float 推到下一栏」的守卫补条件：**整体比一栏还高**的 float 不推（它反正要被栏切，推到哪一栏都得切），只推装得下却又放不下余量的那类。这条其实是把该文件自己写在注释里的意图（“A float taller than a whole column of its own is cut down them wherever it stands, so it takes the first column offered”）落到 push 判断上——原判断先把它推走了。
+3. `AddBoxCut` 允许「孩子只是标签间空白」的定高盒被栏切（§9.149 那条，Chrome 对 000-ref 的逐值是 `100/100/50` 与 `.clear` 100x3 在 227,111）。
+
+组合结果：`1+2` 把 000/002 从 11 760 拉到 9 510、003 从 13 620 到 9 000，`-001` 仍绿；再加 `3` → 000/002 到 **600**、003 回到 **510**（形状已非常接近），但 **`-001` 从绿变成 9 510**。原因很干净：001 的 `.container` 里除了两个 float 还有 `<br clear=all>`，它不是纯容器、不会被 lift，所以它的 float 仍不切栏；而它那条 ref 因为规则 3 被切开了 ⇒ 两边不再相同。⇒ 任何子集单独落都会「把红的变大」或「把绿的弄红」，本回合全部回退，工作树回到 `87eee25f`；复跑 `css-break` 仍是 **22 对**、`204 of 204` 全画出来。
+
+缺口因此收敛成两句，不再是模糊的「band 模型」：
+
+- **谁进这条路线**：需要的是「任何 fragmentainer 里的溢出 float 都按栏切」这个通用能力——普通块路线（`ColumnFloats`/`StandBeside`）在碎片化上下文里放 float 时也要能被栏切，而不是只认「被 lift 出来的直接孩子」。001 卡的就是这一句。
+- **进来的盒看不看得见本栏的 float**：`ArrangeFloatFlowColumns` 现在 arrange 每个成员只递 `childContext.ForContainingBlock(new Size(share, declaredHeight))`，没有 `WithFloats(栏的 tracks)`；于是 `.clear` 里 `<br clear=all>` 拿不到净空（Chrome 给它 250，我们只给一行 20.72）。`FloatFlowColumn.Tracks` 就是普通路线用的那个 `FloatTracks`，把它按 `BandFor(...)` 算出的带递进去是现成的下一步。
+
+顺带纠一处旧笔记的口径：`PlaceFloatFlowColumns` 已经有 `CutDownColumns` + `FreeSpanAt` + `ClearBelow`（`overflowing-block-003`、`tall-float-pushed-to-next-fragmentainer-002`、`fragmented-autowidth-fc-root-beside-floats`、`gecko/bugs/563584-9d` 都在用它），所以这一族的增量不在 band 数学本身，而在上面这两句准入与可见性。`-balancing-*` 三条另有门禁：`FloatFlowColumns` 要求 `box.Style.Multi.Fills`，平衡填充的容器根本不走这条路（放宽后它们数字未动，仍是 850）。
