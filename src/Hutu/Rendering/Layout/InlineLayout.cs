@@ -597,6 +597,32 @@ internal sealed class InlineLayout
         return MeasureIntrinsicCore(container, basis, flow, context);
     }
 
+    /// <summary>Gets the room the elements open on the line ask for at one of their edges where they
+    /// clone their decoration: the inset and the margin a fragment of a cloned box carries with it, which
+    /// the walk otherwise charges once for the whole element and never again on the lines the box is
+    /// broken across. A box that only slices its decoration is charged its opening edge once and its
+    /// closing edge at the end of the run, which is where a sliced box asks for them.</summary>
+    private static Double ClonedEdge(IReadOnlyList<OpenInline> open, Boolean start)
+    {
+        var edge = 0.0;
+
+        for (var i = 0; i < open.Count; i++)
+        {
+            var ancestor = open[i].Ancestor;
+
+            if (!ancestor.Box.Style.ClonesDecoration)
+            {
+                continue;
+            }
+
+            edge += start
+                ? ancestor.InlineStartInset + ancestor.InlineStartMargin
+                : ancestor.InlineEndInset + ancestor.InlineEndMargin;
+        }
+
+        return edge;
+    }
+
     private IntrinsicSize MeasureIntrinsicCore(Box container, Double basis, WritingModeInfo flow, InlineContext context)
     {
         var items = new List<InlineItem>();
@@ -655,16 +681,27 @@ internal sealed class InlineLayout
                 // §8.2). `last` reaches only the block's final line, which this is not.
                 var ending = tail is { } stop ? EndHang(stop, last: false) : 0;
 
+                // A clone keeps its decoration on every fragment, and with it the room that
+                // decoration asks for: the line the break ends is charged the closing edge of each
+                // cloning element still open across the break, and the line the break begins is
+                // charged their opening edge again (CSS Break 3 4.6, measured:
+                // gecko/css-break/box-decoration-break-1, whose column asks for the whole margin box
+                // of a clone rather than for its left half).
+                var edge = ClonedEdge(open, start: false);
+
+                maxContent += edge;
+                unbreakable += edge;
+
                 minContent = Math.Max(minContent, unbreakable - ending);
                 widest = Math.Max(widest, maxContent);
 
                 // The line the break ends takes its trailing space with it, and the one it begins
                 // starts where any line but the first does: no indentation, and no space of its own
                 // ahead of the first thing drawn on it.
-                maxContent = 0;
+                maxContent = ClonedEdge(open, start: true);
                 trailing = 0;
                 sawContent = false;
-                unbreakable = 0;
+                unbreakable = ClonedEdge(open, start: true);
                 previous = -1;
                 segment++;
                 tail = null;
