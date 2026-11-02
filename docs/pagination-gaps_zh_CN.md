@@ -1955,3 +1955,24 @@ AngleSharp.Css 的 `ScriptingFeatureValidator` 原先只在查询写了关键字
 这一对的另一边也跟着换了一种相等方式：`scripting-print-noscript` 过去是「两边都显示文字」而绿，现在是「两边都空白」而绿。
 
 门禁：单测 **2204 → 2207**（`ScriptingFeatureTests` 钉住布尔查询、两个带值状态各属的介质、以及 noscript 不占任何盒）；打印 **189 → 190/198**；屏幕全量只少一个失败名 `wpt/mediaqueries/scripting-print-script.html`，**无新增失败名**（gecko 601、wpt 1385 → 1384）；`css-break` 仍 **23 对**（Gecko 3、WPT 20），§9.144 那份剩余清单里打印的九条名字此轮减为八条，少了 `scripting-print-script`。
+
+### 9.147 隐式 `@scope` 的根读通了：`scope-implicit-001/006-print` 在两份语料里同时转绿
+
+AngleSharp 早就把 `@scope` 解析成分组规则，缺的是引擎这一侧：层叠用的规则是从「表的匹配样式」里取的，而那条路只走进 `@media` 与 `@supports`，所以作用域块里写的规则一条都没进层叠——001 与 006 各缺一个 100x100 的绿方块，就是这么来的。
+
+现在由引擎自己走这张表（`RuleBucketIndex.CollectStyles`），每条规则旁边记住它的块把它限定在哪个子树：前置为空时，根 = 拥有这张表的节点的父元素，也就是那个 `<style>` 写在哪个元素里面（CSS Cascade 6 §3.5.4）。带选择器的根（以及 `|` 之后的边界）仍**不读**：要找它的根就得先拿选择器去匹配文档，宁可让这条规则不生效，也不能把它散到整页去——「不生效」说得比页面写的少，「到处生效」说得多。过滤落在 `CollectCandidates`，只有当表里确实有被限定的规则时才付这一步。
+
+留了一处明说的缺口：为 generated-content 伪元素（`::before`/`::after`/`::marker`、以及从文本里读出来的 `::scroll-marker`）回答的那些臂不走这个裁剪，它们是从收集好的规则另走一条索引的。
+
+`scope-implicit-005-print` 仍红：它的方块在 `<template shadowrootmode=open>` 里，引擎不会打开 declarative shadow root，这一对要的是 shadow tree 而不是作用域。
+
+门禁：单测 **2207 → 2209**（`ScopedStyleTests` 钉住「块只 reach 写它的那棵子树」与「带选择器的根仍不读」）；打印 **190 → 192/198**；屏幕全量失败名 **1989 → 1987**，只少这两条，**无新增**（gecko 601、wpt 1384 → 1382）；`css-break` 仍 **23 对**。
+
+打印剩下的 6 条，成因都不在分页本身（这些页只是被当作打印页重跑了一遍）：
+
+1. `gecko/pagination/fieldset-001-grid-print` — 已判过的测试/参考冲突：`<br>` 与 grid item 的断行两边不一致。
+2. `wpt/css-cascade/scope-implicit-005-print` — 要 declarative shadow root。
+3. `wpt/css-page/monolithic-overflow-032-print.tentative` — 像素全同，页数 7 对 9，Blink 的整块溢出怪癖。
+4. `wpt/printing/input-password-print` — mismatch 对：打印时密码框必须与文本框画得不同，我们两者相同。
+5. `wpt/printing/mask-image-print` — mismatch 对：打印时 `mask-image` 必须生效，我们的打印把遮罩丢了。
+6. `wpt/printing/select-combobox-print` — `select` 该作为 menu-list 只显示选中的那一项；我们现在把每个 `<option>` 都排成行内，于是多打了 “FAIL”。顺带量到：全语料含 `<select` 的页面 141 条，当前失败 12 条（`css-display/select-4-option-optgroup-display-none`、`css-ui/appearance-menulist-*`、`gecko/forms/select/arrow-color` 等），表单控件的真实缺失比这一对大得多，另开一仗合算。
