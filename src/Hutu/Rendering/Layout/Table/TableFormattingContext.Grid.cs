@@ -631,8 +631,36 @@ internal sealed partial class TableFormattingContext
                 var lastColumn = Math.Min(cell.Column + cell.Span, grid.Columns);
                 var lastRow = Math.Min(cell.Row + cell.RowSpan, rows);
 
-                var left = cell.Column == 0 ? vertical[0].Width : vertical[cell.Column].Width * 0.5;
-                var right = lastColumn == grid.Columns ? vertical[grid.Columns].Width : vertical[lastColumn].Width * 0.5;
+                // The line this row's stretch settled on decides the width as well as the colour and the
+                // stroke: on the table's own outer edge each row paints the whole of the line it meets
+                // there, so a row whose cell asks for ten stands ten wide beside a row that asked for
+                // fifteen (CSS 2.1 §17.6.2.1, measured: table-collapsed-borders-paint-at-boundary,
+                // where the black row's right edge is ten wide the whole way down and the blue row's
+                // fifteen belongs to that row alone).
+                var leftEdge = cell.Column == 0
+                    ? CollapsedBorder.Resolve(outer[0], cellLeft[cell.Row][0])
+                    : CollapsedBorder.Resolve(
+                        CollapsedBorder.Resolve(outer[cell.Column], cellRight[cell.Row][cell.Column]),
+                        cellLeft[cell.Row][cell.Column]);
+                var rightEdge = lastColumn == grid.Columns
+                    ? CollapsedBorder.Resolve(outer[lastColumn], cellRight[cell.Row][lastColumn])
+                    : CollapsedBorder.Resolve(
+                        CollapsedBorder.Resolve(outer[lastColumn], cellRight[cell.Row][lastColumn]),
+                        cellLeft[cell.Row][lastColumn]);
+
+                // A stretch that asks for nothing still belongs to the line the whole of it settled on.
+                if (leftEdge.Width <= 0.001)
+                {
+                    leftEdge = vertical[cell.Column];
+                }
+
+                if (rightEdge.Width <= 0.001)
+                {
+                    rightEdge = vertical[lastColumn];
+                }
+
+                var left = cell.Column == 0 ? leftEdge.Width : leftEdge.Width * 0.5;
+                var right = lastColumn == grid.Columns ? rightEdge.Width : rightEdge.Width * 0.5;
 
                 // Every horizontal line is shared: half stands in the row above and half in the row
                 // below, the table's outer halves included - those fall outside the rows, and the table
