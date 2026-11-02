@@ -1941,3 +1941,17 @@ HEAD `8b8b906e` 后，分页语料仍为打印 **189/198**（九条同名，无 
 - 旧 `build/_collapsed-straddle-bands-E.patch` 仍可通过 patch check，但在当前 HEAD 上逐对复跑无效果（`at-boundary` 仍 **2540**），说明它的收益已被后续折叠边改动吸收或依赖旧模型。下一步不能再按 E 猜候选序，需先把 `htb-ltr` 与 `at-boundary` 两处等宽冲突的四个候选及“上一行/下一行”归属完整抄出。
 
 当前仍为 `css-break` **23 对**（Gecko 3、WPT 20），两道实验均已还原。
+
+### 9.146 `scripting` 问的是文档而不是引擎：`scripting-print-script` 转绿，打印 189 → 190
+
+媒体特性 `scripting` 过去一律回答 `none`，因为引擎没有脚本引擎可问。但它问的是**这份文档**有没有 scripting，不是引擎打算不打算跑脚本：一份加载完的文档是有 scripting 的，打印它只是过了首次加载——那正是 `initial-only` 这个名字。三处必须回答同一个数：
+
+- `HutuRenderDevice.IsScripting` 改为真。
+- `HutuViewInternal.CreateBrowsingContext` 用 `WithOnly<IHtmlParser>` 把这个标记交给读入器。AngleSharp 的读入器只问「上下文里有没有脚本引擎」，不问文档的状态；不把这一位给它，落在 `<head>` 里的 `<noscript>` 会按“脚本关闭”那条分支把子节点**搬进 body**，于是任何 UA 规则都碰不到这些内容（这条是靠 `DumpsOnePage` 量出来的：ref 的盒树里根本没有 noscript 元素，文字直接挂在 body 上）。
+- UA 隐藏表补一条 `noscript { display: none }`：它是唯一一个「文档有 scripting 时就不显示内容」的元素。
+
+AngleSharp.Css 的 `ScriptingFeatureValidator` 原先只在查询写了关键字时才回答：无值 → 转换器返回 null → false，所以 `(scripting)` 到处都为假。按 mediaqueries-5 的布尔上下文，除 none 之外的每个状态都算真——屏幕的 `enabled` 与打印的 `initial-only` 都为真，而带值的查询仍各归各的介质。
+
+这一对的另一边也跟着换了一种相等方式：`scripting-print-noscript` 过去是「两边都显示文字」而绿，现在是「两边都空白」而绿。
+
+门禁：单测 **2204 → 2207**（`ScriptingFeatureTests` 钉住布尔查询、两个带值状态各属的介质、以及 noscript 不占任何盒）；打印 **189 → 190/198**；屏幕全量只少一个失败名 `wpt/mediaqueries/scripting-print-script.html`，**无新增失败名**（gecko 601、wpt 1385 → 1384）；`css-break` 仍 **23 对**（Gecko 3、WPT 20），§9.144 那份剩余清单里打印的九条名字此轮减为八条，少了 `scripting-print-script`。
