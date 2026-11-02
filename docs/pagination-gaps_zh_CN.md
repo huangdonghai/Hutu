@@ -1923,3 +1923,15 @@ test 第1栏: fill 842,292 50x100 | gradient 722,302 110x80   ← 正确
 
 三道门禁：`css-break` **24 → 23**（Gecko 3、WPT 20），全量无新增失败名；打印 **189/198** 九条同名；单测 **2204**。
 
+### 9.144 当前剩余基线（2026-11-02，两个已落片之后）
+
+HEAD `8b8b906e` 后，分页语料仍为打印 **189/198**（九条同名，无 css-break 回归）；屏幕 `css-break` 剩 **23 对**：WPT 20、Gecko 3。Gecko 为 `box-decoration-break-1`、`vertical-wm-001/002`；WPT 为 OOF/abspos 四对（另有 28 px 的 `out-of-flow-in-multicolumn-093` AA 对）、竖排表六对、折叠边框三对、`fieldset-001`、`flexbox/multi-line-row-flex-fragmentation-069`、`float-017`、`balanced-inner-multicol`、`transform-006/008`。
+
+本轮又量死三条：
+
+1. 直接栏内 full-width float 给 flow 记整段高度会关闭一整栏，`float-017` 从 **482 px** 退到 **653 px**；Chrome 的缺口不是单纯“float 占栏高”，而是“满宽 band 只关闭它实际经过的那段行，后面的 flow-root 仍按逐栏重排”，普通路线没有 tracks/band，故不能靠 `Fragment.Height` 模拟。
+2. 行内 clone 的祖先 closing margin 从 immediate owner 扩到所有结束元素后，`box-decoration-break-1` 数字一字不变；它差的不是 margin 总和，而是每个行内碎片自身的 margin box 与虚线相位。未落。
+3. clone 修好后重试 `fieldset-001`：去掉 `DividesUnits` 的 `margin.Bottom != 0` 确实能让 fieldset 被栏切开，但差从 **84 755 px** 退到 **106 994 px**——栏的 `MulticolChildren` 没有把 legend 造成的 fieldset overhang 加进 top margin，第一片的表头从 y=3 开始，而 ref 从 y=25 开始；单补这一笔又不足以处理图例自身的占位。
+
+下一步仍按“先做可逐值验证的几何，再落画法”推进，不把 2×2 靶页对上当成碎片语料可直接落表转置。
+
