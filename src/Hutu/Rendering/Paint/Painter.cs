@@ -129,7 +129,32 @@ internal sealed class Painter
     /// and a descendant painted from the viewport layer is still inside that subtree, so the cut has to
     /// travel with it (CSS Masking 1 §1.3, which is what `clip-fixed-pos-transform-descendant-001` asks).
     /// </summary>
-    private List<Rect> _cuts = [];
+    private List<Cut> _cuts = [];
+
+    /// <summary>
+    /// How far the picture has been moved by relative offsets down to where the walk stands. A
+    /// fragment's window is measured in the space of the piece it cuts, so a piece drawn off the place
+    /// the flow gave it carries its window with it, and the walk has to know how far it has travelled
+    /// since the window was stood in order to lay it where the piece is (CSS 2.1 9.4.3, measured:
+    /// out-of-flow-in-multicolumn-045, whose two pieces of a top:100;left:100 box show the green of
+    /// their out-of-flow child 100 pixels clear of the columns and lose the whole of it to a window
+    /// left behind).
+    /// </summary>
+    private Offset _travelled;
+
+    /// <summary>
+    /// A rectangle the walk cuts the picture to, where it came from, and how far the walk had travelled
+    /// when it was stood. A fragment's window moves with the content it cuts; the legacy clip is a
+    /// rectangle of the page and moves with nothing.
+    /// </summary>
+    /// <param name="Area">The rectangle, in the coordinates it was written in.</param>
+    /// <param name="Fragment">Whether the rectangle is the window of a fragment of a broken box.</param>
+    /// <param name="Stood">How far the walk had travelled when the cut was stood.</param>
+    private readonly record struct Cut(Rect Area, Boolean Fragment, Offset Stood);
+
+    /// <summary>How far a window that leaves one axis open reaches along it - the page is not a box
+    /// anything is measured against, so it is opened past any distance the document can grow to.</summary>
+    private const Double Opened = 1e7;
 
     /// <summary>
     /// How many of <see cref="_cuts"/> are already laid around the list being painted. A clip is a
@@ -267,14 +292,18 @@ internal sealed class Painter
     /// <summary>A positioned box left for an ancestor's stacking context to paint, with the overflow
     /// clips that still reach it - those of the boxes it stands in that lie between it and the
     /// layer, which the layer must not lift it out of - and the legacy cuts it was found inside.</summary>
-    private sealed class DeferredBox(LayoutBox box, List<ClipEdge> clips, List<Rect> cuts)
+    private sealed class DeferredBox(LayoutBox box, List<ClipEdge> clips, List<Cut> cuts, Offset travelled)
     {
         public LayoutBox Box { get; } = box;
 
         public List<ClipEdge> Clips { get; } = clips;
 
         /// <summary>Gets the legacy <c>clip</c> of the boxes this one was found inside, outermost first.</summary>
-        public List<Rect> Cuts { get; } = cuts;
+        public List<Cut> Cuts { get; } = cuts;
+
+        /// <summary>Gets how far the walk had travelled by relative offsets where the box was found,
+        /// which is what the windows it carries are measured from.</summary>
+        public Offset Travelled { get; } = travelled;
     }
 
     /// <summary>Collects the positioned boxes a stacking context paints in its layer, and the overflow
@@ -328,6 +357,10 @@ internal sealed class Painter
         // asks of an element whose transform is not none.
         var cut = CutOf(box);
 
+        // A relative box is drawn off the place the flow gave it, and the fragment it stands in goes with
+        // it: the walk carries that distance so a window stood above is laid where the piece is.
+        var outside = Enter(box);
+
         if (box.Transform is { } transform)
         {
             var origin = new Offset(box.BorderBox.X + box.TransformOrigin.X, box.BorderBox.Y + box.TransformOrigin.Y);
@@ -337,7 +370,7 @@ internal sealed class Painter
             // the box was cut to travels with it, which is what the pair of commands below lays down.
             if (cut is { } moved)
             {
-                _cuts.Add(moved);
+                Stand(box, moved);
             }
 
             PaintClipped(box, list, target, deferred: null);
@@ -348,12 +381,13 @@ internal sealed class Painter
             }
 
             target.Add(new PopTransformCommand(box.BorderBox));
+            _travelled = outside;
             return;
         }
 
         if (cut is { } standing)
         {
-            _cuts.Add(standing);
+            Stand(box, standing);
         }
 
         PaintClipped(box, list, target, deferred);
@@ -362,6 +396,8 @@ internal sealed class Painter
         {
             _cuts.RemoveAt(_cuts.Count - 1);
         }
+
+        _travelled = outside;
     }
 
     /// <summary>
@@ -469,16 +505,78 @@ internal sealed class Painter
     /// both answer from here, so the cut a box is painted with is the one its descendants were gathered
     /// under.
     /// </summary>
-    private static Rect? CutOf(LayoutBox box)
+    private static Cut? CutOf(LayoutBox box)
     {
         if (box.FragmentClip is { } fragment)
         {
-            return fragment;
+            return new Cut(fragment, true, Offset.Zero);
         }
 
-        return box.Position is PositionMode.Absolute or PositionMode.Fixed
-            ? box.Source.Style.Clip?.ClipOf(box.BorderBox)
-            : null;
+        if (box.Position is PositionMode.Absolute or PositionMode.Fixed
+            && box.Source.Style.Clip?.ClipOf(box.BorderBox) is { } clip)
+        {
+            return new Cut(clip, false, Offset.Zero);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Stands a cut around what the walk is painting, noting how far the picture has been moved by
+    /// relative offsets until now. A fragment's window that leaves the inline axis open is opened out
+    /// here, where the box it was written over is known, so that what stands out to the side of the
+    /// piece is still drawn (CSS Multicol 1 §3.1, measured: out-of-flow-in-multicolumn-045).
+    /// </summary>
+    private void Stand(LayoutBox box, Cut cut)
+    {
+        _cuts.Add(
+            Open(box, cut with { Stood = _travelled }));
+    }
+
+    /// <summary>
+    /// Opens a fragment's window along the axis it was written not to cut.
+    /// </summary>
+    private static Cut Open(LayoutBox box, Cut cut) =>
+        !cut.Fragment || box.FragmentCutsInline
+            ? cut
+            : box.Flow.IsVertical
+                ? new Cut(
+                    new Rect(cut.Area.X, -Opened, cut.Area.Width, Opened * 2),
+                    true,
+                    cut.Stood)
+                : new Cut(
+                    new Rect(-Opened, cut.Area.Y, Opened * 2, cut.Area.Height),
+                    true,
+                    cut.Stood);
+
+    /// <summary>
+    /// Gets the rectangle a stood cut cuts to where the walk now stands: a fragment's window travels
+    /// with the piece it was written over, and the page's own rectangles stay where they were.
+    /// </summary>
+    private Rect Laid(Cut cut) =>
+        !cut.Fragment || (cut.Stood.X == _travelled.X && cut.Stood.Y == _travelled.Y)
+            ? cut.Area
+            : new Rect(
+                cut.Area.X + _travelled.X - cut.Stood.X,
+                cut.Area.Y + _travelled.Y - cut.Stood.Y,
+                cut.Area.Width,
+                cut.Area.Height);
+
+    /// <summary>
+    /// Carries the walk into a box drawn off the place the flow gave it, and gives back the distance to
+    /// come back to when the subtree is done.
+    /// </summary>
+    private Offset Enter(LayoutBox box)
+    {
+        var outside = _travelled;
+        var moved = box.RelativeDisplacement;
+
+        if (moved.X != 0 || moved.Y != 0)
+        {
+            _travelled = new Offset(outside.X + moved.X, outside.Y + moved.Y);
+        }
+
+        return outside;
     }
 
     /// <summary>
@@ -499,7 +597,7 @@ internal sealed class Painter
 
         for (var i = from; i < _cuts.Count; i++)
         {
-            target.Add(new PushClipCommand(_cuts[i], CornerRadii.None));
+            target.Add(new PushClipCommand(Laid(_cuts[i]), CornerRadii.None));
         }
 
         var outside = _cutDepth;
@@ -511,7 +609,7 @@ internal sealed class Painter
 
         for (var i = _cuts.Count - 1; i >= from; i--)
         {
-            target.Add(new PopClipCommand(_cuts[i]));
+            target.Add(new PopClipCommand(Laid(_cuts[i])));
         }
     }
 
@@ -1045,7 +1143,7 @@ internal sealed class Painter
 
                 var waits = child.ZIndex < 0 ? stack.Below : child.ZIndex == 0 ? stack.Pending : stack.Above;
 
-                waits.Add(new DeferredBox(child, reached, CutsHere()));
+                waits.Add(new DeferredBox(child, reached, CutsHere(), _travelled));
             }
 
             if (!child.EstablishesStackingContext)
@@ -1055,8 +1153,10 @@ internal sealed class Painter
 
                 if (cut is { } standing)
                 {
-                    _cuts.Add(standing);
+                    Stand(child, standing);
                 }
+
+                var travelled = Enter(child);
 
                 if (hiding is { } edge)
                 {
@@ -1069,6 +1169,8 @@ internal sealed class Painter
                 }
 
                 Collect(child, stack);
+
+                _travelled = travelled;
 
                 if (hiding is not null)
                 {
@@ -1556,13 +1658,16 @@ internal sealed class Painter
         // pass is painted outside the pairs they were laid in, so they are laid again here.
         var where = _cuts;
         var depth = _cutDepth;
+        var travelled = _travelled;
         _cuts = entry.Cuts;
         _cutDepth = 0;
+        _travelled = entry.Travelled;
 
         PaintChild(entry.Box, list, target, entry.Box.EstablishesStackingContext ? null : stack);
 
         _cuts = where;
         _cutDepth = depth;
+        _travelled = travelled;
 
         for (var i = entry.Clips.Count - 1; i >= 0; i--)
         {
@@ -1574,7 +1679,7 @@ internal sealed class Painter
     /// Keeps the cuts standing around the place a box was found, for the layer that is to paint it after
     /// the walk has climbed out of them.
     /// </summary>
-    private List<Rect> CutsHere() => _cuts.Count > 0 ? [.. _cuts] : [];
+    private List<Cut> CutsHere() => _cuts.Count > 0 ? [.. _cuts] : [];
 
     /// <summary>
     /// Paints a box that is lifted into a layer of its own - the viewport's, or a pinned one - inside the

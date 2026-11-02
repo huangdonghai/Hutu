@@ -388,6 +388,16 @@ internal sealed class LayoutBox
     /// out in the whole box and only the stretch inside the fragment may be drawn.</summary>
     public Rect? FragmentClip { get; set; }
 
+    /// <summary>
+    /// Gets or sets whether the fragment also cuts the inline axis. A column in continuous media names
+    /// the stretch of the box it holds along the axis that box was broken on, and what stands out to the
+    /// side of it is still seen: a 50-pixel out-of-flow child is drawn whole inside a 40-pixel column,
+    /// and a 150-pixel in-flow box in a 100-pixel two-column container is drawn to its full width (CSS
+    /// Multicol 1 §3.1 against CSS Fragmentation 3 §4.1, measured: out-of-flow-in-multicolumn-045).
+    /// A page is a box the picture is drawn on rather than a stretch of one, so it cuts both ways.
+    /// </summary>
+    public Boolean FragmentCutsInline { get; set; } = true;
+
     /// <summary>Gets or sets the table box - the grid and the border around it, without the captions,
     /// which stand in the wrapper outside it. The table's background and border are painted there and
     /// not over them.</summary>

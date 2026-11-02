@@ -3692,6 +3692,7 @@ internal sealed class BlockLayout
                 // The piece is drawn only where its column stands, which is what lets a float taller
                 // than the column be carried on in the next one (CSS Fragmentation 3 §4.1).
                 arranged.FragmentClip = held;
+                arranged.FragmentCutsInline = false;
                 parent.Children.Add(arranged);
             }
         }
@@ -5566,6 +5567,7 @@ internal sealed class BlockLayout
                         content.Y + top - window,
                         child.Size.Width,
                         bottom - top);
+                    piece.FragmentCutsInline = false;
 
                     parent.Children.Add(piece);
                 }
@@ -5724,6 +5726,7 @@ internal sealed class BlockLayout
                     if (portion.Offset >= 0)
                     {
                         laidOut.FragmentClip = heldRect;
+                        laidOut.FragmentCutsInline = false;
                     }
 
                     parent.Children.Add(laidOut);
@@ -5745,6 +5748,7 @@ internal sealed class BlockLayout
                     // The piece spent the margin and nothing else: what the box holds is drawn by the
                     // piece that shows the box.
                     stood.FragmentClip = stood.BorderBox;
+                    stood.FragmentCutsInline = false;
                 }
 
                 parent.Children.Add(stood);
@@ -6285,6 +6289,7 @@ internal sealed class BlockLayout
                     // (measured: multi-line-row-flex-fragmentation-096, whose straddling line showed
                     // 50 pixels in a 60-pixel column before this).
                     windowed.FragmentClip = windowRect;
+                    windowed.FragmentCutsInline = false;
                     parent.Children.Add(windowed);
 
                     y += windowHeight + windowEdge + (child.Last ? child.Margin.Bottom : 0);
@@ -6408,10 +6413,12 @@ internal sealed class BlockLayout
                             Math.Max(
                                 0.0,
                                 (columnBottom > held.Bottom ? Math.Min(reach, columnBottom) : reach) - held.Y));
+                        arranged.FragmentCutsInline = false;
                     }
                     else
                     {
                         arranged.FragmentClip = held;
+                        arranged.FragmentCutsInline = false;
                     }
                     parent.Children.Add(arranged);
                     y += (portion.Cursor >= 0 ? portion.Cursor : portion.Height) +
@@ -6505,6 +6512,7 @@ internal sealed class BlockLayout
                         // ends where the column box does, not where the box's height does
                         // (CSS Fragmentation 3 §4.1, measured: widows-orphans-022).
                         piece.FragmentClip = rect;
+                        piece.FragmentCutsInline = false;
                     }
 
                     parent.Children.Add(piece);
@@ -6567,6 +6575,7 @@ internal sealed class BlockLayout
                     // The piece spent the margin a box opened with and shows none of the box: what the
                     // box holds is drawn by the piece that carries it.
                     stood.FragmentClip = stood.BorderBox;
+                    stood.FragmentCutsInline = false;
                 }
 
                 parent.Children.Add(stood);
