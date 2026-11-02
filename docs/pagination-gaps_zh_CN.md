@@ -1935,3 +1935,9 @@ HEAD `8b8b906e` 后，分页语料仍为打印 **189/198**（九条同名，无 
 
 下一步仍按“先做可逐值验证的几何，再落画法”推进，不把 2×2 靶页对上当成碎片语料可直接落表转置。
 
+### 9.145 再排除两条竖排表/折叠边实验：正交表与旧 E 补丁都不能直接落
+
+- 把 §9.141 的表尺寸/内向范围/`AlignContent` 实验拆开，只先落 `_edit_size1.py` + `_edit_size2.py` + `AlignContent` 轴向：`table-row/col/section` 六对与 baseline 相同，两对折叠边框降；加上行内向范围、行声明块向长度与栏 target 后，六对退到约 **50 k**。真正被它打回的是正交表 `wpt/css-writing-modes/table-cell-valign-001`：Chrome 的外层 vertical-lr 表 `102x310` 被转成 `310x102`。因此表尺寸转置不能无条件跟随外层 `table.Flow`，至少要先保住 cell 自身正交流向；未落。
+- 旧 `build/_collapsed-straddle-bands-E.patch` 仍可通过 patch check，但在当前 HEAD 上逐对复跑无效果（`at-boundary` 仍 **2540**），说明它的收益已被后续折叠边改动吸收或依赖旧模型。下一步不能再按 E 猜候选序，需先把 `htb-ltr` 与 `at-boundary` 两处等宽冲突的四个候选及“上一行/下一行”归属完整抄出。
+
+当前仍为 `css-break` **23 对**（Gecko 3、WPT 20），两道实验均已还原。
