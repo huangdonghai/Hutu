@@ -2308,3 +2308,17 @@ Q1 有了答案，方向和我猜的不同。三件事：
 - `out-of-flow-in-multicolumn-093`（28）。Chrome 两页这区域逐像素相同（两颗 `::before` 的 `left:-15px` 都在画外），我们差在测试页第二栏那颗 `top:-2px` 比参考页 `top:0` 那颗高 2 px —— 同一条墙，只是量级 28 px。
 
 下一刀的形状：**给 out-of-flow 后代建自己的碎片链** —— 一个 abs/fixed 盒，若它的包含块链穿过一个被切开的盒，就在该盒的每个片里各放一份，位置取自那片的内容头、块向剪到那片；这要求 out-of-flow 的摆放从「一次布局的绝对坐标」搬到「按片重放」。做完 045 那两轴规则正好复用；判定面 `-073/-090/-093`、`block-end-aligned-abspos-with-overflow`、`abspos-in-opacity-*`、`grid-item-oof-013`、`contain-size-fieldset-001`；回归面 `positioned-*`、`css-position`、`sticky`、`float-*` 与所有打印页。`fieldset-001`（84 755）、`vertical-wm-001/002`（12 988/10 608）仍是 §9.165 那堵「按 fragmentainer 重排」的墙；`at-boundary`（2 415）仍是折叠边框 45° 斜接的独立画法活。
+
+### 9.169 `400f0b27` 落两规则：`-073/-090` 转绿；`block-end-aligned-abspos-with-overflow` 量出还差两件
+
+- **栏要切「只有出流内容」的盒**：成员自身高度 0、内容全在出流时，旧代码用 `FitsTheColumns` 一问「切片够不够栏住」（300 的 reach 对两栏 200）就把 `divides` 判回 false，于是这盒**一片都没分**，第一栏的窗又把出流内容全剪掉 —— 结果参考方块整块 11 600 px 差在两边。Chrome 的答案是照栏分片、每个 fragmentainer 画它装得下的那一段、超出末栏的部分随末栏丢掉（CSS Break 3 §4.5）。加 `reachesOut`（仅 `byShape`、自身高度不超一栏、且 reach 比 in-flow extent 大）后：`-073/-090` 各 11 600 → 2 500。
+- **出流后代锚在片上**：剩下的 2 500 是 abs 的 `bottom/top` 偏移仍按「被位移过的整盒」算。给 `FragmentSlice` 加 `AnchorAtPiece`（只在 `ArrangeMulticolRun` 放栏片段处置位），`Arrange` 里 `ForDescendants` 改借**片自己的** padding 盒 → 两片各 2 500 清零，`-073`、`-090` **转绿**。注意键位：先用 `Offset > 0` 当条件时，三对 htb 折叠/平铺表 (`table-{col,row,section}-paint-htb-ltr`) 立刻变红 22 500 —— 表格切片的 abs 锚点不该跟栏片段同源，故必须用显式旗标。
+
+门禁：单测 2216；全量屏幕**少两条红名、零新增**（wpt 1 377→1 374，gecko 600 不变），css-break 20→18；打印 193/198 五条同名。仍红的有 6 处轻微外扩（transform-006 1 361→1 567、transform-008 10 531→11 900、fieldset-001 84 755→84 845、anchor-name-multicol-003、anchor-position-multicol-nested-001、flexbox-multi-column-2）与 1 处靠近（flexbox-single-row-2 39 495→39 245）。基线换到 `build/_full-oofanchor.md`。差值脚本此前把 `11 600` 这种带千位空格的数漏掉了，已改（`build/_diff_fixed.py` 认 `[0-9][0-9 ]*`），旧几轮的「少几条」读数以修正后的口径为准。
+
+`block-end-aligned-abspos-with-overflow`（3 000）量清了，它差的不是锚而是**另两件**（Chrome 逐值：abs 盒 rect 为 (8,128,20,10) 与 (58,58,20,0)，hotpink 层 (8,128,20,30)+(58,58,20,50)，绿方块只在第二栏 (58,58,50,50)）：
+
+- abs 盒自身要**跨 fragmentainer 延续**：Chrome 第二栏画的是它剩下的 50 px（贴栏头起），我们把同一个整盒按片锚点再画一遍，于是第二栏的绿块高 37.72 起、比 Chrome 高 20.28 px。
+- 出流子树里 `break-inside: avoid` 要真躲开：Chrome 把 50x50 的绿块整个推到下一栏（第一栏该处留白），我们在第一栏的窗里露出它 20 px。
+
+⇒ 下一刀是把这两件补上（判定面：`block-end-aligned-abspos-with-overflow`、`out-of-flow-in-multicolumn-093`（28）、`abspos-in-opacity-*` 与 `grid-item-oof-013` 作回归面）。竖排表 6 对、折叠斜接 3 对、`fieldset-001`、`vertical-wm-*`、`flexbox-069`、`balanced-inner-multicol` 仍是 §9.165 的重排墙。
