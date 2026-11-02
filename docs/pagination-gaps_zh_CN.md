@@ -2085,3 +2085,21 @@ Q1 有了答案，方向和我猜的不同。三件事：
 结论收拢成一句可执行的话：`floats-clear-multicol` 那族与 `379349-2a` 这一对共享同一个未完成的能力——「**栏把一个超过栏高的盒按其自身高度切开**」，包括 (a) 盒里只有标签间空白的情况（规则 7）、(b) 盒站在 float 上（规则 3）、(c) 盒是纯 float 容器时它的 float 按栏切（规则 1+2，带 `IsMonolithic` 例外）、(d) 切出来的片仍按流自身轴算净空（Q2）。任何一半先落都会把某条「靠巧合相等」的绿弄红；要落就带着 `gecko/bugs/379349-2a`、`floats-clear-multicol-000/001/002/003` 与 `MulticolBoxCutTests` 一起量。
 
 本轮结束时的工作树：HEAD `d9a389a4` 之后无未落代码；`css-break` 22 对、打印 193/198、单测 2214 全绿，`379349-2a` 复测仍是 `the two agree`。
+
+### 9.154 剩下的分页对其实是同一堵墙：Chrome 会把「超出父盒声明高度的子内容」继续切过 fragmentainer
+
+四条排除性证据（都本轮实测，写下来免得再走一遍）：
+
+- **`lifted` 判别不成立**。给 `AddBoxCut` 的空白盒放宽加「这个成员是不是被 `SpliceOverset` 抬上来的」例外之后，`gecko/bugs/379349-2a` 仍是 2 136；再看盒树，test 那一侧逐值未变 ⇒ 变的是 **ref 页**，`.overflow` 不是被抬进来的成员。那条路排除。
+- **`out-of-flow-in-multicolumn-093` 不是 fuzzy 容差**。该文件里没有任何 `<meta name=\"fuzzy\">`（`FuzzyAllowance` 已经接进三份 imported 计分路径，行 254/546/734）⇒ 那 28 px 是真的 AA 残差，不是计分口径缺容差。
+- **`reftest-expectations.json` 不能用来「清」对**。它自己的 $comment 写明：一条 `fail: <缺什么>` 是一个**会过期的断言**——引擎一旦画得一样了，测试反而失败并说明原因。所以记进去不等于清掉，只是把已知差写进仓库；本目标要的是画对，不用它抵账。
+- **Chrome 对 `379349-2a` test 页的逐值**（本轮量）：`container no1 133x48 | 136,3 133x0`，而它的 `overflow`（388 高，声明在 `.no1 .overflow{height:800%}`，父盒只有 48）是 `3,3 133x240 | 136,3 133x148`。⇒ Chrome 把**超出父盒声明高度的子内容继续按栏切**，父盒自己按声明高度参与流。这正是 `box-decoration-break-1` 之外几乎所有剩余分页对共享的那堵墙：真正的「每片各自成盒」，而不是「整盒 + 窗口裁剪」。
+
+由此，剩余清单不再是 22 条各自为政的差，而是四件事：
+
+1. 每片真布局（nested/real fragmentation）：解开 `floats-clear-multicol-*`（6）、`fieldset-001`、`379349-2a` 这一侧、`balanced-inner-multicol`、`transform-006/008`、`vertical-wm-001/002`、`box-decoration-break-1` 的逐片 margin 盒。
+2. 出流后代的片级裁剪与 content-offset（OOF/abspos 4 对 + `block-end-aligned-abspos-with-overflow`）。
+3. 竖排碎片表里 caption/行带的认领与平铺原点（6 + 折叠边框 3）。
+4. 非分页的能力缺口的确在分页语料里出现的部分：declarative shadow root、表单控件、打印遮罩（打印 5 条里的 4 条）。
+
+本轮没有可安全落的碎片（见 §9.152/9.153 的互锁），代码停在 `bf994690`；工作树与门禁不变：单测 2214 全绿、`css-break` 22 对、打印 193/198。
