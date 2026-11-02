@@ -2168,3 +2168,12 @@ Q1 有了答案，方向和我猜的不同。三件事：
 门禁：单测 **2214 → 2216** 全绿；`css-break` **22 → 21 对**（Gecko 2、WPT 19）；打印 **193/198** 不变；屏幕全量 `5845 of 5845`、`2335 of 2335` 全画出，真实只差这三条转绿，名字跳动的是那族 5 秒字体回退超时。提交 `2a620629`。
 
 剩下 21 对的分布没变：竖排碎片表 6、折叠边框 3、OOF/abspos 4、`vertical-wm` 2、`fieldset-001`、`flexbox-069`、`balanced-inner-multicol`、`transform-006/008`、`oof-093`，加上 CSS2 的 `floats-clear-multicol` 6 条与打印 5 条；主墙仍是 §9.156 写的递归分片（每片站在栏头 + 自带 content offset），本轮这条 intrinsic 修复把它需要的「边记在该记的那一片」也一起摆正了。
+
+### 9.160 下一个可开工点的定位：at-boundary 的折叠边框不在 `Resolve`，OOF 那族卡的是「栏在连续媒体里到底剪不剪」
+
+本轮把两处「看起来能小修」的候选逐值读过代码，结论是它们都不是比较规则的问题，记下入口免得下次重新推：
+
+- `wpt/css-break/table/table-collapsed-borders-paint-at-boundary.tentative`（2 540 px）：差是 y=21..23 一条 3 行高的横带，出现在后面几栏的 x=225..239、305..316（我们画 lime、参考画黑）与 404..418（我们画黑、参考画 blue）。**颜色**在段上错 ⇒ 争的不是胜负规则。`BorderCollapse.Resolve`（`src/Hutu/Rendering/Layout/Table/BorderCollapse.cs:86`）就是「宽 → 样式等级 → origin」这条标准阶梯，且未切开的同族兄弟 `table-collapsed-borders-paint-htb-ltr` 现在是绿的；半边共享也在（`TableFormattingContext.Grid.cs:637` 「每一条水平线被共享：上半在上一行、下半在下一行」）。所以错的是**片边界那一条线上被拿来相见的候选是谁**：入口是 `TableFormattingContext.Grid.cs:487-536` 的 `vertical/horizontal/cellLeft[]/cellRight[]` 四张表——按那几个 x 段把候选与行归属抄出来对照 Chrome，而不是再猜第五种 tie-break（§9.145 已证旧的 straddle-E 补丁在当前 HEAD 上无效果）。
+- OOF/abspos 四对（045/073/090 与 `block-end-aligned-abspos-with-overflow`）：两边几何差已被逐值钉成两件事——(1) 我们的片是「整盒抬到 `栏头 - consumed` + 按栏矩形裁剪」，Chrome 是「每片站在自己栏头 + 内容自带 consumed」，差出整整一个 `consumed`；(2) 连续媒体里栏**不剪内联方向**的溢出（045 的 abs 比栏宽 10 px，Chrome 照画；我们剪掉）。裁剪落点：横向是 `BlockLayout.cs` 里 `arranged.FragmentClip = held`（带 `floatHang` 那一支），竖向是 `laidOut.FragmentClip = heldRect`（约 5726）。**尚未做的实验**：把横向 `held` 的内联范围放开，看这四对与全语料的反应——它能一次证伪/证实 (2)，但 (1) 仍需 §9.156 的片级 content-offset，所以这个实验只能定性，不能单独落；本轮剩余的验算预算不够跑完它的门禁，没有动代码。
+
+本轮无代码改动；HEAD 停在 `a504877f`，复跑 `css-break` 仍是 **21 对**（Gecko 2、WPT 19），三份族报告全数画出、`could not be drawn` 为 0。
