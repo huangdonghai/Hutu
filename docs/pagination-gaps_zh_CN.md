@@ -1768,3 +1768,21 @@ c1 [714,10 50x60]  c2 [714,80 50x60]  c3 [654,10 50x60]  c4 [654,80 50x60]
 
 门禁：屏幕全量 **0 新增失败名**、findings 1988 不变；打印 **189/198** 九条同名；单测 **2201**（新增 `AVerticalColumnSpendsTheMarginItBlocksItsBoxWith`：改前盒在 y=栏首、x=40、宽 82 溢出，四条断言全红）。css-break 像素 481 590 → **453 030**：`gecko/css-break/vertical-wm-001.html` 27468 → **12988**、`vertical-wm-002.html` 24688 → **10608**。族外顺带回收 §9.128 记下的退步：`flexbox-single-column-6` 9850 → 6450、`flexbox-single-column-vertical-lr-6`/`-rl-6` 各 3900 → 3500；变大的两条 `flexbox-multi-row-vertical-rl/lr-1a` 各 +1700（本来已红）。两对 `vertical-wm-*` 剩下的 12 988/10 608 出在后面的容器上，本轮没有逐条量（十条容器各自一条路），留作这两对的下一条。
 
+### 9.132 量清楚但没落：让竖排的栏也切「装有出流后代」的盒子（本族 −39 780、css-position −236 800、flexbox +78 390，判据本身还错着）
+
+`AddBoxCut` 的拒绝表里有一条 `child.Children.Count > 0 && !(clones…) && !clips && Kind != Table && (!HoldsPositioned || vertical)`——竖排里有子盒的普通块因此从不被切（§9.114 记的就是这条轴向缺口）。把 §9.126/§9.127 那份 `vertical && plansAcross` 的标记**提到拒绝表之前**，就把它接了过来。三侧都量了：
+
+| 判据（提前的分支只允许哪些子） | wpt/css-break | wpt/css-position/multicol | gecko/flexbox/pagination |
+|---|---|---|---|
+| 只有表格（`Kind == Table`） | 0 | 0 | 0 |
+| 表格 或 含出流后代 | **−39 780**（`table-row/col/section-paint-vrl-rtl`/`-vlr-rtl` 六对各约 −6630） | **−236 800**（八对 `vl*/lr*/rtl-in-multicols` 33600 → 3200） | **+78 390**（16 对本来已红的竖排 flex） |
+| 再加 `!HoldsLaidOutContext`（子孙里有 flex/grid 就不抢） | −39 780 | −236 800 | +78 390 → 已含上一行 |
+| 不限子盒类型（最初版本） | −39 780 | −236 800 | **+529 540**（44 对） |
+
+两点结论：
+
+1. **收益与代价同源。**「表格」那一半毫无贡献（表格本来就能过拒绝表、走到原来位置的标记分支）⇒ 六对竖排表格的 −39 780 全部来自**含出流后代的盒子被切**这一条，那 16 对 flex 的 +78 390 也来自同一条。
+2. **机制本身还没对。**为此写的最小单元页（竖排 `columns:3`、每栏 100，一个 `block-size:120` 的盒子里放一个 `position:absolute` 孩子）切出 4 片，但四片的 `BorderBox.Y` 全是 0——片全落在**同一栏**里。横排遇到这种盒子是靠 `ArrangeBackwardFragments`（「出流后代能越过自己所属的栏，凡窗口被它跨过的栏都取容器的一片」，§9.106），而那条路线显式 `!box.Flow.IsVertical` 不做竖排；竖排这边 `columns = max(counts.Count, run.Count)` 与 `column = cell % columns` 的配对在这种「一片一栏、栏数由计划给」的形状下也没有把片分到各栏。也就是说：这一支要的不是「会不会切」，而是**切出来的片落在哪一栏**，那是 #11（出流后代逐栏分片）欠的账；在它修好之前，这条只能让 16 对本来已红的 flex 对更红、把八对 css-position 的分差用可疑的重叠「抹平」。
+
+因此按 §9.124/§9.128 的同样处置：**不落，只记**。脚本留在 `build/_edit_vdivide2.py`、`build/_edit_vdivide3.py`、`build/_BlockLayout-hoisted.cs`（最初版本的整份文件），等 #11 的栏位账补齐后一次重放；那时要同时重测这三列数，因为收益与代价同源，任何一侧的变化都会改变取舍。
+
