@@ -2103,3 +2103,14 @@ Q1 有了答案，方向和我猜的不同。三件事：
 4. 非分页的能力缺口的确在分页语料里出现的部分：declarative shadow root、表单控件、打印遮罩（打印 5 条里的 4 条）。
 
 本轮没有可安全落的碎片（见 §9.152/9.153 的互锁），代码停在 `bf994690`；工作树与门禁不变：单测 2214 全绿、`css-break` 22 对、打印 193/198。
+
+### 9.155 「超出父盒声明高度的子内容」这一层到底缺在哪：不是 reach，而是 packer 不肯为它多给一片
+
+先记下两条排除，省得下次再试：
+
+- 我先怀疑 `MulticolChildren` 里 `!breakable` 那条路（`AddBoxCut` → `DividesAcross` → 立 `divides` 的那段）没有把 `ContentReach` 计入，于是在那里加了「内容超出声明高度就按 reach 切」的分支并带上 `reach:`。装好后逐值一测：`379349-2a` 的盒树一字未改。原因：**带块级孩子的成员根本不走这条路**——`.container` 有一个 `.overflow` 子盒 ⇒ `FragmentsInColumns` 与 `!breakable` 都不成立，它走的是后面那条已经算好 `byShape / DividesUnits / byUnits / relayed / painted / reach` 的路（`BlockLayout.cs:2623-2691`）。也就是说**这层的 reach 机制早就在**：那条路的注释已经写明「站在盒之外的单位仍要被画出来，最后一片延伸到它的尽头，而流只按盒自身声明的高度推进」，`Painted(child) = max(Reach, Fragment.Height)` 也已经在 `PlanMulticolRun` 里用着。实验分支已回退（没有可测效果，也不留未验证代码）。
+- `gecko/bugs/379349-1a` 的 13 381 与 `-2a` 不同，它**本来就红**（对照清跑基线 `build/_full-float3.md`）：别把它算进本轮任何实验的代价。
+
+那 Chrome 与我们的真正差额，用它的逐值说清楚：`container no1` 是 `133x48 | 136,3 133x0`（**两个片**：第一栏里 48 高，第二栏里一个 0 高的片），它的子 `overflow` 是 `133x240 | 136,3 133x148`。我们的 `.container` 只有一片（48 高，装在栏里绰绰有余），子盒的 388 就在这一片里向下溢出、被栏的 x 范围困住。⇒ 缺的不是「paint 多远」，而是 **packer 不肯为一个装得下的盒多发一片**：要按 Chrome 那样，父盒必须能在自己的高度用尽之后**再拿到一个零高度的片**，让子内容的剩余部分在下一栏栏头继续布局（子盒自己的 fragment 链 = 父盒的 fragment 链 ∘ 子在父内的偏移）。这一层不在 `MulticolChildren` 里，动的是 `PlanMulticolRun`/`Held`/`Fitting` 的推进记账（一片的 `Held` 用声明高度、但允许再多一片只用来承载 reach），所以要与 `widows-orphans-*`、`overflowing-block-*`、`transform-*`、`AddBoxCut` 那批既有判据一起量。
+
+本轮除此之外没有别的改动：工作树仍是 `a51f71c6` 的代码状态，`css-break` 22 对、打印 193/198、单测 2214 全绿。
