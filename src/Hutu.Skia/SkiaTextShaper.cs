@@ -41,6 +41,11 @@ internal sealed class SkiaTextShaper : IDisposable
     // paragraph pays for the parse once.
     private readonly ConcurrentDictionary<String, Feature[]> _featureLists = new();
 
+    // The direction HarfBuzz takes from a run, kept by the text it read. A page repeats its words far
+    // more often than it invents them, and guessing the segment properties is a buffer walk per run.
+    private readonly Dictionary<String, Boolean> _directions = new(StringComparer.Ordinal);
+    private const Int32 DirectionCacheLimit = 4096;
+
     // HarfBuzz shapes into a buffer rather than out of one, so a buffer is reused for every request;
     // it is not thread safe, which the lock and the cache between them make irrelevant.
     private readonly HarfBuzzBuffer _buffer = new();
@@ -95,11 +100,24 @@ internal sealed class SkiaTextShaper : IDisposable
 
         lock (_shapeLock)
         {
+            if (_directions.TryGetValue(text, out var known))
+            {
+                return known;
+            }
+
             _buffer.Reset();
             _buffer.AddUtf16(text);
             _buffer.GuessSegmentProperties();
 
-            return _buffer.Direction == Direction.RightToLeft;
+            var rightToLeft = _buffer.Direction == Direction.RightToLeft;
+
+            if (_directions.Count >= DirectionCacheLimit)
+            {
+                _directions.Clear();
+            }
+
+            _directions.Add(text, rightToLeft);
+            return rightToLeft;
         }
     }
 
