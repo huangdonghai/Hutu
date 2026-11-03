@@ -51,9 +51,29 @@ internal sealed partial class TableFormattingContext
     {
         var style = box.Style;
         var vertical = box.Flow.IsVertical;
-        var basisWidth = constraints.AvailableWidth ?? context.ContainingBlock.Width;
-        var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
-        var build = Build(box, basisWidth, context);
+
+        // The measure asks after the same pair of axes the arrange reads off the box it is handed: the
+        // columns share out the extent along the axis the table sets its cells on - the page's y for a
+        // table that runs across it - and the rows fill what is left along the other. Asked the other way
+        // the columns are summed along the block axis, so a table of two rows of 110 and 135 measures as
+        // though its rows were columns and back again (CSS Writing Modes 3 §4.1, measured:
+        // wpt/css-break/table/table-col-paint-vlr-rtl, whose table is 400 along the page's x and 100
+        // along its y, the same 100x400 its four fragmentainers make).
+        // A percentage of the table or its cells reads the containing block's *inline* size, which is its
+        // height when that block is a column (CSS Writing Modes 3 §4.1, the rule BlockLayout keeps at its
+        // head); the room handed along an axis only says what that axis has left when it is given.
+        var inlineRoom = context.ContainingIsVertical
+            ? context.ContainingBlock.Height
+            : context.ContainingBlock.Width;
+        var basisInline = vertical
+            ? constraints.AvailableHeight ?? inlineRoom
+            : constraints.AvailableWidth ?? inlineRoom;
+        var basisBlock = vertical
+            ? constraints.AvailableWidth ?? context.ContainingBlock.Width
+            : constraints.AvailableHeight ?? context.ContainingBlock.Height;
+        var build = Build(box, basisInline, context);
+        var insetsInline = vertical ? build.InsetsV : build.InsetsH;
+        var insetsBlock = vertical ? build.InsetsH : build.InsetsV;
 
         var spacingTotal = HorizontalSpacingTotal(build);
         var minContent = build.Grid.SumMinimum() + spacingTotal;
@@ -64,8 +84,9 @@ internal sealed partial class TableFormattingContext
             build,
             minContent,
             maxContent,
-            basisWidth,
-            constraints);
+            basisInline,
+            constraints,
+            vertical);
 
         // The captions are measured first because the height the table declared covers them too; what is
         // left of it once they have taken their share is the height the rows have to fill. A caption
@@ -73,7 +94,7 @@ internal sealed partial class TableFormattingContext
         // its own border and padding included (CSS 2.1 §17.4, measured: table-grid-paint-htb-ltr).
         MeasureCaptions(
             build,
-            vertical ? basisHeight : contentWidth + build.InsetsH,
+            vertical ? basisInline : contentWidth + insetsInline,
             context);
 
         // The children that are not table parts are blocks of the table's own content, and they are
@@ -83,7 +104,9 @@ internal sealed partial class TableFormattingContext
         // The height a table states is the height of its grid: the captions stand in the wrapper around
         // the table box and are added on top, which is what Chrome draws for a 2em-tall table with a
         // caption (measured, table-caption-and-cells).
-        var declared = BoxModel.DeclaredHeight(style, basisHeight, build.InsetsV);
+        var declared = vertical
+            ? BoxModel.DeclaredWidth(style, basisBlock, insetsBlock)
+            : BoxModel.DeclaredHeight(style, basisBlock, insetsBlock);
         var gridHeight = declared;
 
         CompleteGrid(build, contentWidth, context, gridHeight);
@@ -104,20 +127,30 @@ internal sealed partial class TableFormattingContext
         // box is still that tall: its border and background frame the declared height, with the captions
         // standing around it in the wrapper (CSS 2.1 §17.5.3, measured: table-border-008, a table of two
         // captions and no rows).
-        // The captions stand in the wrapper along the block axis, which is the table's height when the
-        // table runs down the page and its width when it runs across it.
+        // The captions stand at the head and the foot of the stack, whichever way the page runs: along y
+        // for a table that runs across it and along x for one that runs down it, where they take their
+        // share of the 400 the rows and they together make (CSS Writing Modes 3 §4.1, measured:
+        // wpt/css-break/table/table-col-paint-vlr-rtl, whose 50 and 75 captions stand at either end of
+        // the page's x, the axis its 110 and 135 rows stack along).
         var contentHeight = Math.Max(declared ?? 0, build.Grid.Height) +
-            (vertical ? 0 : build.CaptionTop + build.CaptionBottom) + othersHeight;
+            build.CaptionTop + build.CaptionBottom + othersHeight;
 
         // A declared height is a floor, as CSS 2.1 §17.5.3 has it: a table asked to be shorter than its
         // rows need is as tall as the rows make it. The width answers the same way, one step further up:
         // a table asked to be narrower than its columns can go is as wide as the columns make it.
-        var usedHeight = BoxModel.ClampHeight(style, Math.Max(declared ?? 0, contentHeight), basisHeight, build.InsetsV);
+        var usedHeight = vertical
+            ? BoxModel.ClampWidth(style, Math.Max(declared ?? 0, contentHeight), basisBlock, insetsBlock)
+            : BoxModel.ClampHeight(style, Math.Max(declared ?? 0, contentHeight), basisBlock, insetsBlock);
+
+        // The pair the engine's Size means as the page draws it: across, then down (BlockLayout keeps the
+        // same order for a column, whose children are measured along y). The columns make the inline
+        // extent and the rows with the captions make the block one, whichever way the page runs.
+        var inlineTotal = Math.Max(contentWidth, build.Grid.Width) + insetsInline;
+        var blockTotal = usedHeight + insetsBlock;
 
         return new Size(
-            Math.Max(contentWidth, build.Grid.Width) + build.InsetsH +
-                (vertical ? build.CaptionTop + build.CaptionBottom : 0),
-            usedHeight + build.InsetsV);
+            vertical ? blockTotal : inlineTotal,
+            vertical ? inlineTotal : blockTotal);
     }
 
     /// <summary>
@@ -126,11 +159,18 @@ internal sealed partial class TableFormattingContext
     /// </summary>
     public IntrinsicSize MeasureIntrinsic(Box box, LayoutContext context)
     {
-        var basis = context.ContainingBlock.Width;
+        // The pair asked for is the extent along the axis the table sets its cells on, so a table that
+        // runs across the page adds the thicknesses of that axis, and a percentage reads the containing
+        // block's inline size (CSS Writing Modes 3 §4.1).
+        var vertical = box.Flow.IsVertical;
+        var basis = context.ContainingIsVertical
+            ? context.ContainingBlock.Height
+            : context.ContainingBlock.Width;
         var build = Build(box, basis, context);
         var spacingTotal = HorizontalSpacingTotal(build);
-        var min = build.Grid.SumMinimum() + spacingTotal + build.InsetsH;
-        var max = build.Grid.SumMaximum() + spacingTotal + build.InsetsH;
+        var insets = vertical ? build.InsetsV : build.InsetsH;
+        var min = build.Grid.SumMinimum() + spacingTotal + insets;
+        var max = build.Grid.SumMaximum() + spacingTotal + insets;
 
         // A width the author stated is part of what the table brings to a box that shrinks to fit, as the
         // preferred size it would rather be: a table with no cells is still as wide as it was told (CSS 2.1
@@ -143,13 +183,13 @@ internal sealed partial class TableFormattingContext
         // (wpt's table-as-item-specified-width holds to exactly that). And a percentage is left out, since
         // the width it would resolve against is the very width being asked about - CSS Tables 3 §4 puts
         // such a table at its preferred width instead, which the columns already answer.
-        var stated = box.Style.Width;
+        var stated = vertical ? box.Style.Height : box.Style.Width;
 
         if (stated.HasValue && stated.Kind != StyleLengthKind.Percent && !stated.ReadsContainingBlock)
         {
             max = Math.Max(max, BoxModel.IsBorderBox(box.Style)
                 ? Math.Max(0, stated.Resolve(basis))
-                : stated.Resolve(basis) + build.InsetsH);
+                : stated.Resolve(basis) + insets);
         }
 
         return new IntrinsicSize(min, Math.Max(min, max));
@@ -159,7 +199,15 @@ internal sealed partial class TableFormattingContext
     public LayoutBox Arrange(Box box, Rect borderBox, LayoutContext context, FragmentSlice? slice = null)
     {
         var style = box.Style;
-        var basis = context.ContainingBlock.Width;
+        var vertical = box.Flow.IsVertical;
+
+        // Percentages of the table's own box, and of its cells, read the inline axis: the height of a
+        // table that runs across the page (CSS Writing Modes 3 §4.1, CSS 2.1 §17.5).
+        // Percentages read the containing block's inline size, which is its height when the box that
+        // holds the table is itself a column (CSS Writing Modes 3 §4.1).
+        var basis = context.ContainingIsVertical
+            ? context.ContainingBlock.Height
+            : context.ContainingBlock.Width;
         var build = Build(box, basis, context);
 
         // The table's own border belongs to the table box, not to the wrapper the captions stand in. A
@@ -174,7 +222,6 @@ internal sealed partial class TableFormattingContext
                 : null;
         var border = ownEdges?.Border ?? build.Border;
         var padding = ownEdges?.Padding ?? build.Padding;
-        var vertical = box.Flow.IsVertical;
         var blockReversed = vertical && box.Flow.BlockIsRightToLeft;
 
         // The captions stand in the wrapper along the block axis, which is the width of a table that runs
@@ -213,9 +260,17 @@ internal sealed partial class TableFormattingContext
                 borderBox.Y + build.CaptionTop,
                 borderBox.Width,
                 tableBlockExtent);
+        // The room the rows have to fill lies along the block axis, which is the table's width when the
+        // table runs across the page, and the captions claim their share of that same axis whichever way
+        // it runs (CSS Writing Modes 3 §4.1 against CSS 2.1 §17.5.3, measured:
+        // wpt/css-writing-modes/table-cell-valign-001 - a vertical-lr table of three horizontal cells
+        // fills 102 along the page's x, not the 314 its columns make along its y).
         var gridHeight = Math.Max(
             0,
-            borderBox.Height - border.Vertical - padding.Vertical - (vertical ? 0 : build.CaptionTop + build.CaptionBottom));
+            (vertical
+                ? borderBox.Width - border.Horizontal - padding.Horizontal
+                : borderBox.Height - border.Vertical - padding.Vertical) -
+                build.CaptionTop - build.CaptionBottom);
         CompleteGrid(build, contentWidth, context, gridHeight);
 
         var layout = new LayoutBox(box, LayoutKind.Table)
@@ -1062,12 +1117,18 @@ internal sealed partial class TableFormattingContext
         layout.SuppressBackground = hide;
         layout.SuppressBorder = hide;
 
-        // The alignment belongs to the cell, not to the table it sits in, and it runs along the block
-        // axis - the width of a table that runs across the page.
+        // The alignment belongs to the cell, not to the table it sits in, and it runs along the cell's own
+        // block axis: the width of a table that runs across the page where the cell runs with it, and its
+        // height where the cell is turned aside inside one - which is the pair `vertical-align` speaks of
+        // (CSS Writing Modes 3 §4.1, measured: wpt/css-writing-modes/table-cell-valign-001, three
+        // horizontal cells of Ahem inside a vertical-lr table, whose top/middle/bottom each shift the
+        // cell's own glyphs along the page's y, the axis those cells stack their lines along).
         AlignContent(
             layout,
             cell.Box.Style.Table.VerticalAlign,
-            vertical ? Math.Max(0, rect.Width - cell.Insets.Horizontal) : contentHeight);
+            cell.Box.Flow.IsVertical
+                ? Math.Max(0, rect.Width - cell.Insets.Horizontal)
+                : contentHeight);
 
         return layout;
     }
@@ -1238,18 +1299,26 @@ internal sealed partial class TableFormattingContext
         Double minContent,
         Double maxContent,
         Double basis,
-        MeasureConstraints constraints)
+        MeasureConstraints constraints,
+        Boolean vertical)
     {
-        var declared = DeclaredContentWidth(style, basis, build.InsetsH);
+        // The extent asked for is the one along the axis the table sets its cells on: its width for a
+        // table that runs across the page, its height for one that runs down it (CSS Writing Modes 3 §4.1).
+        var insets = vertical ? build.InsetsV : build.InsetsH;
+        var declared = DeclaredContentWidth(
+            vertical ? style.Height : style.Width,
+            basis,
+            insets,
+            BoxModel.IsBorderBox(style));
         Double content;
 
-        if (declared is { } width)
+        if (declared is { } inline)
         {
-            content = build.Style.Fixed ? width : Math.Max(width, minContent);
+            content = build.Style.Fixed ? inline : Math.Max(inline, minContent);
         }
-        else if (constraints.AvailableWidth is { } available)
+        else if ((vertical ? constraints.AvailableHeight : constraints.AvailableWidth) is { } available)
         {
-            var room = Math.Max(0, available - build.InsetsH);
+            var room = Math.Max(0, available - insets);
             content = Math.Clamp(room, minContent, Math.Max(minContent, maxContent));
         }
         else
@@ -1259,12 +1328,14 @@ internal sealed partial class TableFormattingContext
 
         var isBorderBox = BoxModel.IsBorderBox(style);
 
-        if (BoxModel.ContentBound(style.MaxWidth, basis, build.InsetsH, isBorderBox) is { } maximum && content > maximum)
+        if (BoxModel.ContentBound(vertical ? style.MaxHeight : style.MaxWidth, basis, insets, isBorderBox) is { } maximum &&
+            content > maximum)
         {
             content = maximum;
         }
 
-        if (BoxModel.ContentBound(style.MinWidth, basis, build.InsetsH, isBorderBox) is { } minimum && content < minimum)
+        if (BoxModel.ContentBound(vertical ? style.MinHeight : style.MinWidth, basis, insets, isBorderBox) is { } minimum &&
+            content < minimum)
         {
             content = minimum;
         }
@@ -1272,17 +1343,20 @@ internal sealed partial class TableFormattingContext
         return Math.Max(0, content);
     }
 
-    /// <summary>Gets the declared width as a content-box width, or null when there is none.</summary>
-    private static Double? DeclaredContentWidth(ComputedStyle style, Double basis, Double insets)
+    /// <summary>Gets a declared extent along the table's own axes as a content-box extent, or null where
+    /// there is none.</summary>
+    private static Double? DeclaredContentWidth(
+        StyleLength width,
+        Double basis,
+        Double insets,
+        Boolean isBorderBox)
     {
-        var width = style.Width;
-
         if (!width.HasValue || (width.Kind == StyleLengthKind.Percent && basis <= 0))
         {
             return null;
         }
 
         var resolved = Math.Max(0, width.Resolve(basis));
-        return BoxModel.IsBorderBox(style) ? Math.Max(0, resolved - insets) : resolved;
+        return isBorderBox ? Math.Max(0, resolved - insets) : resolved;
     }
 }

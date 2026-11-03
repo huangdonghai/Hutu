@@ -28,6 +28,12 @@ internal readonly struct MeasureConstraints
     /// <summary>Gets constraints that fix the available width and leave the height to the content.</summary>
     public static MeasureConstraints FitWidth(Double width) => new(Math.Max(0, width), null);
 
+    /// <summary>Gets constraints that fix the available height and leave the width to the content. A box
+    /// that runs down the page is measured this way: the axis its content is shared out along is the
+    /// page's y there, so this is the same question <see cref="FitWidth"/> asks of a page that runs
+    /// across it.</summary>
+    public static MeasureConstraints FitHeight(Double height) => new(null, Math.Max(0, height));
+
     /// <summary>Gets constraints that fix both dimensions.</summary>
     public static MeasureConstraints Fixed(Double width, Double height) => new(Math.Max(0, width), Math.Max(0, height));
 

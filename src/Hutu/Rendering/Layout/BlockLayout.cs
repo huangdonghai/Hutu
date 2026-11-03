@@ -5438,6 +5438,7 @@ internal sealed class BlockLayout
                 multi.Gap,
                 content.Width,
                 box.Flow.BlockIsRightToLeft,
+                box.Flow.IsRightToLeft,
                 childContext);
         }
         else
@@ -5667,12 +5668,22 @@ internal sealed class BlockLayout
         Double gap,
         Double boxExtent,
         Boolean blockReversed,
+        Boolean inlineReversed,
         LayoutContext childContext)
     {
         for (var cell = 0; cell < cells.Count; cell++)
         {
             var column = cell % columns;
-            var y = originY + column * (share + gap);
+
+            // The columns stand one after another along the inline axis, which runs down the page here,
+            // and a line that reads back from the page's far end begins its columns there too: the first
+            // column of `direction: rtl` is the lowest one on the page, not the highest (CSS Writing
+            // Modes 3 §3.2, CSS Multicol 1 §3, measured in Chrome on
+            // wpt/css-break/table/table-col-paint-vlr-rtl, whose container spans y 192..592 and whose
+            // first fragment stands at 492..592).
+            var y = inlineReversed
+                ? originY + (columns - 1 - column) * (share + gap)
+                : originY + column * (share + gap);
 
             // The block axis starts at the box edge the writing mode names: the right one for
             // vertical-rl, where the pieces of a cut box run back towards the left.

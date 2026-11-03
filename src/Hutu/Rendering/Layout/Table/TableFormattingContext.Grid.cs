@@ -789,14 +789,22 @@ internal sealed partial class TableFormattingContext
         var basis = build.Basis;
         var cellContext = context.ForContainingBlock(new Size(0, 0));
 
+        // The column a cell stands in is its extent along the axis the table sets its cells on, which is
+        // the page's y for a table that runs across it: what the cell states for that axis, what it holds
+        // along it, and the thicknesses that go around it all belong to that pair (CSS Writing Modes 3
+        // §4.1, measured: wpt/css-break/table/table-col-paint-vlr-rtl, whose two columns of a 100-long
+        // table come to 35 each, the 30 of border-spacing included).
+        var vertical = build.Box.Flow.IsVertical;
+
         foreach (var row in build.Grid.Rows)
         {
             foreach (var cell in row.Cells)
             {
                 var intrinsic = _engine.MeasureContentIntrinsic(cell.Box, cellContext);
-                var styleInsets = StyleInsetsH(cell.Box, basis);
-                var min = Math.Max(0, intrinsic.MinContent - styleInsets) + cell.Insets.Horizontal;
-                var max = Math.Max(0, intrinsic.MaxContent - styleInsets) + cell.Insets.Horizontal;
+                var styleInsets = vertical ? StyleInsetsV(cell.Box, basis) : StyleInsetsH(cell.Box, basis);
+                var inlineInsets = vertical ? cell.Insets.Vertical : cell.Insets.Horizontal;
+                var min = Math.Max(0, intrinsic.MinContent - styleInsets) + inlineInsets;
+                var max = Math.Max(0, intrinsic.MaxContent - styleInsets) + inlineInsets;
 
                 cell.MinContent = min;
                 cell.MaxContent = Math.Max(min, max);
@@ -805,18 +813,34 @@ internal sealed partial class TableFormattingContext
                 // point - a share resolved against the box the table sits in would make the table as wide
                 // as its own share, so it is kept as the length it was read from and resolved later. A
                 // length is read here, where the content and the cell's own margins already are.
-                cell.SpecifiedLength = cell.Box.Style.Width.HasValue ? cell.Box.Style.Width : cell.Box.HintedWidth;
+                cell.SpecifiedLength = vertical
+                    ? cell.Box.Style.Height.HasValue
+                        ? cell.Box.Style.Height
+                        : cell.Box.HintedHeight ?? cell.Box.Style.Height
+                    : cell.Box.Style.Width.HasValue
+                        ? cell.Box.Style.Width
+                        : cell.Box.HintedWidth;
                 cell.Specified = cell.SpecifiedLength is { Kind: StyleLengthKind.Percent }
                     ? null
-                    : Pixels(cell.SpecifiedLength, basis, cell.Insets.Horizontal, BoxModel.IsBorderBox(cell.Box.Style));
+                    : Pixels(cell.SpecifiedLength, basis, inlineInsets, BoxModel.IsBorderBox(cell.Box.Style));
             }
         }
     }
 
-    /// <summary>Measures each cell's height at the width its column ended up with.</summary>
+    /// <summary>Measures each cell's extent along the axis the rows stack on, at the room its column left
+    /// it along the axis they run.</summary>
     private void MeasureCellHeights(TableBuild build, LayoutContext context, Double spacing, Double? tableHeight)
     {
         var basis = build.Basis;
+
+        // What a row or a cell states for the axis the rows stack on is its block size, and the style
+        // keeps that under the physical name the writing mode puts the axis on: the width of a table that
+        // runs across the page, its height of one that runs down it. The measure asks the same question
+        // of the other pair of axes, so a table that runs across the page is measured with the room its
+        // columns leave fixed along y and reads its answer along x (CSS Logical 1 §2, §4).
+        var vertical = build.Box.Flow.IsVertical;
+        var blockInsets = new Func<Thickness, Double>(
+            insets => vertical ? insets.Horizontal : insets.Vertical);
 
         foreach (var row in build.Grid.Rows)
         {
@@ -824,7 +848,11 @@ internal sealed partial class TableFormattingContext
             // cap: the row ends up the taller of what it asked for and what its cells need. A per cent is
             // relative to the table's own height, so it can only be read when the table declared one;
             // against an auto height the per cent says nothing and the row takes its content instead.
-            var declared = row.Box.Style.Height.HasValue
+            var declared = vertical
+                ? row.Box.Style.Width.HasValue
+                    ? row.Box.Style.Width
+                    : row.Box.HintedWidth ?? row.Box.Style.Width
+                : row.Box.Style.Height.HasValue
                 ? row.Box.Style.Height
                 : row.Box.HintedHeight ?? row.Box.Style.Height;
 
@@ -833,26 +861,86 @@ internal sealed partial class TableFormattingContext
             row.Declared = declared.Kind == StyleLengthKind.Percent
                 ? tableHeight is { } height ? Math.Max(0, declared.Resolve(height)) : 0
                 : declared.HasValue
-                    ? Math.Max(0, declared.Resolve(context.ContainingBlock.Height))
+                    ? Math.Max(0, declared.Resolve(
+                        vertical ? context.ContainingBlock.Width : context.ContainingBlock.Height))
                     : 0;
 
             foreach (var cell in row.Cells)
             {
-                var width = ColumnSpanWidth(build.Grid, cell, spacing);
-                var styleInsetsH = StyleInsetsH(cell.Box, basis);
-                var styleInsetsV = StyleInsetsV(cell.Box, basis);
-                var margin = cell.Box.Style.Margin.Resolve(basis).Horizontal;
-                var contentWidth = Math.Max(0, width - cell.Insets.Horizontal);
-                var cellContext = context.ForContainingBlock(new Size(contentWidth, 0));
+                var inline = ColumnSpanWidth(build.Grid, cell, spacing);
+                var styleInsetsInline = vertical ? StyleInsetsV(cell.Box, basis) : StyleInsetsH(cell.Box, basis);
+                var styleInsetsBlock = vertical ? StyleInsetsH(cell.Box, basis) : StyleInsetsV(cell.Box, basis);
+                var margin = vertical
+                    ? cell.Box.Style.Margin.Resolve(basis).Vertical
+                    : cell.Box.Style.Margin.Resolve(basis).Horizontal;
+                var contentInline = Math.Max(
+                    0,
+                    inline - (vertical ? cell.Insets.Vertical : cell.Insets.Horizontal));
+                var cellContext = context.ForContainingBlock(
+                    vertical ? new Size(0, contentInline) : new Size(contentInline, 0));
 
                 // The constraint describes the border box the cell's own style would produce, so the
                 // block layout inside it resolves to the content width the column settled on.
-                var measured = _engine.Measure(
-                    cell.Box,
-                    MeasureConstraints.FitWidth(contentWidth + styleInsetsH + margin),
-                    cellContext);
+                // A cell that runs the way its table runs reaches along the block axis with the band its
+                // content makes, and the measure of it is asked with the room the column leaves along the
+                // inline axis. A cell turned aside from its table runs by its own writing mode instead:
+                // what it brings to the row's thickness is then the extent its content *asks for* along
+                // that axis - its own inline size - rather than a share of the room it is handed, which
+                // for a row whose thickness the table has not settled yet would read as nothing
+                // (CSS Writing Modes 3 §4.1, measured: wpt/css-writing-modes/table-cell-valign-001, three
+                // horizontal cells of Ahem in a vertical-lr table, each 102 across the page and 102 long).
+                Double contentHeight;
 
-                var contentHeight = Math.Max(0, measured.Height - styleInsetsV);
+                if (vertical != cell.Box.Flow.IsVertical)
+                {
+                    // The extent is asked along the cell's own inline axis, and the sizes it states for
+                    // that axis hold of it: a `max-height` on a cell that runs down the page inside one
+                    // that runs across it caps the row's thickness the way `max-width` would cap a
+                    // horizontal one (CSS Writing Modes 3 §4.1, measured: the same page, where "xx xx"
+                    // of 50-pixel Ahem in a vertical cell would make 250 of the row and its
+                    // `max-height: 100px` leaves 100 with the text wrapped into two columns).
+                    var cellVertical = cell.Box.Flow.IsVertical;
+                    var across = _engine.MeasureContentIntrinsic(cell.Box, cellContext).MaxContent;
+                    var borderBox = BoxModel.IsBorderBox(cell.Box.Style);
+                    var wanted = BoxModel.ContentBound(
+                        cellVertical ? cell.Box.Style.Height : cell.Box.Style.Width,
+                        basis,
+                        styleInsetsBlock,
+                        borderBox) ?? across;
+
+                    if (BoxModel.ContentBound(
+                        cellVertical ? cell.Box.Style.MaxHeight : cell.Box.Style.MaxWidth,
+                        basis,
+                        styleInsetsBlock,
+                        borderBox) is { } cap)
+                    {
+                        wanted = Math.Min(wanted, cap);
+                    }
+
+                    if (BoxModel.ContentBound(
+                        cellVertical ? cell.Box.Style.MinHeight : cell.Box.Style.MinWidth,
+                        basis,
+                        styleInsetsBlock,
+                        borderBox) is { } floor)
+                    {
+                        wanted = Math.Max(wanted, floor);
+                    }
+
+                    contentHeight = Math.Max(0, wanted);
+                }
+                else
+                {
+                    var measured = _engine.Measure(
+                        cell.Box,
+                        vertical
+                            ? MeasureConstraints.FitHeight(contentInline + styleInsetsInline + margin)
+                            : MeasureConstraints.FitWidth(contentInline + styleInsetsInline + margin),
+                        cellContext);
+
+                    contentHeight = Math.Max(
+                        0,
+                        (vertical ? measured.Width : measured.Height) - styleInsetsBlock);
+                }
 
                 // A height a cell states is a floor under the row, not a size for the cell box: the cell
                 // is as tall as the row the floor helped settle. The row is one that asked for a height,
@@ -860,11 +948,12 @@ internal sealed partial class TableFormattingContext
                 // (CSS Tables 3 §5.2) - which is what keeps a fixed row beside an auto one at its size.
                 // A border-box height already holds the cell's padding and border, so only what is left
                 // over is content.
-                if (cell.Box.Style.Height is { HasValue: true } stated && stated.Kind != StyleLengthKind.Percent)
+                if ((vertical ? cell.Box.Style.Width : cell.Box.Style.Height) is { HasValue: true } stated &&
+                    stated.Kind != StyleLengthKind.Percent)
                 {
                     var floor = Math.Max(0, stated.Resolve(0));
                     var contentFloor = BoxModel.IsBorderBox(cell.Box.Style)
-                        ? Math.Max(0, floor - cell.Insets.Vertical)
+                        ? Math.Max(0, floor - blockInsets(cell.Insets))
                         : floor;
 
                     contentHeight = Math.Max(contentHeight, contentFloor);
@@ -873,13 +962,14 @@ internal sealed partial class TableFormattingContext
 
                 // A height a cell's attribute asks for is a floor under the row, not a size for the cell
                 // box either.
-                if (cell.Box.HintedHeight is { HasValue: true } hinted && hinted.Kind != StyleLengthKind.Percent)
+                if ((vertical ? cell.Box.HintedWidth : cell.Box.HintedHeight) is { HasValue: true } hinted &&
+                    hinted.Kind != StyleLengthKind.Percent)
                 {
                     contentHeight = Math.Max(contentHeight, Math.Max(0, hinted.Resolve(0)));
                     row.HeightDeclared = true;
                 }
 
-                cell.Height = contentHeight + cell.Insets.Vertical;
+                cell.Height = contentHeight + blockInsets(cell.Insets);
             }
         }
     }
