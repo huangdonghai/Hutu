@@ -233,6 +233,26 @@ internal sealed partial class TableFormattingContext
                 ? null
                 : slice.Value.Whole,
             TableBox = tableBox,
+            // The table's own halves of its two outer horizontal lines stop where the outermost rows stop,
+            // so they are carried as two bands of their own whenever a row's line on the table's vertical
+            // edge is narrower than the widest there (CSS 2.1 §17.6.2).
+            TableEdgeBands = box.Style.Table.Collapse &&
+                build.OuterStartTop + build.OuterEndTop +
+                    build.OuterStartBottom + build.OuterEndBottom > 0.001
+                ? (
+                    InsetInline(
+                        vertical,
+                        box.Flow.IsRightToLeft,
+                        tableBox,
+                        build.OuterStartTop,
+                        build.OuterEndTop),
+                    InsetInline(
+                        vertical,
+                        box.Flow.IsRightToLeft,
+                        tableBox,
+                        build.OuterStartBottom,
+                        build.OuterEndBottom))
+                : null,
         };
 
         // The grid's origins, read along the table's own axes: where the inline axis begins, and the
@@ -495,6 +515,28 @@ internal sealed partial class TableFormattingContext
     /// stand at x=714 and x=654 fifty wide each and whose columns stand at y=10 and y=80 sixty tall
     /// each, inside a table 130 wide and 150 tall).
     /// </summary>
+    /// <summary>
+    /// Stands a rectangle in from the two ends of the flow's own inline axis. Those are the page's x for a
+    /// table that runs across it only when the writing mode runs that way: left-to-right takes the insets
+    /// as left and right, right-to-left the other way round, and a table that runs down the page stands
+    /// its columns along y whichever way the page itself turns.
+    /// </summary>
+    private static Rect InsetInline(Boolean vertical, Boolean reversed, Rect rect, Double start, Double end)
+    {
+        var taken = Math.Min(start + end, vertical ? rect.Height : rect.Width);
+
+        if (taken <= 0.001)
+        {
+            return rect;
+        }
+
+        return vertical
+            ? new Rect(rect.X, rect.Y + start, rect.Width, Math.Max(0.0, rect.Height - taken))
+            : reversed
+                ? new Rect(rect.X + end, rect.Y, Math.Max(0.0, rect.Width - taken), rect.Height)
+                : new Rect(rect.X + start, rect.Y, Math.Max(0.0, rect.Width - taken), rect.Height);
+    }
+
     private static Rect FlowRect(
         Boolean vertical,
         Boolean blockReversed,
@@ -924,6 +966,22 @@ internal sealed partial class TableFormattingContext
             vertical, blockReversed,
             vertical ? gridY : gridX, grid.ColumnX[cell.Column], width,
             vertical ? gridX : gridY, grid.Rows[cell.Row].Y, height);
+
+        // On the table's own outer edge the collapsed line is shared with nobody, so its width stands
+        // centred on the grid line the widest row there makes: the cell's box stands in by half the
+        // difference between the two widths, which leaves the border - painted whole inside the box that
+        // is left - reaching from that centre out both ways. Without it a narrower row's line fills the
+        // edge and its content starts where the widest row's content would (CSS 2.1 §17.6.2, measured:
+        // wpt/css-break/table/table-collapsed-borders-paint-at-boundary, where the black row's 15-pixel
+        // line does stand at the column's own edge while a 10-pixel line begins 2.5 in from it, and
+        // Chrome's own cell rects read columnLeft + 7.5 for a table reading 92 wide at columnLeft).
+        rect = InsetInline(
+            vertical,
+            build.Box.Flow.IsRightToLeft,
+            rect,
+            cell.InlineStartInset,
+            cell.InlineEndInset);
+
         var x = rect.X;
         var y = rect.Y;
 

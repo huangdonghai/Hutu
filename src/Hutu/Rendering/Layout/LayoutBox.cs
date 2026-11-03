@@ -441,6 +441,14 @@ internal sealed class LayoutBox
     public Rect? SideBand { get; set; }
 
     /// <summary>
+    /// Gets the two bands a table's own halves of its top and bottom lines are drawn in, under the
+    /// collapsing model: the outer halves stop where the outermost rows' own boxes stop, which is not
+    /// the table's edge when the rows' lines on the table's vertical edges differ in width (CSS 2.1
+    /// §17.6.2, measured: wpt/css-break/table/table-collapsed-borders-paint-at-boundary). Null elsewhere.
+    /// </summary>
+    public (Rect Top, Rect Bottom)? TableEdgeBands { get; set; }
+
+    /// <summary>
     /// Gets or sets the decorations the container laid out its gaps with. Only a context that makes gaps
     /// - and knows how many of them there are and where each one stands - can say which of the container's
     /// rule list a gap takes, so it hands the finished bands to the painter here.

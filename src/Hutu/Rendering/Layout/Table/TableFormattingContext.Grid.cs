@@ -80,6 +80,16 @@ internal sealed partial class TableFormattingContext
         public BorderColors OuterColors;
         public BorderStyles OuterStyles;
 
+        /// <summary>Gets how far the table box's own outer halves stand in from the table's edges along
+        /// the inline axis, at the top and at the bottom: each half reaches only where the outermost row's
+        /// own box reaches, and a row whose line on that edge is narrower than the widest one there stands
+        /// in by half the difference (CSS 2.1 §17.6.2, measured:
+        /// wpt/css-break/table/table-collapsed-borders-paint-at-boundary).</summary>
+        public Double OuterStartTop;
+        public Double OuterEndTop;
+        public Double OuterStartBottom;
+        public Double OuterEndBottom;
+
         public Double InsetsH;
 
         public Double InsetsV;
@@ -624,6 +634,12 @@ internal sealed partial class TableFormattingContext
         build.OuterStyles = new BorderStyles(
             horizontal[0].Line, vertical[grid.Columns].Line, horizontal[rows].Line, vertical[0].Line);
 
+        // The widest line each of the table's own two outer edges meets. The edge is one straight line,
+        // so it is the widest row that decides where the edge stands, and every narrower row keeps its
+        // own width centred there instead of filling the edge whole.
+        var outerInlineMax = 0.0;
+        var outerEndMax = 0.0;
+
         foreach (var row in grid.Rows)
         {
             foreach (var cell in row.Cells)
@@ -672,6 +688,16 @@ internal sealed partial class TableFormattingContext
 
                 cell.UsedBorder = new Thickness(top, right, bottom, left);
 
+                if (cell.Column == 0)
+                {
+                    outerInlineMax = Math.Max(outerInlineMax, left);
+                }
+
+                if (lastColumn == grid.Columns)
+                {
+                    outerEndMax = Math.Max(outerEndMax, right);
+                }
+
                 // The colour and the style of the two vertical edges come from this row's segment of
                 // the line, where the cells that meet there are counted with the candidates that run
                 // the whole way down (CSS 2.1 §17.6.2.1).
@@ -708,6 +734,48 @@ internal sealed partial class TableFormattingContext
                     horizontal[lastRow].Line,
                     leftLine.Line);
                 cell.Insets = Add(cell.Padding, cell.UsedBorder);
+            }
+        }
+
+        // Where a row's own line on the table's outer edge is narrower than the widest one there, the
+        // difference halves out on that side: the cell's box stands in by it, and the border painted
+        // whole inside the box that is left lands on the line the widest row makes (CSS 2.1 §17.6.2,
+        // measured: wpt/css-break/table/table-collapsed-borders-paint-at-boundary, whose 10-pixel lines
+        // begin 2.5 in from a column whose widest line is 15, on both of its edges - and Chrome's own
+        // cell rects say the same: every cell of that table reads 77 wide at columnLeft + 7.5, while the
+        // table itself reads 92 wide at the column).
+        foreach (var row in grid.Rows)
+        {
+            foreach (var cell in row.Cells)
+            {
+                var lastColumn = Math.Min(cell.Column + cell.Span, grid.Columns);
+
+                cell.InlineStartInset = cell.Column == 0
+                    ? Math.Max(0.0, (outerInlineMax - cell.UsedBorder.Left) * 0.5)
+                    : 0.0;
+                cell.InlineEndInset = lastColumn == grid.Columns
+                    ? Math.Max(0.0, (outerEndMax - cell.UsedBorder.Right) * 0.5)
+                    : 0.0;
+
+                // The table's own outer half of a horizontal line runs with the row it stands against:
+                // the first row decides where the top half begins and ends, the last row the bottom one.
+                if (cell.Row != 0 && cell.Row != rows - 1)
+                {
+                    continue;
+                }
+
+                ref var start = ref cell.Row == 0 ? ref build.OuterStartTop : ref build.OuterStartBottom;
+                ref var end = ref cell.Row == 0 ? ref build.OuterEndTop : ref build.OuterEndBottom;
+
+                if (cell.Column == 0)
+                {
+                    start = cell.InlineStartInset;
+                }
+
+                if (lastColumn == grid.Columns)
+                {
+                    end = cell.InlineEndInset;
+                }
             }
         }
     }

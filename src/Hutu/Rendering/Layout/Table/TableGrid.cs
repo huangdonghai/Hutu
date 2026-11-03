@@ -58,6 +58,15 @@ internal sealed class TableCellInfo
     /// from whichever border won each line - a row's or a column's as readily as the cell's own.</summary>
     public BorderStyles LineStyles;
 
+    /// <summary>Gets or sets how far the cell's own box stands in from the table's outer edge along the
+    /// inline axis. There the collapsed line is shared with nobody, so the widest line along that edge
+    /// fills the table's box whole and a row whose line is narrower keeps its own width centred on the
+    /// line the widest row makes (CSS 2.1 §17.6.2, measured:
+    /// wpt/css-break/table/table-collapsed-borders-paint-at-boundary). Kept in the flow's own directions,
+    /// so a table that runs across the page is moved along the page.</summary>
+    public Double InlineStartInset;
+    public Double InlineEndInset;
+
     /// <summary>Gets or sets whether the cell has no content, which <c>empty-cells</c> acts on.</summary>
     public Boolean IsEmpty = true;
 

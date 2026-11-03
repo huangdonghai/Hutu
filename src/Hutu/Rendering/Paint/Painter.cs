@@ -2229,6 +2229,36 @@ internal sealed class Painter
             return;
         }
 
+        // A collapsed table carries the outer halves of its two horizontal lines itself, and each of them
+        // reaches only as far as the outermost row it stands against - which is narrower than the table
+        // wherever the rows' lines on the table's vertical edges differ in width (CSS 2.1 §17.6.2,
+        // measured: wpt/css-break/table/table-collapsed-borders-paint-at-boundary).
+        if (box.TableEdgeBands is { } edges)
+        {
+            var lines = box.BorderStyles ?? style.BorderStyles;
+
+            target.Add(new BorderCommand(
+                edges.Top,
+                new Thickness(border.Top, 0, 0, 0),
+                lines,
+                default,
+                colors?.Top ?? ToArgb(style.BorderTopColor ?? style.Color),
+                0u,
+                0u,
+                0u));
+
+            target.Add(new BorderCommand(
+                edges.Bottom,
+                new Thickness(0, 0, border.Bottom, 0),
+                lines,
+                default,
+                0u,
+                0u,
+                colors?.Bottom ?? ToArgb(style.BorderBottomColor ?? style.Color),
+                0u));
+            return;
+        }
+
         target.Add(new BorderCommand(
             framed,
             border,
