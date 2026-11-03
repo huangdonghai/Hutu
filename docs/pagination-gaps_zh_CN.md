@@ -2340,3 +2340,28 @@ Q1 有了答案，方向和我猜的不同。三件事：
 - `at-boundary` 的 2 335 px 逐行打了坐标：除 rows 21..25 x=327..336 那块 10x5（竖带伸进横带）以外，全是每条折叠竖边**两侧各 2~3 px 的细条**（305..306 与 315..316、327..329 与 337..339、429..431 与 439..441、509..510 与 519..520）。参考页在那些 div 上写的正是 `margin-left/right: 2.5px` = (15−10)/2 ⇒ 差额不是「角上没画 45° 斜接」，而是**used 竖边框的横向摆放中心**：Chrome 把这条线以栅格线为心（一半朝盒外），我们整条画在格线内侧。⇒ 下一步先改横位置（`TableFormattingContext` 里 `SideBand`/`rect.X ± (w−邻居w)/2` 那处），再回头看那 10x5 的角。
 
 `css-break` 现在 18 对（gecko 2 + wpt 16）。
+
+### 9.172 落一刀（`454f076a`）：折叠外沿的**那一半**要以「最宽那行做出的格线」为心 —— at-boundary 2 335 → 65
+
+Chrome 的逐值把这条规则钉住了（`build/_query` 读 test 页）：表格每个片段读 `(225,21,92,100)`（栏宽整份），而它的 cell 一律读 `(232.5,21,77,100)` —— **单元盒比表格盒再进 7.5 px**，7.5 正是「这一沿最宽那条线」15 的一半；宽 77 = 92 − 7.5 − 7.5（左右各自最宽都是 15）。线本身按「以单元盒的边为心、ownW/2 朝内朝外」画：
+
+- 黑行（left 15 = 最宽）：`[232.5−7.5, 232.5+7.5] = [225,240]` → 贴栏边，像素 225..239 ✓ 与我们原来一样；
+- 蓝行（left 10）：`[334.5−5, 334.5+5] = [329.5,339.5]` → 330..339，而我们原来画满 `[327,336]`；
+- 黑行右边（right 10，该沿最宽 15）：`[309.5−5, 309.5+5] = [304.5,314.5]` → 305..314 ✓ ref/Chrome 一致，我们原来 307..316。
+
+⇒ 差额是个通式：**δ = (该沿最宽线宽 − 本行线宽)/2**，单元盒在该沿再进 δ（内联轴两端各自算），线仍按 ownW 整条画在剩下的盒里。参考页把这件事写成 `margin-left/right: 2.5px` = (15−10)/2 ✓ 和上面的算术一致，htb 与 vlr/vrl 两方向同律（参考页 div1 两侧都带 2.5，正是 10 对 15 的 δ）。
+
+落点：
+
+- `TableCellInfo.InlineStartInset/InlineEndInset`（流的内联轴，不是物理左右 —— 竖排表要沿 y 走）：`ResolveBorders` 里先在既有循环累计 `outerInlineMax/outerEndMax`（只数 `cell.Column == 0` 与 `lastColumn == grid.Columns` 的段，且取 §9.170 那次 `Resolve` 之后的宽度），再补一趟按半差写入。
+- `ArrangeCell` 用新助手 `InsetInline(vertical, reversed, rect, start, end)` 收缩单元的边框盒：内容盒跟着进，于是 content 起点 = `栏边 + maxHalf + ownHalf/... `（row2 = 240 ✓ Chrome 也是 240；宽 65 ✓）。竖排时内联轴是 y，rtl 时两端的取法互换。
+- **表格自身那两条外沿水平半线**的范围以首/末行的画盒为界（`build.OuterStartTop/OuterEndTop/OuterStartBottom/OuterEndBottom` → `LayoutBox.TableEdgeBands`，`Painter.AddBorder` 画成上下两条 `BorderCommand`）。零内缩时**不发**这两条、仍走原来的一条命令：`ARowsBorderMeetsTheLinesAboveAndBelowIt` 用 `Painted()` 按盒的 X/Y 找首条命令，一条命令里同时带 Top/Bottom 才是它认的形状。
+
+门禁：at-boundary 2 335 → **65**；`css-break` 仍 18 对（gecko 2 + wpt 16，名单不变）；全量屏幕 gecko 1 735/2 335、wpt 4 471/5 845、wpt-variants 85/85 —— **红名一条不进不出**；打印 193/198 同名五条；`Hutu.Tests` 2 216。基线 `build/_full-edgebands.md`、子集 `build/_break-edgecentre.md`。折叠边全族（`table-collapsed-borders-paint-htb-ltr`、gecko `table-bordercollapse/*`、`border-collapse-006`）都没碰坏：那些表每条线的宽度都相同，δ 恒为 0。
+
+剩下的 65 px 也量清了，是**两件事**（col3 栏头那 5×13）：
+
+- 我们画黑 `[327..416]` 一整条横线，蓝行竖带 `[330..339]` 又盖在它上面；Chrome 画黑横线 `[330,404]`，蓝竖带从 y=26 才起。横线段的**横向范围是相邻两行画盒的交集**：黑行 `[327,416.5]` ∩ 蓝行 `[329.5,404]` = `[329.5,404]` ✓（col1 那条 5 px 横线同理取 lime∩black = `[125.5,212.5]` ✓）。
+- `cutAbove`（§9.164 为「片头那一行要露出竖边越界」立的规则）现在只看 `rect.Y <= 片.Y`；片是按行位移过的，于是**同一栏里第二片的行也满足**，蓝行的竖带从栏头就开画。得再问一句：这一格真是这片的第一个内容吗。
+
+⇒ 下一刀先补这两条（判定面只有 at-boundary；回归面是所有折叠边框表 + 分页语料）。`block-end-aligned-abspos-with-overflow`（3 000）与 `-093`（28）仍是「出流子树按片推进」那件（§9.170 已量清缺的两件），竖排表 6 对、`fieldset-001`、`vertical-wm-*`、`flexbox-069`、`balanced-inner-multicol` 仍是 §9.165 的重排墙。
