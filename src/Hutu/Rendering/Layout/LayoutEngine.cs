@@ -85,6 +85,8 @@ internal sealed class LayoutEngine
     /// </summary>
     private Boolean _rootTakesOverflow;
     private Boolean _markFirstLine;
+    private Boolean _collectOverflow;
+    private Rect? _overflowBounds;
 
     /// <summary>The engine the assertion measures against, made on first use.</summary>
     private LayoutEngine? _reference;
@@ -176,7 +178,7 @@ internal sealed class LayoutEngine
             context);
 
         ResolveMarginNotes(rootBox, context, viewport);
-        ResolveDecorations(rootBox, markFirstLine: true);
+        ResolveDecorations(rootBox, markFirstLine: true, collectOverflow: true);
 
         // The markers of a list are placed from the same geometry, and after it for the same reason: an
         // item's marker stands level with the first line the item reaches, which is only known once the
@@ -192,7 +194,7 @@ internal sealed class LayoutEngine
         // it. It is never less than the viewport itself either, because the viewport is what the
         // page was laid out in. Measuring it settles the frame as well, because a scroll offset is a
         // distance from where the document begins.
-        var content = ScrollableOverflow.Of(rootBox, initial);
+        var content = ScrollableOverflow.Of(rootBox, initial, _overflowBounds);
         ScrollableOverflow.MoveToOrigin(rootBox, content);
 
         return new LayoutResult(rootBox, content.Width, content.Height);
@@ -348,11 +350,14 @@ internal sealed record LayoutProfile(
         arrange?.Stop();
 
         decoration?.Start();
-        ResolveDecorations(rootBox, markFirstLine: true);
+        ResolveDecorations(rootBox, markFirstLine: true, collectOverflow: true);
         decoration?.Stop();
 
         overflow?.Start();
-        var content = ScrollableOverflow.Of(rootBox, new Rect(0, 0, width, viewport.Height));
+        var content = ScrollableOverflow.Of(
+            rootBox,
+            new Rect(0, 0, width, viewport.Height),
+            _overflowBounds);
         ScrollableOverflow.MoveToOrigin(rootBox, content);
         overflow?.Stop();
     }
@@ -439,9 +444,18 @@ internal sealed record LayoutProfile(
     /// is being arranged, only once the whole tree has been placed. Keeping it out of the painter
     /// matters: painting runs again on every invalidation, layout only when the document changes.
     /// </remarks>
-    private void ResolveDecorations(LayoutBox box, Boolean markFirstLine = false)
+    private void ResolveDecorations(
+        LayoutBox box,
+        Boolean markFirstLine = false,
+        Boolean collectOverflow = false)
     {
         _markFirstLine = markFirstLine;
+        _collectOverflow = collectOverflow;
+
+        if (collectOverflow)
+        {
+            _overflowBounds = null;
+        }
 
         // The document element's own overflow is answered before the walk, because the body's used
         // overflow depends on it: a root that clips - or that contains anything, which stops the handover
@@ -490,7 +504,9 @@ internal sealed record LayoutProfile(
         LayoutBox box,
         List<DecorationSource>? around,
         LayoutBox? owner,
-        LayoutBox? spoke)
+        LayoutBox? spoke,
+        Boolean anchored = false,
+        Boolean clipped = false)
     {
         var style = box.Source.Style;
 
@@ -522,6 +538,20 @@ internal sealed record LayoutProfile(
             box.Source.Element is { } body && IsBodyOfRoot(body);
 
         box.ClipsOverflow = box.Kind != LayoutKind.Inline && style.ClipsOverflow && !isRoot && !isBody;
+
+        // The page's scrollable region is the union of every box the viewport can reach. The walk this
+        // pass already makes has both the final geometry and the clip and fixed-frame answers - which
+        // the arranging pass does not, because a table moves its cells and rows again afterwards - so
+        // the region is gathered along it rather than in a second postorder of its own.
+        var fixedFrame = anchored || box.Position == PositionMode.Fixed;
+        var hidden = clipped || box.ClipsOverflow;
+
+        if (_collectOverflow && !fixedFrame && !clipped)
+        {
+            _overflowBounds = _overflowBounds is { } region
+                ? ScrollableOverflow.Merge(region, box.BorderBox)
+                : box.BorderBox;
+        }
 
         if (box.Kind == LayoutKind.Inline)
         {
@@ -589,7 +619,7 @@ internal sealed record LayoutProfile(
 
         foreach (var child in box.Children)
         {
-            ResolveDecorations(child, box.Decorations, enclosing, spoke);
+            ResolveDecorations(child, box.Decorations, enclosing, spoke, fixedFrame, hidden);
         }
 
         // One line of text is underlined as one thing, however many runs of text it is set out of, so

@@ -35,11 +35,17 @@ internal static class ScrollableOverflow
     /// The initial containing block: the viewport at the origin, which is the frame the root was
     /// placed in.
     /// </param>
-    public static Rect Of(LayoutBox root, Rect initial)
+    /// <param name="measured">
+    /// The union of the boxes the decoration walk could reach, gathered while it settled which of them
+    /// clip and which stand in a fixed frame. Null asks for the walk over the finished tree instead.
+    /// </param>
+    public static Rect Of(LayoutBox root, Rect initial, Rect? measured = null)
     {
         // The viewport first, then the root's own box - the page begins at the viewport's start edge
         // even when the box holding it does not reach there - and then everything the root holds.
-        var region = Union(root, Merge(initial, root.BorderBox), anchored: false);
+        var region = measured is { } boxes
+            ? Merge(initial, boxes)
+            : Union(root, Merge(initial, root.BorderBox), anchored: false);
 
         // The edges the page reads from are as far as it goes: the root's box cannot reach past
         // them, and neither can anything else. The other two grow with whatever reaches past them:
@@ -125,7 +131,7 @@ internal static class ScrollableOverflow
         }
     }
 
-    private static Rect Merge(Rect region, Rect box)
+    internal static Rect Merge(Rect region, Rect box)
     {
         var left = Math.Min(region.X, box.X);
         var top = Math.Min(region.Y, box.Y);
