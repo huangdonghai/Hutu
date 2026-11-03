@@ -2390,3 +2390,14 @@ Chrome 的逐值把这条规则钉住了（`build/_query` 读 test 页）：表�
 
 一条已试过不成、别再走的路：把 `DividesAcross` 的 `!vertical` 拿掉、再加「自身声明了块向长度」的门（`!BlockSizeIsAuto(child, child.Flow.IsVertical)`），ref 那一页**一字未变** —— 竖排容器里这种成员根本走不到那条判据：`FragmentsInColumns(child)` 要 `!child.Flow.IsVertical`（`BreaksAtLines` 的最后一条），于是「按行切」那一大支整个跳过，而 2612 那次 `byShape` 也没能让片真的分出来（探针里外壳仍是 `8,192 400x100` 一片，出流孩子按未旅行的整盒坐标画在 `333,292`）。竖排要切这种盒，得先给「跨页方向」那条路（`plansAcross`/`ArrangeMulticolRunAcross`）补上「成员按自身声明长度被栏切开」的能力，并让出流后代随片旅行 —— 不是把横排那套 shape 判据的开关掰开就行。
 
+
+### 9.174 落一刀（`98e74397`）：「站在出流孩子上的盒」终于被栏切开，且未写内沿的 abs 盒按**容纳块**的行文方向挂 —— `css-break` 18 → 13
+
+两半是同一件机制：
+
+- **切**：竖排容器里一个盒，若自己声明了块向长度、流内什么也不带（孩子全出流 + 标签间空白），过去被整条栏跳过 —— 本该显示它某个出流后代的那一片站在自己那一栏里，于是后代随整盒一起丢了。现在 `AddBoxCut` 放行它（`StandsOnOutFlowOnly`：`Kind` 是 Block/Flex + 块向长度是写死的 + 所有孩子要么出流要么是空白文本）。逐值（Chrome 对 `wpt/css-break/table/table-col-paint-vlr-rtl-ref`）：400 长的 `position:relative` 外壳，pattern1 读 `(68,547,40,35) | (8,447,100,35) | (8,347,100,35) | (8,247,15,35)` —— 每栏各接 40/100/100/55，并且**随片旅行**；我们改后探针里四条 rect 一字不差 ✓。
+- **挂**：内轴上未写 inset 的 abs 盒，其静态位置指的是**哪一条边**，问的是**容纳块**的书写模式，不是盒自己的。`direction: rtl` 的竖排里行文从页面的下端走上，所以「100% 长、内沿不写」的带要把起点挂在 592 那条边、往上长满 492..592（原先挂在下边 ⇒ 落到 592..692 ⇒ 被片剪光）。这条若按盒自己的模式判，就把「横向 body 里挂 absolute 的 `sideways-lr` 参考页」也一起搬了：`shape-outside-border-box-border-radius-012` 14 240 → 23 017 ✗；按容纳块判则它保持 14 240 ✓，而 `abs-pos-border-offset-001` 转绿 ✓。落点是新参数 `staticFromInline`，由四个递 `staticFromHigh` 的调用点各自用自己的 `flow` 递进去（`flow.IsVertical && flow.IsRightToLeft`）。
+
+全量：**6 出 0 进** —— `wpt/css-break/table/table-{col,row}-paint-{vlr,vrl}-rtl`、`table-section-paint-vlr-rtl`、`wpt/css-writing-modes/abs-pos-border-offset-001`；靠近：`table-section-paint-vrl-rtl` 47 750→**9 450**、`table-cell-002` 63 300→33 300、`abs-pos-border-offset-002/-003` 14 685/8 325→10 845/6 300、`orthogonal-cell-001` 15 240→14 400。`css-break` 18 对 → **13 对**（gecko 2 + wpt 11）。单测 2216；打印 193/198 同名五条；基线 `build/_full-oofpiece2.md`。
+
+代价说清楚（这 20 对都还红，且方向是「ref 已经像 Chrome、test 还不像」）：16 对 `gecko/flexbox/pagination` 竖排各涨 12 975~16 765、4 对 `table-cell-valign-*` 各涨 1 401。原因是同一条切法在**接力(relays)路线**里没走到底 —— 那些页的 test 侧是 `display:flex` 的接力容器，它的出流孩子不会随片旅行；ref 侧是个 Block/Flex 空壳 + 全出流孩子，现在切了 ✓。⇒ 下一刀：让 relay 那条路（`child.Relays` 的分片）把出流后代也按片放下去（判定面就是这 16 对 + `flexbox/multi-line-row-flex-fragmentation-069` 17 750；同一件机制还欠 `block-end-aligned-abspos-with-overflow` 3 000 与 `out-of-flow-in-multicolumn-093` 28 的「子树按片推进 + 片内 `break-inside: avoid`」）。竖排表剩的折叠边框 2 对（8 625/8 575）与 `vertical-wm-001/002`（12 988/10 608）仍是 §9.165 那堵墙；`at-boundary` 65 px 仍是角上斜接（§9.172）。
