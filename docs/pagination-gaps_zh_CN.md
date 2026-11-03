@@ -2419,3 +2419,27 @@ Chrome 的逐值把这条规则钉住了（`build/_query` 读 test 页）：表�
 4. 顺带纠一条 §9.151 第二句的用法：单独把 band 用 `childContext.WithFloats(BandFor(...))` 递进 `ArrangeFloatFlowColumns`（float 自己不递）**在这三条之前毫无效果**（六对数字一字不变），因为这页在规则 1 之前根本不走 float-flow 路线 —— 探针里 `.container`(100x0) 与 `.clear`(100x20.72) 都是 `MulticolChildren` 的普通成员。所以「递 band」这一步必须排在规则 1 之后重做，不能单独判定它无效。
 
 ⇒ 剩下要一起量的就是 **1 + 7 + 3 + 5(+6)**，判定面 `floats-clear-multicol-{000,002,003}` + `379349-2a`，回归面 `MulticolBoxCutTests` 与 `wpt/CSS2/floats-clear/*`；数字基线：000/002 到 2 805 时还差的是 `.clear` 的**净空**（Chrome 的 `.clear` 读 `27,61,100,100 | 127,61,100,100 | 227,61,100,53`，橙线在 (227,111)；我们 000 现在第一差在 (112,53) = 被挤在第 1 栏两个 float 之间），也就是 5 的「量高也要看得见 band」+ 6 的「推一次的有界循环」。
+
+### 9.177 把 `floats-clear-multicol` 那套整套落下去量了一遍：还差两个具体 bug，先记下来
+
+整套 = 规则 1（`FloatHostWrapper` 允许 `width:100%` 与背景，只要无边框/内边距、高度 auto、无强制断点）+ 规则 3（`DividesUnits` 对「站在 float 上的盒」不再要求 ≥2 个单位）+ 规则 5（band 既用于量也用于排：`PlaceFloatFlowColumns` 里对非 float 成员用 `childContext.WithFloats(BandFor(child, here.Tracks, context.Floats, top - margin.Top, margin.Left, margin.Right, 0, 0, member.Width))` 复量一次，高度只许升；`ArrangeFloatFlowColumns` 同样递 band，float 自己不递；为此把 `PlaceFloatFlowColumns` 的返回改成 `List<FloatFlowColumn>` 好把 `Tracks` 带出去）+ 规则 6（flow 成员的推栏改成有界循环 `tries = members.Count`）+ 规则 7（`FragmentsInColumns` 放行 `Children.Count == 0` 的定高盒、`AddBoxCut` 的拒绝项加 `HoldsContent(child)`）。
+
+实测（同一轮，逐个组合）：
+
+| 组合 | 000 | 001 | 002 | 003 | balancing ×3 |
+|---|---:|---:|---:|---:|---:|
+| HEAD（都不落） | 510 | 绿 | 510 | 510 | 850 |
+| 只 7 | 9 510 | 9 510 | 9 510 | 9 510 | 850 |
+| 1+7 | 2 805 | 9 510 | 2 805 | 4 620 | 850 |
+| 1+3+7 | **2 505** | 绿 | **2 505** | 4 620 | 850 |
+| 1+3+5+6+7 | 2 505 | 绿 | 2 505 | 4 620 | 850 |
+| 再切 `.clear`（cutHere） | 2 715 | 绿 | 2 715 | 4 620 | 850 |
+
+⇒ 最好的组合仍比 HEAD 差（2 505 vs 510），所以整套已回退（工作树回到 `ebec3f81` 的代码状态）。**规则 3 确实把 `-001` 从 9 510 拉回绿 ✓**，规则 1 也确实把 000/002 从 9 510 拉到 2 805→2 505 ✓，这两条写法可以直接照抄。
+
+挡在中间的两个具体 bug（下一个回合先修这两条，再回来落整套）：
+
+1. **同一栏左右两侧的 float 不能并存。** 探针（000 的 test 页）现在只有 5 片：`27,52.72 | 127,-47.28 | 212,52.72 | 227,-147.28 | 312,-47.28` —— Chrome 是 6 片（左 27/127/227、右 112/212/312），**第 1 栏右侧那片 (112) 没了**。原因在 `PlaceFloatFlowColumns` 的「沿栏切」分支之前那段：放第二个 float 前问余量用的是整条 tracks（`Holds()`/`FitBelow` 把两侧都算进去），于是 250 高的左 float 把 15 宽的右 float 挤到了下一栏。CSS 2.1 §9.5 要的是**只看同一侧**（`gecko/bugs/563584-9d` 那三个 200 宽的 float 各占一栏也是同一判据：按侧算宽度才既不放行也不误伤）。
+2. **band 递进去以后 `<br clear=all>` 还是不买单。** `.clear` 实测仍是 `142,52.72 70x20.72`（一行高，被挤在第 2 栏两个 float 之间），Chrome 是 `27,61,100,100 | 127,61,100,100 | 227,61,100,53`、橙线落在 (227,111)。也就是 `BandFor(...)` 造出的 band 在行内那侧没有让这条 line 用上净空 —— 要么 `originY/Left/Right` 让它自认为空、要么 `<br clear>` 读的是 `ClearBelow(side, …)` 的另一份数据。没修这条之前把 `.clear` 沿栏切开只会更差（2 505 → 2 715 ✓ 实测）。
+
+（`balancing` 三对在所有组合里都是 850：`FloatFlowColumns` 要 `multi.Fills`，平衡容器根本不进这条路线，跟 §9.152 的旧记录一致；它们要的是另一套——沿栏切 + 平衡重排。）
