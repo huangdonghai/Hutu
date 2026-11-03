@@ -71,6 +71,7 @@ internal sealed class LayoutEngine
     /// under which the body may hand its own over instead (CSS Overflow 3 §3.3).
     /// </summary>
     private Boolean _rootTakesOverflow;
+    private Boolean _markFirstLine;
 
     /// <summary>The engine the assertion measures against, made on first use.</summary>
     private LayoutEngine? _reference;
@@ -162,7 +163,7 @@ internal sealed class LayoutEngine
             context);
 
         ResolveMarginNotes(rootBox, context, viewport);
-        ResolveDecorations(rootBox);
+        ResolveDecorations(rootBox, markFirstLine: true);
 
         // The markers of a list are placed from the same geometry, and after it for the same reason: an
         // item's marker stands level with the first line the item reaches, which is only known once the
@@ -335,9 +336,8 @@ internal sealed record LayoutProfile(
         arrange?.Stop();
 
         decoration?.Start();
-        ResolveDecorations(rootBox);
+        ResolveDecorations(rootBox, markFirstLine: true);
         ResolveMarkers(rootBox, FloatsOf(rootBox.Source));
-        Hutu.Rendering.Boxes.FirstLine.Mark(rootBox);
         decoration?.Stop();
 
         overflow?.Start();
@@ -428,8 +428,9 @@ internal sealed record LayoutProfile(
     /// is being arranged, only once the whole tree has been placed. Keeping it out of the painter
     /// matters: painting runs again on every invalidation, layout only when the document changes.
     /// </remarks>
-    private void ResolveDecorations(LayoutBox box)
+    private void ResolveDecorations(LayoutBox box, Boolean markFirstLine = false)
     {
+        _markFirstLine = markFirstLine;
         // The document element's own overflow is answered before the walk, because the body's used
         // overflow depends on it: a root that clips - or that contains anything, which stops the handover
         // just the same (CSS Contain 1 §2) - keeps the body's clipping for the body, and a root that does
@@ -584,6 +585,11 @@ internal sealed record LayoutProfile(
         if (box.Kind == LayoutKind.Line)
         {
             SetDecorationLines(box);
+        }
+
+        if (_markFirstLine)
+        {
+            Hutu.Rendering.Boxes.FirstLine.Step(box);
         }
     }
 

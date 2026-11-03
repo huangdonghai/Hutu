@@ -113,6 +113,17 @@ internal static class FirstLine
     /// </remarks>
     internal static void Mark(LayoutBox box)
     {
+        Step(box);
+
+        foreach (var child in box.Children)
+        {
+            Mark(child);
+        }
+    }
+
+    /// <summary>Gives this box alone the style of its first line, the children left to the walk that owns them.</summary>
+    internal static void Step(LayoutBox box)
+    {
         // A line box is not the block that owns the style: it is made from the same box as the lines beside
         // it, so taking the style from it again would hand every line of the block what belongs to one.
         if (box.Kind != LayoutKind.Line && !box.IsOutOfFlow &&
@@ -129,11 +140,6 @@ internal static class FirstLine
                     Cover(line, paint);
                 }
             }
-        }
-
-        foreach (var child in box.Children)
-        {
-            Mark(child);
         }
     }
 
