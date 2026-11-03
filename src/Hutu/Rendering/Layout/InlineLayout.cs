@@ -7496,12 +7496,7 @@ internal sealed class InlineLayout
         }
 
         var font = style.GetFont();
-        var advance = font.AsksForVerticalWidth
-            ? measurer.MeasureUprightAdvance(codePoint, font)
-            : measurer.MeasureAdvance(codePoint, font, flow);
-        var step = font.AsksForVerticalWidth && advance > 0
-            ? advance
-            : Math.Max(advance, font.Size);
+        var step = measurer.MeasureUprightStep(codePoint, font, flow);
 
         return step / 2;
     }
@@ -8777,26 +8772,10 @@ internal sealed class InlineLayout
             // character nor a string holding it is made afresh to ask for it. It is walked by code point,
             // because one character of the text is one cell of the column however many of the string's
             // characters it takes to write it.
-            var verticalWidth = font.AsksForVerticalWidth;
-
             for (var index = Start; index < Start + Length;)
             {
                 var codePoint = TextChunker.CodePointAt(Source, index);
-                var advance = verticalWidth
-                    ? measurer.MeasureUprightAdvance(codePoint, font)
-                    : measurer.MeasureAdvance(codePoint, font, flow);
-
-                // The forms `vhal` and `halt` stand for are half-width by definition: a glyph the
-                // feature leaves alone keeps its own width, and one it substitutes for a
-                // proportional mark is set in half the em - a font whose vertical metrics say
-                // nothing for that glyph answers with its horizontal advance, which is narrower
-                // still and is not what the feature asks for (CSS Writing Modes 4 SS4.2, OpenType
-                // 'vhal'/'halt'; measured: the text-spacing-trim-*-vrl pages, where Chrome stands
-                // the U+2018 of a 'vhal' run in half of the 20-pixel em and the face's own answer
-                // is 5.56).
-                var floor = verticalWidth ? fontSize / 2 : fontSize;
-
-                total += Math.Max(advance, floor);
+                total += measurer.MeasureUprightStep(codePoint, font, flow);
 
                 index += TextChunker.UnitsAt(Source, index);
             }

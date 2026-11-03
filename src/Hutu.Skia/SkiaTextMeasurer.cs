@@ -317,13 +317,10 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         var advance = Math.Abs(vertical.Advance);
         var horizontal = MeasureWidth(text, style);
 
-        // A vertical width feature such as `vhal` may make the step narrower than the character is
-        // along a row, and that narrower step is the one a column takes. A face whose vertical
-        // metrics are wider - some fonts give a symbol a box many ems tall - is not asking for a
-        // wider cell: the character still stands in the width its row advance gives it.
-        return vertical.Succeeded && advance > 0 && advance < horizontal
-            ? advance
-            : horizontal;
+        // A face may set its own vertical advance - Sotyr Fangsong gives a Han character 542 units
+        // against 420 along a line - and that is the step a column takes. The horizontal answer is
+        // only the fallback for a face whose shaper has no vertical metrics of its own.
+        return vertical.Succeeded && advance > 0 ? advance : horizontal;
     }
 
     /// <summary>
@@ -454,9 +451,16 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                 vertical.Succeeded &&
                 verticalAdvance > 0;
             var horizontal = MeasureWidth(characterText, style);
+            var ownVertical = vertical.Succeeded &&
+                verticalAdvance > 0 &&
+                Math.Abs(verticalAdvance - horizontal) > 0.001;
             // The half-width forms are half the em, whatever advance the face carries for the glyph it
             // substituted - see OrientedRun.Advance for the layout's side of the same answer.
-            var advance = exact ? Math.Max(verticalAdvance, style.Size / 2) : horizontal;
+            var advance = exact
+                ? Math.Max(verticalAdvance, style.Size / 2)
+                : ownVertical
+                    ? verticalAdvance
+                    : horizontal;
 
             // The cell is centred across the column by the character's own width, not by a width
             // feature: halt and vhal change how far the glyph advances, not where it stands across
@@ -479,7 +483,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                     advance,
                     centreWidth,
                     start,
-                    exactAdvance: exact));
+                    exactAdvance: exact,
+                    ownVerticalAdvance: ownVertical));
                 continue;
             }
 
@@ -507,7 +512,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                     advance,
                     replacementCentre,
                     start,
-                    exactAdvance: exact));
+                    exactAdvance: exact,
+                    ownVerticalAdvance: ownVertical));
                 continue;
             }
 
@@ -522,7 +528,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                 advance,
                 centreWidth,
                 start,
-                exactAdvance: exact));
+                exactAdvance: exact,
+                ownVerticalAdvance: ownVertical));
         }
 
         return cells;
@@ -849,7 +856,8 @@ internal readonly struct UprightCell
         Double advance,
         Double centreWidth,
         Int32 index,
-        Boolean exactAdvance = false)
+        Boolean exactAdvance = false,
+        Boolean ownVerticalAdvance = false)
     {
         Font = font;
         Glyph = glyph;
@@ -860,6 +868,7 @@ internal readonly struct UprightCell
         CentreWidth = centreWidth;
         Index = index;
         ExactAdvance = exactAdvance;
+        OwnVerticalAdvance = ownVerticalAdvance;
     }
 
     /// <summary>Gets the font the cell is drawn with, after the fallback and the substitution.</summary>
@@ -888,6 +897,10 @@ internal readonly struct UprightCell
     /// not raise: a vertical width feature may set a fullwidth character to half an em down a column.
     /// </summary>
     public Boolean ExactAdvance { get; }
+
+    /// <summary>Gets whether the cell's advance is the face's own vertical metric rather than its
+    /// horizontal advance repeated down the column.</summary>
+    public Boolean OwnVerticalAdvance { get; }
 
     /// <summary>Gets the width the cell is centred across the column by.</summary>
     public Double CentreWidth { get; }

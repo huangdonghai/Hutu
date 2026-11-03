@@ -400,22 +400,30 @@ internal sealed class SkiaTextShaper : IDisposable
                 var points = new SKPoint[infos.Length];
                 var advance = 0f;
 
+                // Skia's shaper repeats a horizontal advance down a column for some faces (Microsoft
+                // YaHei says 512 where its vmtx says 2048), so the step is asked of the library's face
+                // instead. The points above keep the origin Skia read; only the step is replaced.
+                var face = HarfBuzzFont(font.Typeface!);
+
+                if (face is not null)
+                {
+                    var scale = ScaleOf(font.Size);
+                    face.SetScale(scale, scale);
+                }
+
                 for (var index = 0; index < infos.Length; index++)
                 {
                     glyphs[index] = (UInt16)infos[index].Codepoint;
 
-                    // Where the pen has to put the glyph's baseline for a character running down a
-                    // column. The offset is a distance, and the vertical advance is what it should
-                    // be read against, so the two together give it scaled to the size the font is
-                    // drawn at - which holds whether the font measures that step as an em or as its
-                    // own box. A glyph that takes no step of its own sits at the top of its cell.
                     var step = Math.Abs(positions[index].YAdvance);
 
                     points[index] = new SKPoint(
                         positions[index].XOffset,
                         step <= 0 ? 0 : -(Single)positions[index].YOffset * font.Size / step);
 
-                    advance += positions[index].YAdvance;
+                    advance += face is null
+                        ? positions[index].YAdvance
+                        : face.GetVerticalGlyphAdvance(glyphs[index]) / FixedPoint;
                 }
 
                 return new ShapedRun(glyphs, points, advance, true);
@@ -423,9 +431,6 @@ internal sealed class SkiaTextShaper : IDisposable
         }
         catch (Exception exception)
         {
-            // Layout has already been measured against the horizontal glyph, so a face that cannot be
-            // shaped at all is a character drawn as it always was rather than a page that fails to
-            // paint. It is written down because it is not something a reader can report.
             Debug.WriteLine($"Shaping '{text}' vertically for {font.Typeface?.FamilyName} failed: {exception}");
             return ShapedRun.None;
         }

@@ -663,15 +663,9 @@ internal sealed class TextSelector
 
         var codePoint = TextChunker.CodePointAt(text, index - 1);
         var upright = run.Flow.IsUpright(codePoint);
-        var verticalWidth = run.Font.AsksForVerticalWidth;
-        var advance = upright && verticalWidth
-            ? _measurer.MeasureUprightAdvance(codePoint, run.Font)
-            : _measurer.MeasureAdvance(codePoint, run.Font, run.Flow);
         var step = upright
-            ? verticalWidth && advance > 0
-                ? advance
-                : Math.Max(advance, run.Font.Size)
-            : advance;
+            ? _measurer.MeasureUprightStep(codePoint, run.Font, run.Flow)
+            : _measurer.MeasureAdvance(codePoint, run.Font, run.Flow);
 
         if (run.Trims is { } trims && index - 1 < trims.Length && trims[index - 1] != '\0')
         {

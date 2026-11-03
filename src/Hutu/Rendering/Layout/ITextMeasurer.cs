@@ -92,6 +92,31 @@ public interface ITextMeasurer
         MeasureWidth(Char.ConvertFromUtf32(codePoint), style);
 
     /// <summary>
+    /// Gets the step one upright character takes down a column, using the face's own vertical advance
+    /// where it has one and the em floor where it does not.
+    /// </summary>
+    /// <remarks>
+    /// A face may set its vertical advance larger than its horizontal one - a long, narrow CJK face
+    /// commonly does - and the column has to take that step rather than the width the glyph has along
+    /// a line. The floor still applies to a face that only repeats its horizontal advance down a
+    /// column, and a vertical width feature keeps the half-em floor it asks for.
+    /// </remarks>
+    Double MeasureUprightStep(Int32 codePoint, FontStyle style, WritingModeInfo flow)
+    {
+        var vertical = MeasureUprightAdvance(codePoint, style);
+        var horizontal = MeasureAdvance(codePoint, style, flow);
+
+        if (style.AsksForVerticalWidth)
+        {
+            return Math.Max(vertical, style.Size / 2);
+        }
+
+        return Math.Abs(vertical - horizontal) > 0.001
+            ? vertical
+            : Math.Max(horizontal, style.Size);
+    }
+
+    /// <summary>
     /// Gets the extent the text occupies along the block axis: the height of a horizontal line, or the
     /// width of a vertical column.
     /// </summary>

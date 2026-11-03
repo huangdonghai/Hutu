@@ -741,7 +741,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
 
             var code = trims is not null && cell.Index < trims.Length ? trims[cell.Index] : '\0';
             var autoCode = autoSpaces is not null && cell.Index < autoSpaces.Length ? autoSpaces[cell.Index] : '\0';
-            var emStep = cell.ExactAdvance ? cell.Advance : Math.Max(cell.Advance, style.Size);
+            var emStep = cell.ExactAdvance || cell.OwnVerticalAdvance
+                ? cell.Advance
+                : Math.Max(cell.Advance, style.Size);
             var naturalStep = emStep + letterSpacing;
             var step = naturalStep;
             var trimmed = code != '\0' && emStep > 0;
