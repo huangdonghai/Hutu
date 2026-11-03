@@ -1456,8 +1456,9 @@ internal sealed record LayoutProfile(
         LayoutContext context,
         StaticStanding? standing = null,
         StaticLine? line = null,
-        Boolean staticFromHigh = false) =>
-        _positioned.Arrange(box, staticPosition, context, standing, line, staticFromHigh);
+        Boolean staticFromHigh = false,
+        Boolean staticFromInline = false) =>
+        _positioned.Arrange(box, staticPosition, context, standing, line, staticFromHigh, staticFromInline);
 
     /// <summary>
     /// Gets the height the table's repeating header and footer groups take in every fragment the table is

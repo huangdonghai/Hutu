@@ -133,7 +133,8 @@ internal sealed class PositionedLayout
         LayoutContext context,
         StaticStanding? standing = null,
         StaticLine? line = null,
-        Boolean staticFromHigh = false)
+        Boolean staticFromHigh = false,
+        Boolean staticFromInline = false)
     {
         var position = box.Style.Position;
 
@@ -192,7 +193,14 @@ internal sealed class PositionedLayout
             position, style, containingBlock, staticPosition.X, measured.Width, margin, insetWidth, standing, intrinsicWidth, line,
             staticFromHigh);
         var (height, y) = Vertical(
-            position, style, containingBlock, staticPosition.Y, measured.Height, margin, insetHeight, standing, intrinsicHeight);
+            position, style, containingBlock, staticPosition.Y, measured.Height, margin, insetHeight, standing, intrinsicHeight,
+            // Which edge of the box the flow's static position names along the *inline* axis is the
+            // containing block's answer as well: a line reading back up the page leaves a box with no
+            // inset along the line hanging its start edge there and growing down the page again
+            // (CSS 2.1 §10.3.7, CSS Writing Modes 3 §4.3, §5.1, measured:
+            // wpt/css-break/table/table-col-paint-vlr-rtl-ref, whose 100%-long absolute band with no
+            // inset along the line fills its column's y 492..592 rather than standing below it).
+            inlineFromHigh: staticFromInline);
 
         var placed = _engine.Arrange(box, new Rect(x, y, width, height), childContext);
 
@@ -442,7 +450,8 @@ internal sealed class PositionedLayout
         Thickness margin,
         Double insets,
         StaticStanding? standing,
-        Double? intrinsicHeight = null)
+        Double? intrinsicHeight = null,
+        Boolean inlineFromHigh = false)
     {
         var hasTop = position.Top.HasValue;
         var hasBottom = position.Bottom.HasValue;
@@ -486,7 +495,12 @@ internal sealed class PositionedLayout
         }
         else
         {
-            y = staticY + margin.Top + (standing is { } area
+            // An unset edge on the axis the line runs along hangs from the static position, which names
+            // the line's start edge - the low y for a line reading down the page and the high y for one
+            // reading back up it.
+            y = standing is null && inlineFromHigh
+                ? staticY - margin.Bottom - height
+                : staticY + margin.Top + (standing is { } area
                 ? StaticStanding.Stand(area.Vertical, area.Area.Height - height - margin.Vertical)
                 : 0);
         }

@@ -1116,6 +1116,20 @@ internal sealed class BlockLayout
         margin.Top == 0 && margin.Bottom == 0 &&
         (HoldsPositioned(child) || child.Kind == BoxKind.Grid);
 
+    /// <summary>Gets whether a box that runs across the page states its own length along the axis the
+    /// columns stack on and holds nothing in the flow - only what has left it, and the whitespace between
+    /// the tags. Such a box is cut by the columns all the same: the piece that would have shown one of its
+    /// descendants stands in a column of its own, so leaving the box whole loses that descendant with it
+    /// (CSS Fragmentation 3 §4.5, measured: wpt/css-break/table/table-col-paint-vlr-rtl-ref, whose
+    /// 400-long relative box of absolute bands comes out 40,100,100,55 of each across its four columns).
+    /// A box with children in the flow is not this one - those are the break points the run works
+    /// from - and neither is one whose length the content decides.</summary>
+    private static Boolean StandsOnOutFlowOnly(Box child) =>
+        child.Kind is BoxKind.Block or BoxKind.Flex &&
+        !BlockSizeIsAuto(child, true) &&
+        child.Children.All(part => PositionedLayout.IsOutOfFlow(part) ||
+            (part.Kind == BoxKind.Text && String.IsNullOrWhiteSpace(part.Text)));
+
     /// <summary>One place where a column may end inside a divided box: the distance from the box's top
     /// and whether that spot is the end of a line box (which orphans and widows count) rather than the
     /// end of a whole child (CSS Break 3 §4.3).</summary>
@@ -2759,7 +2773,17 @@ internal sealed class BlockLayout
             // is not this pass's work yet, so it is left whole.
             child.Children.Count > 0 && !(child.Style.ClonesDecoration && !HoldsContent(child)) &&
                 !child.Style.ClipsOverflow && child.Kind != BoxKind.Table &&
-                (!HoldsPositioned(child) || vertical) ||
+            // A box that runs across the page, states its own length along the axis the columns stack
+            // on, and holds nothing in the flow is cut there even though all it carries has left the
+            // flow: the piece that would have shown a descendant stands in a column of its own, so
+            // leaving the box whole loses the descendant with it. A box with children in the flow is
+            // not - those are the break points the run works from - nor one whose length the content
+            // decides (CSS Fragmentation 3 §4.5, measured:
+            // wpt/css-break/table/table-col-paint-vlr-rtl-ref, whose 400-long relative box of absolute
+            // bands comes out 40,100,100,55 of each across the four columns; against
+            // gecko/flexbox/pagination/flexbox-multi-column-vertical-lr-2, whose boxes hold a flex
+            // container and are left to the run's own fragmenting).
+            (!HoldsPositioned(child) || (vertical && !StandsOnOutFlowOnly(child))) ||
             BlockSizeIsAuto(child, vertical) && !HasBlockMinimum(child, vertical) &&
                 // A table sizes its block extent from its rows, and the rows are the break points the
                 // column needs - along either axis: a vertical container's table runs its captions and
@@ -6825,7 +6849,11 @@ internal sealed class BlockLayout
             // caller says which corner it handed (CSS 2.1 §10.3.7, CSS Writing Modes 3 §5.1, measured:
             // box-shadow-003, whose abs rings stand inside the column that holds them).
             parent.Children.Add(_engine.ArrangePositioned(
-                child, staticPosition, context, staticFromHigh: flow.IsVertical && flow.BlockSign < 0));
+                child,
+                staticPosition,
+                context,
+                staticFromHigh: flow.IsVertical && flow.BlockSign < 0,
+                staticFromInline: flow.IsVertical && flow.IsRightToLeft));
         }
 
         // The extent the children occupied along the column, in the same units the box states its own
