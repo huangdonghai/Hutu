@@ -8991,6 +8991,8 @@ internal sealed class InlineLayout
     /// <summary>The styled text an inline note holds, kept as spans so nested markup survives.</summary>
     private sealed class NoteSource
     {
+        private Int32 _lastSpan = -1;
+
         private NoteSource(
             String text,
             IReadOnlyList<NoteSpan> spans,
@@ -9016,6 +9018,24 @@ internal sealed class InlineLayout
         /// <summary>Gets the styled span holding the character at the text position.</summary>
         public NoteSpan SpanAt(Int32 position)
         {
+            var index = _lastSpan;
+
+            if ((UInt32)index < (UInt32)Spans.Count)
+            {
+                var span = Spans[index];
+
+                while (position >= span.Start + span.Length && index + 1 < Spans.Count)
+                {
+                    span = Spans[++index];
+                }
+
+                if (position >= span.Start && position < span.Start + span.Length)
+                {
+                    _lastSpan = index;
+                    return span;
+                }
+            }
+
             var low = 0;
             var high = Spans.Count - 1;
 
@@ -9034,6 +9054,7 @@ internal sealed class InlineLayout
                 }
                 else
                 {
+                    _lastSpan = middle;
                     return span;
                 }
             }
