@@ -884,7 +884,8 @@ internal sealed record LayoutProfile(
                 {
                     if (!into.TryGetValue(element, out var runs))
                     {
-                        runs = into[element] = new List<TrimmedRun>();
+                        runs = new List<TrimmedRun>();
+                        into.Add(element, runs);
                     }
 
                     runs.Add(new TrimmedRun(
