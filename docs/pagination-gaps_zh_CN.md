@@ -2491,3 +2491,50 @@ Chrome 的 ref（一个不带 `display:flex` 的普通块容器，`margin-block-
 - 落法：**margin 这一改与 test 侧那条一起提交**（只落一半会让 12 对数字变大、只有 2 对变小）。本轮按这个判断把它回退了，工作树仍是 `1a7e71bb` 的代码状态（门禁：屏幕全量 0 进 0 出但对页 15 个名字变动、单测 2 216 —— 数据留在 `build/_full-marginonce.md`，下一轮直接对照）。
 
 补一条同轮的实测（省得再查一遍 `ArrangeFragment` 的选成员）：把 `start/end/at/reach` 全打出来看，MC0 的三个窗口是 `0..50 | 50..100 | 100..150`，成员分别只有 HEADER / NAV+ARTICLE / FOOTER —— **每个 item 恰好落进一个窗口，没有重复**；MC1（margin 25）的窗口是 `0..25 | 25..75 | 75..125 | 125..175`，HEADER 进 0..25 与 25..75 两次（尾部）✓ 与 Chrome 的 `(13,103,40,25)`+`(63,78,40,25)` 完全对应。所以那条多画的青色不是「窗口把上一栏的 item 又收进来了」，而是**旅行过的那一片画在了自己窗口之上**（青色落在 MC0 第 2 栏的 y 53..63，比 MC1 的栏头 78 高 25）—— 即 `windowed.FragmentClip = windowRect` 这一层没把随片旅行的子树剪住（`FragmentCutsInline=false` 那条路径），下一刀从这里查：先用探针确认那一片的 `FragmentClip` 与子树 rect 各是什么，再看 painter 的 clip 是否覆盖 children（`096` 当年是靠它生效的，说明条件里还有没覆盖到的形状）。
+
+### 9.181 §9.180 的两条一起落了：续片不再重复付 margin，被切断的 flex item 收到窗口头并截短 —— flex 分页 14 对每对降 2 675~3 350，全量 0 进 0 出
+
+两条必须成对落（§9.180 已经量过只落第一条会让 12 对数字变大）：
+
+1. `src/Hutu/Rendering/Layout/BlockLayout.cs` `ArrangeMulticolRun` 的「片的块向 margin」：`portion.Offset > 0.001 && child.Reach > child.Fragment.Height + 0.001 ? 0 : child.Margin.Top` → **`portion.Offset > 0.001 ? 0 : child.Margin.Top`**。那个 `Reach` 例外从来没被验证过，而它把「盒有没有被自己的内容超出」当成了「margin 该不该再付一次」，两回事。
+2. `src/Hutu/Rendering/Layout/Flex/FlexFormattingContext.cs` `ArrangeFragment`：被切断的那个 item 收到**窗口头**并按 `start - mainAt` 截短（挂在底边之外的内容不动，那属于本片的画面）。判据收窄到「切口真的落在盒子里」：`mainAt < start - 0.001 && mainAt + mainSize > start + 0.001`。
+
+第 2 条的收窄是**必须的**，不是保守：不加 `mainSize` 这一半（只判 `mainAt < start`）的话，`wpt/css-break/flexbox/multi-line-row-flex-fragmentation-093` 会**新红 2 250** —— 那是一个 50 高的盒带 210 高的溢出子元素，它的**盒子整条站在窗口之上**、只是挂下来的内容使它进窗，此时截短会把盒压成 0 高、子元素跟着从窗口头起画。加窄之后 -093 回到绿 ✓
+
+门禁（`build/_full-flexfix2.md`，对照基线 `build/_full-bandcache.md`）：**名字 0 进 0 出**，22 个名字像素变动，单测 **2 216 全过**，打印 **193/198 仍是同样 5 对**。
+
+| 名字 | HEAD | 两条之后 |
+|---|---:|---:|
+| `flexbox-{single,multi}-column-1a..1f`（12 对） | 11 475 | **8 800** |
+| `flexbox-single-column-2` | 14 725 | **11 650** |
+| `flexbox-multi-column-2` | 15 975 | **12 625** |
+| `wpt/css-lists/inline-block-list{,-marker}.html` | 17 240 / 17 337 | 17 096 / 17 193 |
+| `wpt/css-break/transform-008` | 11 900 | 12 761 ✗（见下） |
+| 其余 4 个名字 | - | +-1~3 px |
+
+逐页与 Chrome 自己渲的同一页比（`build/_chrome-1a*.png` vs `build/look/*`）：test 页 **18 025 → 12 375 ✓**、ref 页 **11 475 → 4 600 ✓**、对页 **11 475 → 8 800 ✓** —— 两页都真的更贴 Chrome，不是「两页一致地错」换了个方向。
+
+**`transform-008` 的 +884 不是这条规则的反证。** 用 Chrome 读 `.relpos` 的分片矩形：`(58,158,50,50) | (158,108,50,100) | (258,108,50,50)` —— 栏头在 y=108，**后两片就站在 108**，只有开头那片带那 50；HEAD 把 margin 又付一次，把它们摆在 158 ✗，新规则摆在 108 ✓。这页之所以还差一万多像素，是另一件事：`.transform` 里 `position:absolute; width:100%; height:100%` 的绿色子元素我们**在第 1、2 栏根本没画**（Chrome 三栏都绿：col1 y 140..209、col2 98..202、col3 90..167；我们新旧两版都只有 col3 的 69 个绿像素，只是 118..199 → 68..149 换了个位置）。⇒ 它属于「OOF 子树随片旅行/继续」那一族，和 `block-end-aligned-abspos-with-overflow`(3 000)、`out-of-flow-in-multicolumn-093`(28) 同一个根因，下一轮一起查。
+
+`single/multi-column-1a..1f` 剩下的 8 800：`first at 163,103`（第 4 栏 y=103 灰 vs 白）。ref 侧还差 4 600、test 侧还差 12 375，两条的方向都已经确认，剩下的量要继续往 Chrome 的逐片矩形靠：下一步用探针比 MC1（`margin-block-start:25px` 那个容器）四栏里 nav/article/footer 的起点。
+
+### 9.182 续片欠的那条装饰：ref 页与 Chrome 归零，代价是 12 对的对页数字第一次只反映 test 侧的真错
+
+`src/Hutu/Rendering/Layout/BlockLayout.cs` 的 `Arrange`（`contentX/contentY` 那几行）以前把「这一片画不画 block-start 装饰」和「内容让不让出那 15 px」当成同一件事：`FragmentSlice` 把被切边的 border/padding 归零是**为了不与 §4.7 的 slice 相反而多画一条边**，但 `contentY = borderBox.Y + border.Top + padding.Top` 于是把装饰占掉的房间一起丢了，**每一片后面的流量都被抽走那么多**。修法是把两件事拆开：照旧只画本片拥有的边，另由调用方告诉这片「它头顶上已经过去了多少装饰」。
+
+- `src/Hutu/Rendering/Layout/Fragmentation/ChildSlicer.cs`：`FragmentSlice` 增加 `Double OweStart = 0`。
+- `ArrangeMulticolRun` 的普通块那片：`OweStart: portion.Offset > 0.001 ? cutBorder.Top + cutPadding.Top : 0`。
+- `Arrange`：`var owedTop = slice?.OweStart ?? 0.0;` 只加在 `contentY` 上（`contentHeight` 不动，以免碰到百分比高度那条链）。
+
+两处判据都是语料逼出来的，别再退回宽的版本：
+
+1. **必须 `portion.Offset > 0.001`，不能只看 `Starts == false`。** 一刀切按 `Starts == false` 试过：`wpt/css-break/line-after-unbreakable-float-after-padding` **新红 312**（`first at 28,70`）。那一页是 `padding-top:100px` 的盒里塞一个 `break-inside:avoid` 的整块浮动，浮动挤不进第一栏，于是续片的 `portion.Offset` 是 **0**（内容空间），它的盒本来就**从自己的栏头起**；Chrome 读浮动 `(22.30,58,14.28,75)` —— 就站在栏头 58，100 的 padding 只属于第一栏。按 `Starts==false` 付债会把它压到 149.72。加窄之后该对回到绿 ✓。
+2. `gecko/flexbox/pagination/flexbox-single-column-1a` 的 ref 页才是这条债的正面证据：容器 `border-block-width:10px; padding-block:5px`，Chrome 四片读 `13_208_40_50 | 63_208_40_50 | 113_208_40_50 | 163_208_40_30`，第 2 栏从上到下是**青 15（被切断的 header 尾）+ 洋红 25 + 黄 10**；我们画成洋红 25 + 黄 25 —— 那 15 px 的流量被抽掉了。修完 **ref 页 vs Chrome = 0 px**（逐像素相同，`build/_chrome-1a-ref.png` vs `build/look/flexbox-single-column-1a-ref.png`）。
+
+门禁（`build/_full-debt3.md`，对照已提交基线 `build/_full-bandcache.md`；单独看这条改动对照 `build/_full-flexfix2.md`）：**0 进 0 出**，单测 **2 216 全过**，打印 **193/198 同名同数**。这一条自己带来的变动只有 17 个名字：12 对 `flexbox-{single,multi}-column-1a..1f` 8 800 → 12 375、`single-column-2` 11 650 → 14 275、`single-column-6` 6 450 → 6 800、`fieldset-001` 84 845 → 85 816、`css-anchor-position/multicol-004` 2 200 → 2 000 ✓、`multicol-nested-001` 5 700 → 5 540 ✓。
+
+**为什么对页数字会变大**：以前 test 侧（flex 窗口）与 ref 侧（普通块分栏）「一致地错」，两边误差互相抵消，8 800 是个假象。现在 ref 侧与 Chrome 逐像素相同，对页分数 12 375 = test 侧的真实错，而 test 侧本身也从 18 025 降到 12 375。两边总误差 29 500 → 12 375。
+
+**test 侧剩下的那一刀不在 `ArrangeFragment`，在分割阶段**：探针读 MC3（`13,208 40x65 | 63,208 40x50 | 113,208 40x65`）—— 我们的窗口把**内容 150** 切成 50/50/50（3 栏），Chrome 把**边框盒 180** 切成 50/50/50/30（4 栏，第一栏里 15 是装饰、只剩 35 给内容）。所以 `Relays` 那条 `windowEdge`/`portion.Offset` 的账要把 block-start 装饰算进被消耗的量，才能让每一片的内容起点接上；本轮没有动它。同一条账大概也压着 `gecko/pagination/border-breaking-00{0..3}-cols`(3 000~76 000) 和 `wpt/css-break/fieldset-001`(85 816)。
+
+一条别当回归去查的：**`gecko/css-grid/grid-clamping-002` 在两次全量里报 `TimeoutException … after 5 s`（0 像素）**，第三次没有复现。那页画 `200,-9404 12x10004` 的定宽盒，单跑 2 s 且为绿 —— 是满载下 5 s 预算的抖动。
