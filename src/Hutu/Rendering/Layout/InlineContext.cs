@@ -25,7 +25,14 @@ internal readonly struct InlineContext
         Engine = engine ?? throw new ArgumentNullException(nameof(engine));
         Containing = containing;
         Absolute = absolute;
-        Atomic = atomic;
+        // An atomic inline box roots a formatting context of its own, and a float from outside one does
+        // not reach into it: it neither shortens the lines inside nor drops their first one below itself.
+        // It is the box as a whole that steps around the float, which is a question the line the box sits
+        // on answers before the box is measured at all (CSS 2.1 §9.4.1, §9.5). Clearing it here reaches
+        // both passes - the measuring one builds its inline context from the block it is inside of, so
+        // leaving either of them with the band is enough for the two to disagree about where the nested
+        // content begins.
+        Atomic = atomic.WithFloats(null);
     }
 
     /// <summary>Gets the engine that measures and arranges an atomic box.</summary>

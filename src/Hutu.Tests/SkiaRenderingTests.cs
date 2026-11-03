@@ -43,6 +43,67 @@ public sealed class SkiaRenderingTests
     }
 
     /// <summary>
+    /// A sentence is put down in the same places whether it is set as one run or cut into pieces by an
+    /// element: the adjustments a face answers between neighbouring letters reach as far as the word
+    /// they belong to and no further across the space, which is what lets a page that wrapped part of a
+    /// sentence in a <c>span</c> come to the same picture as a page that did not (CSS Text Decoration 4
+    /// §2.9.2 leans on this, and the borrowed pages that spell a rule out of shifted pieces of one
+    /// sentence are built of nothing else. Shaped as one run, the letters slid two pixels).
+    /// </summary>
+    [Test]
+    public async Task CuttingASentenceAtItsSpacesLeavesItsLettersWhereTheyWere()
+    {
+        const String Run = "    ABCDEF    ";
+        const String Cut = "    <span>ABCDEF</span>    ";
+        const String Style = "margin:0;font:32px serif;white-space:pre";
+
+        var whole = await InkedColumnsAsync($"<p style='{Style}'>{Run}</p>");
+        var pieces = await InkedColumnsAsync($"<p style='{Style}'>{Cut}</p>");
+
+        Assert.That(whole, Is.EqualTo(pieces), "the letters stand where they stood before they were cut");
+    }
+
+    /// <summary>Draws a page and says which of its columns put any ink down.</summary>
+    private static async Task<Boolean[]> InkedColumnsAsync(String body)
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(400, 200);
+
+        await view.SetHtml($"<html><body style='margin:0'>{body}</body></html>");
+
+        var paint = view.Paint;
+
+        Assert.That(paint, Is.Not.Null, "the page was laid out and painted");
+
+        var width = Math.Max(1, (Int32)Math.Ceiling(paint!.Bounds.Width));
+        var height = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Height));
+
+        using var surface = SKSurface.Create(new SKImageInfo(width, height));
+        surface.Canvas.Clear(SKColors.White);
+        new SkiaPaintExecutor(measurer).Execute(paint, surface.Canvas);
+
+        using var image = surface.Snapshot();
+        using var bitmap = SKBitmap.FromImage(image);
+
+        var inked = new Boolean[width];
+
+        for (var x = 0; x < width; x++)
+        {
+            for (var y = 0; y < height; y++)
+            {
+                if (bitmap.GetPixel(x, y) != SKColors.White)
+                {
+                    inked[x] = true;
+                    break;
+                }
+            }
+        }
+
+        return inked;
+    }
+
+    /// <summary>
     /// A font asked for by the name it carries is the font that carries it, which is what
     /// <c>local()</c> in an <c>@font-face</c> source names - the way a book that ships no font of its
     /// own says which of the machine's it wants.

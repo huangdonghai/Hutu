@@ -220,6 +220,19 @@ public sealed class LengthUnitTests
         Assert.That(TextFontSize(view, "x"), Is.EqualTo(10).Within(0.01), "two ic of the parent's face");
     }
 
+    [Test]
+    public async Task ChIsTheFaceAdvanceOnTheClampsAsWellAsTheSizes()
+    {
+        using var view = CreateView();
+
+        // The fake face advances every character by five pixels, so eight ch is forty: the clamps are
+        // written in the same face as the sizes, and a fold handed only the font size would answer with
+        // the half em and give thirty-two of a twenty-pixel line (CSS Values 4 §4.4).
+        await view.SetHtml(Document("<div style='width:100px;font-size:20px;min-height:8ch'></div>"));
+
+        Assert.That(Box(view, "div").BorderBox.Height, Is.EqualTo(40).Within(0.01));
+    }
+
     private static Double OneLineHeight(HutuViewInternal view) =>
         Walk(view).First(node => node.Kind == LayoutKind.Line).BorderBox.Height;
 

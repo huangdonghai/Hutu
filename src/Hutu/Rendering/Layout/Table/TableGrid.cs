@@ -61,11 +61,15 @@ internal sealed class TableCellInfo
     /// <summary>Gets or sets whether the cell has no content, which <c>empty-cells</c> acts on.</summary>
     public Boolean IsEmpty = true;
 
-    /// <summary>Gets or sets the border that wins on each edge in the collapsing model.</summary>
-    public CollapsedBorder Top;
-    public CollapsedBorder Right;
-    public CollapsedBorder Bottom;
-    public CollapsedBorder Left;
+    /// <summary>Gets or sets the border that wins on each edge of the grid in the collapsing model.
+    /// They are kept per <em>logical</em> side, because which physical edge a side falls on turns with
+    /// the writing mode: the inline-start edge of a cell is its left in a row reading left to right,
+    /// its right in one reading right to left, and its top or bottom down a column (CSS Writing Modes
+    /// 3 §9.1).</summary>
+    public CollapsedBorder InlineStart;
+    public CollapsedBorder InlineEnd;
+    public CollapsedBorder BlockStart;
+    public CollapsedBorder BlockEnd;
 }
 
 /// <summary>One row of the grid, with its height and the cells that start in it.</summary>

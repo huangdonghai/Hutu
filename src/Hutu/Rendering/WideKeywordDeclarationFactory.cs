@@ -66,6 +66,14 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         // CSS Text 4's punctuation spacing and CSS Fonts 4's east-asian variants, read token by token
         // where their values are needed.
         "text-spacing-trim",
+        // Text Decoration 4's spaces at the ends of the decorated text, which is a set of keywords the
+        // ends of a line are pulled back by: AngleSharp has no grammar for it, so the declaration is
+        // dropped at parse unless it is kept here.
+        "text-decoration-skip-spaces",
+        // CSS Text 5's line fitting, which AngleSharp has no grammar for at all: the value is a direction,
+        // a set of lines and a percentage limit, all read as tokens by the style. It is inherited, so the
+        // declaration also has to travel down to the text inside the box that asked for it.
+        "text-fit",
         // CSS Text 4's inter-script spacing, read token by token for the same reason.
         "text-autospace",
         // CSS Text 3's hanging punctuation, whose value is a set of keywords AngleSharp has no
@@ -185,6 +193,8 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         "text-autospace",
         "hanging-punctuation",
         "font-variant-east-asian",
+        // CSS Text 5's line fitting is inherited down to the text of the box that asked for it.
+        "text-fit",
     };
 
     /// <summary>
@@ -288,6 +298,10 @@ internal sealed class WideKeywordDeclarationFactory : IDeclarationFactory
         ["min-block-size"] = ["fit-content("],
         ["max-inline-size"] = ["fit-content("],
         ["max-block-size"] = ["fit-content("],
+        // CSS Text 3 §5.2's two modifiers, which AngleSharp's grammar for the property stops short of:
+        // a declaration naming either one is kept whole, and the style reads the distance and the words
+        // from the same text. Dropped at the parse, `4em hanging` indents nothing at all.
+        ["text-indent"] = ["hanging", "each-line"],
     };
 
     /// <summary>

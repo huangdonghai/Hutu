@@ -250,6 +250,13 @@ internal sealed class Box
     public Boolean IsAnonymous { get; init; }
 
     /// <summary>
+    /// Gets whether the box begins the content of the block it was made from, which is where that block's
+    /// indentation stands. A run of inline content that a block child broke away from the head of its box
+    /// resumes on a line of its own, and that line is not the block's first (CSS Text 3 §5.2).
+    /// </summary>
+    public Boolean StartsParentContent { get; init; } = true;
+
+    /// <summary>
     /// Gets whether the element asked for <c>display: contents</c>, which generates no box of its own:
     /// the box here exists only to hold the children the walk found, and paints none of the element's
     /// background, border or margin (CSS Display 3 §2.5).

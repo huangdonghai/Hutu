@@ -431,6 +431,32 @@ internal sealed record TextArea
     internal StyleLength Indent { get; init; } = StyleLength.Zero;
 
     /// <summary>
+    /// Gets whether the distance is carried by every line but the ones the property would otherwise
+    /// indent: <c>text-indent: 4em hanging</c> (CSS Text 3 §5.2).
+    /// </summary>
+    internal Boolean IndentHanging { get; init; }
+
+    /// <summary>
+    /// Gets whether the lines the indentation is meant for include the first line after every forced
+    /// break, not only the block's own first line: <c>text-indent: 4em each-line</c> (CSS Text 3 §5.2).
+    /// </summary>
+    internal Boolean IndentEachLine { get; init; }
+
+    /// <summary>
+    /// Gets how the block's lines are scaled to fill their line boxes: <c>text-fit</c> (CSS Text 5 §1.1),
+    /// with the direction, the lines it reaches and the limit on the factor kept apart.
+    /// </summary>
+    internal TextFit Fit { get; init; } = TextFit.None;
+
+    /// <summary>
+    /// Gets whether the block's line height is a multiple or share of the font the text is drawn at - a
+    /// plain number, a percentage, or <c>normal</c> - and so follows the size the fitting scales the line
+    /// to. A length the page wrote, in pixels or in <c>em</c>, is its own number and stays (CSS Text 5
+    /// §1.1, which holds the computed font size, and with it the lengths measured from it, unaffected).
+    /// </summary>
+    internal Boolean LineHeightTracksFont { get; init; } = true;
+
+    /// <summary>
     /// Gets whether the box draws itself, which is inherited like the rest of the area: an element that
     /// says nothing is seen or hidden the way its parent was, and a descendant can always ask to be seen
     /// again. <c>collapse</c> is kept with <c>hidden</c> as not visible, which is what a box that takes

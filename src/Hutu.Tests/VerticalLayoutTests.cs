@@ -40,6 +40,27 @@ public sealed class VerticalLayoutTests
     }
 
     [Test]
+    public async Task AnOrthogonalChildBreaksAgainstTheContainersMaxHeight()
+    {
+        using var view = CreateView(400);
+
+        // The container's height comes from nothing, so the column inside it is given no inline room to
+        // break against. The fallback is the smallest of the container's own inner max size floored by its
+        // min size and the scrollport's inner size (CSS Writing Modes 3 §7.3.1) - here twenty pixels, which
+        // is four characters of the fake face, so fifteen units of text come to four columns of it.
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<div style='width:300px;max-height:20px;font-size:10px;line-height:1;margin:0'>" +
+            "<div style='writing-mode:vertical-rl'>a a a a a a a a</div>" +
+            "</div></body></html>");
+
+        var boxes = Blocks(view, "div").ToList();
+
+        Assert.That(boxes[1].BorderBox.Height, Is.EqualTo(20), "the column runs as far as the container's max height");
+        Assert.That(boxes[1].BorderBox.Width, Is.EqualTo(40), "and the rest of the text begins the next column");
+    }
+
+    [Test]
     public async Task ColumnStacksBlockChildrenRightToLeft()
     {
         using var view = CreateView(400);

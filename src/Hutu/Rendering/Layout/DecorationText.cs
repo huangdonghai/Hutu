@@ -42,6 +42,27 @@ public enum DecorationSkip : Byte
 }
 
 /// <summary>
+/// Which of the spaces at the ends of the text a decoration runs across are left without a line. The
+/// white space *between* two letters is never skipped: it is part of what the rule runs across, and a
+/// line broken at every word would not read as one rule (CSS Text Decoration 4 §2.9.2).
+/// </summary>
+[Flags]
+public enum DecorationSkipSpaces : Byte
+{
+    /// <summary>Every space the line reaches across takes its part of the line.</summary>
+    None = 0,
+
+    /// <summary>The white space the decorated text opens with is left undecorated.</summary>
+    Start = 1,
+
+    /// <summary>The white space the decorated text closes with is left undecorated.</summary>
+    End = 2,
+
+    /// <summary>Both ends, which is what <c>all</c> says.</summary>
+    All = Start | End,
+}
+
+/// <summary>
 /// One decorating box's lines, as they are drawn across the text they reach.
 /// </summary>
 /// <remarks>
@@ -141,7 +162,17 @@ public sealed record DecorationInsets(
     Double? StartShare,
     Double? EndShare,
     Boolean Auto,
-    Boolean PerFragment);
+    Boolean PerFragment)
+{
+    /// <summary>
+    /// Gets which ends of the text this box decorates leave their spaces undecorated: the part of
+    /// <c>text-decoration-skip-spaces</c> that belongs with the ends rather than with the line, since
+    /// what it asks is that the line stop short of the white space the text opens or closes with
+    /// (§2.9.2). It rides along here because the two are carried out at the same moment: the walk that
+    /// pulls a line's ends in is the one that knows how much text the line runs across.
+    /// </summary>
+    public DecorationSkipSpaces Spaces { get; init; }
+}
 
 /// <summary>
 /// Where one decorating box's line stands on one line of text and how thick it is, settled from all the

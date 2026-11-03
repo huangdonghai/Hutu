@@ -793,6 +793,43 @@ public sealed class FloatLayoutTests
         });
     }
 
+    /// <summary>
+    /// A float shortens the lines of the block it stands in and stops at the edge of any formatting
+    /// context it meets: an inline-block roots one of its own, so the floats outside it are not the ones
+    /// its lines stand aside for - it is the box as a whole that steps around them, which the line the box
+    /// sits on has already settled (CSS 2.1 §9.4.1, §9.5). Letting the band through dropped the nested
+    /// first line below the float and made the box taller than anything written in it.
+    /// </summary>
+    [Test]
+    public async Task AFloatStopsAtTheFormattingContextAnInlineBlockRoots()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(Page(
+            "<div style='float:left;width:50px;height:50px'></div>" +
+            "<div id='box' style='display:inline-block'>aaaaaaaaaa<br>aaaaaaaaaa</div>"));
+
+        var box = Bounds(view, "box");
+        var nested = Walk(view.Layout!.Root)
+            .Where(node => node.Kind == LayoutKind.Line &&
+                node.Source.Element?.GetAttribute("id") == "box")
+            .OrderBy(node => node.BorderBox.Y)
+            .ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(nested, Has.Count.GreaterThanOrEqualTo(2), "the box holds the two lines its text makes");
+            Assert.That(
+                box.Height,
+                Is.EqualTo(20).Within(0.5),
+                "two lines of ten, which is all the box holds - not the float's fifty added to them");
+            Assert.That(
+                nested[0].BorderBox.Y,
+                Is.EqualTo(box.Y).Within(0.5),
+                "and its first line stands at the top of the box, not below the float");
+        });
+    }
+
     private static Rect Bounds(HutuViewInternal view, String id)
     {
         var element = view.Document!.GetElementById(id);

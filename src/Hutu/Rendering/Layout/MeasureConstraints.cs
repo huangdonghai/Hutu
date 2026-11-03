@@ -47,6 +47,14 @@ internal readonly struct MeasureConstraints
     public static MeasureConstraints Definite(Double width) =>
         new(Math.Max(0, width), null, Math.Max(0, width));
 
+    /// <summary>
+    /// Gets constraints that fix the available height and leave the width to the content. A table that
+    /// reads down the page settles a cell's inline extent along the physical height, so it is the
+    /// height its column has already settled rather than the width.
+    /// </summary>
+    public static MeasureConstraints FitHeight(Double height) =>
+        new(null, Math.Max(0, height), null);
+
     public MeasureConstraints WithHeight(Double height) =>
         new(AvailableWidth, Math.Max(0, height), DefiniteWidth);
 }

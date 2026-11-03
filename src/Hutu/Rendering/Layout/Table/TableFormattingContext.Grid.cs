@@ -46,6 +46,14 @@ internal sealed partial class TableFormattingContext
         /// table out of an <c>overflow: hidden</c> box that was sized to hold them.
         /// </summary>
         public Double OuterHeight => Margin.Vertical + Height;
+
+        /// <summary>
+        /// Gets the room the caption claims along the axis the table's rows run, which is the physical
+        /// height of a horizontal table and its width of a vertical one: the same arithmetic as
+        /// <see cref="OuterHeight"/>, read on the axis the stack runs down.
+        /// </summary>
+        public Double OuterBlock(Boolean vertical) =>
+            (vertical ? Margin.Horizontal : Margin.Vertical) + Height;
     }
 
     /// <summary>Everything the table context computes for one table, shared by both phases.</summary>
@@ -64,6 +72,25 @@ internal sealed partial class TableFormattingContext
         public Double InsetsH;
 
         public Double InsetsV;
+
+        /// <summary>Gets how the table's columns and rows run, which decides which physical pair the
+        /// grid's two axes are: the columns of a horizontal table run along its width and its rows
+        /// along its height, and a vertical table exchanges the two.</summary>
+        public WritingModeInfo Flow;
+
+        /// <summary>Gets the table's own insets along the axis its columns run.</summary>
+        public Double InsetsInline => Flow.IsVertical ? InsetsV : InsetsH;
+
+        /// <summary>Gets the table's own insets along the axis its rows run.</summary>
+        public Double InsetsBlock => Flow.IsVertical ? InsetsH : InsetsV;
+
+        /// <summary>Gets the <c>border-spacing</c> that falls between two neighbouring columns. The
+        /// pair stays physical where the grid does not: the distance between two columns is the
+        /// vertical one once the columns run down the page (CSS Tables 3 §3.3).</summary>
+        public Double InlineSpacing => Flow.IsVertical ? Style.VerticalSpacing : Style.HorizontalSpacing;
+
+        /// <summary>Gets the <c>border-spacing</c> that falls between two neighbouring rows.</summary>
+        public Double BlockSpacing => Flow.IsVertical ? Style.HorizontalSpacing : Style.VerticalSpacing;
 
         /// <summary>Gets the width the percentages of the table and its cells resolve against.</summary>
         public Double Basis;
@@ -127,6 +154,10 @@ internal sealed partial class TableFormattingContext
             InsetsH = padding.Horizontal + border.Horizontal,
             InsetsV = padding.Vertical + border.Vertical,
             Basis = basis,
+            // The grid's two axes are the table's own: which physical extent each of them is, and
+            // which way along the line it runs, the writing mode decides (CSS Writing Modes 3 §4.3,
+            // §9.1).
+            Flow = table.Flow,
         };
 
         CollectRows(build, basis);
@@ -138,35 +169,35 @@ internal sealed partial class TableFormattingContext
     }
 
     /// <summary>
-    /// Shares out the columns and measures the rows at the width the table settled on. When the table
-    /// declared a height greater than its rows need, the grid is grown to that height so the rows fill
-    /// the box rather than leaving it empty below them (CSS 2.1 §17.5.3).
+    /// Shares out the columns and measures the rows at the inline size the table settled on. When the
+    /// table declared a block size greater than its rows need, the grid is grown to that size so the
+    /// rows fill the box rather than leaving it empty beside them (CSS 2.1 §17.5.3).
     /// </summary>
-    private void CompleteGrid(TableBuild build, Double contentWidth, LayoutContext context, Double? targetHeight = null)
+    private void CompleteGrid(TableBuild build, Double contentInline, LayoutContext context, Double? targetBlock = null)
     {
         var tableStyle = build.Style;
-        var spacing = tableStyle.Collapse ? 0.0 : tableStyle.HorizontalSpacing;
-        var rowSpacing = tableStyle.Collapse ? 0.0 : tableStyle.VerticalSpacing;
-        var columnTarget = Math.Max(0, contentWidth - HorizontalSpacingTotal(build));
+        var spacing = tableStyle.Collapse ? 0.0 : build.InlineSpacing;
+        var rowSpacing = tableStyle.Collapse ? 0.0 : build.BlockSpacing;
+        var columnTarget = Math.Max(0, contentInline - InlineSpacingTotal(build));
 
         // A cell's per cent is a share of the room the columns have between them, so it can only be read
-        // now that the table's own width is settled - and only where the table has a width of its own to
-        // be a share of. A table that takes its width from its content has no whole for the share, and the
-        // share is left unread rather than deciding how wide the table it sits in becomes. Rebuilding the
-        // column bounds also clears the widths a column declaration asked for, so those are handed back
-        // before the columns are shared out.
-        if (build.Box.Style.Width.HasValue && build.Grid.ResolvePercentages(columnTarget))
+        // now that the table's own inline size is settled - and only where the table has one of its own
+        // to be a share of. A table that takes that size from its content has no whole for the share, and
+        // the share is left unread rather than deciding how large the table it sits in becomes.
+        // Rebuilding the column bounds also clears the widths a column declaration asked for, so those
+        // are handed back before the columns are shared out.
+        if (InlineLength(build.Box, build.Flow.IsVertical).HasValue && build.Grid.ResolvePercentages(columnTarget))
         {
             build.Grid.ApplyColumnHints(build.ColumnHints);
         }
 
         build.Grid.SizeColumns(columnTarget, tableStyle.Fixed);
-        MeasureCellHeights(build, context, spacing, targetHeight);
+        MeasureCellHeights(build, context, spacing, targetBlock);
         build.Grid.SizeRows();
         build.Grid.PlaceColumns(spacing, tableStyle.Collapse);
         build.Grid.PlaceRows(rowSpacing, tableStyle.Collapse);
 
-        if (targetHeight is { } target)
+        if (targetBlock is { } target)
         {
             var surplus = target - build.Grid.Height;
 
@@ -441,44 +472,55 @@ internal sealed partial class TableFormattingContext
         }
 
         var rows = grid.Rows.Count;
-        var vertical = new CollapsedBorder[grid.Columns + 1];
-        var horizontal = new CollapsedBorder[rows + 1];
-        Array.Fill(vertical, CollapsedBorder.None);
-        Array.Fill(horizontal, CollapsedBorder.None);
+        var columns = grid.Columns;
+        var columnLines = new CollapsedBorder[columns + 1];
+        var rowLines = new CollapsedBorder[rows + 1];
+        Array.Fill(columnLines, CollapsedBorder.None);
+        Array.Fill(rowLines, CollapsedBorder.None);
+
+        // The two families of grid lines are numbered from the edges the markup's first column and
+        // first row stand at, and the physical edge each of those is drawn on is the writing mode's to
+        // say: down a column the line between two columns runs across the page and the line between two
+        // rows runs down it (CSS Writing Modes 3 §9.1).
+        var flow = build.Flow;
+        var inlineStart = InlineStartSide(flow);
+        var inlineEnd = InlineEndSide(flow);
+        var blockStart = BlockStartSide(flow);
+        var blockEnd = BlockEndSide(flow);
 
         foreach (var row in grid.Rows)
         {
             foreach (var cell in row.Cells)
             {
-                cell.Top = CollapsedBorder.Of(cell.Box.Style, BorderSide.Top, CollapsedBorder.OriginCell);
-                cell.Right = CollapsedBorder.Of(cell.Box.Style, BorderSide.Right, CollapsedBorder.OriginCell);
-                cell.Bottom = CollapsedBorder.Of(cell.Box.Style, BorderSide.Bottom, CollapsedBorder.OriginCell);
-                cell.Left = CollapsedBorder.Of(cell.Box.Style, BorderSide.Left, CollapsedBorder.OriginCell);
+                cell.BlockStart = CollapsedBorder.Of(cell.Box.Style, blockStart, CollapsedBorder.OriginCell);
+                cell.InlineEnd = CollapsedBorder.Of(cell.Box.Style, inlineEnd, CollapsedBorder.OriginCell);
+                cell.BlockEnd = CollapsedBorder.Of(cell.Box.Style, blockEnd, CollapsedBorder.OriginCell);
+                cell.InlineStart = CollapsedBorder.Of(cell.Box.Style, inlineStart, CollapsedBorder.OriginCell);
 
-                var lastColumn = Math.Min(cell.Column + cell.Span, grid.Columns);
+                var lastColumn = Math.Min(cell.Column + cell.Span, columns);
                 var lastRow = Math.Min(cell.Row + cell.RowSpan, rows);
 
-                vertical[cell.Column] = CollapsedBorder.Resolve(vertical[cell.Column], cell.Left);
-                vertical[lastColumn] = CollapsedBorder.Resolve(vertical[lastColumn], cell.Right);
-                horizontal[cell.Row] = CollapsedBorder.Resolve(horizontal[cell.Row], cell.Top);
-                horizontal[lastRow] = CollapsedBorder.Resolve(horizontal[lastRow], cell.Bottom);
+                columnLines[cell.Column] = CollapsedBorder.Resolve(columnLines[cell.Column], cell.InlineStart);
+                columnLines[lastColumn] = CollapsedBorder.Resolve(columnLines[lastColumn], cell.InlineEnd);
+                rowLines[cell.Row] = CollapsedBorder.Resolve(rowLines[cell.Row], cell.BlockStart);
+                rowLines[lastRow] = CollapsedBorder.Resolve(rowLines[lastRow], cell.BlockEnd);
             }
         }
 
         // The rows, row groups, columns and column groups meet the same lines the cells do (CSS 2.1
-        // §17.6.2): a row's top and bottom meet the two horizontal lines it sits between, a column's
-        // left and right the vertical ones, and a group's borders only the lines at its own outer
-        // edges. A row's left and right reach no line but the table's outer ones, and a column's top
-        // and bottom likewise: the grid keeps one line per line, so the widest of them stands for all.
+        // §17.6.2): a row's two block sides meet the two lines it sits between, a column's two inline
+        // sides the two it stands between, and a group's borders only the lines at its own outer edges.
+        // A row's inline sides reach no line but the table's outer ones, and a column's block sides
+        // likewise: the grid keeps one line per line, so the widest of them stands for all.
         for (var r = 0; r < rows; r++)
         {
             var row = grid.Rows[r];
             var rowStyle = row.Box.Style;
 
-            horizontal[r] = CollapsedBorder.Resolve(horizontal[r], CollapsedBorder.Of(rowStyle, BorderSide.Top, CollapsedBorder.OriginRow));
-            horizontal[r + 1] = CollapsedBorder.Resolve(horizontal[r + 1], CollapsedBorder.Of(rowStyle, BorderSide.Bottom, CollapsedBorder.OriginRow));
-            vertical[0] = CollapsedBorder.Resolve(vertical[0], CollapsedBorder.Of(rowStyle, BorderSide.Left, CollapsedBorder.OriginRow));
-            vertical[grid.Columns] = CollapsedBorder.Resolve(vertical[grid.Columns], CollapsedBorder.Of(rowStyle, BorderSide.Right, CollapsedBorder.OriginRow));
+            rowLines[r] = CollapsedBorder.Resolve(rowLines[r], CollapsedBorder.Of(rowStyle, blockStart, CollapsedBorder.OriginRow));
+            rowLines[r + 1] = CollapsedBorder.Resolve(rowLines[r + 1], CollapsedBorder.Of(rowStyle, blockEnd, CollapsedBorder.OriginRow));
+            columnLines[0] = CollapsedBorder.Resolve(columnLines[0], CollapsedBorder.Of(rowStyle, inlineStart, CollapsedBorder.OriginRow));
+            columnLines[columns] = CollapsedBorder.Resolve(columnLines[columns], CollapsedBorder.Of(rowStyle, inlineEnd, CollapsedBorder.OriginRow));
 
             if (row.Group is { } group)
             {
@@ -487,43 +529,43 @@ internal sealed partial class TableFormattingContext
 
                 if (first)
                 {
-                    horizontal[r] = CollapsedBorder.Resolve(horizontal[r], CollapsedBorder.Of(group.Style, BorderSide.Top, CollapsedBorder.OriginRowGroup));
-                    vertical[0] = CollapsedBorder.Resolve(vertical[0], CollapsedBorder.Of(group.Style, BorderSide.Left, CollapsedBorder.OriginRowGroup));
+                    rowLines[r] = CollapsedBorder.Resolve(rowLines[r], CollapsedBorder.Of(group.Style, blockStart, CollapsedBorder.OriginRowGroup));
+                    columnLines[0] = CollapsedBorder.Resolve(columnLines[0], CollapsedBorder.Of(group.Style, inlineStart, CollapsedBorder.OriginRowGroup));
                 }
 
                 if (last)
                 {
-                    horizontal[r + 1] = CollapsedBorder.Resolve(horizontal[r + 1], CollapsedBorder.Of(group.Style, BorderSide.Bottom, CollapsedBorder.OriginRowGroup));
-                    vertical[grid.Columns] = CollapsedBorder.Resolve(vertical[grid.Columns], CollapsedBorder.Of(group.Style, BorderSide.Right, CollapsedBorder.OriginRowGroup));
+                    rowLines[r + 1] = CollapsedBorder.Resolve(rowLines[r + 1], CollapsedBorder.Of(group.Style, blockEnd, CollapsedBorder.OriginRowGroup));
+                    columnLines[columns] = CollapsedBorder.Resolve(columnLines[columns], CollapsedBorder.Of(group.Style, inlineEnd, CollapsedBorder.OriginRowGroup));
                 }
             }
         }
 
-        for (var c = 0; c < grid.Columns; c++)
+        for (var c = 0; c < columns; c++)
         {
             if (c < build.ColumnBoxes.Count && build.ColumnBoxes[c] is { } column)
             {
-                vertical[c] = CollapsedBorder.Resolve(vertical[c], CollapsedBorder.Of(column.Style, BorderSide.Left, CollapsedBorder.OriginColumn));
-                vertical[c + 1] = CollapsedBorder.Resolve(vertical[c + 1], CollapsedBorder.Of(column.Style, BorderSide.Right, CollapsedBorder.OriginColumn));
-                horizontal[0] = CollapsedBorder.Resolve(horizontal[0], CollapsedBorder.Of(column.Style, BorderSide.Top, CollapsedBorder.OriginColumn));
-                horizontal[rows] = CollapsedBorder.Resolve(horizontal[rows], CollapsedBorder.Of(column.Style, BorderSide.Bottom, CollapsedBorder.OriginColumn));
+                columnLines[c] = CollapsedBorder.Resolve(columnLines[c], CollapsedBorder.Of(column.Style, inlineStart, CollapsedBorder.OriginColumn));
+                columnLines[c + 1] = CollapsedBorder.Resolve(columnLines[c + 1], CollapsedBorder.Of(column.Style, inlineEnd, CollapsedBorder.OriginColumn));
+                rowLines[0] = CollapsedBorder.Resolve(rowLines[0], CollapsedBorder.Of(column.Style, blockStart, CollapsedBorder.OriginColumn));
+                rowLines[rows] = CollapsedBorder.Resolve(rowLines[rows], CollapsedBorder.Of(column.Style, blockEnd, CollapsedBorder.OriginColumn));
             }
 
             if (c < build.ColumnGroupBoxes.Count && build.ColumnGroupBoxes[c] is { } columnGroup)
             {
                 var first = c == 0 || !ReferenceEquals(build.ColumnGroupBoxes[c - 1], columnGroup);
-                var last = c == grid.Columns - 1 || c + 1 >= build.ColumnGroupBoxes.Count || !ReferenceEquals(build.ColumnGroupBoxes[c + 1], columnGroup);
+                var last = c == columns - 1 || c + 1 >= build.ColumnGroupBoxes.Count || !ReferenceEquals(build.ColumnGroupBoxes[c + 1], columnGroup);
 
                 if (first)
                 {
-                    vertical[c] = CollapsedBorder.Resolve(vertical[c], CollapsedBorder.Of(columnGroup.Style, BorderSide.Left, CollapsedBorder.OriginColumnGroup));
-                    horizontal[0] = CollapsedBorder.Resolve(horizontal[0], CollapsedBorder.Of(columnGroup.Style, BorderSide.Top, CollapsedBorder.OriginColumnGroup));
+                    columnLines[c] = CollapsedBorder.Resolve(columnLines[c], CollapsedBorder.Of(columnGroup.Style, inlineStart, CollapsedBorder.OriginColumnGroup));
+                    rowLines[0] = CollapsedBorder.Resolve(rowLines[0], CollapsedBorder.Of(columnGroup.Style, blockStart, CollapsedBorder.OriginColumnGroup));
                 }
 
                 if (last)
                 {
-                    vertical[c + 1] = CollapsedBorder.Resolve(vertical[c + 1], CollapsedBorder.Of(columnGroup.Style, BorderSide.Right, CollapsedBorder.OriginColumnGroup));
-                    horizontal[rows] = CollapsedBorder.Resolve(horizontal[rows], CollapsedBorder.Of(columnGroup.Style, BorderSide.Bottom, CollapsedBorder.OriginColumnGroup));
+                    columnLines[c + 1] = CollapsedBorder.Resolve(columnLines[c + 1], CollapsedBorder.Of(columnGroup.Style, inlineEnd, CollapsedBorder.OriginColumnGroup));
+                    rowLines[rows] = CollapsedBorder.Resolve(rowLines[rows], CollapsedBorder.Of(columnGroup.Style, blockEnd, CollapsedBorder.OriginColumnGroup));
                 }
             }
         }
@@ -531,34 +573,52 @@ internal sealed partial class TableFormattingContext
         // The table's own border only competes on the outermost lines, where it takes the lowest
         // origin and therefore only wins when no cell asked for something wider.
         var style = build.Box.Style;
-        vertical[0] = CollapsedBorder.Resolve(vertical[0], CollapsedBorder.Of(style, BorderSide.Left, CollapsedBorder.OriginTable));
-        vertical[grid.Columns] = CollapsedBorder.Resolve(vertical[grid.Columns], CollapsedBorder.Of(style, BorderSide.Right, CollapsedBorder.OriginTable));
-        horizontal[0] = CollapsedBorder.Resolve(horizontal[0], CollapsedBorder.Of(style, BorderSide.Top, CollapsedBorder.OriginTable));
-        horizontal[rows] = CollapsedBorder.Resolve(horizontal[rows], CollapsedBorder.Of(style, BorderSide.Bottom, CollapsedBorder.OriginTable));
+        columnLines[0] = CollapsedBorder.Resolve(columnLines[0], CollapsedBorder.Of(style, inlineStart, CollapsedBorder.OriginTable));
+        columnLines[columns] = CollapsedBorder.Resolve(columnLines[columns], CollapsedBorder.Of(style, inlineEnd, CollapsedBorder.OriginTable));
+        rowLines[0] = CollapsedBorder.Resolve(rowLines[0], CollapsedBorder.Of(style, blockStart, CollapsedBorder.OriginTable));
+        rowLines[rows] = CollapsedBorder.Resolve(rowLines[rows], CollapsedBorder.Of(style, blockEnd, CollapsedBorder.OriginTable));
 
         foreach (var row in grid.Rows)
         {
             foreach (var cell in row.Cells)
             {
-                var lastColumn = Math.Min(cell.Column + cell.Span, grid.Columns);
+                var lastColumn = Math.Min(cell.Column + cell.Span, columns);
                 var lastRow = Math.Min(cell.Row + cell.RowSpan, rows);
 
-                var left = cell.Column == 0 ? vertical[0].Width : vertical[cell.Column].Width * 0.5;
-                var right = lastColumn == grid.Columns ? vertical[grid.Columns].Width : vertical[lastColumn].Width * 0.5;
-                var top = cell.Row == 0 ? horizontal[0].Width : horizontal[cell.Row].Width * 0.5;
-                var bottom = lastRow == rows ? horizontal[rows].Width : horizontal[lastRow].Width * 0.5;
+                // Which line each physical edge of the cell stands on, and whether that line is one of
+                // the table's outer edges, where the cell paints the whole of it rather than the half
+                // it would share with a neighbour that is not there.
+                CollapsedBorder Edge(BorderSide side) =>
+                    side == inlineStart ? columnLines[cell.Column] :
+                    side == inlineEnd ? columnLines[lastColumn] :
+                    side == blockStart ? rowLines[cell.Row] : rowLines[lastRow];
 
-                cell.UsedBorder = new Thickness(top, right, bottom, left);
+                Boolean Outer(BorderSide side) =>
+                    side == inlineStart ? cell.Column == 0 :
+                    side == inlineEnd ? lastColumn == columns :
+                    side == blockStart ? cell.Row == 0 : lastRow == rows;
+
+                Double WidthOf(BorderSide side)
+                {
+                    var line = Edge(side).Width;
+                    return Outer(side) ? line : line * 0.5;
+                }
+
+                cell.UsedBorder = new Thickness(
+                    WidthOf(BorderSide.Top),
+                    WidthOf(BorderSide.Right),
+                    WidthOf(BorderSide.Bottom),
+                    WidthOf(BorderSide.Left));
                 cell.Colors = new BorderColors(
-                    horizontal[cell.Row].Color,
-                    vertical[lastColumn].Color,
-                    horizontal[lastRow].Color,
-                    vertical[cell.Column].Color);
+                    Edge(BorderSide.Top).Color,
+                    Edge(BorderSide.Right).Color,
+                    Edge(BorderSide.Bottom).Color,
+                    Edge(BorderSide.Left).Color);
                 cell.LineStyles = new BorderStyles(
-                    horizontal[cell.Row].Line,
-                    vertical[lastColumn].Line,
-                    horizontal[lastRow].Line,
-                    vertical[cell.Column].Line);
+                    Edge(BorderSide.Top).Line,
+                    Edge(BorderSide.Right).Line,
+                    Edge(BorderSide.Bottom).Line,
+                    Edge(BorderSide.Left).Line);
                 cell.Insets = Add(cell.Padding, cell.UsedBorder);
             }
         }
@@ -571,74 +631,140 @@ internal sealed partial class TableFormattingContext
     private void ResolveCellIntrinsics(TableBuild build, LayoutContext context)
     {
         var basis = build.Basis;
-        var cellContext = context.ForContainingBlock(new Size(0, 0));
+        var vertical = build.Flow.IsVertical;
+        var cellContext = context.ForContainingBlock(new Size(0, 0), vertical);
 
         foreach (var row in build.Grid.Rows)
         {
             foreach (var cell in row.Cells)
             {
-                var intrinsic = _engine.MeasureContentIntrinsic(cell.Box, cellContext);
-                var styleInsets = StyleInsetsH(cell.Box, basis);
-                var min = Math.Max(0, intrinsic.MinContent - styleInsets) + cell.Insets.Horizontal;
-                var max = Math.Max(0, intrinsic.MaxContent - styleInsets) + cell.Insets.Horizontal;
+                // A cell turned aside from its table lays its own line across the axis the columns run,
+                // so what the column has to hold is the room its content takes *across* that line: the
+                // height a horizontal cell's text fills in the column of a vertical table, and the
+                // thickness of the single column a vertical cell lays down in a row of a horizontal one
+                // (CSS Writing Modes 3 §9.2). Its inline intrinsics are the other size - the one the
+                // rows negotiate over - and handing them to the column is what made a cell as tall as
+                // the text it was asked to wrap.
+                var intrinsic = cell.Box.Flow.IsVertical != vertical
+                    ? CrossIntrinsic(cell.Box, context, build.Flow)
+                    : _engine.MeasureContentIntrinsic(cell.Box, cellContext);
+                var styleInsets = StyleInsets(cell.Box, basis, vertical);
+                var insets = InlineInsets(cell.Insets, vertical);
+                var min = Math.Max(0, intrinsic.MinContent - styleInsets) + insets;
+                var max = Math.Max(0, intrinsic.MaxContent - styleInsets) + insets;
 
                 cell.MinContent = min;
                 cell.MaxContent = Math.Max(min, max);
 
-                // A per-cent width is a share of the table's own width, which is not settled yet at this
-                // point - a share resolved against the box the table sits in would make the table as wide
-                // as its own share, so it is kept as the length it was read from and resolved later. A
-                // length is read here, where the content and the cell's own margins already are.
-                cell.SpecifiedLength = cell.Box.Style.Width.HasValue ? cell.Box.Style.Width : cell.Box.HintedWidth;
+                // A per-cent inline size is a share of the table's own inline size, which is not settled
+                // yet at this point - a share resolved against the box the table sits in would make the
+                // table as large as its own share, so it is kept as the length it was read from and
+                // resolved later. A length is read here, where the content and the cell's own margins
+                // already are.
+                cell.SpecifiedLength = InlineLength(cell.Box, vertical);
                 cell.Specified = cell.SpecifiedLength is { Kind: StyleLengthKind.Percent }
                     ? null
-                    : Pixels(cell.SpecifiedLength, basis, cell.Insets.Horizontal, BoxModel.IsBorderBox(cell.Box.Style));
+                    : Pixels(cell.SpecifiedLength, basis, insets, BoxModel.IsBorderBox(cell.Box.Style));
             }
         }
     }
 
-    /// <summary>Measures each cell's height at the width its column ended up with.</summary>
-    private void MeasureCellHeights(TableBuild build, LayoutContext context, Double spacing, Double? tableHeight)
+    /// <summary>
+    /// Gets the room a cell that reads across its table asks along the axis its columns run. The cell's
+    /// own line runs the other way, so the column is not handed how wide the cell's content is but how
+    /// thick it is: the extent the content takes across its own line, which is what the cell comes to
+    /// when it is asked at nothing and so wraps to none (CSS Writing Modes 3 §9.2). The two
+    /// suggestions are the same number for the same reason - content that is not wrapped fills just
+    /// one line however little it is offered - and both are read with the cell's own insets already
+    /// in them, the way <see cref="MeasureContentIntrinsic"/> answers.
+    /// </summary>
+    private IntrinsicSize CrossIntrinsic(Box box, LayoutContext context, WritingModeInfo flow)
+    {
+        // The cell's own writing mode decides which physical pair its lines run along, so it is the
+        // context the content is laid out in; the answer is then read on the table's axis.
+        var own = context.ForContainingBlock(new Size(0, 0), box.Flow.IsVertical);
+        var laid = _engine.Measure(box, MeasureConstraints.Unconstrained, own);
+        var across = Math.Max(0.0, flow.InlineExtent(laid.Width, laid.Height));
+
+        return new IntrinsicSize(across, across);
+    }
+
+    /// <summary>Measures each cell at the size its column ended up with, along the axis the columns run.</summary>
+    private void MeasureCellHeights(TableBuild build, LayoutContext context, Double spacing, Double? targetBlock)
     {
         var basis = build.Basis;
+        var vertical = build.Flow.IsVertical;
 
         foreach (var row in build.Grid.Rows)
         {
-            // A row may declare a height of its own, and CSS 2.1 §17.5.3 makes it a floor rather than a
-            // cap: the row ends up the taller of what it asked for and what its cells need. A per cent is
-            // relative to the table's own height, so it can only be read when the table declared one;
-            // against an auto height the per cent says nothing and the row takes its content instead.
-            var declared = row.Box.Style.Height.HasValue
-                ? row.Box.Style.Height
-                : row.Box.HintedHeight ?? row.Box.Style.Height;
+            // A row may declare a size of its own along the axis the rows run - the physical height of a
+            // horizontal table and its width of a vertical one - and CSS 2.1 §17.5.3 makes it a floor
+            // rather than a cap: the row ends up the larger of what it asked for and what its cells need.
+            // A per cent is relative to the table's own size on that axis, so it can only be read where
+            // the table declared one; against an auto size the per cent says nothing and the row takes
+            // its content instead.
+            var declared = BlockLength(row.Box, vertical);
 
             row.HeightDeclared = declared.HasValue;
 
             row.Declared = declared.Kind == StyleLengthKind.Percent
-                ? tableHeight is { } height ? Math.Max(0, declared.Resolve(height)) : 0
+                ? targetBlock is { } stated ? Math.Max(0, declared.Resolve(stated)) : 0
                 : declared.HasValue
-                    ? Math.Max(0, declared.Resolve(context.ContainingBlock.Height))
+                    ? Math.Max(0, declared.Resolve(vertical ? context.ContainingBlock.Width : context.ContainingBlock.Height))
                     : 0;
 
             foreach (var cell in row.Cells)
             {
                 var width = ColumnSpanWidth(build.Grid, cell, spacing);
-                var styleInsetsV = StyleInsetsV(cell.Box, basis);
-                var contentWidth = Math.Max(0, width - cell.Insets.Horizontal);
-                var cellContext = context.ForContainingBlock(new Size(contentWidth, 0));
+                var styleInsetsBlock = StyleInsets(cell.Box, basis, !vertical);
+                var contentInline = Math.Max(0, width - InlineInsets(cell.Insets, vertical));
+
+                // The cell may be orthogonal to the table it stands in, and it is the cell's own
+                // writing mode that tells the layout inside it which axis is which. What the grid has
+                // settled is the extent along the axis its columns run, handed down as that physical
+                // pair with the other axis left open (CSS Writing Modes 3 §9.2).
+                var cellContext = context.ForContainingBlock(
+                    build.Flow.SizeOf(contentInline, 0), vertical);
 
                 // The constraint describes the border box the cell's own style would produce, so the
-                // block layout inside it resolves to the width the column settled on. The cell's own
-                // width and min/max declarations have already taken part in that column sizing; asking
-                // them again here would resolve a percentage against the cell's content box - a
-                // 33.33% cell inside a 198-pixel box measured its content at 66 pixels and wrapped
-                // several times, making the row taller than the content it ended up drawing.
+                // block layout inside it resolves to the size the column settled on. Down a column the
+                // columns run along the physical height, so the constraint carries it there and the
+                // context says so. The cell's own width and min/max declarations have already taken part
+                // in that column sizing; asking them again here would resolve a percentage against the
+                // cell's content box - a 33.33% cell inside a 198-pixel box measured its content at 66
+                // pixels and wrapped several times, making the row taller than the content it ended up
+                // drawing.
                 var measured = _engine.Measure(
                     cell.Box,
-                    MeasureConstraints.Definite(width),
+                    vertical ? MeasureConstraints.FitHeight(width) : MeasureConstraints.Definite(width),
                     cellContext);
 
-                var contentHeight = Math.Max(0, measured.Height - styleInsetsV);
+                // A cell turned aside from the table it stands in can have its own line running along
+                // the axis the rows run, and a block along its own line fills the room it is given
+                // rather than asking its content - given no room, it reports none, and the row with it.
+                // Where the measurement did settle that axis its answer stands; where it settled
+                // nothing, the size the cell stated for that axis is what the row takes, and failing
+                // that the size its content asks for - the same suggestion the columns negotiate from
+                // (CSS Writing Modes 3 §9.2, which is what the orthogonal cell references hold to). A
+                // stated size is the cell's own used size here, so content past it overflows rather
+                // than growing the row (§17.5.3 read with CSS Sizing 3 §5.2).
+                // Only a cell turned aside from its table has its own line running along the axis the
+                // rows run, and only there can the measurement come back with nothing because the room
+                // it was given was nothing. A cell that runs the same way as its table answered for
+                // itself above, and its answer stands.
+                var turned = cell.Box.Flow.IsVertical != vertical;
+                var measuredBlock = build.Flow.BlockExtent(measured.Width, measured.Height);
+                var settled = !turned || measuredBlock > BlockInsets(cell.Insets, vertical) + Epsilon;
+                var rowSized = BlockLength(cell.Box, vertical);
+                var askedFor = settled
+                    ? measuredBlock
+                      : rowSized is { HasValue: true } named && named.Kind != StyleLengthKind.Percent
+                        ? Math.Max(0, named.Resolve(0))
+                        : _engine.MeasureContentIntrinsic(cell.Box, cellContext).MaxContent;
+
+                var contentHeight = Math.Max(
+                    0,
+                    askedFor - styleInsetsBlock);
 
                 // A height a cell states is a floor under the row, not a size for the cell box: the cell
                 // is as tall as the row the floor helped settle. The row is one that asked for a height,
@@ -646,11 +772,11 @@ internal sealed partial class TableFormattingContext
                 // (CSS Tables 3 §5.2) - which is what keeps a fixed row beside an auto one at its size.
                 // A border-box height already holds the cell's padding and border, so only what is left
                 // over is content.
-                if (cell.Box.Style.Height is { HasValue: true } stated && stated.Kind != StyleLengthKind.Percent)
+                if (BlockLength(cell.Box, vertical) is { HasValue: true } block && block.Kind != StyleLengthKind.Percent)
                 {
-                    var floor = Math.Max(0, stated.Resolve(0));
+                    var floor = Math.Max(0, block.Resolve(0));
                     var contentFloor = BoxModel.IsBorderBox(cell.Box.Style)
-                        ? Math.Max(0, floor - cell.Insets.Vertical)
+                        ? Math.Max(0, floor - BlockInsets(cell.Insets, vertical))
                         : floor;
 
                     contentHeight = Math.Max(contentHeight, contentFloor);
@@ -659,19 +785,19 @@ internal sealed partial class TableFormattingContext
 
                 // A height a cell's attribute asks for is a floor under the row, not a size for the cell
                 // box either.
-                if (cell.Box.HintedHeight is { HasValue: true } hinted && hinted.Kind != StyleLengthKind.Percent)
+                if (HintedBlock(cell.Box, vertical) is { HasValue: true } hinted && hinted.Kind != StyleLengthKind.Percent)
                 {
                     contentHeight = Math.Max(contentHeight, Math.Max(0, hinted.Resolve(0)));
                     row.HeightDeclared = true;
                 }
 
-                cell.Height = contentHeight + cell.Insets.Vertical;
+                cell.Height = contentHeight + BlockInsets(cell.Insets, vertical);
             }
         }
     }
 
-    /// <summary>Measures the captions at the table's content width and splits them by side.</summary>
-    private void MeasureCaptions(TableBuild build, Double contentWidth, LayoutContext context)
+    /// <summary>Measures the captions at the table's content inline size and splits them by side.</summary>
+    private void MeasureCaptions(TableBuild build, Double contentInline, LayoutContext context)
     {
         build.CaptionTop = 0;
         build.CaptionBottom = 0;
@@ -681,24 +807,28 @@ internal sealed partial class TableFormattingContext
             return;
         }
 
-        var captionContext = context.ForContainingBlock(new Size(contentWidth, 0));
+        var vertical = build.Flow.IsVertical;
+        var captionContext = context.ForContainingBlock(build.Flow.SizeOf(contentInline, 0), vertical);
 
         foreach (var caption in build.Captions)
         {
-            caption.Margin = caption.Box.Style.Margin.Resolve(contentWidth);
-            var avail = Math.Max(0, contentWidth - caption.Margin.Horizontal);
-            var size = _engine.Measure(caption.Box, MeasureConstraints.FitWidth(avail), captionContext);
+            caption.Margin = caption.Box.Style.Margin.Resolve(contentInline);
+            var avail = Math.Max(0, contentInline - InlineInsets(caption.Margin, vertical));
+            var size = _engine.Measure(
+                caption.Box,
+                vertical ? MeasureConstraints.FitHeight(avail) : MeasureConstraints.FitWidth(avail),
+                captionContext);
 
-            caption.Width = size.Width;
-            caption.Height = size.Height;
+            caption.Width = build.Flow.InlineExtent(size.Width, size.Height);
+            caption.Height = build.Flow.BlockExtent(size.Width, size.Height);
 
             if (caption.Side == CaptionSide.Top)
             {
-                build.CaptionTop += caption.OuterHeight;
+                build.CaptionTop += caption.OuterBlock(vertical);
             }
             else
             {
-                build.CaptionBottom += caption.OuterHeight;
+                build.CaptionBottom += caption.OuterBlock(vertical);
             }
         }
     }
@@ -706,53 +836,74 @@ internal sealed partial class TableFormattingContext
     /// <summary>
     /// Measures the children of the table that are not table parts - a container of its own that the
     /// page wrote for a row group, say. They are blocks of the table's own content box, and the table
-    /// is as tall as they are.
+    /// is as large along the row axis as they are.
     /// </summary>
-    private void MeasureOthers(TableBuild build, Double contentWidth, LayoutContext context)
+    private void MeasureOthers(TableBuild build, Double contentInline, LayoutContext context)
     {
         if (build.Others.Count == 0)
         {
             return;
         }
 
-        var childContext = context.ForContainingBlock(new Size(contentWidth, 0));
+        var vertical = build.Flow.IsVertical;
+        var childContext = context.ForContainingBlock(build.Flow.SizeOf(contentInline, 0), vertical);
 
         foreach (var other in build.Others)
         {
-            var margin = other.Style.Margin.Resolve(contentWidth);
-            var avail = Math.Max(0, contentWidth - margin.Horizontal);
-            var size = _engine.Measure(other, MeasureConstraints.FitWidth(avail), childContext);
+            var margin = other.Style.Margin.Resolve(contentInline);
+            var avail = Math.Max(0, contentInline - InlineInsets(margin, vertical));
+            var size = _engine.Measure(
+                other,
+                vertical ? MeasureConstraints.FitHeight(avail) : MeasureConstraints.FitWidth(avail),
+                childContext);
 
-            build.OtherHeights.Add(size.Height + margin.Vertical);
+            build.OtherHeights.Add(build.Flow.BlockExtent(size.Width, size.Height) + BlockInsets(margin, vertical));
             build.OtherMargins.Add(margin);
-            build.OtherWidths.Add(size.Width);
+            build.OtherWidths.Add(build.Flow.InlineExtent(size.Width, size.Height));
         }
     }
 
-    /// <summary>Reads the width hints a <c>col</c> or <c>colgroup</c> declared, in column order.</summary>
+    /// <summary>
+    /// Reads the width hints a <c>col</c> or <c>colgroup</c> declared, in column order. The lists are
+    /// keyed by <em>column</em> rather than by element, because a <c>col span=2</c> stands for two of
+    /// them and a <c>colgroup span=4</c> with no <c>col</c> inside for four (CSS 2.1 §11.2.1) - and a
+    /// group that names more columns than its children cover still stands for the rest.
+    /// </summary>
     private static void CollectColumnHints(TableBuild build, Double basis)
     {
+        var vertical = build.Flow.IsVertical;
+
         foreach (var child in build.Box.Children)
         {
             switch (child.Kind)
             {
                 case BoxKind.TableColumn:
-                    build.ColumnHints.Add(HintOf(child, basis));
-                    build.ColumnBoxes.Add(child);
-                    build.ColumnGroupBoxes.Add(null);
+                    AddColumns(build, child, null, SpanOf(child) ?? 1, basis, vertical);
                     break;
 
                 case BoxKind.TableColumnGroup:
-                    var group = HintOf(child, basis);
+                    var groupHint = HintOf(child, basis, vertical);
+                    var covered = 0;
 
                     foreach (var column in child.Children)
                     {
-                        if (column.Kind == BoxKind.TableColumn)
+                        if (column.Kind != BoxKind.TableColumn)
                         {
-                            build.ColumnHints.Add(HintOf(column, basis) ?? group);
-                            build.ColumnBoxes.Add(column);
-                            build.ColumnGroupBoxes.Add(child);
+                            continue;
                         }
+
+                        var each = SpanOf(column) ?? 1;
+                        AddColumns(build, column, child, each, basis, vertical);
+                        covered += each;
+                    }
+
+                    var rest = Math.Max(0, (SpanOf(child) ?? covered) - covered);
+
+                    for (var at = 0; at < rest; at++)
+                    {
+                        build.ColumnHints.Add(groupHint);
+                        build.ColumnBoxes.Add(null);
+                        build.ColumnGroupBoxes.Add(child);
                     }
 
                     break;
@@ -760,12 +911,40 @@ internal sealed partial class TableFormattingContext
         }
     }
 
-    private static Double? HintOf(Box box, Double basis) =>
-        ResolveSpecified(box, basis, StyleInsetsH(box, basis));
+    /// <summary>Gives the columns a <c>col</c> covers its hint and its boxes.</summary>
+    private static void AddColumns(
+        TableBuild build,
+        Box column,
+        Box? group,
+        Int32 count,
+        Double basis,
+        Boolean vertical)
+    {
+        var hint = HintOf(column, basis, vertical);
+        var groupHint = group is null ? null : HintOf(group, basis, vertical);
 
-    /// <summary>Gets a declared width as a border-box width, or null when there is none.</summary>
-    private static Double? ResolveSpecified(Box box, Double basis, Double insets) =>
-        Pixels(box.Style.Width, basis, insets, BoxModel.IsBorderBox(box.Style));
+        for (var at = 0; at < count; at++)
+        {
+            build.ColumnHints.Add(hint ?? groupHint);
+            build.ColumnBoxes.Add(column);
+            build.ColumnGroupBoxes.Add(group);
+        }
+    }
+
+    /// <summary>Reads a <c>col</c> or <c>colgroup</c> span, or null where it names none.</summary>
+    private static Int32? SpanOf(Box box) =>
+        box.Element?.GetAttribute("span") is { } text &&
+        Int32.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) &&
+        value > 0
+            ? Math.Min(value, 1000)
+            : null;
+
+    private static Double? HintOf(Box box, Double basis, Boolean vertical) =>
+        ResolveSpecified(box, basis, StyleInsets(box, basis, vertical), vertical);
+
+    /// <summary>Gets a declared column-axis size as a border-box size, or null when there is none.</summary>
+    private static Double? ResolveSpecified(Box box, Double basis, Double insets, Boolean vertical) =>
+        Pixels(InlineLength(box, vertical), basis, insets, BoxModel.IsBorderBox(box.Style));
 
     /// <summary>
     /// Turns a width a cell or column asked for into the border-box width the grid settles by. A per-cent
@@ -899,9 +1078,59 @@ internal sealed partial class TableFormattingContext
         box.Style.BorderBottomWidth,
         box.Style.BorderLeftWidth);
 
-    private static Double StyleInsetsH(Box box, Double basis) =>
-        box.Style.Padding.Resolve(basis).Horizontal + StyleBorder(box).Horizontal;
+    /// <summary>
+    /// Gets a box's own insets along one of the table's axes. A percentage of either is read against the
+    /// containing block's inline size, which is the physical width of a row and its height down a column
+    /// (CSS Writing Modes 3 §9.1), and <paramref name="alongInline"/> names the column axis.
+    /// </summary>
+    private static Double StyleInsets(Box box, Double basis, Boolean alongInline) =>
+        alongInline
+            ? box.Style.Padding.Resolve(basis).Vertical + StyleBorder(box).Vertical
+            : box.Style.Padding.Resolve(basis).Horizontal + StyleBorder(box).Horizontal;
 
-    private static Double StyleInsetsV(Box box, Double basis) =>
-        box.Style.Padding.Resolve(basis).Vertical + StyleBorder(box).Vertical;
+    /// <summary>Gets the sum a thickness takes along the axis the columns run.</summary>
+    private static Double InlineInsets(Thickness insets, Boolean vertical) =>
+        vertical ? insets.Vertical : insets.Horizontal;
+
+    /// <summary>Gets the sum a thickness takes along the axis the rows run.</summary>
+    private static Double BlockInsets(Thickness insets, Boolean vertical) =>
+        vertical ? insets.Horizontal : insets.Vertical;
+
+    /// <summary>
+    /// Gets the length a box states its column-axis size with: its <c>width</c>, or its <c>height</c>
+    /// where the table reads down the page. An HTML attribute states the same physical extent the style
+    /// sheet would, so it follows the same exchange.
+    /// </summary>
+    private static StyleLength InlineLength(Box box, Boolean vertical) => vertical
+        ? box.Style.Height.HasValue ? box.Style.Height : box.HintedHeight ?? box.Style.Height
+        : box.Style.Width.HasValue ? box.Style.Width : box.HintedWidth ?? box.Style.Width;
+
+    /// <summary>Gets the length a box states its row-axis size with.</summary>
+    private static StyleLength BlockLength(Box box, Boolean vertical) => vertical
+        ? box.Style.Width.HasValue ? box.Style.Width : box.HintedWidth ?? box.Style.Width
+        : box.Style.Height.HasValue ? box.Style.Height : box.HintedHeight ?? box.Style.Height;
+
+    /// <summary>Gets the attribute that states a box's row-axis size, if one does.</summary>
+    private static StyleLength? HintedBlock(Box box, Boolean vertical) =>
+        vertical ? box.HintedWidth : box.HintedHeight;
+
+    /// <summary>Gets the physical edge the inline axis starts at: where a table's first column stands.</summary>
+    private static BorderSide InlineStartSide(WritingModeInfo flow) => flow.IsVertical
+        ? flow.InlineSign > 0 ? BorderSide.Top : BorderSide.Bottom
+        : flow.InlineSign > 0 ? BorderSide.Left : BorderSide.Right;
+
+    /// <summary>Gets the physical edge the inline axis ends at.</summary>
+    private static BorderSide InlineEndSide(WritingModeInfo flow) => flow.IsVertical
+        ? flow.InlineSign > 0 ? BorderSide.Bottom : BorderSide.Top
+        : flow.InlineSign > 0 ? BorderSide.Right : BorderSide.Left;
+
+    /// <summary>Gets the physical edge the block axis starts at: where a table's first row stands.</summary>
+    private static BorderSide BlockStartSide(WritingModeInfo flow) => flow.IsVertical
+        ? flow.BlockSign > 0 ? BorderSide.Left : BorderSide.Right
+        : BorderSide.Top;
+
+    /// <summary>Gets the physical edge the block axis ends at.</summary>
+    private static BorderSide BlockEndSide(WritingModeInfo flow) => flow.IsVertical
+        ? flow.BlockSign > 0 ? BorderSide.Right : BorderSide.Left
+        : BorderSide.Bottom;
 }

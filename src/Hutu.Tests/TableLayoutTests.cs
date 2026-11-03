@@ -875,6 +875,190 @@ public sealed class TableLayoutTests
         });
     }
 
+    /// <summary>
+    /// A table that reads right to left keeps the column numbers its markup gave and stands them from
+    /// the other edge of the grid, so the first cell of a row is the one against the physical right -
+    /// and the collapsed line each of its edges paints is the line standing there, not the one its
+    /// span starts on (CSS Writing Modes 3 §4.3, read the way the writing-modes progression
+    /// references hold to it).
+    /// </summary>
+    [Test]
+    public async Task ATableThatReadsRightToLeftMirrorsItsColumns()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table id='t' style='border-collapse:collapse;direction:rtl'>" +
+            "<tr>" +
+            "<td id='a' style='width:20px;padding:0;border-left:6px solid black'>A</td>" +
+            "<td id='b' style='width:20px;padding:0;border-right:2px solid black'>B</td>" +
+            "<td id='c' style='width:20px;padding:0'>C</td>" +
+            "</tr></table></body></html>");
+
+        var table = Find(view, "t");
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+        var c = Find(view, "c");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(a.BorderBox.Right, Is.EqualTo(table.BorderBox.Right).Within(0.5),
+                "the first cell of the row stands against the physical right edge");
+            Assert.That(b.BorderBox.Right, Is.EqualTo(a.BorderBox.X).Within(0.5),
+                "and the cell after it marches leftwards from there");
+            Assert.That(c.BorderBox.Right, Is.EqualTo(b.BorderBox.X).Within(0.5));
+            Assert.That(c.BorderBox.X, Is.EqualTo(table.BorderBox.X).Within(0.5));
+            Assert.That(a.Border.Left, Is.EqualTo(3).Within(0.5),
+                "six against two meet on the line a's physical left stands on, and the cell paints half of the winner");
+            Assert.That(b.Border.Right, Is.EqualTo(3).Within(0.5));
+            Assert.That(c.Border.Right, Is.EqualTo(0).Within(0.5),
+                "nothing was asked for on the line between the last two cells");
+        });
+    }
+
+    /// <summary>
+    /// A table that reads down the page lays its columns along that axis and stacks its rows across it,
+    /// so the table comes to the size of its grid turned through a quarter turn and its first row group
+    /// stands against the block-start edge - the right one under `vertical-rl` (CSS Writing Modes 3
+    /// §9.1, which is what the writing-modes progression references hold to).
+    /// </summary>
+    [Test]
+    public async Task AVerticalTableTurnsItsGridThroughTheWritingMode()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table id='t' style='writing-mode:vertical-rl;border-spacing:0'>" +
+            "<tbody id='first'><tr>" +
+            "<td id='a' style='padding:0;width:20px;height:20px'></td>" +
+            "<td id='b' style='padding:0;width:20px;height:20px'></td></tr></tbody>" +
+            "<tbody id='second'><tr>" +
+            "<td style='padding:0;width:20px;height:20px'></td>" +
+            "<td style='padding:0;width:20px;height:20px'></td></tr></tbody>" +
+            "</table></body></html>");
+
+        var table = Find(view, "t");
+        var first = Find(view, "first");
+        var second = Find(view, "second");
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(table.BorderBox.Width, Is.EqualTo(40).Within(0.5),
+                "the two rows are the ones that stack across the page");
+            Assert.That(table.BorderBox.Height, Is.EqualTo(40).Within(0.5),
+                "and the two columns run down it");
+            Assert.That(first.BorderBox.Right, Is.EqualTo(table.BorderBox.Right).Within(0.5),
+                "the first row group stands against the block-start edge");
+            Assert.That(second.BorderBox.Right, Is.EqualTo(first.BorderBox.X).Within(0.5),
+                "and the next group to the left of it");
+            Assert.That(a.BorderBox.Y, Is.EqualTo(table.BorderBox.Y).Within(0.5),
+                "a cell's row runs down the page, its first cell at the head");
+            Assert.That(b.BorderBox.Y, Is.EqualTo(a.BorderBox.Bottom).Within(0.5));
+        });
+    }
+
+    /// <summary>
+    /// A cell turned aside from the table it stands in lays its own line across the axis the columns
+    /// run, so the column is handed the room the content takes <em>across</em> that line rather than
+    /// the length of it: the height a horizontal cell's text comes to with the pair of padding it
+    /// writes above and below, which is the other pair from the one the cell asks along its own line
+    /// (CSS Writing Modes 3 §9.2). Handing the column the length of the line is what made such a cell
+    /// as tall as the text it was given - and as tall as the row it stands in.
+    /// </summary>
+    [Test]
+    public async Task AColumnDownThePageHoldsWhatItsCellAsksAcrossItsLine()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table id='t' style='writing-mode:vertical-lr;border-spacing:0'>" +
+            "<tr>" +
+            "<td id='a' style='writing-mode:horizontal-tb;width:20px;padding:2px 4px 3px 5px'>A</td>" +
+            "<td id='b' style='writing-mode:horizontal-tb;width:20px;padding:2px 4px 3px 5px'>B</td>" +
+            "</tr></table></body></html>");
+
+        var table = Find(view, "t");
+        var a = Find(view, "a");
+        var b = Find(view, "b");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(a.BorderBox.Width, Is.EqualTo(29).Within(0.5),
+                "the size the cell states along its own line, with the padding on either side of it");
+            Assert.That(a.BorderBox.Height, Is.EqualTo(15).Within(0.5),
+                "and across the line a line of ten with two written above it and three below");
+            Assert.That(b.BorderBox.X, Is.EqualTo(a.BorderBox.X).Within(0.5),
+                "the next cell of the row stands down the page, not across it");
+            Assert.That(b.BorderBox.Y, Is.EqualTo(a.BorderBox.Bottom).Within(0.5));
+            Assert.That(table.BorderBox.Height, Is.EqualTo(30).Within(0.5),
+                "the two cells fill the column one under the other");
+        });
+    }
+
+    /// <summary>
+    /// <c>vertical-align</c> moves a cell's content along the block axis of the <em>cell</em>, and a
+    /// cell written <c>vertical-rl</c> runs that axis from its right edge leftwards: what
+    /// <c>bottom</c> reaches for is the left edge, and the room the content leaves is counted back
+    /// from the right (CSS Writing Modes 3 §9.2). Reading the extent as the largest coordinate rather
+    /// than the smallest left the cell with no content in its flow at all, so the whole of its width
+    /// was taken to be slack and the content was moved out of the cell beside it.
+    /// </summary>
+    [Test]
+    public async Task ARightToLeftCellStandsItsContentOffTheEdgeItsOwnBlockEndIs()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-spacing:0'>" +
+            "<tr><td id='top' style='writing-mode:vertical-rl;width:40px;padding:0;vertical-align:top'>A</td></tr>" +
+            "<tr><td id='bottom' style='writing-mode:vertical-rl;width:40px;padding:0;vertical-align:bottom'>A</td></tr>" +
+            "</table></body></html>");
+
+        var top = Find(view, "top");
+        var bottom = Find(view, "bottom");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(top.Children[0].BorderBox.Right, Is.EqualTo(top.BorderBox.Right).Within(0.5),
+                "the block of a right-to-left cell begins at its right edge, and top leaves it there");
+            Assert.That(bottom.Children[0].BorderBox.X, Is.EqualTo(bottom.BorderBox.X).Within(0.5),
+                "while bottom stands the content off the edge that block ends at, which is the left one");
+        });
+    }
+
+    /// <summary>
+    /// A <c>col</c> and the <c>colgroup</c> around it are given the band of grid their span covers, so
+    /// that a background they carry paints across every column they stand for (CSS 2.1 §17.5.2). The
+    /// span counts columns rather than elements: <c>col span=2</c> is two columns, and the group that
+    /// holds it names three of its own.
+    /// </summary>
+    [Test]
+    public async Task AColumnCoversTheColumnsItsSpanNames()
+    {
+        using var view = CreateView(400);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table style='border-spacing:0'>" +
+            "<colgroup id='g' span=3><col id='c' span=2></colgroup>" +
+            "<tr><td style='padding:0;width:20px'></td><td style='padding:0;width:20px'></td><td style='padding:0;width:20px'></td></tr>" +
+            "</table></body></html>");
+
+        var column = Find(view, "c");
+        var group = Find(view, "g");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(column.BorderBox.Width, Is.EqualTo(40).Within(0.5),
+                "the col covers the two columns its span names");
+            Assert.That(group.BorderBox.Width, Is.EqualTo(60).Within(0.5),
+                "and the group covers the three it was told to stand for");
+            Assert.That(group.BorderBox.X, Is.EqualTo(column.BorderBox.X).Within(0.5),
+                "both start at the first column they share");
+        });
+    }
+
     private static LayoutBox Find(HutuViewInternal view, String id)
     {
         var root = view.Layout?.Root;

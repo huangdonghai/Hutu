@@ -879,7 +879,8 @@ internal sealed record LayoutProfile(
                         at,
                         box.Vertical ? box.BorderBox.Height : box.BorderBox.Width,
                         standing,
-                        insets));
+                        insets,
+                        asked[at].Font));
                 }
             }
         }
@@ -891,7 +892,7 @@ internal sealed record LayoutProfile(
     }
 
     /// <summary>Carries one decorating box's inset out along the text it decorates.</summary>
-    private static void Trim(List<TrimmedRun> runs)
+    private void Trim(List<TrimmedRun> runs)
     {
         var insets = runs[0].Insets;
 
@@ -907,6 +908,22 @@ internal sealed record LayoutProfile(
             }
 
             var (start, end) = Distances(insets, total, thickness);
+
+            // The spaces the decorated text opens and closes with are pulled off the ends as well where
+            // the page asked for it: the line stops at the first letter it has a rule to stand under and
+            // begins again at the last, however much white space the mode kept on either side of them
+            // (CSS Text Decoration 4 §2.9.2). What lies between two letters is left alone, since that is
+            // part of the text the one rule runs across.
+            if (insets.Spaces.HasFlag(DecorationSkipSpaces.Start))
+            {
+                start += segment[0].Spaces(_measurer, fromEnd: false);
+            }
+
+            if (insets.Spaces.HasFlag(DecorationSkipSpaces.End))
+            {
+                end += segment[^1].Spaces(_measurer, fromEnd: true);
+            }
+
             var pulls = new Double[segment.Count];
             var pushes = new Double[segment.Count];
 
@@ -982,12 +999,46 @@ internal sealed record LayoutProfile(
         Int32 At,
         Double Size,
         LayoutBox? Line,
-        DecorationInsets Insets)
+        DecorationInsets Insets,
+        FontStyle Font)
     {
         internal Double Thickness =>
             Box.DecorationPlacements is { } placed && At < placed.Count
                 ? Math.Max(1, placed[At].UnderlineThickness)
                 : 1;
+
+        /// <summary>
+        /// Gets how far the white space this run opens (or closes) with reaches along the line, which is
+        /// the room a decoration asked to skip its spaces pulls off that end. A run that begins with a
+        /// letter answers with nothing, and so does one that is nothing but spaces: the room of a run
+        /// with no letter on the far side of it belongs to the line rather than to a space to skip.
+        /// </summary>
+        internal Double Spaces(ITextMeasurer measurer, Boolean fromEnd)
+        {
+            if (Box.Kind != LayoutKind.Text || Box.Text is not { Length: > 0 } text)
+            {
+                return 0.0;
+            }
+
+            var run = 0;
+
+            while (run < text.Length && Char.IsWhiteSpace(text[fromEnd ? text.Length - 1 - run : run]))
+            {
+                run++;
+            }
+
+            if (run == 0 || run == text.Length)
+            {
+                return 0.0;
+            }
+
+            // The run's own axis is what the answer is measured along: down a column the spaces step
+            // from cell to cell, which is the extent the line is pulled back by.
+            return Math.Min(Size, measurer.MeasureAdvance(
+                text.Substring(fromEnd ? text.Length - run : 0, run),
+                Font,
+                Box.Source.Style.Flow));
+        }
 
         /// <summary>Says to the run where the ends of this one line stand.</summary>
         internal void Apply(Double start, Double end)

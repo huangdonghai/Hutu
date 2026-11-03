@@ -1,4 +1,4 @@
-﻿using AngleSharp.Css.Dom;
+using AngleSharp.Css.Dom;
 using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
@@ -114,7 +114,7 @@ internal sealed class InlineLayout
         Double maxInline,
         WritingModeInfo flow,
         InlineContext context,
-        Double indent,
+        TextIndentation indent,
         InlineStart? start = null)
     {
         // A plan that begins partway through the content belongs to one fragment, not to the box: it is
@@ -157,6 +157,11 @@ internal sealed class InlineLayout
             Ellipsize(lines, maxInline, flow, ellipsis, container);
         }
 
+        // The lines the block reached are then scaled to fill their line boxes, where the page asked for
+        // fitting: the breaks are already settled, and what changes is how big the text on each line is
+        // drawn (CSS Text 5 §1.1, Appendix A - applied after wrapping, before justification).
+        FitLines(container, lines, context);
+
         lines = AddInterlineNotes(container, lines, maxInline, flow, context);
 
         _plans[key] = lines;
@@ -175,6 +180,173 @@ internal sealed class InlineLayout
         {
             EllipsizeLine(line, maxInline, flow, mark, container, force: false);
         }
+    }
+
+    /// <summary>
+    /// Scales the block's lines so the text on each of them fills its line box, which is what
+    /// <c>text-fit</c> asks for (CSS Text 5 §1.1).
+    /// </summary>
+    /// <remarks>
+    /// A line's factor is the room the fitting can hand to its text divided by the room that text takes:
+    /// the scalable parts are the text and the spacing that travels with the font size, while a replaced
+    /// box, an atomic inline and a spacing written as a length stay at the size they were written at and
+    /// come off the room first (§1.1.1). The direction says which lines the property reaches at all - a
+    /// block that grows leaves a line that already overflows alone - and the scaling says whether one
+    /// factor serves every line or each has its own, with <c>per-line</c> holding the block's last line
+    /// and any line a forced break ended unscaled.
+    /// </remarks>
+    private void FitLines(Box container, List<Line> lines, InlineContext context)
+    {
+        var fit = container.Style.TextFitting;
+
+        if (fit.IsNone || lines.Count == 0)
+        {
+            return;
+        }
+
+        // A line whose room depends on how far down the block it stands is a line the rule leaves alone,
+        // and floats are exactly that: the fitting is switched off for the whole block (§1.1).
+        if (context.Containing.Floats is not null)
+        {
+            return;
+        }
+
+        var factors = new Double[lines.Count];
+        var shared = 1.0;
+
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+
+            // Nothing to scale, or no room to scale into, is a line drawn at the size it stands at. What
+            // the line holds that the fitting cannot reach is everything the text does not account for:
+            // the boxes of replaced and atomic content, an inline element's own padding, border and margin
+            // along the line, and the room the line's trailing spaces still take - all of which stand at
+            // the size they were written at while the text is stretched or shrunk around them
+            // (CSS Text 5 §1.1.1).
+            var scalable = ScalableExtent(line);
+            var room = line.Extent - line.Indent - Math.Max(0, line.Used - scalable);
+
+            if (scalable <= 0 || room <= 0)
+            {
+                factors[index] = 1;
+                continue;
+            }
+
+            var factor = room / scalable;
+
+            factors[index] = fit.Clamp(fit.Mode switch
+            {
+                TextFitMode.Grow => Math.Max(1, factor),
+                TextFitMode.Shrink => Math.Min(1, factor),
+                _ => 1,
+            });
+
+            if (index == 0 || factors[index] < shared)
+            {
+                shared = factors[index];
+            }
+        }
+
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+
+            var factor = fit.Scaling switch
+            {
+                // The last line of the block, and any line a forced break ended, keep the size they were
+                // written at: `per-line` is the mode that says so (CSS Text 5 §1.1).
+                TextFitScaling.PerLine when index == lines.Count - 1 || line.ForceEnded => 1,
+                TextFitScaling.PerLine or TextFitScaling.PerLineAll => factors[index],
+                _ => shared,
+            };
+
+            ScaleLine(container, line, factor);
+        }
+    }
+
+    /// <summary>
+    /// Gets the room a line's scalable parts take: the text it holds, with the boxes the fitting cannot
+    /// reach left out (CSS Text 5 §1.1.1).
+    /// </summary>
+    private static Double ScalableExtent(Line line)
+    {
+        var total = 0.0;
+
+        foreach (var fragment in line.Fragments)
+        {
+            if (!fragment.IsReplaced && fragment.Atomic is null && !fragment.OutOfFlow)
+            {
+                total += fragment.Width;
+            }
+        }
+
+        return total;
+    }
+
+
+    /// <summary>
+    /// Puts a line at the factor the fitting worked out for it: the runs it holds are widened by it, the
+    /// line's height goes with them where it came from the font rather than from the page, and the scale
+    /// is carried for the placing pass, which draws the runs at the size it says.
+    /// </summary>
+    private static void ScaleLine(Box container, Line line, Double factor)
+    {
+        if (Math.Abs(factor - 1) < 0.0001)
+        {
+            return;
+        }
+
+        var scalable = 0.0;
+
+        foreach (var fragment in line.Fragments)
+        {
+            if (!fragment.IsReplaced && fragment.Atomic is null && !fragment.OutOfFlow)
+            {
+                fragment.Width *= factor;
+                scalable += fragment.Width / factor;
+            }
+        }
+
+        // Only the text moved: what the line held at its written size keeps its room, and the rest of the
+        // line's extent is that part plus the text at the new size.
+        line.Used += scalable * (factor - 1);
+        line.NaturalUsed = line.NaturalUsed is { } natural ? natural + scalable * (factor - 1) : line.Used;
+        line.Scale = factor;
+
+        // A line's height goes with its text where it is a multiple of the font it is drawn at - a bare
+        // number, a percentage, or `normal`. A length the page wrote is its own number and stands, however
+        // big the glyphs get around it (CSS Text 5 §1.1, and the `line-height: 20px` reference of
+        // grow-per-line-all-line-height measures both readings).
+        if (container.Style.LineHeightTracksFont)
+        {
+            line.Ascent *= factor;
+            line.Height *= factor;
+        }
+    }
+
+    /// <summary>
+    /// Gets the font a run on a fitted line is drawn and measured with: the fragment's own face at the
+    /// size the fitting scaled the line to. The computed font size is left where the page put it - the
+    /// scaling reaches the used size alone, which is why the line-height and the spacing the style carries
+    /// are read from the style rather than from this font (CSS Text 5 §1.1).
+    /// </summary>
+    private static FontStyle FittedFont(Line line, ComputedStyle style)
+    {
+        var font = style.GetFont();
+
+        if (Math.Abs(line.Scale - 1) < 0.0001)
+        {
+            return font;
+        }
+
+        return new FontStyle(
+            font.Family,
+            font.Size * line.Scale,
+            font.Weight,
+            font.IsItalic,
+            font.Adjust,
+            font.Features);
     }
 
     /// <summary>
@@ -319,7 +491,7 @@ internal sealed class InlineLayout
         Double maxInline,
         WritingModeInfo flow,
         InlineContext context,
-        Double indent,
+        TextIndentation indent,
         ComputedStyle strut,
         List<Line> greedy)
     {
@@ -382,7 +554,7 @@ internal sealed class InlineLayout
         Double maxInline,
         WritingModeInfo flow,
         InlineContext context,
-        Double indent,
+        TextIndentation indent,
         InlineStart start)
     {
         var items = new List<InlineItem>();
@@ -614,12 +786,16 @@ internal sealed class InlineLayout
 
         // The first line carries the box's indentation ahead of anything set on it, so both extents the
         // content asks for are that much wider: one line is the indent and the line, and the narrowest
-        // break is the indent and the longest thing that cannot be broken.
+        // break is the indent and the longest thing that cannot be broken. A forced break ends the line
+        // that carried it, and the next segment asks for the distance only where the modifiers put it on
+        // a line after a break (CSS Text 3 §5.2).
         var indent = Indentation(container, flow, basis);
+        var headIndent = indent.Carries(first: true, afterBreak: false) ? indent.Distance : 0;
+        var breakIndent = indent.Carries(first: false, afterBreak: true) ? indent.Distance : 0;
 
         var minContent = 0.0;
-        var maxContent = indent;
-        var unbreakable = indent;
+        var maxContent = headIndent;
+        var unbreakable = headIndent;
 
         // The widest line of those a forced break makes. A forced break is honoured even by the
         // max-content size (CSS Sizing 3 §5.1), so the lines it makes lie beside each other rather than
@@ -654,6 +830,11 @@ internal sealed class InlineLayout
         // content needs, wherever the two characters happened to be written.
         var previous = -1;
 
+        // Where each item stands along the one line the content needs. A reading hanging past its pair
+        // asks the room of a neighbour whose tab stops are already decided by that place, and the walk
+        // from the pair outward cannot answer it for itself.
+        var begins = new Double[items.Count];
+
         for (var position = 0; position < items.Count; position++)
         {
             var item = items[position];
@@ -668,13 +849,13 @@ internal sealed class InlineLayout
                 minContent = Math.Max(minContent, unbreakable - ending);
                 widest = Math.Max(widest, maxContent);
 
-                // The line the break ends takes its trailing space with it, and the one it begins
-                // starts where any line but the first does: no indentation, and no space of its own
-                // ahead of the first thing drawn on it.
-                maxContent = 0;
+                // The line the break ends takes its trailing space with it, and the one it begins starts
+                // with no space of its own ahead of the first thing drawn on it, and with the box's
+                // indentation only where the modifiers say a line after a break carries it.
+                maxContent = breakIndent;
                 trailing = 0;
                 sawContent = false;
-                unbreakable = 0;
+                unbreakable = breakIndent;
                 previous = -1;
                 segment++;
                 tail = null;
@@ -686,6 +867,7 @@ internal sealed class InlineLayout
             var insets = Advance(open, item.Inline, carried: null, origin: 0, apply: true, step: null);
             maxContent += insets;
             unbreakable += insets;
+            begins[position] = maxContent + trailing;
 
             if (item.IsOutOfFlow)
             {
@@ -708,10 +890,14 @@ internal sealed class InlineLayout
             }
 
             // An inline-block is atomic too: it takes the extent its own content asks for and offers no
-            // break inside itself, however its content would have been broken had it stood on its own.
+            // break inside itself, however its content would have been broken had it stood on its own. The floats the
+            // line stands among are left behind here as well - an extent asked of an atomic box is asked of its
+            // own root, not of the band around the line (CSS 2.1 §9.4.1, §9.5).
             if (item.IsAtomic)
             {
-                var intrinsic = context.Engine.MeasureIntrinsic(item.Box, context.Containing);
+                var intrinsic = context.Engine.MeasureIntrinsic(
+                    item.Box,
+                    context.Containing.WithFloats(null));
                 var (start, end) = flow.InlineMargins(item.Box.Style.Margin.Resolve(basis));
                 var extent = intrinsic.MaxContent + start + end;
 
@@ -728,9 +914,10 @@ internal sealed class InlineLayout
             // them needs and offers no break opportunity inside itself.
             if (item.IsRuby)
             {
-                var baseWidth = Measure(item.Style, item.Text!, flow);
+                var baseWidth = PairWidth(item.Style, container.Style, item.Text!, maxContent + trailing, flow);
                 var annotationWidth = Measure(item.AnnotationStyle, item.AnnotationText!, flow);
-                var (beforeRoom, afterRoom) = OverhangRoom(items, position);
+                var (beforeRoom, afterRoom) = OverhangRoom(
+                    items, position, maxContent + trailing, baseWidth, annotationWidth, begins, container.Style);
                 var extent = RubyExtent(item, baseWidth, annotationWidth, beforeRoom, afterRoom);
 
                 maxContent += trailing + extent;
@@ -2010,8 +2197,14 @@ internal sealed class InlineLayout
         var shift = line.BandShifts is { } bands && bands.TryGetValue(ancestor, out var aligned)
             ? aligned
             : 0;
-        var blockOffset = cursor + line.Ascent + shift - ancestor.Ascent - ancestor.BlockStartInset;
-        var blockSize = ancestor.Ascent + ancestor.Descent + ancestor.BlockStartInset + ancestor.BlockEndInset;
+
+        // The band an element draws is as tall as the font it is set in, so on a line the fitting scaled
+        // it goes with the text - while the padding, border and margin around it are lengths the page
+        // wrote, and those stand at the size they were written at (CSS Text 5 §1.1).
+        var ascent = ancestor.Ascent * line.Scale;
+        var descent = ancestor.Descent * line.Scale;
+        var blockOffset = cursor + line.Ascent + shift - ascent - ancestor.BlockStartInset;
+        var blockSize = ascent + descent + ancestor.BlockStartInset + ancestor.BlockEndInset;
 
         item.Node!.BorderBox = flow.Map(contentBox, item.Start, end - item.Start, blockOffset, blockSize);
 
@@ -2156,7 +2349,8 @@ internal sealed class InlineLayout
             // still the font's content area, so it does not grow to cover an image taller than its text.
             Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Image)
             {
-                Font = fragment.Style.GetFont(),
+                Font = FittedFont(line, fragment.Style),
+                FitScale = line.Scale,
                 Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
                 Flow = fragment.Flow,
                 ImageUrl = fragment.Box.SourceUrl,
@@ -2178,25 +2372,39 @@ internal sealed class InlineLayout
             // the pair were a plain inline and the reading were not there (CSS Ruby 1 §3.6). The
             // reading is laid over the base's content edge, which the shared baseline fixes, and it
             // only grows the line when it reaches past the leading the line already has (Build).
-            var metrics = measurer.GetMetrics(fragment.Style.GetFont());
-            var baseline = line.Ascent + fragment.BaselineShift;
+            var metrics = measurer.GetMetrics(FittedFont(line, fragment.Style));
+            // The turned base is centred across the line by the drawing, so the reading that stands off
+            // its edge is stood off the same middle - see `Marks` for the same exchange.
+            var turned = fragment.Flow.IsVertical && !fragment.Flow.IsSideways &&
+                fragment.Flow.Orientation == TextOrientation.Sideways;
+            var baseline = (turned
+                ? (line.Height + metrics.Ascent - metrics.Descent) / 2
+                : line.Ascent) + fragment.BaselineShift;
 
             // The base keeps the band its own line-height asks for rather than the whole line box: a
             // line grown by the reading - or by a taller neighbour - leaves the base in the band around
             // the shared baseline, which is where its own leading puts it and where the reading, standing
             // just past its content edge, no longer covers it.
-            var band = Math.Min(line.Height, LineBoxHeight(measurer, fragment.Style, fragment.Style.GetFont()));
+            var band = Math.Min(line.Height, LineBoxHeight(measurer, fragment.Style, FittedFont(line, fragment.Style)));
             var bandTop = baseline - metrics.Ascent - ((band - metrics.Ascent - metrics.Descent) / 2);
+
+            // A reading that hung over the text beside its pair pushed the pair along to make room for
+            // itself; otherwise the base keeps the middle of the room the two halves share.
+            var standing = fragment.Hang ?? RubyAligned(
+                fragment.Box.Style.RubyAlign,
+                fragment.Width,
+                fragment.BaseWidth);
 
             Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Text)
             {
                 Text = fragment.Text,
-                Font = fragment.Style.GetFont(),
+                Font = FittedFont(line, fragment.Style),
+                FitScale = line.Scale,
                 Baseline = flow.BlockOffsetFromLeft(band, baseline - bandTop),
                 Flow = fragment.Flow,
                 BorderBox = flow.Map(
                     contentBox,
-                    origin + RubyAligned(fragment.Box.Style.RubyAlign, fragment.Width, fragment.BaseWidth),
+                    origin + standing,
                     fragment.BaseWidth,
                     cursor + bandTop,
                     band),
@@ -2206,8 +2414,8 @@ internal sealed class InlineLayout
                 annotation,
                 contentBox,
                 flow,
-                origin,
-                fragment.Width,
+                origin + standing,
+                fragment.BaseWidth,
                 cursor + (annotation.Under
                     ? baseline + metrics.Descent
                     : baseline - metrics.Ascent - annotation.Block),
@@ -2236,7 +2444,8 @@ internal sealed class InlineLayout
                 ? spaces[..text.Length]
                 : null,
             AutoSpaceRoom = fragment.AutoSpaceRoom,
-            Font = fragment.Style.GetFont(),
+            Font = FittedFont(line, fragment.Style),
+            FitScale = line.Scale,
             Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
             Flow = fragment.Flow,
             HangSide = fragment.HangSide,
@@ -2371,7 +2580,17 @@ internal sealed class InlineLayout
         var spacing = fragment.Style.LetterSpacing;
         var words = fragment.Style.WordSpacing;
         var face = measurer.GetMetrics(font);
-        var baseline = line.Ascent + fragment.BaselineShift;
+        // A turned run stands with its em box centred across the line it fills, and the drawing places
+        // its baseline from that middle rather than from the ascent the line was measured with - which
+        // a taller neighbour, or a face resolved for the glyphs rather than the one the page named,
+        // moves. The marks stand off the text's own edge, so they are stood off the same middle, or a
+        // mark drifts away from the letters it marks (CSS Text Decoration 4 §5.2 with Writing Modes 3
+        // §5.2, which is what makes the two mirrored vertical modes read the same side of the text).
+        var turned = fragment.Flow.IsVertical && !fragment.Flow.IsSideways &&
+            fragment.Flow.Orientation == TextOrientation.Sideways;
+        var baseline = (turned
+            ? (line.Height + face.Ascent - face.Descent) / 2
+            : line.Ascent) + fragment.BaselineShift;
 
         // A mark stands just outside the text it marks - above the content edge for a mark on the
         // ascent side, below it for one on the descent side - and takes no room in the line: it may
@@ -3212,7 +3431,7 @@ internal sealed class InlineLayout
         WritingModeInfo flow,
         InlineContext context,
         ComputedStyle strut,
-        Double indent = 0,
+        TextIndentation indent = default,
         Boolean emergency = true,
         Boolean singleLine = false,
         Boolean settleEdges = true,
@@ -3259,12 +3478,15 @@ internal sealed class InlineLayout
             return leading;
         }
 
-        // Only the first line of the content is set in; the line after a forced break begins where any
-        // other line does, which is what leaving the indent behind on the first builder says. An indent
-        // is measured from the content edge and a float shortens the line from that same edge, so a
-        // float standing where the indent reaches leaves the line to start where the float ends, not
+        // The distance a line is set in by, measured from the edge its room begins at: a line the
+        // modifiers put the distance on takes it, and every other line begins where the box does.
+        Double Settled(Boolean first, Boolean afterBreak) =>
+            Inset(indent.Carries(first, afterBreak) ? indent.Distance : 0);
+
+        // An indent is measured from the content edge and a float shortens the line from that same edge,
+        // so a float standing where the indent reaches leaves the line to start where the float ends, not
         // that far past it. A negative indent hangs out of the box and is never pulled back in.
-        var leading = Inset(indent);
+        var leading = Settled(first: true, afterBreak: false);
         var builder = new LineBuilder(
             strut!,
             leading,
@@ -3330,7 +3552,7 @@ internal sealed class InlineLayout
                 flow.IsVertical,
                 _measurer,
                 startsParagraph: forced,
-                indent: Inset(0));
+                indent: Settled(first: false, afterBreak: forced));
             breakPoint = null;
             following = null;
             pendingGrace = 0;
@@ -3355,7 +3577,7 @@ internal sealed class InlineLayout
                     flow.IsVertical,
                     _measurer,
                     startsParagraph: false,
-                    indent: Inset(0));
+                    indent: Settled(first: false, afterBreak: false));
                 breakPoint = null;
                 following = null;
                 pendingGrace = 0;
@@ -3371,7 +3593,7 @@ internal sealed class InlineLayout
                     flow.IsVertical,
                     _measurer,
                     startsParagraph: false,
-                    indent: Inset(0));
+                    indent: Settled(first: false, afterBreak: false));
             }
         }
 
@@ -3420,9 +3642,15 @@ internal sealed class InlineLayout
             return true;
         }
 
+        // Where each item begins along the line the builder is filling. A reading hanging past its pair
+        // asks the room of a neighbour whose tabs are already placed, and only the line can say where.
+        var begins = new Double[items.Count];
+
         for (var index = 0; index < items.Count; index++)
         {
             var item = items[index];
+
+            begins[index] = builder.Width;
 
             if (item.IsBreak)
             {
@@ -4137,8 +4365,9 @@ internal sealed class InlineLayout
                 var rubyFlow = item.Box.Flow;
                 var baseFlow = ResolveOrientation(item.Text!, rubyFlow);
                 var annotation = MeasureAnnotation(item);
-                var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
-                var (before, after) = OverhangRoom(items, index);
+                var baseWidth = PairWidth(item.Style, strut, item.Text!, builder.Width, rubyFlow);
+                var (before, after) = OverhangRoom(
+                    items, index, builder.Width, baseWidth, annotation.Width, begins, strut);
                 var extent = RubyExtent(item, baseWidth, annotation.Width, before, after);
 
                 var band = room.Height;
@@ -4165,9 +4394,25 @@ internal sealed class InlineLayout
                         // are left.
                         room.Drop(builder.ExtentFor(item.Inline) + extent);
                     }
+
+                    // The pair now stands where a different line left it, and the room beside it is
+                    // another question: it is asked again of the place the pair holds here.
+                    begins[index] = builder.Width;
+                    (before, after) = OverhangRoom(
+                        items, index, builder.Width, baseWidth, annotation.Width, begins, strut);
+                    extent = RubyExtent(item, baseWidth, annotation.Width, before, after);
                 }
 
-                builder.AddRuby(item.Text!, extent, item.Style, item.Box, baseFlow, annotation, baseWidth, item.Inline);
+                builder.AddRuby(
+                    item.Text!,
+                    extent,
+                    item.Style,
+                    item.Box,
+                    baseFlow,
+                    annotation,
+                    baseWidth,
+                    RubyHang(item, extent, baseWidth, annotation.Width, after),
+                    item.Inline);
                 breakPoint = null;
                 following = null;
                 continue;
@@ -4340,7 +4585,8 @@ internal sealed class InlineLayout
                         // gives the break as an opportunity of its own, the line is filled to its end edge.
                         var asks = (at == run.Start && !spaces && !letters &&
                             !TextChunker.IsBreakSpace(run.Source[run.Start])
-                            ? width + trailed + mark
+                            ? AskWidth(item, strut, run.Source, run.Start, run.Length, width, trailed, mark,
+                                builder.Width, stepsSpaces, itemFlow)
                             : advance) - trim.BoundaryDelta + auto.BoundaryDelta - auto.RetroDelta;
 
                         // A closing punctuation that ends the line may give up its trailing half. The
@@ -6258,6 +6504,73 @@ internal sealed class InlineLayout
     private static readonly String UprightHyphen = Char.ConvertFromUtf32(0x2010);
 
     /// <summary>
+    /// Measures what a pair's own characters ask of the line. A tab inside the base runs the line on to
+    /// its next stop rather than by an advance of its own, which is a question about where the pair
+    /// stands rather than about the font (CSS Text 3 §4.2).
+    /// </summary>
+    private Double PairWidth(
+        ComputedStyle style,
+        ComputedStyle tabStyle,
+        String text,
+        Double position,
+        WritingModeInfo flow) =>
+        text.IndexOf('\t') < 0
+            ? Measure(style, text, flow)
+            : WhiteSpaceWidth(style, tabStyle, text, 0, text.Length, position, flow);
+
+    /// <summary>
+    /// Gets the room a run that opens with content asks the line for before the line steps inside it. The
+    /// opportunity inside a word is what the line falls back on once the word stands on a line of its own
+    /// and still does not fit, not a licence to fill the last of the line above with the end of it, so the
+    /// whole of the word is asked for - with the space that trails it and the mark a break draws. Where the
+    /// mode gives the line a place to end inside the run, after a preserved space it keeps (CSS Text 3
+    /// §4.1.3), the ask stops at the first of those: the line may genuinely be brought to an end there, and
+    /// a three-character box holding two kana and four ideographic spaces fills with one of those spaces
+    /// rather than moving the second kana down to begin the line.
+    /// </summary>
+    private Double AskWidth(
+        InlineItem item,
+        ComputedStyle strut,
+        String source,
+        Int32 start,
+        Int32 length,
+        Double width,
+        Double trailed,
+        Double mark,
+        Double position,
+        Boolean stepsSpaces,
+        WritingModeInfo flow)
+    {
+        if (stepsSpaces)
+        {
+            var end = start + length;
+            var at = start;
+
+            while (at < end && !TextChunker.IsBreakSpace(source[at]))
+            {
+                at += TextClusters.UnitsAt(source, at, end);
+            }
+
+            if (at > start && at < end)
+            {
+                // The content up to the first space it holds, and that space: the line ends after it.
+                var leading = Measure(item.Style, source, start, at - start, flow);
+
+                return leading + WhiteSpaceWidth(
+                    item.Style,
+                    strut,
+                    source,
+                    at,
+                    TextClusters.UnitsAt(source, at, end),
+                    position + leading,
+                    flow);
+            }
+        }
+
+        return width + trailed + mark;
+    }
+
+    /// <summary>
     /// Gets the room the mark a break draws takes: the hyphenate character, set in the run's own font.
     /// </summary>
     private static Double HyphenWidth(ITextMeasurer measurer, ComputedStyle style, WritingModeInfo flow) =>
@@ -7132,18 +7445,72 @@ internal sealed class InlineLayout
 
     /// <summary>
     /// Gets how far a reading may hang past its pair on each side: the room the text standing
-    /// directly beside the pair gives up (CSS Ruby 1 §5.1).
+    /// beside the pair gives up (CSS Ruby 1 §5.1).
     /// </summary>
-    private (Double Before, Double After) OverhangRoom(List<InlineItem> items, Int32 index) =>
-        (Spaces(items, index - 1, fromEnd: true), Spaces(items, index + 1, fromEnd: false));
+    private (Double Before, Double After) OverhangRoom(
+        List<InlineItem> items,
+        Int32 index,
+        Double position,
+        Double baseWidth,
+        Double annotationWidth,
+        Double[] begins,
+        ComputedStyle tabStyle)
+    {
+        var pair = items[index].Text;
+        var facing = String.IsNullOrEmpty(pair) ? '\0' : pair![0];
+        var before = Spaces(items, index - 1, fromEnd: true, position, facing, begins, tabStyle);
+
+        // A reading that cannot hang far enough forces its pair wider, and the wider pair carries the
+        // text after it along the line. What that side gives up is therefore asked of the place the
+        // reading itself reaches, which the room already found on this side decides.
+        var end = ReadingEnd(items[index], position, baseWidth, annotationWidth, before);
+        var after = Spaces(items, index + 1, fromEnd: false, end,
+            String.IsNullOrEmpty(pair) ? '\0' : pair[^1], begins, tabStyle);
+
+        return (before, after);
+    }
 
     /// <summary>
-    /// Measures the run of spaces a neighbour ends or begins with. A neighbour that is not a run of
-    /// text, or one whose edge is not a space, gives up nothing.
+    /// Gets where a reading reaches along the line: the pair's own characters stand where its alignment
+    /// puts them once the room beside it has been taken, and the reading is laid over them from there
+    /// (CSS Ruby 1 §4.3, §5.1).
     /// </summary>
-    private Double Spaces(List<InlineItem> items, Int32 at, Boolean fromEnd)
+    private static Double ReadingEnd(
+        InlineItem item,
+        Double position,
+        Double baseWidth,
+        Double annotationWidth,
+        Double before)
     {
-        var room = 0.0;
+        var excess = Math.Max(0, annotationWidth - baseWidth);
+        var start = position + HangPast(item, excess, before, fromEnd: true);
+
+        return item.Box.Style.RubyAlign switch
+        {
+            RubyAlign.Start or RubyAlign.SpaceBetween => start + annotationWidth,
+            RubyAlign.End => start + baseWidth,
+            _ => start + (baseWidth + annotationWidth) / 2,
+        };
+    }
+
+    /// <summary>
+    /// Measures the room one side of a pair gives up to a reading. The characters standing against the
+    /// pair are gathered outward - white space of any width, the blank side of a fullwidth mark, a
+    /// quarter of a middle dot - until one gives up nothing, and they are measured from the place the
+    /// line holds them at, because a tab's room is a distance to a stop (CSS Ruby 1 §5.1). A neighbour
+    /// that is not a run of text gives up nothing at all.
+    /// </summary>
+    private Double Spaces(
+        List<InlineItem> items,
+        Int32 at,
+        Boolean fromEnd,
+        Double position,
+        Char facing,
+        Double[] begins,
+        ComputedStyle tabStyle)
+    {
+        var given = 0.0;
+        var edge = position;
 
         for (var index = at; index >= 0 && index < items.Count; index += fromEnd ? -1 : 1)
         {
@@ -7156,46 +7523,71 @@ internal sealed class InlineLayout
             }
 
             var text = item.Text!;
-            var count = 0;
+            var flow = item.Box.Flow;
 
-            if (fromEnd)
+            // How many characters at the edge a reading may cover, counted outward until one keeps its
+            // whole room for itself.
+            var taken = 0;
+
+            while (taken < text.Length &&
+                HangShare(item, text, fromEnd ? text.Length - 1 - taken : taken, fromEnd, facing) > 0)
             {
-                while (count < text.Length && IsOverhangSpace(text[text.Length - 1 - count]))
-                {
-                    count++;
-                }
-            }
-            else
-            {
-                while (count < text.Length && IsOverhangSpace(text[count]))
-                {
-                    count++;
-                }
+                taken++;
             }
 
-            if (count == 0)
+            if (taken == 0)
             {
-                // A fullwidth punctuation mark beside the pair gives up part of its advance even
-                // though it is not a space (CSS Ruby 1 §5.1). Only the mark directly beside the pair
-                // counts: one standing past a space is not what the reading would cover.
-                if (room == 0)
-                {
-                    room += PunctuationRoom(item, fromEnd ? text[^1] : text[0], fromEnd);
-                }
-
                 break;
             }
 
-            var run = fromEnd ? text[^count..] : text[..count];
-            room += Measure(item.Style, run, item.Box.Flow);
+            var first = fromEnd ? text.Length - taken : 0;
 
-            if (count < text.Length)
+            // A tab runs the line on to its next stop rather than by any advance of its own, so what the
+            // neighbour gives up is measured from where the line stands at its edge: for the one behind
+            // the pair that is where the line left it, and for the one ahead where the reading ends.
+            var place = fromEnd
+                ? begins[index] + WhiteSpaceWidth(item.Style, tabStyle, text, 0, first, begins[index], flow)
+                : edge;
+
+            // The characters are then paid for in the order the line sets them: white space gives up all
+            // of its room, a mark only the part of the fullwidth one that faces the pair.
+            var cursor = first;
+
+            while (cursor < first + taken)
+            {
+                if (IsOverhangSpace(text[cursor]))
+                {
+                    var next = cursor;
+
+                    while (next < first + taken && IsOverhangSpace(text[next]))
+                    {
+                        next++;
+                    }
+
+                    var run = WhiteSpaceWidth(item.Style, tabStyle, text, cursor, next - cursor, place, flow);
+                    given += run;
+                    place += run;
+                    cursor = next;
+                    continue;
+                }
+
+                var units = TextChunker.UnitsAt(text, cursor);
+
+                given += HangShare(item, text, cursor, fromEnd, facing) *
+                    FullwidthRoom(item.Style, flow);
+                place += Measure(item.Style, text, cursor, units, flow);
+                cursor += units;
+            }
+
+            edge = fromEnd ? begins[index] : place;
+
+            if (taken < text.Length)
             {
                 break;
             }
         }
 
-        return room;
+        return given;
     }
 
     /// <summary>
@@ -7207,31 +7599,102 @@ internal sealed class InlineLayout
         character == '\t' || Char.GetUnicodeCategory(character) == UnicodeCategory.SpaceSeparator;
 
     /// <summary>
-    /// Gets the room a reading may take out of the punctuation beside its pair: half of a fullwidth
-    /// opening or closing punctuation mark on the side that faces the pair, and a quarter of a fullwidth
-    /// middle dot on either side (CSS Ruby 1 §5.1).
+    /// Gets what part of a full character's room a character standing beside a pair gives up to the
+    /// reading: all of white space, half of a fullwidth bracket on the blank side that faces the pair,
+    /// and a quarter of a middle dot on either side. A mark whose blank has already been taken by
+    /// <c>text-spacing-trim</c> has none left to give, and any other character gives up nothing at all -
+    /// which is where the reading stops (CSS Ruby 1 §5.1).
     /// </summary>
-    private Double PunctuationRoom(InlineItem item, Char character, Boolean fromEnd)
+    private Double HangShare(InlineItem item, String text, Int32 at, Boolean fromEnd, Char pair)
     {
-        var category = Char.GetUnicodeCategory(character);
-        var share = category switch
+        var character = text[at];
+
+        if (IsOverhangSpace(character))
         {
-            UnicodeCategory.OpenPunctuation => fromEnd ? 0 : 0.5,
-            UnicodeCategory.ClosePunctuation => fromEnd ? 0.5 : 0,
-            UnicodeCategory.OtherPunctuation when character == '\u30FB' => 0.25,
+            return 1;
+        }
+
+        var style = item.Style;
+        var codePoint = (Int32)character;
+        var kind = KindOf(style, codePoint);
+
+        // Only the blank side that looks at the pair is offered: an opening mark keeps its room on its
+        // far side and a closing mark on this, and a middle dot is blank on both.
+        var share = kind switch
+        {
+            PunctuationClass.Opening => fromEnd ? 0 : 0.5,
+            PunctuationClass.Closing => fromEnd ? 0.5 : 0,
+            PunctuationClass.Middle => 0.25,
             _ => 0,
         };
 
-        if (share == 0)
+        if (share == 0 ||
+            (kind != PunctuationClass.Middle &&
+                !IsFullwidthPunctuation(_measurer, style, codePoint)))
+        {
+            // A narrow parenthesis is a letter the reading must not cover, however the pair is set.
+            return 0;
+        }
+
+        // The character the pair stands against, and the one beyond, decide whether the blank is still
+        // there: a mark already trimmed by `text-spacing-trim` gives up nothing (CSS Ruby 1 §5.1).
+        var value = style.TextSpacingTrim;
+
+        if (value.All)
         {
             return 0;
         }
 
-        // Only the fullwidth forms give room: a narrow parenthesis is a letter the reading must not
-        // cover, however the pair is set.
-        var advance = Measure(item.Style, character.ToString(), item.Box.Flow);
+        var inward = at == (fromEnd ? text.Length - 1 : 0)
+            ? pair
+            : fromEnd ? text[at + 1] : text[at - 1];
 
-        return advance >= item.Style.GetFont().Size * 0.9 ? advance * share : 0;
+        if (value.Adjacent)
+        {
+            var trims = kind switch
+            {
+                PunctuationClass.Opening => TextSpacingTrim.TrimsOpening(
+                    NeighborOf(_measurer, style, inward), style.FontSize),
+                PunctuationClass.Closing => TextSpacingTrim.TrimsClosing(
+                    NeighborOf(_measurer, style, inward), style.FontSize),
+                _ => false,
+            };
+
+            if (trims)
+            {
+                return 0;
+            }
+        }
+
+        return share;
+    }
+
+    /// <summary>
+    /// Gets the room one full character takes along the line: the ideographic space, which is the width
+    /// a fullwidth form is measured in.
+    /// </summary>
+    private Double FullwidthRoom(ComputedStyle style, WritingModeInfo flow) =>
+        Measure(style, "\u3000", flow);
+
+    /// <summary>
+    /// Gets how much room a pair must take for itself on one side, past its own characters, when the
+    /// reading does not fit in the room that side gives up (CSS Ruby 1 §5.1).
+    /// </summary>
+    private static Double HangPast(InlineItem item, Double excess, Double room, Boolean fromEnd)
+    {
+        if (excess <= 0 || item.Box.Style.RubyOverhang != RubyOverhangMode.Spaces)
+        {
+            return 0;
+        }
+
+        // Which side the reading hangs from is `ruby-align`'s business: from the start it asks room of
+        // the far side only, from the end of the near side only, and from the centre of both.
+        return item.Box.Style.RubyAlign switch
+        {
+            RubyAlign.Start or RubyAlign.SpaceBetween => fromEnd ? 0 : Math.Max(0, excess - room),
+            RubyAlign.End => fromEnd ? Math.Max(0, excess - room) : 0,
+            _ => Math.Max(0, (excess / 2) - room),
+        };
     }
 
     /// <summary>
@@ -7252,18 +7715,13 @@ internal sealed class InlineLayout
             return baseWidth;
         }
 
-        var align = item.Box.Style.RubyAlign;
-
         if (item.Box.Style.RubyOverhang == RubyOverhangMode.Spaces)
         {
             // A reading may cover the spaces beside it and no further: once those run out, the pair
-            // grows by what is left on that side. Which side it hangs from is `ruby-align`'s business.
-            return align switch
-            {
-                RubyAlign.Start => baseWidth + Math.Max(0, excess - after),
-                RubyAlign.End => baseWidth + Math.Max(0, excess - before),
-                _ => baseWidth + Math.Max(0, (excess / 2) - before) + Math.Max(0, (excess / 2) - after),
-            };
+            // grows by what is left on that side.
+            return baseWidth +
+                HangPast(item, excess, before, fromEnd: true) +
+                HangPast(item, excess, after, fromEnd: false);
         }
 
         // What `auto` allows is the user agent's choice. Chrome lets a reading hang half an em past
@@ -7281,6 +7739,22 @@ internal sealed class InlineLayout
         RubyAlign.End => extent - width,
         _ => (extent - width) / 2,
     };
+
+    /// <summary>
+    /// Gets how far a pair's own characters stand inside the room it takes: what the reading took from
+    /// the near side is what pushes them along, and the reading is laid over them from there. Nothing is
+    /// pushed where the room the pair may take is the user agent's choice, which hangs the reading past
+    /// the pair evenly instead (CSS Ruby 1 §4.3, §5.1).
+    /// </summary>
+    private static Double? RubyHang(
+        InlineItem item,
+        Double extent,
+        Double baseWidth,
+        Double annotationWidth,
+        Double after) =>
+        item.Box.Style.RubyOverhang == RubyOverhangMode.Spaces
+            ? extent - baseWidth - HangPast(item, Math.Max(0, annotationWidth - baseWidth), after, fromEnd: false)
+            : null;
 
     /// <summary>
     /// Measures a range of text the way a column advances it. Upright text advances by its em box
@@ -7950,11 +8424,43 @@ internal sealed class InlineLayout
     /// div with 20px of right inset indents 50px for `text-indent: 50%`, not 50% of the containing
     /// block - text-indent-percentage-002).
     /// </summary>
-    private static Double Indentation(Box container, WritingModeInfo flow, Double contentInline)
+    /// <summary>
+    /// The distance a block's lines are set in by, with the two modifiers that say which of them carry it:
+    /// <c>hanging</c> puts the distance on every line but the ones the rule names, and <c>each-line</c>
+    /// adds the line after every forced break to the ones it names (CSS Text 3 §5.2).
+    /// </summary>
+    private readonly record struct TextIndentation(Double Distance, Boolean Hanging, Boolean EachLine)
+    {
+        /// <summary>
+        /// Gets whether a line carries the distance. <paramref name="first"/> says the line begins the
+        /// block's content and <paramref name="afterBreak"/> says a forced break ended the line before it,
+        /// which are the two lines the property names; <c>hanging</c> puts it on every other line.
+        /// </summary>
+        internal Boolean Carries(Boolean first, Boolean afterBreak)
+        {
+            var named = first || (EachLine && afterBreak);
+
+            return Hanging ? !named : named;
+        }
+    }
+
+    private static TextIndentation Indentation(Box container, WritingModeInfo flow, Double contentInline)
     {
         var indent = container.Style.TextIndent;
 
-        return indent.HasValue ? indent.Resolve(contentInline) : 0;
+        // A run of inline content that a block child broke away from the head of its box is wrapped in an
+        // anonymous block of its own, and only the first of those wraps is the line the indentation was
+        // written for: the block's first line stands where its content begins, not where each fragment of
+        // it happens to resume (CSS Text 3 §5.2).
+        if (!indent.HasValue || (container.IsAnonymous && !container.StartsParentContent))
+        {
+            return default;
+        }
+
+        return new TextIndentation(
+            indent.Resolve(contentInline),
+            container.Style.TextIndentHanging,
+            container.Style.TextIndentEachLine);
     }
 
     /// <summary>
@@ -8571,7 +9077,8 @@ internal sealed class InlineLayout
             InterlineNoteSource? interlineNote = null,
             Boolean interlineGap = false,
             Double? interlinePosition = null,
-            MarginNoteSource? marginNote = null)
+            MarginNoteSource? marginNote = null,
+            Double? hang = null)
         {
             Source = source;
             Start = start;
@@ -8592,6 +9099,7 @@ internal sealed class InlineLayout
             InterlineGap = interlineGap;
             InterlinePosition = interlinePosition;
             MarginNote = marginNote;
+            Hang = hang;
         }
 
         /// <summary>Gets whether the fragment is a box that left the flow, placed but not drawn here.</summary>
@@ -8637,6 +9145,12 @@ internal sealed class InlineLayout
         /// the room the annotation needed.
         /// </summary>
         public Double BaseWidth { get; }
+
+        /// <summary>
+        /// Gets how far a ruby's base stands inside the room the pair takes, where the reading has hung
+        /// over the text beside it; null where the pair's halves are simply centred on each other.
+        /// </summary>
+        public Double? Hang { get; }
 
         /// <summary>
         /// Gets the string the fragment's text is a piece of. A fragment whose pieces came from two
@@ -9034,7 +9548,7 @@ internal sealed class InlineLayout
     /// </remarks>
     private readonly struct LinePlanKey : IEquatable<LinePlanKey>
     {
-        public LinePlanKey(Box container, Double maxInline, Double indent, Int32 flow, FloatBand? band)
+        public LinePlanKey(Box container, Double maxInline, TextIndentation indent, Int32 flow, FloatBand? band)
         {
             Container = container;
             MaxInline = maxInline;
@@ -9049,7 +9563,7 @@ internal sealed class InlineLayout
 
         public Double MaxInline { get; }
 
-        public Double Indent { get; }
+        public TextIndentation Indent { get; }
 
         public Int32 Flow { get; }
 
@@ -9348,6 +9862,14 @@ internal sealed class InlineLayout
         /// in what the indentation leaves, and the indent is what they are then all moved by.
         /// </summary>
         public Double Indent { get; set; }
+
+        /// <summary>
+        /// Gets or sets how much the line's text was scaled to fill its line box by <c>text-fit</c>, or one
+        /// where the line stands at the size the page wrote. The runs it holds are already measured at the
+        /// scaled size; what is left is to draw them with a font of that size, which is the question the
+        /// placing pass asks this for (CSS Text 5 §1.1).
+        /// </summary>
+        public Double Scale { get; set; } = 1;
 
         /// <summary>Gets where the line's content starts along the inline axis, after alignment.</summary>
         public Double Offset { get; set; }
@@ -10488,14 +11010,6 @@ internal sealed class InlineLayout
         /// </summary>
         public Boolean CanBreakBefore(String source, Int32 start, ComputedStyle style)
         {
-            // Where the page licensed a break anywhere - `line-break: anywhere`, `overflow-wrap` in
-            // either value, `break-spaces` - the rules between the two characters are set aside, and
-            // the edge of an inline element is no place to bring them back.
-            if (style.BreaksAnywhere || style.BreaksBetweenLetters || style.WrapsLongWords || style.WrapsInsideSpaces)
-            {
-                return true;
-            }
-
             // A box that left the flow holds none of the line's text, so the question is asked of the
             // last run the line really carries (the same reason the other look-backs pass such boxes by).
             TextFragment? last = null;
@@ -10512,6 +11026,33 @@ internal sealed class InlineLayout
             }
 
             if (last is not { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null })
+            {
+                return true;
+            }
+
+            // A run that opens with a space the mode *keeps* stands where no licence reaches: §4.1.3
+            // puts the opportunity after every space the mode keeps, never before the first of them, and
+            // the licences for breaking within words (§5.2-§5.5) speak of words - the space in front of
+            // one is not one. Measured on "X　XX　X" in a four-character box, where the line ends at the
+            // second X and the space hangs past the edge, and on `XXX<span>　</span>X`, where it does not
+            // begin the next line either. Two spaces meeting across an element's edge are the exception:
+            // there the break after the first of them is exactly the place the mode gives, and
+            // `line-break: anywhere` sets the whole question aside.
+            var opensWithKeptSpace = TextChunker.IsBreakSpace(source[start]) &&
+                !TextChunker.IsCollapsible(source[start]);
+            var holdsKeptSpace = TextChunker.IsBreakSpace(last.Source[last.Start + last.Length - 1]) &&
+                !TextChunker.IsCollapsible(last.Source[last.Start + last.Length - 1]);
+
+            if (opensWithKeptSpace && !holdsKeptSpace && !style.BreaksAnywhere)
+            {
+                return false;
+            }
+
+            // Where the page licensed a break anywhere - `line-break: anywhere`, `overflow-wrap` in
+            // either value, `break-spaces`, `word-break: break-all` - the rules between the two
+            // characters are set aside, and the edge of an inline element is no place to bring them
+            // back.
+            if (style.BreaksAnywhere || style.BreaksBetweenLetters || style.WrapsLongWords || style.WrapsInsideSpaces)
             {
                 return true;
             }
@@ -10554,6 +11095,7 @@ internal sealed class InlineLayout
             WritingModeInfo flow,
             RubyAnnotation ruby,
             Double baseWidth,
+            Double? hang,
             InlineAncestor? inline)
         {
             Enter(inline);
@@ -10568,7 +11110,8 @@ internal sealed class InlineLayout
                 flow,
                 inline,
                 ruby: ruby,
-                baseWidth: baseWidth));
+                baseWidth: baseWidth,
+                hang: hang));
 
             Width += width;
         }
@@ -10823,7 +11366,15 @@ internal sealed class InlineLayout
                 // The block's own line-height is a floor for the line, however small the runs on it
                 // ask to be (CSS 2.1 §10.8.1). It is the strut that carries that answer.
                 var strutHeight = strutMetrics.Ascent + strutMetrics.Descent;
-                statedLine = statedLine is { } stated ? Math.Max(stated, strutHeight) : strutHeight;
+
+                // Only a line height the block *stated* also caps the line: `normal` says the line is as
+                // tall as the faces on it, so a block written at no size must not shrink the line its
+                // runs ask for - which is how a `pre` at `font-size: 0` came to lay two twelve-pixel
+                // lines on top of one another (CSS 2.1 §10.8.1).
+                if (_fallback?.LineHeight is not null)
+                {
+                    statedLine = statedLine is { } stated ? Math.Max(stated, strutHeight) : strutHeight;
+                }
             }
             else if (Double.IsNegativeInfinity(ascent))
             {

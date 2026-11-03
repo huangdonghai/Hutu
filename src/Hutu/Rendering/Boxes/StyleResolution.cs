@@ -308,6 +308,7 @@ internal sealed class StyleResolution
         "text-underline-position",
         "text-decoration-inset",
         "text-decoration-skip-ink",
+        "text-decoration-skip-spaces",
         "box-decoration-break",
         "cursor",
         "caret-color",

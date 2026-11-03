@@ -204,6 +204,16 @@ internal sealed class FusedParent
     public Boolean InGrid { get; init; }
 
     public StyleLength Indent { get; init; } = StyleLength.Zero;
+
+    /// <summary>Gets which lines of a child's block the inherited indentation is meant for.</summary>
+    public Boolean IndentHanging { get; init; }
+
+    /// <summary>Gets whether the inherited indentation reaches the line after every forced break too.</summary>
+    public Boolean IndentEachLine { get; init; }
+
+    /// <summary>Gets the line fitting a child inherits from this parent (CSS Text 5 §1.1).</summary>
+    public TextFit Fit { get; init; }
+
     public TextDirection Direction { get; init; } = TextDirection.LeftToRight;
 
     /// <summary>
@@ -471,6 +481,9 @@ internal sealed class FusedParent
         InGrid = style.Display.Contains("grid", StringComparison.OrdinalIgnoreCase),
         Collapses = style.Table.Collapse,
         Indent = style.CascadedTextIndent,
+        IndentHanging = style.TextIndentHanging,
+        IndentEachLine = style.TextIndentEachLine,
+        Fit = style.TextFitting,
         Direction = style.Direction,
         Language = style.Language,
         WritingMode = style.WritingMode,
@@ -729,6 +742,14 @@ internal static class FusedStyleFactory
                         : null,
                 parent.HangingPunctuation);
 
+            var (indentLength, indentHanging, indentEachLine) = ComputedStyle.ResolveTextIndentFused(
+                find("text-indent"), parent.Indent, parent.IndentHanging, parent.IndentEachLine, face, dimensions);
+
+            var fitting = ComputedStyle.ResolveTextFitFused(find("text-fit"), parent.Fit);
+
+            var lineHeightTracksFont = ComputedStyle.LineHeightFollowsFont(
+                (find("line-height") ?? parent.LineHeightHit)?.Value);
+
             var built = new TextArea
             {
                 // A text field holds the text it was given: its spaces and its line breaks stand
@@ -769,7 +790,11 @@ internal static class FusedStyleFactory
                 LineClamp = ComputedStyle.ReadLineClamp(
                     find("-webkit-line-clamp"), find("line-clamp"), find("-webkit-box-orient")),
                 VerticalAlign = ComputedStyle.ResolveVerticalAlignFused(find("vertical-align"), parent.VerticalAlign, PresentationalHints.Valign(element)),
-                Indent = ComputedStyle.ResolveTextIndentFused(find("text-indent"), parent.Indent, face, dimensions),
+                Indent = indentLength,
+                IndentHanging = indentHanging,
+                IndentEachLine = indentEachLine,
+                Fit = fitting,
+                LineHeightTracksFont = lineHeightTracksFont,
                 Visibility = ComputedStyle.ResolveVisibilityFused(find("visibility"), parent.Visibility),
                 Trim = Trim(find("text-box-trim")?.Value),
                 EdgeStart = Edge(find("text-box-edge")?.Value, first: true),
@@ -906,14 +931,18 @@ internal static class FusedStyleFactory
                     heightHint ?? StyleLength.Auto, parent.Box?.Height),
                 WidthDeclared = widthDeclaration is not null || widthHint is not null,
                 HeightDeclared = heightDeclaration is not null || heightHint is not null,
+                // The four clamps are written in the same face as the two sizes above, so they are folded
+                // against it too: `ex`, `ch` and `ic` are measures of the face rather than fractions of the
+                // size, and a fold handed only the number has nothing to measure them from (CSS Values 4
+                // §4.4, measured by min-height: 8ch coming out at four characters of the face).
                 MinWidth = ComputedStyle.ResolveBoxLengthFused(find("min-" + alongWidth) ?? find("min-width"),
-                    RenderMode.Horizontal, size, dimensions, StyleLength.None, parent.Box?.MinWidth),
+                    RenderMode.Horizontal, face, dimensions, StyleLength.None, parent.Box?.MinWidth),
                 MaxWidth = ComputedStyle.ResolveBoxLengthFused(find("max-" + alongWidth) ?? find("max-width"),
-                    RenderMode.Horizontal, size, dimensions, StyleLength.None, parent.Box?.MaxWidth),
+                    RenderMode.Horizontal, face, dimensions, StyleLength.None, parent.Box?.MaxWidth),
                 MinHeight = ComputedStyle.ResolveBoxLengthFused(find("min-" + alongHeight) ?? find("min-height"),
-                    RenderMode.Vertical, size, dimensions, StyleLength.None, parent.Box?.MinHeight),
+                    RenderMode.Vertical, face, dimensions, StyleLength.None, parent.Box?.MinHeight),
                 MaxHeight = ComputedStyle.ResolveBoxLengthFused(find("max-" + alongHeight) ?? find("max-height"),
-                    RenderMode.Vertical, size, dimensions, StyleLength.None, parent.Box?.MaxHeight),
+                    RenderMode.Vertical, face, dimensions, StyleLength.None, parent.Box?.MaxHeight),
                 AspectRatio = AspectRatio.Parse(find("aspect-ratio")?.Value),
                 Margin = ComputedStyle.ResolveThicknessFused(
                     find, reader, face, dimensions, flow, "margin", StyleLength.Zero, parent.Box?.Margin),

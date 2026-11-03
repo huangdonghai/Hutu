@@ -1802,7 +1802,11 @@ public sealed class SkiaPaintExecutor
             baselineX,
             (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y));
 
-        return [.. Moved(ink, (Single)command.Bounds.X, (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y))
+        // The turn is taken about the point the run starts at, and that point is on the baseline the
+        // column stands on rather than at its left edge: the along-run coordinate of the blob is the
+        // page's across-column distance once it is turned, so starting it at the edge of the box would
+        // slide every glyph along the column by the distance the baseline stands in from that edge.
+        return [.. Moved(ink, baselineX, (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y))
             .Select(box => turn.MapRect(box))];
     }
 
@@ -1842,6 +1846,18 @@ public sealed class SkiaPaintExecutor
             box.Right + x,
             box.Bottom + y))];
 
+    /// <summary>
+    /// Lays one solid band of a decoration down the page.
+    /// </summary>
+    /// <remarks>
+    /// A band is a strip of colour in every way that matters but its length: a browser lays it down on
+    /// whole device pixels, the same rule that lays a border side and a background down without a
+    /// feathered edge (and the same one the reference parts of this family rely on - a page that
+    /// builds an extended line out of three overlapping copies of a shorter one only comes to the same
+    /// picture when each copy is laid on whole pixels, because a feathered edge is laid three times
+    /// where the single band has it once). The length keeps its own ends: the inset and the skips cut
+    /// a band into pieces, and their edges are the answer those rules came to.
+    /// </remarks>
     private static void Band(
         SKCanvas canvas,
         SKPaint paint,
@@ -1849,10 +1865,14 @@ public sealed class SkiaPaintExecutor
         Single end,
         Single at,
         Single height,
-        Boolean alongLine) =>
-        canvas.DrawRect(alongLine
+        Boolean alongLine)
+    {
+        var area = SnapToDevice(canvas, alongLine
             ? new SKRect(start, at, end, at + height)
-            : new SKRect(at, start, at + height, end), paint);
+            : new SKRect(at, start, at + height, end));
+
+        canvas.DrawRect(area, paint);
+    }
 
     /// <summary>
     /// Swings the decoration from side to side of the height it sits at, one cubic turn to a wavelength.

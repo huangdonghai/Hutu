@@ -711,7 +711,21 @@ internal static partial class BoxBuilder
                 continue;
             }
 
-            var anonymous = new Box(BoxKind.Block, parent.Style.AsAnonymous()) { IsAnonymous = true, Flow = parent.Flow };
+            // The indentation of the block the children were split from stands on the first of these wraps
+            // and nowhere else: only that one begins the block, while each later run resumes on a line that
+            // starts where an ordinary line does (CSS Text 3 §5.2). An item of a flex or grid container is
+            // not among them - a run of text beside the items is an item in its own right, and the distance
+            // reaches its first line however far down the container it stands (CSS Flexbox 1 §4.1).
+            var begins = parent.Kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry ||
+                !parent.Children.Exists(
+                    child => child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child));
+
+            var anonymous = new Box(BoxKind.Block, parent.Style.AsAnonymous())
+            {
+                IsAnonymous = true,
+                StartsParentContent = begins,
+                Flow = parent.Flow,
+            };
             anonymous.Children.AddRange(run);
             parent.Children.Add(anonymous);
         }

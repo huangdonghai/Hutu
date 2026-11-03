@@ -852,4 +852,38 @@ public sealed class InlineBoxTests
             }
         }
     }
+
+    /// <summary>
+    /// A measurer whose faces stand half an em above the baseline and half below, which is the one thing
+    /// the fixed fake cannot say: the height a strut asks for then follows the size it is set at, as it
+    /// does in a real font.
+    /// </summary>
+    private sealed class SizedTextMeasurer : ITextMeasurer
+    {
+        public FontMetrics GetMetrics(FontStyle style) =>
+            new(style.Size / 2, style.Size / 2, 0, 0, 0, 0, 0);
+
+        public Double MeasureWidth(String text, FontStyle style) => text.Length * style.Size;
+    }
+
+    [Test]
+    public async Task ANormalLineHeightLeavesTheLineAsTallAsTheFacesOnIt()
+    {
+        using var view = new HutuViewInternal(new SizedTextMeasurer());
+        view.SetViewportSize(600, 600);
+
+        // The block is written at no size, so its strut asks for nothing, and the runs on the lines are
+        // set at twenty pixels: `normal` leaves the line to the faces standing on it, and a strut that
+        // stated no height must not cap it at nothing - which is how a `pre` at `font-size: 0` came to
+        // lay two twelve-pixel lines on top of one another (CSS 2.1 §10.8.1).
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='margin:0;font-size:0'>" +
+            "<span style='font-size:20px'>ab</span><br><span style='font-size:20px'>cd</span></div>" +
+            "</body></html>");
+
+        Assert.That(
+            Lines(view).Select(line => line.BorderBox.Height).ToList(),
+            Is.EqualTo(new List<Double> { 20, 20 }),
+            "each line is as tall as the face set on it");
+    }
 }

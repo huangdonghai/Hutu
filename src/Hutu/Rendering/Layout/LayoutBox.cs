@@ -47,6 +47,13 @@ internal enum LayoutKind
 
     /// <summary>A table cell.</summary>
     TableCell,
+
+    /// <summary>
+    /// A <c>col</c> or <c>colgroup</c>, given the band of the grid it stands for so that its background
+    /// can be painted across the columns it covers (CSS 2.1 §17.5.2). It holds no content and paints no
+    /// border of its own: a column's borders belong to the grid lines, which the cells draw.
+    /// </summary>
+    TableColumn,
 }
 
 /// <summary>The four border colours of a box, in ARGB order.</summary>
@@ -183,6 +190,15 @@ internal sealed class LayoutBox
 
     /// <summary>Gets the resolved font of a text node.</summary>
     public FontStyle Font { get; set; }
+
+    /// <summary>
+    /// Gets or sets how much the line this run stands on was scaled to fill its line box by
+    /// <c>text-fit</c>, or one where it was not scaled. A letter or word spacing the page wrote as a share
+    /// of the font is part of what that scaling reaches and is drawn at the multiple; one written as a
+    /// length stands (CSS Text 5 §1.1.1).
+    /// </summary>
+    public Double FitScale { get; set; } = 1;
+
 
     /// <summary>
     /// Gets the distance from the box's inline start to the baseline, measured on the block axis: the

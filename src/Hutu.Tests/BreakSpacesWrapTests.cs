@@ -155,6 +155,26 @@ public sealed class BreakSpacesWrapTests
         });
     }
 
+    [Test]
+    public async Task AKanaKeepsTheFirstOfTheSpacesBehindItOnTheLine()
+    {
+        // The chunker holds a word together with the ideographic spaces behind it, and the mode lets the
+        // line end after the first of those: the ask stops at that place rather than asking for the whole
+        // piece, so the line is filled to its edge and the rest of the run follows below. Measuring the
+        // piece as one unit moved the second kana down and left the line a character short (the same
+        // arithmetic Chrome shows on "ああ" with four ideographic spaces in a three-character box).
+        using var view = await Render(
+            "<style>div { white-space: break-spaces; width: 20px }</style>" +
+            "<div>\u3042\u3042\u3000\u3000\u3000\u3000\u3042\u3042</div>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Text(view, "\u3042\u3042\u3000\u3000").BorderBox.Width, Is.EqualTo(20), "the word and two spaces fill the line");
+            Assert.That(Text(view, "\u3000\u3000\u3042\u3042").BorderBox.Y, Is.EqualTo(10), "the rest of the run takes room on the line below");
+            Assert.That(Texts(view).Count(), Is.EqualTo(2), "and nothing was left over for a third line");
+        });
+    }
+
     private static async Task<HutuViewInternal> Render(String content)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());
