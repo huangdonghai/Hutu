@@ -168,7 +168,6 @@ internal sealed class LayoutEngine
         // The markers of a list are placed from the same geometry, and after it for the same reason: an
         // item's marker stands level with the first line the item reaches, which is only known once the
         // lines have been put down.
-        ResolveMarkers(rootBox, FloatsOf(rootBox.Source));
 
         // A first line is the same kind of answer, and it comes after for the same reason: the arm is read
         // while the boxes are made, but which fragments the block reaches first is only known here, with
@@ -337,7 +336,6 @@ internal sealed record LayoutProfile(
 
         decoration?.Start();
         ResolveDecorations(rootBox, markFirstLine: true);
-        ResolveMarkers(rootBox, FloatsOf(rootBox.Source));
         decoration?.Stop();
 
         overflow?.Start();
@@ -590,6 +588,7 @@ internal sealed record LayoutProfile(
         if (_markFirstLine)
         {
             Hutu.Rendering.Boxes.FirstLine.Step(box);
+            ResolveMarkers(box, FloatsOf(box.Source), recurse: false);
         }
     }
 
@@ -1113,7 +1112,10 @@ internal sealed record LayoutProfile(
     /// marker is. Only the marker that hangs beside an item is placed from the finished geometry.
     /// </para>
     /// </remarks>
-    private void ResolveMarkers(LayoutBox box, FloatTracks? around)
+    private void ResolveMarkers(LayoutBox box, FloatTracks? around) =>
+        ResolveMarkers(box, around, recurse: true);
+
+    private void ResolveMarkers(LayoutBox box, FloatTracks? around, Boolean recurse)
     {
         var source = box.Source;
 
@@ -1214,7 +1216,7 @@ internal sealed record LayoutProfile(
 
         foreach (var child in box.Children)
         {
-            ResolveMarkers(child, FloatsOf(box.Source) ?? around);
+            ResolveMarkers(child, FloatsOf(box.Source) ?? around, recurse: true);
         }
     }
 
