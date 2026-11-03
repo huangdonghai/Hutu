@@ -266,9 +266,17 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         // script say otherwise overrides both forms together.
         _ = flow;
 
-        return _advances.GetOrAdd(
-            new CodePointAdvanceKey(style, codePoint),
-            _ => MeasureWidth(Char.ConvertFromUtf32(codePoint), style));
+        var key = new CodePointAdvanceKey(style, codePoint);
+
+        if (_advances.TryGetValue(key, out var width))
+        {
+            return width;
+        }
+
+        width = MeasureWidth(Char.ConvertFromUtf32(codePoint), style);
+        _advances.TryAdd(key, width);
+
+        return width;
     }
 
     /// <summary>
@@ -276,10 +284,20 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     /// or a vertical width feature such as <c>vhal</c> - can make smaller than the width it takes along
     /// a line.
     /// </summary>
-    public Double MeasureUprightAdvance(Int32 codePoint, FontStyle style) =>
-        _uprightAdvances.GetOrAdd(
-            new CodePointAdvanceKey(style, codePoint),
-            _ => MeasureUpright(codePoint, style));
+    public Double MeasureUprightAdvance(Int32 codePoint, FontStyle style)
+    {
+        var key = new CodePointAdvanceKey(style, codePoint);
+
+        if (_uprightAdvances.TryGetValue(key, out var width))
+        {
+            return width;
+        }
+
+        width = MeasureUpright(codePoint, style);
+        _uprightAdvances.TryAdd(key, width);
+
+        return width;
+    }
 
     private Double MeasureUpright(Int32 codePoint, FontStyle style)
     {
