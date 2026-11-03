@@ -2387,3 +2387,6 @@ Chrome 的逐值把这条规则钉住了（`build/_query` 读 test 页）：表�
 代价也记下来：6 对 `table-{col,row,section}-paint-{vlr,vrl}-rtl` 从 30 050 → 53 700（`table-cell-002` 25 800 → 33 300 同理）。逐像素看了原因 —— **test 那侧已经画对**（第一栏 y=520 处 (68,97) 橙 + (98,107) 天蓝、y=560 处 (68,87) 绿 + (88,107) 蓝，与 Chrome 的 pattern2/pattern1 逐值一致），**坏在 ref 那侧几乎空白**：ref 是「`position:relative` 的 400 长外壳 + 一堆 `position:absolute` 的孩子」，Chrome 把每个出流孩子按栏切开跟着片走（pattern1 读 4 个 rect：`(68,547,40,35)`、`(8,447,100,35)`、`(8,347,100,35)`、`(8,247,15,35)`；下标题落在块向 325..400，只有末栏接得到），我们的出流孩子仍按整盒坐标画、被片的旅行甩在栏外（实测在 y=360 那条片里画到 x=333..407）。
 
 ⇒ 这 6 对与 `block-end-aligned-abspos-with-overflow`（3 000）、`out-of-flow-in-multicolumn-093`（28）卡在**同一件**事上：出流后代要按片旅行/延续（含子树里的 `break-inside: avoid` 参与推栏）。这一件做完，六对竖排表 + 两对 OOF 一起收；先前 `at-boundary` 的 65 px 仍是角上斜接（§9.172），与这条无关。
+
+一条已试过不成、别再走的路：把 `DividesAcross` 的 `!vertical` 拿掉、再加「自身声明了块向长度」的门（`!BlockSizeIsAuto(child, child.Flow.IsVertical)`），ref 那一页**一字未变** —— 竖排容器里这种成员根本走不到那条判据：`FragmentsInColumns(child)` 要 `!child.Flow.IsVertical`（`BreaksAtLines` 的最后一条），于是「按行切」那一大支整个跳过，而 2612 那次 `byShape` 也没能让片真的分出来（探针里外壳仍是 `8,192 400x100` 一片，出流孩子按未旅行的整盒坐标画在 `333,292`）。竖排要切这种盒，得先给「跨页方向」那条路（`plansAcross`/`ArrangeMulticolRunAcross`）补上「成员按自身声明长度被栏切开」的能力，并让出流后代随片旅行 —— 不是把横排那套 shape 判据的开关掰开就行。
+
