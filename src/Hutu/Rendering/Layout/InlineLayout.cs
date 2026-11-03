@@ -9374,13 +9374,42 @@ internal sealed class InlineLayout
         /// different strings carries a string of its own, which is the one case a merge has to write
         /// out - and it is one per element rather than one per character.
         /// </summary>
-        public String Source { get; private set; }
+        private String _source = String.Empty;
+        private Int32 _start;
+        private Int32 _length;
+        private Int32 _trailingSoftHyphens = -1;
+
+        public String Source
+        {
+            get => _source;
+            private set
+            {
+                _source = value;
+                _trailingSoftHyphens = -1;
+            }
+        }
 
         /// <summary>Gets where in <see cref="Source"/> the fragment's text begins.</summary>
-        public Int32 Start { get; private set; }
+        public Int32 Start
+        {
+            get => _start;
+            private set
+            {
+                _start = value;
+                _trailingSoftHyphens = -1;
+            }
+        }
 
         /// <summary>Gets how many characters the fragment holds.</summary>
-        public Int32 Length { get; set; }
+        public Int32 Length
+        {
+            get => _length;
+            set
+            {
+                _length = value;
+                _trailingSoftHyphens = -1;
+            }
+        }
 
         /// <summary>
         /// Gets or sets whether the fragment's run ends in a tab. A tab is drawn as one space but was
@@ -9410,6 +9439,32 @@ internal sealed class InlineLayout
         /// the chunks were being appended one character at a time.
         /// </summary>
         public String Text => Source.Substring(Start, Length);
+
+        /// <summary>
+        /// Gets how many soft hyphens the fragment ends with. The answer is kept because a line asks it
+        /// again as it grows, and reading it off the source avoids making a string for the tail.
+        /// </summary>
+        public Int32 TrailingSoftHyphens
+        {
+            get
+            {
+                if (_trailingSoftHyphens < 0)
+                {
+                    var count = 0;
+
+                    for (var index = _start + _length - 1;
+                         index >= _start && _source[index] == (Char)0x00AD;
+                         index--)
+                    {
+                        count++;
+                    }
+
+                    _trailingSoftHyphens = count;
+                }
+
+                return _trailingSoftHyphens;
+            }
+        }
 
         /// <summary>Takes the fragment's text to be the whole of the given string.</summary>
         public void MergeInto(String text)
@@ -10557,15 +10612,9 @@ internal sealed class InlineLayout
                     return false;
                 }
 
-                var text = last.Text;
-                var trailing = 0;
+                var trailing = last.TrailingSoftHyphens;
 
-                while (trailing < text.Length && text[text.Length - 1 - trailing] == (Char)0x00AD)
-                {
-                    trailing++;
-                }
-
-                return trailing > 0 && (text.Length > trailing || wordsBefore > 0);
+                return trailing > 0 && (last.Length > trailing || wordsBefore > 0);
             }
         }
 
