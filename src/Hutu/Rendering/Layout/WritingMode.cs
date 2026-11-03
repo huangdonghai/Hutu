@@ -78,7 +78,7 @@ public enum TextOrientation
 /// are already physical rectangles by the time a backend sees them.
 /// </para>
 /// </remarks>
-public readonly struct WritingModeInfo
+public readonly struct WritingModeInfo : IEquatable<WritingModeInfo>
 {
     internal WritingModeInfo(
         WritingMode mode,
@@ -91,6 +91,22 @@ public readonly struct WritingModeInfo
         CombinesUpright = combinesUpright;
         Direction = direction;
     }
+
+    /// <summary>
+    /// Gets whether two requests set text the same way, which is the four decisions the struct carries.
+    /// </summary>
+    /// <remarks>
+    /// Typed rather than left to the struct's own <c>Equals(Object)</c>: the line asks it of every run it
+    /// puts on it, and the inherited form boxes both sides and compares the fields through reflection.
+    /// Measured on a page of vertical CJK, where it was a twentieth of the layout's own CPU.
+    /// </remarks>
+    public Boolean Equals(WritingModeInfo other) =>
+        Mode == other.Mode &&
+        Orientation == other.Orientation &&
+        CombinesUpright == other.CombinesUpright &&
+        Direction == other.Direction;
+
+    public override Boolean Equals(Object? obj) => obj is WritingModeInfo other && Equals(other);
 
     /// <summary>The writing mode plain horizontal text uses, which is what every existing box gets.</summary>
     internal static WritingModeInfo Horizontal { get; } = new(WritingMode.HorizontalTb);
