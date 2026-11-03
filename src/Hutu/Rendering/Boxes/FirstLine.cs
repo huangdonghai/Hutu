@@ -16,8 +16,8 @@ namespace Hutu.Rendering.Boxes;
 /// Pseudo-Elements 4 §5.2 makes <c>::first-line</c> stand for the first line box of a block container,
 /// which is why nothing here can be settled while the boxes are being made: where the line ends is a
 /// question for the layout, and the layout is the only reader of the answer. So the style is resolved on
-/// the block beside its own (<see cref="Apply"/>) and only *distributed* once the lines are down
-/// (<see cref="Mark"/>).
+/// the block beside its own (<see cref="Apply"/>) and only *distributed* once the lines are down,
+/// which the decoration walk does for each box through <see cref="Step"/>.
 /// </para>
 /// <para>
 /// Two things follow from where the specification puts the anonymous box, and the borrowed pairs read
@@ -55,7 +55,7 @@ internal static class FirstLine
 
     /// <summary>
     /// Resolves the style an arm ending in <c>::first-line</c> came to for this block and keeps it on the
-    /// box, where <see cref="Mark"/> finds it. Nothing is kept where no arm was written, so a block the
+    /// box, where <see cref="Step"/> finds it. Nothing is kept where no arm was written, so a block the
     /// sheets say nothing about carries nothing.
     /// </summary>
     internal static void Apply(
@@ -101,25 +101,6 @@ internal static class FirstLine
 
     /// <summary>Gets whether the block's own cascade - not one inherited down - writes a property.</summary>
     private static Boolean Declares(MatchedCascade cascade, String name) => cascade.Find(name) is not null;
-
-    /// <summary>
-    /// Walks a finished layout and gives every fragment of the first line of each block that was written
-    /// one the style the arm came to.
-    /// </summary>
-    /// <remarks>
-    /// The walk goes down before it hands anything over, so a nested block writes over what an outer one
-    /// reached with: two arms on the same line are two boxes, and the nearer one is the one the text
-    /// carries.
-    /// </remarks>
-    internal static void Mark(LayoutBox box)
-    {
-        Step(box);
-
-        foreach (var child in box.Children)
-        {
-            Mark(child);
-        }
-    }
 
     /// <summary>Gives this box alone the style of its first line, the children left to the walk that owns them.</summary>
     internal static void Step(LayoutBox box)

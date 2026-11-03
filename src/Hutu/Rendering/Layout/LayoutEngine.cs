@@ -87,6 +87,8 @@ internal sealed class LayoutEngine
     private Boolean _markFirstLine;
     private Boolean _collectOverflow;
     private Rect? _overflowBounds;
+    private GatheredRun[] _gatheredRuns = Array.Empty<GatheredRun>();
+    private Int32 _gatheredCount;
 
     /// <summary>The engine the assertion measures against, made on first use.</summary>
     private LayoutEngine? _reference;
@@ -183,11 +185,6 @@ internal sealed class LayoutEngine
         // The markers of a list are placed from the same geometry, and after it for the same reason: an
         // item's marker stands level with the first line the item reaches, which is only known once the
         // lines have been put down.
-
-        // A first line is the same kind of answer, and it comes after for the same reason: the arm is read
-        // while the boxes are made, but which fragments the block reaches first is only known here, with
-        // the lines put down.
-        Hutu.Rendering.Boxes.FirstLine.Mark(rootBox);
 
         // What the document occupies is what a viewport has to be able to reach, which is not the
         // root's box: a page whose columns run sideways, or a box placed off an edge, reaches past
@@ -451,6 +448,9 @@ internal sealed record LayoutProfile(
     {
         _markFirstLine = markFirstLine;
         _collectOverflow = collectOverflow;
+        _gatheredCount = 0;
+        _speakerSlots.Clear();
+        _speakers.Clear();
 
         if (collectOverflow)
         {
@@ -470,7 +470,7 @@ internal sealed record LayoutProfile(
 
         // The inset a decorating box asked for is counted along the whole of the text it decorates, which
         // is only known once every run carries the lines reaching it.
-        ResolveInsets(box);
+        ResolveInsets();
     }
 
     /// <summary>
@@ -506,9 +506,11 @@ internal sealed record LayoutProfile(
         LayoutBox? owner,
         LayoutBox? spoke,
         Boolean anchored = false,
-        Boolean clipped = false)
+        Boolean clipped = false,
+        LayoutBox? line = null)
     {
         var style = box.Source.Style;
+        var standing = box.Kind == LayoutKind.Line ? box : line;
 
         // A fragment of a broken box keeps the corner curves of the box it came from, so they are
         // measured against that whole box: the piece a radius really ends on is shorter than it, and a
@@ -615,11 +617,53 @@ internal sealed record LayoutProfile(
 
         box.OwnDecoration = own;
 
+        // The final pass that gathers the page's overflow is also the one that settles the inset runs:
+        // the text, its line and its decorations are all in hand here, so the inset is gathered without
+        // two further walks of the tree.
+        if (_collectOverflow && box.Kind == LayoutKind.Text && box.Decorations is { } decorating)
+        {
+            for (var at = 0; at < decorating.Count; at++)
+            {
+                var askedSource = decorating[at];
+
+                if (askedSource.Insets is null || askedSource.Speaker is not { } speaker)
+                {
+                    continue;
+                }
+
+                var slot = askedSource.SpeakerIndex;
+
+                if (slot < 0)
+                {
+                    if (!_speakerSlots.TryGetValue(speaker, out slot))
+                    {
+                        slot = _speakers.Count;
+                        _speakerSlots.Add(speaker, slot);
+                        _speakers.Add(askedSource);
+                    }
+
+                    askedSource.SpeakerIndex = slot;
+                }
+
+                if (_gatheredCount == _gatheredRuns.Length)
+                {
+                    Array.Resize(ref _gatheredRuns, Math.Max(16, _gatheredRuns.Length * 2));
+                }
+
+                _gatheredRuns[_gatheredCount++] = new GatheredRun(
+                    slot,
+                    box,
+                    at,
+                    box.Vertical ? box.BorderBox.Height : box.BorderBox.Width,
+                    standing);
+            }
+        }
+
         var enclosing = element && box.Kind != LayoutKind.Text ? box : owner;
 
         foreach (var child in box.Children)
         {
-            ResolveDecorations(child, box.Decorations, enclosing, spoke, fixedFrame, hidden);
+            ResolveDecorations(child, box.Decorations, enclosing, spoke, fixedFrame, hidden, standing);
         }
 
         // One line of text is underlined as one thing, however many runs of text it is set out of, so
@@ -902,29 +946,27 @@ internal sealed record LayoutProfile(
     /// fragment is trimmed at both of its own ends, and a share is taken of that fragment rather than of
     /// the whole (CSS Text Decoration 4 §2.9.1).
     /// </summary>
-    private void ResolveInsets(LayoutBox root)
+    private void ResolveInsets()
     {
-        _speakerSlots.Clear();
-        _speakers.Clear();
-
-        var counts = _trimmedCounts;
-        Array.Clear(counts, 0, counts.Length);
-        var total = 0;
-
-        CountTrimmed(root, ref counts, ref total);
-        _trimmedCounts = counts;
-
-        if (total == 0)
+        if (_gatheredCount == 0)
         {
             return;
         }
 
         var speakers = _speakers.Count;
+        var counts = Ensure(ref _trimmedCounts, speakers);
+        Array.Clear(counts, 0, counts.Length);
+
+        for (var at = 0; at < _gatheredCount; at++)
+        {
+            counts[_gatheredRuns[at].Speaker]++;
+        }
+
         var starts = Ensure(ref _trimmedStarts, speakers);
 
-        if (_trimmedRuns.Length < total)
+        if (_trimmedRuns.Length < _gatheredCount)
         {
-            _trimmedRuns = new TrimmedRun[Math.Max(total, _trimmedRuns.Length * 2)];
+            _trimmedRuns = new TrimmedRun[Math.Max(_gatheredCount, _trimmedRuns.Length * 2)];
         }
 
         var offset = 0;
@@ -934,11 +976,19 @@ internal sealed record LayoutProfile(
             starts[slot] = offset;
             offset += counts[slot];
 
-            // The count becomes the write cursor for this slot on the collecting walk.
+            // The count becomes the write cursor for this slot while the gathered runs are scattered.
             counts[slot] = starts[slot];
         }
 
-        CollectTrimmed(root, null, _trimmedRuns, counts);
+        for (var at = 0; at < _gatheredCount; at++)
+        {
+            var gathered = _gatheredRuns[at];
+            _trimmedRuns[counts[gathered.Speaker]++] = new TrimmedRun(
+                gathered.Box,
+                gathered.At,
+                gathered.Size,
+                gathered.Line);
+        }
 
         for (var slot = 0; slot < speakers; slot++)
         {
@@ -964,91 +1014,6 @@ internal sealed record LayoutProfile(
         }
 
         return buffer;
-    }
-
-    /// <summary>
-    /// Counts the runs each decorating speaker has, so its share of one flat array can be reserved
-    /// before the text is read into it.
-    /// </summary>
-    private void CountTrimmed(LayoutBox box, ref Int32[] counts, ref Int32 total)
-    {
-        if (box.Kind == LayoutKind.Text && box.Decorations is { } asked)
-        {
-            for (var at = 0; at < asked.Count; at++)
-            {
-                var source = asked[at];
-
-                if (source.Insets is null || source.Speaker is not { } speaker)
-                {
-                    continue;
-                }
-
-                var slot = source.SpeakerIndex;
-
-                if (slot < 0)
-                {
-                    if (!_speakerSlots.TryGetValue(speaker, out slot))
-                    {
-                        slot = _speakers.Count;
-                        _speakerSlots.Add(speaker, slot);
-                        _speakers.Add(source);
-                    }
-
-                    // The slot is written back onto the source so the collecting walk reads it without
-                    // hashing the speaker again. The decoration pass makes these sources afresh.
-                    source.SpeakerIndex = slot;
-                }
-
-                if (counts.Length <= slot)
-                {
-                    Array.Resize(ref counts, Math.Max(slot + 1, counts.Length * 2));
-                }
-
-                counts[slot]++;
-                total++;
-            }
-        }
-
-        foreach (var child in box.Children)
-        {
-            CountTrimmed(child, ref counts, ref total);
-        }
-    }
-
-    /// <summary>
-    /// Gathers the runs each decorating box asked to have its ends pulled back from, in the order the text
-    /// is read, together with how much inline room the run takes. Each speaker's runs are written into
-    /// the stretch of the flat array reserved for it, so the trim that follows reads one interval.
-    /// </summary>
-    private static void CollectTrimmed(
-        LayoutBox box,
-        LayoutBox? line,
-        TrimmedRun[] runs,
-        Int32[] at)
-    {
-        var standing = box.Kind == LayoutKind.Line ? box : line;
-
-        if (box.Kind == LayoutKind.Text && box.Decorations is { } asked)
-        {
-            for (var index = 0; index < asked.Count; index++)
-            {
-                var slot = asked[index].SpeakerIndex;
-
-                if (slot >= 0 && asked[index].Insets is not null)
-                {
-                    runs[at[slot]++] = new TrimmedRun(
-                        box,
-                        index,
-                        box.Vertical ? box.BorderBox.Height : box.BorderBox.Width,
-                        standing);
-                }
-            }
-        }
-
-        foreach (var child in box.Children)
-        {
-            CollectTrimmed(child, standing, runs, at);
-        }
     }
 
     /// <summary>Carries one decorating box's inset out along the text it decorates.</summary>
@@ -1168,6 +1133,17 @@ internal sealed record LayoutProfile(
             ? (thickness, thickness)
             : (insets.Start ?? (insets.StartShare ?? 0) * total,
                insets.End ?? (insets.EndShare ?? 0) * total);
+
+    /// <summary>
+    /// One run of text gathered in reading order, with the speaker slot it belongs to and the line it
+    /// stands on, before the runs are scattered into one interval per speaker.
+    /// </summary>
+    private readonly record struct GatheredRun(
+        Int32 Speaker,
+        LayoutBox Box,
+        Int32 At,
+        Double Size,
+        LayoutBox? Line);
 
     /// <summary>
     /// One run of text whose decoration has ends to pull in, with the room it takes along the line and
