@@ -7382,7 +7382,12 @@ internal sealed class InlineLayout
             return null;
         }
 
-        var chars = mask.Substring(start, length).ToCharArray();
+        var chars = new Char[length];
+
+        for (var index = 0; index < length; index++)
+        {
+            chars[index] = mask[start + index];
+        }
 
         if (clearBoundary)
         {
@@ -7477,7 +7482,7 @@ internal sealed class InlineLayout
         }
 
         return TextSpacingTrim.IsFullwidth(
-            measurer.MeasureWidth(Char.ConvertFromUtf32(codePoint), style.GetFont()),
+            measurer.MeasureAdvance(codePoint, style.GetFont(), flow ?? WritingModeInfo.Horizontal),
             fullwidth);
     }
 
@@ -7487,7 +7492,7 @@ internal sealed class InlineLayout
     {
         if (!flow.IsVertical)
         {
-            return measurer.MeasureWidth(Char.ConvertFromUtf32(codePoint), style.GetFont()) / 2;
+            return measurer.MeasureAdvance(codePoint, style.GetFont(), flow) / 2;
         }
 
         var font = style.GetFont();
@@ -11139,6 +11144,8 @@ internal sealed class InlineLayout
                 return;
             }
 
+            var previous = Previous;
+
             var trim = PlanTrim(
                 _measurer,
                 source,
@@ -11146,7 +11153,7 @@ internal sealed class InlineLayout
                 length,
                 style,
                 flow,
-                Previous,
+                previous,
                 !HasContent,
                 _startsParagraph,
                 wantMask: true);
@@ -11154,6 +11161,10 @@ internal sealed class InlineLayout
             if (trim.RetroDelta != 0)
             {
                 TrimLast(trim.RetroDelta, trim.RetroCode);
+
+                // The trim just marked the character this looks back on, and a mark is part of what
+                // it answers: only the walk has to be taken again, and only here.
+                previous = Previous;
             }
 
             width -= trim.BoundaryDelta;
@@ -11165,7 +11176,7 @@ internal sealed class InlineLayout
                 length,
                 style,
                 flow,
-                Previous,
+                previous,
                 wantMask: true);
 
             if (auto.RetroDelta != 0)
