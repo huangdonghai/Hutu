@@ -3591,6 +3591,10 @@ internal sealed class InlineLayout
         LineBuilder.Checkpoint? breakPoint = null;
         List<TailStep>? following = null;
 
+        // The one buffer the steps after an opportunity are kept in. Text that may break after every
+        // character made a fresh opportunity at every one of them, and a fresh list each time.
+        var tail = new List<TailStep>();
+
         // The room a stop or comma at the end of the line was left off for, which it only keeps while
         // it is the last thing on the line: the next thing put there takes that room back, and the
         // fit it is asked about is made against the line as it really is (CSS Text 3 §8.2.1).
@@ -3832,13 +3836,16 @@ internal sealed class InlineLayout
                 {
                     if (breakPoint is { } point && builder.HasContent)
                     {
-                        var replay = following ?? new List<TailStep>();
+                        var replay = following;
 
                         builder.Restore(point);
                         NextLine();
                         breakPoint = null;
-                        following = null;
-                        Replay(replay);
+
+                        if (replay is not null)
+                        {
+                            Replay(replay);
+                        }
                     }
                     else if (builder.HasContent)
                     {
@@ -4771,7 +4778,8 @@ internal sealed class InlineLayout
                         if (breaks && builder.HasContent && !inRuby)
                         {
                             breakPoint = builder.Capture();
-                            following = new List<TailStep>();
+                            tail.Clear();
+                            following = tail;
                         }
 
                         // A line that ran past its last opportunity may have to give back what came
@@ -4794,13 +4802,16 @@ internal sealed class InlineLayout
                             (!spaces || (item.Style.WrapsInsideSpaces && followed)) &&
                             builder.ExtentFor(item.Inline) + advance + closing + auto.BoundaryDelta - auto.RetroDelta - trim.BoundaryDelta - trim.RetroDelta - Math.Max(endGrace, hangGrace) > room.Room)
                         {
-                            var replay = following ?? new List<TailStep>();
+                            var replay = following;
 
                             builder.Restore(point);
                             NextLine(hyphenate: builder.EndsInSoftHyphen);
                             breakPoint = null;
-                            following = null;
-                            Replay(replay);
+
+                            if (replay is not null)
+                            {
+                                Replay(replay);
+                            }
                         }
 
                         if (breaks && (room.Room > 0 || hyphen) &&
@@ -10308,6 +10319,9 @@ internal sealed class InlineLayout
     {
         private readonly List<TextFragment> _fragments = new();
         private readonly List<OpenInline> _open = new();
+
+        /// <summary>The chain a captured line stood with, kept from one capture to the next.</summary>
+        private OpenInline[] _opened = Array.Empty<OpenInline>();
         private readonly HashSet<InlineAncestor>? _carried;
         private readonly ComputedStyle? _fallback;
         private readonly Boolean _vertical;
@@ -10496,14 +10510,32 @@ internal sealed class InlineLayout
         /// Gets a place the line can be cut back to: the runs it holds, the room they took, and the
         /// elements their chain had opened.
         /// </summary>
-        public Checkpoint Capture() => new(
-            _fragments.Count,
-            _fragments.Count > 0 ? _fragments[^1].Length : 0,
-            _fragments.Count > 0 ? _fragments[^1].Width : 0,
-            _fragments.Count > 0 ? _fragments[^1].Trims : null,
-            _fragments.Count > 0 ? _fragments[^1].AutoSpaces : null,
-            Width,
-            _open.ToArray());
+        /// <remarks>
+        /// The opened chain is copied into a buffer the builder keeps rather than into a fresh array:
+        /// a page whose text may break after every character took a snapshot at every one of them, and
+        /// only the newest snapshot is ever read back.
+        /// </remarks>
+        public Checkpoint Capture()
+        {
+            var opened = _open.Count;
+
+            if (_opened.Length < opened)
+            {
+                Array.Resize(ref _opened, Math.Max(opened, Math.Max(4, _opened.Length * 2)));
+            }
+
+            _open.CopyTo(0, _opened, 0, opened);
+
+            return new Checkpoint(
+                _fragments.Count,
+                _fragments.Count > 0 ? _fragments[^1].Length : 0,
+                _fragments.Count > 0 ? _fragments[^1].Width : 0,
+                _fragments.Count > 0 ? _fragments[^1].Trims : null,
+                _fragments.Count > 0 ? _fragments[^1].AutoSpaces : null,
+                Width,
+                _opened,
+                opened);
+        }
 
         /// <summary>
         /// Cuts the line back to a place it stood at. The caller has kept the steps taken since and
@@ -10528,7 +10560,11 @@ internal sealed class InlineLayout
 
             Width = at.Width;
             _open.Clear();
-            _open.AddRange(at.Open);
+
+            for (var index = 0; index < at.Opened; index++)
+            {
+                _open.Add(at.Open[index]);
+            }
         }
 
         /// <summary>The state a line may be cut back to, kept while a soft hyphen offers the place.</summary>
@@ -10539,7 +10575,8 @@ internal sealed class InlineLayout
             String? RunTrims,
             String? RunAutoSpaces,
             Double Width,
-            OpenInline[] Open);
+            OpenInline[] Open,
+            Int32 Opened);
 
         /// <summary>
         /// Gets the code point the line's text ends on, or null where it ends on a box rather than a run.
