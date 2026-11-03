@@ -2408,3 +2408,14 @@ Chrome 的逐值把这条规则钉住了（`build/_query` 读 test 页）：表�
 - **`floats-clear-multicol-*` 卡的不是「成员看不见本栏 float」。** 照 §9.151 第二句把 `runs[run].Tracks` 的 band 用 `childContext.WithFloats(BandFor(...))` 递进 `ArrangeFloatFlowColumns`（float 自己不递），六对 510/850 **一个像素都没动**；探针 `floats-clear-multicol-000` 显示这页根本不走那条路：`.container`（100x0）与 `.clear`（100x20.72）都是 `MulticolChildren` 的普通成员，两个 float 整条站在第 1 栏里向下溢出 250。Chrome 的 `.clear` 读 `27,61,100,100 | 127,61,100,100 | 227,61,100,53`（被三栏接走，净空按 float 的整高 250 付），`.float` 读 `27,61,15,100 | 127,61,15,100 | 227,61,15,50`。⇒ 缺口就是 §9.151 的第一句（**普通栏路线也要把超出栏高的 float 沿栏切开并让它在下一栏续上**，即 §9.152 的规则 1+2），第二句对这一族是空的。实验已回退。
 
 `css-break` 现状不变：13 对（gecko 2 + wpt 11），最靠内的三件是 `at-boundary` 65 px（角上斜接，§9.172）、`transform-006` 1 567 px（逐片几何差不到 1 px，差异全是旋转边的 AA 细条：Chrome 四片的前变换盒 = 100x50 / 100x100 / 100x25 / 100x0，`LayoutEngine` 已按 `slice.Piece` 取参考盒，剩下的要看片盒的**分数**尺寸是否一致）、`balanced-inner-multicol` 700 px。
+
+### 9.176 `floats-clear-multicol` 那一套又量了一遍：顺序很重要，规则 2 其实早就在树里
+
+三条实测（都在今天的 HEAD 上做过，又全部回退，工作树回到 `70b86b18`）：
+
+1. **§9.152 的规则 2 已经落地** —— `PlaceFloatFlowColumns` 现在就是「整条比一栏还高的 float 不推、留在被给到的第一栏沿栏切；装得下却又放不下余量的才推」，并且带 `IsMonolithic` 例外（`BlockLayout.cs:3512`、`3534`）。所以那一条不用再动。
+2. **只落规则 7**（`FragmentsInColumns` 放行 `Children.Count == 0` 的定高盒 + `AddBoxCut` 的拒绝项加 `HoldsContent(child)`）：ref 侧的 250 空盒立刻按 Chrome 切了，于是 000/002/003 从 510 → **9 510**、原本绿的 `-001` 也变 9 510 ✗ —— 与 §9.151 当年量的数字一模一样，证明「半边先落会把对称的绿弄破」这条判断到今天仍然成立。
+3. **再叠规则 1**（`FloatHostWrapper` 不再因为 `width:100%` 或有背景就拒：只要求没有边框/内边距、高度 auto、无强制断点）：000 **9 510 → 2 805**、002 → 2 805、003 → 4 620 ✓✓；`-001` 仍 9 510（它的 `.container` 里除两个 float 还有一个 `<br clear=all>`，不是纯壳，走不进 host 路线 —— 这正是规则 3 要解的），balancing 三对一字未动（`FloatFlowColumns` 要 `multi.Fills`，平衡容器根本不进这条路）。
+4. 顺带纠一条 §9.151 第二句的用法：单独把 band 用 `childContext.WithFloats(BandFor(...))` 递进 `ArrangeFloatFlowColumns`（float 自己不递）**在这三条之前毫无效果**（六对数字一字不变），因为这页在规则 1 之前根本不走 float-flow 路线 —— 探针里 `.container`(100x0) 与 `.clear`(100x20.72) 都是 `MulticolChildren` 的普通成员。所以「递 band」这一步必须排在规则 1 之后重做，不能单独判定它无效。
+
+⇒ 剩下要一起量的就是 **1 + 7 + 3 + 5(+6)**，判定面 `floats-clear-multicol-{000,002,003}` + `379349-2a`，回归面 `MulticolBoxCutTests` 与 `wpt/CSS2/floats-clear/*`；数字基线：000/002 到 2 805 时还差的是 `.clear` 的**净空**（Chrome 的 `.clear` 读 `27,61,100,100 | 127,61,100,100 | 227,61,100,53`，橙线在 (227,111)；我们 000 现在第一差在 (112,53) = 被挤在第 1 栏两个 float 之间），也就是 5 的「量高也要看得见 band」+ 6 的「推一次的有界循环」。
