@@ -414,3 +414,276 @@ flow-root 现在建立 BFC（装住子 margin + 与浮动 stand-clear），wpt 2
 **剩下的 `@supports` 尾巴（5 对）**都属"这个位置不许出现这条 at-rule"：`at-supports-content-001` / `at-media-content-001`（条件块里的 `@namespace` 不该登记，而**未声明的前缀应当只作废那一条规则**——我们在匹配期才解析前缀，解析器无从知道命名空间表，需要在收集样式规则时按表校验 selector 里的 `prefix|`）、`at-supports-045`（`@supports` 之后再出 `@import`/`@namespace` 要作废后续）、`at-supports-namespace-002`（`selector()` 里的前缀只在有效 `@namespace` 之后可用）、`at-supports-048`（样式规则嵌套里的 `@supports`）。`selector(:is(:foo,.a))` 要为 false：Chrome 用的是"严格选择器校验"，而 `:is/:where/:has` 是**函数型**伪类，不在工厂表里——试过一次在 `selector()` 里扫未知伪类，`at-supports-selector-picker` 立刻红，已回退；正解是给核心解析器加一个 strict 开关。
 
 **近失（≤120 像素）还剩 88 对**，但绝大多数是 1–2 像素的圆角/装饰抗锯齿（如 `contain-paint-clip-017/018` 只差 1 像素的 #fcfaf9/#fcfdfc），另有 8 对是 `line-breaking`/`word-break` 的小语种断行（Javanese/Thai/Lao），需要真正的 UAX #14 断行表，都在结构化缺口一档。
+
+## 17. 2026-11-03 轮：表格跟着书写模式走，col 拿到自己的带
+
+**做掉的两件事**（一个提交口径：表格的轴）
+
+1. **表格有了"内联轴/块轴"的概念**。之前 `TableFormattingContext` 整个只认物理宽高：列永远沿 x、行永远沿 y，`writing-mode` 只对表格盒子自己生效、对网格无效（`table-progression-vrl-001` 差 30678 px，网格整个没转）。现在网格全程在逻辑坐标里算（列=内联，行=块），只在两处落到物理：
+   - 入口：`Measure`/`MeasureIntrinsic` 从物理约束里取出内联/块可用尺寸，声明尺寸按轴读对应的物理属性（竖排表的"列宽"由 `height` 决定，行轴由 `width` 决定）；`MeasureConstraints.FitHeight` 是为竖排单元格新增的入口。
+   - 出口：所有 `LayoutBox` 用 `WritingModeInfo.Map(content, inlineOffset, inlineSize, blockOffset, blockSize)` 落位，row/rowgroup/cell/caption/非表部件子节点无一例外；`border-spacing` 的两值按轴选（`TableBuild.InlineSpacing`/`BlockSpacing`），insets 同理。
+   - `direction: rtl` 不再单独打补丁：`Map` 内联轴反向，collapse 的边框按"内联始/终、块始/块终"四侧读写（`InlineStartSide` 等），顺带把 RTL 表 `border-left:6px` 与邻居 `border-right:2px` 正确合到同一条线上。
+2. **`col`/`colgroup` 拿到自己那几列的带**（CSS 2.1 §17.5.2）。两个缺陷叠在一起才看得见：`<col span=2>` 原先只记 1 列（`CollectColumnHints` 按元素不按列），而且列元素根本不生成框，背景无处可画。现在 `LayoutKind.TableColumn` 有框（只画背景，`SuppressBorder`——线的边框归单元格画），`ColumnBoxes`/`ColumnGroupBoxes`/`ColumnHints` 三者按列对齐，`colgroup span=N` 无子元素时也算 N 列。
+
+**读数**（Ahem 已装，HEAD `94ad8ac2` 之上未提交）
+
+| 语料 | 前 | 后 |
+|---|---:|---:|
+| `wpt/css-writing-modes/` | 剩 50 | **剩 40** |
+| `wpt/css-tables/` | 剩 32 | **剩 30** |
+| `gecko/writing-mode` | 剩 20 | **剩 19** |
+| `wpt/CSS2/` | 68 | 68（无回退） |
+| `wpt/css-text-decor/` | 54 | 54 |
+| `gecko/tables` | 0 | 0 |
+
+单测 **2196 → 2198**（新增 `ATableThatReadsRightToLeftMirrorsItsColumns`、`AVerticalTableTurnsItsGridThroughTheWritingMode`、`AColumnCoversTheColumnsItsSpanNames`），硬断言 63 全绿。`table-progression` 10/10 清零。
+
+**正交单元格（本簇已做一半）** 单元格自己的书写模式可以与表格不同（`table-cell-valign-*` 是竖排表里的横排格，`table-cell-align-005/006` 是横排表里的竖排格）。三处按格的 `Box.Flow` 走而不是按表格的：单元格子节点的 containing block（物理对 + `containingIsVertical`）、`vertical-align` 的移动轴、以及**行轴尺寸**——正交格的自身内联轴可能正好落在行轴上，而块布局沿自己的内联轴是"填满所给"而非"问内容"，给 0 就报 0，于是行高塌成 0（valign 那族原本 `table 8x316`、格子 `2x102`）。此时改用格声明的行轴尺寸，无声明则用内容的 max-content 建议。做完：valign-001/002/003 从 1738 px 掉到 104 px、align-001/003 从 9324 掉到 800，**但还没有一对翻绿**（104 px 是渐变硬边那一行的次像素相位差，超出页面自报的 `totalPixels=0-1` 容差）；align-005/006 与 table-cell-002 的像素数反而变大，说明这两对在正交格的行轴上还没量对——下一步从这里查。
+
+## 18. 2026-11-03 轮续：正交格量对了轴，`:dir()` 顺着树找
+
+§17 留下的"正交格还没翻绿"这一半做完了，根因是三处**轴读错**，都不是"单元格特殊"。
+
+1. **列要的是格"跨过自己那行"的尺寸**。横排表里的竖排格：列沿 x，而格自己的内联是 y。`MeasureContentIntrinsic` 报的是沿**格的内联轴**的建议值，直接交给列就把"文字有多长"当成"格子有多厚"（`table-cell-001` 因此 80 宽而不是 20）。新增 `CrossIntrinsic`：按格自身的流做一次无约束 `Measure`，再用 `Flow.InlineExtent` 在**表格**的内联轴上取值。
+2. **交给格的 containing-block 方向旗标属于表格，不属于格**。`ForContainingBlock(size, containingIsVertical)` 说的是"包含框怎么流"，此前处处传 `cell.Box.Flow.IsVertical`：同流时看不出差别，正交时就把表格的容器说成了竖的，格于是认为"内联由容器给"，而容器在那方向 nothing to hand down（0），横排表里竖排格的行高塌成只剩 padding（`orthogonal-cell-001` 五张表只有一张对）。改成传 `flow.IsVertical`（`MeasureCellHeights`、`ArrangeCell` 各一处）。
+3. **跨流的块盒由内容决定自己那条线的长度**。`BlockLayout.MeasureColumn` 的 `fillsInline` 只问"是不是常规块级盒"，正交时照旧按"填满容器"算。加上 `context.ContainingIsVertical == flow.IsVertical`，并让 `MeasureColumnChildren` 额外回报子盒沿内联轴的最大距离 `FlowedInline`（只在 `height:auto` 且不填满时接住）。这条也解释了 `available-size-*` 一族为什么一直量不满。
+
+**`vertical-align` 在反向块轴上要取最小坐标**：`vertical-rl` 的格块轴从右往左，内容的"末端"是最小 x；原来一律 `Math.Max`，把它当成没占地方，整格宽度都成了余量，内容被推出格子（`table-cell-align-005` 16640 → 6400 → 绿）。
+
+**`:dir()` 是问树的，不是问某一个元素的**。vendored AngleSharp 的 `DirFunctionState` 只比对元素自己的 `dir` 属性，于是 `<tr dir=rtl>` 里的 `td.start:dir(rtl)` 整条规则作废、背景不翻转（`table-cell-align-001..005` 全卡在这）。按 HTML §3.2.1.3 沿祖先链取最近的 `ltr`/`rtl`，一路没有就是 `ltr`；`auto`（以及默认的 `bdi`）留给双向文本解析器定方向，选择器不猜。改在 `deps/AngleSharp`：新增 `DirectionNames`、`ElementExtensions.GetDirectionality`，`CssSelectorConstructor` 用它。
+
+**转倒文本的 skip-ink 墨框起点在基线上**。`SkiaPaintExecutor.Beside` 先把 blob 的墨框按 `Bounds.X` 平移、再绕 `baselineX` 旋转，两个原点差了一个 `axis`，整条列跟着错位。于是要求"不画线"的 `text-decoration-skip-ink-sidewayslr-002` 露出 16 px 线头，而 `-sidewaysrl-002` 一直不绿。平移改用 `baselineX` 之后两对都按页面说的画（这条也是笔记 §7 里 `skip-spaces` 一族"被 blob 内落位卡住"的同一处）。
+
+**读数**（Ahem 已装）
+
+| 语料 | 前 | 后 |
+|---|---:|---:|
+| `wpt/css-writing-modes/` | 剩 40 | **剩 31** |
+| `wpt/css-tables/` | 剩 30 | **剩 28** |
+| `wpt/css-text-decor/` | 剩 54 | **剩 53** |
+| `gecko/writing-mode` | 18 | 18 |
+| `wpt/css-text/` | 95 | 95（无回退） |
+| `wpt/css-ruby/` | 32 | 32（无回退） |
+| `wpt/CSS2/` | 68 | 68（无回退） |
+
+翻绿：`table-cell-001`、`table-cell-002`、`table-cell-align-001/002/003/004/005`、`orthogonal-cell-001`、`two-levels-of-orthogonal-flows-fixed`、`table-intrinsic-size-003/004`、`text-decoration-skip-ink-sidewaysrl-002`。单测 2198 → **2204**（`AColumnDownThePageHoldsWhatItsCellAsksAcrossItsLine`、`ARightToLeftCellStandsItsContentOffTheEdgeItsOwnBlockEndIs`、`DirPseudoClassTests` 四则），硬断言 63 全绿。
+
+**教训（工具层）**：PowerShell 的双引号 here-string 会把 `` `t ``、`` `n `` 等当转义序列吃掉，往中文文档里追加带反引号的 Markdown 会被静默改写（`table-cell-001` 变成 TAB+"able-cell-001"）；改用 `apply_patch` 或单引号 here-string。另外该文件在库里是 LF，用 `WriteAllText` 写成 CRLF 会让 `git diff` 显示整篇重写——`--ignore-cr-at-eol` 能确认自己只改了 55 行。
+
+**正交格剩下的线索**：`table-cell-align-006`（3200，竖排表里横排格 + `padding-bottom` 时格内 `div` 的落位）、`three-levels-of-orthogonal-flows`（34080）、`percentage-padding-in-shrink-to-fit`（435600，收缩适配里百分号 padding 的基准）、`inline-box-orthogonal-child-with-margins`（66730）。`table-cell-valign-001..004` 仍卡在渐变硬边那一行的次像素相位（104 px，超出页面自报的 `totalPixels=0-1`），和装饰族的相位问题是同一条线。
+
+## 19. 2026-11-03 轮续：装饰线铺在整像素上，`skip-spaces` 补上
+
+**装饰线要铺在整像素上**（`SkiaPaintExecutor.Band` 走 `SnapToDevice`，与边框侧、背景同一套规则）。`text-decoration-inset-*` 那一族借用页的参考做法是"三根错开的短线叠成一根长线"：软边叠三次合成一个颜色，单根的一次是另一个颜色，只有线本身没有软边时两种画法才可能相同。headless Chrome 实测把 32px 的下划线铺成整整三行实心（y=102..104），我们当时是 103.4..106.6（上下各一行软边）。改完 **inset 族 12 对当场翻绿 6 对**，并顺带修好 `text-decoration-thickness-vertical-001`、`text-underline-offset-calc`；余下 6 对从 68~982 px 掉到 6~693 px。
+
+**转倒文本的基线在盒子正中，不跟着 `line.Ascent` 走**。`text-emphasis-position-property-005*`/`006*` 共 16 对（竖排 + `text-orientation: sideways` 的正文配强调符，参考页用 `<ruby>` 复刻）。竖排表那批先靠"正交格"三处修好；横竖混对（005d..g / 006d..g）还差 1~2 px：`Marks` 与 ruby 注疏都用 `line.Ascent` 定"文本外边"，而画转倒字形时 `Axis()` 是按盒子正中 ± `(ascent-descent)/2` 落的 —— 两套口径。当行的 ascent 来自**回退字库**（CJK 字形解析到的 face 与页面声明的 serif 度量不同）时两者相差 0.69 px，镜像两侧一正一负。改成：转倒流的注疏与强调符一律用 `(line.Height + ascent - descent)/2`（与 `Axis` 同一口径）→ **16 对全绿**。
+
+**`text-decoration-skip-spaces` 之前压根没实现**（属性名没注册、值没人读）。用 Chrome 量过默认值：不声明时空格照样画线，所以页面注释里"按 L3 这是默认行为"不作数，得显式实现。链路：`WideKeywordDeclarationFactory` 注册名字（AngleSharp 无文法，否则整条声明在 parse 期就丢了）→ `ComputedStyle.ResolveSkipSpacesFused` 读 `none | [start||end] | all` → 值挂在 `DecorationInsets.Spaces`（与 inset 同一条通道，因为把两端往里拉的正是那次遍历）→ `LayoutEngine.Trim`：段首 run 的前导空白宽度并入 `start`、段尾 run 的尾部空白并入 `end`，字母之间的空格一律不管。单测 `ARuleAskedToSkipItsEndSpacesStopsAtTheFirstLetterUnderIt` 断言 trim 恰等于两侧空白的宽度。
+
+**跨空格的 kern：一整串与被元素切成几段必须落在同一处**（`src/Hutu.Skia/SkiaTextShaper.cs`）。skip-spaces 实现完还剩 1263~1272 px 的差异，根因不在那个属性：`        ABCDEF        ` 整串一个 blob 时字母落在 62，被 `<span>` 切成三段时落在 64，而 Chrome 两种写法都在 64。HarfBuzz 对"空格 + 下一个字形"照样答 GPOS 字偶对，浏览器在词边界把查找停住（Blink 用 word-extents）。这里等价的做法是**按空白切段分别 shape，再把各段字形按各自笔位拼回去**：段内字偶照旧，跨空格不成对。`ShapeRun` 与 `ShapeClusters` 两条路径用同一套切法（否则字距按字形落、字形按段落），从右往左写的整串不切——各段谁前谁后是文字的本事，不是这个切分能定的。**skip-spaces 5 对当场翻绿**，`wpt/css-text` 95、`css-ruby` 32、`CSS2` 68、`css-tables` 28、`gecko/writing-mode` 18 全部无回退。新单测 `CuttingASentenceAtItsSpacesLeavesItsLettersWhereTheyWere` 直接比对两种写法的落墨列，改之前差 2 px。这条大概也是 `letter-spacing-cursive`、`grow-consistent` 一类零散对的同一条根。
+
+**读数**（Ahem 已装；四块语料合计 231 → 181（见 §20））
+
+| 语料 | 本轮开始 | 现在 |
+|---|---:|---:|
+| `wpt/css-text/` | 95 | 95 |
+| `wpt/css-text-decor/` | 54 | **24** |
+| `wpt/css-writing-modes/` | 50 | **31** |
+| `wpt/css-ruby/` | 32 | **31**（见 §20）
+| `wpt/css-tables/`（旁证） | 32 | **28** |
+| `gecko/writing-mode`（旁证） | 20 | **18** |
+| `wpt/CSS2/`（旁证） | 68 | 68（无回退） |
+
+单测 2196 → **2207**，硬断言 63 全绿。
+
+**工具层教训（第二次踩）**：`apply_patch` 千万别写占位内容 —— 我一次误写 `{ ... }` 破坏了 `TableLayoutTests.cs` 的 helper，另一次破坏了 `TextDecorationPaintTests.cs` 只能 `git checkout --` 回滚（那是我自己几分钟前的改动，才敢这么处理）。动手前先用 `Select-String` 核对精确上下文。
+
+## 20. 2026-11-03 轮续：外面的浮动不许钻进 inline-block 的格式化上下文
+
+`css-ruby` 里 `ruby-with-floats-001/002/003` 三对同一条根：测试页把一个 `<ruby>` 直接放在浮块旁边，参考页把同一个 ruby 裹进 `display:inline-block`。我们的参考页把嵌套那一行**压到浮块下边**（`line 100,50` 而不是 `100,0`），外层盒子因此比它的内容高出一截（85.44 而不是 35.44）。CSS 2.1 §9.4.1／§9.5：inline-block 自成一个 BFC，**外面**的浮动既不缩短它里面的行，也不把第一行压下去——是它整块在浮块旁边让位，而这一步线在放它之前就已经答过了。
+
+`LayoutContext.ForContainingBlock(size, containingIsVertical)` 原样把 `Floats` 带进下一个上下文，于是嵌套的行仍拿得到外层那条 `FloatBand`。修在两处：`BlockLayout` 内联内容那支交给 atomic 的上下文 `.WithFloats(null)`，以及 `InlineContext` 构造里 `Atomic` 一律清掉。**只清一处不够**——把两处分别拆掉试，001 和合成用例都还会露出那 50 px；两条 pass（measure 与 arrange）对同一件事不能给两个答案。
+
+新增单测 `AFloatStopsAtTheFormattingContextAnInlineBlockRoots`（`FloatLayoutTests`）：浮块 50×50 + 一个两行的 inline-block，断言盒子高 20 且首行在盒顶；任一处清除拿掉都会让它红（70 高、首行 y=50），是有效守卫。
+
+**这轮结果**：`ruby-with-floats-001` 翻绿（`css-ruby` 32 → **31**），其余三块与旁证模块无回退。002/003 仍差 530 px——那两对的另一半在**线盒自己**：浮块的顶在线顶之下、却和线的高度相交时，Chrome 把整条线缩到浮块右边（x=100），我们按线当时的 0 高去问 room，inset 只取到 50。下一步从这里查。
+
+## 21. 2026-11-03 轮续：专名号的过悬把"身边的空格"逐字让出来
+
+`css-ruby` 里 `ruby-overhang-spaces-*` 是最大的一族（水平 8 对 + 竖排 4 对）。规范 CSS Ruby 1 §5.1 把 `spaces` 允许的过悬对象列成一张表：**保留空白、U+00A0、其他空格分隔符、全角开标点起始侧的一半、全角闭标点结束侧的一半、全width中点两侧各四分之一** —— 三条我们自己都写歪了。
+
+**一、"一半/四分之一"是逐字向外累加的，不是只看贴住的那一个字符**。旧实现是"先数贴着的空格串，串外就不看了"（注释里还写着理由："空格后面的那个标点不是注疏要盖的东西"）——这句判断是错的：注疏可以连着盖过 `　」` 这一串。按字符向外走、走到第一个不肯让的字符才停之后，`-016`、`-017` 当场翻绿（`　`(20) + `」` 的一半(10) = 30，正好是 Chrome 的量）。
+
+**二、被 `text-spacing-trim` 裁掉的半边不再让第二次**。规范每一项都带 "unless it has been trimmed by text-spacing-trim"。`-021` 的 `））`：Chrome 实测第一个 `）` 宽 10（被裁）、第二个 20，注疏只从第二个拿到 ½×20=10，扫到被裁的那个就停 → 盒子 160 ✓。我们的 `IsFullwidthPunctuation` + `TextSpacingTrim.TrimsOpening/TrimsClosing` 正好能答这一个问题，邻居取"朝专名号那一侧的字符"（贴住注基的那个字符，其邻居是注基本身的首/尾字符）。
+
+**三、中点的四分之一按整宽算，不按字形宽**。`-019` 用 `&#x00B7;`（不是 `・`），Chrome 里它只有 5.2 px 宽，可过悬仍给了 5 = **¼em**。所以份额一律乘"一个全角字符在线上的宽度"（`FullwidthRoom` 取 U+3000 的推进，横竖各随其流），而不是字符自己的推进。
+
+**四、制表符让出的是"到下一个停靠点的距离"**（CSS Text 3 §4.2），这只有线自己答得出。旧实现把它当一个字形量（serif/20px 答 8.43 px，实际停靠距离 20 px）——`-004`、`-006` 差的就是那 5.79 px。补法：两条 pass 都记下每个 item 的**起点**（intrinsic 用 `maxContent + trailing`，线用 `builder.Width`），从注基往回走时先用起点量出前缀、得到空格段的真实位置，再按停靠算；往后走时起点是**注疏读到的位置**（`ReadingEnd`）而不是盒子边缘——Chrome 的 `-013`/`-017` 两处实测都只和这一条一致（017 的第二个制表符宽 10 = 从注疏右缘 190 起算；若从盒子右缘或注基右缘起算都不对）。
+
+**五、专名号长大时，基不是居中，是"近端亏空 + 基 + 远端亏空"**。`-017` 两侧room 不等（50 / 40），Chrome 把基落在 `盒子起点 + 近端亏空`，注疏再以基为心 —— 我们原来的 `RubyAligned` 居中会把基推后 5 px，于是"总宽对了、画面还是错的"。现在 `RubyHang` 把近端亏空存进片段，注疏盒子改成以基的位置为原点、以基宽为房间（`AnnotationBox` 的两个参数换了），对称亏空时与旧行为逐位相同，所以 `ruby-overhang-spaces-align-*` 五对没动。
+
+**注基里的制表符**也顺手改了：`PairWidth` 见到制表符就走 `WhiteSpaceWidth`（`ruby-tab-in-base-001` 的基从 50 变 100 ✓ 与参考页 `padding-left: 75px` 一致）。那三对仍差：画的时候整串 `\tY` 是一个 blob，制表符按字形的 25 px 落位，而线给了 75 ——普通 run 是在制表符处切成片段的，注基没有。
+
+**结果**：`css-ruby` 31 → **27**（`-004`/`-006`/`-016`/`-017` 翻绿），`-011` 从 7120 px 降到 1428 px。`Hutu.Tests` 2207 → **2210**（三条守卫：跨空格继续拿标点、被裁的标点不再让、制表符按停靠点让），硬断言 63 全绿，`css-text` 95 / `css-text-decor` 24 / `css-writing-modes` 31 / `css-tables` 28 / `gecko/writing-mode` 18 / `CSS2` 68 全部无回退。
+
+**下一刀在哪（已经定位，不在过悬本身）**
+
+* `-021`：参考页用 `font-family: halt-font`（字形自带 `halt`）。Chrome 的 `text-spacing-trim: space-all` 会**把字体自带的宽度特征关掉**（那两个 `<span>` 里的 `）（` 回到 20 px），我们只在 `HasExclusiveFeature` 里看作者写的 `font-feature-settings`，于是参考页的注基少 20 px。改在 `space-all` 时给 shaping 追加 `"halt" 0, "vhal" 0, "palt" 0, "vpal" 0`。
+* `-019`：`·` 在 `あ·` 里比单字多 2.5 px，在 `·　` 里不多——`text-autospace` 的边界判断在跨 item 时不一致，测试页/参考页因此各差 5 px（113.36 vs 118.36）。
+* 竖排四对：盒子两侧宽度都对（140），差在注疏与注基的落位，先从 `vertical-001` 的 702 px 那一条线看。
+* `-013`/`-011`：制表符的"上一趟宽度"。Chrome 把长大后的盒子整体右推时，**不重算**后面那个制表符的宽度（013 实测 8.83 = 从注基右缘 51.17 起算，而它画在 62.34 上）；我们按实际起点重算，于是差一个停靠周期。要一致就得把"注疏读到的位置"同时也当作画的落位来问。
+
+**工具**：这一族靠两个新脚本定位的 —— `build/tmp/measure.ps1`（把 `measure.js` 注入副本页，用 headless Chrome `--dump-dom` 打印每个字符的 `Range` x/w 与 ruby/rt 的实际盒子）和 `build/tmp/chrome-x.ps1`（截图后扫橙色/蓝色边框的列）。注意两件事：本机已有 Chrome 会话时**必须**给 `--user-data-dir`，否则 `--dump-dom` 一句都不输出；PS 5.1 的 `Get-Content -Raw` 按 ANSI(GBK) 读 UTF-8 会把 CJK 读成乱码，要用 `[IO.File]::ReadAllText(..., UTF8)`。
+
+## 22. 2026-11-03 轮续：一段文字里的空格，线只问到第一个为止
+
+`css-text/white-space` 那 23 对里 `trailing-ideographic-space-break-spaces-001/003` 与 `break-spaces-with-ideographic-space-001` 同一条根。测试页 `ああ　　　　ああ` 放进 3 字宽的盒子，Chrome 量出来是三行 `ああ　` / `　　　` / `ああ`，我们给的是四行 `あ` / `あ　　` / `　　あ` / `あ`。
+
+分块把 `あ` 和它后面的四个全角空格留成同一段（`LineBreaks.MayBreak` 在 ID×BA、BA×BA 都不给断点，到 BA×ID 才断），于是线在段首问的是"**整段**要不要放得下"：`asks = width + trailed + mark`，这一段 5 个字符 = 80 px > 剩下的 32 → 判不下 → `NextLine()` → 第二个假名整段掉到下一行。可 §4.1.3 给 `break-spaces` 的断点是"**每**一个保留空格之后"，也就是说这段内部本来就有合法的断行处，段首不该按整段问。同一条规则在拉丁文那侧一直是对的：`XXXX　　XX` 里 Chrome 也只让第一行拿到 `XXXX　`（溢出到 80，不是 96），因为它的"整段"只问到第一个空格为止。
+
+改法（`AskWidth`）：`stepsSpaces` 为真且段内确有可断的空格时，段的"要价"只算**到第一个保留空格为止**（前缀用 `Measure`，那一个空格用 `WhiteSpaceWidth`，制表符仍按停靠点算），其余照旧整段。于是 `ああ　　　　ああ` 第一行 `ああ　`、第二行 `　　　`、第三行 `ああ` ✓；拉丁 `XX　　　　XX` 与 `XXXX　　XX` 逐字符位不变 ✓。**`wpt/css-text` 95 → 92**。
+
+守卫：`AKanaKeepsTheFirstOfTheSpacesBehindItOnTheLine`（`BreakSpacesWrapTests`，假测量器 5 px/字符、盒宽 20 px）断言两行、首行铺满 20 px；把 `AskWidth` 换回 `width + trailed + mark` 立刻变红（四行），是真守卫。
+
+**顺带定位到但没动的三件事**（都贴着 `break-spaces` / ruby 这一族）
+
+* `trailing-ideographic-space-break-spaces-008`：`XXX<span>　</span>X` 放进 3 字宽，Chrome 让空格留在第一行末尾并溢出（第 4 格在 83..108），我们把空格挪到了第二行；同一个文本节点里（`XXX　X`）我们是对的。走过的两条死路要记下来：① 把后一个 item 开头的空格也算进 `trailed`（词与空格跨元素仍是一体）——对 008 无效，动的是 4505 那条"放不放下"的判据，不是把空格吐回去的那条；② 在 `CanBreakBefore` 里禁止"跨元素边界的 run 以空格开头时断行"（§4.1.3 的机会在每个空格**之后**，不在第一个之前）——008/#d 两例当场对上了 Chrome，但 `break-spaces-before-first-char-007..011/016/017` 与 `break-spaces-before-first-ideographic-char-007..011/016/017` 共 15 对立刻变红（这些页面正是要在第一个空格之前断）。差别一定还在 `beforeFirst`（`WrapsBeforeSpaces = overflow-wrap: break-word|anywhere || line-break: anywhere`）与该不该用 `CanBreakBefore` 的宽授权之间，需要按这 15 对再定一次规则；`steps` 的判据里加 `trailed` 同样会碰坏这一族，已回退。
+* `ruby-overhang-spaces-011/013`：跟在长大后的盒子后面的那个制表符，Chrome 用的是"**上一趟**按注疏右缘算出的宽度"，画的时候整体平移而不重算（013 实测宽 8.83 = 从 71.17 起算，而它画在 62.34 上）；我们按实际起点重算，于是要么差一个停靠周期，要么在两个自洽解之间摇摆。要对齐就得让线后的空格段也按"注疏读到的位置"量一次宽度（并接受它与盒边不连续）。
+* `ruby-overhang-spaces-019/021`：`text-autospace` 在跨 item 边界多给的 2.5 px（`あ·` 比 `·` 单字多 2.5）与 `text-spacing-trim: space-all` 应当关掉字体自带的 `halt/vhal/palt/vpal`（Chrome 里那两个 `<span class=space-all>` 的 `）（` 回到 20 px，我们仍是 10）。这两条都在测量侧，与过悬规则无关 —— 过悬那一侧我们已经和 Chrome 逐位对齐。
+
+**读数**：`wpt/css-text/` 95 → **92**、`wpt/css-text-decor/` 24、`wpt/css-writing-modes/` 31、`wpt/css-ruby/` 27；旁证 `wpt/css-tables/` 28、`gecko/writing-mode` 18、`wpt/CSS2/` 68 —— 全都不回退。单测 **2211**（这两轮新增 4 条守卫）全绿，硬断言 63 通过 / 1 跳过。四块目标语料合计 231 → **174**。
+
+## 23. 2026-11-03 轮续：`normal` 的行高不是上限，小块字号不许把线压扁
+
+`white-space-zero-fontsize-001/002` 两对同一条根，顺带翻绿 `text-autospace-elements-002/004/006` 三对。测试页是 `pre { font-size: 0 }` 里放两个 `span { font-size: 12px }`，参考页把 pre 改成 12px —— 断言：保留的换行在字号为 0 时仍然算断行。我们的两条线高度是 **0**：`line pre … x0`，两行叠在一起。
+
+根因在 `Build` 收线高那一段。strut 的 `Stretched()` 同时给了两件事：线高的**下限**（`ascent/descent` 各取 max ✓ 正确）和一个塞进 `statedLine` 的**上限**。`statedLine` 本来是给"页面写明的 line-height"准备的（`line-height: 1` 时字形溢出线盒而不撑高它），但 `normal` 也被当成数字塞了进去：`pre` 字号 0 → strut 自然高度 0 → `line.Height = min(13.59, 0) = 0`。CSS 2.1 §10.8.1 里 `normal` 说的是"行盒按线上的字形取高"，它只能当下限，不能当上限。改法：`statedLine` 只在 `_fallback?.LineHeight is not null`（页面确实写了行高）时并入 strut 高度；下限那条路径不动。
+
+**读数**：`wpt/css-text/` 92 → **87**、其余三块与三块旁证不变（`css-text-decor` 24、`css-writing-modes` 31、`css-ruby` 27、`css-tables` 28、`gecko/writing-mode` 18、`CSS2` 68）。单测 2211 全绿，硬断言 63 通过 / 1 跳过。四块目标语料合计 231 → **169**。
+
+**顺带**：同一条改动让 `text-autospace-elements-002/004/006` 翻绿 —— 那三对的行里也有 0 字号的自动空格插值，线被压扁后注疏与空格叠在一起。剩下的 `text-autospace-*` 五对要先解决 `Measure` 里跨 item 边界的 autospace 增量不一致（`·` 在 `あ·` 里多 2.5 px、在 `·　` 里不多）。
+
+## 24. 2026-11-03 轮续：认不出词界的文字，也要给一个断处
+
+`line-breaking-023..027` 五对是 `relat="mismatch"`（测试页必须与 `white-space: pre` 的参考页**不同**），断言写得很直白：需要词法/正字法分析的语言，即使 UA 不会正确分词，也必须有一种 fallback 断行，**不允许溢出**。我们五对全给成同一张图：泰、老挝、缅甸、高棉、爪哇的字母在 `ClassOf` 里落到 `Al`，两个字母之间没有断点，整串顶在 6em 的盒子里一行画完 ✓ 与 pre 相同 → mismatch 失败。
+
+规范那一句话在 CSS Text 3 §5.1 末尾（不是 UAX#14 的 LB1）：
+
+> In order to avoid unexpected overflow, if the user agent is unable to perform the requisite lexical or orthographic analysis for line breaking any content language that requires it—for example due to lacking a dictionary for certain languages—it must assume a soft wrap opportunity between pairs of typographic letter units in that writing system.
+
+即：**没有词典就得按“任意两个字母之间”放行**，`word-break: normal` 下如此；`keep-all` 仍然把字母扣在一起（§5.4 的 `HoldsTogether` 认 `Al/Nu/Id`，不动）✓ `break-all`/`anywhere` 本来就断 ✓。
+
+实现两行：`TextChunker.RequiresAnalysis(codePoint)`（UAX#14 SA 的那些块：Thai/Lao、Myanmar、Khmer、Tai Le/New Tai Lue/Khmer 符号、Buginese/Tai Tham、Balinese/Sundanese、Batak、Kayah Li/Rejang/Javanese、Shan/Tai Nüa/Tai Viet、Cham），`LineBreaks.ClassOf` 在 `word is WordBreaking.Normal` 时把它们读成 `Id`。附注两点：① 这些块里的元号/上下标符号多是 `Mn`/`Mc`，`ClassOf` 先答 `Cm` → LB9/LB10 把它们粘在前一个字母上，簇不会被拆开 ✓；② 分块器与断行器都走 `ClassOf`，所以一处改完，chunking、`min-content`、行内断点一起对上。
+
+**代价**：`word-break-auto-phrase-002` 由绿转红 —— 那对拿 `word-break: keep-all` + `<wbr>` 当参考，比较的是 `min-content` 宽度；有了 fallback，我们的 `normal` 泰文 min-content 掉到一个字母，而 Chrome 有泰语词典，min-content 是一个词。同族另外四对（001/003/004/005、intrinsic-001）本来就红。净收益 +4。真要清这一族，得给这些文字做词界识别（词典或统计），不是断点规则能补的。
+
+**读数（本轮终点）**：`wpt/css-text/` 95 → **83**、`wpt/css-text-decor/` 24、`wpt/css-writing-modes/` 31、`wpt/css-ruby/` 27；旁证 `wpt/css-tables/` 28、`gecko/writing-mode` 18、`wpt/CSS2/` 68 —— 全不回退。`Hutu.Tests` **2212** 全绿（本轮 6 条新守卫），硬断言 63 通过 / 1 跳过。四块目标语料合计 231 → **165**。
+
+**下一刀（css-text 83 的分布）**：`word-break` 15（含 auto-phrase 5）、`text-fit` 10（属性未实现）、`overflow-wrap` 8、`white-space` 15、`text-autospace` 5、`text-justify` 5、`line-break-anywhere-overrides` 4、`letter-spacing` 4、`text-align`/`text-indent` 各 3、`bidi`/`text-transform` 各 2。三条已经定位、不需要词典的：`text-indent-each-line-hanging`（`each-line` + `hanging` 的首行缩进）、`letter-spacing-ligatures-003`（字距按字形还是按字符）、`empty-span-001`（空 inline 元素在行内的落位）。
+
+## 25. 2026-11-03 轮续：首行缩进的两个修饰符，以及"第一个可格式化行"到底是谁
+
+`text-indent-each-line-hanging`（8800 px）、`text-indent-abspos-hanging-001`（204）、`text-indent-length-002`（800）三对都是整条声明被丢掉：AngleSharp 的文法只到长度为止，`4em hanging` 里的词它不认识，于是连 `4em` 一起不认。先把声明留住 —— `KeywordExtraSubstrings` 加 `["text-indent"] = ["hanging", "each-line"]`，值里出现这两个词之一就整条留原文，其余写法（`40px`、`50%`、`calc(...)`）照旧走 AngleSharp 的类型值，`ResolveTextIndentFused` 只在留原文那条路上 `LengthReader.FromText` 取距离。
+
+语义（CSS Text 3 §5.2，逐条对着 `text-indent-each-line-hanging-ref.html` 的 8 个盒子验过）：记 **被点名的行** = 块自己的首行 ∪（有 `each-line` 时）每个**强制**断行之后的首行。没有 `hanging` → 缩进落在被点名的行上；有 `hanging` → 落在这之外的每一行。实现成 `InlineLayout.TextIndentation(Distance, Hanging, EachLine)`，一个 `Carries(first, afterBreak)`；它跟着缩进一起穿过 `Plan`/`BuildLines`/`Balanced`/`LinePlanKey`（计划缓存的键本来就有缩进，标志不进键就会串色），`BuildLines` 里原来写死的 `Inset(indent)` / `Inset(0)` 换成 `Settled(first, afterBreak)`，`NextLine(forced:)` 已经有强制断行的信号，不必新记。内在尺寸那一趟也按段种子：段首行的缩进 `headIndent`，强制断行后那段 `breakIndent`（无标志时两者就是原来的 `indent`/`0`，`text-indent-min-max-content-001` 不动）。
+
+`text-indent-length-002` 考的是另一半：块里夹了块级子元素，行内文字被切成若干匿名块，**只有开头那一个**是"这个块的首行"，后面每一段都在普通行的起点起行。规范那句 "a line is not available when it does not begin the block container" 的具体形状，参考页写成 ` X`/`X`/` X`/`X`/` X` 五行，非常干脆。做法：`Box.StartsParentContent`（默认 true），`GroupChildren` 造第二个及以后的匿名包裹时置 false（父子里已有在流内的块级孩子）；`Indentation()` 见 `IsAnonymous && !StartsParentContent` 就返回 0。一处收紧：flex/grid 的匿名子项**不是**匿名块盒子，`anonymous-flex-item-001`/`anonymous-grid-item-001` 要求容器里第三个孩子照样缩进（CSS Flexbox 1 §4.1），所以 `parent.Kind` 是 Flex/Grid/Masonry 时不收紧 —— 这两对本轮开头因为我的收紧红过，已修回。
+
+**顺手清掉两处上一轮记录说"已回退"、其实还留在树里的实验**：`steps` 的闸门里加 `trailed`、以及逐步 `trails`（`asks` 的 else 支 `advance + trails`）。两处退回 HEAD 的写法后 `TailorableBreakTests.ABreakAllLeavesTheSpaceToTheWordItCameFrom` 恢复通过（break-all 下那个尾随空格仍跟着词溢出）；对语料读数无差别（`indent2` 的 css-text 与退回前后一致）。`trailed` 上为 `line-break: anywhere` 加的那个条件也试过：整块 css-text 一对不差，按 HEAD 收回，不留没证据的死重。
+
+**读数**：`wpt/css-text/` 82 → **79**（正是上面三对）、旁证 `wpt/CSS2/` 68 → **67**（`block-in-inline-first-line-002`，同一条匿名块规则带出来的）、`wpt/css-text-decor/` 24、`wpt/css-writing-modes/` 31、`wpt/css-ruby/` 27、`wpt/css-tables/` 28、`gecko/writing-mode` 18 全不动。四块目标语料合计 164 → **161**。`Hutu.Tests` **2217** 全绿（本轮 4 条守卫：hanging、each-line、两者同用、匿名段不缩进），硬断言 63 通过 / 1 跳过。
+
+**已知边界**：带 modifier 的声明只认简单长度（`FromText`），`text-indent: calc(1em + 2px) hanging` 这种组合语料里没有，真写了会退化成 0 距离 + 标志；百分比照旧在布局里按容器 content box 解析。多栏（`slotExtents`）的后栏行按 `Settled(first: false, afterBreak: false)` 走，`hanging` 时会给它们缩进，Chrome 怎么算没测。
+
+**下一刀（css-text 79 的分布）**：`word-break` 15（含 auto-phrase 5，需要词界）、`white-space` 15、`text-fit` 10（属性未实现）、`overflow-wrap` 8、`text-autospace` 5、`text-justify` 5、`letter-spacing` 4、`line-break` 4、`hyphens` 3、`text-align` 3、`bidi` 2、`text-transform` 2。
+
+## 26. 2026-11-03 轮续：min/max 也要按字形折，正交流没有块尺寸时给一个 fallback
+
+`available-size-011/017/018` 三对看着是三件事，其实是两条规则，而且第一条不是 writing-mode 的事。
+
+**`ch` 在 clamp 上退化成半个 em。** `height: 4ch` 走的是带字形的读法（我们量 `"0"` 的推进宽度），但 `min-height`/`max-height`/`min-width`/`max-width` 在 fused 路径里传的是 `size` 这个光秃秃的数字而不是 `face` —— 于是 `FaceMeasure` 直接返回 null，落到 `LengthReader.cs:365` 的 0.5em 兜底。`available-size-017` 的父盒是 `height: 4ch; min-height: 8ch`，规范期望 8×11.99 = 95.94，我们给 80，正交子盒就在错的位置上换行。改一处：四个 clamp 跟两个 size 一样传 `face`。这类页的构造很刁：`ch` 在这族测试里同时当"可用高度"和"字符宽度"用，所以只要两边不一致就必然错位 —— 字体换成什么都不知道，测试照样自洽。
+
+**WM3 §7.3.1 的 fallback 尺寸。** 011/018 的父盒是 auto 高度（018 还叠了 `min-height` > `max-height`），块轴没有确定尺寸，正交子盒的 inline 就没得破。规范给的兜底是三者取最小：① 父盒自己的 inner max size（被 inner min size 抬底）、② 最近的祖先 scrollport 的 inner size、③ 初始包含块。我们原来只有 ②③（`Measure` 里 auto 高度一律 `childHeight = 0` 往下传）。补 `BlockLayout.OrthogonalExtent(style, basis, insets, scrollExtent)`，在测量与摆放两处都按 §7.3.1 取 ①并夹在 scrollport 之内；`min > max` 时 min 赢（CSS 2.1 §10.4.3，018 正是这一条）。
+
+顺带把一条自己写错的守卫纠正了：我一开始拿 8 个不可断的 `a` 去测，期望两栏 ——但那是**正确的溢出**。WM3 §7.3.2 说正交根盒的 inline 自动尺寸是 fit-content(min(max-content, max(min-content, stretch-fit)))，一个整词不可断，min-content 就是整个词，所以盒子按内容长到 47.97 而不是被压到 20。守卫改成有空格的 `a a a a a a a a`（15 个单位、20px 可容 4 个）→ 四栏 ✓ 与 011 的形状一致。写守卫前应该先确认内容的断点，而不是先看盒子尺寸。
+
+**读数**：`wpt/css-writing-modes/` 31 → **28**（正是这三对）、`wpt/CSS2/` 67、`wpt/css-text/` 79、`wpt/css-text-decor/` 24、`wpt/css-ruby/` 27、`wpt/css-tables/` 28、`gecko/writing-mode` 18 —— 其余六块逐条比对无变化。四块目标语料合计 161 → **158**（本轮起点 164）。`Hutu.Tests` **2219** 全绿（新增 2 条守卫：`ChIsTheFaceAdvanceOnTheClampsAsWellAsTheSizes`、`AnOrthogonalChildBreaksAgainstTheContainersMaxHeight`），硬断言 63 通过 / 1 跳过。
+
+**下一刀（writing-modes 28 的分布）**：`abs-pos-border-offset-001..003`（3 对）、`tcy-white-space-processing-001..003`（3 对）、`text-combine-upright-*`（4 对）、`table-cell-valign-001..004`（4 对 —— 已查证是 fuzzy `totalPixels=0-1` 与我们的 AA/子像素覆盖对不上，不是能靠规则清掉的）、`ch-units-vrl-003/004`（2 对，同族但成因不是 clamp）、`available-size` 还剩 002/004 等。css-text 79 里最大的仍是 `text-fit`（10 对，属性未实现，规范已从 drafts.csswg.org/css-text-5 取回：`[none|grow|shrink] [consistent|per-line|per-line-all]? <percentage>?`，按行缩放字号而不是字距）。
+
+## 27. 2026-11-03 轮续：下一刀的依据先记下来（text-fit / tcy / ruby 里的制表符）
+
+本轮把三个待做的簇查清了，代码未动，先把依据钉在这里，免得下次重新推。
+
+**`text-fit`（css-text 10 对，属性完全未实现）**。规范在 drafts.csswg.org/css-text-5（全文已存 build/tmp/textfit.txt）。文法 `[none|grow|shrink] [consistent|per-line|per-line-all]? <percentage>?`，继承，作用于块容器，初始 `none`。缩放因子按行算：`factor = (行盒可用宽度 - 不可缩部分) / 可缩部分`，即规范说的 `(A+B)/A`。**可缩部分** = 文本（含 inline 盒里的文本，但不含行尾空白）+ 与字号成比例的间距（百分比的 letter/word-spacing、text-autospace）；**不可缩** = text-indent、line-padding、非百分比的 letter/word-spacing、原子 inline、inline 盒的 inline 轴 padding/border/margin。`consistent`（默认）= 所有行取最小的那个因子；`per-line` = 各行自取，但块末行与以强制断行收尾的行不缩；`per-line-all` = 都缩。`grow` 只放大（因子 >1 才生效），`shrink` 只缩小（因子 <1 才生效）；`<percentage>` 是限幅：grow 且 ≥100% 时为上限，shrink 且在 0..100% 内时为下限。缩放只改**用值字号**：`line-height: 1.5em`、非百分比字距等不跟着变，但 `line-height: normal` 的行盒会随字形高度变。有 float / initial-letter 让行盒宽度随块轴位置变化时整个块不缩。应用在换行之后、两端对齐之前。已逐格核对过的期望值：`grow-consistent`（120px，pre，两行 60/30 → 因子 2 与 4 → 取 2 → 整块 20px）；`shrink-consistent`（80px，160/80 → 0.5 与 1 → 0.5 → 10px）；`grow-per-line`（20px 字号，行1 "ABCD"=80 → 1.5 → 30px，行2 是末行不缩 → 20px）；`grow-per-line-all-line-height` 的 `AB<span border:1px>CD</span>E` 在 102px 里：可缩 50、不可缩 2 → (102-2)/50 = 2；末行规则、固定行高那一版则两行分别是 98/20=4.9 与 …（照参考页写死）；`spacing.html` 的 `letter-spacing:50%` 随字号缩、`letter-spacing:10px` 不缩，最后一格 `shrink per-line-all 75%` 是因子被下限 0.75 抬起（(40-30)/80=0.125 → 0.75 → 15px）；`text-align.html` 与 `text-box.html`、`writing-mode.html` 各用 consistent。
+
+**`tcy-white-space-processing-001..003`（writing-modes 3 对）**。规则：`text-combine-upright: all` 的盒子里，`white-space: normal` 的空格要**两头裁掉、中间折叠**，并且整个组合文本挤进**一个 em** 的行内格。我们现在是每个子 run 各自成段：`<span>"  12"</span>` 画成 `" "`(4px) + `"12"`(16px) 共 20px 深，参考页是 16px；`<span>"5    6"</span>` 我们 16+4+16=36，参考页是一格里放 `5 6`。所以不是只裁空格就完事，组合内容要当一个整体收进 1em（`TextSelector.ColumnStep` 已经按 `Font.Size / run.Text.Length` 铺一格，缺的是"整段合并 + 空白处理"）。
+
+**`ruby-tab-in-base-001..003`（css-ruby 3 对）**。已定位：普通流里 `X<tab>Y`（tab-size:100px，Ahem 25px）会被在制表符处拆段 —— `"X "` 画到 100、`"Y"` 从 100 起 ✓；而 `X<ruby><tab>Y<rt>z</rt></ruby>` 里基准文本 `"\tY"` 是**一个** 100px 宽的碎片，但里面的字形按字体的制表符推进画，`"Y"` 落在 68.75 而不是 100。注 `"z"` 的位置（68.75..81.25，居中在 100px 的格上）与 Chrome 一致 ✓，所以只需让含 `制表符` 的 ruby 基准碎片像普通流那样拆开（或让画制表符时用行内位置推到 stop），pair 宽度与注的居中都不用动。
+
+## 28. 2026-11-03 轮续：ruby 基准丢了 inline 盒的结构；正交根的块轴尺寸被父盒顶宽
+
+读数不动（四块 158），这轮是查证，代码只读未改。两处已经用探针钉死，下一轮可以直接动手。
+
+**`ruby-tab-in-base-001..003`（css-ruby 3 对）**。`InlineLayout.AddRuby`（src/Hutu/Rendering/Layout/InlineLayout.cs:2782）把基准子节点 `Flatten` 成**一个字符串**，于是基准里"没有文字、只有 padding/border 的 inline 盒"贡献 0。对照实验（build/tmp/empt.html）：`X<span style='padding-left:75px'></span>Y` 在普通流里画成 X(0..25) + span(25..100) + Y(100..) ✓；同样的 span 放进 `<ruby>` 基准里就整个消失，基准只剩 "Y" 宽 25。参考页 `ruby-tab-in-base-001-ref.html` 正是用 `<span class=tab style="padding-left:75px">` 表达制表位，所以我们连参考页都画错（ref 里 Y 落在 33 而不是 108）。注 `z` 的居中位置本来就和 Chrome 一致，所以不必动 pair 宽度。要修的是让 ruby 基准带**分段结构**（文本段 + 各 inline 盒的 inline 边缘），这是一处真重构，顺带可能清掉 `empty-ruby-text-container-abs` 一族。
+
+**`two-levels-of-orthogonal-flows*` + `three-levels-of-orthogonal-flows`（writing-modes 3 对）**。`div style="writing-mode:vertical-rl"`（auto 宽度）里面再套一个 horizontal-tb div：Chrome 把外层的**块轴**尺寸（这里的物理宽度）按内容的 fit-content 算，参考页就写成 `width:fit-content`；我们顶到了包含块的 784，于是黄色底铺满整行。探针实测：test 外层 `div 8,85.16 784x17.72 vertical`，ref `div 8,85.16 98.75x17.72`（98.75 正是 "A B C D E F G" 一行）。两处要改：`MeasureColumn` 的 `childBlock = declaredBlock ?? context.ContainingBlock.Width`（src/Hutu/Rendering/Layout/BlockLayout.cs:220）与 `Layout` 里竖分支的 `?? context.ContainingBlock.Width`（同文件 648-649）——摆放那一处应当用本盒已定的 `contentWidth`，测量那一处需要**先按块轴开放地量一遍子节点**（拿内在尺寸）再夹在可用宽度内，两趟必须给出同一个数，否则又会踩"同一个孩子被按两种约束量两次"的坑。`-percentage` 那一版只差 144 像素：内层 `width:50%` 我们按 body 的 784 折成 392，Chrome 按 §7.3.1 的 fallback（此处就是视口 800）折成 400，差的正是 8 列 × 18 行 = 144 ✓ 所以百分比的基底也要走同一条 fallback，不能退回最近一个确定宽度。
+
+**下一轮的次序建议**：先做 `text-fit`（10 对，依据在 §27，改测量→摆放→绘制三层，`consistent` 那半边能一次清 5 对：`grow-consistent`、`shrink-consistent`、`text-align`、`text-box`、`writing-mode`），再回来啃 ruby 基准分段（3 对）与正交根块轴（3 对）。
+
+## 29. 2026-11-03 轮续：`text-fit` 落地，css-text 79 → 74
+
+属性按 CSS Text 5 §1.1 实现（规范全文与十个参考页的算法都在 §27，本轮照它做）。文法 `[none|grow|shrink] [consistent|per-line|per-line-all]? <percentage>?`，继承，作用于块容器。AngleSharp 对它一个字都没有，所以进 `RawValueNames` 留原文、并进 `InheritedRawNames` 让它随层叠往下走；`ComputedStyle.TryReadTextFit` 逐 token 认：认不出的 token 当整条无效（回到继承值），没有方向词就是 `none`，`75%` 存成 0.75。存进 `TextArea.Fit`，`text-fit` 同时加进 `TextNames`，"这个元素一个字没写就整块继承父面积"的捷径照旧。
+
+布局在 `InlineLayout.FitLines`，挂在 `Plan` 里换行与行夹裁之后、两端对齐之前（§1.1 附录 A）。因子是 `room / scalable`，而 **`room = line.Extent - line.Indent - (line.Used - scalable)`**：不可缩部分不逐项去数，而是取"这一行已经用掉的宽度里，文本之外的那一截"，一次覆盖原子盒与替换内容、inline 盒沿行轴的 padding/border/margin、以及 `pre` 行尾仍占位的空格（§1.1.1）。`scalable` 只累加文本碎片的宽度。方向决定够不够格缩：`grow` 取 `max(1, factor)`，`shrink` 取 `min(1, factor)`；`<percentage>` 经 `TextFit.Clamp` 生效 —— grow 且 ≥100% 是上限，shrink 且 ≤100% 是下限，反过来写就不限。缩放范围：`consistent`（默认）整块用各行因子的**最小值**；`per-line` 每行自取，但块末行与**以强制断行收尾的行**不缩；`per-line-all` 都缩。有 float 让行盒宽度随块轴位置变化时整块不缩（规范明说）。
+
+落地：`ScaleLine` 把可缩碎片宽度乘因子，`line.Used` 只加文本变化那一段（不可缩的部分保持原位）；`line.Ascent`/`line.Height` **只在块没写 `line-height` 时**（`container.Style.LineHeight is null`，即 `normal`）才乘因子 —— 写下的行高是计算字号的长度，不随缩放变（§1.1）。绘制与基线走 `FittedFont(line, style)`：同族同权同斜，只把尺寸乘 `line.Scale`，computed font-size 不动，所以 line-height、非百分比字距都照原样读。
+
+**结果**：`grow-consistent`、`shrink-consistent`、`grow-per-line`、`shrink-per-line-all`、`writing-mode` 五对转绿；`wpt/css-text/` 79 → **74**，其余六块（writing-modes 28、tables 28、CSS2 67、gecko 18、decor 24、ruby 27）逐条 diff 不变。四块目标语料 158 → **153**。守卫 7 条在 src/Hutu.Tests/TextFitTests.cs，`Hutu.Tests` **2226** 全绿。
+
+**两处是我把期望算错，不是引擎错**，记下来免得再犯：① `white-space:pre` 的两行 "4 字 / 10 字" 因子是 5 与 **1**（10 × 5px 正好铺满 100px），不是 5 与 2；② `per-line` 说的 "lines that end in a forced break" 指的是**前一行**以强制断行收尾，所以 pre 的两行（末行 + 断行收尾）全都不缩。写完守卫先怀疑自己读的规范，再怀疑代码。
+
+**还红 5 对**：`grow-per-line-all`（1900 px）与 `grow-per-line-all-line-height`（536 px）—— 靠 Used 推不可缩部分已经接近但不齐，要再看 inline 边缘与行高的相互作用；`spacing.html`（34034）需要把 letter/word-spacing 按**百分比 vs 长度**拆开（百分比随字号缩，长度不缩，现在一律算在文本里）；`text-align.html`（2534）与 `text-box.html`（19820）分别要查对齐和 `text-box` trim 与缩放的相互影响。
+
+## 30. 2026-11-03 轮续：text-fit 剩五对的成因定位（代码未动）
+
+读数仍是 fit3 那一组（css-text 74 / decor 24 / writing-modes 28 / ruby 27 = 153；CSS2 67、tables 28、gecko 18），`Hutu.Tests` 2226 全绿、Conformance 63/1。本轮是查证，两处钉死：
+
+**inline 盒的边框带没有跟着缩放**（`grow-per-line-all` 1900px → 本轮 Used 推导后 `grow-per-line-all-line-height` 412px，形状完全一样）。扫描两张图：lime 边框的 x 范围两边都是 48..89 ✓ 宽度对（40px 的 "CD" + 2px 边），差的是竖直范围 —— 参考页 y=7..28（高 22），我们 y=15..26（高 12 = 10px 字号的带 + 2px 边）。也就是说碎片宽度已经按因子放开了，**inline 祖先盒的带（border-box 的顶与高）还是按未缩放字体算的**。要改的不是 `InlineLayout.cs:2378` 那处（那是 ruby 基准专用的 band，已经吃 `FittedFont`），而是 `Advance`/`CloseBox` 一族：祖先带的高度来自 `OpenInline` 进来时用 `item.Style.GetFont()` 量的那份度量（对照 4362/4376/4421 `room.Grow(LineBoxHeight(item.Style, item.Style.GetFont()))` 这些建线时的调用 —— 它们跑在 `FitLines` 之前，所以线高我能事后乘因子，而祖先带的顶/高是在摆放期由碎片自己的度量再算一次，没走 `FittedFont`）。修法：摆放期凡是给 inline 祖先算带的地方，都改读 `FittedFont(line, style)`；`line.Scale` 已经带在线上了。
+
+**百分比字距要在绘制里也缩**（`spacing.html` 34034px）。几何侧按 Used 推不可缩部分已经对：`letter-spacing:10px` 那两格（box 2、4）用 `A = 文本本体`、`fixed = Used - A` 折出 2.5 / 2 的正确因子；但 `letter-spacing:50%` 与 `word-spacing:50%` 是可缩部分（§1.1.1：随字号成比例的间距要一起缩），参考页把 50% 折成缩放后的 20px/20px。**绘制侧读的是 `Style.LetterSpacing` 这个已经按 computed 字号折好的数字**（`InlineLayout.cs:2568`、`7874`、`TextSelector.cs:558`、`LayoutEngine.cs:1121`），所以字距不会随 `line.Scale` 变。修法：只有当该间距是**百分比声明**（`ResolvedFont.LetterSpacingPercent` / `WordSpacingPercent` 非 null）时，把绘制/量字用的间距乘 `line.Scale`；写成 px/em 的照旧不乘。`spacing.html` 最后一格还顺带验 `TextFit.Clamp` 的下限方向（已经对：守卫 `APercentageLimitsHowFarAShrinkFitMayGo` 绿）。
+
+**另外两对**：`text-align.html`（2534px，first at 10,9 test #0000ff ref #0000d3）与 `text-box.html`（19820px，first at 10,4 test 黑 ref 白）。前者像是对齐用的 extent 与缩放后的 `Used`/`Hanging` 相互作用（两端对齐前缩放，`AlignLastLines`/`DistributeSpace` 会把 `NaturalUsed` 再吃一遍），后者要查 `text-box-trim` 取的行高与缩放后行高的先后。两对都在同一台机器上一测就知道，别再猜。
+
+## 31. 2026-11-03 轮续：inline 盒的带随 text-fit 缩放（两对逼近，未转绿）
+
+`CloseBox`（src/Hutu/Rendering/Layout/InlineLayout.cs:2197 一带）以前用 `ancestor.Ascent`/`ancestor.Descent` 直接算元素画出的带 —— 那是建 `InlineAncestor` 时用 `box.Style.GetFont()` 量的，`InlineAncestor` 在 Collect 期生成、跨行共享，所以拿不到行因子。改成在用它的时候乘 `line.Scale`（`ascent`/`descent` 两个局部量），padding/border/margin 仍是页写的长度，不乘。`line.Scale` 默认 1 ⇒ 没写 `text-fit` 的页面逐位不变，所以其余六块不必重跑（构造上无影响）。
+
+读数：`wpt/css-text/` 仍 **74**（没有新转绿），但两对大幅逼近 —— `grow-per-line-all-line-height` 536 → **312** px、`grow-per-line-all` 1900 → **1800** px（lime 边框那条 42×22 的竖直带已经对齐）。`Hutu.Tests` **2226** 全绿，CSS2 67 / tables 28 / gecko 18 / decor 24 / writing-modes 28 / ruby 27 未重跑（按上文理由不变）。四块目标语料合计仍 **153**。
+
+**还差的三件事**，都在 §30 里定位过、这次没来得及做：
+1. `grow-per-line-all-line-height` 的 312 px 现在落在 `border:1px solid green` 那一格（box 2，`AB\nCDEFG` 用 per-line-all 分别缩 4.9 与 2），`first at 8,73 test #000000 ref #008000` —— 是绿边框的位置/高度差，不是文字本身；下一轮先看这一格的两次缩放有没有把 `line.Ascent`（写了 `line-height` 时不乘因子）与已乘的 `ascent` 混用。
+2. `spacing.html` 34034 px：百分比 letter/word-spacing 要在绘制与逐字定位里也乘 `line.Scale`（`InlineLayout.cs:2568`、`:7874`、`TextSelector.cs:558`、`LayoutEngine.cs:1121` 都读 `Style.LetterSpacing` 这个已按 computed 字号折好的数字）；判据是 `ResolvedFont.LetterSpacingPercent` / `WordSpacingPercent` 非 null 才乘。同时 `ScalableExtent`/`ScaleLine` 要把 px 字距算作不可缩（`FixedSpacing(fragment)`），否则 `letter-spacing:10px` 那两格的宽度会被多缩。
+3. `text-align.html`(2534) 与 `text-box.html`(19820)：前者怀疑是两端对齐/`AlignLastLines` 重吃 `NaturalUsed`，后者是 `text-box-trim` 取的行高与缩放后行高的先后。两对都在同机一测便知，别再推。
+
+## 32. 2026-11-03 轮续：inline 带的缩放留下，两条字距实验回退
+
+**留下**：CloseBox 里元素画出的带（ncestor.Ascent/Descent）乘 line.Scale。实测 grow-per-line-all-line-height 536 → **312** px、grow-per-line-all 1900 → **1800** px，wpt/css-text/ 仍 74（这两对差最后一格的溢出墨，见下）。Hutu.Tests **2226** 全绿。
+
+**两条已试、量出来更差、已回退**（别照原样再试）：
+1. 把 §1.1.1 的"非百分比字距不可缩"实现成 FixedSpacing(fragment)（按 ResolvedFont.LetterSpacingPercent/WordSpacingPercent 判百分比），从 ScalableExtent 里扣掉、ScaleLine 只乘文本本体 —— `spacing.html` 34034 → **34310**。规范是对的，但我们的 line.Used 与碎片宽度对不上这个拆分（Used 里字距到底算进哪一边没查清），推翻了 oom = Extent - Indent - (Used - scalable) 的一致性。
+2. 再把百分比字距在绘制里也乘缩放（LayoutBox.FitScale + Painter.DrawnLetterSpacing/DrawnWordSpacing）—— 34310 → **35070**，更差。说明绘制侧本来就在某处跟着字号走了（或参数位置被我当成 letterSpacing 的那个其实另有含义）。
+
+**下一刀的正确顺序**：别再从"字距算哪边"下手。先把 `spacing.html` 第一格（`width:100px; letter-spacing:50%`，A<span class=nospacing>A</span>）的**布局树**与**绘制出的逐字推进**各打一遍，看 100px 里两枚 A 到底落在哪：现在 irst at 8,0 test #008000 ref #000000 说明差异从第一行第一列就开始，先确认是谁在错，再决定改几何还是改绘制。另外两对（	ext-align 2534、	ext-box 19820）同理，都是一测便知，别再推。
+
+## 33. 2026-11-03 轮续：行高要分"倍数"和"长度"，text-box 转绿
+
+上一轮定下的规矩是"先测别再推"，一测就中。把 `spacing.html` 第一格单独拿出来打布局树：test 与 ref 的**文字水平位置完全一致**（两块都在 x=0..60、60..100，字体 40@Ahem），差的是竖直 —— test `fill 0,0 100x20 / text base 16`，ref `fill 0,0 100x40 / text base 32`。也就是说行的**块尺寸**没跟着缩放：参考页写的是 `font-size:40px` 配继承下来的 `line-height:1`，倍数是拿"真正画出来的字号"乘的，于是行盒 40；我们的 20 是没乘因子的那一个。
+
+规范那句话读窄了：`This property does not affect the font-size computed value, and thus does not affect font-size-relative <length> values of other properties. For example "line-height: 1.5em" and "letter-spacing: 0.1em" are not affected` —— 说的是**长度**（em/px）不跟着动；而 `line-height: <无单位数值>` 和百分比本来就不是长度，是"按所用字号重算的倍数"，要跟着缩放。于是加 `TextArea.LineHeightTracksFont`：`ComputedStyle.LineHeightFollowsFont(text)` 认"空 / `normal` / 以 `%` 结尾 / 能当纯数解析"四种为跟随，其余（带单位的长度）不跟随；两条路径都填 —— 融合路径取 `find("line-height") ?? parent.LineHeightHit` 的原文（无单位数值是往下重乘的，所以要带声明而不是父值），旧路径取 `ReadKeyword("line-height")`。`ScaleLine` 由"块没写行高才乘因子"改成按这个判断。
+
+顺手把上一轮量差的两条里**该留的那半**留下：`LayoutBox.FitScale`（摆放时等于 `line.Scale`）+ `Painter.DrawnLetterSpacing/DrawnWordSpacing` —— 只有当声明是**百分比**字距时才乘 `FitScale`，写成 px/em 的不乘（§1.1.1 的"随字号成比例的间距可缩"）。上一次它让 `spacing.html` 变差，是因为竖直那半还没修；这次 19832 → **18702**，方向对了。`GatherTextRuns`（光标/命中表）也一并走同一 helper，免得天真点错位置。
+
+**读数**：`wpt/css-text/` 74 → **73**（`text-fit/text-box.html` 转绿），其余六块 fit9 与 fit7 一致：writing-modes 28、tables 28、CSS2 67、gecko 18、decor 24、ruby 27。四块目标语料 153 → **152**。守卫新增一条 `ALineHeightWrittenAsAMultipleGrowsWithTheFitWhileALengthStands`（`line-height:1` 缩到 20、`line-height:10px` 保持 10），`Hutu.Tests` 全绿。
+
+**text-fit 还红 4 对**：`spacing` 18702（first at 8,57 已经是浅灰，说明前面几格只剩 `:first-line` 灰带与后段字距）、`grow-per-line-all` 1800、`text-align` 2534（test #0000ff / ref #0000d3，看着像缩放后 `Used`/`Extent` 的小数与对齐再分配打架）、`grow-per-line-all-line-height` 312（一格溢出墨的竖直范围）。都还是"先打树再改"的路子。
