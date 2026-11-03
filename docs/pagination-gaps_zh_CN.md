@@ -2472,3 +2472,20 @@ Chrome 的逐值把这条规则钉住了（`build/_query` 读 test 页）：表�
   1. 蓝行的 `rect.Y` 与栏的 `band.Y` 在「本栏里它上面还压着黑行剩下的 5 px」时仍然满足 `<=` ⇒ `cutAbove` 误判为真，蓝左带从 21 起画（Chrome 从 26 = 单元盒自己的顶边起）。要区分「本片的第一个盒」与「本片第一个盒之上还有上一行的尾」，得用片在整表坐标里的消耗量（`slice` 带的 `Whole`/`Piece` 之差），不能只比 `rect.Y <= band.Y`。
   2. else 分支给的 `+Top` 让带子从行盒顶边再往下 5 px 起；而 cell 的 `rect.Y` 本来就是共享线的**中部**（每格只留半条），所以「上一行在本片里有尾巴」时正确的起点是 `rect.Y` 本身（overhang 0）。`htb-ltr`（绿）靠的是上一行的带向下伸 `+Bottom` 把上半条盖住，两种写法在没被切断的表里等价 ✓ 这就是它至今没暴露的原因。
   ⇒ 这两条都要带全量门禁做（折叠边框表全族 + 三对 8 575/8 625/65 都在判据面上）；本轮没有落任何代码。
+
+### 9.180 竖排的 margin 只该付一次：两页都更贴 Chrome，但对页会先变差 —— 差在 test 侧一条多画的青色带
+
+把 `ArrangeMulticolRun` 里那句「片的块向 margin」的例外去掉（改成 `portion.Offset > 0.001 ? 0 : child.Margin.Top`，即**续下来的片不再重复付 margin**）之后，逐页与 Chrome 自己渲的同一页比像素：
+
+| 页面 | HEAD | 去掉重复付 |
+|---|---:|---:|
+| `flexbox-single-column-1a` 的 **test** vs Chrome test | 18 025 | **16 775** ✓ |
+| `flexbox-single-column-1a` 的 **ref** vs Chrome ref | 11 475 | **4 600** ✓ |
+| 对页分数（test vs ref，跑分器读的） | 11 475 | 13 200 ✗ |
+
+Chrome 的 ref（一个不带 `display:flex` 的普通块容器，`margin-block-start:25px`）读 `(13,103,40,25) | (63,78,40,50) | (113,78,40,50) | (163,78,40,25)` —— 开头那栏付 margin，续下去的每一片都站在**栏头**；我们以前把 25 又付了一次，所以从第二栏起整列内容低 25 px（像素图上一条青色带从 78 挪到 103）。所以这条判据本身是对的，而且**两页都因此更贴 Chrome**。
+
+但对页分数会先变差（12 对 `flexbox-{single,multi}-column-1a..1f` 各 +1 725、`-2` 两对反而 −1 075/−1 350，另 `transform-008` +861）：因为 ref 侧一步就少了 6 875 的错，test 侧还剩 16 775。**要一起落，还差 test 侧这一条**：
+
+- `flexbox-single-column-1a` 的 MC0（第一个 `.multicol`，无 margin）里，第 2 栏 x=63..102、y≈53..67 我们多画了一条 40 宽的青色（header 的尾），把 Chrome 该露出来的 article（`68,38,30,25` 黄）整条盖掉了。Chrome 的 MC0 第 1 栏正好装下 50 高的 header（13..63），第 2 栏是 nav(13..38)+article(38..63)，**没有任何 header 尾**；我们的布局树也是 `nav 63,13 30x25` + `article 68,38 30x25` ✓ 正确 —— 多出来的是**另一片把 header 又画了一遍**。可疑点在 `FlexFormattingContext.ArrangeFragment` 选成员的那句：`at < end - 0.001 && at + ItemReach(item, ...) > start + 0.001` —— 当 `ItemReach` 比 item 自己的盒子大（内容挂到盒外）时，一个已经整条落在上一栏的 item 会被算进这一片。下一步就从这里查：先用探针确认这片窗口里 header 的 `at`/`ItemReach`/`start`/`end` 各是多少，再决定是收紧 `ItemReach` 的口径还是给「整条已在窗外」的 item 加排除。
+- 落法：**margin 这一改与 test 侧那条一起提交**（只落一半会让 12 对数字变大、只有 2 对变小）。本轮按这个判断把它回退了，工作树仍是 `1a7e71bb` 的代码状态（门禁：屏幕全量 0 进 0 出但对页 15 个名字变动、单测 2 216 —— 数据留在 `build/_full-marginonce.md`，下一轮直接对照）。
