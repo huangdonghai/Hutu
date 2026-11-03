@@ -2460,3 +2460,15 @@ Chrome 的逐值把这条规则钉住了（`build/_query` 读 test 页）：表�
 1. **清除要按 float 在流自身轴上的整高付**（§9.152 的 Q2）。现在 `slot.Tracks` 里每条 float 记录的是**本片可见的那段**（第一栏 0..100），所以流成员只付到 100；Chrome 的 `.clear` 读 `27,61,100,100 | 127,61,100,100 | 227,61,100,53` —— 净空落在 250 = float 的**整高**（它自己沿栏续了下去）。做法：量成员时用的 tracks 要把此前每个 float 按 `Slice + Visible` 的整高登记一遍（同一个 `FloatTracks` 只用于「量」；逐片 arrange 仍用本栏那段），这样成员盒自然长到 253。
 2. **比一栏还高的流成员要被切开而不是整条推走**。今天的行为：`top + outer > columnHeight` 就把成员 `at++` 推到下一栏（本轮实测被推 to `127,152.72` —— 落到栏脚之外，整块看不见）。上一轮加的 `cutHere` 分支方向对（对 `BreaksAtLines` 的成员，当它第一个单位在本栏放不下时也走 `CutDownColumns`），但它得排在第 1 步之后：净空没对时切出来的片高 103 而 Chrome 是 100/53，数字反而从 2 505 变 2 715 ✓ 实测过。
 3. 这两步做完，再一起回退/重放上表里的规则 1（`FloatHostWrapper` 允许 percent 宽与背景）、3（`DividesUnits` 站在 float 上的盒 ≥1 个单位即切）、7（`FragmentsInColumns` 放行无子盒 + `AddBoxCut` 的 `HoldsContent` 项）；判定面 000/001/002/003 + `gecko/bugs/379349-2a`，回归面 `wpt/CSS2/floats-clear/*`、`widows-orphans-*`、`tall-float-pushed-*`、`fragmented-autowidth-fc-root-beside-floats`、`overflowing-block-003`、`MulticolBoxCutTests`。
+
+### 9.179 两条实测：flex 那一族的「对页数字」被 ref 侧自己那 11 475 px 卡住；`at-boundary` 剩下的是 overhang 的三种取值
+
+- **`gecko/flexbox/pagination` 的 `single-column-1a..1f` / `multi-column-1a..1f`（12 对，各 11 475）**：先把「谁错」量清楚再动手。把 Chrome 自己渲的 test 页与 ref 页存成 PNG，跟我们两页逐像素比（`build/_chrome-1a*.png`、`build/look/flexbox-single-column-1a-{test,ref}.png`）：
+  - 我们的 test 页 vs Chrome 的 test 页 = **18 025**
+  - 我们的 ref 页 vs Chrome 的 ref 页 = **11 475**
+  - 我们的 test 页 vs 我们的 ref 页（对页分数）= **11 475**
+  ⇒ 两页彼此「一致地错」，错的方向与量就是 ref 侧那 11 475（ref 是不带 `display:flex` 的普通块容器，走普通分栏路线）。所以任何只动 test 侧（flex 窗口）的改法都会把对页分数变大 —— 本轮试过的一条就是这样：把窗口片的块向 margin 改成不再重复付（`ArrangeMulticolRun` 里 `portion.Offset > 0.001 && (child.Reach > child.Fragment.Height || child.Relays)`），Chrome 的 MC1 容器第二片确实读 `(63,78,40,50)`（栏头）而我们读 `(63,103,40,50)`（margin 又付了一次），改完 **test 页 vs Chrome 从 18 025 降到 16 775 ✓ 更贴 Chrome**，但对页分数 11 475 → 16 325 ✗（`single-column-2` 反而 14 725 → 13 650 ✓）。已回退，工作树仍是 `4d7ebed7` 的代码状态。**结论：这一族要从 ref 侧（普通块沿栏切 + 成员随片）下手，12 对一起动；test 侧这条 margin 判据留着等 ref 侧修好后一起落，否则会凭空多 6 对变差。**
+- **`table-collapsed-borders-paint-at-boundary` 的最后 65 px = 折叠边竖带的 overhang 取值问题**，不是斜接也不是范围（§9.172 的两条各对一半）。Chrome/ref 在 col4（x 327..419）的栏头 5 行（y 21..25）是：黑横线 `[329.5,404]`、蓝**右**带（15 宽）`[404,419]` 也画到这 5 行、蓝**左**带（10 宽）从 y=26 才起；我们画成：黑横线 `[327,416.5]`（左端多 2.5=δ，且被蓝左带盖住 330..339）。对应当前代码 `cutAbove = piece is { } band && cell.Row > 0 && rect.Y <= band.Y + 0.001`（`piece` 是 `Rect?`，即那片 fragment 的矩形；`overhang = Row==0 || cutAbove ? -Top : +Top`）两条：
+  1. 蓝行的 `rect.Y` 与栏的 `band.Y` 在「本栏里它上面还压着黑行剩下的 5 px」时仍然满足 `<=` ⇒ `cutAbove` 误判为真，蓝左带从 21 起画（Chrome 从 26 = 单元盒自己的顶边起）。要区分「本片的第一个盒」与「本片第一个盒之上还有上一行的尾」，得用片在整表坐标里的消耗量（`slice` 带的 `Whole`/`Piece` 之差），不能只比 `rect.Y <= band.Y`。
+  2. else 分支给的 `+Top` 让带子从行盒顶边再往下 5 px 起；而 cell 的 `rect.Y` 本来就是共享线的**中部**（每格只留半条），所以「上一行在本片里有尾巴」时正确的起点是 `rect.Y` 本身（overhang 0）。`htb-ltr`（绿）靠的是上一行的带向下伸 `+Bottom` 把上半条盖住，两种写法在没被切断的表里等价 ✓ 这就是它至今没暴露的原因。
+  ⇒ 这两条都要带全量门禁做（折叠边框表全族 + 三对 8 575/8 625/65 都在判据面上）；本轮没有落任何代码。
