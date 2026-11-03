@@ -126,9 +126,19 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         var descent = primary.Descent;
         var gap = primary.LineGap;
 
-        // Every run is read, a lone one included: a text the primary font cannot set at all comes back
-        // as a single run in the fallback face, and that face's metrics are the ones the line follows.
-        foreach (var run in Decompose(text, style))
+        // A run the primary face carries is the face the metrics above already describe: there is
+        // nothing to read back from it.
+        var runs = Decompose(text, style);
+        var own = GetFont(style);
+
+        if (runs.Count == 1 && ReferenceEquals(runs[0].Font, own))
+        {
+            return primary;
+        }
+
+        // Every other run is read, a lone one included: a text the primary font cannot set at all comes
+        // back as a single run in the fallback face, and that face's metrics are the ones the line follows.
+        foreach (var run in runs)
         {
             if (CarriesNothing(run.Text))
             {
