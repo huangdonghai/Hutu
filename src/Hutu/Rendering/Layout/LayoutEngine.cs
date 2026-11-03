@@ -62,6 +62,9 @@ internal sealed class LayoutEngine
     /// of the pass that filled them, which is why the record is dropped between the two passes.
     /// </summary>
     private readonly Dictionary<Box, FloatTracks> _floats = new();
+    private readonly List<MarginNoteAnchor> _marginNotes = new();
+    private readonly HashSet<Box> _registeredMarginNotes = new();
+    private Int32 _marginNoteOrder;
 
     /// <summary>
     /// Whether the document element hands its overflow to the viewport itself, which is the condition
@@ -123,9 +126,12 @@ internal sealed class LayoutEngine
         _contentIntrinsicFree.Clear();
         _inline.ResetPlanCache();
         _floats.Clear();
+        _marginNotes.Clear();
+        _registeredMarginNotes.Clear();
+        _marginNoteOrder = 0;
 
-        var size = Measure(root, MeasureConstraints.FitWidth(width), context);
-        var margin = BoxModel.UsedMargin(root.Style, width, size.Width);
+        var size = MeasureRoot(root, width, context);
+        var margin = RootMargin(root.Style, root.Flow, width, size.Width);
 
         // The root is the one box whose containing block is the initial containing block, and that
         // block begins where the page reads from - the top left corner of the viewport in horizontal
@@ -155,6 +161,7 @@ internal sealed class LayoutEngine
                 flow.BlockExtent(size.Width, size.Height)),
             context);
 
+        ResolveMarginNotes(rootBox, context, viewport);
         ResolveDecorations(rootBox);
 
         // The markers of a list are placed from the same geometry, and after it for the same reason: an
@@ -258,14 +265,14 @@ internal sealed record LayoutProfile(
         {
             ResetCaches();
             var before = GC.GetTotalAllocatedBytes(false);
-            Measure(root, MeasureConstraints.FitWidth(width), context);
+            MeasureRoot(root, width, context);
             measureAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
         }
 
         for (var iteration = 0; iteration < allocRuns; iteration++)
         {
             ResetCaches();
-            var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+            var size = MeasureRoot(root, width, context);
             var before = GC.GetTotalAllocatedBytes(false);
             Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
             arrangeAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
@@ -274,7 +281,7 @@ internal sealed record LayoutProfile(
         for (var iteration = 0; iteration < allocRuns; iteration++)
         {
             ResetCaches();
-            var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+            var size = MeasureRoot(root, width, context);
             var rootBox = Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
             var before = GC.GetTotalAllocatedBytes(false);
             ResolveDecorations(rootBox);
@@ -284,7 +291,7 @@ internal sealed record LayoutProfile(
         for (var iteration = 0; iteration < allocRuns; iteration++)
         {
             ResetCaches();
-            var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+            var size = MeasureRoot(root, width, context);
             var rootBox = Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
             ResolveDecorations(rootBox);
             var content = ScrollableOverflow.Of(rootBox, new Rect(0, 0, width, viewport.Height));
@@ -319,11 +326,12 @@ internal sealed record LayoutProfile(
         ResetCaches();
 
         measure?.Start();
-        var size = Measure(root, MeasureConstraints.FitWidth(width), context);
+        var size = MeasureRoot(root, width, context);
         measure?.Stop();
 
         arrange?.Start();
         var rootBox = Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
+        ResolveMarginNotes(rootBox, context, viewport);
         arrange?.Stop();
 
         decoration?.Start();
@@ -348,12 +356,39 @@ internal sealed record LayoutProfile(
         _contentIntrinsicFree.Clear();
         _inline.ResetPlanCache();
         _floats.Clear();
+        _marginNotes.Clear();
+        _registeredMarginNotes.Clear();
+        _marginNoteOrder = 0;
+    }
+
+    /// <summary>
+    /// Measures the document element in the page flow its body establishes. When that flow differs
+    /// from the root's own writing mode, the margins that place the root and define its page band are
+    /// mapped onto the page flow before the content is sized.
+    /// </summary>
+    private Size MeasureRoot(Box root, Double width, LayoutContext context)
+    {
+        var constraints = MeasureConstraints.FitWidth(width);
+        var size = Measure(root, constraints, context);
+        var own = BoxModel.UsedMargin(root.Style, width, size.Width);
+        var margin = RootMargin(root.Style, root.Flow, width, size.Width);
+        var ownInline = root.Flow.InlineMargins(own);
+        var mappedInline = root.Flow.InlineMargins(margin);
+
+        if (ownInline.Start == mappedInline.Start && ownInline.End == mappedInline.End)
+        {
+            return size;
+        }
+
+        // This is the same root box at the same available width, with only the page-flow margin
+        // interpretation changed. Measuring it directly avoids confusing the ordinary cache entry.
+        return MeasureCore(root, constraints, context, margin);
     }
 
     /// <summary>The root's border box, exactly as <see cref="Layout"/> computes it.</summary>
     private static Rect RootBorderBox(Box root, Size size, Double width, Size viewport, LayoutContext context)
     {
-        var margin = BoxModel.UsedMargin(root.Style, width, size.Width);
+        var margin = RootMargin(root.Style, root.Flow, width, size.Width);
         var initial = new Rect(0, 0, width, viewport.Height);
         var flow = root.Flow;
         var (inlineStart, _) = flow.InlineMargins(margin);
@@ -366,6 +401,22 @@ internal sealed record LayoutProfile(
             blockStart,
             flow.BlockExtent(size.Width, size.Height));
     }
+
+    private readonly record struct MarginNoteAnchor(Box Note, LayoutBox Line, Int32 Order);
+
+    private sealed record MarginNotePlan(
+        Box Note,
+        Int32 Order,
+        NoteSide Side,
+        Rect Band,
+        InlineLayout.MarginNoteFlow NoteFlow,
+        Thickness Margin,
+        Thickness Padding,
+        Thickness Border,
+        Double ContentInline,
+        Double ContentBlock,
+        Double OuterBlock,
+        Double DeclarationProgress);
 
     /// <summary>
     /// Resolves the corner radii of every box, together with the two keywords that decide what those
@@ -559,7 +610,14 @@ internal sealed record LayoutProfile(
                 style.UnderlineOffset,
                 style.DecorationInset)
             {
-                Speaker = box.Source,
+                // The element, not the box: every run of text the element decorates has to be gathered
+                // back into the one line it asked for, and the boxes a font fallback cuts the text into
+                // are not separate decorators. Two runs trimmed as two boxes leave a gap at every font
+                // change (CSS Text Decoration 4 §2.1, §2.9.1).
+                Speaker = box.Source.Element ?? (Object)box.Source,
+                Font = style.GetFont(),
+                Start = box.Flow.InlineStart(box.BorderBox),
+                Position = style.UnderlinePosition,
             }
             : null;
     }
@@ -829,7 +887,8 @@ internal sealed record LayoutProfile(
                         at,
                         box.Vertical ? box.BorderBox.Height : box.BorderBox.Width,
                         standing,
-                        insets));
+                        insets,
+                        asked[at].Font));
                 }
             }
         }
@@ -841,7 +900,7 @@ internal sealed record LayoutProfile(
     }
 
     /// <summary>Carries one decorating box's inset out along the text it decorates.</summary>
-    private static void Trim(List<TrimmedRun> runs)
+    private void Trim(List<TrimmedRun> runs)
     {
         var insets = runs[0].Insets;
 
@@ -857,6 +916,22 @@ internal sealed record LayoutProfile(
             }
 
             var (start, end) = Distances(insets, total, thickness);
+
+            // The spaces the decorated text opens and closes with are pulled off the ends as well where
+            // the page asked for it: the line stops at the first letter it has a rule to stand under and
+            // begins again at the last, however much white space the mode kept on either side of them
+            // (CSS Text Decoration 4 §2.9.2). What lies between two letters is left alone, since that is
+            // part of the text the one rule runs across.
+            if (insets.Spaces.HasFlag(DecorationSkipSpaces.Start))
+            {
+                start += segment[0].Spaces(_measurer, fromEnd: false);
+            }
+
+            if (insets.Spaces.HasFlag(DecorationSkipSpaces.End))
+            {
+                end += segment[^1].Spaces(_measurer, fromEnd: true);
+            }
+
             var pulls = new Double[segment.Count];
             var pushes = new Double[segment.Count];
 
@@ -932,12 +1007,46 @@ internal sealed record LayoutProfile(
         Int32 At,
         Double Size,
         LayoutBox? Line,
-        DecorationInsets Insets)
+        DecorationInsets Insets,
+        FontStyle Font)
     {
         internal Double Thickness =>
             Box.DecorationPlacements is { } placed && At < placed.Count
                 ? Math.Max(1, placed[At].UnderlineThickness)
                 : 1;
+
+        /// <summary>
+        /// Gets how far the white space this run opens (or closes) with reaches along the line, which is
+        /// the room a decoration asked to skip its spaces pulls off that end. A run that begins with a
+        /// letter answers with nothing, and so does one that is nothing but spaces: the room of a run
+        /// with no letter on the far side of it belongs to the line rather than to a space to skip.
+        /// </summary>
+        internal Double Spaces(ITextMeasurer measurer, Boolean fromEnd)
+        {
+            if (Box.Kind != LayoutKind.Text || Box.Text is not { Length: > 0 } text)
+            {
+                return 0.0;
+            }
+
+            var run = 0;
+
+            while (run < text.Length && Char.IsWhiteSpace(text[fromEnd ? text.Length - 1 - run : run]))
+            {
+                run++;
+            }
+
+            if (run == 0 || run == text.Length)
+            {
+                return 0.0;
+            }
+
+            // The run's own axis is what the answer is measured along: down a column the spaces step
+            // from cell to cell, which is the extent the line is pulled back by.
+            return Math.Min(Size, measurer.MeasureAdvance(
+                text.Substring(fromEnd ? text.Length - run : 0, run),
+                Font,
+                Box.Source.Style.Flow));
+        }
 
         /// <summary>Says to the run where the ends of this one line stand.</summary>
         internal void Apply(Double start, Double end)
@@ -1210,7 +1319,12 @@ internal sealed record LayoutProfile(
             // without the floats a column has placed, once with them (CSS 2.1 §9.5.2, measured with
             // BuildLines dropping a `<br clear=both>` line below a float and the answer never reaching
             // the caller because the earlier plain measure had filled the entry first).
-            context.Floats);
+            context.Floats,
+
+            // The same reason the band is part of the question: a box measured against a width a
+            // percentage can resolve against answers differently from the same box at the same
+            // number that nothing resolves against.
+            definiteWidth: constraints.DefiniteWidth.HasValue);
 
         if (_cache.TryGetValue(key, out var cached))
         {
@@ -1438,6 +1552,294 @@ internal sealed record LayoutProfile(
             _floats[box] = tracks;
         }
     }
+
+    /// <summary>Records the body line a margin note belongs to.</summary>
+    internal void RegisterMarginNote(Box note, LayoutBox line)
+    {
+        if (_registeredMarginNotes.Add(note))
+        {
+            _marginNotes.Add(new MarginNoteAnchor(note, line, _marginNoteOrder++));
+        }
+    }
+
+    /// <summary>
+    /// Lays the margin notes after the body has settled: the root margin supplies each side's
+    /// available inline extent, declaration-line positions order each side, and ordinary line layout
+    /// supplies each note group's content.
+    /// </summary>
+    private void ResolveMarginNotes(LayoutBox root, LayoutContext context, Size viewport)
+    {
+        if (_marginNotes.Count == 0)
+        {
+            return;
+        }
+
+        var flow = root.Flow;
+        var rootMargin = RootMargin(
+            root.Source.Style,
+            flow,
+            viewport.Width,
+            root.BorderBox.Width);
+        var (startMargin, endMargin) = flow.InlineMargins(rootMargin);
+        var startThickness = Math.Max(0, startMargin);
+        var endThickness = Math.Max(0, endMargin);
+        var plans = new List<MarginNotePlan>(_marginNotes.Count);
+        var noteContextLayout = context.WithFloats(null);
+        var noteContext = new InlineContext(
+            this,
+            noteContextLayout,
+            noteContextLayout,
+            noteContextLayout);
+        var initial = new Rect(0, 0, viewport.Width, viewport.Height);
+        var parents = ParentMap(root);
+
+        foreach (var anchor in _marginNotes)
+        {
+            var side = ResolveMarginSide(anchor.Note.Style.NoteSide, startThickness, endThickness);
+            var content = ContainingBorder(anchor.Line, root, parents);
+            var band = MarginBand(initial, content, flow, side, startThickness, endThickness);
+            var thickness = flow.IsVertical ? band.Height : band.Width;
+            var margin = anchor.Note.Style.Margin.Resolve(thickness);
+            var padding = anchor.Note.Style.Padding.Resolve(thickness);
+            var border = BlockLayout.BorderOf(anchor.Note);
+            var (inlineMarginStart, inlineMarginEnd) = flow.InlineMargins(margin);
+            var (inlinePaddingStart, inlinePaddingEnd) = flow.InlineMargins(padding);
+            var (inlineBorderStart, inlineBorderEnd) = flow.InlineMargins(border);
+            var inlineEdges = inlinePaddingStart + inlinePaddingEnd +
+                inlineBorderStart + inlineBorderEnd;
+            var contentInline = Math.Max(
+                0,
+                thickness -
+                inlineMarginStart - inlineMarginEnd -
+                inlineEdges);
+            var declaredInline = flow.IsVertical ? anchor.Note.Style.Height : anchor.Note.Style.Width;
+
+            if (declaredInline.HasValue)
+            {
+                var declared = Math.Max(0, declaredInline.Resolve(thickness));
+                contentInline = Math.Max(
+                    0,
+                    BoxModel.IsBorderBox(anchor.Note.Style) ? declared - inlineEdges : declared);
+            }
+            var noteFlow = _inline.BuildMarginNoteFlow(
+                anchor.Note,
+                contentInline,
+                flow,
+                noteContext);
+            var (blockMarginStart, blockMarginEnd) = flow.BlockMargins(margin);
+            var (blockPaddingStart, blockPaddingEnd) = flow.BlockMargins(padding);
+            var (blockBorderStart, blockBorderEnd) = flow.BlockMargins(border);
+            var blockEdges = blockPaddingStart + blockPaddingEnd +
+                blockBorderStart + blockBorderEnd;
+            var declaredBlock = flow.IsVertical ? anchor.Note.Style.Width : anchor.Note.Style.Height;
+            var contentBlock = declaredBlock.HasValue
+                ? Math.Max(
+                    0,
+                    BoxModel.IsBorderBox(anchor.Note.Style)
+                        ? declaredBlock.Resolve(thickness) - blockEdges
+                        : declaredBlock.Resolve(thickness))
+                : noteFlow.BlockSize;
+            var outerBlock = contentBlock +
+                blockMarginStart + blockMarginEnd +
+                blockEdges;
+            var declaration = flow.BlockStart(anchor.Line.BorderBox);
+            var progress = flow.BlockSign < 0 ? -declaration : declaration;
+
+            plans.Add(new MarginNotePlan(
+                anchor.Note,
+                anchor.Order,
+                side,
+                band,
+                noteFlow,
+                margin,
+                padding,
+                border,
+                contentInline,
+                contentBlock,
+                outerBlock,
+                progress));
+        }
+
+        foreach (var side in new[] { NoteSide.InlineStart, NoteSide.InlineEnd })
+        {
+            var sidePlans = plans
+                .Where(plan => plan.Side == side)
+                .OrderBy(plan => plan.DeclarationProgress)
+                .ThenBy(plan => plan.Order)
+                .ToList();
+            var occupied = Double.NegativeInfinity;
+
+            foreach (var plan in sidePlans)
+            {
+                var startProgress = Math.Max(plan.DeclarationProgress, occupied);
+                var blockStart = flow.BlockSign < 0 ? -startProgress : startProgress;
+                var frame = MarginFrame(plan.Band, flow, blockStart);
+                var (inlineMarginStart, _) = flow.InlineMargins(plan.Margin);
+                var (inlinePaddingStart, _) = flow.InlineMargins(plan.Padding);
+                var (inlineBorderStart, _) = flow.InlineMargins(plan.Border);
+                var (blockMarginStart, _) = flow.BlockMargins(plan.Margin);
+                var (blockPaddingStart, _) = flow.BlockMargins(plan.Padding);
+                var (blockBorderStart, _) = flow.BlockMargins(plan.Border);
+                var borderInline = plan.ContentInline +
+                    flow.InlineMargins(plan.Padding).Start +
+                    flow.InlineMargins(plan.Padding).End +
+                    flow.InlineMargins(plan.Border).Start +
+                    flow.InlineMargins(plan.Border).End;
+                var blockEdges = flow.BlockMargins(plan.Padding).Start +
+                    flow.BlockMargins(plan.Padding).End +
+                    flow.BlockMargins(plan.Border).Start +
+                    flow.BlockMargins(plan.Border).End;
+                var borderBlock = plan.ContentBlock + blockEdges;
+                var borderRect = flow.Map(
+                    frame,
+                    inlineMarginStart,
+                    borderInline,
+                    blockMarginStart,
+                    borderBlock);
+                var contentRect = flow.Map(
+                    frame,
+                    inlineMarginStart + inlineBorderStart + inlinePaddingStart,
+                    plan.ContentInline,
+                    blockMarginStart +
+                        flow.BlockMargins(plan.Border).Start +
+                        flow.BlockMargins(plan.Padding).Start,
+                    plan.ContentBlock);
+                var noteBox = new LayoutBox(plan.Note, LayoutKind.Block)
+                {
+                    BorderBox = borderRect,
+                    Margin = plan.Margin,
+                    Border = plan.Border,
+                    Padding = plan.Padding,
+                    Flow = flow,
+                };
+
+                _inline.PlaceMarginNoteFlow(
+                    plan.NoteFlow,
+                    noteBox,
+                    contentRect,
+                    noteContext);
+                root.Children.Add(noteBox);
+                occupied = startProgress + plan.OuterBlock;
+            }
+        }
+    }
+
+    private static NoteSide ResolveMarginSide(NoteSide side, Double start, Double end) =>
+        side switch
+        {
+            NoteSide.InlineStart => NoteSide.InlineStart,
+            NoteSide.InlineEnd => NoteSide.InlineEnd,
+            _ => end > start ? NoteSide.InlineEnd : NoteSide.InlineStart,
+        };
+
+    /// <summary>
+    /// Maps the root's physical margins into the writing mode the page actually adopts. The root
+    /// keeps its own computed writing mode when the body establishes a different one, so its logical
+    /// margin sides need to be carried over before the root box is placed.
+    /// </summary>
+    private static Thickness RootMargin(
+        ComputedStyle style,
+        WritingModeInfo flow,
+        Double basis,
+        Double borderBoxWidth)
+    {
+        var physical = BoxModel.UsedMargin(style, basis, borderBoxWidth);
+
+        if (!flow.IsVertical || style.WritingMode != WritingMode.HorizontalTb)
+        {
+            return physical;
+        }
+
+        // Keep the physical block margins so a page that deliberately sets a right/left page inset
+        // is still placed against that edge. The horizontal page's inline sides (left/right) also
+        // supply the vertical page's top/bottom leading when those are not given physically.
+        var top = physical.Left != 0 ? physical.Left : physical.Top;
+        var bottom = physical.Right != 0 ? physical.Right : physical.Bottom;
+
+        return new Thickness(top, physical.Right, bottom, physical.Left);
+    }
+
+    /// <summary>Gets each layout box's parent without relying on a back pointer the tree does not keep.</summary>
+    private static Dictionary<LayoutBox, LayoutBox> ParentMap(LayoutBox root)
+    {
+        var parents = new Dictionary<LayoutBox, LayoutBox>();
+
+        void Walk(LayoutBox box)
+        {
+            foreach (var child in box.Children)
+            {
+                parents[child] = box;
+                Walk(child);
+            }
+        }
+
+        Walk(root);
+        return parents;
+    }
+
+    /// <summary>
+    /// Gets the border box of the block that holds the line a margin note was declared on. Its border
+    /// separates the block's margin - blank room the note may share - from its painted content.
+    /// </summary>
+    private static Rect ContainingBorder(
+        LayoutBox line,
+        LayoutBox root,
+        IReadOnlyDictionary<LayoutBox, LayoutBox> parents)
+    {
+        var current = line;
+
+        while (parents.TryGetValue(current, out var parent))
+        {
+            if (!parent.Source.IsAnonymous)
+            {
+                return parent.BorderBox;
+            }
+
+            current = parent;
+        }
+
+        return root.BorderBox;
+    }
+
+    /// <summary>
+    /// Gets the page-margin band on one side. The root margin is the floor; when the declaration
+    /// block's border stands farther in, the unnamed margin between it and the page is added too.
+    /// </summary>
+    private static Rect MarginBand(
+        Rect page,
+        Rect content,
+        WritingModeInfo flow,
+        NoteSide side,
+        Double start,
+        Double end)
+    {
+        var physicalStart = side == NoteSide.InlineStart
+            ? flow.InlineSign > 0
+            : flow.InlineSign < 0;
+        var floor = physicalStart ? start : end;
+
+        if (!flow.IsVertical)
+        {
+            var room = physicalStart
+                ? content.X - page.X
+                : page.Right - content.Right;
+            var thickness = Math.Min(page.Width, Math.Max(floor, Math.Max(0, room)));
+            var x = physicalStart ? page.X : page.Right - thickness;
+            return new Rect(x, page.Y, thickness, 0);
+        }
+
+        var verticalRoom = physicalStart
+            ? content.Y - page.Y
+            : page.Bottom - content.Bottom;
+        var verticalThickness = Math.Min(page.Height, Math.Max(floor, Math.Max(0, verticalRoom)));
+        var y = physicalStart ? page.Y : page.Bottom - verticalThickness;
+        return new Rect(page.X, y, 0, verticalThickness);
+    }
+
+    private static Rect MarginFrame(Rect band, WritingModeInfo flow, Double blockStart) =>
+        flow.IsVertical
+            ? new Rect(blockStart, band.Y, 0, band.Height)
+            : new Rect(band.X, blockStart, band.Width, 0);
 
     /// <summary>Gets the floats a box's own walk placed, or null when it placed none.</summary>
     internal FloatTracks? FloatsOf(Box box) => _floats.TryGetValue(box, out var tracks) ? tracks : null;
@@ -1756,7 +2158,11 @@ internal sealed record LayoutProfile(
         };
     }
 
-    private Size MeasureCore(Box box, MeasureConstraints constraints, LayoutContext context)
+    private Size MeasureCore(
+        Box box,
+        MeasureConstraints constraints,
+        LayoutContext context,
+        Thickness? inlineMarginOverride = null)
     {
         return box.Kind switch
         {
@@ -1766,7 +2172,7 @@ internal sealed record LayoutProfile(
             BoxKind.Table => _table.Measure(box, constraints, context),
             _ => box.IsReplaced
                 ? MeasureReplaced(box, constraints, context)
-                : _block.Measure(box, constraints, context),
+                : _block.Measure(box, constraints, context, inlineMarginOverride),
         };
     }
 
@@ -1855,20 +2261,28 @@ internal sealed record LayoutProfile(
         private readonly Double _width;
         private readonly Double _height;
         private readonly FloatBand? _floats;
+        private readonly Boolean _definiteWidth;
 
-        public MeasureKey(Box box, Double width, Double height, FloatBand? floats = null)
+        public MeasureKey(
+            Box box,
+            Double width,
+            Double height,
+            FloatBand? floats = null,
+            Boolean definiteWidth = false)
         {
             _box = box;
             _width = width;
             _height = height;
             _floats = floats;
+            _definiteWidth = definiteWidth;
         }
 
         public Boolean Equals(MeasureKey other) =>
             ReferenceEquals(_box, other._box) &&
             _width.Equals(other._width) &&
             _height.Equals(other._height) &&
-            ReferenceEquals(_floats, other._floats);
+            ReferenceEquals(_floats, other._floats) &&
+            _definiteWidth == other._definiteWidth;
 
         public override Boolean Equals(Object? obj) => obj is MeasureKey other && Equals(other);
 
@@ -1876,6 +2290,7 @@ internal sealed record LayoutProfile(
             System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_box),
             _width,
             _height,
-            _floats is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_floats));
+            _floats is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_floats),
+            _definiteWidth);
     }
 }

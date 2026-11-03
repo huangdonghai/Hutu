@@ -95,6 +95,63 @@ public sealed class RubyLayoutTests
             "fifty pixels of reading, less half an em of overhang");
     }
 
+    [Test]
+    public async Task AReadingCoversTheMarkStandingPastTheSpaceBesideIt()
+    {
+        using var view = CreateView();
+
+        // The room beside a pair is gathered outward character by character, not only from the glyph
+        // that touches it: a space gives up all five of its pixels and the fullwidth mark behind it the
+        // blank half that looks at the pair, so seven and a half are covered each side and the pair
+        // grows by the other twelve and a half (CSS Ruby 1 §5.1).
+        await view.SetHtml(Document(
+            "x〕 <ruby style='ruby-overhang: spaces'>ab<rt>abcdefghij</rt></ruby> 〔y"));
+
+        Assert.That(
+            Text(view, " 〔y").BorderBox.X - Text(view, "x〕 ").BorderBox.Right,
+            Is.EqualTo(35),
+            "the pair is the base plus what the space and the mark beside it could not cover");
+    }
+
+    [Test]
+    public async Task AReadingCoversNoMarkWhoseBlankTheLineHasAlreadyTaken()
+    {
+        using var view = CreateView();
+
+        // A mark whose blank half has been trimmed by `text-spacing-trim` has none left to give, and
+        // the reading stops there rather than reaching on to the marks behind it: only the space
+        // touches the pair, so five are covered a side and the pair grows by fifteen.
+        await view.SetHtml(Document(
+            "<span style='text-spacing-trim:trim-all'>〕〕 <ruby style='ruby-overhang: spaces'>" +
+            "ab<rt>abcdefghij</rt></ruby> 〔〔</span>"));
+
+        Assert.That(
+            Text(view, " 〔〔").BorderBox.X - Text(view, "〕〕 ").BorderBox.Right,
+            Is.EqualTo(40),
+            "a trimmed mark gives the reading nothing to cover");
+    }
+
+    [Test]
+    public async Task AReadingTakesTheWholeRoomATabRunsTheLineOn()
+    {
+        using var view = CreateView();
+
+        // A tab is no glyph with an advance of its own: it runs the line on to the next stop, and that
+        // distance is what the reading may cover. Two letters bring the line to ten and the stop stands
+        // at twenty, so ten pixels of tab are covered on each side and the pair grows by the other ten.
+        await view.SetHtml(Document(
+            "<span style='white-space:pre;tab-size:20px'>ab\t<ruby style='ruby-overhang: spaces'>" +
+            "cd<rt>abcdefghij</rt></ruby>\tef</span>"));
+
+        // The line stands at twenty where the pair begins, and the base is pushed on by the ten pixels
+        // the tab could not cover. Measuring the tab by its glyph instead would have left room of five
+        // and put the base at twenty-five.
+        Assert.That(
+            Text(view, "cd").BorderBox.X,
+            Is.EqualTo(30),
+            "the pair grows only by what the tab's stop did not cover");
+    }
+
     private static String Document(String content, String lineHeight = "2", Int32 width = 0) =>
         "<html><body style='margin:0'><p style='margin:0;font-size:10px;line-height:" + lineHeight +
         (width > 0 ? ";width:" + width + "px" : String.Empty) +

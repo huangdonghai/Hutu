@@ -43,6 +43,67 @@ public sealed class SkiaRenderingTests
     }
 
     /// <summary>
+    /// A sentence is put down in the same places whether it is set as one run or cut into pieces by an
+    /// element: the adjustments a face answers between neighbouring letters reach as far as the word
+    /// they belong to and no further across the space, which is what lets a page that wrapped part of a
+    /// sentence in a <c>span</c> come to the same picture as a page that did not (CSS Text Decoration 4
+    /// §2.9.2 leans on this, and the borrowed pages that spell a rule out of shifted pieces of one
+    /// sentence are built of nothing else. Shaped as one run, the letters slid two pixels).
+    /// </summary>
+    [Test]
+    public async Task CuttingASentenceAtItsSpacesLeavesItsLettersWhereTheyWere()
+    {
+        const String Run = "    ABCDEF    ";
+        const String Cut = "    <span>ABCDEF</span>    ";
+        const String Style = "margin:0;font:32px serif;white-space:pre";
+
+        var whole = await InkedColumnsAsync($"<p style='{Style}'>{Run}</p>");
+        var pieces = await InkedColumnsAsync($"<p style='{Style}'>{Cut}</p>");
+
+        Assert.That(whole, Is.EqualTo(pieces), "the letters stand where they stood before they were cut");
+    }
+
+    /// <summary>Draws a page and says which of its columns put any ink down.</summary>
+    private static async Task<Boolean[]> InkedColumnsAsync(String body)
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(400, 200);
+
+        await view.SetHtml($"<html><body style='margin:0'>{body}</body></html>");
+
+        var paint = view.Paint;
+
+        Assert.That(paint, Is.Not.Null, "the page was laid out and painted");
+
+        var width = Math.Max(1, (Int32)Math.Ceiling(paint!.Bounds.Width));
+        var height = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Height));
+
+        using var surface = SKSurface.Create(new SKImageInfo(width, height));
+        surface.Canvas.Clear(SKColors.White);
+        new SkiaPaintExecutor(measurer).Execute(paint, surface.Canvas);
+
+        using var image = surface.Snapshot();
+        using var bitmap = SKBitmap.FromImage(image);
+
+        var inked = new Boolean[width];
+
+        for (var x = 0; x < width; x++)
+        {
+            for (var y = 0; y < height; y++)
+            {
+                if (bitmap.GetPixel(x, y) != SKColors.White)
+                {
+                    inked[x] = true;
+                    break;
+                }
+            }
+        }
+
+        return inked;
+    }
+
+    /// <summary>
     /// A font asked for by the name it carries is the font that carries it, which is what
     /// <c>local()</c> in an <c>@font-face</c> source names - the way a book that ships no font of its
     /// own says which of the machine's it wants.
@@ -120,7 +181,7 @@ public sealed class SkiaRenderingTests
     [Test]
     public void AColumnIsToldTheVerticalFormOfItsPunctuation()
     {
-        const String punctuation = "、。「」『』（）";
+        const String punctuation = "、。「」『』（）；：";
 
         using var measurer = new SkiaTextMeasurer();
         var style = new FontStyle("Arial", 18);
@@ -143,21 +204,100 @@ public sealed class SkiaRenderingTests
                 continue;
             }
 
+            var cell = measurer.DecomposeUpright(character.ToString(), style).Single();
+
+            Assert.That(
+                cell.Font.Typeface?.PostScriptName,
+                Is.EqualTo(font.Typeface?.PostScriptName),
+                $"U+{(Int32)character:X4} was moved to another face for its column form");
+
             if (IsSubstituted(measurer.Shaper, font, character))
             {
                 Assert.That(
                     measurer.Shaper.ShapeVertical(font, character.ToString()).Glyphs[0],
                     Is.Not.Zero,
                     $"U+{(Int32)character:X4} was answered with the null glyph");
+                Assert.That(cell.DrawByGlyph, Is.True);
                 continue;
             }
 
-            Assert.That(VerticalForms.TryGet(character, out var form), Is.True, $"U+{(Int32)character:X4} has no form to fall back on");
-            Assert.That(
-                measurer.HasGlyph(style, form),
-                Is.True,
-                $"U+{(Int32)character:X4} has neither a form the font declares nor one the column can name");
+            if (VerticalForms.TryGet(character, out var form) &&
+                font.Typeface?.GetGlyph(form) != 0)
+            {
+                Assert.That(cell.Text, Is.EqualTo(form.ToString()));
+            }
+            else
+            {
+                Assert.That(
+                    cell.Text,
+                    Is.EqualTo(character.ToString()),
+                    $"U+{(Int32)character:X4} kept neither its own glyph nor a form of the same face");
+            }
         }
+    }
+
+    [Test]
+    public void AColumnKeepsAFontsOwnSemicolonWhenTheFaceHasNoVerticalForm()
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var typeface = SKTypeface.FromFile(SemicolonFont());
+
+        if (typeface is null)
+        {
+            Assert.Ignore("the subset face the corpus brings could not be opened");
+            return;
+        }
+
+        measurer.Fonts.Register("vertical-semicolon-font", typeface);
+
+        var style = new FontStyle("vertical-semicolon-font", 16);
+        var font = measurer.GetFont(style, '\uFF1B');
+        var vertical = measurer.Shaper.ShapeVertical(font, "\uFF1B");
+        var cell = measurer.DecomposeUpright("\uFF1B", style).Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(font.Typeface?.GetGlyph('\uFF1B'), Is.Not.Zero);
+            Assert.That(font.Typeface?.GetGlyph('\uFE14'), Is.Zero,
+                "the subset face has no Unicode semicolon presentation form");
+            Assert.That(vertical.Glyphs[0], Is.EqualTo(font.Typeface?.GetGlyph('\uFF1B')),
+                "the face has no vertical substitution for the semicolon");
+            Assert.That(cell.Font.Typeface?.PostScriptName, Is.EqualTo(typeface.PostScriptName),
+                "the column keeps the face that carries the written character");
+            Assert.That(cell.DrawByGlyph, Is.False);
+            Assert.That(cell.Text, Is.EqualTo("\uFF1B"),
+                "without a vertical form on the same face, the written glyph is the one Chrome draws");
+        });
+    }
+
+    [TestCase('\uFF1A')]
+    [TestCase('\uFF1B')]
+    public async Task TrimAllCentresAnUprightPunctuationInItsTrimmedCell(Char punctuation)
+    {
+        using var measurer = new SkiaTextMeasurer();
+        using var typeface = SKTypeface.FromFile(SemicolonFont());
+
+        if (typeface is null)
+        {
+            Assert.Ignore("the subset face the corpus brings could not be opened");
+            return;
+        }
+
+        measurer.Fonts.Register("vertical-semicolon-font", typeface);
+
+        var trimmed = await RenderCharacter(
+            measurer,
+            punctuation,
+            ";font-family:vertical-semicolon-font;text-spacing-trim:trim-all",
+            margin: 40);
+        var inkCentre = (trimmed.Ink.Top + trimmed.Ink.Bottom) / 2;
+        var cellCentre = (trimmed.Cell.Top + trimmed.Cell.Bottom) / 2;
+
+        Assert.That(
+            inkCentre,
+            Is.EqualTo(cellCentre).Within(2),
+            $"U+{(Int32)punctuation:X4} stands in the middle of the half cell it was given " +
+            $"(ink {trimmed.Ink}, cell {trimmed.Cell})");
     }
 
     [Test]
@@ -1368,21 +1508,125 @@ public sealed class SkiaRenderingTests
     /// <summary>The size the column placement tests set their character at.</summary>
     private const Single ColumnFontSize = 48;
 
+    [Test]
+    public async Task ATurnedCharacterStandsAboutTheMiddleOfItsColumn()
+    {
+        // A character the column turns is measured out from its baseline, which stands its ascent
+        // towards one edge of the column and its descent towards the other. The column centres that
+        // em box, so the middle dot - whose ink sits in the middle of the box - stands as far from one
+        // edge of its cell as from the other. The dot is set smaller than the line it stands on, which
+        // is what tells the column's middle apart from the baseline the taller text of the line gives
+        // it: a line box wider than the run's own font leaves the two answers apart
+        // (CSS Writing Modes 4 §4.2).
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(200, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:100px;" +
+            "margin:0;font-size:48px;line-height:1.5'>漢<span style='font-size:24px'>·</span></div></body></html>");
+
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+        var cell = TextsIn(view.Layout!.Root).Single(text => text.Text == "·").BorderBox;
+        var inked = Enumerable.Range(0, bitmap.Width)
+            .Where(x => Enumerable.Range((Int32)cell.Y, (Int32)(cell.Bottom - cell.Y))
+                .Any(y => y < bitmap.Height && bitmap.GetPixel(x, y).Red < 200))
+            .ToArray();
+
+        Assert.That(inked, Is.Not.Empty, "the dot is drawn");
+
+        var middle = (inked.Min() + inked.Max() + 1) / 2.0;
+        Assert.That(
+            middle,
+            Is.EqualTo((cell.X + cell.Right) / 2).Within(1.5),
+            "the turned glyph is centred across its column");
+    }
+
+    [Test]
+    public async Task AHungStopLeavesTheLastCharacterOnTheLineEdge()
+    {
+        // A line that ends by hanging its stop still spreads its room over the text it holds: the
+        // character before the stop stands on the line's end edge, and only the stop itself is outside
+        // it. A share of the room falling on the seam into the hung glyph instead leaves the last
+        // character short of the edge, which is where a line looks unjustified (CSS Text 3 §5.7.1,
+        // §8.2.1).
+        using var measurer = new SkiaTextMeasurer();
+        using var view = new HutuViewInternal(measurer);
+        view.SetViewportSize(300, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:24px;height:72px;" +
+            "font-family:Microsoft JhengHei;font-size:16px;line-height:24px;margin:0;" +
+            "text-align:justify;hanging-punctuation:force-end'>甲乙。丙丁。</div></body></html>");
+
+        using var bitmap = RenderToBitmap(view.Paint!, measurer);
+        var line = Columns(view.Layout!.Root).First(node =>
+            TextsIn(node).Any(text => text.BorderBox.Bottom > node.BorderBox.Bottom + 0.01));
+
+        var left = (Int32)Math.Round(line.BorderBox.X - view.Paint!.Bounds.X) + 1;
+        var right = (Int32)Math.Round(line.BorderBox.Right - view.Paint!.Bounds.X) - 1;
+        var edge = (Int32)Math.Floor(line.BorderBox.Bottom - view.Paint.Bounds.Y);
+        var top = (Int32)Math.Round(line.BorderBox.Y - view.Paint.Bounds.Y);
+        var inkEnd = -1;
+
+        for (var y = edge; y >= top && inkEnd < 0; y--)
+        {
+            for (var x = left; x < right; x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+
+                if (pixel.Red < 240 || pixel.Green < 240 || pixel.Blue < 240)
+                {
+                    inkEnd = y;
+                    break;
+                }
+            }
+        }
+
+        Assert.That(inkEnd, Is.GreaterThanOrEqualTo(0), "the line is drawn");
+        Assert.That(
+            edge - inkEnd,
+            Is.LessThanOrEqualTo(4),
+            "the character before the hung stop stands on the line's end edge");
+    }
+
     /// <summary>What one character set alone in a column painted: the mark it left, and the cell it was given.</summary>
     private sealed record Rendered(Byte[] Pixels, SKRect Cell, SKRect Ink);
+
+    /// <summary>The checked-in CJK subset, which carries U+FF1B but no U+FE14.</summary>
+    private static String SemicolonFont()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null &&
+               !File.Exists(Path.Combine(directory.FullName, "Directory.Packages.props")))
+        {
+            directory = directory.Parent;
+        }
+
+        return Path.Combine(
+            directory?.FullName ?? AppContext.BaseDirectory,
+            "conformance",
+            "fonts",
+            "noto",
+            "cjk",
+            "NotoSansCJKjp-Regular-subset-halt.otf");
+    }
 
     /// <summary>
     /// Sets one character on its own in a column and paints it, which is how a glyph's placement is
     /// read back: the layout gives the character a cell, and the ink says where in that cell it went.
     /// </summary>
-    private static async Task<Rendered> RenderCharacter(SkiaTextMeasurer measurer, Char character)
+    private static async Task<Rendered> RenderCharacter(
+        SkiaTextMeasurer measurer, Char character, String declarations = "", Int32 margin = 0)
     {
         using var view = new HutuViewInternal(measurer);
         view.SetViewportSize(200, 200);
 
         await view.SetHtml(
-            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:100px;margin:0;" +
-            $"font-size:{ColumnFontSize}px;line-height:1'>{character}</div></body></html>");
+            "<html><body style='margin:0'><div style='writing-mode:vertical-rl;width:100px;height:100px;" +
+            $"margin:{margin}px;" +
+            $"font-size:{ColumnFontSize}px;line-height:1{declarations}'>{character}</div></body></html>");
 
         var paint = view.Paint!;
         var width = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Width));

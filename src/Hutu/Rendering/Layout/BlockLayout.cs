@@ -44,9 +44,13 @@ internal sealed class BlockLayout
     /// Measures a block box, returning the size of its <em>border</em> box. No geometry is produced:
     /// the children are only asked for their sizes, which is why the result can be cached.
     /// </summary>
-    public Size Measure(Box box, MeasureConstraints constraints, LayoutContext context) =>
+    public Size Measure(
+        Box box,
+        MeasureConstraints constraints,
+        LayoutContext context,
+        Thickness? inlineMarginOverride = null) =>
         box.Flow.IsVertical
-            ? MeasureColumn(box, constraints, context, box.Flow)
+            ? MeasureColumn(box, constraints, context, box.Flow, inlineMarginOverride)
             : MeasureRow(box, constraints, context);
 
     private Size MeasureRow(Box box, MeasureConstraints constraints, LayoutContext context)
@@ -68,10 +72,12 @@ internal sealed class BlockLayout
         // A width stated as one of the content keywords is settled by what the box holds rather than by
         // the containing block, so it is asked for here, where both are in hand.
         var marginBasis = context.ContainingIsVertical ? context.ContainingBlock.Height : context.ContainingBlock.Width;
-        var (borderBoxWidth, contentWidth) = _engine.ContentSizedWidth(box, basisWidth, context) is { } contentSized
-            ? (contentSized, Math.Max(0, contentSized - insets.Horizontal))
-            : BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insets.Horizontal,
-                context.ContainingBlock.Height, marginBasis);
+        var (borderBoxWidth, contentWidth) = constraints.DefiniteWidth is { } definite
+            ? (definite, Math.Max(0, definite - insets.Horizontal))
+            : _engine.ContentSizedWidth(box, basisWidth, context) is { } contentSized
+                ? (contentSized, Math.Max(0, contentSized - insets.Horizontal))
+                : BoxModel.ResolveWidth(style, basisWidth, context.ContainingBlock.Width, insets.Horizontal,
+                    context.ContainingBlock.Height, marginBasis);
         var basisHeight = constraints.AvailableHeight ?? context.ContainingBlock.Height;
         var declaredHeight = BoxModel.DeclaredHeight(style, basisHeight, insets.Vertical);
 
@@ -104,9 +110,12 @@ internal sealed class BlockLayout
         // against it, because that height is the containing block a percentage inside resolves
         // against (§10.5). A height the content decides stays zero, which is what makes such a
         // percentage come to auto.
+        // A box whose height the content decides hands its children no block extent to work against,
+        // which a child in an orthogonal flow reads as no inline room either: the fallback below is what
+        // answers for it (CSS Writing Modes 3 §7.3.1).
         var childHeight = preferredHeight is { } preferred
             ? BoxModel.ClampHeight(style, preferred, basisHeight, insets.Vertical)
-            : 0;
+            : OrthogonalExtent(style, basisHeight, insets.Vertical, context.Viewport.Height) ?? 0;
 
         Double contentHeight;
 
@@ -171,7 +180,12 @@ internal sealed class BlockLayout
     /// is only as wide as the columns it needs, which is the opposite of the <c>auto</c> width of a
     /// block in a row.
     /// </summary>
-    private Size MeasureColumn(Box box, MeasureConstraints constraints, LayoutContext context, WritingModeInfo flow)
+    private Size MeasureColumn(
+        Box box,
+        MeasureConstraints constraints,
+        LayoutContext context,
+        WritingModeInfo flow,
+        Thickness? inlineMarginOverride)
     {
         var style = box.Style;
         var border = BorderOf(box);
@@ -190,6 +204,18 @@ internal sealed class BlockLayout
         var declaredInline = BoxModel.DeclaredHeight(style, basisInline, insetsInline);
         var declaredBlock = BoxModel.DeclaredWidth(style, basisBlock, insetsBlock);
 
+        // A normal block fills its containing block along a column just as a normal block fills its
+        // width in a row. Content that cannot break overflows; it does not enlarge the containing block
+        // and give itself more room on the next measure. A float, positioned box or inline-block still
+        // shrinks to the inline extent its text asks for - and so does a box standing across the flow
+        // it is contained in, whose own line runs where the container has no extent to hand down: the
+        // room along that line is settled by what the box holds rather than by what holds the box
+        // (CSS Writing Modes 3 §4.1, which exchanges the axes for the box alone).
+        var fillsInline = box.IsBlockLevel &&
+            !IsFloat(box) &&
+            !PositionedLayout.IsOutOfFlow(box) &&
+            context.ContainingIsVertical == flow.IsVertical;
+
         // The children's containing block is the box's content box, and both of its extents have to
         // be settled before they are measured: the inline one is the declared height or the extent
         // the box was given, the block one the declared width or, when it comes from the content,
@@ -200,7 +226,11 @@ internal sealed class BlockLayout
         // width a row resolves: `ResolveWidth` is where a row subtracts them, and this is the same
         // rule with the axes exchanged. A percentage height still resolves against the whole extent
         // the box was given rather than against what its margins leave, which is also what a row does.
-        var (inlineBefore, inlineAfter) = flow.InlineMargins(style.Margin.Resolve(percentBasis));
+        // The root can inherit a page flow from the body while keeping its own horizontal computed
+        // margins. Its placement maps those margins onto the page flow, so measurement must use the
+        // same mapping or the page starts outside the viewport and extends past it by that margin.
+        var (inlineBefore, inlineAfter) = flow.InlineMargins(
+            inlineMarginOverride ?? style.Margin.Resolve(percentBasis));
         var childInline = declaredInline ?? Math.Max(0, basisInline - inlineBefore - inlineAfter - insetsInline);
         var childBlock = declaredBlock ?? context.ContainingBlock.Width;
 
@@ -238,6 +268,13 @@ internal sealed class BlockLayout
                 var column = MeasureColumnChildren(box, childInline, childBlock, context, flow);
                 contentBlock = column.Block;
                 childInline = Math.Max(childInline, column.Inline);
+
+                if (style.Height.IsAuto && !fillsInline)
+                {
+                    // The columns of the content reach along the line as far as the tallest of them, and
+                    // that is how long the line of a box across its container has to be.
+                    childInline = Math.Max(childInline, column.FlowedInline);
+                }
             }
         }
         else
@@ -248,10 +285,7 @@ internal sealed class BlockLayout
             var text = _inline.Measure(box, childInline, flow, new InlineContext(_engine, context));
             contentBlock = text.Block;
 
-            // Only a column that stated no length down the page takes one from its text; a declared
-            // length stays what the page said however much further the content runs, or a box that
-            // clips its overflow would be grown past the edge it clips at.
-            if (style.Height.IsAuto)
+            if (style.Height.IsAuto && !fillsInline)
             {
                 childInline = Math.Max(childInline, text.Inline);
             }
@@ -268,13 +302,16 @@ internal sealed class BlockLayout
     /// the block axis, which is how wide the band of columns they make has to be.
     /// </summary>
     /// <remarks>
-    /// Nothing here answers for the inline axis: a column is as long as the space it was given, not
-    /// as long as the tallest child, so what the children reach down it does not come into the size.
-    /// Margins collapse along the block axis (the physical x for a column) exactly as they do in a
-    /// row - a neighbour's adjoining margins fold into one strip, a child's outer edge escapes through
-    /// the box when nothing borders or pads there, and a box with nothing across it self-collapses.
+    /// Two answers come back for the inline axis. <see cref="Float"/> is how far down the line the
+    /// floats reach, which a column always grows for; <see cref="FlowedInline"/> is how far the boxes
+    /// in the flow reach, which only a column that is not stretched along its line takes up - the one
+    /// standing across the flow that contains it, whose line runs where its container has nothing to
+    /// hand down. Margins collapse along the block axis (the physical x for a column) exactly as they
+    /// do in a row - a neighbour's adjoining margins fold into one strip, a child's outer edge escapes
+    /// through the box when nothing borders or pads there, and a box with nothing across it
+    /// self-collapses.
     /// </remarks>
-    private (Double Block, Double Inline) MeasureColumnChildren(
+    private (Double Block, Double Inline, Double FlowedInline) MeasureColumnChildren(
         Box box,
         Double contentInline,
         Double basisBlock,
@@ -283,6 +320,7 @@ internal sealed class BlockLayout
     {
         var cursor = 0.0;
         var pending = 0.0;
+        var flowed = 0.0;
         var pendingGroup = MarginGroup.Zero;
         var throughStart = CollapsesThroughStart(box, flow, contentInline);
         var throughEnd = CollapsesThroughEnd(box, flow, contentInline);
@@ -334,6 +372,14 @@ internal sealed class BlockLayout
 
             var size = _engine.Measure(child, constraints, childContext);
 
+            // How far down the line the child reaches is its own extent along it, with the margins it
+            // writes at either end of that axis added to it.
+            var (inlineBefore, inlineAfter) = flow.InlineMargins(child.Style.Margin.Resolve(contentInline));
+
+            flowed = Math.Max(
+                flowed,
+                flow.InlineExtent(size.Width, size.Height) + inlineBefore + inlineAfter);
+
             cursor += pending + flow.BlockExtent(size.Width, size.Height);
             pending = childEnd;
             pendingGroup = new MarginGroup(childEnd);
@@ -344,7 +390,7 @@ internal sealed class BlockLayout
         // and as wide as its declared width, so the float's height counts and its width does not.
         var stacked = throughEnd ? cursor : cursor + pending;
 
-        return (stacked, floats.DeepestInline);
+        return (stacked, floats.DeepestInline, flowed);
     }
 
     /// <summary>
@@ -648,6 +694,11 @@ internal sealed class BlockLayout
                     ? contentHeight
                     : (Double?)null;
 
+        // The block extent the children are laid out against: this box's own used height where it has one,
+        // and where the content decides it, the fallback a child in an orthogonal flow is owed (§7.3.1).
+        var handedV = usedHeight ??
+            OrthogonalExtent(style, context.ContainingBlock.Height, insetsV, context.Viewport.Height) ?? 0;
+
         var childBox = flow.IsVertical
             ? new Rect(
                 contentX,
@@ -659,7 +710,7 @@ internal sealed class BlockLayout
                 contentX,
                 contentY,
                 contentWidth,
-                usedHeight ?? 0);
+                handedV);
 
         var childContext = context.ForContainingBlock(childBox, box.Flow.IsVertical);
 
@@ -719,9 +770,17 @@ internal sealed class BlockLayout
             // measuring pass settled on, so the two passes answer the same question the same way. A
             // column keeps the context its own measuring pass hands the line, which is the pair the
             // two axes are swapped into.
-            var atomic = flow.IsVertical
+            //
+            // The band of floats this box stands among is left behind on the way in: an atomic inline
+            // box roots a formatting context of its own, and a float from outside one neither shortens
+            // the lines inside it nor drops their first one below itself - the box as a whole is what
+            // steps around the float, which the line it sits on has already settled (CSS 2.1 §9.4.1,
+            // §9.5). The measuring pass and this one both hand the nested content this context, so the
+            // two cannot disagree about where its first line begins.
+            var atomic = (flow.IsVertical
                 ? context
-                : context.ForContainingBlock(new Rect(contentX, contentY, contentWidth, usedHeight ?? 0), box.Flow.IsVertical);
+                : context.ForContainingBlock(new Rect(contentX, contentY, contentWidth, handedV), box.Flow.IsVertical))
+                .WithFloats(null);
 
             var inline = new InlineContext(_engine, context, childContext, atomic);
 
@@ -736,6 +795,36 @@ internal sealed class BlockLayout
         AlignContent(box, layout, flow, flow.BlockExtent(contentWidth, contentHeight), used);
 
         return layout;
+    }
+
+    /// <summary>
+    /// Gets the extent a child in an orthogonal flow breaks its lines against when this box has no
+    /// definite block size of its own.
+    /// </summary>
+    /// <remarks>
+    /// A horizontal box whose height comes from its content hands a vertical child no inline room at
+    /// all, and CSS Writing Modes 3 §7.3.1 then calls for a fallback: the smallest of the box's own inner
+    /// max size floored by its inner min size, the nearest ancestor scrollport's inner size, and the
+    /// initial containing block's size. The engine already answers with the last of those when it is given
+    /// nothing, so what is worked out here is the first - the pair the page stated - and it is kept within
+    /// the scrollport, which is the other size the rule weighs against it.
+    /// </remarks>
+    private static Double? OrthogonalExtent(
+        ComputedStyle style, Double basis, Double insets, Double scrollExtent)
+    {
+        if (!style.MaxHeight.HasValue)
+        {
+            // Nothing stated for the ceiling: the rule's first size is out of the running, and the
+            // extents below it answer for themselves.
+            return null;
+        }
+
+        var ceiling = style.MaxHeight.Resolve(basis) - insets;
+        var floor = style.MinHeight.HasValue ? style.MinHeight.Resolve(basis) - insets : 0;
+
+        // A min larger than the max wins, as it does wherever the two are worked out (CSS 2.1 §10.4.3),
+        // and the scrollport is the other size the rule weighs against this one.
+        return Math.Max(0, Math.Min(Math.Max(ceiling, floor), scrollExtent));
     }
 
     /// <summary>Measures the block children and returns the height their stacking occupies.</summary>
@@ -896,6 +985,16 @@ internal sealed class BlockLayout
                 continue;
             }
 
+            // A cleared box is moved below the floats it refuses to stand beside before its band is
+            // read. The room it may take depends on where it lands: once a left float has ended, the
+            // same right float that left no space beside it can leave a usable column beside the
+            // cleared top. What it moved through is not given back to the surrounding margins.
+            if (tracks is { } cleared && child.Style.Clear != ClearSide.None)
+            {
+                var clearedTo = cleared.ClearBelow(child.Style.Clear, cursor + pending);
+                pending = Math.Max(pending, clearedTo - cursor);
+            }
+
             // The child's lines stand in the band of the floats around it, at the height the child
             // itself reaches: two siblings at different depths have different room beside a float,
             // so the band is answered per child rather than by the one context the container shares.
@@ -907,22 +1006,14 @@ internal sealed class BlockLayout
             var passContext = childContext.WithFloats(band);
             var childConstraints = constraints;
 
-            // A box that steps clear of the floats is measured against the room that stepping leaves it,
-            // and the arranging pass runs the same arithmetic to read the size back out of the cache.
-            if (shift > 0)
+            // A formatting root is measured against the room the floats leave it, whether it also had
+            // to step sideways or only takes a narrower column beside a float on its other edge. The
+            // arranging pass runs the same arithmetic to read the size back out of the cache.
+            if (room < contentWidth)
             {
                 passContext = passContext.ForContainingBlock(
                     new Size(room, childContext.ContainingBlock.Height));
                 childConstraints = MeasureConstraints.FitWidth(room);
-            }
-
-            // A cleared box is moved below the floats it refuses to stand beside. What it moved
-            // through is not given back to the surrounding margins - the stack resumes from where
-            // the box landed.
-            if (tracks is { } cleared && child.Style.Clear != ClearSide.None)
-            {
-                var clearedTo = cleared.ClearBelow(child.Style.Clear, cursor + pending);
-                pending = Math.Max(pending, clearedTo - cursor);
             }
 
             var size = _engine.Measure(child, childConstraints, passContext);
@@ -4444,7 +4535,9 @@ internal sealed class BlockLayout
     }
 
     /// <summary>Gets whether the child is pinned to an edge of its container instead of stacked in it.</summary>
-    private static Boolean IsFloat(Box child) => child.Style.Float != FloatSide.None;
+    private static Boolean IsFloat(Box child) =>
+        child.Style.Float != FloatSide.None &&
+        child.Style.NotePlacement != NotePlacement.Inline;
 
     /// <summary>
     /// Gets the line an inline-level out-of-flow box would have joined, or null when its specified
@@ -5248,6 +5341,14 @@ internal sealed class BlockLayout
                 continue;
             }
 
+            // The same clearance the measuring pass applied, before the band is read: the room a
+            // cleared root takes is the room at the height it lands, not at the height it started.
+            if (tracks is { } cleared && child.Style.Clear != ClearSide.None)
+            {
+                var clearedTo = cleared.ClearBelow(child.Style.Clear, cursor + pending);
+                pending = Math.Max(pending, clearedTo - cursor);
+            }
+
             // The band and the step clear of the floats are the measuring pass's own arithmetic, run
             // again at the place the child lands, so the size read back is the one it was answered with.
             var (shift, room, drop, band) = FormattingRoot(
@@ -5260,16 +5361,10 @@ internal sealed class BlockLayout
             var passContext = context.WithFloats(band);
             var childConstraints = constraints;
 
-            if (shift > 0)
+            if (room < contentWidth)
             {
                 passContext = passContext.ForContainingBlock(new Size(room, context.ContainingBlock.Height));
                 childConstraints = MeasureConstraints.FitWidth(room);
-            }
-
-            if (tracks is { } cleared && child.Style.Clear != ClearSide.None)
-            {
-                var clearedTo = cleared.ClearBelow(child.Style.Clear, cursor + pending);
-                pending = Math.Max(pending, clearedTo - cursor);
             }
 
             var size = _engine.Measure(child, childConstraints, passContext);

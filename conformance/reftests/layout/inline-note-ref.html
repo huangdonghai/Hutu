@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>reference for inline note</title>
+<style>
+@font-face {
+  font-family: NoteAhem;
+  src: url('../../fonts/Ahem.ttf');
+}
+html, body { margin: 0; }
+.line {
+  position: relative;
+  width: 40px;
+  height: 44px;
+  font-family: NoteAhem;
+  font-size: 20px;
+  line-height: 20px;
+}
+.row {
+  position: absolute;
+  left: 0;
+  width: 40px;
+  height: 20px;
+  line-height: 20px;
+}
+.justified {
+  position: relative;
+  width: 90px;
+  height: 88px;
+  margin-top: 10px;
+  font-family: NoteAhem;
+  font-size: 20px;
+  line-height: 20px;
+}
+.justified .row {
+  width: 90px;
+  text-align: justify;
+  text-align-last: justify;
+  text-justify: inter-character;
+}
+.justified .last {
+  width: 20px;
+  text-align: left;
+  text-align-last: left;
+}
+</style>
+</head>
+<body>
+<div class="line">
+  <span class="row" style="top: 2px">ab</span>
+  <span class="row" style="top: 22px">cd</span>
+</div>
+<div class="justified">
+  <span class="row" style="top: 2px">abcd</span>
+  <span class="row" style="top: 22px">efgh</span>
+  <span class="row last" style="top: 46px">i</span>
+  <span class="row last" style="top: 66px">j</span>
+</div>
+</body>
+</html>

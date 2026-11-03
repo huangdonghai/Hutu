@@ -282,6 +282,34 @@ internal readonly struct ChunkRange
     public static Boolean IsCjk(String text, Int32 index) => IsCjk(CodePointAt(text, index));
 
     /// <summary>
+    /// Gets whether a code point belongs to a writing system whose word boundaries are not marked and
+    /// cannot be found without lexical or orthographic analysis: the Southeast Asian scripts UAX #14
+    /// leaves to "other means" (its SA class) - Thai, Lao, Myanmar, Khmer and the scripts written
+    /// against the same convention.
+    /// </summary>
+    /// <remarks>
+    /// The ranges are the script blocks, marks and all: a line ends beside one of these letters
+    /// wherever the analysis would have put a boundary, and the combining marks of the same scripts
+    /// are the marks the line-breaking rules already glue to the letter before them. The set follows
+    /// UAX #14's own assignment rather than a language list, because the fallback the specification
+    /// asks for is a property of the writing system, not of knowing which language is being set.
+    /// </remarks>
+    public static Boolean RequiresAnalysis(Int32 codePoint) =>
+        (codePoint >= 0x0E00 && codePoint <= 0x0EFF) ||   // Thai, Lao
+        (codePoint >= 0x1000 && codePoint <= 0x109F) ||   // Myanmar
+        (codePoint >= 0x1780 && codePoint <= 0x17FF) ||   // Khmer
+        (codePoint >= 0x1950 && codePoint <= 0x19DF) ||   // Tai Le, New Tai Lue, Khmer symbols
+        (codePoint >= 0x1A00 && codePoint <= 0x1AAF) ||   // Buginese, Tai Tham
+        (codePoint >= 0x1B00 && codePoint <= 0x1BBF) ||   // Balinese, Sundanese
+        (codePoint >= 0x1BC0 && codePoint <= 0x1BFF) ||   // Batak
+        (codePoint >= 0xA900 && codePoint <= 0xA9DF) ||   // Kayah Li, Rejang, Javanese
+        (codePoint >= 0xAA60 && codePoint <= 0xAADF) ||   // Shan and Tai Nua, Tai Viet
+        (codePoint >= 0x10000 && codePoint <= 0x1007F);   // Cham
+
+    /// <summary>Gets whether the code point at an index belongs to a script that needs analysis.</summary>
+    public static Boolean RequiresAnalysis(String text, Int32 index) => RequiresAnalysis(CodePointAt(text, index));
+
+    /// <summary>
     /// Gets whether a character keeps its own orientation when it is set in a column.
     /// </summary>
     /// <remarks>
@@ -293,7 +321,9 @@ internal readonly struct ChunkRange
     /// alphabetic.
     /// </remarks>
     public static Boolean IsUpright(Int32 codePoint) =>
-        IsWide(codePoint) || (codePoint >= 0xFE10 && codePoint <= 0xFE4F);
+        IsWide(codePoint) ||
+        (codePoint >= 0xFE10 && codePoint <= 0xFE6F) ||
+        CjkSymbols.IsSymbol(codePoint);
 
     /// <summary>Gets whether the character keeps its own orientation when it is set in a column.</summary>
     public static Boolean IsUpright(Char character) => IsUpright((Int32)character);

@@ -449,6 +449,15 @@ internal static partial class BoxBuilder
             return BoxKind.RubyBase;
         }
 
+        // A note's placement replaces the display the element would otherwise have had: whether it is
+        // written as a span or a block, it stands at one inline position and contributes a note there.
+        if (!style.IsDisplayNone &&
+            (style.NotePlacement is NotePlacement.Inline or
+                NotePlacement.Interline or NotePlacement.Margin))
+        {
+            return BoxKind.Inline;
+        }
+
         var display = style.Display;
 
         // A table part has two roles, and the page may change only one of them (CSS Display 3 §2.7).
@@ -820,7 +829,22 @@ internal static partial class BoxBuilder
             // of the last one, wherever the blocks between them stand; a run between two others is
             // interior and trims nothing (CSS Inline 3 §5.1).
             var trim = RunTrim(parent, firstRun, LastRun(children, index));
-            var anonymous = new Box(BoxKind.Block, parent.Style.AsAnonymous(trim)) { IsAnonymous = true, Flow = parent.Flow };
+
+            // The indentation of the block the children were split from stands on the first of these wraps
+            // and nowhere else: only that one begins the block, while each later run resumes on a line that
+            // starts where an ordinary line does (CSS Text 3 §5.2). An item of a flex or grid container is
+            // not among them - a run of text beside the items is an item in its own right, and the distance
+            // reaches its first line however far down the container it stands (CSS Flexbox 1 §4.1).
+            var begins = parent.Kind is BoxKind.Flex or BoxKind.Grid or BoxKind.Masonry ||
+                !parent.Children.Exists(
+                    child => child.IsBlockLevel && !PositionedLayout.IsOutOfFlow(child));
+
+            var anonymous = new Box(BoxKind.Block, parent.Style.AsAnonymous(trim))
+            {
+                IsAnonymous = true,
+                StartsParentContent = begins,
+                Flow = parent.Flow,
+            };
             anonymous.Children.AddRange(run);
             parent.Children.Add(anonymous);
             firstRun = false;

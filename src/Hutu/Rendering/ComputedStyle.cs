@@ -12,6 +12,28 @@ using System.Globalization;
 namespace Hutu.Rendering;
 
 /// <summary>
+/// Where an underline stands against the text it decorates, as <c>text-underline-position</c> asks
+/// (CSS Text Decoration 4 §2.7).
+/// </summary>
+public enum TextUnderlinePosition : Byte
+{
+    /// <summary>The user agent's own answer: the font's underline position in a row, and the text-under edge beside a column.</summary>
+    Auto,
+
+    /// <summary>Where the face's own underline metrics put it.</summary>
+    FromFont,
+
+    /// <summary>Under the text content, on the side the writing mode calls under.</summary>
+    Under,
+
+    /// <summary>The left edge of the text in a column.</summary>
+    Left,
+
+    /// <summary>The right edge of the text in a column.</summary>
+    Right,
+}
+
+/// <summary>
 /// How a ruby base and its reading are set within the column they share (CSS Ruby 1 §4.3).
 /// </summary>
 internal enum RubyAlign
@@ -129,6 +151,31 @@ internal readonly struct ComputedStyle
     /// </summary>
     public Int32 Order => _values.Fused?.Order ?? 0;
 
+    /// <summary>Gets how this element places the note it defines.</summary>
+    public NotePlacement NotePlacement => _values.Fused?.NotePlacement ?? NotePlacement.None;
+
+    /// <summary>Gets which page-margin side a margin note uses.</summary>
+    public NoteSide NoteSide => _values.Fused?.NoteSide ?? NoteSide.Auto;
+
+    /// <summary>Reads the note placement keyword an element declared.</summary>
+    public static NotePlacement ResolveNotePlacementFused(ICssProperty? declared) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            "inline" => NotePlacement.Inline,
+            "interline" => NotePlacement.Interline,
+            "margin" => NotePlacement.Margin,
+            _ => NotePlacement.None,
+        };
+
+    /// <summary>Reads the side a margin note declared.</summary>
+    public static NoteSide ResolveNoteSideFused(ICssProperty? declared) =>
+        declared?.Value?.Trim().ToLowerInvariant() switch
+        {
+            "inline-start" => NoteSide.InlineStart,
+            "inline-end" => NoteSide.InlineEnd,
+            _ => NoteSide.Auto,
+        };
+
     /// <summary>
     /// Reads the order from the element's own cascaded declaration, for the fused path. A value that is
     /// not a number is not an order, and a box left with none is the initial zero.
@@ -221,7 +268,7 @@ internal readonly struct ComputedStyle
     private static readonly String[] TextNames =
         {
             "white-space", "text-align", "text-align-last", "text-justify", "vertical-align",
-            "text-indent", "visibility", "overflow-wrap", "word-wrap", "word-break", "line-break",
+            "text-indent", "text-fit", "visibility", "overflow-wrap", "word-wrap", "word-break", "line-break",
             "text-spacing-trim", "text-autospace", "hanging-punctuation",
         };
 
@@ -313,6 +360,19 @@ internal readonly struct ComputedStyle
             parent?.TextAlign,
             parent?.Direction ?? TextDirection.LeftToRight);
 
+        var (indent, indentHanging, indentEachLine) = ReadTextIndent();
+
+        // The line fitting is read from the same text whether the element wrote it or inherited it: the
+        // computed declaration carries what came down, and a value the parse cannot read is no value.
+        var fitting = TryReadTextFit(ReadKeyword("text-fit"), out var statedFit)
+            ? statedFit
+            : parent?.TextFitting ?? TextFit.None;
+
+        // A number or a percentage is read off the font the line is drawn at, which the fitting
+        // moves; a length is the page's own number. The text is the cascaded one, so a number
+        // inherited from above is read as the form the page wrote, not the pixels it came to.
+        var lineHeightTracksFont = LineHeightFollowsFont(ReadKeyword("line-height"));
+
         var text = new TextArea
         {
             WhiteSpace = Keyword("white-space", CssInitialValues.WhiteSpace),
@@ -344,7 +404,11 @@ internal readonly struct ComputedStyle
                         : null,
                 parent?.HangingPunctuation ?? HangingPunctuationValue.Initial),
             VerticalAlign = Keyword("vertical-align", CssInitialValues.VerticalAlign),
-            Indent = ReadLength("text-indent", RenderMode.Horizontal, StyleLength.Zero),
+            Indent = indent,
+            IndentHanging = indentHanging,
+            IndentEachLine = indentEachLine,
+            Fit = fitting,
+            LineHeightTracksFont = lineHeightTracksFont,
             Visibility = Keyword("visibility", CssInitialValues.Visibility),
         };
 
@@ -1089,21 +1153,193 @@ internal readonly struct ComputedStyle
     /// the parent's resolved length. Percentages stay unresolved for the layout pass, as in
     /// the box-model read.
     /// </summary>
-    public static StyleLength ResolveTextIndentFused(
-        ICssProperty? declared, StyleLength parentIndent, LengthReader.FontSource font, IRenderDimensions dimensions)
+    public static (StyleLength Length, Boolean Hanging, Boolean EachLine) ResolveTextIndentFused(
+        ICssProperty? declared,
+        StyleLength parentIndent,
+        Boolean parentHanging,
+        Boolean parentEachLine,
+        LengthReader.FontSource font,
+        IRenderDimensions dimensions)
     {
         if (declared is null)
         {
-            return parentIndent;
+            return (parentIndent, parentHanging, parentEachLine);
+        }
+
+        // A declaration that names either modifier survives the parse as the text the page wrote, so the
+        // words and the distance are both taken from it here (CSS Text 3 §5.2).
+        if (SplitTextIndent(declared.Value) is { } stated)
+        {
+            return (
+                LengthReader.FromText(stated.Distance, RenderMode.Horizontal, dimensions, font) ?? StyleLength.Zero,
+                stated.Hanging,
+                stated.EachLine);
         }
 
         // Wide keywords fall through to the read below and resolve to zero there, exactly as
         // the old path reads them: the cascade leaves them unresolved and the length reader
         // answers every one of them with nothing.
         return LengthReader.TryReadProperty(declared, RenderMode.Horizontal, dimensions, font, out var length)
-            ? length
-            : StyleLength.Zero;
+            ? (length, false, false)
+            : (StyleLength.Zero, false, false);
     }
+
+    /// <summary>
+    /// Takes the two modifiers CSS Text 3 §5.2 gives <c>text-indent</c> off the text of a declaration,
+    /// leaving the distance it was written with. Null is the answer for a declaration that names neither,
+    /// which is the shape AngleSharp's own grammar reads.
+    /// </summary>
+    /// <remarks>
+    /// The grammar of the property stops at the distance, so a page writing either modifier had the whole
+    /// declaration dropped at the parse; the declaration factory keeps the text of any declaration naming
+    /// one, and here the words say which lines of the block carry the distance rather how far it runs.
+    /// </remarks>
+    internal static (String Distance, Boolean Hanging, Boolean EachLine)? SplitTextIndent(String? text)
+    {
+        if (String.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var hanging = false;
+        var eachLine = false;
+        var distance = new List<String>();
+
+        foreach (var token in text!.Split(
+            new[] { ' ', '\t', '\n', '\r', '\f' },
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (token.Equals("hanging", StringComparison.OrdinalIgnoreCase))
+            {
+                hanging = true;
+            }
+            else if (token.Equals("each-line", StringComparison.OrdinalIgnoreCase))
+            {
+                eachLine = true;
+            }
+            else
+            {
+                distance.Add(token);
+            }
+        }
+
+        return hanging || eachLine
+            ? (String.Join(" ", distance), hanging, eachLine)
+            : null;
+    }
+
+    /// <summary>
+    /// Reads <c>text-fit</c> from the text of a declaration (CSS Text 5 §1.1): a direction, the set of
+    /// lines it reaches, and a percentage limit, in any order. AngleSharp has no grammar for the property,
+    /// so this is the whole of its parse, and the answers it refuses are the ones the cascade left for the
+    /// inherited value to speak for.
+    /// </summary>
+    internal static Boolean TryReadTextFit(String? text, out TextFit fit)
+    {
+        fit = TextFit.None;
+
+        if (String.IsNullOrWhiteSpace(text) || CssWideKeyword.Is(text!.Trim()))
+        {
+            return false;
+        }
+
+        TextFitMode? mode = null;
+        TextFitScaling? scaling = null;
+        Double? limit = null;
+
+        foreach (var token in text!.Split(
+            new[] { ' ', '\t', '\n', '\r', '\f' },
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (token.Equals("none", StringComparison.OrdinalIgnoreCase))
+            {
+                mode = TextFitMode.None;
+            }
+            else if (token.Equals("grow", StringComparison.OrdinalIgnoreCase))
+            {
+                mode = TextFitMode.Grow;
+            }
+            else if (token.Equals("shrink", StringComparison.OrdinalIgnoreCase))
+            {
+                mode = TextFitMode.Shrink;
+            }
+            else if (token.Equals("consistent", StringComparison.OrdinalIgnoreCase))
+            {
+                scaling = TextFitScaling.Consistent;
+            }
+            else if (token.Equals("per-line-all", StringComparison.OrdinalIgnoreCase))
+            {
+                scaling = TextFitScaling.PerLineAll;
+            }
+            else if (token.Equals("per-line", StringComparison.OrdinalIgnoreCase))
+            {
+                scaling = TextFitScaling.PerLine;
+            }
+            else if (token.EndsWith("%", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!Double.TryParse(
+                    token.AsSpan(0, token.Length - 1),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out var percent) ||
+                    percent < 0)
+                {
+                    return false;
+                }
+
+                limit = percent / 100.0;
+            }
+            else
+            {
+                // A token the grammar has no place for makes the whole declaration one the stylesheet
+                // did not write, and what stands then is the value inherited.
+                return false;
+            }
+        }
+
+        if (mode is null)
+        {
+            // The lines and the limit speak only of a direction: with none named the property is at its
+            // initial, and the keywords say nothing the layout acts on (CSS Text 5 §1.1).
+            return false;
+        }
+
+        fit = new TextFit(mode.Value, scaling ?? TextFitScaling.Consistent, limit);
+        return true;
+    }
+
+    /// <summary>Resolves the block's line fitting for the fused path, taking the parent's where this
+    /// element wrote nothing the parse can read.</summary>
+    public static TextFit ResolveTextFitFused(ICssProperty? declared, TextFit parent)
+    {
+        if (declared is null)
+        {
+            return parent;
+        }
+
+        return TryReadTextFit(declared.Value, out var stated) ? stated : parent;
+    }
+
+    /// <summary>
+    /// Gets whether a line height written as this text travels with the size the fitting scales a line to.
+    /// A bare number and a percentage are multiples of the font the text is drawn at; <c>normal</c>, and
+    /// nothing written at all, is the font's own extent; a length - pixels, <c>em</c>, anything with a
+    /// unit - is the page's number and stands (CSS Text 5 §1.1).
+    /// </summary>
+    internal static Boolean LineHeightFollowsFont(String? text)
+    {
+        var stated = text?.Trim();
+
+        if (stated is not { Length: > 0 } ||
+            stated.Equals("normal", StringComparison.OrdinalIgnoreCase) ||
+            stated.EndsWith("%", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return Double.TryParse(stated, NumberStyles.Float, CultureInfo.InvariantCulture, out _);
+    }
+
 
     /// <summary>
     /// The axis name each physical side of the box goes by, in the order a thickness is read - top,
@@ -1799,7 +2035,8 @@ internal readonly struct ComputedStyle
             UnderlineOffset = ResolveUnderlineOffsetFused(
                 find("text-underline-offset"), parentUnderlineOffset, font, dimensions),
             Inset = ResolveDecorationInsetFused(
-                find("text-decoration-inset"), find("box-decoration-break"), font, dimensions),
+                find("text-decoration-inset"), find("box-decoration-break"),
+                find("text-decoration-skip-spaces"), font, dimensions),
             Skip = ResolveSkipInkFused(find("text-decoration-skip-ink"), parentSkip),
         };
     }
@@ -1818,12 +2055,14 @@ internal readonly struct ComputedStyle
     /// <summary>
     /// Resolves how thick a decoration line is, for the fused path. The property is not inherited: a miss
     /// says nothing, and the face's own metrics are what the line then takes - which is also what
-    /// <c>auto</c> and <c>from-font</c> ask for, since this engine reads its metrics from the face
+    /// <c>auto</c> and <c>from-font</c> ask for, since this engine reads its metrics from the face. The
+    /// answer is the length as written and not a whole number of pixels: the value the property computes
+    /// to is an absolute length, and the only floor is one device pixel at the time the line is drawn
     /// (CSS Text Decoration 4 §2.4).
     /// </summary>
     public static Double? ResolveDecorationThicknessFused(
         ICssProperty? declared, LengthReader.FontSource font, IRenderDimensions dimensions) =>
-        DecorationLength(declared, font, dimensions) is { } asked ? Math.Round(asked) : null;
+        DecorationLength(declared, font, dimensions);
 
     /// <summary>
     /// Resolves how far an underline stands from where the font puts it, for the fused path. The property
@@ -1862,15 +2101,22 @@ internal readonly struct ComputedStyle
     public static DecorationInsets? ResolveDecorationInsetFused(
         ICssProperty? declared,
         ICssProperty? broken,
+        ICssProperty? spaces,
         LengthReader.FontSource font,
         IRenderDimensions dimensions)
     {
         var clone = broken?.Value?.IndexOf("clone", StringComparison.OrdinalIgnoreCase) >= 0;
+        var skip = ResolveSkipSpacesFused(spaces);
         var text = declared?.Value?.Trim();
 
         if (String.IsNullOrEmpty(text) || IsInherit(declared))
         {
-            return clone ? new DecorationInsets(null, null, null, null, false, true) : null;
+            // A box that asks for nothing but the skipping of its spaces still has ends to pull in, so
+            // the record is made for it as much as for one that wrote a distance: the zero distances say
+            // the line runs to the edges, and the spaces come off those afterwards.
+            return clone || skip != DecorationSkipSpaces.None
+                ? new DecorationInsets(null, null, null, null, false, true) { Spaces = skip }
+                : null;
         }
 
         var terms = InsetTerms(text!);
@@ -1882,7 +2128,7 @@ internal readonly struct ComputedStyle
 
         if (terms.Count == 1 && terms[0].Equals("auto", StringComparison.OrdinalIgnoreCase))
         {
-            return new DecorationInsets(null, null, null, null, true, clone);
+            return new DecorationInsets(null, null, null, null, true, clone) { Spaces = skip };
         }
 
         var (start, startShare) = ReadInsetTerm(terms[0], font, dimensions);
@@ -1892,10 +2138,55 @@ internal readonly struct ComputedStyle
 
         if (start is null && end is null && startShare is null && endShare is null)
         {
-            return null;
+            return skip == DecorationSkipSpaces.None
+                ? null
+                : new DecorationInsets(null, null, null, null, false, clone) { Spaces = skip };
         }
 
-        return new DecorationInsets(start, end, startShare, endShare, false, clone);
+        return new DecorationInsets(start, end, startShare, endShare, false, clone) { Spaces = skip };
+    }
+
+    /// <summary>
+    /// Resolves <c>text-decoration-skip-spaces</c>: which ends of the decorated text leave their spaces
+    /// without a line. The value is a set of keywords read token by token, so <c>start end</c> and
+    /// <c>all</c> say the same thing and a word the grammar cannot read says nothing at all - which is
+    /// the initial <c>none</c>, the line running across the spaces as it does across the letters
+    /// (CSS Text Decoration 4 §2.9.2).
+    /// </summary>
+    public static DecorationSkipSpaces ResolveSkipSpacesFused(ICssProperty? declared)
+    {
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrEmpty(text) || IsInherit(declared))
+        {
+            return DecorationSkipSpaces.None;
+        }
+
+        var spaces = DecorationSkipSpaces.None;
+
+        foreach (var word in text!.Split((Char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (word.Equals("all", StringComparison.OrdinalIgnoreCase))
+            {
+                return DecorationSkipSpaces.All;
+            }
+
+            if (word.Equals("none", StringComparison.OrdinalIgnoreCase))
+            {
+                return DecorationSkipSpaces.None;
+            }
+
+            if (word.Equals("start", StringComparison.OrdinalIgnoreCase))
+            {
+                spaces |= DecorationSkipSpaces.Start;
+            }
+            else if (word.Equals("end", StringComparison.OrdinalIgnoreCase))
+            {
+                spaces |= DecorationSkipSpaces.End;
+            }
+        }
+
+        return spaces;
     }
 
     /// <summary>
@@ -3224,6 +3515,7 @@ internal readonly struct ComputedStyle
         // until one is asked for, since a list that asks for nothing is already the answer.
         internal IReadOnlyList<Shadow>? BoxPaint;
         internal IReadOnlyList<Shadow>? TextPaint;
+
     }
 
     /// <summary>
@@ -3234,6 +3526,8 @@ internal readonly struct ComputedStyle
     {
         internal Layout.WritingMode WritingMode = Layout.WritingMode.HorizontalTb;
         internal TextDirection Direction = TextDirection.LeftToRight;
+        internal NotePlacement NotePlacement;
+        internal NoteSide NoteSide;
 
         /// <summary>
         /// Gets the language the element's text is written in, or null where neither it nor any
@@ -3297,6 +3591,9 @@ internal readonly struct ComputedStyle
 
         /// <summary>Gets how a ruby base and its reading are set within their column (CSS Ruby 1 §4.3).</summary>
         internal RubyAlign RubyAlign;
+
+        /// <summary>Gets where an underline stands against the text it decorates (CSS Text Decoration 4 §2.7).</summary>
+        internal TextUnderlinePosition UnderlinePosition;
         internal CssColorValue OutlineColor = CssColorValue.Black;
         internal BackgroundClip BackgroundClip;
 
@@ -4429,7 +4726,9 @@ internal readonly struct ComputedStyle
         ReferenceEquals(_values.Text, other._values.Text) &&
         ReferenceEquals(_values.Border, other._values.Border) &&
         ReferenceEquals(_values.DisplayPositioning, other._values.DisplayPositioning) &&
-        ReferenceEquals(_values.List, other._values.List);
+        ReferenceEquals(_values.List, other._values.List) &&
+        NotePlacement == other.NotePlacement &&
+        NoteSide == other.NoteSide;
 
     /// <summary>
     /// Gets whether this style hands a descendant exactly what <paramref name="other"/> handed it:
@@ -4490,6 +4789,7 @@ internal readonly struct ComputedStyle
             mine.Ruby == theirs.Ruby &&
             mine.RubyOverhang == theirs.RubyOverhang &&
             mine.RubyAlign == theirs.RubyAlign &&
+            mine.UnderlinePosition == theirs.UnderlinePosition &&
             mine.Cursor == theirs.Cursor &&
             mine.Transform == theirs.Transform &&
             mine.TextStrokeWidth == theirs.TextStrokeWidth &&
@@ -4820,6 +5120,24 @@ internal readonly struct ComputedStyle
     /// <summary>Gets the indent as the sheet wrote it, for the child that inherits it and scales its own.</summary>
     internal StyleLength CascadedTextIndent => _values.Text.Indent;
 
+    /// <summary>Gets whether the box's indentation hangs: it stands on every line but the ones named.</summary>
+    public Boolean TextIndentHanging => _values.Text.IndentHanging;
+
+    /// <summary>Gets whether the box's indentation reaches the line after every forced break too.</summary>
+    public Boolean TextIndentEachLine => _values.Text.IndentEachLine;
+
+    /// <summary>
+    /// Gets how the box's lines are scaled to fill their line boxes: <c>text-fit</c> (CSS Text 5 §1.1),
+    /// which the inline layout reads once per block.
+    /// </summary>
+    public TextFit TextFitting => _values.Text.Fit;
+
+    /// <summary>
+    /// Gets whether the box's line height is a multiple or share of the drawn font, and so follows
+    /// the size <c>text-fit</c> scales a line to (CSS Text 5 §1.1).
+    /// </summary>
+    public Boolean LineHeightTracksFont => _values.Text.LineHeightTracksFont;
+
     /// <summary>
     /// Gets the extra space added to every character's advance, in pixels. <c>normal</c>, the initial
     /// value, means none; a length is resolved against the element's own font size, so <c>.16em</c> is
@@ -5062,6 +5380,80 @@ internal readonly struct ComputedStyle
             "space-between" => RubyAlign.SpaceBetween,
             _ => RubyAlign.SpaceAround,
         };
+
+    /// <summary>
+    /// Gets where an underline stands against the text it decorates (CSS Text Decoration 4 §2.7).
+    /// </summary>
+    public TextUnderlinePosition UnderlinePosition => _values.Fused is { } fused
+        ? fused.UnderlinePosition
+        : ReadKeyword("text-underline-position")?.ToLowerInvariant() switch
+        {
+            "from-font" => TextUnderlinePosition.FromFont,
+            "under" => TextUnderlinePosition.Under,
+            "left" => TextUnderlinePosition.Left,
+            "right" => TextUnderlinePosition.Right,
+            _ => TextUnderlinePosition.Auto,
+        };
+
+    /// <summary>
+    /// Resolves where an underline stands from the element's own cascaded declaration, for the fused
+    /// path. The property is inherited, and its two sides may be written together with <c>under</c>
+    /// or <c>from-font</c>; a side wins because it is the more specific answer.
+    /// </summary>
+    public static TextUnderlinePosition ResolveTextUnderlinePositionFused(
+        ICssProperty? declared,
+        TextUnderlinePosition inherited)
+    {
+        var text = declared?.Value?.Trim();
+
+        if (String.IsNullOrWhiteSpace(text) ||
+            text.Equals("inherit", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("unset", StringComparison.OrdinalIgnoreCase))
+        {
+            return inherited;
+        }
+
+        var left = false;
+        var right = false;
+        var under = false;
+        var fromFont = false;
+
+        foreach (var token in text.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            switch (token.ToLowerInvariant())
+            {
+                case "left":
+                    left = true;
+                    break;
+                case "right":
+                    right = true;
+                    break;
+                case "under":
+                    under = true;
+                    break;
+                case "from-font":
+                    fromFont = true;
+                    break;
+            }
+        }
+
+        if (right)
+        {
+            return TextUnderlinePosition.Right;
+        }
+
+        if (left)
+        {
+            return TextUnderlinePosition.Left;
+        }
+
+        if (fromFont)
+        {
+            return TextUnderlinePosition.FromFont;
+        }
+
+        return under ? TextUnderlinePosition.Under : TextUnderlinePosition.Auto;
+    }
 
     /// <summary>
     /// Resolves the ruby alignment from the element's own cascaded declaration, for the fused path.
@@ -6464,6 +6856,26 @@ internal readonly struct ComputedStyle
     /// </summary>
     private StyleLength ReadLength(String name, RenderMode mode, StyleLength fallback) =>
         ReadDeclared(name, mode) ?? fallback;
+
+    /// <summary>
+    /// Reads the box's indentation with the two modifiers CSS Text 3 §5.2 gives it. A declaration naming
+    /// either one reaches the engine as text rather than as a length, so the words and the distance are
+    /// both taken from that text; the value the element never wrote is inherited with them, the way the
+    /// computed declaration carries it.
+    /// </summary>
+    private (StyleLength Length, Boolean Hanging, Boolean EachLine) ReadTextIndent()
+    {
+        if (SplitTextIndent(ReadKeyword("text-indent")) is { } stated)
+        {
+            return (
+                LengthReader.FromText(stated.Distance, RenderMode.Horizontal, _dimensions, FontSourceOf())
+                    ?? StyleLength.Zero,
+                stated.Hanging,
+                stated.EachLine);
+        }
+
+        return (ReadLength("text-indent", RenderMode.Horizontal, StyleLength.Zero), false, false);
+    }
 
     /// <summary>Reads a length the page declared, or null when it declared none.</summary>
     private StyleLength? ReadDeclared(String name, RenderMode mode) =>

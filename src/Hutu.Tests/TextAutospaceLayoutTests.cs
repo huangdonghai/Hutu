@@ -45,6 +45,16 @@ public sealed class TextAutospaceLayoutTests
     }
 
     [Test]
+    public async Task TheShorthandTurnsTheRoomOff()
+    {
+        using var view = CreateView();
+
+        await view.SetHtml(Document("<p style='margin:0;font-size:10px;text-spacing:no-autospace'>国A</p>"));
+
+        Assert.That(Text(view, "国A").BorderBox.Width, Is.EqualTo(10).Within(0.001));
+    }
+
+    [Test]
     public async Task TwoIdeographsAreNot()
     {
         using var view = CreateView();

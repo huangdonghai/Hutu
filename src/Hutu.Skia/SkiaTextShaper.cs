@@ -151,6 +151,28 @@ internal sealed class SkiaTextShaper : IDisposable
             return Array.Empty<Int32>();
         }
 
+        // The clusters belong to the same shaping that placed the glyphs, so a run cut at its spaces
+        // is clustered the same way: each piece is counted from the place it stands at in the text.
+        if (StandsAcrossSpaces(font, text))
+        {
+            var across = new List<Int32>();
+
+            foreach (var (start, length) in Pieces(text))
+            {
+                foreach (var cluster in Clusters(font, text.Substring(start, length), features))
+                {
+                    across.Add(cluster + start);
+                }
+            }
+
+            return across.ToArray();
+        }
+
+        return Clusters(font, text, features);
+    }
+
+    private Int32[] Clusters(SKFont font, String text, String? features)
+    {
         try
         {
             lock (_shapeLock)
@@ -177,12 +199,121 @@ internal sealed class SkiaTextShaper : IDisposable
             // The spacing then falls by the glyph rather than by the character, which is how it was
             // drawn before anything asked: a shaper that will not answer is a page spaced slightly
             // wrong, not a page that loses its text.
-            Debug.WriteLine($"Clustering '{text}' for {typeface.FamilyName} failed: {exception}");
+            Debug.WriteLine($"Clustering '{text}' for {font.Typeface?.FamilyName} failed: {exception}");
             return Array.Empty<Int32>();
         }
     }
 
     private ShapedRun ShapeRun(SKFont font, String text, String? features)
+    {
+        // HarfBuzz answers a kerning pair across a space the way it answers one between two letters,
+        // and a browser does not: its lookups stop at the word boundary. The difference is small but
+        // it is not invisible - a sentence whose letters were cut into pieces by an element keeps its
+        // letters where they were, while the same sentence shaped as one run slides them a little -
+        // and the borrowed pages compare those two spellings against each other. Shaping each piece on
+        // its own is that stop: within a piece every pair still answers, across a space none does.
+        if (StandsAcrossSpaces(font, text))
+        {
+            return ShapePieces(font, text, features);
+        }
+
+        return ShapePiece(font, text, features);
+    }
+
+    /// <summary>
+    /// Gets whether the text holds a letter on one side of a space and another on the other, so that a
+    /// pair on either side of that space is the only thing shaping whole could get wrong. A run the
+    /// script reads back to front is left alone: its pieces are laid out by the shaper's own pen, and
+    /// the order of pieces across a space is the writing's, not something this split may decide.
+    /// </summary>
+    private Boolean StandsAcrossSpaces(SKFont font, String text)
+    {
+        var spaces = 0;
+        var letters = 0;
+
+        for (var at = 0; at < text.Length; at++)
+        {
+            if (Char.IsWhiteSpace(text[at]))
+            {
+                spaces++;
+            }
+            else
+            {
+                letters++;
+
+                // A word standing at either edge of the run has no pair to lose across that edge.
+                if (spaces > 0 && spaces < at && letters > 1 && at < text.Length - 1)
+                {
+                    return !ReadsRightToLeft(text);
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Shapes the pieces of a run separated by white space and lays them down where they were written,
+    /// with each piece's glyphs standing at the pen it reached.
+    /// </summary>
+    private ShapedRun ShapePieces(SKFont font, String text, String? features)
+    {
+        var glyphs = new List<UInt16>();
+        var points = new List<SKPoint>();
+        var pen = 0.0;
+
+        foreach (var (start, length) in Pieces(text))
+        {
+            var piece = ShapePiece(font, text.Substring(start, length), features);
+
+            if (!piece.Succeeded)
+            {
+                // One piece the face cannot set is the whole run it stands in: the caller draws the
+                // text unshaped, which is what it does for a run it cannot shape at all.
+                return ShapedRun.None;
+            }
+
+            for (var at = 0; at < piece.Glyphs.Length; at++)
+            {
+                glyphs.Add(piece.Glyphs[at]);
+
+                var point = piece.Points.Length > at ? piece.Points[at] : SKPoint.Empty;
+                points.Add(new SKPoint(point.X + (Single)pen, point.Y));
+            }
+
+            pen += piece.Advance;
+        }
+
+        return new ShapedRun(glyphs.ToArray(), points.ToArray(), (Single)pen, true);
+    }
+
+    /// <summary>
+    /// Cuts the text at the white space it holds, giving the runs of letters and the runs of space
+    /// between them in the order they were written.
+    /// </summary>
+    private static List<(Int32 Start, Int32 Length)> Pieces(String text)
+    {
+        var pieces = new List<(Int32, Int32)>();
+        var start = 0;
+
+        while (start < text.Length)
+        {
+            var white = Char.IsWhiteSpace(text[start]);
+            var at = start + 1;
+
+            while (at < text.Length && Char.IsWhiteSpace(text[at]) == white)
+            {
+                at++;
+            }
+
+            pieces.Add((start, at - start));
+            start = at;
+        }
+
+        return pieces;
+    }
+
+    private ShapedRun ShapePiece(SKFont font, String text, String? features)
     {
         if (!String.IsNullOrEmpty(features))
         {
@@ -418,7 +549,7 @@ internal sealed class SkiaTextShaper : IDisposable
         }
         catch (Exception exception)
         {
-            Debug.WriteLine($"Shaping '{text}' with {features} for {typeface.FamilyName} failed: {exception}");
+            Debug.WriteLine($"Shaping '{text}' with {features} for {font.Typeface?.FamilyName} failed: {exception}");
 
             return ShapedRun.None;
         }

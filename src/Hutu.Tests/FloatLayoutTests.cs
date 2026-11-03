@@ -174,6 +174,28 @@ public sealed class FloatLayoutTests
     }
 
     [Test]
+    public async Task AClearedFormattingRootTakesTheRoomLeftWhereItLands()
+    {
+        using var view = CreateView(1000);
+
+        await view.SetHtml(Page(
+            "<div id='area' style='width:1000px'>" +
+            "<div id='left' style='float:left;width:400px;height:500px'></div>" +
+            "<div id='right' style='float:right;width:400px;height:700px'></div>" +
+            "<div id='links' style='clear:left;overflow:hidden;height:20px'></div>" +
+            "</div>"));
+
+        // clear:left moves the box below the left float, but the right float still reaches past
+        // that height. The formatting root therefore begins at the container's left edge and takes
+        // the 600 pixels left of the right float, rather than measuring the zero-width gap between
+        // both floats at the height it started from.
+        Assert.That(
+            Bounds(view, "links"),
+            Is.EqualTo(new Rect(0, 500, 600, 20)),
+            "clearance moves the box before its width is read off the floats");
+    }
+
+    [Test]
     public async Task TwoFloatsOfOneSideShareARowUntilTheRoomRunsOut()
     {
         using var view = CreateView();
@@ -787,6 +809,43 @@ public sealed class FloatLayoutTests
                 $"{text.BorderBox.X},{text.BorderBox.Y} {text.BorderBox.Width}x{text.BorderBox.Height}",
                 Is.EqualTo("50,0 25x10"),
                 "five of them are five characters, measured and kept");
+        });
+    }
+
+    /// <summary>
+    /// A float shortens the lines of the block it stands in and stops at the edge of any formatting
+    /// context it meets: an inline-block roots one of its own, so the floats outside it are not the ones
+    /// its lines stand aside for - it is the box as a whole that steps around them, which the line the box
+    /// sits on has already settled (CSS 2.1 §9.4.1, §9.5). Letting the band through dropped the nested
+    /// first line below the float and made the box taller than anything written in it.
+    /// </summary>
+    [Test]
+    public async Task AFloatStopsAtTheFormattingContextAnInlineBlockRoots()
+    {
+        using var view = CreateView(400);
+
+        await view.SetHtml(Page(
+            "<div style='float:left;width:50px;height:50px'></div>" +
+            "<div id='box' style='display:inline-block'>aaaaaaaaaa<br>aaaaaaaaaa</div>"));
+
+        var box = Bounds(view, "box");
+        var nested = Walk(view.Layout!.Root)
+            .Where(node => node.Kind == LayoutKind.Line &&
+                node.Source.Element?.GetAttribute("id") == "box")
+            .OrderBy(node => node.BorderBox.Y)
+            .ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(nested, Has.Count.GreaterThanOrEqualTo(2), "the box holds the two lines its text makes");
+            Assert.That(
+                box.Height,
+                Is.EqualTo(20).Within(0.5),
+                "two lines of ten, which is all the box holds - not the float's fifty added to them");
+            Assert.That(
+                nested[0].BorderBox.Y,
+                Is.EqualTo(box.Y).Within(0.5),
+                "and its first line stands at the top of the box, not below the float");
         });
     }
 

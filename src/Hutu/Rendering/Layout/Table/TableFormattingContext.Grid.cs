@@ -510,6 +510,15 @@ internal sealed partial class TableFormattingContext
         var cellLeft = new CollapsedBorder[rows][];
         var cellRight = new CollapsedBorder[rows][];
 
+        // The lines are numbered from the table's inline start, which is the physical left only when the
+        // table reads left to right: a table that reads the other way meets its start line at the
+        // physical right edge, and a border that is whole there - or halved with the neighbour beyond it
+        // - has to be put on that side of the box. What follows keeps the pair as start and end and hands
+        // the physical fields at the end (CSS 2.1 §17.6.2 with CSS Writing Modes 3 §4.3, measured in
+        // Chrome: direction:rtl, three cells of 20, a 6-pixel line against a 2-pixel one - the first
+        // cell reads 23 wide at the table's right edge and keeps 3 of the line, the second 23 and 3).
+        var mirrored = !build.Box.Flow.IsVertical && build.Box.Flow.IsRightToLeft;
+
         for (var r = 0; r < rows; r++)
         {
             cellLeft[r] = new CollapsedBorder[bounds];
@@ -529,18 +538,23 @@ internal sealed partial class TableFormattingContext
                 cell.Right = CollapsedBorder.Of(cell.Box.Style, BorderSide.Right, CollapsedBorder.OriginCell);
                 cell.Bottom = CollapsedBorder.Of(cell.Box.Style, BorderSide.Bottom, CollapsedBorder.OriginCell);
                 cell.Left = CollapsedBorder.Of(cell.Box.Style, BorderSide.Left, CollapsedBorder.OriginCell);
+                
+                // The style names the physical sides, while the lines are numbered along the flow: a
+                // table that reads right to left meets its start line with the cell's own right border.
+                var startBorder = mirrored ? cell.Right : cell.Left;
+                var endBorder = mirrored ? cell.Left : cell.Right;
 
                 var lastColumn = Math.Min(cell.Column + cell.Span, grid.Columns);
                 var lastRow = Math.Min(cell.Row + cell.RowSpan, rows);
 
-                vertical[cell.Column] = CollapsedBorder.Resolve(vertical[cell.Column], cell.Left);
-                vertical[lastColumn] = CollapsedBorder.Resolve(vertical[lastColumn], cell.Right);
+                vertical[cell.Column] = CollapsedBorder.Resolve(vertical[cell.Column], startBorder);
+                vertical[lastColumn] = CollapsedBorder.Resolve(vertical[lastColumn], endBorder);
                 var through = Math.Min(cell.Row + cell.RowSpan, rows);
 
                 for (var r = cell.Row; r < through; r++)
                 {
-                    cellLeft[r][cell.Column] = CollapsedBorder.Resolve(cellLeft[r][cell.Column], cell.Left);
-                    cellRight[r][lastColumn] = CollapsedBorder.Resolve(cellRight[r][lastColumn], cell.Right);
+                        cellLeft[r][cell.Column] = CollapsedBorder.Resolve(cellLeft[r][cell.Column], startBorder);
+                        cellRight[r][lastColumn] = CollapsedBorder.Resolve(cellRight[r][lastColumn], endBorder);
                 }
                 horizontal[cell.Row] = CollapsedBorder.Resolve(horizontal[cell.Row], cell.Top);
                 horizontal[lastRow] = CollapsedBorder.Resolve(horizontal[lastRow], cell.Bottom);
@@ -629,10 +643,30 @@ internal sealed partial class TableFormattingContext
         horizontal[rows] = CollapsedBorder.Resolve(horizontal[rows], CollapsedBorder.Of(style, BorderSide.Bottom, CollapsedBorder.OriginTable));
         build.OuterTop = horizontal[0].Width * 0.5;
         build.OuterBottom = horizontal[rows].Width * 0.5;
-        build.OuterColors = new BorderColors(
-            horizontal[0].Color, vertical[grid.Columns].Color, horizontal[rows].Color, vertical[0].Color);
-        build.OuterStyles = new BorderStyles(
-            horizontal[0].Line, vertical[grid.Columns].Line, horizontal[rows].Line, vertical[0].Line);
+        // The table's own box paints the outer halves of the outer lines, and which physical side a
+        // line's colour stands on turns with the flow (CSS 2.1 §17.6.2, CSS Writing Modes 3 §4.3).
+        build.OuterColors = mirrored
+            ? new BorderColors(
+                horizontal[0].Color,
+                vertical[0].Color,
+                horizontal[rows].Color,
+                vertical[grid.Columns].Color)
+            : new BorderColors(
+                horizontal[0].Color,
+                vertical[grid.Columns].Color,
+                horizontal[rows].Color,
+                vertical[0].Color);
+        build.OuterStyles = mirrored
+            ? new BorderStyles(
+                horizontal[0].Line,
+                vertical[0].Line,
+                horizontal[rows].Line,
+                vertical[grid.Columns].Line)
+            : new BorderStyles(
+                horizontal[0].Line,
+                vertical[grid.Columns].Line,
+                horizontal[rows].Line,
+                vertical[0].Line);
 
         // The widest line each of the table's own two outer edges meets. The edge is one straight line,
         // so it is the widest row that decides where the edge stands, and every narrower row keeps its
@@ -653,30 +687,30 @@ internal sealed partial class TableFormattingContext
                 // fifteen (CSS 2.1 §17.6.2.1, measured: table-collapsed-borders-paint-at-boundary,
                 // where the black row's right edge is ten wide the whole way down and the blue row's
                 // fifteen belongs to that row alone).
-                var leftEdge = cell.Column == 0
+                var startEdge = cell.Column == 0
                     ? CollapsedBorder.Resolve(outer[0], cellLeft[cell.Row][0])
                     : CollapsedBorder.Resolve(
                         CollapsedBorder.Resolve(outer[cell.Column], cellRight[cell.Row][cell.Column]),
                         cellLeft[cell.Row][cell.Column]);
-                var rightEdge = lastColumn == grid.Columns
+                var endEdge = lastColumn == grid.Columns
                     ? CollapsedBorder.Resolve(outer[lastColumn], cellRight[cell.Row][lastColumn])
                     : CollapsedBorder.Resolve(
                         CollapsedBorder.Resolve(outer[lastColumn], cellRight[cell.Row][lastColumn]),
                         cellLeft[cell.Row][lastColumn]);
 
                 // A stretch that asks for nothing still belongs to the line the whole of it settled on.
-                if (leftEdge.Width <= 0.001)
+                if (startEdge.Width <= 0.001)
                 {
-                    leftEdge = vertical[cell.Column];
+                    startEdge = vertical[cell.Column];
                 }
 
-                if (rightEdge.Width <= 0.001)
+                if (endEdge.Width <= 0.001)
                 {
-                    rightEdge = vertical[lastColumn];
+                    endEdge = vertical[lastColumn];
                 }
 
-                var left = cell.Column == 0 ? leftEdge.Width : leftEdge.Width * 0.5;
-                var right = lastColumn == grid.Columns ? rightEdge.Width : rightEdge.Width * 0.5;
+                var startWidth = cell.Column == 0 ? startEdge.Width : startEdge.Width * 0.5;
+                var endWidth = lastColumn == grid.Columns ? endEdge.Width : endEdge.Width * 0.5;
 
                 // Every horizontal line is shared: half stands in the row above and half in the row
                 // below, the table's outer halves included - those fall outside the rows, and the table
@@ -686,25 +720,27 @@ internal sealed partial class TableFormattingContext
                 var top = horizontal[cell.Row].Width * 0.5;
                 var bottom = horizontal[lastRow].Width * 0.5;
 
-                cell.UsedBorder = new Thickness(top, right, bottom, left);
+                cell.UsedBorder = mirrored
+                    ? new Thickness(top, startWidth, bottom, endWidth)
+                    : new Thickness(top, endWidth, bottom, startWidth);
 
                 if (cell.Column == 0)
                 {
-                    outerInlineMax = Math.Max(outerInlineMax, left);
+                    outerInlineMax = Math.Max(outerInlineMax, startWidth);
                 }
 
                 if (lastColumn == grid.Columns)
                 {
-                    outerEndMax = Math.Max(outerEndMax, right);
+                    outerEndMax = Math.Max(outerEndMax, endWidth);
                 }
 
                 // The colour and the style of the two vertical edges come from this row's segment of
                 // the line, where the cells that meet there are counted with the candidates that run
                 // the whole way down (CSS 2.1 §17.6.2.1).
-                var leftLine = CollapsedBorder.Resolve(
+                var startLine = CollapsedBorder.Resolve(
                     CollapsedBorder.Resolve(outer[cell.Column], cellRight[cell.Row][cell.Column]),
                     cellLeft[cell.Row][cell.Column]);
-                var rightLine = CollapsedBorder.Resolve(
+                var endLine = CollapsedBorder.Resolve(
                     CollapsedBorder.Resolve(outer[lastColumn], cellRight[cell.Row][lastColumn]),
                     cellLeft[cell.Row][lastColumn]);
 
@@ -713,26 +749,38 @@ internal sealed partial class TableFormattingContext
                 // first row borders the left edge and whose second borders the right keeps one green
                 // line down each side (CSS 2.1 §17.6.2.1, measured: border-collapse-006, which shows
                 // red through the empty stretch as soon as the segment is answered on its own).
-                if (leftLine.Width <= 0.001)
+                if (startLine.Width <= 0.001)
                 {
-                    leftLine = vertical[cell.Column];
+                    startLine = vertical[cell.Column];
                 }
 
-                if (rightLine.Width <= 0.001)
+                if (endLine.Width <= 0.001)
                 {
-                    rightLine = vertical[lastColumn];
+                    endLine = vertical[lastColumn];
                 }
 
-                cell.Colors = new BorderColors(
-                    horizontal[cell.Row].Color,
-                    rightLine.Color,
-                    horizontal[lastRow].Color,
-                    leftLine.Color);
-                cell.LineStyles = new BorderStyles(
-                    horizontal[cell.Row].Line,
-                    rightLine.Line,
-                    horizontal[lastRow].Line,
-                    leftLine.Line);
+                cell.Colors = mirrored
+                    ? new BorderColors(
+                        horizontal[cell.Row].Color,
+                        startLine.Color,
+                        horizontal[lastRow].Color,
+                        endLine.Color)
+                    : new BorderColors(
+                        horizontal[cell.Row].Color,
+                        endLine.Color,
+                        horizontal[lastRow].Color,
+                        startLine.Color);
+                cell.LineStyles = mirrored
+                    ? new BorderStyles(
+                        horizontal[cell.Row].Line,
+                        startLine.Line,
+                        horizontal[lastRow].Line,
+                        endLine.Line)
+                    : new BorderStyles(
+                        horizontal[cell.Row].Line,
+                        endLine.Line,
+                        horizontal[lastRow].Line,
+                        startLine.Line);
                 cell.Insets = Add(cell.Padding, cell.UsedBorder);
             }
         }
@@ -751,10 +799,10 @@ internal sealed partial class TableFormattingContext
                 var lastColumn = Math.Min(cell.Column + cell.Span, grid.Columns);
 
                 cell.InlineStartInset = cell.Column == 0
-                    ? Math.Max(0.0, (outerInlineMax - cell.UsedBorder.Left) * 0.5)
+                    ? Math.Max(0.0, (outerInlineMax - (mirrored ? cell.UsedBorder.Right : cell.UsedBorder.Left)) * 0.5)
                     : 0.0;
                 cell.InlineEndInset = lastColumn == grid.Columns
-                    ? Math.Max(0.0, (outerEndMax - cell.UsedBorder.Right) * 0.5)
+                    ? Math.Max(0.0, (outerEndMax - (mirrored ? cell.UsedBorder.Left : cell.UsedBorder.Right)) * 0.5)
                     : 0.0;
 
                 // The table's own outer half of a horizontal line runs with the row it stands against:
@@ -805,6 +853,42 @@ internal sealed partial class TableFormattingContext
                 var inlineInsets = vertical ? cell.Insets.Vertical : cell.Insets.Horizontal;
                 var min = Math.Max(0, intrinsic.MinContent - styleInsets) + inlineInsets;
                 var max = Math.Max(0, intrinsic.MaxContent - styleInsets) + inlineInsets;
+
+                // A cell that runs aside from its table turns the question over: the track it stands in
+                // is measured along the axis the table sets its cells on, which for this cell is the axis
+                // its content stacks on. What the column wants is therefore how far the cell reaches
+                // along its own block axis between the narrowest and the widest stretch of its line, not
+                // how long that line is; reading the length for the reach left each cell shorter than
+                // the content it was given and made two identical cells of one row come back unequal
+                // (measured in Chrome: two horizontal-tb cells of one line of 18.4 with padding-block 2
+                // and 3 in a vertical-lr table stand 23 down the page each, and the table comes to 46).
+                if (vertical != cell.Box.Flow.IsVertical)
+                {
+                    var aside = cell.Box.Flow.IsVertical;
+
+                    // The pair above is reckoned in the table's axes; this cell answers in its own.
+                    var ownStyle = aside ? StyleInsetsV(cell.Box, basis) : StyleInsetsH(cell.Box, basis);
+                    var ownInsets = aside ? cell.Insets.Vertical : cell.Insets.Horizontal;
+                    var narrow = Math.Max(0, intrinsic.MinContent - ownStyle) + ownInsets;
+                    var wide = Math.Max(0, intrinsic.MaxContent - ownStyle) + ownInsets;
+
+                    // Squeeze along the line the cell itself writes, and read the reach across it.
+                    var atNarrow = _engine.Measure(
+                        cell.Box,
+                        aside
+                            ? MeasureConstraints.FitHeight(narrow)
+                            : MeasureConstraints.FitWidth(narrow),
+                        cellContext);
+                    var atWide = _engine.Measure(
+                        cell.Box,
+                        aside
+                            ? MeasureConstraints.FitHeight(wide)
+                            : MeasureConstraints.FitWidth(wide),
+                        cellContext);
+
+                    min = Math.Max(0, aside ? atNarrow.Width : atNarrow.Height);
+                    max = Math.Max(0, aside ? atWide.Width : atWide.Height);
+                }
 
                 cell.MinContent = min;
                 cell.MaxContent = Math.Max(min, max);
@@ -879,8 +963,6 @@ internal sealed partial class TableFormattingContext
                 var cellContext = context.ForContainingBlock(
                     vertical ? new Size(0, contentInline) : new Size(contentInline, 0));
 
-                // The constraint describes the border box the cell's own style would produce, so the
-                // block layout inside it resolves to the content width the column settled on.
                 // A cell that runs the way its table runs reaches along the block axis with the band its
                 // content makes, and the measure of it is asked with the room the column leaves along the
                 // inline axis. A cell turned aside from its table runs by its own writing mode instead:
@@ -930,11 +1012,20 @@ internal sealed partial class TableFormattingContext
                 }
                 else
                 {
+                    // The constraint describes the border box the column settled, so the block layout
+                    // inside it resolves to that width rather than to the one the cell's own style would
+                    // produce: the cell's width and min/max have already taken part in the column sizing,
+                    // and asking them again resolves its percentage against its own content box - a
+                    // 33.33% cell inside a 198-pixel box measured its content at 66 pixels and wrapped
+                    // several times, making the row taller than the content it drew (CSS Tables 3 §4.5,
+                    // measured: gecko/table/percentage-*.html and the two names in TableLayoutTests). A
+                    // table that reads down the page settles its cells along the physical height, which
+                    // MeasureConstraints has no definite room for yet, so that axis keeps the old ask.
                     var measured = _engine.Measure(
                         cell.Box,
                         vertical
                             ? MeasureConstraints.FitHeight(contentInline + styleInsetsInline + margin)
-                            : MeasureConstraints.FitWidth(contentInline + styleInsetsInline + margin),
+                            : MeasureConstraints.Definite(inline),
                         cellContext);
 
                     contentHeight = Math.Max(
@@ -1080,22 +1171,43 @@ internal sealed partial class TableFormattingContext
                     var group = HintOf(child, basis);
                     var groups = child.Element is IElement groupElement ? Span(groupElement, "span") : 1;
 
-                    for (var g = 0; g < groups; g++)
+                    // A group that names its columns does not also claim the ones its span counts: the
+                    // children are the columns, and what is left of the span stands for no column of its
+                    // own (HTML 4.9.11.5 read the way the agent lays the band out, measured in Chrome:
+                    // `<colgroup span=3><col span=2></colgroup>` over three columns of 20 pixels gives
+                    // both the group and the col a band of 40, not 60). Only a group with no `col`
+                    // children lays out as many columns as its span names.
+                    var named = child.Children.Exists(c => c.Kind == BoxKind.TableColumn);
+
+                    if (named)
                     {
                         foreach (var column in child.Children)
                         {
-                            if (column.Kind == BoxKind.TableColumn)
+                            if (column.Kind != BoxKind.TableColumn)
                             {
-                                var own = HintOf(column, basis);
-                                var columns = column.Element is IElement columnElement ? Span(columnElement, "span") : 1;
-
-                                for (var i = 0; i < columns; i++)
-                                {
-                                    build.ColumnHints.Add(own ?? group);
-                                    build.ColumnBoxes.Add(column);
-                                    build.ColumnGroupBoxes.Add(child);
-                                }
+                                continue;
                             }
+
+                            var own = HintOf(column, basis);
+                            var columns = column.Element is IElement columnElement
+                                ? Span(columnElement, "span")
+                                : 1;
+
+                            for (var i = 0; i < columns; i++)
+                            {
+                                build.ColumnHints.Add(own ?? group);
+                                build.ColumnBoxes.Add(column);
+                                build.ColumnGroupBoxes.Add(child);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (var g = 0; g < groups; g++)
+                        {
+                            build.ColumnHints.Add(group);
+                            build.ColumnBoxes.Add(null);
+                            build.ColumnGroupBoxes.Add(child);
                         }
                     }
 

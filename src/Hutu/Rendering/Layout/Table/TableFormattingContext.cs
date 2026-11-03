@@ -367,6 +367,8 @@ internal sealed partial class TableFormattingContext
             : borderBox.Y + build.Border.Top + build.Padding.Top +
                 (vertical ? 0 : build.CaptionTop);
         ArrangeRows(build, layout, gridX, gridY, childContext, slice?.Piece);
+        ArrangeColumnTracks(build, layout, gridX, gridY);
+
         ArrangeColumnBands(build, layout, gridX, gridY);
 
         var bottomY = gridY + build.Grid.Height;
@@ -730,6 +732,80 @@ internal sealed partial class TableFormattingContext
 
         table.Children.InsertRange(0, bands);
     }
+
+    /// <summary>
+    /// Places each <c>col</c> and <c>colgroup</c> over the band of grid its span names, so that the track
+    /// has a box of its own even where it paints nothing: the background it carries is laid row band by
+    /// row band by <see cref="ArrangeColumnBands"/>, while this box stands for the column band itself
+    /// (CSS 2.1 §17.5.2, measured: a <c>col span=2</c> over three columns of 20 pixels reads 40 wide,
+    /// and the group that names three of its own reads 60, both starting at the first column they share).
+    /// </summary>
+    private void ArrangeColumnTracks(TableBuild build, LayoutBox table, Double gridX, Double gridY)
+    {
+        var grid = build.Grid;
+
+        if (grid.Rows.Count == 0 || grid.Columns == 0)
+        {
+            return;
+        }
+
+        var vertical = build.Box.Flow.IsVertical;
+        var blockReversed = vertical && build.Box.Flow.BlockIsRightToLeft;
+        var inlineStart = vertical ? gridY : gridX;
+        var blockStart = vertical ? gridX : gridY;
+        var tracks = new List<LayoutBox>();
+
+        // The group and the column both stand for a run of columns, so the grid is walked once for each.
+        // The span counts columns rather than elements, which is why a run ends where its owner changes.
+        foreach (var byGroup in new[] { false, true })
+        {
+            var owners = byGroup ? build.ColumnGroupBoxes : build.ColumnBoxes;
+
+            for (var at = 0; at < grid.Columns; at++)
+            {
+                if (at >= owners.Count || owners[at] is not { } owner)
+                {
+                    continue;
+                }
+
+                var end = at + 1;
+
+                while (end < grid.Columns &&
+                       end < owners.Count &&
+                       ReferenceEquals(owners[end], owner))
+                {
+                    end++;
+                }
+
+                var offset = grid.ColumnX[at];
+                var extent = Math.Max(0.0, grid.ColumnX[end - 1] + grid.Widths[end - 1] - offset);
+
+                tracks.Add(new LayoutBox(owner, LayoutKind.TableColumn)
+                {
+                    BorderBox = FlowRect(
+                        vertical,
+                        blockReversed,
+                        inlineStart,
+                        offset,
+                        extent,
+                        blockStart,
+                        0,
+                        grid.Height),
+                    Flow = build.Box.Flow,
+
+                    // The track paints nothing of its own: its background belongs to the bands above it,
+                    // which are the picture Chrome makes of a column, and its borders belong to the cells.
+                    SuppressBackground = true,
+                    SuppressBorder = true,
+                });
+
+                at = end - 1;
+            }
+        }
+
+        table.Children.InsertRange(0, tracks);
+    }
+
 
     /// <summary>Gets whether a table part paints a background of its own.</summary>
     private static Boolean Paints(Box? part) =>
@@ -1128,7 +1204,9 @@ internal sealed partial class TableFormattingContext
             cell.Box.Style.Table.VerticalAlign,
             cell.Box.Flow.IsVertical
                 ? Math.Max(0, rect.Width - cell.Insets.Horizontal)
-                : contentHeight);
+            : contentHeight,
+            cell.Box.Flow.IsVertical,
+            cell.Box.Flow.BlockIsRightToLeft);
 
         return layout;
     }
@@ -1150,15 +1228,30 @@ internal sealed partial class TableFormattingContext
     /// time, which is how a cell asked to stand at the top of its row came to sit half a move off it.
     /// </para>
     /// </remarks>
-    private static void AlignContent(LayoutBox cell, CellVerticalAlignment align, Double contentHeight)
+    private static void AlignContent(
+        LayoutBox cell,
+        CellVerticalAlignment align,
+        Double contentExtent,
+        Boolean alongX,
+        Boolean reversed)
     {
         if (cell.Children.Count == 0 || align == CellVerticalAlignment.Top)
         {
             return;
         }
 
-        var top = cell.ContentBox.Y;
-        var bottom = top;
+        // The alignment runs along the cell's own block axis: down the page for a cell that writes
+        // across it, and along the page for one that writes down it. A cell whose block axis reads from
+        // right to left reaches its block END at the low coordinate, so `bottom` stands the content off
+        // its left edge; taking the largest coordinate there left the content reaching past the cell
+        // instead (CSS Writing Modes 3 §4.1, §9.2, measured in Chrome: a vertical-rl cell 40 across
+        // with one line of 17.72 keeps its `top` content against its right edge at x = 23 and stands
+        // its `bottom` content at x = 1, still on its own row rather than below the cell).
+        var from = alongX
+            ? (reversed ? cell.ContentBox.Right : cell.ContentBox.X)
+            : cell.ContentBox.Y;
+
+        var used = 0.0;
 
         foreach (var child in cell.Children)
         {
@@ -1167,42 +1260,15 @@ internal sealed partial class TableFormattingContext
                 continue;
             }
 
-            bottom = Math.Max(
-                bottom,
-                child.BorderBox.Bottom - child.RelativeDisplacement.Y + child.Margin.Bottom);
+            used = Math.Max(used, Reach(child, from, alongX, reversed));
 
             // A float counts as the content it takes room for, wherever it stands in the subtree -
             // measured in Chrome, a cell holding nothing but a tall float has no slack to align
             // anything in, its content box having grown to hold that float.
-            bottom = Math.Max(bottom, Floats(child));
+            used = Math.Max(used, Floats(child, from, alongX, reversed));
         }
 
-        static Double Floats(LayoutBox box)
-        {
-            var bottom = 0.0;
-
-            foreach (var child in box.Children)
-            {
-                if (child.IsOutOfFlow)
-                {
-                    continue;
-                }
-
-                if (child.Source.Style.Float != FloatSide.None)
-                {
-                    bottom = Math.Max(
-                        bottom,
-                        child.BorderBox.Bottom - child.RelativeDisplacement.Y + child.Margin.Bottom);
-                }
-
-                bottom = Math.Max(bottom, Floats(child));
-            }
-
-            return bottom;
-        }
-
-        var used = bottom - top;
-        var free = contentHeight - used;
+        var free = contentExtent - used;
 
         if (free <= Epsilon)
         {
@@ -1221,19 +1287,61 @@ internal sealed partial class TableFormattingContext
             return;
         }
 
+        // Along a reversed block axis the slack lies the other way on the page.
+        var dx = alongX ? (reversed ? -shift : shift) : 0.0;
+        var dy = alongX ? 0.0 : shift;
+
         foreach (var child in cell.Children)
         {
             if (!child.IsOutOfFlow)
             {
-                Shift(child, shift);
+                Shift(child, dx, dy);
             }
+        }
+
+        // How far one box reaches along the axis, measured from where the cell's content begins and
+        // read back at the room the flow gave it rather than the place a `position: relative` step
+        // drew it at, which is the room the cell holds either way (CSS 2.1 §9.4.3).
+        static Double Reach(LayoutBox box, Double from, Boolean alongX, Boolean reversed)
+        {
+            var edge = alongX
+                ? reversed
+                    ? box.BorderBox.X - box.RelativeDisplacement.X - box.Margin.Left
+                    : box.BorderBox.Right - box.RelativeDisplacement.X + box.Margin.Right
+                : box.BorderBox.Bottom - box.RelativeDisplacement.Y + box.Margin.Bottom;
+
+            return Math.Max(0.0, reversed ? from - edge : edge - from);
+        }
+
+        static Double Floats(LayoutBox box, Double from, Boolean alongX, Boolean reversed)
+        {
+            var far = 0.0;
+
+            foreach (var child in box.Children)
+            {
+                if (child.IsOutOfFlow)
+                {
+                    continue;
+                }
+
+                if (child.Source.Style.Float != FloatSide.None)
+                {
+                    far = Math.Max(far, Reach(child, from, alongX, reversed));
+                }
+
+                far = Math.Max(far, Floats(child, from, alongX, reversed));
+            }
+
+            return far;
         }
     }
 
-    /// <summary>Moves a box and its whole in-flow subtree down by the given distance.</summary>
-    private static void Shift(LayoutBox box, Double dy)
+    /// <summary>Moves a box and the in-flow descendants it carries by the same pair.</summary>
+    private static void Shift(LayoutBox box, Double dx, Double dy)
     {
-        box.BorderBox = new Rect(box.BorderBox.X, box.BorderBox.Y + dy, box.BorderBox.Width, box.BorderBox.Height);
+        var edges = box.BorderBox;
+
+        box.BorderBox = new Rect(edges.X + dx, edges.Y + dy, edges.Width, edges.Height);
 
         foreach (var child in box.Children)
         {
@@ -1241,7 +1349,7 @@ internal sealed partial class TableFormattingContext
             // say - was placed against its own containing block and is not part of what was aligned.
             if (!child.IsOutOfFlow)
             {
-                Shift(child, dy);
+                Shift(child, dx, dy);
             }
         }
     }

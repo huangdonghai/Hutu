@@ -36,6 +36,36 @@ public sealed class TextSpacingTrimLayoutTests
         });
     }
 
+    [Test]
+    public async Task TheShorthandSetsBothLonghandsItStandsFor()
+    {
+        using var view = await Rendered(
+            "<html><body style='margin:0'>" +
+            "<div id='a' style='text-spacing: none'>国</div>" +
+            "<div id='b' style='text-spacing: trim-all'>国</div>" +
+            "<div id='c' style='text-spacing: ideograph-numeric trim-both'>国</div>" +
+            "</body></html>");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Style(view, "a").TextSpacingTrim.Start, Is.EqualTo(SpacingTrimStart.Space));
+            Assert.That(Style(view, "a").TextSpacingTrim.Adjacent, Is.False);
+            Assert.That(Style(view, "a").TextSpacingTrim.End, Is.EqualTo(SpacingTrimEnd.Space));
+            Assert.That(Style(view, "a").TextAutospace.Off, Is.True, "none turns autospacing off");
+
+            Assert.That(Style(view, "b").TextSpacingTrim.All, Is.True);
+            Assert.That(
+                Style(view, "b").TextAutospace.Kinds,
+                Is.EqualTo(TextAutospaceValue.Initial.Kinds),
+                "the longhand the value does not name takes its initial value");
+
+            Assert.That(Style(view, "c").TextSpacingTrim.Start, Is.EqualTo(SpacingTrimStart.Trim));
+            Assert.That(Style(view, "c").TextSpacingTrim.Adjacent, Is.True);
+            Assert.That(Style(view, "c").TextSpacingTrim.End, Is.EqualTo(SpacingTrimEnd.Trim));
+            Assert.That(Style(view, "c").TextAutospace.Kinds, Is.EqualTo(AutoSpaceKind.Numeric));
+        });
+    }
+
     private static async Task<HutuViewInternal> Rendered(String html)
     {
         var view = new HutuViewInternal(new FakeTextMeasurer());

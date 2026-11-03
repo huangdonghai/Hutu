@@ -43,7 +43,8 @@ public sealed class TextDecorationSkipInkTests
     {
         // Where the text is set in a script written across the rule, auto asks nothing of the line - even
         // for the letter in it that would break the line elsewhere. All breaks it whatever the script is
-        // (CSS Text Decoration 4 §2.10.4).
+        // (CSS Text Decoration 4 §2.10.4). At the font's own underline position the descender of 'p'
+        // still crosses the rule, so 'all' has something to break.
         var auto = await Columns("p開", "font-family:Yu Gothic");
         var none = await Columns("p開", "font-family:Yu Gothic;text-decoration-skip-ink:none");
         var every = await Columns("p開", "font-family:Yu Gothic;text-decoration-skip-ink:all");

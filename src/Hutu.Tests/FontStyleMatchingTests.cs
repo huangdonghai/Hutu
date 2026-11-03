@@ -1,6 +1,8 @@
 using Hutu.Rendering.Layout;
 using Hutu.Skia;
 using NUnit.Framework;
+using System;
+using System.Diagnostics;
 
 namespace Hutu.Tests;
 
@@ -40,5 +42,28 @@ public sealed class FontStyleMatchingTests
             (slanted.Left, slanted.Right),
             Is.Not.EqualTo((upright.Left, upright.Right)),
             "the italic of the family the generic name means");
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void AFamilyListIsResolvedOnceForManyCharacters()
+    {
+        using var resolver = new SkiaFontResolver();
+        var style = new FontStyle("sans-serif", 16);
+        var stopwatch = Stopwatch.StartNew();
+
+        // These characters all miss the primary face. Searching the family list for each one is the
+        // regression this guards: the list and its style decide the candidate faces, not the glyph.
+        for (var codepoint = 0x4E00; codepoint < 0x4EC8; codepoint++)
+        {
+            _ = resolver.ResolveListed(style, codepoint);
+        }
+
+        stopwatch.Stop();
+
+        Assert.That(
+            stopwatch.Elapsed,
+            Is.LessThan(TimeSpan.FromSeconds(5)),
+            "the family list is resolved once and each character only checks its glyphs");
     }
 }

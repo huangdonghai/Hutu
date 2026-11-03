@@ -98,6 +98,81 @@ public sealed class TextDecorationThicknessTests
         });
     }
 
+    [Test]
+    public async Task AThinLineIsFlooredAtOneDevicePixelRatherThanOnePagePixel()
+    {
+        // The only floor the specification puts on a line is one device pixel (CSS Text Decoration 4
+        // §2.4), and a device pixel is one of the surface's rather than one of the page's: half a page
+        // pixel on a surface drawn twice the size is a whole device pixel and no more. Rounding the ask,
+        // or flooring it in page pixels, draws that line two device pixels wide instead of one.
+        var coverage = await DeviceCoverage("0.5px", scale: 2);
+
+        Assert.That(
+            coverage,
+            Is.LessThan(1.5),
+            "half a page pixel at twice the scale covers one device row, not two");
+    }
+
+    /// <summary>
+    /// Paints one underline on a surface drawn at the given scale and answers how many of the surface's
+    /// own rows the red band covers.
+    /// </summary>
+    private static async Task<Double> DeviceCoverage(String thickness, Single scale)
+    {
+        using var checking = new SkiaTextMeasurer();
+
+        Assume.That(
+            checking.GetMetrics(new Hutu.Rendering.Layout.FontStyle(Family, 40)).Ascent,
+            Is.GreaterThan(0),
+            $"no {Family} on this machine");
+
+        using var view = new HutuViewInternal(new SkiaTextMeasurer());
+        view.SetViewportSize(400, 300);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'><div style='margin:0;height:40px'></div>" +
+            "<div style='margin:0;font-family:" + Family + ";font-size:40px;line-height:2;" +
+            "text-decoration:underline;text-decoration-color:red;text-decoration-skip-ink:none;" +
+            "text-decoration-thickness:" + thickness + "'>ooo</div></body></html>");
+
+        var paint = view.Paint ?? throw new InvalidOperationException("the page produced no paint list");
+        var width = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Width * scale));
+        var height = Math.Max(1, (Int32)Math.Ceiling(paint.Bounds.Height * scale));
+
+        using var surface = SKSurface.Create(new SKImageInfo(width, height));
+        surface.Canvas.Clear(SKColors.White);
+        surface.Canvas.Scale(scale);
+        new SkiaPaintExecutor(new SkiaTextMeasurer()).Execute(paint, surface.Canvas);
+        using var image = surface.Snapshot();
+        using var bitmap = SKBitmap.FromImage(image);
+
+        var coverage = 0.0;
+
+        for (var row = 0; row < height; row++)
+        {
+            var red = 0;
+
+            for (var column = 0; column < width; column++)
+            {
+                var pixel = bitmap.GetPixel(column, row);
+
+                if (pixel.Red > 200 && pixel.Green < 160 && pixel.Blue < 160)
+                {
+                    red++;
+                }
+            }
+
+            // The glyphs are set in black and the line in red, so any red on a row is the band's: the
+            // rows it covers are counted, and the rows it does not are not.
+            if (red > 10)
+            {
+                coverage++;
+            }
+        }
+
+        return coverage;
+    }
+
     /// <summary>
     /// Gets the first and last page row that carry the line's ink, for one kind of line set at the given
     /// thickness.

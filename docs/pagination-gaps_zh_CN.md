@@ -2538,3 +2538,138 @@ Chrome 的 ref（一个不带 `display:flex` 的普通块容器，`margin-block-
 **test 侧剩下的那一刀不在 `ArrangeFragment`，在分割阶段**：探针读 MC3（`13,208 40x65 | 63,208 40x50 | 113,208 40x65`）—— 我们的窗口把**内容 150** 切成 50/50/50（3 栏），Chrome 把**边框盒 180** 切成 50/50/50/30（4 栏，第一栏里 15 是装饰、只剩 35 给内容）。所以 `Relays` 那条 `windowEdge`/`portion.Offset` 的账要把 block-start 装饰算进被消耗的量，才能让每一片的内容起点接上；本轮没有动它。同一条账大概也压着 `gecko/pagination/border-breaking-00{0..3}-cols`(3 000~76 000) 和 `wpt/css-break/fieldset-001`(85 816)。
 
 一条别当回归去查的：**`gecko/css-grid/grid-clamping-002` 在两次全量里报 `TimeoutException … after 5 s`（0 像素）**，第三次没有复现。那页画 `200,-9404 12x10004` 的定宽盒，单跑 2 s 且为绿 —— 是满载下 5 s 预算的抖动。
+
+### 9.183 把 dev-text 合进 dev-paged：65 处冲突全解，净 +64 对；两条竖排表格缺陷被它的单测抓出来
+
+合并的账：base `7357d65a`，我们这边 300 个提交，dev-text 34 个（约 11 260 行插入 / 67 个文件）。9 个路径 65 处冲突，全部解决：子模块 `deps/AngleSharp.Css` 先在子模块里合（`origin/dev-text` 的 `bbd2b38 Add the text-spacing shorthand` 合进我们的 `devel` → `19bf4d5`，两边改的文件不相交，干净），再把 gitlink 记过来；`Box.cs`/`BoxBuilder.cs` 两边各自加东西 → 都留；`BlockLayout.cs` 把他们的 `column.FlowedInline` 规则嵌进我们新加的 `else`；`InlineLayout.cs` 断开后新行的起点是**两者相加** `breakIndent + ClonedEdge(open, start: true)`（Text 3 §5.2 管缩进，Break 3 §4.6 管 clone 的开边，各对一半）；`SkiaFontResolver.cs` 两边各自做了同一个字体缓存改造，取他们更完整的结构（去掉按字符的 `ListedKey` 缓存、`Keep` 去重、正确释放），保留我们的按名缓存 `_candidates` 与没冲突的 `IsCollection` 修正，并把释放改成单一所有者（`_candidates` 是所有者，`_listedFamilies` 只是它的视图）；`LayoutEngine.MeasureKey` 两个新字段都留（我们的 `FloatBand? floats` + 他们的 `definiteWidth`）。两处假信号：`src/Hutu.Tests/TableLayoutTests.cs` 那个 `M` 是 stat 脏（`git hash-object` 与 HEAD blob 相同），`git update-index --refresh` 就清了；`MeasureConstraints.FitHeight` 两边各加了一遍，同一个问题两个名字 → 留一条并把两边的说法合进注释。
+
+按选择 1（保我们表格实现）打进来的他们那侧修正：`8eacca36` 的两条（单元格按列已定的宽度测 `MeasureConstraints.Definite(inline)`；`TableGrid.ResolvePercentages` 给无百分比列预留最小宽度、按比例缩放百分比列），并把它那条 `cell.Span == 1` 的守卫**只留在求比例**的那趟，第二趟照旧解析所有百分比格（否则跨列格的百分比就没人管了）。
+
+他们带进来的表格大重构 `8238bca2`（513 + 614 行）没有整片搬过来，但它逼出的三件事按 Chrome 逐条落了：
+
+- **col/colgroup 出盒**（新 `ArrangeColumnTracks`）：`LayoutKind.TableColumn` 的盒覆盖它的 span 所指的列带，`SuppressBackground/SuppressBorder` 为真，背景仍由我们按行带画的 `ArrangeColumnBands` 画。6 对因此转绿（4 个 `table-progression-*-002`、`logical-props-004`、`border-conflict-style-107`）。
+- **`colgroup span` 与 `col` 子元素同时存在时**：我们原来按 `groups x children` 乘出 6 条记录（`<colgroup span=3><col span=2>` → 6 列）。Chrome 实测两个页面一致：组的带=它子元素的带（`g:40,c:40` / `g:44,c:44`），即有 `col` 子元素时组自己的 span 不再另加列。修好后**他们的断言 group==60 与 Chrome 相左**，已按实测把断言改成 40 并把证据写进测试注释。
+- **RTL 折叠边**：线号是从表的 inline start 排的，而 `Thickness`/`BorderColors`/`OuterColors` 是物理的。`direction:rtl` 时 start 线在物理右边，所以「外边画整条、内边各画半条」落错了边。修法是把注册也按流向（`startBorder = mirrored ? cell.Right : cell.Left`）并只在**横排**表里镜像（`!IsVertical && IsRightToLeft`），竖排表的边转向是另一条轴，不在这里动。Chrome 读第一格 `(43..66, 23 宽)`、`border-left` 用掉 3，`ATableThatReadsRightToLeftMirrorsItsColumns` 因此过了。
+
+门禁（`build/_merged3.md`，对合并前基线 `build/_full-debt3.md`）：**76 对转绿 / 16 对新红**，gecko 1739 → 1744，wpt 4478 → 4537；单测 **2 353 / 2 355**（合并前 2 216，他们带来 139）；打印 **193/198** 同名同数。**分页/分片零受损**：16 个新红没有一个在 `css-break / css-multicol / pagination / columns / floats-clear-multicol / printing`，变动像素里也没有。
+
+剩下的 16 个新红（`build/_ndiff_merged1.txt` 的清单，形状未变）：`text-spacing-trim-*-vrl` 4（各 778）、`text-overflow-ellipsis-vertical{,-rtl}` 2（各 3 000）、`text-decoration` 5 + `line-through-style-{block,inline}-dashed-*` 4（都是 0 像素 = 两页画成同图而声明 mismatch）、`1174450-intrinsic-sizing` 18 504 → 40 460、`two-levels-of-orthogonal-flows` 2 020 → 12 330、`table-colspan-percent-auto` 1 561、`368504-3b` 393、`thickness-length-rounding` 1 320、`underline-position-001b` 684、`auto-phrase-002` 337。
+
+还挂着的 2 个单测（**没有删、没有 Ignore，是看得见的欠账**），两边都按 Chrome 证实是他们写得对、我们这侧有真缺陷：
+
+1. `AColumnDownThePageHoldsWhatItsCellAsksAcrossItsLine`（我们 14/28，他们 15/30，Chrome 用自家字体 23/46）：`vertical != cell.Box.Flow.IsVertical` 那支用 `MeasureContentIntrinsic(...).MaxContent` = **沿自己内边**的最大内容尺寸当行的推进量，而竖排表里横排格沿表内边（物理 y）贡献的是它**自己的块向高度**。探针实测 `_g_orth1`：格 29x20.56、线 20x17.72，而 22.72 = 17.72 + 2 + 3 才是它的高度；同一页两格在 `_g_orth` 里还得到 20.56 与 19.69 两个不同值（相同的格子必须相同）。我试过直接换成「按定宽量自己块高」，结果 X 从 29.56 变成 26.72 而 Y 没动 → 说明 `MeasureCellHeights` 里 `cell.Height` 与 `blockInsets` 的轴语义和这里的命名相互纠缠，得先把那套名字读通再动；这条改动会重排 writing-mode 族的本质尺寸，必须连着 `two-levels-of-orthogonal-flows` 与 `1174450-intrinsic-sizing` 一起重跑。
+2. `ARightToLeftCellStandsItsContentOffTheEdgeItsOwnBlockEndIs`（我们 `bottom` 的内容在 x=30，他们期望 0）：Chrome 实测 `top` 的内容在 23（贴右）、`bottom` 在 1（贴左）——`vertical-rl` 格的块轴从右走到左，`vertical-align:bottom` 是块**末**，即物理左边。我们这里把块末当成了高坐标那端。
+
+### 9.184 合并的复验与一个坑：`Copy-Item` 保留旧时间戳会让增量构建给出假结论
+
+复验（全部在 `dotnet build --no-incremental` 之后）：单测 **2 355 / 2 355 全过**；全量 **79 对转绿 / 15 个名字新红**，gecko 1739→1745、wpt 4478→4541；打印 **193/198** 同名同数；分页/分片仍零受损。15 个新红里 `gecko/css-grid/grid-clamping-002` 是满载下的 5 s 超时（该页画 `12x10004` 的定宽盒，单跑 2 s 且为绿），所以真正的正文侧新红是 **14 个**，`text-spacing-trim-*-vrl` 4 + `line-through-dashed` 4 + `skip-ink-sidewayslr-001` 1 这 9 个都是 0 像素或小额，另 `text-overflow-ellipsis-vertical{,-rtl}` 3 000 x2、`thickness-length-rounding` 1 320、`underline-position-001b` 684、`auto-phrase-002` 337。
+
+坑：`git checkout HEAD -- <file>` 会把**索引和工作树**一起回退；随后用 `Copy-Item` 还原时，PowerShell 的 `Copy-Item` **保留源文件的 LastWriteTime**，于是文件看起来比已编译的产物旧，`dotnet build` 增量跳过它 —— 我在字体解析器、shaper、paint executor 三次「换回我们的版本」对照里都吃了这个亏，得出的「谁绿谁红」结论全部作废（其中一次让我误判「自动合并静默丢了我们的 legend notch」，实际合并版里那段一直在）。以后做任何单文件对照：还原后 `git add` + `dotnet build --no-incremental`，或先 `(Get-Item file).LastWriteTime = Get-Date`。
+
+14 个新红的当前定位：`text-spacing-trim-*-vrl` 走的是 `DrawUprightColumn→GetColumnBlob`，而 `SkiaTextMeasurer` / `SkiaTextBlobCache` / `SkiaOpenTypeMetrics` 三个文件**只有 dev-text 改过**——也就是我们那侧的 trim 实现现在跑在他们的 Skia 文本层上；`blob` 缓存键里 `trims/autoSpaces/autoSpace` 三个参数都在，所以要往下查的是他们层内对 upright 单元格的度量取法，不是键。`line-through-dashed`/`skip-ink` 那 9 个 0 像素是同一条装饰定位重排的下游（`SkiaPaintExecutor.Axis`/`DrawTurned` 与 `Painter`/`DecorationText`，三个文件两边都改过，合并结果需要按 hunk 手工对账，不能整文件二选一：换成我们那版会让他们的 `ATurnedCharacterStandsAboutTheMiddleOfItsColumn`、`ABoxSetSmallerStandsItsLineAtItsOwnSize`、`AThinLineIsFlooredAtOneDevicePixelRatherThanOnePagePixel` 挂掉）。
+
+### 9.185 那 5 个「0 像素却声明 mismatch」的名字：虚线样式在半路丢了，丢点在装饰的传播上
+
+先把性质钉住，省得下轮重新猜：
+
+- `gecko/text-decoration/line-through-style-{block,inline}-dashed-{quirks,standards}` 4 个 + `wpt/css-text-decor/text-decoration-skip-ink-sidewayslr-001` 都是 `rel=mismatch`，报「两页画成同一张图」。
+- 实测（`build/look/line-through-style-block-dashed-standards-{test,ref}.png`）：两页在第 23..29 行完全一致，横线行 29 有 116 个暗像素 = **实线**。Chrome 侧 test 与 ref 不同（其 test 的正文还整体高 8 行，那是 quirks 布局，与我们无关：我们从来没有 quirks 模式，`Quirk|CompatibilityMode` 在 src/Hutu 里只有一处注释）。
+- 于是：**我们的 line-through 把 dashed 画成了 solid**。`rel=match` 的装饰对看不出这件事（两边都少画一条线仍相同），所以语料只在 mismatch 对上暴露 —— 也意味着这处丢失的影响面比 5 个名字大。
+
+排除与定位：
+
+1. `SkiaPaintExecutor.Shape(...)` 里 dashed 是**自己铺小段**实现的（`pitch = height * 5`，`Band` 一段一段画），Solid/Double 走 `Band`，Wavy 走 `Swing` —— 分发正确。
+2. `DecorationText.Shape(declared, shorthand)` 两版**一字不差**（我逐行对过 `build/_dt_head.cs`），`ComputedStyle` 两条读路径（`ResolveTextDecoration` 与 fused 的 `find("text-decoration-style")`）也都把长写传进去了。
+3. 所以丢在**传播**环节：`LayoutEngine.cs` 约 540..570 把 `box.Decorations` 组装成 `DecorationSource` 列表（外层向内各自画自己那条线），而 `LayoutEngine.cs` 是**两边都改过**的文件。下一步从 `box.Decorations` 的元素带着谁的 `Shape` 入手：给一个 `<p style="text-decoration: line-through; text-decoration-style: dashed">` 打点，看 `DrawLine` 收到的 `decoration.Shape` 到底是 Solid 还是 Dashed。
+
+探针方法两条，免得再踩：
+
+- 装饰**不是**独立的 paint command，它随 `TextCommand` 走（`LayoutDumper` 会把未知命令按类名打出来，而这类页面只出现 `text` op）——所以 paint list 看不出装饰有没有画，要用像素。
+- 我们引擎的 PNG 只有两种来路：`build/look/<pair>-{test,ref}.png`（跑分/LOOK 写的）和 `HUTU_PROBE_PNG`（探针，需要绝对路径）。`_pix` 画的是 Chrome，不是我们。
+
+另记 `wpt-variants/text-spacing-trim-*-vrl-zh-{hans,hant}` 4 个（各 778）的实测：Chrome 逐字 `国 y8 h20 / ）y28 h20 / ‘y48 h10 / （y58 h10 / 国 y68 h20`，总长 80；我们 test 页那一 run 是 **90**，且**两个相邻引号只有一个收成半角**（步长 20/20/10/20/20）。掩码由 `InlineLayout` 的 `MaskOf`/`AutoSpaceAfter`/`AutoSpaceReplace` 生产（我们的代码），消费在他们的 Skia 文本层（`SkiaTextMeasurer`/`SkiaTextBlobCache`/`SkiaOpenTypeMetrics` 三个文件只有 dev-text 改过）；`TextBlobKey` 里 `trims/autoSpaces` 都在，所以要在 `BuildColumnBlob` 里逐字对位，不是缓存键的问题。
+
+### 9.186 line-through 被 skip-ink 吃掉：一个语料大面积看不见的 bug，以及剩 9 个红名的分类
+
+`src/Hutu.Skia/SkiaPaintExecutor.cs` 的 `DrawDecorations` 里，注释写着「line-through 永不被打断」，但 `!through` 这个条件在 dev-text 的装饰重排中丢了：`blocked = skips ? across : empty` 把**每个**通道都按墨迹打断。对 `font: 100px Ahem` 的 `xxxxxxxxxx`，小写墨迹横贯中线，于是 `Pieces` 把整条 line-through 全跳掉——**这条线在页面上根本不存在**。这也是那 4 个 `line-through-style-*-dashed-*` 名字报「两页画成同一张图」的原因（不是虚线丢了：`decor l:dashed` 一直在命令里）。
+
+- 修法一行：`var blocked = !through && skips ? across : Array.Empty<SKRect>();`（CSS Text Decoration 4 §2.10.4 只管 underline/overline）。
+- 影响面比名字数大得多：`rel=match` 的装饰对是「两边都缺这条线」才绿的，所以这类丢失在语料里是**隐形**的。修完 gecko 1745 → **1749**、新红 15 → **10**；单测 **2 355 / 2 355**；打印 193/198 未动。
+
+顺带把探针补强了（`src/Hutu.Conformance.Tests/LayoutDumper.cs`）：`text` op 现在打 `decor u/o/l:shape`。装饰不是独立命令，它随 `TextCommand` 走，所以 paint list 以前完全看不出装饰有没有到位——这次就是靠这行 `decor l:dashed` 把「形状丢了」和「线根本没画」分开的。
+
+**剩 9 个新红的分类（都已定位到层）**
+
+- `wpt-variants/text-spacing-trim-*-vrl-zh-*` 4（各 778）：Chrome 逐字 `国20 / ）20 / ‘10 / （10 / 国20 = 80`，我们 `20/20/10/20/20 = 90` —— 相邻两个标点只有一个收成半角。掩码由我们 `InlineLayout.MaskOf` 生产、在他们的 Skia 文本层消费（`SkiaTextMeasurer`/`SkiaTextBlobCache`/`SkiaOpenTypeMetrics` 三个文件只有 dev-text 改过）。已用换回我们 `SkiaFontResolver` 的对照排除字体路径（4 值一字未变），下一步在 `BuildColumnBlob` 里逐字对位。
+- `text-overflow-ellipsis-vertical{,-rtl}-001` 2（各 3000）：**布局对**（探针给出 `216,349.72 100x100 “…”`），差在格子里画什么——Chrome 那一格是**整块方框**（Ahem 自己的 .notdef），我们画了 70 宽的点 ⇒ 我们为一个本该由主字体 .notdef 顶上的字符找了后备字体。改动点在他们的 `SkiaTextShaper`（+135）的后备判定。
+- `text-decoration-thickness-length-rounding-001` 1933、`text-underline-position-001b` 684、`text-decoration-skip-ink-sidewayslr-001` 0、`word-break-auto-phrase-002` 337：同一批重排的下游（`Thickness(canvas,…)` 的设备像素下限、`Axis`/`Beside` 的列内定位、sideways 的 skip 判定）。
+
+另记一次自摆乌龙：`git checkout HEAD -- f` 会连索引一起回退，随后 `Copy-Item` 又带回**源文件的旧时间戳**，`dotnet build` 因此不重编译；这轮前半几次「换回我们版本」的对照因此不可信。以后一律：还原后 `(Get-Item f).LastWriteTime = Get-Date` 再 `dotnet build`（或直接 `--no-incremental`），并 `git add` 把索引拉回合并内容。
+
+### 9.187 转字基线的横位置：省略号那 2 个清了；剩 8 个
+
+`Axis()` 的 docstring 写的就是「转字 run 要把它自己的 em 盒摆到栏中线上」，但函数体对**非 sideways** 的列提前 `return middle`。只有当 ascent==descent 时栏中线才等于居中 em 盒的基线；竖排 Ahem 里 `ascent-descent = 60`，于是 `text-overflow: ellipsis` 插入的那个 `…`（Ahem 自己有 U+2026，glyph 名 `ellipsis`，是个满方框）被画成**同一条方框右移 30 px 再被裁掉右边 30**：10 000 的墨只剩 7 000，成对差正好 3 000 px。删掉那个提前返回、统一走 `middle ± half`（转向决定符号）之后：
+
+- `wpt/css-overflow/text-overflow-ellipsis-vertical-001` 与 `-rtl-001` **转绿**；
+- 他们那两个「转字要立在栏中线」的单测（`ATurnedCharacterStandsAboutTheMiddleOfItsColumn` 等）仍然过——因为它们量的本来就是 em 盒中心；
+- 顺手核了 `vertical-text-simple-001`、`text-orientation-vertical-004` 仍绿。
+
+门禁：单测 **2 355 / 2 355**；全量 **79 出 / 8 进**（gecko 1749、wpt 4543、净 **+71 对**）；打印 **193/198** 同名同数；分页/分片仍然零受损。
+
+**修正 §9.186 里的一条判断**：省略号不是「后备字体判定」问题——单文件回退 `SkiaTextShaper`/`SkiaTextMeasurer`/`SkiaFontResolver` 三次的对照（这次都 touch + 重建，避免 §9.184 那个时间戳坑）数值一字不变，真因是上面的转字横位置。
+
+剩 8 个（都在正文/装饰侧，已各自量过）：
+
+- `text-spacing-trim-*-vrl-zh-*` ×4（各 778）：Chrome 逐字步长 `20/20/10/10/20`（Range 实测 `国y8 h20 / ）y28 h20 / ‘y48 h10 / （y58 h10 / 国y68 h20`），我们 `20/20/10/20/20` ⇒ 相邻两个标点只有一个收成半角，在 `BuildColumnBlob` 与他们层内的 upright 步长里对字位。
+- `text-decoration-thickness-length-rounding-001` 1933、`text-decoration-skip-ink-sidewayslr-001` 0、`word-break-auto-phrase-002` 337。
+- `text-underline-position-001b` 684：逐像素量出两件事——① 我们两个盒的绿色下划线都在行 95/96，Chrome 在 93/94（整体低 2 行，`text-underline-offset: .25em` + 2 px 厚度的落点）；② 绿色墨里还有**两根 2 px 宽、44 行高的竖条**，在 x 69..70 与 x 112..113（纵贯 66..109，test1 两个浮点盒各一根），而 Chrome 那一区域只有两条横的下划线（行 93/94，宽 68 与 63）。探针显示 test1 的 `writing-mode: initial` 解析是对的（两盒都是横排，`33,74.72 68.41x17.72` 无 vertical 标记），所以这不是「横排被当成列边线」，更像某个竖排/转字盒的装饰线段落错了坐标（test2 的 `sideways-rl` 从 y=121 起，若它按 test1 的行画出来就会落在这一段）。下一刀：把每条装饰线段的端点连同发它的 run 一起打出来，看这两根竖条归谁。
+
+#### 9.187 补：`text-spacing-trim-*-vrl` 那 778 px 不是整列位移，是一个格子的墨
+
+把 test 与 ref 两张 `build/look/` 图逐像素比：差异常集中在 **x 740..786、y 65..97**（46 宽、33 高的一小块），列团聚在 x 740..760 与 768..784 两处，行段在 60..100。也就是**同一列里一个字符的墨**不同，不是整列被推歪。
+
+但两件事同时成立，需要下一轮分开处理：
+
+- 布局侧：我们那 run 的盒子是 `28.96x90`，Chrome Range 逐字是 `国20 ）20 ‘10 （10 国20`（合计 80），ref 页我们量到 `40 + 15.56 + 20`。也就是**推进量仍然偏大**（多半是 `（` 那一格没吃到剪枝：`PlanTrim` 的掩码按 `TrimsOpening(前一格=Opening)` 应该会标它，`SkiaTextBlobCache.BuildColumnBlob` 里 `step = emStep - delta` 也确实会减半 —— 所以要查的是**掩码到没到这里**：`trims[cell.Index]` 以 `cell.Index` 直接索引，而 `cell.Index` 是 run 内文本的下标，`MaskOf(fragment.Trims, run.Start, run.Length, false)`（`InlineLayout.cs:1862`）给的是**切片后**的串；两者在 run 起点非 0 时错位。
+- 墨形状侧：那一格 x 740..786 宽 46 比列宽（28.96）还大，说明**相邻两列各占了一点**，更像「半角形式 vs 全角形式」的字形之差：字体 `NotoSansCJKjp-Regular-subset-chws.otf` 里 `‘`(U+2018) 的 `hAdvance` 本来就是 278（窄），`（`(U+FF08) 与 `）`/`国` 都是 1000，`vmtx` 全是 1000，GSUB 里**没有 `chws`**（只有 fwid/hwid/liga/locl/pwid/vert/vrt2）—— 所以 Chrome 那两个 10 全靠**属性剪枝**，不是字体自带的半角形式。我们只剪出了一格。
+
+排查起点建议：在 `BuildColumnBlob` 里把 `(cell.Index, code, emStep, step)` 连同 `trims` 整串打出来（探针新加一个 `HUTU_PROBE_TRIMS` 即可），一眼能看出是掩码错位还是 `emStep > 0` 条件把这格挡了。
+
+再补一条从新探针拿到的硬数据（`LayoutDumper` 现在会打 `trims <下标><码>`，与上一轮的 `decor u/o/l:shape` 一道留下当工具）：`text-spacing-trim-quote-001-chws-vrl-zh-hans` 的四行文本，掩码各**只有一处**：
+
+- `国）‘（国` -> `trims 3`，`国）“（国` -> `trims 3`
+- `国）’（国` -> `trims 1`，`国）”（国` -> `trims 1`
+
+Chrome 的步长是 `20 20 10 10 20`，也就是 index 2 与 3 两处都该剪；我们剪了 3，**缺的是 2**（`）` 后面那个开侧引号）。index 3 能剪是靠 `previous.Class is Opening or Middle` 这个选支（它的邻居是引号，算 Opening）；index 2 的邻居是 `）`（Closing），只能走第三个选支 `previous.Class == Closing && previous.Fullwidth && previous.Size >= size`。两边字号同为 20，`>=` 成立，所以卡的是 **`previous.Fullwidth`**：`TrimNeighbor.Fullwidth` 由 `NeighborOf(...) -> IsFullwidthPunctuation(measurer, style, codePoint)` 量出来，而 `TextSpacingTrim.IsFullwidth(advance, fullwidth)` 比较的是「该字符在**当前页面特性下**的推进量」是否还等于全宽。字体侧实测（fontTools）：这份 chws 子集里 `）` 的 `hAdvance/vAdvance` 都是 1000、`‘`(U+2018) 的 `hAdvance` 只有 278、`vAdvance` 1000，且 GSUB 里**根本没有 chws**（只有 fwid/hwid/liga/locl/pwid/vert/vrt2）——所以「已经按比例了所以别再剪」这条判断，在我们按竖排特性/字形形式量 `）` 时可能被误判成半宽。
+
+下一刀（明确）：把 `IsFullwidthPunctuation` 在列里量 `）` 用的到底是横排推进、还是竖排字形推进查清；它决定 `TrimNeighbor.Fullwidth`，也就决定这 4 个名字（各 778 px）。同一处也解释为什么 `’`/`”` 那两行只有 `trims 1`（收侧被剪了一次，开侧那次同样没成立）。
+
+#### 9.187 再补：竖排「全宽」判据接上 flow 之后，病移到 ref 页的一格
+
+`InlineLayout.IsFullwidthPunctuation` / `NeighborOf` 现在带 `flow`：竖排且 `text-orientation: upright` 时，字符占的是整 em 格（列的步长在 `BuildColumnBlob` 里就是 `max(advance, size)`），所以不该拿它的横排宽度当「已经按比例」的证据。效果：
+
+- test 页四行由 `28.96x90 / trims 3` 变成 **`28.96x80 / trims 2 3`**，与 Chrome 的 Range 逐字实测 `国20 ）20 ‘10 （10 国20` 完全一致；横排变体仍绿；单测 **2 355 / 2 355**；全量 79 出 / 9 进，而第 9 条又是 `gecko/css-grid/grid-clamping-002` 的 0 像素超时抖动（单跑为绿）⇒ 真实新红仍是 8。
+- 但成对数字从 778 涨到 1464：**残差移到 ref 页**。ref 里 `<halt>` 包着的 `‘（` 我们量到 `15.56`（`‘` 用了字体自己的 hAdvance 278/1000 -> 5.56），Chrome 给的是 `10 + 10`。
+
+下一格的成因（已用 fontTools 核过字体）：`‘`(U+2018) 的 `East_Asian_Width` 是 **Ambiguous**，而 CSS Writing Modes 3 §4.1.2/9.2 让 upright 列里 ambiguous 字符取**半宽 em 盒**（这正是 Chrome 在两页里都给 `‘` 10 的原因，和 `vhal` 无关）；我们目前在竖排单元里对 ambiguous 字符没有这条换算，直接用了它的横排推进。补法应当落在 `SkiaTextMeasurer.DecomposeUprightInto` 的 `advance`/`centreWidth` 一侧（ambiguous -> size/2），而不是再回到 `IsFullwidthPunctuation`。
+
+#### 9.187 再补二：half-width 形式按半个 em 计，两页几何对齐 Chrome，剩下的 1036 是括号格的墨
+
+`vhal`/`halt` 在 OpenType 里定义就是「半宽形式」，字体若没有对应替换、回落成 hmtx（`‘` 的 278 -> 5.56）不该被当成答案。于是把下限同时加在**布局**（`InlineLayout` 的 `OrientedRun.Advance`：`floor = verticalWidth ? size/2 : size`）与**绘制**（`SkiaTextMeasurer.DecomposeUprightInto`：`exact ? max(verticalAdvance, size/2) : horizontal`）两处——两处必须一起，否则成对数字会因两侧不一致而变大（只改绘制那侧时确实从 778 涨到 1464，就是这个原因）。
+
+结果：test 页四行 `28.96x80`、`trims 2 3`；ref 页 `40 + 20 + 20 = 80`，与 Chrome Range 实测 `国）:8_40 | ‘（:48_20 | 国:68_20` 逐段同坐标。单测 **2 355 / 2 355**、全量 **79 出 / 8 进**（这一跑没有 grid-clamping 的抖动，gecko 1749 / wpt 4543）、打印 **193/198** 未动。成对像素 1464 -> **1036**。
+
+剩下的 1036 全在**括号那一格的墨**：按列统计，差异常分布在每列内 x 偏移约 5..24 的 20 宽带上（681..700、710..729 是稠密带，约 24 px/行；739..758、768..787 是稀疏带，约 4 px/行），y 62..97 —— 也就是几何一致而**被剪那格画的是哪一个字形**不同：test 页用 chws 字体不加特性，ref 页用 halt 字体加 `'halt' 1,'vhal' 1`，Chrome 让两者画成同一个竖直形式。下一刀查 upright 列里 `vert`/`vrt2` 与 `VerticalForms` 回退的选择次序（`SkiaTextMeasurer.DecomposeUprightInto` 里 `vertical.Glyphs[0]` 与 `IsSubstituted` 那一支），以及剪枝后字形在格内的居中量（`centreWidth`）。
+
+### 9.188 合并收口：80 对转绿 / 7 对新红，随合并落地的两项绘制修复与遗留清单
+
+以 `build/_full-debt3.md`（合并前基线）对 `build/_merged13.md`：**79 -> 80 对转绿、8 -> 7 对新红**，gecko 1739 -> **1749**、wpt 4478 -> **4543**；单测 **2355 / 2355**；打印 **193/198** 同名同数；分页/分片族仍零受损。
+
+合并期新落地的两处绘制修复（都在 `src/Hutu.Skia/SkiaPaintExecutor.cs` / `WritingMode.cs`）：
+
+- **line-through 不再被 skip-ink 打断**：`blocked = !through && skips ? ...`。dev-text 的重排丢了 `!through`，于是小写墨横贯中线的字体里整条 line-through 被跳光 —— 语料的 match 对看不见（两边同时缺线仍是「匹配」），只有 4 个 mismatch 的 dashed 对报了「两页相同」。修后 gecko 1745 -> 1749。
+- **跟字转的列，其下划线走块末端侧**（`IsSideways` 或 `text-orientation: sideways`）：这类模式里 `left`/`right` 不起作用（001a/001b 两页在 Chrome 都与 ref 相同），只剩 under 一侧，即块末端。清掉 `text-decoration-skip-ink-sidewayslr-001`（原来两页相同）与 `text-underline-position-001b`（684 -> 绿）。
+
+该改动**带出一个新红**：`text-underline-offset-vertical-001`（40 px）。原因是我把规则铺到了真竖排（`vertical-lr` + mixed）列上；证据是那一页 Chrome 的 span 是 20 宽 x 100 高、我们给成 100 宽 x 20 高（另有一处既有的竖排几何分歧），它的线该留在近侧。**待办（下一步第一件事，改动很小）**：把取侧限定为「跟字转的列」，真竖排列恢复只认 `Right` 关键字 —— 预期 7 -> 6。锚文本要用文件里已有的 `§2.7`，用占位串会 assert 失败（上一轮就是这么没打进去的）。
+
+仍开着的 6 个（含上面对待办清零后）：`text-spacing-trim-*-vrl` x4（各 1036）—— 两页几何已与 Chrome 逐字一致（`20/20/10/10/20`），差在 upright 列里那一格选哪个字形：查 `SkiaTextMeasurer.DecomposeUprightInto` 里 `vert`/`vrt2` 与 `VerticalForms` 回退的次序，以及剪枝后字形在格内的居中量 `centreWidth`；`text-decoration-thickness-length-rounding-001` 1933（`Thickness(canvas, asked, fromFont)` 的设备像素下限那套）；`word-break-auto-phrase-002` 337（dev-text 的 `TextChunker` +28 与我们分词掩码的交界）。

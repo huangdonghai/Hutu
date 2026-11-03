@@ -1387,8 +1387,11 @@ public sealed class SkiaPaintExecutor
         // In a column a decoration runs beside the text rather than under it, so it becomes a line
         // down the box at the distance from the baseline that the font asked for - and it is split the
         // same way, the lines stood off the baseline behind the turned glyphs and the crossing one in
-        // front of them.
-        var across = (Single)command.Baseline;
+        // front of them. The distances here are taken from the baseline the column's glyphs are drawn
+        // about, which is what the overline and the line-through are stood off; the underline of a
+        // column is the one line stood off something else - the font its own decorating box is set in -
+        // and DrawDecorations lays that out (CSS Text Decoration 4 §2.5, §2.9).
+        var across = (Single)Axis(command, metrics);
         var beside = Beside(command, metrics);
 
         DrawDecorations(canvas, paint, command, metrics, across, alongLine: false, beside, through: false);
@@ -1434,7 +1437,7 @@ public sealed class SkiaPaintExecutor
             return;
         }
 
-        DrawTurned(canvas, command, paint);
+        DrawTurned(canvas, command, metrics, paint);
     }
 
     /// <summary>
@@ -1577,7 +1580,7 @@ public sealed class SkiaPaintExecutor
                 DecorationSkip.All => true,
                 _ => !TextClusters.StandsAcrossTheLine(command.Text),
             };
-            var blocked = skips ? across : Array.Empty<SKRect>();
+            var blocked = !through && skips ? across : Array.Empty<SKRect>();
 
             // Where the run's baseline stands on the axis its lines are measured along, in the same
             // coordinates as those lines: a row counts down from the page's top edge, a column across
@@ -1591,31 +1594,95 @@ public sealed class SkiaPaintExecutor
             {
                 // The face gives the line its zero position; text-underline-offset moves it outward
                 // from there, and text-decoration-thickness replaces the face's own width
-                // (CSS Text Decoration 4 §2.4, §2.8). The line's own position is the edge it was measured
-                // to, and the band it is drawn with grows away from the text it stands under - which is
-                // what lets a page thicken a line and have it cover the room on the far side of that edge
-                // rather than the room between the edge and the letters it already left behind.
-                var at = text + (sign * (
-                    (placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset))
-                    + (decoration.UnderlineOffset ?? 0)));
+                // (CSS Text Decoration 4 §2.4, §2.8). Along a row the line stands off the baseline of
+                // the text it runs across; down a column it stands off the font its own box is set in,
+                // as the branch below lays out. A column that says right puts the line on the other
+                // side of the text, where a row reads left and right as auto (§2.7).
+                var extra = decoration.UnderlineOffset ?? 0;
+                var fontOffset = placed?.UnderlineOffset ?? Math.Abs(metrics.UnderlineOffset);
+
+                // Across a row, `under` stands at the bottom of the decorating box's normalized em
+                // box, not at the face's alphabetic underline or its full hhea descent (CSS Text
+                // Decoration 4 §2.7). A column keeps its own position and is handled below.
+                if (alongLine && decoration.Position is TextUnderlinePosition.Under)
+                {
+                    fontOffset = _measurer.GetMetrics(decoration.Font).EmDescent;
+                }
+
+                // Along a row the line stands its settled distance from the baseline the whole line
+                // shares, so a run of Latin turned down a column and the run of ideographs beside it
+                // draw one rule: the offset is the decorating box's own, averaged over the text it
+                // reaches on the line, and not the run's, which would step the line wherever the
+                // scripts meet (§2.9). A column's `right` asks for the other side of the text, where a
+                // row reads left and right as auto (§2.7).
+                Double at;
+                Int32 underlineGrow;
+
+                if (!alongLine)
+                {
+                    // A column stands the line off the font the decorating box itself is set in: the
+                    // box's inline box is centred across the column, its baseline sits one ascent into
+                    // it, and the line goes one underline below that. Taking it from the box rather than
+                    // from the runs it crosses is what lines a note set smaller than the text beside it
+                    // at the note's own size, while every run of one box still draws one line (§2.9).
+                    var face = _measurer.GetMetrics(decoration.Font);
+                    var under = (command.Bounds.Width / 2) -
+                        ((face.Ascent - face.Descent) / 2) -
+                        Math.Abs(face.UnderlineOffset);
+
+                    // Which edge of the column the rule stands on. A mode that turns its glyphs with
+                    // the line has no left or right side for a rule at all - `under` is the only answer
+                    // there, and it is the block-end edge of the writing mode. A column whose glyphs
+                    // keep their own uprightness takes the keywords at their word, and answers
+                    // `auto`/`under`/`from-font` with the same block-end side (CSS Text Decoration 4
+                    // §2.7 with CSS Writing Modes 4 §4.2; measured:
+                    // text-underline-position-001a/-001b, where sideways-lr, sideways-rl and the two
+                    // `text-orientation: sideways` pages match their reference whichever of `left` or
+                    // `right` the page asks for, and text-decoration-skip-ink-sidewayslr-001, whose
+                    // rule Chrome draws at x = 23 of a column beginning at x = 4 - the far edge from
+                    // the one a right-to-left column uses).
+                    var sideways = command.Flow.IsSideways ||
+                        command.Flow.Orientation == TextOrientation.Sideways;
+
+                    var onRight = sideways || decoration.Position is TextUnderlinePosition.Auto
+                        ? !command.Flow.BlockIsRightToLeft
+                        : decoration.Position == TextUnderlinePosition.Right;
+
+                    if (onRight)
+                    {
+                        at = command.Bounds.X + command.Bounds.Width - under + extra;
+                        underlineGrow = 1;
+                    }
+                    else
+                    {
+                        at = command.Bounds.X + under - extra;
+                        underlineGrow = -1;
+                    }
+                }
+                else
+                {
+                    at = text + (sign * (fontOffset + extra));
+                    underlineGrow = grow;
+                }
 
                 DrawLine(
                     canvas,
                     paint,
                     command,
                     (Single)at,
-                    Thickness(decoration.Thickness, placed?.UnderlineThickness ?? metrics.UnderlineThickness),
+                    Thickness(canvas, decoration.Thickness, placed?.UnderlineThickness ?? metrics.UnderlineThickness),
                     decoration.Shape,
                     alongLine,
                     pulls,
                     pushes,
                     blocked,
+                    decoration.Start,
                     // An underline stands under its text and thickens away from it: downward along a
                     // row, and out to the side it was measured to down a column. Which side that is
                     // follows the direction the offset was counted in, so it is the same sign as that
                     // one rather than the answer to where the line landed - a page that sets a negative
                     // <c>text-underline-offset</c> still asks for an underline (§2.4).
-                    grow);
+                    underlineGrow);
             }
 
             // The face says where its overline goes; a face that will not is answered with the top of
@@ -1633,6 +1700,7 @@ public sealed class SkiaPaintExecutor
                     command,
                     (Single)at,
                     Thickness(
+                        canvas,
                         decoration.Thickness,
                         placed?.OverlineThickness
                             ?? (metrics.OverlineThickness > 0
@@ -1643,6 +1711,7 @@ public sealed class SkiaPaintExecutor
                     pulls,
                     pushes,
                     blocked,
+                    decoration.Start,
                     // An overline stands over its text and thickens away from it, the other way from
                     // its underline (§2.4).
                     -grow);
@@ -1657,12 +1726,13 @@ public sealed class SkiaPaintExecutor
                     paint,
                     command,
                     (Single)(origin + from - (sign * Math.Abs(metrics.StrikeoutOffset))),
-                    Thickness(decoration.Thickness, metrics.StrikeoutThickness),
+                    Thickness(canvas, decoration.Thickness, metrics.StrikeoutThickness),
                     decoration.Shape,
                     alongLine,
                     pulls,
                     pushes,
                     blocked,
+                    decoration.Start,
                     // A line-through is drawn across the letters it crosses, so a thicker one covers
                     // more of them rather than sliding off the text to one side (§2.5).
                     0);
@@ -1695,7 +1765,7 @@ public sealed class SkiaPaintExecutor
         }
         else
         {
-            DrawTurned(canvas, command, stroke);
+            DrawTurned(canvas, command, metrics, stroke);
         }
     }
 
@@ -1728,10 +1798,16 @@ public sealed class SkiaPaintExecutor
 
     /// <summary>
     /// Gets how thick a decoration line is: what the decorating box asked for, or the face's own width
-    /// where it asked for nothing. A line is never thinner than one pixel, however small the ask.
+    /// where it asked for nothing. Whatever the ask, the line is never thinner than one device pixel -
+    /// the only floor the specification sets, and a device pixel is a pixel of the surface the page is
+    /// drawn on rather than of the page itself (CSS Text Decoration 4 §2.4).
     /// </summary>
-    private static Double Thickness(Double? asked, Double fromFont) =>
-        Math.Max(1, asked ?? fromFont);
+    private static Double Thickness(SKCanvas canvas, Double? asked, Double fromFont)
+    {
+        var scale = canvas.TotalMatrix.ScaleX;
+
+        return Math.Max(scale > 0 ? 1 / scale : 1, asked ?? fromFont);
+    }
 
     /// <summary>
     /// Draws one decoration line across the run in the shape the element asked for. A solid line is a
@@ -1763,6 +1839,7 @@ public sealed class SkiaPaintExecutor
         Double trimStart,
         Double trimEnd,
         SKRect[] ink,
+        Double boxStart,
         Int32 grow = 1)
     {
         var height = (Single)thickness;
@@ -1796,7 +1873,7 @@ public sealed class SkiaPaintExecutor
         // own ink and the room on either side of it; where it is not, the whole stretch is one piece.
         foreach (var (from, to) in Pieces(start, end, at, height, ink))
         {
-            Shape(canvas, paint, command, at, height, shape, alongLine, from, to);
+            Shape(canvas, paint, command, at, height, shape, alongLine, from, to, boxStart);
         }
     }
 
@@ -1812,7 +1889,8 @@ public sealed class SkiaPaintExecutor
         DecorationShape shape,
         Boolean alongLine,
         Single start,
-        Single end)
+        Single end,
+        Double boxStart)
     {
         if (end <= start)
         {
@@ -1841,7 +1919,7 @@ public sealed class SkiaPaintExecutor
                 StrokeWidth = height,
             };
 
-            Swing(canvas, stroke, start, end, at, height, alongLine);
+            Swing(canvas, stroke, start, end, at, height, alongLine, boxStart);
             return;
         }
 
@@ -1952,14 +2030,18 @@ public sealed class SkiaPaintExecutor
                 (Single)command.Bounds.Y);
         }
 
-        var baselineX = (Single)(command.Bounds.X + command.Baseline);
+        var baselineX = (Single)(command.Bounds.X + Axis(command, metrics));
         var upward = command.Flow.TurnsCounterClockwise;
         var turn = SKMatrix.CreateRotationDegrees(
             upward ? -90 : 90,
             baselineX,
             (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y));
 
-        return [.. Moved(ink, (Single)command.Bounds.X, (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y))
+        // The turn is taken about the point the run starts at, and that point is on the baseline the
+        // column stands on rather than at its left edge: the along-run coordinate of the blob is the
+        // page's across-column distance once it is turned, so starting it at the edge of the box would
+        // slide every glyph along the column by the distance the baseline stands in from that edge.
+        return [.. Moved(ink, baselineX, (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y))
             .Select(box => turn.MapRect(box))];
     }
 
@@ -1999,6 +2081,18 @@ public sealed class SkiaPaintExecutor
             box.Right + x,
             box.Bottom + y))];
 
+    /// <summary>
+    /// Lays one solid band of a decoration down the page.
+    /// </summary>
+    /// <remarks>
+    /// A band is a strip of colour in every way that matters but its length: a browser lays it down on
+    /// whole device pixels, the same rule that lays a border side and a background down without a
+    /// feathered edge (and the same one the reference parts of this family rely on - a page that
+    /// builds an extended line out of three overlapping copies of a shorter one only comes to the same
+    /// picture when each copy is laid on whole pixels, because a feathered edge is laid three times
+    /// where the single band has it once). The length keeps its own ends: the inset and the skips cut
+    /// a band into pieces, and their edges are the answer those rules came to.
+    /// </remarks>
     private static void Band(
         SKCanvas canvas,
         SKPaint paint,
@@ -2006,15 +2100,27 @@ public sealed class SkiaPaintExecutor
         Single end,
         Single at,
         Single height,
-        Boolean alongLine) =>
-        canvas.DrawRect(alongLine
+        Boolean alongLine)
+    {
+        var area = SnapToDevice(canvas, alongLine
             ? new SKRect(start, at, end, at + height)
-            : new SKRect(at, start, at + height, end), paint);
+            : new SKRect(at, start, at + height, end));
+
+        canvas.DrawRect(area, paint);
+    }
 
     /// <summary>
-    /// Swings the decoration from side to side of the height it sits at, a half turn to a length of
-    /// twice its own thickness.
+    /// Swings the decoration from side to side of the height it sits at, one cubic turn to a wavelength.
+    /// The wavelength and the turn's reach are the browser's own: a wavelength of one plus twice the
+    /// rounded double thickness, and control points one turn beyond the middle on either side, where
+    /// the rounded triple thickness sets the turn (Chrome's DecorationLinePainter::MakeWave).
     /// </summary>
+    /// <param name="boxStart">
+    /// Where the decorating box begins along the line. The wave is counted from there, so the stretches
+    /// one decoration is drawn in - the ideographs either side of a middle dot, say - carry on the same
+    /// wave instead of each beginning a new one where it starts, and the wave itself is cut to the
+    /// stretch rather than starting a fresh one at its edge.
+    /// </param>
     private static void Swing(
         SKCanvas canvas,
         SKPaint stroke,
@@ -2022,35 +2128,68 @@ public sealed class SkiaPaintExecutor
         Single end,
         Single at,
         Single height,
-        Boolean alongLine)
+        Boolean alongLine,
+        Double boxStart)
     {
-        var step = Math.Max(height * 2, 2);
+        // The wave is measured in the surface's own pixels, as the browser measures it: a line one page
+        // pixel thick is two device pixels on a display drawn twice the size, and the wave it swings is
+        // the wave of that thicker line - which is why the same page shows a finer wave there.
+        var device = Math.Max(canvas.TotalMatrix.ScaleX, 0.0001);
+        var thickness = Math.Max(1, height * device);
+        var wavelength = (1 + (2 * Math.Round((2 * thickness) + 0.5, MidpointRounding.AwayFromZero))) / device;
+        var reach = (0.5 + Math.Round((3 * thickness) + 0.5, MidpointRounding.AwayFromZero)) / device;
+
+        // The stroke is as wide as the line and hangs from the middle of it, so the wave is that middle.
+        var middle = at + (height / 2);
+        var first = boxStart + (Math.Floor((start - boxStart) / wavelength) * wavelength);
 
         using var path = new SKPath();
-        path.MoveTo(Place(start, at, alongLine));
+        path.MoveTo(Place((Single)first, (Single)middle, alongLine));
 
-        var above = true;
-
-        for (var position = start; position < end; position += step)
+        for (var position = first; position < end; position += wavelength)
         {
-            var next = Math.Min(position + step, end);
-            var control = position + (step / 2);
-            var swung = at + (above ? -height : height);
+            var half = position + (wavelength / 2);
+            var next = position + wavelength;
 
-            path.QuadTo(
-                alongLine ? control : swung,
-                alongLine ? swung : control,
-                alongLine ? next : at,
-                alongLine ? at : next);
-
-            above = !above;
+            path.CubicTo(
+                Place((Single)half, (Single)(middle + reach), alongLine),
+                Place((Single)half, (Single)(middle - reach), alongLine),
+                Place((Single)next, (Single)middle, alongLine));
         }
 
+        canvas.Save();
+        canvas.ClipRect(alongLine
+            ? new SKRect(start, (Single)(middle - reach - height), end, (Single)(middle + reach + height))
+            : new SKRect((Single)(middle - reach - height), start, (Single)(middle + reach + height), end));
         canvas.DrawPath(path, stroke);
+        canvas.Restore();
     }
 
     private static SKPoint Place(Single along, Single across, Boolean alongLine) =>
         alongLine ? new SKPoint(along, across) : new SKPoint(across, along);
+
+    /// <summary>
+    /// Gets where a column's glyphs stand on the axis across the column: the middle of the box for text
+    /// kept upright, and for text turned down the column the place that puts its own em box on that same
+    /// middle. A turned run is measured out from its baseline, which stands with its ascent towards one
+    /// edge of the column and its descent towards the other, so the middle of that box lies half the
+    /// difference of the two beyond the baseline (CSS Writing Modes 4 §4.2).
+    /// </summary>
+    private static Double Axis(TextCommand command, FontMetrics metrics)
+    {
+        // A turned run is laid out from its baseline, whose ascent faces one edge of the column and
+        // whose descent the other; what is kept on the column's middle is the em box those two make,
+        // which puts the baseline itself half their difference off it. The turn decides which side: the
+        // mode that reads upward puts the ascent the other way (CSS Writing Modes 4 §4.2, measured: the
+        // ellipsis Chrome sets for `text-overflow: ellipsis` down a vertical-lr column of Ahem fills the
+        // column whole at x = 216..316, where standing the baseline on the middle alone left it 30 in
+        // from the left edge and cut 30 off the right - and the turned run of wpt/css-writing-modes/
+        // vertical-text-simple-001, whose centre stays on the middle either way).
+        var middle = command.Bounds.Width / 2;
+        var half = (metrics.Ascent - metrics.Descent) / 2;
+
+        return command.Flow.TurnsCounterClockwise ? middle + half : middle - half;
+    }
 
     /// <summary>
     /// Draws a run whose glyphs are all turned the same quarter turn, which is what Latin text and
@@ -2060,12 +2199,18 @@ public sealed class SkiaPaintExecutor
     /// <remarks>
     /// A turn to the right reads downward and puts the ascent to the right of the baseline, which is
     /// where a column's baseline sits in the right-to-left modes; the modes that read upward turn the
-    /// other way and put it on the left, and the baseline the layout handed over is already on that
-    /// side of the box.
+    /// other way and put it on the left, which is the way <see cref="Axis"/> counts the turn when it
+    /// places the baseline on that side of the column's middle.
     /// </remarks>
-    private void DrawTurned(SKCanvas canvas, TextCommand command, SKPaint paint)
+    private void DrawTurned(SKCanvas canvas, TextCommand command, FontMetrics metrics, SKPaint paint)
     {
-        var baselineX = (Single)(command.Bounds.X + command.Baseline);
+        // A column of mixed or upright text stands on its central baseline, and a sideways run stands
+        // there too: its em box is centred across the column like the upright glyphs beside it, which
+        // puts its own baseline half an em-box's difference in from that middle (CSS Writing Modes 4
+        // §4.2). Standing it on the alphabetic baseline instead leaves a run of Latin - or a lone
+        // middle dot - off to one side of the column it sits in.
+        var axis = Axis(command, metrics);
+        var baselineX = (Single)(command.Bounds.X + axis);
         var upward = command.Flow.TurnsCounterClockwise;
         var start = (Single)(upward ? command.Bounds.Bottom : command.Bounds.Y);
 
@@ -2076,7 +2221,7 @@ public sealed class SkiaPaintExecutor
         // does: the baseline stands a half-leading and a descent into the box, so the run is moved that
         // far along the column to put its first character at the start of the box rather than that much
         // above it.
-        canvas.Translate((Single)command.Baseline, 0);
+        canvas.Translate((Single)axis, 0);
         DrawRunBlob(canvas, command, start, paint, command.LetterSpacing, command.WordSpacing);
         canvas.Restore();
     }

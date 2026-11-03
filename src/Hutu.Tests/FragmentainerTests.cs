@@ -59,6 +59,24 @@ public sealed class FragmentainerTests
     }
 
     [Test]
+    public void AKeptLineMovesWithTheLineAfterIt()
+    {
+        var heights = new[] { 10.0, 10.0, 10.0, 10.0 };
+        var keeps = new[] { false, true, false, false };
+
+        Assert.That(
+            Fragmentainer.FillLines(
+                heights,
+                25,
+                3,
+                orphans: 1,
+                widows: 1,
+                keeps: keeps),
+            Is.EqualTo(new[] { 1, 2, 1 }),
+            "the pair is not cut across the first two fragments");
+    }
+
+    [Test]
     public void TheFirstChildsBreakIsTheBlocksOwn()
     {
         var children = Children(2);

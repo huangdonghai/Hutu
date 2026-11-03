@@ -47,6 +47,8 @@ internal static class Fragmentainer
     /// <summary>
     /// Fills the fragments with lines, keeping the orphans and widows of each cut (CSS Break 3 §3.3):
     /// the counts it returns are the lines each column takes, and the last column takes what is left.
+    /// A line marked as kept with the one after it is not cut from that line while another fragment
+    /// remains available.
     /// </summary>
     public static IReadOnlyList<Int32> FillLines(
         IReadOnlyList<Double> heights,
@@ -56,7 +58,8 @@ internal static class Fragmentainer
         Int32 widows,
         IReadOnlyList<Double>? startTrims = null,
         IReadOnlyList<Double>? endTrims = null,
-        Boolean spills = false)
+        Boolean spills = false,
+        IReadOnlyList<Boolean>? keeps = null)
     {
         var counts = new List<Int32>(Math.Min(columns, heights.Count));
         var from = 0;
@@ -64,6 +67,16 @@ internal static class Fragmentainer
         for (var column = 0; column < columns && from < heights.Count; column++)
         {
             var fit = FragmentSlicer.Fitting(heights, extent, orphans, widows, from, startTrims, endTrims);
+
+            // A keep-with-next boundary may not be cut while another fragment is still available.
+            // The last fragment falls back to the ordinary slice rather than losing content.
+            if (keeps is not null && !spills && column < columns - 1)
+            {
+                while (fit > 0 && from + fit < heights.Count && keeps[from + fit - 1])
+                {
+                    fit--;
+                }
+            }
 
             // A block that cannot keep its orphans in this room moves whole to the next fragment. A fill
             // that names as many columns as it needs offers that next fragment the very same room for the
@@ -108,8 +121,8 @@ internal static class Fragmentainer
 
     /// <summary>
     /// Gets the least extent a balanced fill of <paramref name="columns"/> columns needs for a run of
-    /// lines: the height at which the whole run still fits, honoured with the same orphans and widows the
-    /// fill uses.
+    /// lines: the height at which the whole run still fits, honoured with the same orphans, widows and
+    /// kept line boundaries the fill uses.
     /// </summary>
     public static Double BalanceLines(
         IReadOnlyList<Double> heights,
@@ -117,7 +130,8 @@ internal static class Fragmentainer
         Int32 orphans,
         Int32 widows,
         IReadOnlyList<Double>? startTrims = null,
-        IReadOnlyList<Double>? endTrims = null)
+        IReadOnlyList<Double>? endTrims = null,
+        IReadOnlyList<Boolean>? keeps = null)
     {
         if (columns <= 1 || heights.Count == 0)
         {
@@ -139,7 +153,15 @@ internal static class Fragmentainer
             var middle = (low + high) / 2;
 
             if (middle >= tallest &&
-                Placed(FillLines(heights, middle, columns, orphans, widows, startTrims, endTrims)) >= heights.Count)
+                Placed(FillLines(
+                    heights,
+                    middle,
+                    columns,
+                    orphans,
+                    widows,
+                    startTrims,
+                    endTrims,
+                    keeps: keeps)) >= heights.Count)
             {
                 high = middle;
             }

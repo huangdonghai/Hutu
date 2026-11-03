@@ -156,6 +156,22 @@ internal static class LayoutDumper
             text.Append(" \"").Append(Quote(node.Text)).Append('"')
                 .Append(" base ").Append(Number(node.Baseline))
                 .Append(" font ").Append(Number(node.Font.Size)).Append('@').Append(node.Font.Family);
+
+            // Which characters the property marked for trimming is the other half of the answer:
+            // a run measured too wide and a run trimmed in the paint but not in the layout read
+            // differently, and nothing else in the dump tells them apart.
+            if (node.Trims is { } marks)
+            {
+                text.Append(" trims");
+
+                for (var at = 0; at < marks.Length; at++)
+                {
+                    if (marks[at] != '\0')
+                    {
+                        text.Append(' ').Append(at).Append(marks[at]);
+                    }
+                }
+            }
         }
 
         if (node.Kind == LayoutKind.Image)
@@ -240,6 +256,31 @@ internal static class LayoutDumper
                     .Append("\" base ").Append(Number(run.Baseline))
                     .Append(" font ").Append(Number(run.Font.Size)).Append('@').Append(run.Font.Family)
                     .Append(" #").Append(run.Color.ToString("x8"));
+
+                // Whether a decoration reached the command at all is part of what the page drew, and
+                // nothing else in the dump says it: the lines ride on the run rather than standing as
+                // commands of their own.
+                foreach (var decoration in run.Decorations)
+                {
+                    text.Append(" decor ");
+
+                    if (decoration.Underline)
+                    {
+                        text.Append('u');
+                    }
+
+                    if (decoration.Overline)
+                    {
+                        text.Append('o');
+                    }
+
+                    if (decoration.LineThrough)
+                    {
+                        text.Append('l');
+                    }
+
+                    text.Append(':').Append(decoration.Shape.ToString().ToLowerInvariant());
+                }
                 break;
             case ImageCommand image:
                 text.Append(' ').Append(image.Fit.ToString().ToLowerInvariant()).Append(' ').Append(Tail(image.Url));

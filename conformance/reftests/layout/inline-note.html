@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>inline note draws two ordinary sublines and grows its line</title>
+<link rel="match" href="inline-note-ref.html">
+<style>
+@font-face {
+  font-family: NoteAhem;
+  src: url('../../fonts/Ahem.ttf');
+}
+html, body { margin: 0; }
+.line {
+  margin: 0;
+  font-family: NoteAhem;
+  font-size: 20px;
+  line-height: 24px;
+}
+.note {
+  -hutu-note-placement: inline;
+  font-size: 20px;
+  line-height: 20px;
+}
+.justified {
+  width: 90px;
+  margin-top: 10px;
+  font-family: NoteAhem;
+  font-size: 20px;
+  line-height: 24px;
+  text-align: justify;
+  text-justify: inter-character;
+}
+</style>
+</head>
+<body>
+<div class="line"><span class="note">abcd</span></div>
+<div class="justified"><span class="note">abcdefghij</span></div>
+</body>
+</html>

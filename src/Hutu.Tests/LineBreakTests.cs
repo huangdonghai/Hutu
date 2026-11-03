@@ -270,6 +270,28 @@ public sealed class LineBreakTests
 
     private static List<String> Chunks(String text) => TextChunker.Chunks(text).ToList();
 
+    [Test]
+    public void AScriptNeedingAnalysisFallsBackToBreakingBetweenItsLetters()
+    {
+        // Word boundaries in these scripts are not written, and an engine without the analysis to find
+        // them is not allowed to overflow: it must assume an opportunity between each pair of typographic
+        // letter units (CSS Text 3 §5.1). The marks of the same scripts stay on the letter they stand
+        // over, under or beside, which is why the vowel here opens no place to break.
+        var text = "\u0E21\u0E19\u0E38\u0E0A\u0E22";
+
+        Assert.That(
+            Chunks(text, LineBreaks.WordBreaking.Normal),
+            Is.EqualTo(new[] { "\u0E21", "\u0E19\u0E38", "\u0E0A", "\u0E22" }),
+            "the line may end between the letters, and not inside one");
+
+        // `keep-all` asks for that licence to be withheld: only a space, or a break the page wrote,
+        // comes between the letters then (§5.4).
+        Assert.That(
+            Chunks(text, LineBreaks.WordBreaking.KeepAll),
+            Is.EqualTo(new[] { text }),
+            "nothing but the marks' own rule holds the run together");
+    }
+
     private static List<String> Chunks(String text, LineBreaks.WordBreaking word)
     {
         var chunks = new List<String>();

@@ -42,6 +42,27 @@ public enum DecorationSkip : Byte
 }
 
 /// <summary>
+/// Which of the spaces at the ends of the text a decoration runs across are left without a line. The
+/// white space *between* two letters is never skipped: it is part of what the rule runs across, and a
+/// line broken at every word would not read as one rule (CSS Text Decoration 4 §2.9.2).
+/// </summary>
+[Flags]
+public enum DecorationSkipSpaces : Byte
+{
+    /// <summary>Every space the line reaches across takes its part of the line.</summary>
+    None = 0,
+
+    /// <summary>The white space the decorated text opens with is left undecorated.</summary>
+    Start = 1,
+
+    /// <summary>The white space the decorated text closes with is left undecorated.</summary>
+    End = 2,
+
+    /// <summary>Both ends, which is what <c>all</c> says.</summary>
+    All = Start | End,
+}
+
+/// <summary>
 /// One decorating box's lines, as they are drawn across the text they reach.
 /// </summary>
 /// <remarks>
@@ -69,6 +90,30 @@ public sealed record DecorationSource(
     /// </summary>
     public Object? Speaker { get; init; }
 
+    /// <summary>
+    /// Gets the font the decorating box is set in. A column stands the line it draws at a distance
+    /// taken from that font - its inline box and its own underline metric - rather than from the font
+    /// of each run the line happens to cross, so that a note set smaller than the text beside it is
+    /// lined at its own size and a run that changes face does not move the line (§2.9). It is not part
+    /// of what the record answers, for the reason <see cref="Speaker"/> is not.
+    /// </summary>
+    public FontStyle Font { get; init; }
+
+    /// <summary>
+    /// Gets where the decorating box begins along the line. A wavy line is counted from that place, so
+    /// that the runs the box is drawn in carry on one wave rather than each beginning a new one where it
+    /// starts - which is where the browser beside this one counts it from as well (§3.3). It is not part
+    /// of what the record answers, for the reason <see cref="Speaker"/> is not.
+    /// </summary>
+    public Double Start { get; init; }
+
+    /// <summary>
+    /// Gets where this decorating box stands its underlines (CSS Text Decoration 4 §2.7). Two boxes
+    /// that draw the same line but stand it on different sides are different decorators, so the
+    /// position is part of the value the record compares.
+    /// </summary>
+    public TextUnderlinePosition Position { get; init; } = TextUnderlinePosition.Auto;
+
     public Boolean Equals(DecorationSource? other) =>
         other is not null &&
         Underline == other.Underline &&
@@ -78,7 +123,8 @@ public sealed record DecorationSource(
         Color == other.Color &&
         Thickness == other.Thickness &&
         UnderlineOffset == other.UnderlineOffset &&
-        Insets == other.Insets;
+        Insets == other.Insets &&
+        Position == other.Position;
 
     public override int GetHashCode() =>
         HashCode.Combine(
@@ -90,7 +136,8 @@ public sealed record DecorationSource(
                 Color),
             Thickness,
             UnderlineOffset,
-            Insets);
+            Insets,
+            Position);
 }
 
 /// <summary>
@@ -115,7 +162,17 @@ public sealed record DecorationInsets(
     Double? StartShare,
     Double? EndShare,
     Boolean Auto,
-    Boolean PerFragment);
+    Boolean PerFragment)
+{
+    /// <summary>
+    /// Gets which ends of the text this box decorates leave their spaces undecorated: the part of
+    /// <c>text-decoration-skip-spaces</c> that belongs with the ends rather than with the line, since
+    /// what it asks is that the line stop short of the white space the text opens or closes with
+    /// (§2.9.2). It rides along here because the two are carried out at the same moment: the walk that
+    /// pulls a line's ends in is the one that knows how much text the line runs across.
+    /// </summary>
+    public DecorationSkipSpaces Spaces { get; init; }
+}
 
 /// <summary>
 /// Where one decorating box's line stands on one line of text and how thick it is, settled from all the

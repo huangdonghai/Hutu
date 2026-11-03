@@ -134,6 +134,14 @@ internal sealed class TableGrid
     /// <summary>Gets the width each column needs at its narrowest.</summary>
     public Double[] Minimum = [];
 
+    /// <summary>Gets the minimums the cells that stand in one column asked for, before the spanning
+    /// cells were folded in. A per cent is shared out against these: what a <c>colspan</c> cell needs
+    /// is settled by the sharing afterwards and is no claim on one column's room (CSS Tables 3 §4.5,
+    /// measured: wpt/css-tables/table-colspan-percent-auto, where a 90 per cent column keeps its 360
+    /// of a 400-pixel table beside an automatic column that takes the remaining 40).
+    /// </summary>
+    public Double[] SpanFree = [];
+
     /// <summary>Gets the width each column wants when nothing forces it to wrap.</summary>
     public Double[] Maximum = [];
 
@@ -213,6 +221,9 @@ internal sealed class TableGrid
                     ? left.Row.CompareTo(right.Row)
                     : left.Column.CompareTo(right.Column));
 
+        // What the spans will claim is not what the columns demand on their own; keep the pair apart.
+        SpanFree = (Double[])Minimum.Clone();
+
         foreach (var cell in spanning)
         {
             Spread(Minimum, cell, cell.MinContent);
@@ -233,7 +244,63 @@ internal sealed class TableGrid
             return false;
         }
 
+        // A percentage paints a share of the room the columns have, but the columns that asked for no
+        // percentage still need their content first. A row of logos followed by cells declared 27%,
+        // 27%, 27% and 19% otherwise added the logos' minimums on top of the whole table width: the
+        // table grew past the width its own style gave it. When the shares and those minimums cannot
+        // both fit, the percentage columns divide what the automatic columns leave, in the proportions
+        // the page wrote (CSS Tables 3 4.5, measured: the two names in TableLayoutTests that a cell's
+        // per cent must not narrow its own content, and that percentage columns share the room an
+        // Only the shares that set the proportions are read from a cell that stands in one column: a
+        // spanning cell is not a claim on one column's width, but its own per cent still resolves once
+        // the table's width is known (measured: wpt/css-tables/table-colspan-percent-auto).
+        // automatic column leaves).
+        var percentages = new Dictionary<Int32, Double>();
         var any = false;
+
+        foreach (var row in Rows)
+        {
+            foreach (var cell in row.Cells)
+            {
+                if (cell.Span == 1 &&
+                    cell.SpecifiedLength is { Kind: StyleLengthKind.Percent } length)
+                {
+                    var width = Math.Max(0, length.Resolve(basis));
+
+                    percentages[cell.Column] = percentages.TryGetValue(cell.Column, out var held)
+                        ? Math.Max(held, width)
+                        : width;
+
+                    any = true;
+                }
+            }
+        }
+
+        if (!any)
+        {
+            return false;
+        }
+
+        var percentTotal = 0.0;
+
+        foreach (var width in percentages.Values)
+        {
+            percentTotal += width;
+        }
+
+        var reserved = 0.0;
+
+        for (var column = 0; column < Columns; column++)
+        {
+            if (!percentages.ContainsKey(column))
+            {
+                reserved += column < SpanFree.Length ? SpanFree[column] : 0;
+            }
+        }
+
+        var scale = percentTotal + reserved > basis + 0.0001
+            ? Math.Max(0, basis - reserved) / percentTotal
+            : 1.0;
 
         foreach (var row in Rows)
         {
@@ -243,18 +310,13 @@ internal sealed class TableGrid
                 {
                     // A per-cent width sizes the grid area itself, insets included, so nothing is added
                     // to it here.
-                    cell.Specified = Math.Max(0, length.Resolve(basis));
-                    any = true;
+                    cell.Specified = Math.Max(0, length.Resolve(basis) * scale);
                 }
             }
         }
 
-        if (any)
-        {
-            Prepare();
-        }
-
-        return any;
+        Prepare();
+        return true;
     }
 
     /// <summary>Gets the narrowest width the columns can take between them.</summary>

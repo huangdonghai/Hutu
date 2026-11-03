@@ -156,7 +156,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             primary.UnderlineThickness,
             primary.StrikeoutOffset,
             primary.StrikeoutThickness,
-            capHeight: primary.CapHeight);
+            capHeight: primary.CapHeight,
+            emDescent: primary.EmDescent);
     }
 
     /// <summary>
@@ -286,10 +287,15 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         var font = GetFont(style, codePoint);
         var vertical = _shaper.ShapeVertical(font, text, style.Features);
         var advance = Math.Abs(vertical.Advance);
+        var horizontal = MeasureWidth(text, style);
 
-        return vertical.Succeeded && advance > 0
+        // A vertical width feature such as `vhal` may make the step narrower than the character is
+        // along a row, and that narrower step is the one a column takes. A face whose vertical
+        // metrics are wider - some fonts give a symbol a box many ems tall - is not asking for a
+        // wider cell: the character still stands in the width its row advance gives it.
+        return vertical.Succeeded && advance > 0 && advance < horizontal
             ? advance
-            : MeasureWidth(text, style);
+            : horizontal;
     }
 
     /// <summary>
@@ -420,7 +426,9 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
                 vertical.Succeeded &&
                 verticalAdvance > 0;
             var horizontal = MeasureWidth(characterText, style);
-            var advance = exact ? verticalAdvance : horizontal;
+            // The half-width forms are half the em, whatever advance the face carries for the glyph it
+            // substituted - see OrientedRun.Advance for the layout's side of the same answer.
+            var advance = exact ? Math.Max(verticalAdvance, style.Size / 2) : horizontal;
 
             // The cell is centred across the column by the character's own width, not by a width
             // feature: halt and vhal change how far the glyph advances, not where it stands across
@@ -451,15 +459,16 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             // a glyph of the same font, drawn where the font puts that glyph. The reserved forms are a
             // block of the BMP, so a character from the planes above has no form to be asked for.
             if (codePoint <= Char.MaxValue &&
-                VerticalForms.TryGet((Char)codePoint, out var replacement) && HasGlyph(style, replacement))
+                VerticalForms.TryGet((Char)codePoint, out var replacement) &&
+                font.Typeface?.GetGlyph(replacement) != 0)
             {
                 var replacementText = replacement.ToString();
-                var replacementFont = GetFont(style, replacement);
+                var replacementFont = font;
                 var replacementRun = _shaper.ShapeVertical(replacementFont, replacementText, style.Features);
                 var replacementHasOrigin = replacementRun.Succeeded && replacementRun.Glyphs.Length == 1;
                 var replacementCentre = style.Features is null
-                    ? MeasureWidth(replacementText, style)
-                    : MeasureWidth(replacementText, WithoutFeatures(style));
+                    ? MeasureWidthWith(replacementFont, replacementText, features: null)
+                    : MeasureWidthWith(replacementFont, replacementText, WithoutFeatures(style).Features);
 
                 cells.Add(new UprightCell(
                     replacementFont,
@@ -489,6 +498,13 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
         }
 
         return cells;
+    }
+
+    /// <summary>Measures a stretch with the exact face and features the caller chose.</summary>
+    private Double MeasureWidthWith(SKFont font, String text, String? features)
+    {
+        var shaped = _shaper.Shape(font, text, features);
+        return shaped.Succeeded ? shaped.Advance : font.MeasureText(text);
     }
 
     /// <summary>Whether the font answered a vertical run with a glyph of its own rather than the one a line would use.</summary>
@@ -527,7 +543,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 
         if (usedSize <= 0)
         {
-            return new FontMetrics(0, 0, 0, 0, 0, 0, 0, xHeight: 0, capHeight: 0);
+            return new FontMetrics(0, 0, 0, 0, 0, 0, 0, xHeight: 0, capHeight: 0, emDescent: 0);
         }
 
         // GetFontMetrics reports the recommended line spacing; the metrics themselves are always
@@ -546,7 +562,12 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
             // Skia's metrics carry no x-height, so the face itself is asked what it stands its lowercase
             // at; a font that does not say leaves the field empty and the layout guesses from the em.
             xHeight: _openType.GetXHeight(font.Typeface, (Single)usedSize) ?? 0,
-            capHeight: metrics.CapHeight);
+            capHeight: metrics.CapHeight,
+            emDescent: _openType.GetEmDescent(
+                font.Typeface,
+                (Single)usedSize,
+                -metrics.Ascent,
+                metrics.Descent));
     }
 
     private SKFont CreateFont(FontStyle style) => new(_resolver.Resolve(style), (Single)EffectiveSize(style));

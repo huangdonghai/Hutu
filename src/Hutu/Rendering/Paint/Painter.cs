@@ -1888,6 +1888,22 @@ internal sealed class Painter
         return runs;
     }
 
+    /// <summary>
+    /// Gets the letter spacing a run is drawn with: what the style settled, carried along with the glyphs
+    /// where the page wrote it as a share of the font and the line was fitted to fill its box. A spacing
+    /// stated as a length is the page's own number and stays (CSS Text 5 §1.1.1).
+    /// </summary>
+    private static Double DrawnLetterSpacing(LayoutBox box, ComputedStyle style) =>
+        style.ResolvedFont.LetterSpacingPercent is not null
+            ? style.LetterSpacing * box.FitScale
+            : style.LetterSpacing;
+
+    /// <summary>Gets the room between words the run is drawn with, on the same terms as above.</summary>
+    private static Double DrawnWordSpacing(LayoutBox box, ComputedStyle style) =>
+        style.ResolvedFont.WordSpacingPercent is not null
+            ? style.WordSpacing * box.FitScale
+            : style.WordSpacing;
+
     private static void GatherTextRuns(LayoutBox node, List<TextCommand> runs)
     {
         if (!String.IsNullOrEmpty(node.Text))
@@ -1902,7 +1918,7 @@ internal sealed class Painter
                 0xFF00_0000,
                 node.Decorations ?? NoDecorations,
                 node.Flow,
-                style.LetterSpacing,
+                DrawnLetterSpacing(node, style),
                 style.TextStrokeWidth,
                 0,
                 reversed: node.Reversed));
@@ -1997,13 +2013,13 @@ internal sealed class Painter
             fill,
             box.Decorations ?? NoDecorations,
             box.Flow,
-            style.LetterSpacing,
+            DrawnLetterSpacing(box, style),
             stroke.TextStrokeWidth,
             stroke.TextStrokeColor,
             box.Justification,
             box.Justifies,
             style.TextJustify,
-            style.WordSpacing,
+            DrawnWordSpacing(box, style),
             box.DecorationPlacements,
             style.SkipInk,
             (line is { Shadow: true } cast ? cast.Style : style).TextShadows,

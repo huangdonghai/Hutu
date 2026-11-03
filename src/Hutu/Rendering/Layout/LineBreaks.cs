@@ -336,6 +336,16 @@ internal static class LineBreaks
             return BreakClass.Cm;
         }
 
+        // §5.1: a writing system that marks no word boundaries leaves the engine nothing to break
+        // between unless it analyses the text, and an engine without that analysis is not allowed to
+        // overflow - it must assume an opportunity between the letter units. Reading them as
+        // ideographic is exactly that assumption, and it is what lets a line of Thai, Khmer, Myanmar or
+        // Javanese come apart where a dictionary would have said.
+        if (word is WordBreaking.Normal && TextChunker.RequiresAnalysis(codePoint))
+        {
+            return BreakClass.Id;
+        }
+
         return Held(TextChunker.IsCjk(codePoint) ? BreakClass.Id : BreakClass.Al, word);
     }
 

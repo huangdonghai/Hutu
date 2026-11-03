@@ -58,6 +58,34 @@ public sealed class TextDecorationPaintTests
     }
 
     [Test]
+    public async Task HorizontalCjkAutoUnderlineUsesTheFontPosition()
+    {
+        const String cjk = "font-family:Microsoft JhengHei;font-size:40px;" +
+            "text-decoration-color:red;text-decoration-skip-ink:none;text-decoration-thickness:2px";
+        var auto = await Ink("中", "underline", cjk + ";text-underline-position:auto");
+        var fromFont = await Ink("中", "underline", cjk + ";text-underline-position:from-font");
+
+        Assert.That(
+            auto.Bottommost,
+            Is.EqualTo(fromFont.Bottommost).Within(2),
+            "auto must not move a horizontal CJK underline down to the font descent");
+    }
+
+    [Test]
+    public async Task HorizontalCjkUnderUsesTheBottomOfTheEmBox()
+    {
+        const String cjk = "font-family:Microsoft JhengHei;font-size:40px;" +
+            "text-decoration-color:red;text-decoration-skip-ink:none;text-decoration-thickness:8px";
+        var auto = await Ink("中", "underline", cjk + ";text-underline-position:auto");
+        var under = await Ink("中", "underline", cjk + ";text-underline-position:under");
+
+        Assert.That(
+            under.Bottommost,
+            Is.EqualTo(auto.Bottommost).Within(2),
+            "under must use the em-box bottom, not the font's full hhea descent");
+    }
+
+    [Test]
     public async Task ADoubleDecorationDrawsTwoBandsOfInk()
     {
         var solid = await Ink(Text, "underline solid");
@@ -90,6 +118,52 @@ public sealed class TextDecorationPaintTests
             dotted.Columns,
             Is.GreaterThanOrEqualTo(3),
             "and a dotted one is a row of separate dots");
+    }
+
+    /// <summary>
+    /// <c>text-decoration-skip-spaces: start end</c> keeps the white space a decorated text opens and
+    /// closes with free of the rule: the line stops at the first letter it has a reason to stand under,
+    /// however much space the mode kept on either side of the letters (CSS Text Decoration 4 §2.9.2).
+    /// Without the ask the same text is ruled straight through those spaces, which is the pair the
+    /// comparison below states.
+    /// </summary>
+    [Test]
+    public async Task ARuleAskedToSkipItsEndSpacesStopsAtTheFirstLetterUnderIt()
+    {
+        // The eight spaces on either side of the letters are worth sixty-four pixels of rule at the size
+        // this text is set at, and the walk that pulls the ends in is where the ask is carried out.
+        const String Spaced = "        " + Text + "        ";
+
+        var whole = await Ends(Spaced, "");
+        var skipped = await Ends(Spaced, "text-decoration-skip-spaces:start end;");
+        var before = await Ends(Spaced, "text-decoration-skip-spaces:start;");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(whole.Start, Is.EqualTo(0).Within(0.5), "nothing was pulled in");
+            Assert.That(whole.End, Is.EqualTo(0).Within(0.5));
+            Assert.That(skipped.Start, Is.EqualTo(40).Within(0.5), "the spaces the text opens with are left out");
+            Assert.That(skipped.End, Is.EqualTo(40).Within(0.5), "and the ones it closes with");
+            Assert.That(before.Start, Is.EqualTo(40).Within(0.5), "naming one end pulls that one in");
+            Assert.That(before.End, Is.EqualTo(0).Within(0.5), "and only that one");
+        });
+    }
+
+    private static async Task<(Double Start, Double End)> Ends(String content, String extra)
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 200);
+
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            $"<p style='margin:0;font-size:40px;white-space:pre;text-decoration:underline;{extra}'>" +
+            $"{content}</p></body></html>");
+
+        var run = Walk(view.Layout!.Root).Single(node => node.Kind == LayoutKind.Text);
+
+        Assert.That(run.DecorationPlacements, Is.Not.Null.And.Not.Empty, "the run carries the line it asks for");
+
+        return (run.DecorationPlacements![0].TrimStart, run.DecorationPlacements![0].TrimEnd);
     }
 
     private static async Task<InkExtent> Ink(String content, String decoration = "none", String extra = "")

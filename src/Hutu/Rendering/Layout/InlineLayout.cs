@@ -1,7 +1,8 @@
-﻿using AngleSharp.Css.Dom;
+using AngleSharp.Css.Dom;
 using Hutu.Rendering.Boxes;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 
 using System.Globalization;
@@ -113,7 +114,7 @@ internal sealed class InlineLayout
         Double maxInline,
         WritingModeInfo flow,
         InlineContext context,
-        Double indent,
+        TextIndentation indent,
         InlineStart? start = null)
     {
         // A plan that begins partway through the content belongs to one fragment, not to the box: it is
@@ -156,6 +157,13 @@ internal sealed class InlineLayout
             Ellipsize(lines, maxInline, flow, ellipsis, container);
         }
 
+        // The lines the block reached are then scaled to fill their line boxes, where the page asked for
+        // fitting: the breaks are already settled, and what changes is how big the text on each line is
+        // drawn (CSS Text 5 §1.1, Appendix A - applied after wrapping, before justification).
+        FitLines(container, lines, context);
+
+        lines = AddInterlineNotes(container, lines, maxInline, flow, context);
+
         _plans[key] = lines;
         return lines;
     }
@@ -172,6 +180,173 @@ internal sealed class InlineLayout
         {
             EllipsizeLine(line, maxInline, flow, mark, container, force: false);
         }
+    }
+
+    /// <summary>
+    /// Scales the block's lines so the text on each of them fills its line box, which is what
+    /// <c>text-fit</c> asks for (CSS Text 5 §1.1).
+    /// </summary>
+    /// <remarks>
+    /// A line's factor is the room the fitting can hand to its text divided by the room that text takes:
+    /// the scalable parts are the text and the spacing that travels with the font size, while a replaced
+    /// box, an atomic inline and a spacing written as a length stay at the size they were written at and
+    /// come off the room first (§1.1.1). The direction says which lines the property reaches at all - a
+    /// block that grows leaves a line that already overflows alone - and the scaling says whether one
+    /// factor serves every line or each has its own, with <c>per-line</c> holding the block's last line
+    /// and any line a forced break ended unscaled.
+    /// </remarks>
+    private void FitLines(Box container, List<Line> lines, InlineContext context)
+    {
+        var fit = container.Style.TextFitting;
+
+        if (fit.IsNone || lines.Count == 0)
+        {
+            return;
+        }
+
+        // A line whose room depends on how far down the block it stands is a line the rule leaves alone,
+        // and floats are exactly that: the fitting is switched off for the whole block (§1.1).
+        if (context.Containing.Floats is not null)
+        {
+            return;
+        }
+
+        var factors = new Double[lines.Count];
+        var shared = 1.0;
+
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+
+            // Nothing to scale, or no room to scale into, is a line drawn at the size it stands at. What
+            // the line holds that the fitting cannot reach is everything the text does not account for:
+            // the boxes of replaced and atomic content, an inline element's own padding, border and margin
+            // along the line, and the room the line's trailing spaces still take - all of which stand at
+            // the size they were written at while the text is stretched or shrunk around them
+            // (CSS Text 5 §1.1.1).
+            var scalable = ScalableExtent(line);
+            var room = line.Extent - line.Indent - Math.Max(0, line.Used - scalable);
+
+            if (scalable <= 0 || room <= 0)
+            {
+                factors[index] = 1;
+                continue;
+            }
+
+            var factor = room / scalable;
+
+            factors[index] = fit.Clamp(fit.Mode switch
+            {
+                TextFitMode.Grow => Math.Max(1, factor),
+                TextFitMode.Shrink => Math.Min(1, factor),
+                _ => 1,
+            });
+
+            if (index == 0 || factors[index] < shared)
+            {
+                shared = factors[index];
+            }
+        }
+
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var line = lines[index];
+
+            var factor = fit.Scaling switch
+            {
+                // The last line of the block, and any line a forced break ended, keep the size they were
+                // written at: `per-line` is the mode that says so (CSS Text 5 §1.1).
+                TextFitScaling.PerLine when index == lines.Count - 1 || line.ForceEnded => 1,
+                TextFitScaling.PerLine or TextFitScaling.PerLineAll => factors[index],
+                _ => shared,
+            };
+
+            ScaleLine(container, line, factor);
+        }
+    }
+
+    /// <summary>
+    /// Gets the room a line's scalable parts take: the text it holds, with the boxes the fitting cannot
+    /// reach left out (CSS Text 5 §1.1.1).
+    /// </summary>
+    private static Double ScalableExtent(Line line)
+    {
+        var total = 0.0;
+
+        foreach (var fragment in line.Fragments)
+        {
+            if (!fragment.IsReplaced && fragment.Atomic is null && !fragment.OutOfFlow)
+            {
+                total += fragment.Width;
+            }
+        }
+
+        return total;
+    }
+
+
+    /// <summary>
+    /// Puts a line at the factor the fitting worked out for it: the runs it holds are widened by it, the
+    /// line's height goes with them where it came from the font rather than from the page, and the scale
+    /// is carried for the placing pass, which draws the runs at the size it says.
+    /// </summary>
+    private static void ScaleLine(Box container, Line line, Double factor)
+    {
+        if (Math.Abs(factor - 1) < 0.0001)
+        {
+            return;
+        }
+
+        var scalable = 0.0;
+
+        foreach (var fragment in line.Fragments)
+        {
+            if (!fragment.IsReplaced && fragment.Atomic is null && !fragment.OutOfFlow)
+            {
+                fragment.Width *= factor;
+                scalable += fragment.Width / factor;
+            }
+        }
+
+        // Only the text moved: what the line held at its written size keeps its room, and the rest of the
+        // line's extent is that part plus the text at the new size.
+        line.Used += scalable * (factor - 1);
+        line.NaturalUsed = line.NaturalUsed is { } natural ? natural + scalable * (factor - 1) : line.Used;
+        line.Scale = factor;
+
+        // A line's height goes with its text where it is a multiple of the font it is drawn at - a bare
+        // number, a percentage, or `normal`. A length the page wrote is its own number and stands, however
+        // big the glyphs get around it (CSS Text 5 §1.1, and the `line-height: 20px` reference of
+        // grow-per-line-all-line-height measures both readings).
+        if (container.Style.LineHeightTracksFont)
+        {
+            line.Ascent *= factor;
+            line.Height *= factor;
+        }
+    }
+
+    /// <summary>
+    /// Gets the font a run on a fitted line is drawn and measured with: the fragment's own face at the
+    /// size the fitting scaled the line to. The computed font size is left where the page put it - the
+    /// scaling reaches the used size alone, which is why the line-height and the spacing the style carries
+    /// are read from the style rather than from this font (CSS Text 5 §1.1).
+    /// </summary>
+    private static FontStyle FittedFont(Line line, ComputedStyle style)
+    {
+        var font = style.GetFont();
+
+        if (Math.Abs(line.Scale - 1) < 0.0001)
+        {
+            return font;
+        }
+
+        return new FontStyle(
+            font.Family,
+            font.Size * line.Scale,
+            font.Weight,
+            font.IsItalic,
+            font.Adjust,
+            font.Features);
     }
 
     /// <summary>
@@ -316,7 +491,7 @@ internal sealed class InlineLayout
         Double maxInline,
         WritingModeInfo flow,
         InlineContext context,
-        Double indent,
+        TextIndentation indent,
         ComputedStyle strut,
         List<Line> greedy)
     {
@@ -379,7 +554,7 @@ internal sealed class InlineLayout
         Double maxInline,
         WritingModeInfo flow,
         InlineContext context,
-        Double indent,
+        TextIndentation indent,
         InlineStart start)
     {
         var items = new List<InlineItem>();
@@ -387,9 +562,14 @@ internal sealed class InlineLayout
 
         var kept = Resume(items, start);
 
-        return kept.Count == 0
-            ? new List<Line>()
-            : BuildLines(kept, maxInline, flow, context, container.Style, indent);
+        if (kept.Count == 0)
+        {
+            return new List<Line>();
+        }
+
+        var lines = BuildLines(kept, maxInline, flow, context, container.Style, indent);
+
+        return AddInterlineNotes(container, lines, maxInline, flow, context);
     }
 
     /// <summary>
@@ -541,6 +721,7 @@ internal sealed class InlineLayout
                 var columnLines = Plan(container, share, flow, context, Indentation(container, flow, share));
                 var breaks = container.Style.Breaks;
                 var heights = Heights(columnLines);
+                var keeps = Keeps(columnLines);
                 var starts = Leadings(container, columnLines, atStart: true);
                 var ends = Leadings(container, columnLines, atStart: false);
                 var (columnTrimStart, columnTrimEnd) = Trim(container, columnLines);
@@ -572,7 +753,14 @@ internal sealed class InlineLayout
 
                 var columnHeight = multi.Fills
                     ? context.Containing.ContainingBlock.Height
-                    : Fragmentainer.BalanceLines(heights, columns, breaks.Orphans, breaks.Widows, starts, ends);
+                    : Fragmentainer.BalanceLines(
+                        heights,
+                        columns,
+                        breaks.Orphans,
+                        breaks.Widows,
+                        starts,
+                        ends,
+                        keeps);
 
                 return new InlineContentSize(inline, Math.Max(0, columnHeight - columnTrimStart - columnTrimEnd));
             }
@@ -630,12 +818,16 @@ internal sealed class InlineLayout
 
         // The first line carries the box's indentation ahead of anything set on it, so both extents the
         // content asks for are that much wider: one line is the indent and the line, and the narrowest
-        // break is the indent and the longest thing that cannot be broken.
+        // break is the indent and the longest thing that cannot be broken. A forced break ends the line
+        // that carried it, and the next segment asks for the distance only where the modifiers put it on
+        // a line after a break (CSS Text 3 §5.2).
         var indent = Indentation(container, flow, basis);
+        var headIndent = indent.Carries(first: true, afterBreak: false) ? indent.Distance : 0;
+        var breakIndent = indent.Carries(first: false, afterBreak: true) ? indent.Distance : 0;
 
         var minContent = 0.0;
-        var maxContent = indent;
-        var unbreakable = indent;
+        var maxContent = headIndent;
+        var unbreakable = headIndent;
 
         // The widest line of those a forced break makes. A forced break is honoured even by the
         // max-content size (CSS Sizing 3 §5.1), so the lines it makes lie beside each other rather than
@@ -669,6 +861,11 @@ internal sealed class InlineLayout
         // edges between them: a boundary the property widens asks for its room on the one line the
         // content needs, wherever the two characters happened to be written.
         var previous = -1;
+
+        // Where each item stands along the one line the content needs. A reading hanging past its pair
+        // asks the room of a neighbour whose tab stops are already decided by that place, and the walk
+        // from the pair outward cannot answer it for itself.
+        var begins = new Double[items.Count];
 
         for (var position = 0; position < items.Count; position++)
         {
@@ -707,13 +904,16 @@ internal sealed class InlineLayout
                 minContent = Math.Max(minContent, unbreakable - ending);
                 widest = Math.Max(widest, maxContent);
 
-                // The line the break ends takes its trailing space with it, and the one it begins
-                // starts where any line but the first does: no indentation, and no space of its own
-                // ahead of the first thing drawn on it.
-                maxContent = ClonedEdge(open, start: true);
+                // The line the break ends takes its trailing space with it. The one it begins carries
+                // the box's indentation only where the modifiers say a line after a break does, and the
+                // opening edge of every element it still stands inside where those elements clone their
+                // decoration (CSS Text 3 §5.2 with CSS Break 3 §4.6).
+                var reopened = breakIndent + ClonedEdge(open, start: true);
+
+                maxContent = reopened;
                 trailing = 0;
                 sawContent = false;
-                unbreakable = ClonedEdge(open, start: true);
+                unbreakable = reopened;
                 previous = -1;
                 segment++;
                 tail = null;
@@ -725,6 +925,7 @@ internal sealed class InlineLayout
             var insets = Advance(open, item.Inline, carried: null, origin: 0, apply: true, step: null);
             maxContent += insets;
             unbreakable += insets;
+            begins[position] = maxContent + trailing;
 
             if (item.IsOutOfFlow)
             {
@@ -747,10 +948,14 @@ internal sealed class InlineLayout
             }
 
             // An inline-block is atomic too: it takes the extent its own content asks for and offers no
-            // break inside itself, however its content would have been broken had it stood on its own.
+            // break inside itself, however its content would have been broken had it stood on its own. The floats the
+            // line stands among are left behind here as well - an extent asked of an atomic box is asked of its
+            // own root, not of the band around the line (CSS 2.1 §9.4.1, §9.5).
             if (item.IsAtomic)
             {
-                var intrinsic = context.Engine.MeasureIntrinsic(item.Box, context.Containing);
+                var intrinsic = context.Engine.MeasureIntrinsic(
+                    item.Box,
+                    context.Containing.WithFloats(null));
                 var (start, end) = flow.InlineMargins(item.Box.Style.Margin.Resolve(basis));
                 var extent = intrinsic.MaxContent + start + end;
 
@@ -767,9 +972,10 @@ internal sealed class InlineLayout
             // them needs and offers no break opportunity inside itself.
             if (item.IsRuby)
             {
-                var baseWidth = Measure(item.Style, item.Text!, flow);
+                var baseWidth = PairWidth(item.Style, container.Style, item.Text!, maxContent + trailing, flow);
                 var annotationWidth = Measure(item.AnnotationStyle, item.AnnotationText!, flow);
-                var (beforeRoom, afterRoom) = OverhangRoom(items, position);
+                var (beforeRoom, afterRoom) = OverhangRoom(
+                    items, position, maxContent + trailing, baseWidth, annotationWidth, begins, container.Style);
                 var extent = RubyExtent(item, baseWidth, annotationWidth, beforeRoom, afterRoom);
 
                 maxContent += trailing + extent;
@@ -1184,6 +1390,7 @@ internal sealed class InlineLayout
         DistributeSpace(lines);
 
         var heights = Heights(lines);
+        var keeps = Keeps(lines);
         var breaks = container.Style.Breaks;
         var starts = Leadings(container, lines, atStart: true);
         var ends = Leadings(container, lines, atStart: false);
@@ -1199,7 +1406,14 @@ internal sealed class InlineLayout
             ? columnHeight
             : multi.Fills
                 ? contentBox.Height
-                : Fragmentainer.BalanceLines(heights, columns, breaks.Orphans, breaks.Widows, starts, ends);
+                : Fragmentainer.BalanceLines(
+                    heights,
+                    columns,
+                    breaks.Orphans,
+                    breaks.Widows,
+                    starts,
+                    ends,
+                    keeps);
 
         // A fill is not held to the column count: content that does not fit the stated columns spills
         // into more of them, which is how Chrome lays a run too long for its `column-count` out.
@@ -1211,7 +1425,8 @@ internal sealed class InlineLayout
             breaks.Widows,
             starts,
             ends,
-            spills: multi.Fills && !wraps);
+            spills: multi.Fills && !wraps,
+            keeps: keeps);
 
         // Each column trims the leading off its own first and last lines (CSS Inline 3 §6.2), so every
         // column begins with its first line standing where that line's text edge asks.
@@ -1243,6 +1458,65 @@ internal sealed class InlineLayout
             new List<(Double, Double)> { (contentBox.Y, contentBox.Y + extent) });
 
         return Math.Max(0, extent - trimStart - trimEnd);
+    }
+
+    /// <summary>
+    /// Builds the line flow of one margin-note group at the inline extent the page margin offers.
+    /// Margin notes use the ordinary line composer but are placed as one block after the document
+    /// layout has settled.
+    /// </summary>
+    internal MarginNoteFlow BuildMarginNoteFlow(
+        Box note,
+        Double inlineExtent,
+        WritingModeInfo flow,
+        InlineContext context)
+    {
+        var source = NoteSource.Read(note);
+        var items = NoteItems(
+            source,
+            0,
+            source.Text.Length,
+            inlineExtent,
+            flow,
+            upright: false);
+        var lines = items.Count == 0
+            ? new List<Line>()
+            : BuildLines(
+                items,
+                inlineExtent,
+                flow,
+                context,
+                note.Style,
+                Indentation(note, flow, inlineExtent),
+                emergency: false,
+                settleEdges: true);
+
+        AlignLastLines(lines, inlineExtent);
+        DistributeSpace(lines);
+
+        var block = 0.0;
+
+        foreach (var line in lines)
+        {
+            block += Math.Max(0, line.Height) + line.GapBefore;
+        }
+
+        return new MarginNoteFlow(note, lines, flow, block, this);
+    }
+
+    /// <summary>Places a margin-note flow into its already-positioned content rectangle.</summary>
+    internal void PlaceMarginNoteFlow(
+        MarginNoteFlow flow,
+        LayoutBox parent,
+        Rect contentBox,
+        InlineContext context)
+    {
+        if (flow.BlockSize <= 0)
+        {
+            return;
+        }
+
+        flow.Place(parent, contentBox, context);
     }
 
     /// <summary>Gets the heights the lines take when stacked, the gaps a float made included.</summary>
@@ -1278,6 +1552,19 @@ internal sealed class InlineLayout
         }
 
         return heights;
+    }
+
+    /// <summary>Gets the boundaries between lines that a fragment break must not cut.</summary>
+    private static List<Boolean> Keeps(List<Line> lines)
+    {
+        var keeps = new List<Boolean>(lines.Count);
+
+        foreach (var line in lines)
+        {
+            keeps.Add(line.KeepWithNext);
+        }
+
+        return keeps;
     }
 
     private static Double Total(List<Double> heights)
@@ -1344,6 +1631,14 @@ internal sealed class InlineLayout
                 Flow = flow,
             };
 
+            foreach (var marker in line.Fragments)
+            {
+                if (marker.MarginNote is { } margin)
+                {
+                    context.Engine.RegisterMarginNote(margin.Box, lineBox);
+                }
+            }
+
             var open = new List<OpenInline>();
             var origin = line.Offset + line.Left;
             var last = line.Fragments[^1];
@@ -1354,6 +1649,13 @@ internal sealed class InlineLayout
                 // boxes it belongs to reach out over it, and the line's own cursor is where the
                 // content after it begins (CSS Text 3 §8.2.1).
                 var box = fragment.HangSide == HangStart ? origin - fragment.Width : origin;
+
+                if (fragment.InterlineGap || fragment.InterlineNote is not null ||
+                    fragment.MarginNote is not null)
+                {
+                    origin = box + fragment.Width;
+                    continue;
+                }
 
                 // The inline elements the run sits inside are opened and closed around it, each taking
                 // a box that begins and ends where the run reaches its edges. The step charges the same
@@ -1660,6 +1962,12 @@ internal sealed class InlineLayout
             if (fragment.Length == 0 || fragment.IsReplaced || fragment.Atomic is not null ||
                 fragment.Ruby is not null || fragment.OutOfFlow)
             {
+                if (fragment.InterlineGap || fragment.InterlineNote is not null ||
+                    fragment.MarginNote is not null)
+                {
+                    fragment.Level = baseLevel;
+                }
+
                 Flush();
                 ordered.Add(fragment);
                 continue;
@@ -1922,6 +2230,7 @@ internal sealed class InlineLayout
         item.Node = new LayoutBox(ancestor.Box, LayoutKind.Inline)
         {
             Flow = flow,
+            Margin = ancestor.NoteContent ? ancestor.Margin : default,
             Padding = ancestor.PaddingFor(cutStart, cutEnd),
             Border = ancestor.BorderFor(cutStart, cutEnd),
             SlicesInlineStart = cutStart,
@@ -1977,8 +2286,14 @@ internal sealed class InlineLayout
         var shift = line.BandShifts is { } bands && bands.TryGetValue(ancestor, out var aligned)
             ? aligned
             : 0;
-        var blockOffset = cursor + line.Ascent + shift - ancestor.Ascent - ancestor.BlockStartInset;
-        var blockSize = ancestor.Ascent + ancestor.Descent + ancestor.BlockStartInset + ancestor.BlockEndInset;
+
+        // The band an element draws is as tall as the font it is set in, so on a line the fitting scaled
+        // it goes with the text - while the padding, border and margin around it are lengths the page
+        // wrote, and those stand at the size they were written at (CSS Text 5 §1.1).
+        var ascent = ancestor.Ascent * line.Scale;
+        var descent = ancestor.Descent * line.Scale;
+        var blockOffset = cursor + line.Ascent + shift - ascent - ancestor.BlockStartInset;
+        var blockSize = ascent + descent + ancestor.BlockStartInset + ancestor.BlockEndInset;
 
         item.Node!.BorderBox = flow.Map(contentBox, item.Start, end - item.Start, blockOffset, blockSize);
 
@@ -2004,7 +2319,7 @@ internal sealed class InlineLayout
     }
 
     /// <summary>Builds the node a run is drawn through and puts it in the innermost box open around it.</summary>
-    private static void Place(
+    private void Place(
         TextFragment fragment,
         List<OpenInline> open,
         LayoutBox lineBox,
@@ -2070,6 +2385,24 @@ internal sealed class InlineLayout
             return;
         }
 
+        if (fragment.Note is { } note)
+        {
+            PlaceNote(
+                fragment,
+                note,
+                open,
+                lineBox,
+                contentBox,
+                flow,
+                line,
+                origin,
+                cursor,
+                context,
+                placement);
+
+            return;
+        }
+
         if (fragment.Atomic is { } atomic)
         {
             // The box is arranged as the block container it is - it brings its own geometry, radii and
@@ -2107,7 +2440,8 @@ internal sealed class InlineLayout
             // still the font's content area, so it does not grow to cover an image taller than its text.
             Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Image)
             {
-                Font = fragment.Style.GetFont(),
+                Font = FittedFont(line, fragment.Style),
+                FitScale = line.Scale,
                 Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
                 Flow = fragment.Flow,
                 ImageUrl = fragment.Box.SourceUrl,
@@ -2129,25 +2463,39 @@ internal sealed class InlineLayout
             // the pair were a plain inline and the reading were not there (CSS Ruby 1 §3.6). The
             // reading is laid over the base's content edge, which the shared baseline fixes, and it
             // only grows the line when it reaches past the leading the line already has (Build).
-            var metrics = measurer.GetMetrics(fragment.Style.GetFont());
-            var baseline = line.Ascent + fragment.BaselineShift;
+            var metrics = measurer.GetMetrics(FittedFont(line, fragment.Style));
+            // The turned base is centred across the line by the drawing, so the reading that stands off
+            // its edge is stood off the same middle - see `Marks` for the same exchange.
+            var turned = fragment.Flow.IsVertical && !fragment.Flow.IsSideways &&
+                fragment.Flow.Orientation == TextOrientation.Sideways;
+            var baseline = (turned
+                ? (line.Height + metrics.Ascent - metrics.Descent) / 2
+                : line.Ascent) + fragment.BaselineShift;
 
             // The base keeps the band its own line-height asks for rather than the whole line box: a
             // line grown by the reading - or by a taller neighbour - leaves the base in the band around
             // the shared baseline, which is where its own leading puts it and where the reading, standing
             // just past its content edge, no longer covers it.
-            var band = Math.Min(line.Height, LineBoxHeight(measurer, fragment.Style, fragment.Style.GetFont()));
+            var band = Math.Min(line.Height, LineBoxHeight(measurer, fragment.Style, FittedFont(line, fragment.Style)));
             var bandTop = baseline - metrics.Ascent - ((band - metrics.Ascent - metrics.Descent) / 2);
+
+            // A reading that hung over the text beside its pair pushed the pair along to make room for
+            // itself; otherwise the base keeps the middle of the room the two halves share.
+            var standing = fragment.Hang ?? RubyAligned(
+                fragment.Box.Style.RubyAlign,
+                fragment.Width,
+                fragment.BaseWidth);
 
             Attach(open, lineBox, new LayoutBox(fragment.Box, LayoutKind.Text)
             {
                 Text = fragment.Text,
-                Font = fragment.Style.GetFont(),
+                Font = FittedFont(line, fragment.Style),
+                FitScale = line.Scale,
                 Baseline = flow.BlockOffsetFromLeft(band, baseline - bandTop),
                 Flow = fragment.Flow,
                 BorderBox = flow.Map(
                     contentBox,
-                    origin + RubyAligned(fragment.Box.Style.RubyAlign, fragment.Width, fragment.BaseWidth),
+                    origin + standing,
                     fragment.BaseWidth,
                     cursor + bandTop,
                     band),
@@ -2157,8 +2505,8 @@ internal sealed class InlineLayout
                 annotation,
                 contentBox,
                 flow,
-                origin,
-                fragment.Width,
+                origin + standing,
+                fragment.BaseWidth,
                 cursor + (annotation.Under
                     ? baseline + metrics.Descent
                     : baseline - metrics.Ascent - annotation.Block),
@@ -2187,9 +2535,11 @@ internal sealed class InlineLayout
                 ? spaces[..text.Length]
                 : null,
             AutoSpaceRoom = fragment.AutoSpaceRoom,
-            Font = fragment.Style.GetFont(),
+            Font = FittedFont(line, fragment.Style),
+            FitScale = line.Scale,
             Baseline = flow.BlockOffsetFromLeft(line.Height, line.Ascent + fragment.BaselineShift),
             Flow = fragment.Flow,
+            HangSide = fragment.HangSide,
             Justification = fragment.Justify,
             Justifies = fragment.Expansions,
             Reversed = backwards,
@@ -2200,6 +2550,75 @@ internal sealed class InlineLayout
             fragment, run.Text!, flow, contentBox, origin, room, cursor, line, measurer);
 
         Attach(open, lineBox, run);
+    }
+
+    /// <summary>Places one two-line inline note fragment and its two ordinary text lines.</summary>
+    private void PlaceNote(
+        TextFragment fragment,
+        NoteRun note,
+        List<OpenInline> open,
+        LayoutBox lineBox,
+        Rect contentBox,
+        WritingModeInfo flow,
+        Line line,
+        Double origin,
+        Double cursor,
+        InlineContext context,
+        Placement placement)
+    {
+        var (marginStart, _) = flow.InlineMargins(note.Margin);
+        var (paddingStart, paddingEnd) = flow.InlineMargins(note.Padding);
+        var (borderStart, borderEnd) = flow.InlineMargins(note.Border);
+        var (blockMarginStart, blockMarginEnd) = flow.BlockMargins(note.Margin);
+        var (blockPaddingStart, blockPaddingEnd) = flow.BlockMargins(note.Padding);
+        var (blockBorderStart, blockBorderEnd) = flow.BlockMargins(note.Border);
+        var contentInline = Math.Max(note.FirstWidth, note.SecondWidth);
+        var borderInline = contentInline + paddingStart + paddingEnd + borderStart + borderEnd;
+        var firstBlock = note.First?.Height ?? note.EmptyLineHeight;
+        var secondBlock = note.Second?.Height ?? note.EmptyLineHeight;
+        var borderBlock = firstBlock + secondBlock + blockPaddingStart + blockPaddingEnd +
+            blockBorderStart + blockBorderEnd;
+        var marginBoxBlock = borderBlock + blockMarginStart + blockMarginEnd;
+        var marginBoxTop = cursor + ((line.Height - marginBoxBlock) / 2);
+
+        var outer = new LayoutBox(fragment.Box, LayoutKind.Inline)
+        {
+            Margin = note.Margin,
+            Padding = note.Padding,
+            Border = note.Border,
+            Flow = flow,
+            BorderBox = flow.Map(
+                contentBox,
+                origin + marginStart,
+                borderInline,
+                marginBoxTop + blockMarginStart,
+                borderBlock),
+        };
+
+        Attach(open, lineBox, outer);
+
+        void PlaceRow(Line? row, Double rowOffset)
+        {
+            if (row is null)
+            {
+                return;
+            }
+
+            PlaceLines(
+                fragment.Box,
+                outer,
+                [row],
+                0,
+                1,
+                outer.ContentBox,
+                note.Flow,
+                context,
+                rowOffset,
+                placement);
+        }
+
+        PlaceRow(note.First, 0);
+        PlaceRow(note.Second, firstBlock);
     }
 
     /// <summary>
@@ -2252,7 +2671,17 @@ internal sealed class InlineLayout
         var spacing = fragment.Style.LetterSpacing;
         var words = fragment.Style.WordSpacing;
         var face = measurer.GetMetrics(font);
-        var baseline = line.Ascent + fragment.BaselineShift;
+        // A turned run stands with its em box centred across the line it fills, and the drawing places
+        // its baseline from that middle rather than from the ascent the line was measured with - which
+        // a taller neighbour, or a face resolved for the glyphs rather than the one the page named,
+        // moves. The marks stand off the text's own edge, so they are stood off the same middle, or a
+        // mark drifts away from the letters it marks (CSS Text Decoration 4 §5.2 with Writing Modes 3
+        // §5.2, which is what makes the two mirrored vertical modes read the same side of the text).
+        var turned = fragment.Flow.IsVertical && !fragment.Flow.IsSideways &&
+            fragment.Flow.Orientation == TextOrientation.Sideways;
+        var baseline = (turned
+            ? (line.Height + face.Ascent - face.Descent) / 2
+            : line.Ascent) + fragment.BaselineShift;
 
         // A mark stands just outside the text it marks - above the content edge for a mark on the
         // ascent side, below it for one on the descent side - and takes no room in the line: it may
@@ -2410,6 +2839,65 @@ internal sealed class InlineLayout
     {
         foreach (var child in container.Children)
         {
+            // A note's placement owns the element's participation in flow before position and float
+            // are considered: those properties are ignored on the defining element itself.
+            if (child.Kind == BoxKind.Inline &&
+                child.Style.NotePlacement == NotePlacement.Inline &&
+                !InsideRubyText(chain))
+            {
+                var note = NoteSource.Read(child, hoistInterline: true, hoistMargin: true);
+
+                if (note.Text.Length > 0 && note.HasInk)
+                {
+                    items.Add(InlineItem.CreateNote(note, child, chain));
+                }
+                else
+                {
+                    foreach (var nested in note.NestedInterline)
+                    {
+                        items.Add(InlineItem.CreateInterlineNote(
+                            nested.Note.Content,
+                            nested.Note.Box,
+                            chain));
+                    }
+
+                    foreach (var nested in note.NestedMargin)
+                    {
+                        items.Add(InlineItem.CreateMarginNote(nested.Note.Box, chain));
+                    }
+                }
+
+                continue;
+            }
+
+            if (child.Kind == BoxKind.Inline &&
+                child.Style.NotePlacement == NotePlacement.Interline &&
+                !InsideRubyText(chain))
+            {
+                var note = NoteSource.Read(child, hoistMargin: true);
+
+                if (note.Text.Length > 0 && note.HasInk)
+                {
+                    items.Add(InlineItem.CreateInterlineNote(note, child, chain));
+                }
+
+                continue;
+            }
+
+            if (child.Kind == BoxKind.Inline &&
+                child.Style.NotePlacement == NotePlacement.Margin &&
+                !InsideRubyText(chain))
+            {
+                var note = NoteSource.Read(child);
+
+                if (note.Text.Length > 0 && note.HasInk)
+                {
+                    items.Add(InlineItem.CreateMarginNote(child, chain));
+                }
+
+                continue;
+            }
+
             // A box that left the flow is not part of the line: it is placed against a containing block of
             // its own. It is kept as an item of no extent so the place it would have had is still known -
             // that place is the static position an offset left unset falls back to - while the line it
@@ -2687,6 +3175,315 @@ internal sealed class InlineLayout
         }
     }
 
+    /// <summary>Gets whether a run sits inside the reading half of a ruby pair, where notes do not apply.</summary>
+    private static Boolean InsideRubyText(InlineAncestor? chain)
+    {
+        for (var ancestor = chain; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (ancestor.Box.Element?.LocalName is "rt" or "rtc")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Takes the physical edges one fragment of a sliced inline box carries: inline-start only on the
+    /// first fragment, inline-end only on the last, and both block edges everywhere between.
+    /// </summary>
+    private static Thickness SliceEdges(WritingModeInfo flow, Thickness edges, Boolean first, Boolean last)
+    {
+        var top = edges.Top;
+        var right = edges.Right;
+        var bottom = edges.Bottom;
+        var left = edges.Left;
+
+        if (!flow.IsVertical)
+        {
+            if (flow.InlineSign > 0)
+            {
+                if (!first)
+                {
+                    left = 0;
+                }
+
+                if (!last)
+                {
+                    right = 0;
+                }
+            }
+            else
+            {
+                if (!first)
+                {
+                    right = 0;
+                }
+
+                if (!last)
+                {
+                    left = 0;
+                }
+            }
+        }
+        else if (flow.InlineSign > 0)
+        {
+            if (!first)
+            {
+                top = 0;
+            }
+
+            if (!last)
+            {
+                bottom = 0;
+            }
+        }
+        else
+        {
+            if (!first)
+            {
+                bottom = 0;
+            }
+
+            if (!last)
+            {
+                top = 0;
+            }
+        }
+
+        return new Thickness(top, right, bottom, left);
+    }
+
+    /// <summary>Turns one range of a note into ordinary inline items for the shared line composer.</summary>
+    private List<InlineItem> NoteItems(
+        NoteSource source,
+        Int32 start,
+        Int32 end,
+        Double basis,
+        WritingModeInfo flow,
+        Boolean upright,
+        InlineAncestor? root = null)
+    {
+        var items = new List<InlineItem>();
+        var ancestors = new Dictionary<Box, InlineAncestor>();
+        var markers = source.NestedInterline
+            .Where(marker =>
+                marker.Position >= start &&
+                (marker.Position < end || (marker.Position == end && end == source.Text.Length)))
+            .ToList();
+        var markerIndex = 0;
+        var marginMarkers = source.NestedMargin
+            .Where(marker =>
+                marker.Position >= start &&
+                (marker.Position < end || (marker.Position == end && end == source.Text.Length)))
+            .ToList();
+        var marginIndex = 0;
+
+        InlineAncestor? ChainFor(IReadOnlyList<Box> boxes)
+        {
+            InlineAncestor? chain = root;
+
+            foreach (var ancestor in boxes)
+            {
+                if (!ancestors.TryGetValue(ancestor, out chain))
+                {
+                    chain = new InlineAncestor(ancestor, chain, basis, flow, _measurer, noteContent: true);
+                    ancestors.Add(ancestor, chain);
+                }
+            }
+
+            return chain;
+        }
+
+        void AddMarker(NestedInterlineNote marker)
+        {
+            items.Add(InlineItem.CreateInterlineNote(
+                marker.Note.Content,
+                marker.Note.Box,
+                ChainFor(marker.Ancestors)));
+        }
+
+        void AddMarginMarker(NestedMarginNote marker)
+        {
+            items.Add(InlineItem.CreateMarginNote(
+                marker.Note.Box,
+                ChainFor(marker.Ancestors)));
+        }
+
+        void AddMarkersThrough(Int32 position)
+        {
+            while (true)
+            {
+                var interlinePosition = markerIndex < markers.Count
+                    ? markers[markerIndex].Position
+                    : Int32.MaxValue;
+                var marginPosition = marginIndex < marginMarkers.Count
+                    ? marginMarkers[marginIndex].Position
+                    : Int32.MaxValue;
+                var next = Math.Min(interlinePosition, marginPosition);
+
+                if (next > position)
+                {
+                    return;
+                }
+
+                if (interlinePosition <= marginPosition)
+                {
+                    AddMarker(markers[markerIndex++]);
+                }
+                else
+                {
+                    AddMarginMarker(marginMarkers[marginIndex++]);
+                }
+            }
+        }
+
+        void AddText(NoteSpan span, Int32 from, Int32 to)
+        {
+            if (to <= from)
+            {
+                return;
+            }
+
+            var text = source.Text[from..to];
+            var partFlow = upright
+                ? new WritingModeInfo(
+                    flow.Mode,
+                    TextOrientation.Upright,
+                    flow.CombinesUpright,
+                    flow.Direction)
+                : flow;
+
+            items.Add(InlineItem.CreateText(
+                text,
+                span.Style,
+                span.Box,
+                ChainFor(span.Ancestors),
+                partFlow));
+        }
+
+        foreach (var span in source.Spans)
+        {
+            var from = Math.Max(start, span.Start);
+            var to = Math.Min(end, span.Start + span.Length);
+
+            if (to <= from)
+            {
+                continue;
+            }
+
+            AddMarkersThrough(from);
+
+            while (true)
+            {
+                var interlinePosition = markerIndex < markers.Count
+                    ? markers[markerIndex].Position
+                    : Int32.MaxValue;
+                var marginPosition = marginIndex < marginMarkers.Count
+                    ? marginMarkers[marginIndex].Position
+                    : Int32.MaxValue;
+                var at = Math.Min(interlinePosition, marginPosition);
+
+                if (at >= to)
+                {
+                    break;
+                }
+
+                AddText(span, from, at);
+
+                if (interlinePosition <= marginPosition)
+                {
+                    AddMarker(markers[markerIndex++]);
+                }
+                else
+                {
+                    AddMarginMarker(marginMarkers[marginIndex++]);
+                }
+
+                from = at;
+            }
+
+            AddText(span, from, to);
+            AddMarkersThrough(to);
+        }
+
+        AddMarkersThrough(end);
+        return items;
+    }
+
+    private static Boolean HasUprightCharacters(String text, Int32 start, Int32 end)
+    {
+        foreach (var rune in text[start..end].EnumerateRunes())
+        {
+            var value = rune.Value;
+
+            if (value is >= 0x2E80 and <= 0x9FFF or
+                >= 0xF900 and <= 0xFAFF or
+                >= 0xFE30 and <= 0xFE4F or
+                >= 0xFF00 and <= 0xFFEF or
+                >= 0x20000 and <= 0x3FFFF)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Lays one note subline through the ordinary line composer, forced to a single line.</summary>
+    private Line? NoteLine(
+        NoteSource source,
+        Int32 start,
+        Int32 end,
+        ComputedStyle noteStyle,
+        WritingModeInfo flow,
+        InlineContext context,
+        Double maxInline)
+    {
+        if (end <= start)
+        {
+            return null;
+        }
+
+        var upright = flow.IsVertical && HasUprightCharacters(source.Text, start, end);
+        var lines = BuildLines(
+            NoteItems(source, start, end, maxInline, flow, upright),
+            maxInline,
+            flow,
+            context,
+            noteStyle,
+            emergency: false,
+            singleLine: true,
+            settleEdges: false);
+
+        if (lines.Count == 0)
+        {
+            return null;
+        }
+
+        if (lines.Count != 1)
+        {
+            var excerpt = source.Text.Substring(start, Math.Min(80, end - start));
+            throw new InvalidOperationException(
+                $"An inline-note subline must build exactly one line; got {lines.Count} for \"{excerpt}\".");
+        }
+
+        var line = lines[0];
+
+        if (line.Used <= 0 && !line.Fragments.Exists(HasInk))
+        {
+            return null;
+        }
+
+        line.Left = 0;
+        line.GapBefore = 0;
+        line.Extent = line.Used;
+        line.Offset = 0;
+
+        return line;
+    }
+
     /// <summary>
     /// Splits a text node on its explicit newlines. They survive white-space processing only for
     /// preformatted content, where each one forces a line break rather than being drawn as a glyph.
@@ -2725,8 +3522,15 @@ internal sealed class InlineLayout
         WritingModeInfo flow,
         InlineContext context,
         ComputedStyle strut,
-        Double indent = 0,
-        Boolean emergency = true)
+        TextIndentation indent = default,
+        Boolean emergency = true,
+        Boolean singleLine = false,
+        Boolean settleEdges = true,
+        Double blockStart = 0,
+        IReadOnlyList<Double>? slotExtents = null,
+        IReadOnlyList<Double>? minimumInlineStarts = null,
+        Int32 initialSlot = 0,
+        IReadOnlyList<Line>? slotBodyLines = null)
     {
         var lines = new List<Line>();
 
@@ -2743,17 +3547,44 @@ internal sealed class InlineLayout
         // floated beside it and the float's far edge for the lines that have. A column is left out, as
         // it has been for floats themselves: the band a line would be shortened by runs sideways there.
         var room = new LineRoom(
-            flow.IsVertical ? null : context.Containing.Floats,
-            maxInline,
-            flow.InlineSign < 0);
+            flow.IsVertical || singleLine ? null : context.Containing.Floats,
+            singleLine ? Double.PositiveInfinity : maxInline,
+            flow.InlineSign < 0,
+            blockStart);
 
-        // Only the first line of the content is set in; the line after a forced break begins where any
-        // other line does, which is what leaving the indent behind on the first builder says. An indent
-        // is measured from the content edge and a float shortens the line from that same edge, so a
-        // float standing where the indent reaches leaves the line to start where the float ends, not
+        var slot = initialSlot;
+
+        Double Inset(Double indent)
+        {
+            var leading = indent > 0 ? Math.Max(0, indent - room.Inset) : indent;
+            var minimumInlineStart = minimumInlineStarts is { } starts && slot < starts.Count
+                ? starts[slot]
+                : 0;
+
+            if (minimumInlineStart > room.Inset)
+            {
+                leading = Math.Max(leading, minimumInlineStart - room.Inset);
+            }
+
+            return leading;
+        }
+
+        // The distance a line is set in by, measured from the edge its room begins at: a line the
+        // modifiers put the distance on takes it, and every other line begins where the box does.
+        Double Settled(Boolean first, Boolean afterBreak) =>
+            Inset(indent.Carries(first, afterBreak) ? indent.Distance : 0);
+
+        // An indent is measured from the content edge and a float shortens the line from that same edge,
+        // so a float standing where the indent reaches leaves the line to start where the float ends, not
         // that far past it. A negative indent hangs out of the box and is never pulled back in.
-        var leading = indent > 0 ? Math.Max(0, indent - room.Inset) : indent;
-        var builder = new LineBuilder(strut, leading, flow.IsVertical, _measurer, startsParagraph: true, firstLine: true);
+        var leading = Settled(first: true, afterBreak: false);
+        var builder = new LineBuilder(
+            strut!,
+            leading,
+            flow.IsVertical,
+            _measurer,
+            startsParagraph: true,
+            firstLine: settleEdges);
 
         // The place the line could be cut back to at a soft hyphen, and the steps it has taken since:
         // they begin the next line when the run after the hyphen turns out not to fit.
@@ -2789,19 +3620,79 @@ internal sealed class InlineLayout
             line.Extent = room.Room;
             line.GapBefore = room.Gap;
             line.ForceEnded = forced;
+            line.SlotIndex = slotExtents is null ? -1 : slot;
 
             lines.Add(line);
             carried = line.ContinuesToNext;
             room.Next(line.Height);
+
+            if (slotExtents is { Count: > 0 } && slot < slotExtents.Count - 1)
+            {
+                var extent = slotExtents[slot];
+
+                if (slotBodyLines is { } bodyLines && slot < bodyLines.Count)
+                {
+                    var noteStyle = line.Governing ?? strut;
+                    extent -= InterlineBodyAdjustment(bodyLines[slot], noteStyle);
+                }
+
+                room.Skip(Math.Max(0, extent));
+                slot++;
+            }
         }
 
         void NextLine(Boolean forced = false, Boolean hyphenate = false)
         {
             Close(builder, forced, hyphenate);
-            builder = new LineBuilder(strut, carried, flow.IsVertical, _measurer, startsParagraph: forced);
+            builder = new LineBuilder(
+                strut,
+                carried,
+                flow.IsVertical,
+                _measurer,
+                startsParagraph: forced,
+                indent: Settled(first: false, afterBreak: forced));
             breakPoint = null;
             following = null;
             pendingGrace = 0;
+        }
+
+        void AdvanceToSlot(Int32 target)
+        {
+            if (slotExtents is not { Count: > 0 } || target <= slot)
+            {
+                return;
+            }
+
+            if (builder.HasContent)
+            {
+                NextLine(forced: true);
+            }
+            else
+            {
+                builder = new LineBuilder(
+                    strut,
+                    carried,
+                    flow.IsVertical,
+                    _measurer,
+                    startsParagraph: false,
+                    indent: Settled(first: false, afterBreak: false));
+                breakPoint = null;
+                following = null;
+                pendingGrace = 0;
+            }
+
+            while (slot < target && slot < slotExtents.Count - 1)
+            {
+                room.Skip(slotExtents[slot]);
+                slot++;
+                builder = new LineBuilder(
+                    strut,
+                    carried,
+                    flow.IsVertical,
+                    _measurer,
+                    startsParagraph: false,
+                    indent: Settled(first: false, afterBreak: false));
+            }
         }
 
         void Replay(List<TailStep> steps)
@@ -2849,9 +3740,15 @@ internal sealed class InlineLayout
             return true;
         }
 
+        // Where each item begins along the line the builder is filling. A reading hanging past its pair
+        // asks the room of a neighbour whose tabs are already placed, and only the line can say where.
+        var begins = new Double[items.Count];
+
         for (var index = 0; index < items.Count; index++)
         {
             var item = items[index];
+
+            begins[index] = builder.Width;
 
             if (item.IsBreak)
             {
@@ -2876,6 +3773,33 @@ internal sealed class InlineLayout
             // Whatever comes beside the glyph the line was left short for takes that room back: the
             // glyph hangs only while it ends the line, and from here it does not.
             Charge();
+
+            if (item.InterlineAnchor is { } anchor)
+            {
+                AdvanceToSlot(anchor.Slot);
+
+                var target = Math.Max(builder.Width, anchor.Position - room.Inset);
+
+                if (room.Room > 0)
+                {
+                    target = Math.Min(target, Math.Max(builder.Width, room.Room));
+                }
+
+                builder.AddInterlineGap(item.Box, item.Style, flow, target - builder.Width);
+                continue;
+            }
+
+            if (item.InterlineNote is { } interlineNote)
+            {
+                builder.AddInterlineNote(item.Box, item.Style, flow, item.Inline, interlineNote);
+                continue;
+            }
+
+            if (item.MarginNote is { } marginNote)
+            {
+                builder.AddMarginNote(item.Box, item.Style, flow, item.Inline, marginNote);
+                continue;
+            }
 
             // Only runs of text are kept for the line after the box the loop is about to place: a box
             // is placed where it stands and hands the line back only to the opportunity before the
@@ -2934,6 +3858,511 @@ internal sealed class InlineLayout
                         String.Empty, 0, 0, 0, item.Style, item.Box, flow, ancestor, Empty: true));
                 }
 
+                continue;
+            }
+
+            if (item.NoteSource is { Text.Length: > 0 } noteSource)
+            {
+                var noteText = noteSource.Text;
+                var note = item.Box;
+                var noteStyle = item.Style;
+                var noteFlow = note.Flow;
+                var noteLineHeight = LineBoxHeight(noteStyle, noteStyle.GetFont());
+                var margin = noteStyle.Margin.Resolve(maxInline);
+                var padding = noteStyle.Padding.Resolve(maxInline);
+                var border = BlockLayout.BorderOf(note);
+                var (marginStart, marginEnd) = noteFlow.InlineMargins(margin);
+                var (paddingStart, paddingEnd) = noteFlow.InlineMargins(padding);
+                var (borderStart, borderEnd) = noteFlow.InlineMargins(border);
+                var startEdges = marginStart + paddingStart + borderStart;
+                var endEdges = marginEnd + paddingEnd + borderEnd;
+                var clonesDecoration = noteStyle.ClonesDecoration;
+                var offset = 0;
+                var firstFragment = true;
+                var measured = new Dictionary<(Int32 Start, Int32 End, Double Basis), Line?>();
+                var hoistedMarginNotes = new HashSet<Box>();
+                var hoistedInterlineNotes = new HashSet<Box>();
+
+                Line? MeasuredLine(Int32 start, Int32 end, Double basis)
+                {
+                    var key = (start, end, basis);
+
+                    if (!measured.TryGetValue(key, out var line))
+                    {
+                        line = NoteLine(
+                            noteSource,
+                            start,
+                            end,
+                            noteStyle,
+                            noteFlow,
+                            context,
+                            basis);
+                        measured.Add(key, line);
+                    }
+
+                    return line;
+                }
+
+                while (offset < noteText.Length)
+                {
+                    if (noteText[offset] == '\n')
+                    {
+                        if (builder.HasContent)
+                        {
+                            NextLine();
+                        }
+
+                        offset++;
+                        continue;
+                    }
+
+                    var segmentEnd = noteText.IndexOf('\n', offset);
+
+                    if (segmentEnd < 0)
+                    {
+                        segmentEnd = noteText.Length;
+                    }
+
+                    var boundaries = new List<Int32> { offset };
+
+                    for (var at = offset; at < segmentEnd;)
+                    {
+                        at += TextClusters.UnitsAt(noteText, at, segmentEnd);
+                        boundaries.Add(at);
+                    }
+
+                    var count = boundaries.Count - 1;
+                    // Ask for the same extent Build() will account from these fragments. The running
+                    // estimate includes indent and temporary punctuation grace, which would otherwise
+                    // make this note choose too few characters for the room it really has.
+                    var available = room.Room - builder.Indent - builder.CurrentUsed();
+                    var segmentIsEnd = segmentEnd == noteText.Length;
+
+                    Boolean AllowsBreakAt(Int32 at)
+                    {
+                        if (at <= offset || at >= segmentEnd)
+                        {
+                            return true;
+                        }
+
+                        var before = CodePointBefore(noteText, at);
+                        var after = TextChunker.CodePointAt(noteText, at);
+                        var beforeKind = CharUnicodeInfo.GetUnicodeCategory(before);
+                        var afterKind = CharUnicodeInfo.GetUnicodeCategory(after);
+
+                        static Boolean IsBreakSensitive(UnicodeCategory category) =>
+                            category is UnicodeCategory.SpaceSeparator or
+                                UnicodeCategory.LineSeparator or
+                                UnicodeCategory.ParagraphSeparator or
+                                UnicodeCategory.ConnectorPunctuation or
+                                UnicodeCategory.DashPunctuation or
+                                UnicodeCategory.OpenPunctuation or
+                                UnicodeCategory.ClosePunctuation or
+                                UnicodeCategory.InitialQuotePunctuation or
+                                UnicodeCategory.FinalQuotePunctuation or
+                                UnicodeCategory.OtherPunctuation;
+
+                        if (IsBreakSensitive(afterKind) ||
+                            beforeKind is UnicodeCategory.OpenPunctuation or
+                                UnicodeCategory.InitialQuotePunctuation)
+                        {
+                            return false;
+                        }
+
+                        if (!IsBreakSensitive(beforeKind))
+                        {
+                            return true;
+                        }
+
+                        var style = noteSource.SpanAt(at).Style;
+                        return LineBreaks.MayBreak(before, after, style.WordBreakingRules);
+                    }
+
+                    var advances = new Double[count + 1];
+                    var segmentUpright = noteFlow.IsVertical &&
+                        HasUprightCharacters(noteText, offset, segmentEnd);
+                    var estimateFlow = segmentUpright
+                        ? new WritingModeInfo(
+                            noteFlow.Mode,
+                            TextOrientation.Upright,
+                            noteFlow.CombinesUpright,
+                            noteFlow.Direction)
+                        : noteFlow;
+
+                    // A full line build is too costly to repeat at every grapheme boundary.
+                    // Cumulative cluster advances locate the balance cheaply; ExactCandidate then
+                    // rebuilds only the neighboring boundaries with the ordinary line engine.
+                    for (var unit = 0; unit < count; unit++)
+                    {
+                        var start = boundaries[unit];
+                        var end = boundaries[unit + 1];
+                        var span = noteSource.SpanAt(start);
+                        advances[unit + 1] = advances[unit] +
+                            MeasureChunk(_measurer, span.Style, noteText, start, end - start, estimateFlow);
+                    }
+
+                    // Punctuation prohibitions can cover every boundary near the width-balanced
+                    // estimate. Walk outward for legal splits instead of falling back to one line.
+                    List<Int32> NearbySplits(Int32 take, Int32 center, Int32 wanted)
+                    {
+                        var splits = new List<Int32>(wanted);
+                        var left = Math.Min(take - 1, center);
+                        var right = Math.Min(take, center + 1);
+
+                        while (splits.Count < wanted && (left >= 1 || right <= take))
+                        {
+                            if (left >= 1)
+                            {
+                                if (AllowsBreakAt(boundaries[left]))
+                                {
+                                    splits.Add(left);
+                                }
+
+                                left--;
+                            }
+
+                            if (splits.Count < wanted && right <= take)
+                            {
+                                if (AllowsBreakAt(boundaries[right]))
+                                {
+                                    splits.Add(right);
+                                }
+
+                                right++;
+                            }
+                        }
+
+                        if (splits.Count == 0)
+                        {
+                            // The end boundary is always legal, even where a long unbreakable unit
+                            // leaves no interior split available.
+                            splits.Add(take);
+                        }
+
+                        return splits;
+                    }
+
+                    (Line? First, Line? Second) SplitAt(Int32 take, Int32 at, Double content)
+                    {
+                        var end = boundaries[take];
+                        var split = boundaries[at];
+                        var first = MeasuredLine(offset, split, content);
+                        var second = MeasuredLine(split, end, content);
+
+                        return (first, second);
+                    }
+
+                    (
+                        Line? First,
+                        Line? Second,
+                        Double FirstWidth,
+                        Double SecondWidth,
+                        Double Needed) ExactCandidate(Int32 take, Boolean last)
+                    {
+                        var estimate = Estimate(take, last);
+                        var startEdge = firstFragment || clonesDecoration ? startEdges : 0;
+                        var endEdge = last || clonesDecoration ? endEdges : 0;
+                        var content = Math.Max(1, available - startEdge - endEdge);
+                        var best = default((Line? First, Line? Second, Double FirstWidth, Double SecondWidth, Double Maximum));
+                        var bestMaximum = Double.PositiveInfinity;
+                        var bestDifference = Double.PositiveInfinity;
+                        var bestAt = estimate.Split;
+
+                        foreach (var at in NearbySplits(take, estimate.Split, wanted: 3))
+                        {
+                            var split = SplitAt(take, at, content);
+                            var firstWidth = split.First?.Used ?? 0;
+                            var secondWidth = split.Second?.Used ?? 0;
+                            var maximum = Math.Max(firstWidth, secondWidth);
+                            var difference = Math.Abs(firstWidth - secondWidth);
+
+                            if (maximum < bestMaximum - 0.001 ||
+                                (Math.Abs(maximum - bestMaximum) <= 0.001 &&
+                                    (difference < bestDifference - 0.001 ||
+                                        (Math.Abs(difference - bestDifference) <= 0.001 && at > bestAt))))
+                            {
+                                best = (split.First, split.Second, firstWidth, secondWidth, maximum);
+                                bestMaximum = maximum;
+                                bestDifference = difference;
+                                bestAt = at;
+                            }
+                        }
+
+                        if (Double.IsPositiveInfinity(bestMaximum))
+                        {
+                            var split = SplitAt(take, take, content);
+                            var firstWidth = split.First?.Used ?? 0;
+                            var secondWidth = split.Second?.Used ?? 0;
+                            best = (split.First, split.Second, firstWidth, secondWidth, Math.Max(firstWidth, secondWidth));
+                        }
+
+                        return (
+                            best.First,
+                            best.Second,
+                            best.FirstWidth,
+                            best.SecondWidth,
+                            best.Maximum + startEdge + endEdge);
+                    }
+
+                    (Int32 Split, Double Needed) Estimate(Int32 take, Boolean last)
+                    {
+                        var startEdge = firstFragment || clonesDecoration ? startEdges : 0;
+                        var endEdge = last || clonesDecoration ? endEdges : 0;
+                        var target = advances[take] / 2;
+                        var upper = Math.Max(1, take);
+                        var found = Array.BinarySearch(advances, 0, take + 1, target);
+
+                        if (found < 0)
+                        {
+                            found = ~found;
+                        }
+
+                        var bestMaximum = Double.PositiveInfinity;
+                        var bestSplit = upper;
+
+                        foreach (var at in NearbySplits(take, found, wanted: 6))
+                        {
+                            var firstWidth = advances[at];
+                            var secondWidth = advances[take] - advances[at];
+                            var maximum = Math.Max(firstWidth, secondWidth);
+
+                            if (maximum < bestMaximum - 0.001 ||
+                                (Math.Abs(maximum - bestMaximum) <= 0.001 && at > bestSplit))
+                            {
+                                bestMaximum = maximum;
+                                bestSplit = at;
+                            }
+                        }
+
+                        return (bestSplit, bestMaximum + startEdge + endEdge);
+                    }
+
+                    var best = 0;
+                    var bestLast = false;
+                    var chosen = default((Line? First, Line? Second, Double FirstWidth, Double SecondWidth, Double Needed));
+
+                    if (segmentIsEnd && count > 0)
+                    {
+                        var whole = Estimate(count, last: true);
+
+                        if (whole.Needed <= available)
+                        {
+                            best = count;
+                            bestLast = true;
+                        }
+                    }
+
+                    if (best == 0)
+                    {
+                        var low = 1;
+                        var high = segmentIsEnd ? count - 1 : count;
+
+                        while (low <= high)
+                        {
+                            var middle = low + ((high - low) / 2);
+
+                            if (Estimate(middle, last: false).Needed <= available)
+                            {
+                                best = middle;
+                                bestLast = false;
+                                low = middle + 1;
+                            }
+                            else
+                            {
+                                high = middle - 1;
+                            }
+                        }
+                    }
+
+                    if (best > 0)
+                    {
+                        chosen = ExactCandidate(best, bestLast);
+
+                        if (chosen.Needed > available && bestLast)
+                        {
+                            best = segmentIsEnd ? count - 1 : count;
+                            bestLast = false;
+                            chosen = best > 0
+                                ? ExactCandidate(best, last: false)
+                                : default;
+                        }
+
+                        while (!bestLast && best > 0 && chosen.Needed > available)
+                        {
+                            best--;
+                            chosen = ExactCandidate(best, last: false);
+                        }
+
+                        while (!bestLast && best > 0 && !AllowsBreakAt(boundaries[best]))
+                        {
+                            best--;
+                            chosen = ExactCandidate(best, last: false);
+                        }
+                    }
+
+                    if (best == 0)
+                    {
+                        if (builder.HasContent)
+                        {
+                            NextLine();
+                            continue;
+                        }
+
+                        // A note that cannot fit even one character in an empty line overflows rather
+                        // than stalling the line breaker.
+                        best = 1;
+                        bestLast = segmentIsEnd;
+                        chosen = ExactCandidate(best, bestLast);
+                    }
+
+                    // The cumulative-advance search is only a fast estimate. Its measured split
+                    // can often fit a few more graphemes, so probe forward until the next prefix
+                    // genuinely overflows.
+                    var furthest = segmentIsEnd ? count - 1 : count;
+
+                    while (!bestLast && best < furthest)
+                    {
+                        var next = best + 1;
+
+                        while (next <= furthest && !AllowsBreakAt(boundaries[next]))
+                        {
+                            next++;
+                        }
+
+                        if (next > furthest)
+                        {
+                            break;
+                        }
+
+                        var wider = ExactCandidate(next, last: false);
+
+                        if (wider.Needed > available)
+                        {
+                            break;
+                        }
+
+                        best = next;
+                        chosen = wider;
+                    }
+
+                    if (segmentIsEnd && !bestLast && best == count - 1)
+                    {
+                        var whole = ExactCandidate(count, last: true);
+
+                        if (whole.Needed <= available)
+                        {
+                            best = count;
+                            bestLast = true;
+                            chosen = whole;
+                        }
+                    }
+
+                    var prefixEnd = boundaries[best];
+
+                    var drawsNothing = chosen.First is null && chosen.Second is null;
+                    var fragmentMargin = clonesDecoration
+                        ? margin
+                        : SliceEdges(noteFlow, margin, firstFragment, bestLast);
+                    var fragmentPadding = clonesDecoration
+                        ? padding
+                        : SliceEdges(noteFlow, padding, firstFragment, bestLast);
+                    var fragmentBorder = clonesDecoration
+                        ? border
+                        : SliceEdges(noteFlow, border, firstFragment, bestLast);
+                    var (blockMarginStart, blockMarginEnd) = noteFlow.BlockMargins(margin);
+                    var (blockPaddingStart, blockPaddingEnd) = noteFlow.BlockMargins(padding);
+                    var (blockBorderStart, blockBorderEnd) = noteFlow.BlockMargins(border);
+                    var blockSize = (chosen.First?.Height ?? noteLineHeight) +
+                        (chosen.Second?.Height ?? noteLineHeight) +
+                        blockMarginStart + blockMarginEnd +
+                        blockPaddingStart + blockPaddingEnd +
+                        blockBorderStart + blockBorderEnd;
+                    var run = new NoteRun(
+                        chosen.First,
+                        chosen.Second,
+                        noteFlow,
+                        noteLineHeight,
+                        blockSize,
+                        Math.Max(0, (LineBoxHeight(strut, strut.GetFont()) - strut.FontSize) / 2),
+                        prefixEnd < segmentEnd,
+                        fragmentMargin,
+                        fragmentPadding,
+                        fragmentBorder);
+                    var inlineSize = Math.Max(chosen.FirstWidth, chosen.SecondWidth) +
+                        (firstFragment || clonesDecoration ? startEdges : 0) +
+                        (bestLast || clonesDecoration ? endEdges : 0);
+                    var noteStart = builder.Width;
+                    var noteContentStart = noteStart +
+                        (firstFragment || clonesDecoration ? startEdges : 0);
+
+                    if (!drawsNothing)
+                    {
+                        builder.AddNote(note, noteStyle, noteFlow, item.Inline, run, inlineSize);
+                        firstFragment = false;
+                    }
+
+                    void HoistNested(Line? row)
+                    {
+                        if (row is null)
+                        {
+                            return;
+                        }
+
+                        foreach (var marker in row.Fragments)
+                        {
+                            if (marker.InterlineNote is not { } nested)
+                            {
+                                if (marker.MarginNote is { } margin)
+                                {
+                                    if (hoistedMarginNotes.Add(margin.Box))
+                                    {
+                                        builder.AddMarginNote(
+                                            marker.Box,
+                                            marker.Style,
+                                            flow,
+                                            marker.Inline,
+                                            margin);
+                                    }
+                                }
+
+                                continue;
+                            }
+
+                            var at = InterlineAnchorPosition(row, marker, 0);
+                            if (hoistedInterlineNotes.Add(nested.Box))
+                            {
+                                builder.AddMappedInterlineNote(
+                                    marker.Box,
+                                    marker.Style,
+                                    noteFlow,
+                                    nested,
+                                    noteContentStart + at);
+                            }
+                        }
+                    }
+
+                    HoistNested(chosen.First);
+                    HoistNested(chosen.Second);
+
+                    offset = prefixEnd;
+
+                    if (offset < noteText.Length)
+                    {
+                        if (noteText[offset] == '\n')
+                        {
+                            offset++;
+                        }
+
+                        if (offset < noteText.Length && !drawsNothing)
+                        {
+                            NextLine();
+                        }
+                    }
+                }
+
+                breakPoint = null;
+                following = null;
+                pendingGrace = 0;
                 continue;
             }
 
@@ -3048,8 +4477,9 @@ internal sealed class InlineLayout
                 var rubyFlow = item.Box.Flow;
                 var baseFlow = ResolveOrientation(item.Text!, rubyFlow);
                 var annotation = MeasureAnnotation(item);
-                var baseWidth = Measure(item.Style, item.Text!, rubyFlow);
-                var (before, after) = OverhangRoom(items, index);
+                var baseWidth = PairWidth(item.Style, strut, item.Text!, builder.Width, rubyFlow);
+                var (before, after) = OverhangRoom(
+                    items, index, builder.Width, baseWidth, annotation.Width, begins, strut);
                 var extent = RubyExtent(item, baseWidth, annotation.Width, before, after);
 
                 var band = room.Height;
@@ -3076,9 +4506,25 @@ internal sealed class InlineLayout
                         // are left.
                         room.Drop(builder.ExtentFor(item.Inline) + extent);
                     }
+
+                    // The pair now stands where a different line left it, and the room beside it is
+                    // another question: it is asked again of the place the pair holds here.
+                    begins[index] = builder.Width;
+                    (before, after) = OverhangRoom(
+                        items, index, builder.Width, baseWidth, annotation.Width, begins, strut);
+                    extent = RubyExtent(item, baseWidth, annotation.Width, before, after);
                 }
 
-                builder.AddRuby(item.Text!, extent, item.Style, item.Box, baseFlow, annotation, baseWidth, item.Inline);
+                builder.AddRuby(
+                    item.Text!,
+                    extent,
+                    item.Style,
+                    item.Box,
+                    baseFlow,
+                    annotation,
+                    baseWidth,
+                    RubyHang(item, extent, baseWidth, annotation.Width, after),
+                    item.Inline);
                 breakPoint = null;
                 following = null;
                 continue;
@@ -3087,7 +4533,7 @@ internal sealed class InlineLayout
             // An inline element may ask for an orientation of its own, so each run is measured and
             // drawn in the flow of the box it came from rather than in the container's. The font is
             // taken once for the item, because every piece of it is set in that one font.
-            var itemFlow = item.Box.Flow;
+            var itemFlow = item.Flow ?? item.Box.Flow;
             var font = item.Style.GetFont();
 
             // A line does not break inside ruby: the base and its reading stand together, so a soft
@@ -3251,7 +4697,8 @@ internal sealed class InlineLayout
                         // gives the break as an opportunity of its own, the line is filled to its end edge.
                         var asks = (at == run.Start && !spaces && !letters &&
                             !TextChunker.IsBreakSpace(run.Source[run.Start])
-                            ? width + trailed + mark
+                            ? AskWidth(item, strut, run.Source, run.Start, run.Length, width, trailed, mark,
+                                builder.Width, stepsSpaces, itemFlow)
                             : advance) - trim.BoundaryDelta + auto.BoundaryDelta - auto.RetroDelta;
 
                         // A closing punctuation that ends the line may give up its trailing half. The
@@ -3426,12 +4873,437 @@ internal sealed class InlineLayout
             Close(builder);
         }
 
+        SettleNotesAtLineEnds(lines);
+
         // Which inline elements the lines hand on is settled before the edges are: an element that
         // ends at a line's end is not one the line cut, and the glyph standing there is the last of
         // its element's last formatted line.
         MarkSlices(lines, maxInline);
-        SettleLines(lines);
+
+        if (settleEdges)
+        {
+            SettleLines(lines);
+        }
+
         return lines;
+    }
+
+    /// <summary>
+    /// Turns the zero-width interline-note anchors left on body lines into one note stream whose lines
+    /// share the body's interlinear slots. A note line that fills up continues in the slot of the next
+    /// body line rather than adding another line in front of the same one.
+    /// </summary>
+    private List<Line> AddInterlineNotes(
+        Box container,
+        List<Line> bodyLines,
+        Double maxInline,
+        WritingModeInfo flow,
+        InlineContext context)
+    {
+        var anchors = new List<(Int32 Slot, InterlineNoteSource Note, Double Position)>();
+        var slotTops = new Double[bodyLines.Count];
+        var slotExtents = new Double[bodyLines.Count];
+        var minimumStarts = new Double[bodyLines.Count];
+        var top = 0.0;
+
+        for (var bodyIndex = 0; bodyIndex < bodyLines.Count; bodyIndex++)
+        {
+            var bodyLine = bodyLines[bodyIndex];
+            top += bodyLine.GapBefore;
+            slotTops[bodyIndex] = top;
+            slotExtents[bodyIndex] = bodyLine.GapBefore + bodyLine.Height;
+            minimumStarts[bodyIndex] = bodyIndex == 0 ? bodyLine.Indent : 0;
+
+            var markers = bodyLine.Fragments
+                .Where(fragment => fragment.InterlineNote is not null)
+                .ToList();
+
+            if (markers.Count > 0)
+            {
+                var bodyAlignment = BodyLineAlignment(container, bodyLine, bodyIndex, bodyLines.Count);
+
+                if (bodyAlignment.Equals("justify", StringComparison.OrdinalIgnoreCase))
+                {
+                    bodyLine.Alignment = bodyAlignment;
+                    DistributeSpace([bodyLine]);
+                }
+
+                var bodyOffset = BodyLineInlineOffset(container, bodyLine, bodyIndex, bodyLines.Count);
+
+                foreach (var marker in markers)
+                {
+                    anchors.Add((
+                        bodyIndex,
+                        marker.InterlineNote!,
+                        InterlineAnchorPosition(bodyLine, marker, bodyOffset)));
+                }
+
+                bodyLine.Fragments.RemoveAll(fragment => fragment.InterlineNote is not null);
+            }
+
+            top += bodyLine.Height;
+        }
+
+        if (anchors.Count == 0)
+        {
+            return bodyLines;
+        }
+
+        var noteLines = BuildInterlineFlow(
+            container,
+            anchors,
+            maxInline,
+            flow,
+            context,
+            slotTops,
+            slotExtents,
+            minimumStarts,
+            anchors[0].Slot,
+            bodyLines);
+        var bySlot = new Dictionary<Int32, List<Line>>();
+
+        foreach (var noteLine in noteLines)
+        {
+            var slot = Math.Clamp(noteLine.SlotIndex, 0, bodyLines.Count - 1);
+            noteLine.SlotIndex = slot;
+
+            if (!bySlot.TryGetValue(slot, out var slotLines))
+            {
+                bySlot.Add(slot, slotLines = new List<Line>());
+            }
+
+            slotLines.Add(noteLine);
+        }
+
+        var lines = new List<Line>(bodyLines.Count);
+
+        for (var bodyIndex = 0; bodyIndex < bodyLines.Count; bodyIndex++)
+        {
+            var bodyLine = bodyLines[bodyIndex];
+            if (bySlot.TryGetValue(bodyIndex, out var notes) && notes.Count > 0)
+            {
+                foreach (var noteLine in notes)
+                {
+                    foreach (var marker in noteLine.Fragments
+                        .Where(fragment => fragment.MarginNote is not null)
+                        .ToList())
+                    {
+                        bodyLine.Fragments.Add(marker);
+                        noteLine.Fragments.Remove(marker);
+                    }
+
+                    lines.Add(noteLine);
+                }
+
+                notes[^1].KeepWithNext = true;
+                bodyLine.GapBefore -= InterlineBodyAdjustment(container, bodyLine, notes[^1]);
+            }
+
+            lines.Add(bodyLine);
+        }
+
+        return lines;
+    }
+
+    /// <summary>Gets the inline coordinate at which an interline-note anchor stands on its body line.</summary>
+    private Double InterlineAnchorPosition(Line line, TextFragment marker, Double alignment)
+    {
+        if (marker.InterlinePosition is { } positioned)
+        {
+            return line.Left + alignment + positioned;
+        }
+
+        var open = new List<OpenInline>();
+        var at = line.Indent;
+
+        foreach (var fragment in line.Fragments)
+        {
+            at += Advance(open, fragment.Inline, line.ContinuesFromPrevious, at, apply: true, step: null);
+
+            if (ReferenceEquals(fragment, marker))
+            {
+                return line.Left + alignment + at;
+            }
+
+            at += fragment.Width;
+        }
+
+        return line.Left + alignment + at;
+    }
+
+    /// <summary>Gets the inline offset the body line's own alignment gives it.</summary>
+    private static Double BodyLineInlineOffset(
+        Box container,
+        Line line,
+        Int32 index,
+        Int32 count)
+    {
+        var alignment = BodyLineAlignment(container, line, index, count);
+
+        return AlignmentOffset(
+            alignment,
+            Math.Max(0, line.Extent - line.Indent),
+            line.Used,
+            line.Fragments.FirstOrDefault()?.Flow ?? container.Flow);
+    }
+
+    private static String BodyLineAlignment(Box container, Line line, Int32 index, Int32 count)
+    {
+        var style = line.Governing ?? container.Style;
+        var last = index == count - 1 || line.ForceEnded;
+
+        return last
+            ? (style.TextAlignLast.Equals("auto", StringComparison.OrdinalIgnoreCase)
+                ? (style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase)
+                    ? "start"
+                    : style.TextAlign)
+                : style.TextAlignLast)
+            : style.TextAlign;
+    }
+
+    /// <summary>
+    /// Gets the leading the note and body lines share at their boundary, which is removed from the
+    /// ordinary gap between their two line boxes so the note stands nearer to the body it annotates.
+    /// </summary>
+    private Double InterlineBodyAdjustment(Box container, Line bodyLine, Line noteLine)
+    {
+        var noteStyle = noteLine.Governing ??
+            noteLine.Fragments.LastOrDefault(fragment => !fragment.InterlineGap)?.Style ??
+            container.Style;
+
+        return InterlineBodyAdjustment(bodyLine, noteStyle);
+    }
+
+    /// <summary>
+    /// Gets how far the body line moves toward its interline note. Without an inline note this is the
+    /// smaller of the two half-leadings; with one, the effective body boundary is the first subline's
+    /// block-start edge and that boundary is overlapped by the two half-leadings' smaller value.
+    /// </summary>
+    private Double InterlineBodyAdjustment(Line bodyLine, ComputedStyle noteStyle)
+    {
+        var noteGap = HalfLeading(noteStyle);
+        var inline = InlineNoteFirstAdjustment(bodyLine, noteGap);
+
+        if (inline is { } adjustment)
+        {
+            return adjustment;
+        }
+
+        var bodyStyle = bodyLine.Governing ??
+            bodyLine.Fragments.FirstOrDefault()?.Style ??
+            noteStyle;
+        return Math.Min(HalfLeading(bodyStyle), noteGap);
+    }
+
+    /// <summary>
+    /// Gets the line movement needed to put an interline note against the nearest inline-note first
+    /// subline, including the centring and block decorations between the body edge and that subline.
+    /// </summary>
+    private Double? InlineNoteFirstAdjustment(Line bodyLine, Double noteGap)
+    {
+        Double? adjustment = null;
+
+        foreach (var fragment in bodyLine.Fragments)
+        {
+            if (fragment.Note is not { First: { } first } note)
+            {
+                continue;
+            }
+
+            var style = first.Governing ??
+                first.Fragments.FirstOrDefault(row => row.Length > 0)?.Style ??
+                fragment.Style;
+            var (blockMarginStart, _) = note.Flow.BlockMargins(note.Margin);
+            var (blockPaddingStart, _) = note.Flow.BlockMargins(note.Padding);
+            var (blockBorderStart, _) = note.Flow.BlockMargins(note.Border);
+            var boundary =
+                ((bodyLine.Height - note.BlockSize) / 2) +
+                blockMarginStart +
+                blockBorderStart +
+                blockPaddingStart;
+            var overlap = Math.Min(HalfLeading(style), noteGap);
+            var current = boundary + overlap;
+
+            adjustment = adjustment is { } existing ? Math.Min(existing, current) : current;
+        }
+
+        return adjustment;
+    }
+
+    /// <summary>Gets the space a line's leading adds above or below its glyphs.</summary>
+    private Double HalfLeading(ComputedStyle style)
+    {
+        var font = style.GetFont();
+        return Math.Max(0, (LineBoxHeight(style, font) - style.FontSize) / 2);
+    }
+
+    /// <summary>
+    /// Builds the shared note flow in DOM order. Each line fills the interlinear slot of one body line;
+    /// when it fills up, the remaining text continues in the next slot rather than adding a second note
+    /// line in front of the same body line.
+    /// </summary>
+    private List<Line> BuildInterlineFlow(
+        Box container,
+        List<(Int32 Slot, InterlineNoteSource Note, Double Position)> anchors,
+        Double maxInline,
+        WritingModeInfo flow,
+        InlineContext context,
+        IReadOnlyList<Double> slotTops,
+        IReadOnlyList<Double> slotExtents,
+        IReadOnlyList<Double> minimumInlineStarts,
+        Int32 firstSlot,
+        IReadOnlyList<Line> slotBodyLines)
+    {
+        var items = new List<InlineItem>();
+        ComputedStyle? strut = null;
+
+        foreach (var (slot, note, position) in anchors)
+        {
+            var root = new InlineAncestor(note.Box, null, maxInline, flow, _measurer, noteContent: true);
+            var noteItems = NoteItems(
+                note.Content,
+                0,
+                note.Content.Text.Length,
+                maxInline,
+                flow,
+                upright: false,
+                root: root);
+
+            items.Add(InlineItem.CreateInterlineAnchor(slot, position, note.Box));
+
+            foreach (var item in noteItems)
+            {
+                items.Add(item);
+            }
+
+            strut ??= note.Box.Style;
+        }
+
+        if (items.Count == 0 || strut is null)
+        {
+            return new List<Line>();
+        }
+
+        var lineStrut = strut ?? container.Style;
+        var noteLines = BuildLines(
+            items,
+            maxInline,
+            flow,
+            context,
+            lineStrut,
+            emergency: false,
+            singleLine: false,
+            settleEdges: true,
+            blockStart: slotTops[firstSlot],
+            slotExtents: slotExtents,
+            minimumInlineStarts: minimumInlineStarts,
+            initialSlot: firstSlot,
+            slotBodyLines: slotBodyLines);
+        var justify = container.Style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase);
+
+        for (var index = 0; index < noteLines.Count; index++)
+        {
+            var line = noteLines[index];
+            line.IsInterlineNote = true;
+            line.Alignment = justify && index < noteLines.Count - 1 && !line.ForceEnded
+                ? "justify"
+                : "start";
+            line.Offset = Aligned(line, maxInline);
+        }
+
+        return noteLines;
+    }
+
+    /// <summary>
+    /// Settles the sublines of notes that are the last in-flow content of an outer line. A note in
+    /// the middle of a line keeps its natural width: justification and hanging punctuation describe a
+    /// line edge, and the note has not reached one there.
+    /// </summary>
+    private void SettleNotesAtLineEnds(List<Line> lines)
+    {
+        for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
+        {
+            var line = lines[lineIndex];
+            TextFragment? last = null;
+            var hasVisible = false;
+            var allNotes = true;
+
+            for (var index = line.Fragments.Count - 1; index >= 0; index--)
+            {
+                var fragment = line.Fragments[index];
+
+                if (fragment.OutOfFlow)
+                {
+                    continue;
+                }
+
+                if (!HasInk(fragment))
+                {
+                    continue;
+                }
+
+                hasVisible = true;
+                allNotes &= fragment.Note is not null;
+                last ??= fragment;
+            }
+
+            if (last?.Note is not { } note)
+            {
+                continue;
+            }
+
+            // A line whose visible content is entirely notes is a note layout line even when its
+            // naturally ending fragment leaves some trailing room. That trailing room is outside
+            // the note, just as the remaining part of a line box is outside a short final line.
+            var fullNoteLine = note.ReachedLineEnd || (hasVisible && allNotes);
+            note.EndsOuterLine = fullNoteLine;
+
+            var rows = new List<Line>(2);
+
+            if (note.First is { } first)
+            {
+                rows.Add(first);
+            }
+
+            if (note.Second is { } second)
+            {
+                rows.Add(second);
+            }
+
+            foreach (var row in rows)
+            {
+                SettleLine(
+                    row,
+                    firstLine: true,
+                    lastLine: fullNoteLine || lineIndex == lines.Count - 1,
+                    forceLineEnd: fullNoteLine);
+            }
+
+            var naturalContent = rows.Count == 0 ? 0 : rows.Max(row => row.Used);
+            var alignLast = last.Style.TextAlignLast;
+            var lastSpokenFor = lineIndex == lines.Count - 1 || line.ForceEnded;
+            var justified = alignLast.Equals("justify", StringComparison.OrdinalIgnoreCase) ||
+                (!lastSpokenFor &&
+                    last.Style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase));
+
+            foreach (var row in rows)
+            {
+                row.Left = 0;
+                row.Indent = 0;
+                row.Extent = naturalContent;
+                row.Offset = 0;
+
+                if (justified)
+                {
+                    row.Alignment = "justify";
+                }
+            }
+
+            var grown = naturalContent + note.InlineEdges;
+            line.Used += grown - last.Width;
+            last.Width = grown;
+            line.Offset = Aligned(line, line.Extent);
+        }
     }
 
     /// <summary>The side of a line a fragment hangs from: the line's start edge, or its end edge.</summary>
@@ -3457,30 +5329,38 @@ internal sealed class InlineLayout
     {
         for (var index = 0; index < lines.Count; index++)
         {
-            var line = lines[index];
+            SettleLine(
+                lines[index],
+                firstLine: index == 0,
+                lastLine: index == lines.Count - 1,
+                forceLineEnd: false);
+        }
+    }
 
-            // The opening glyph hangs first: it stands outside the line, so the room the line has is
-            // what the rest of the line measures into - and the trim at the end of the line asks
-            // whether the line overflows on what is left.
-            var opening = HangAtStart(line, firstLine: index == 0);
-            var used = line.Used - opening;
-            var hung = HangAtEnd(line, lastLine: index == lines.Count - 1, used);
-            var trimmed = 0.0;
+    /// <summary>Settles the edges of one line with the line boundaries its surrounding block gives it.</summary>
+    private void SettleLine(Line line, Boolean firstLine, Boolean lastLine, Boolean forceLineEnd)
+    {
+        // The opening glyph hangs first: it stands outside the line, so the room the line has is
+        // what the rest of the line measures into - and the trim at the end of the line asks
+        // whether the line overflows on what is left.
+        var opening = HangAtStart(line, firstLine);
+        var used = line.Used - opening;
+        var hung = HangAtEnd(line, lastLine, used, forceLineEnd);
+        var trimmed = 0.0;
 
-            if (hung > 0)
-            {
-                line.Used = used - hung;
-            }
-            else
-            {
-                trimmed = TrimLineEnd(line, line.Extent, used);
-                line.Used = used - trimmed;
-            }
+        if (hung > 0)
+        {
+            line.Used = used - hung;
+        }
+        else
+        {
+            trimmed = TrimLineEnd(line, line.Extent, used);
+            line.Used = used - trimmed;
+        }
 
-            if (hung > 0 || opening > 0 || trimmed > 0)
-            {
-                line.Offset = Aligned(line, line.Extent);
-            }
+        if (hung > 0 || opening > 0 || trimmed > 0)
+        {
+            line.Offset = Aligned(line, line.Extent);
         }
     }
 
@@ -3496,7 +5376,8 @@ internal sealed class InlineLayout
         {
             var fragment = line.Fragments[index];
 
-            if (fragment.OutOfFlow)
+            if (fragment.OutOfFlow || fragment.InterlineGap ||
+                fragment.InterlineNote is not null || fragment.MarginNote is not null)
             {
                 continue;
             }
@@ -3527,7 +5408,7 @@ internal sealed class InlineLayout
             if (kind == PunctuationClass.None ||
                 value.All ||
                 TextSpacingTrim.HasExclusiveFeature(fragment.Style.ResolvedFont.Features) ||
-                !IsFullwidthPunctuation(_measurer, fragment.Style, codePoint))
+                !IsFullwidthPunctuation(_measurer, fragment.Style, codePoint, fragment.Flow))
             {
                 return 0;
             }
@@ -3566,11 +5447,15 @@ internal sealed class InlineLayout
     /// the way of anything hanging past it.
     /// </summary>
     private static Boolean HasInk(TextFragment fragment) =>
-        fragment.IsReplaced ||
-        fragment.Atomic is not null ||
-        fragment.Ruby is not null ||
-        fragment.Length > fragment.Hanging ||
-        (fragment.Length == 0 && (fragment.Width > 0 || CarriesAnInlineEdge(fragment.Inline)));
+        !fragment.InterlineGap &&
+        fragment.InterlineNote is null &&
+        fragment.MarginNote is null &&
+        (fragment.IsReplaced ||
+            fragment.Atomic is not null ||
+            fragment.Ruby is not null ||
+            fragment.Note is not null ||
+            fragment.Length > fragment.Hanging ||
+            (fragment.Length == 0 && (fragment.Width > 0 || CarriesAnInlineEdge(fragment.Inline))));
 
     /// <summary>Hangs the line's opening glyph where the property reaches it, and answers with its advance.</summary>
     private Double HangAtStart(Line line, Boolean firstLine)
@@ -3621,7 +5506,7 @@ internal sealed class InlineLayout
     }
 
     /// <summary>Hangs the line's closing glyph where the property reaches it, and answers with its advance.</summary>
-    private Double HangAtEnd(Line line, Boolean lastLine, Double used)
+    private Double HangAtEnd(Line line, Boolean lastLine, Double used, Boolean forceLineEnd)
     {
         for (var index = line.Fragments.Count - 1; index >= 0; index--)
         {
@@ -3667,7 +5552,7 @@ internal sealed class InlineLayout
             }
 
             var start = TextClusters.ClusterStart(fragment.Source, stop);
-            var overflows = used > line.Extent - line.Indent;
+            var overflows = forceLineEnd || used > line.Extent - line.Indent;
             var hangs = HangingPunctuation.HangsAtEnd(
                 fragment.Style.HangingPunctuation,
                 TextChunker.CodePointAt(fragment.Source, start),
@@ -4131,6 +6016,50 @@ internal sealed class InlineLayout
     /// then takes the held boxes along with the text, exactly as it takes the fragments themselves.
     /// </para>
     /// </remarks>
+    /// <summary>The ordinary line flow belonging to one margin-note group.</summary>
+    internal sealed class MarginNoteFlow
+    {
+        internal MarginNoteFlow(
+            Box note,
+            Object lines,
+            WritingModeInfo flow,
+            Double blockSize,
+            InlineLayout owner)
+        {
+            _owner = owner;
+            Note = note;
+            _lines = (List<Line>)lines;
+            Flow = flow;
+            BlockSize = blockSize;
+        }
+
+        private readonly InlineLayout _owner;
+        private readonly List<Line> _lines;
+
+        public Box Note { get; }
+
+        public WritingModeInfo Flow { get; }
+
+        public Double BlockSize { get; }
+
+        internal void Place(LayoutBox parent, Rect contentBox, InlineContext context)
+        {
+            var placement = new Placement(context.Engine);
+            _owner.PlaceLines(
+                Note,
+                parent,
+                _lines,
+                0,
+                _lines.Count,
+                contentBox,
+                Flow,
+                context,
+                0,
+                placement);
+            placement.Finish(Flow);
+        }
+    }
+
     private sealed class Placement
     {
         private readonly LayoutEngine _engine;
@@ -4694,6 +6623,73 @@ internal sealed class InlineLayout
     private static readonly String UprightHyphen = Char.ConvertFromUtf32(0x2010);
 
     /// <summary>
+    /// Measures what a pair's own characters ask of the line. A tab inside the base runs the line on to
+    /// its next stop rather than by an advance of its own, which is a question about where the pair
+    /// stands rather than about the font (CSS Text 3 §4.2).
+    /// </summary>
+    private Double PairWidth(
+        ComputedStyle style,
+        ComputedStyle tabStyle,
+        String text,
+        Double position,
+        WritingModeInfo flow) =>
+        text.IndexOf('\t') < 0
+            ? Measure(style, text, flow)
+            : WhiteSpaceWidth(style, tabStyle, text, 0, text.Length, position, flow);
+
+    /// <summary>
+    /// Gets the room a run that opens with content asks the line for before the line steps inside it. The
+    /// opportunity inside a word is what the line falls back on once the word stands on a line of its own
+    /// and still does not fit, not a licence to fill the last of the line above with the end of it, so the
+    /// whole of the word is asked for - with the space that trails it and the mark a break draws. Where the
+    /// mode gives the line a place to end inside the run, after a preserved space it keeps (CSS Text 3
+    /// §4.1.3), the ask stops at the first of those: the line may genuinely be brought to an end there, and
+    /// a three-character box holding two kana and four ideographic spaces fills with one of those spaces
+    /// rather than moving the second kana down to begin the line.
+    /// </summary>
+    private Double AskWidth(
+        InlineItem item,
+        ComputedStyle strut,
+        String source,
+        Int32 start,
+        Int32 length,
+        Double width,
+        Double trailed,
+        Double mark,
+        Double position,
+        Boolean stepsSpaces,
+        WritingModeInfo flow)
+    {
+        if (stepsSpaces)
+        {
+            var end = start + length;
+            var at = start;
+
+            while (at < end && !TextChunker.IsBreakSpace(source[at]))
+            {
+                at += TextClusters.UnitsAt(source, at, end);
+            }
+
+            if (at > start && at < end)
+            {
+                // The content up to the first space it holds, and that space: the line ends after it.
+                var leading = Measure(item.Style, source, start, at - start, flow);
+
+                return leading + WhiteSpaceWidth(
+                    item.Style,
+                    strut,
+                    source,
+                    at,
+                    TextClusters.UnitsAt(source, at, end),
+                    position + leading,
+                    flow);
+            }
+        }
+
+        return width + trailed + mark;
+    }
+
+    /// <summary>
     /// Gets the room the mark a break draws takes: the hyphenate character, set in the run's own font.
     /// </summary>
     private static Double HyphenWidth(ITextMeasurer measurer, ComputedStyle style, WritingModeInfo flow) =>
@@ -4784,7 +6780,7 @@ internal sealed class InlineLayout
 
             var kind = KindOf(style, codePoint);
 
-            if (kind != PunctuationClass.None && IsFullwidthPunctuation(measurer, style, codePoint))
+            if (kind != PunctuationClass.None && IsFullwidthPunctuation(measurer, style, codePoint, flow))
             {
                 var trimmed = value.All;
 
@@ -4793,13 +6789,13 @@ internal sealed class InlineLayout
                     if (kind == PunctuationClass.Opening && index > start)
                     {
                         trimmed = TextSpacingTrim.TrimsOpening(
-                            NeighborOf(measurer, style, CodePointBefore(source, index)),
+                            NeighborOf(measurer, style, CodePointBefore(source, index), flow),
                             style.FontSize);
                     }
                     else if (kind == PunctuationClass.Closing && index + take < end)
                     {
                         trimmed = TextSpacingTrim.TrimsClosing(
-                            NeighborOf(measurer, style, TextChunker.CodePointAt(source, index + take)),
+                            NeighborOf(measurer, style, TextChunker.CodePointAt(source, index + take), flow),
                             style.FontSize);
                     }
                 }
@@ -5193,7 +7189,7 @@ internal sealed class InlineLayout
         if (enabled &&
             !value.All &&
             firstKind != PunctuationClass.None &&
-            IsFullwidthPunctuation(measurer, style, firstCodePoint))
+            IsFullwidthPunctuation(measurer, style, firstCodePoint, flow))
         {
             var trimmed = lineEmpty
                 ? TextSpacingTrim.TrimsAtLineStart(value, firstKind, startsParagraph)
@@ -5225,9 +7221,9 @@ internal sealed class InlineLayout
                 (previousValue.All || previousValue.Adjacent);
 
             if (previousEnabled &&
-                IsFullwidthPunctuation(measurer, lastText.Style, lastText.CodePoint) &&
+                IsFullwidthPunctuation(measurer, lastText.Style, lastText.CodePoint, lastText.Flow) &&
                 TextSpacingTrim.TrimsClosing(
-                    NeighborOf(measurer, style, firstCodePoint),
+                    NeighborOf(measurer, style, firstCodePoint, flow),
                     lastText.Style.FontSize))
             {
                 retro = TrimDelta(measurer, lastText.Style, lastText.CodePoint, lastText.Flow);
@@ -5252,7 +7248,7 @@ internal sealed class InlineLayout
 
                 var kind = KindOf(style, codePoint);
 
-                if (kind != PunctuationClass.None && IsFullwidthPunctuation(measurer, style, codePoint))
+                if (kind != PunctuationClass.None && IsFullwidthPunctuation(measurer, style, codePoint, flow))
                 {
                     var trimmed = value.All;
 
@@ -5261,13 +7257,13 @@ internal sealed class InlineLayout
                         if (kind == PunctuationClass.Opening && index > start)
                         {
                             trimmed = TextSpacingTrim.TrimsOpening(
-                                NeighborOf(measurer, style, CodePointBefore(source, index)),
+                                NeighborOf(measurer, style, CodePointBefore(source, index), flow),
                                 style.FontSize);
                         }
                         else if (kind == PunctuationClass.Closing && index + take < end)
                         {
                             trimmed = TextSpacingTrim.TrimsClosing(
-                                NeighborOf(measurer, style, TextChunker.CodePointAt(source, index + take)),
+                                NeighborOf(measurer, style, TextChunker.CodePointAt(source, index + take), flow),
                                 style.FontSize);
                         }
                     }
@@ -5370,12 +7366,12 @@ internal sealed class InlineLayout
 
     /// <summary>Gets what the collapse rules need to know about one character standing beside another.</summary>
     private static TrimNeighbor NeighborOf(
-        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint) =>
+        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint, WritingModeInfo? flow) =>
         new(
             KindOf(style, codePoint),
             codePoint == 0x3000,
             KindOf(style, codePoint) == PunctuationClass.Closing &&
-                IsFullwidthPunctuation(measurer, style, codePoint),
+                IsFullwidthPunctuation(measurer, style, codePoint, flow),
             style.FontSize);
 
     /// <summary>
@@ -5383,11 +7379,25 @@ internal sealed class InlineLayout
     /// proportionally is simultaneously full- and half-width, and the property leaves it alone.
     /// </summary>
     private static Boolean IsFullwidthPunctuation(
-        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint)
+        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint, WritingModeInfo? flow = null)
     {
         if (TextSpacingTrim.HasExclusiveFeature(style.ResolvedFont.Features))
         {
             return false;
+        }
+
+        // Down an upright column every character owns a cell of the whole em, whatever width it has
+        // along a line: the steps a column takes are floored at the em box there. A narrow Latin quote
+        // stood upright in such a column is therefore as full-width down it as the ideograph beside
+        // it, which is the pair the collapse rules read. Measuring its line width instead says the
+        // glyph is already proportional and leaves the trim unmarked, which makes every column of
+        // these pages one character too long (CSS Writing Modes 3 §4.1.2 with CSS Text 4 §4.4,
+        // measured: the text-spacing-trim-*-vrl variants, where Chrome trims the U+2018 that follows
+        // a U+FF09 down an upright column). A turned run is left to the rule above, since it really
+        // does advance by the width the character has along a line.
+        if (flow is { IsVertical: true, Orientation: TextOrientation.Upright })
+        {
+            return true;
         }
 
         var fullwidth = measurer.MeasureWidth("\u6C34", style.GetFont());
@@ -5404,10 +7414,23 @@ internal sealed class InlineLayout
 
     /// <summary>Gets the room one trimmed character gives up along the line or column it is set on.</summary>
     private static Double TrimDelta(
-        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint, WritingModeInfo flow) =>
-        flow.IsVertical
-            ? style.FontSize / 2
-            : measurer.MeasureWidth(Char.ConvertFromUtf32(codePoint), style.GetFont()) / 2;
+        ITextMeasurer measurer, ComputedStyle style, Int32 codePoint, WritingModeInfo flow)
+    {
+        if (!flow.IsVertical)
+        {
+            return measurer.MeasureWidth(Char.ConvertFromUtf32(codePoint), style.GetFont()) / 2;
+        }
+
+        var font = style.GetFont();
+        var advance = font.AsksForVerticalWidth
+            ? measurer.MeasureUprightAdvance(codePoint, font)
+            : measurer.MeasureAdvance(codePoint, font, flow);
+        var step = font.AsksForVerticalWidth && advance > 0
+            ? advance
+            : Math.Max(advance, font.Size);
+
+        return step / 2;
+    }
 
     /// <summary>
     /// Gets the room a closing punctuation can give up if it ends the line. The breaker keeps such a
@@ -5555,18 +7578,72 @@ internal sealed class InlineLayout
 
     /// <summary>
     /// Gets how far a reading may hang past its pair on each side: the room the text standing
-    /// directly beside the pair gives up (CSS Ruby 1 §5.1).
+    /// beside the pair gives up (CSS Ruby 1 §5.1).
     /// </summary>
-    private (Double Before, Double After) OverhangRoom(List<InlineItem> items, Int32 index) =>
-        (Spaces(items, index - 1, fromEnd: true), Spaces(items, index + 1, fromEnd: false));
+    private (Double Before, Double After) OverhangRoom(
+        List<InlineItem> items,
+        Int32 index,
+        Double position,
+        Double baseWidth,
+        Double annotationWidth,
+        Double[] begins,
+        ComputedStyle tabStyle)
+    {
+        var pair = items[index].Text;
+        var facing = String.IsNullOrEmpty(pair) ? '\0' : pair![0];
+        var before = Spaces(items, index - 1, fromEnd: true, position, facing, begins, tabStyle);
+
+        // A reading that cannot hang far enough forces its pair wider, and the wider pair carries the
+        // text after it along the line. What that side gives up is therefore asked of the place the
+        // reading itself reaches, which the room already found on this side decides.
+        var end = ReadingEnd(items[index], position, baseWidth, annotationWidth, before);
+        var after = Spaces(items, index + 1, fromEnd: false, end,
+            String.IsNullOrEmpty(pair) ? '\0' : pair[^1], begins, tabStyle);
+
+        return (before, after);
+    }
 
     /// <summary>
-    /// Measures the run of spaces a neighbour ends or begins with. A neighbour that is not a run of
-    /// text, or one whose edge is not a space, gives up nothing.
+    /// Gets where a reading reaches along the line: the pair's own characters stand where its alignment
+    /// puts them once the room beside it has been taken, and the reading is laid over them from there
+    /// (CSS Ruby 1 §4.3, §5.1).
     /// </summary>
-    private Double Spaces(List<InlineItem> items, Int32 at, Boolean fromEnd)
+    private static Double ReadingEnd(
+        InlineItem item,
+        Double position,
+        Double baseWidth,
+        Double annotationWidth,
+        Double before)
     {
-        var room = 0.0;
+        var excess = Math.Max(0, annotationWidth - baseWidth);
+        var start = position + HangPast(item, excess, before, fromEnd: true);
+
+        return item.Box.Style.RubyAlign switch
+        {
+            RubyAlign.Start or RubyAlign.SpaceBetween => start + annotationWidth,
+            RubyAlign.End => start + baseWidth,
+            _ => start + (baseWidth + annotationWidth) / 2,
+        };
+    }
+
+    /// <summary>
+    /// Measures the room one side of a pair gives up to a reading. The characters standing against the
+    /// pair are gathered outward - white space of any width, the blank side of a fullwidth mark, a
+    /// quarter of a middle dot - until one gives up nothing, and they are measured from the place the
+    /// line holds them at, because a tab's room is a distance to a stop (CSS Ruby 1 §5.1). A neighbour
+    /// that is not a run of text gives up nothing at all.
+    /// </summary>
+    private Double Spaces(
+        List<InlineItem> items,
+        Int32 at,
+        Boolean fromEnd,
+        Double position,
+        Char facing,
+        Double[] begins,
+        ComputedStyle tabStyle)
+    {
+        var given = 0.0;
+        var edge = position;
 
         for (var index = at; index >= 0 && index < items.Count; index += fromEnd ? -1 : 1)
         {
@@ -5579,46 +7656,71 @@ internal sealed class InlineLayout
             }
 
             var text = item.Text!;
-            var count = 0;
+            var flow = item.Box.Flow;
 
-            if (fromEnd)
+            // How many characters at the edge a reading may cover, counted outward until one keeps its
+            // whole room for itself.
+            var taken = 0;
+
+            while (taken < text.Length &&
+                HangShare(item, text, fromEnd ? text.Length - 1 - taken : taken, fromEnd, facing) > 0)
             {
-                while (count < text.Length && IsOverhangSpace(text[text.Length - 1 - count]))
-                {
-                    count++;
-                }
-            }
-            else
-            {
-                while (count < text.Length && IsOverhangSpace(text[count]))
-                {
-                    count++;
-                }
+                taken++;
             }
 
-            if (count == 0)
+            if (taken == 0)
             {
-                // A fullwidth punctuation mark beside the pair gives up part of its advance even
-                // though it is not a space (CSS Ruby 1 §5.1). Only the mark directly beside the pair
-                // counts: one standing past a space is not what the reading would cover.
-                if (room == 0)
-                {
-                    room += PunctuationRoom(item, fromEnd ? text[^1] : text[0], fromEnd);
-                }
-
                 break;
             }
 
-            var run = fromEnd ? text[^count..] : text[..count];
-            room += Measure(item.Style, run, item.Box.Flow);
+            var first = fromEnd ? text.Length - taken : 0;
 
-            if (count < text.Length)
+            // A tab runs the line on to its next stop rather than by any advance of its own, so what the
+            // neighbour gives up is measured from where the line stands at its edge: for the one behind
+            // the pair that is where the line left it, and for the one ahead where the reading ends.
+            var place = fromEnd
+                ? begins[index] + WhiteSpaceWidth(item.Style, tabStyle, text, 0, first, begins[index], flow)
+                : edge;
+
+            // The characters are then paid for in the order the line sets them: white space gives up all
+            // of its room, a mark only the part of the fullwidth one that faces the pair.
+            var cursor = first;
+
+            while (cursor < first + taken)
+            {
+                if (IsOverhangSpace(text[cursor]))
+                {
+                    var next = cursor;
+
+                    while (next < first + taken && IsOverhangSpace(text[next]))
+                    {
+                        next++;
+                    }
+
+                    var run = WhiteSpaceWidth(item.Style, tabStyle, text, cursor, next - cursor, place, flow);
+                    given += run;
+                    place += run;
+                    cursor = next;
+                    continue;
+                }
+
+                var units = TextChunker.UnitsAt(text, cursor);
+
+                given += HangShare(item, text, cursor, fromEnd, facing) *
+                    FullwidthRoom(item.Style, flow);
+                place += Measure(item.Style, text, cursor, units, flow);
+                cursor += units;
+            }
+
+            edge = fromEnd ? begins[index] : place;
+
+            if (taken < text.Length)
             {
                 break;
             }
         }
 
-        return room;
+        return given;
     }
 
     /// <summary>
@@ -5630,31 +7732,102 @@ internal sealed class InlineLayout
         character == '\t' || Char.GetUnicodeCategory(character) == UnicodeCategory.SpaceSeparator;
 
     /// <summary>
-    /// Gets the room a reading may take out of the punctuation beside its pair: half of a fullwidth
-    /// opening or closing punctuation mark on the side that faces the pair, and a quarter of a fullwidth
-    /// middle dot on either side (CSS Ruby 1 §5.1).
+    /// Gets what part of a full character's room a character standing beside a pair gives up to the
+    /// reading: all of white space, half of a fullwidth bracket on the blank side that faces the pair,
+    /// and a quarter of a middle dot on either side. A mark whose blank has already been taken by
+    /// <c>text-spacing-trim</c> has none left to give, and any other character gives up nothing at all -
+    /// which is where the reading stops (CSS Ruby 1 §5.1).
     /// </summary>
-    private Double PunctuationRoom(InlineItem item, Char character, Boolean fromEnd)
+    private Double HangShare(InlineItem item, String text, Int32 at, Boolean fromEnd, Char pair)
     {
-        var category = Char.GetUnicodeCategory(character);
-        var share = category switch
+        var character = text[at];
+
+        if (IsOverhangSpace(character))
         {
-            UnicodeCategory.OpenPunctuation => fromEnd ? 0 : 0.5,
-            UnicodeCategory.ClosePunctuation => fromEnd ? 0.5 : 0,
-            UnicodeCategory.OtherPunctuation when character == '\u30FB' => 0.25,
+            return 1;
+        }
+
+        var style = item.Style;
+        var codePoint = (Int32)character;
+        var kind = KindOf(style, codePoint);
+
+        // Only the blank side that looks at the pair is offered: an opening mark keeps its room on its
+        // far side and a closing mark on this, and a middle dot is blank on both.
+        var share = kind switch
+        {
+            PunctuationClass.Opening => fromEnd ? 0 : 0.5,
+            PunctuationClass.Closing => fromEnd ? 0.5 : 0,
+            PunctuationClass.Middle => 0.25,
             _ => 0,
         };
 
-        if (share == 0)
+        if (share == 0 ||
+            (kind != PunctuationClass.Middle &&
+                !IsFullwidthPunctuation(_measurer, style, codePoint)))
+        {
+            // A narrow parenthesis is a letter the reading must not cover, however the pair is set.
+            return 0;
+        }
+
+        // The character the pair stands against, and the one beyond, decide whether the blank is still
+        // there: a mark already trimmed by `text-spacing-trim` gives up nothing (CSS Ruby 1 §5.1).
+        var value = style.TextSpacingTrim;
+
+        if (value.All)
         {
             return 0;
         }
 
-        // Only the fullwidth forms give room: a narrow parenthesis is a letter the reading must not
-        // cover, however the pair is set.
-        var advance = Measure(item.Style, character.ToString(), item.Box.Flow);
+        var inward = at == (fromEnd ? text.Length - 1 : 0)
+            ? pair
+            : fromEnd ? text[at + 1] : text[at - 1];
 
-        return advance >= item.Style.GetFont().Size * 0.9 ? advance * share : 0;
+        if (value.Adjacent)
+        {
+            var trims = kind switch
+            {
+                PunctuationClass.Opening => TextSpacingTrim.TrimsOpening(
+                    NeighborOf(_measurer, style, inward, null), style.FontSize),
+                PunctuationClass.Closing => TextSpacingTrim.TrimsClosing(
+                    NeighborOf(_measurer, style, inward, null), style.FontSize),
+                _ => false,
+            };
+
+            if (trims)
+            {
+                return 0;
+            }
+        }
+
+        return share;
+    }
+
+    /// <summary>
+    /// Gets the room one full character takes along the line: the ideographic space, which is the width
+    /// a fullwidth form is measured in.
+    /// </summary>
+    private Double FullwidthRoom(ComputedStyle style, WritingModeInfo flow) =>
+        Measure(style, "\u3000", flow);
+
+    /// <summary>
+    /// Gets how much room a pair must take for itself on one side, past its own characters, when the
+    /// reading does not fit in the room that side gives up (CSS Ruby 1 §5.1).
+    /// </summary>
+    private static Double HangPast(InlineItem item, Double excess, Double room, Boolean fromEnd)
+    {
+        if (excess <= 0 || item.Box.Style.RubyOverhang != RubyOverhangMode.Spaces)
+        {
+            return 0;
+        }
+
+        // Which side the reading hangs from is `ruby-align`'s business: from the start it asks room of
+        // the far side only, from the end of the near side only, and from the centre of both.
+        return item.Box.Style.RubyAlign switch
+        {
+            RubyAlign.Start or RubyAlign.SpaceBetween => fromEnd ? 0 : Math.Max(0, excess - room),
+            RubyAlign.End => fromEnd ? Math.Max(0, excess - room) : 0,
+            _ => Math.Max(0, (excess / 2) - room),
+        };
     }
 
     /// <summary>
@@ -5675,18 +7848,13 @@ internal sealed class InlineLayout
             return baseWidth;
         }
 
-        var align = item.Box.Style.RubyAlign;
-
         if (item.Box.Style.RubyOverhang == RubyOverhangMode.Spaces)
         {
             // A reading may cover the spaces beside it and no further: once those run out, the pair
-            // grows by what is left on that side. Which side it hangs from is `ruby-align`'s business.
-            return align switch
-            {
-                RubyAlign.Start => baseWidth + Math.Max(0, excess - after),
-                RubyAlign.End => baseWidth + Math.Max(0, excess - before),
-                _ => baseWidth + Math.Max(0, (excess / 2) - before) + Math.Max(0, (excess / 2) - after),
-            };
+            // grows by what is left on that side.
+            return baseWidth +
+                HangPast(item, excess, before, fromEnd: true) +
+                HangPast(item, excess, after, fromEnd: false);
         }
 
         // What `auto` allows is the user agent's choice. Chrome lets a reading hang half an em past
@@ -5704,6 +7872,22 @@ internal sealed class InlineLayout
         RubyAlign.End => extent - width,
         _ => (extent - width) / 2,
     };
+
+    /// <summary>
+    /// Gets how far a pair's own characters stand inside the room it takes: what the reading took from
+    /// the near side is what pushes them along, and the reading is laid over them from there. Nothing is
+    /// pushed where the room the pair may take is the user agent's choice, which hangs the reading past
+    /// the pair evenly instead (CSS Ruby 1 §4.3, §5.1).
+    /// </summary>
+    private static Double? RubyHang(
+        InlineItem item,
+        Double extent,
+        Double baseWidth,
+        Double annotationWidth,
+        Double after) =>
+        item.Box.Style.RubyOverhang == RubyOverhangMode.Spaces
+            ? extent - baseWidth - HangPast(item, Math.Max(0, annotationWidth - baseWidth), after, fromEnd: false)
+            : null;
 
     /// <summary>
     /// Measures a range of text the way a column advances it. Upright text advances by its em box
@@ -5995,7 +8179,8 @@ internal sealed class InlineLayout
         {
             var line = lines[position];
 
-            if (line.Fragments.Count == 0 ||
+            if (line.IsInterlineNote ||
+                line.Fragments.Count == 0 ||
                 (!line.ForceEnded && position != lines.Count - 1))
             {
                 continue;
@@ -6040,11 +8225,8 @@ internal sealed class InlineLayout
             var line = lines[position];
 
             // A plan is kept and asked again, and the room a line was given can be different the next
-            // time round: what was folded in last time comes back out before anything is folded in now.
-            foreach (var fragment in line.Fragments)
-            {
-                fragment.Expand(0, 0);
-            }
+            // time round: every expansion, including the two rows of a note, comes back out first.
+            ResetExpansion(line);
 
             if (line.Fragments.Count == 0 ||
                 !line.Alignment.Equals("justify", StringComparison.OrdinalIgnoreCase))
@@ -6052,43 +8234,238 @@ internal sealed class InlineLayout
                 continue;
             }
 
-            var places = 0;
-
-            for (var index = 0; index < line.Fragments.Count; index++)
-            {
-                places += Places(line, index);
-            }
-
-            var free = (line.Extent - line.Indent) - line.Used;
-
-            if (places == 0 || free <= 0)
-            {
-                continue;
-            }
-
-            var share = free / places;
-            var owed = 0.0;
-            var given = 0.0;
+            var bodyPlaces = 0;
+            var notes = new List<NoteExpansion>();
 
             for (var index = 0; index < line.Fragments.Count; index++)
             {
                 var fragment = line.Fragments[index];
-                var count = Places(line, index);
 
-                if (count == 0)
+                if (fragment.Note is not { } note)
                 {
+                    bodyPlaces += Places(line, index);
                     continue;
                 }
 
-                // The room is owed out on a running total, so the fractions of a share that does not
-                // divide evenly fall on the places one after another and the last word still lands
-                // exactly on the edge the line was given.
-                owed += share * count;
+                var firstWidth = note.First?.Used ?? 0;
+                var secondWidth = note.Second?.Used ?? 0;
+                var naturalContent = Math.Max(firstWidth, secondWidth);
 
-                fragment.Expand((owed - given) / count, count);
-                given = owed;
+                notes.Add(new NoteExpansion(
+                    fragment,
+                    note.First,
+                    note.Second,
+                    Math.Max(0, fragment.Width - naturalContent),
+                    note.EndsOuterLine,
+                    note.First is null ? 0 : LinePlaces(note.First),
+                    note.Second is null ? 0 : LinePlaces(note.Second),
+                    firstWidth,
+                    secondWidth));
+            }
+
+            var free = (line.Extent - line.Indent) - line.Used;
+
+            if (free <= 0)
+            {
+                foreach (var note in notes)
+                {
+                    if (note.EndsLine)
+                    {
+                        ApplyNoteExpansion(note, 0);
+                    }
+                }
+
+                continue;
+            }
+
+            if (notes.Count == 0)
+            {
+                if (bodyPlaces > 0)
+                {
+                    ExpandByShare(line, free / bodyPlaces);
+                }
+
+                continue;
+            }
+
+            Double Growth(Double share)
+            {
+                var growth = bodyPlaces * share;
+
+                foreach (var note in notes)
+                {
+                    var first = note.FirstWidth + (note.FirstPlaces * share);
+                    var second = note.SecondWidth + (note.SecondPlaces * share);
+                    growth += Math.Max(first, second) - Math.Max(note.FirstWidth, note.SecondWidth);
+                }
+
+                return growth;
+            }
+
+            if (bodyPlaces == 0 &&
+                !notes.Exists(note => note.FirstPlaces > 0 || note.SecondPlaces > 0))
+            {
+                continue;
+            }
+
+            var high = 1.0;
+
+            while (Growth(high) < free && high < 1_000_000_000)
+            {
+                high *= 2;
+            }
+
+            var low = 0.0;
+
+            for (var step = 0; step < 60; step++)
+            {
+                var middle = (low + high) / 2;
+
+                if (Growth(middle) < free)
+                {
+                    low = middle;
+                }
+                else
+                {
+                    high = middle;
+                }
+            }
+
+            var share = (low + high) / 2;
+
+            if (share <= 0)
+            {
+                continue;
+            }
+
+            ExpandByShare(line, share);
+
+            foreach (var note in notes)
+            {
+                ApplyNoteExpansion(note, share);
             }
         }
+    }
+
+    /// <summary>Restores every fragment and note subline to the extent it had before justification.</summary>
+    private static void ResetExpansion(Line line)
+    {
+        if (line.NaturalUsed is { } used)
+        {
+            line.Used = used;
+        }
+        else
+        {
+            line.NaturalUsed = line.Used;
+        }
+
+        if (line.NaturalExtent is { } extent)
+        {
+            line.Extent = extent;
+        }
+        else
+        {
+            line.NaturalExtent = line.Extent;
+        }
+
+        foreach (var fragment in line.Fragments)
+        {
+            fragment.Expand(0, 0);
+
+            if (fragment.Note is { First: { } first })
+            {
+                ResetExpansion(first);
+            }
+
+            if (fragment.Note is { Second: { } second })
+            {
+                ResetExpansion(second);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gives every expansion place on a line the same share and returns the width it added. The room is
+    /// owed out on a running total so fractions fall on different places and the last one lands exactly.
+    /// </summary>
+    private static Double ExpandByShare(Line line, Double share)
+    {
+        var owed = 0.0;
+        var given = 0.0;
+
+        for (var index = 0; index < line.Fragments.Count; index++)
+        {
+            var fragment = line.Fragments[index];
+            var count = Places(line, index);
+
+            if (count == 0)
+            {
+                continue;
+            }
+
+            owed += share * count;
+            fragment.Expand((owed - given) / count, count);
+            given = owed;
+        }
+
+        return given;
+    }
+
+    /// <summary>
+    /// Expands a note's two sublines with the line-wide share. A subline that reaches the outer line
+    /// end also fills the natural width of the wider subline, which is the room inside the note box.
+    /// </summary>
+    private static void ApplyNoteExpansion(NoteExpansion note, Double share)
+    {
+        var target = Math.Max(
+            note.FirstWidth + (note.FirstPlaces * share),
+            note.SecondWidth + (note.SecondPlaces * share));
+        var firstShare = note.EndsLine &&
+            note.First is not null &&
+            note.FirstPlaces > 0 &&
+            note.FirstWidth < target
+            ? (target - note.FirstWidth) / note.FirstPlaces
+            : share;
+        var secondShare = note.EndsLine &&
+            note.Second is not null &&
+            note.SecondPlaces > 0 &&
+            note.SecondWidth < target
+            ? (target - note.SecondWidth) / note.SecondPlaces
+            : share;
+        var firstGrowth = note.First is null ? 0 : ExpandByShare(note.First, firstShare);
+        var secondGrowth = note.Second is null ? 0 : ExpandByShare(note.Second, secondShare);
+        var firstUsed = note.FirstWidth + firstGrowth;
+        var secondUsed = note.SecondWidth + secondGrowth;
+        var content = Math.Max(firstUsed, secondUsed);
+
+        if (note.First is { } first)
+        {
+            first.Used = firstUsed;
+            first.Extent = content;
+            first.Offset = 0;
+        }
+
+        if (note.Second is { } second)
+        {
+            second.Used = secondUsed;
+            second.Extent = content;
+            second.Offset = 0;
+        }
+
+        note.Fragment.SetJustifiedWidth(content + note.Edges);
+    }
+
+    /// <summary>Gets every expansion place held by the fragments of one line.</summary>
+    private static Int32 LinePlaces(Line line)
+    {
+        var places = 0;
+
+        for (var index = 0; index < line.Fragments.Count; index++)
+        {
+            places += Places(line, index);
+        }
+
+        return places;
     }
 
     /// <summary>
@@ -6106,6 +8483,15 @@ internal sealed class InlineLayout
     private static Int32 Places(Line line, Int32 index)
     {
         var fragment = line.Fragments[index];
+
+        // A glyph hung off the line's edge takes no room in the line and no place in it: the room a
+        // justified line spreads is owed to the text the line still holds, and a share falling on the
+        // seam into a hung glyph is a share falling into the margin (CSS Text 3 §8.2.1).
+        if (fragment.HangSide != 0)
+        {
+            return 0;
+        }
+
         var last = fragment.Start + fragment.Length - 1;
         var justify = fragment.Style.TextJustify;
         var places = 0;
@@ -6150,8 +8536,12 @@ internal sealed class InlineLayout
             : 0);
     }
 
-    /// <summary>Gets whether the fragment is the one the line ends with, whose trailing place is the line trailing.</summary>
-    private static Boolean EndsLine(Line line, Int32 index) => index == line.Fragments.Count - 1;
+    /// <summary>
+    /// Gets whether the fragment is the one the text of the line ends with: the last fragment, or the one
+    /// before a glyph hung off the line's edge, whose trailing place is the line's trailing as well.
+    /// </summary>
+    private static Boolean EndsLine(Line line, Int32 index) =>
+        index == line.Fragments.Count - 1 || line.Fragments[index + 1].HangSide != 0;
 
     /// <summary>
     /// Gets the distance the first line of a box is set in from the edge it begins at.
@@ -6167,11 +8557,43 @@ internal sealed class InlineLayout
     /// div with 20px of right inset indents 50px for `text-indent: 50%`, not 50% of the containing
     /// block - text-indent-percentage-002).
     /// </summary>
-    private static Double Indentation(Box container, WritingModeInfo flow, Double contentInline)
+    /// <summary>
+    /// The distance a block's lines are set in by, with the two modifiers that say which of them carry it:
+    /// <c>hanging</c> puts the distance on every line but the ones the rule names, and <c>each-line</c>
+    /// adds the line after every forced break to the ones it names (CSS Text 3 §5.2).
+    /// </summary>
+    private readonly record struct TextIndentation(Double Distance, Boolean Hanging, Boolean EachLine)
+    {
+        /// <summary>
+        /// Gets whether a line carries the distance. <paramref name="first"/> says the line begins the
+        /// block's content and <paramref name="afterBreak"/> says a forced break ended the line before it,
+        /// which are the two lines the property names; <c>hanging</c> puts it on every other line.
+        /// </summary>
+        internal Boolean Carries(Boolean first, Boolean afterBreak)
+        {
+            var named = first || (EachLine && afterBreak);
+
+            return Hanging ? !named : named;
+        }
+    }
+
+    private static TextIndentation Indentation(Box container, WritingModeInfo flow, Double contentInline)
     {
         var indent = container.Style.TextIndent;
 
-        return indent.HasValue ? indent.Resolve(contentInline) : 0;
+        // A run of inline content that a block child broke away from the head of its box is wrapped in an
+        // anonymous block of its own, and only the first of those wraps is the line the indentation was
+        // written for: the block's first line stands where its content begins, not where each fragment of
+        // it happens to resume (CSS Text 3 §5.2).
+        if (!indent.HasValue || (container.IsAnonymous && !container.StartsParentContent))
+        {
+            return default;
+        }
+
+        return new TextIndentation(
+            indent.Resolve(contentInline),
+            container.Style.TextIndentHanging,
+            container.Style.TextIndentEachLine);
     }
 
     /// <summary>
@@ -6290,7 +8712,17 @@ internal sealed class InlineLayout
                     ? measurer.MeasureUprightAdvance(codePoint, font)
                     : measurer.MeasureAdvance(codePoint, font, flow);
 
-                total += verticalWidth && advance > 0 ? advance : Math.Max(advance, fontSize);
+                // The forms `vhal` and `halt` stand for are half-width by definition: a glyph the
+                // feature leaves alone keeps its own width, and one it substitutes for a
+                // proportional mark is set in half the em - a font whose vertical metrics say
+                // nothing for that glyph answers with its horizontal advance, which is narrower
+                // still and is not what the feature asks for (CSS Writing Modes 4 SS4.2, OpenType
+                // 'vhal'/'halt'; measured: the text-spacing-trim-*-vrl pages, where Chrome stands
+                // the U+2018 of a 'vhal' run in half of the 20-pixel em and the face's own answer
+                // is 5.56).
+                var floor = verticalWidth ? fontSize / 2 : fontSize;
+
+                total += Math.Max(advance, floor);
 
                 index += TextChunker.UnitsAt(Source, index);
             }
@@ -6340,7 +8772,12 @@ internal sealed class InlineLayout
             Box? annotationBox = null,
             Boolean atomic = false,
             Boolean outOfFlow = false,
-            Boolean empty = false)
+            Boolean empty = false,
+            NoteSource? noteSource = null,
+            InterlineNoteSource? interlineNote = null,
+            InterlineFlowAnchor? interlineAnchor = null,
+            MarginNoteSource? marginNote = null,
+            WritingModeInfo? flow = null)
         {
             Text = text;
             Style = style;
@@ -6354,6 +8791,11 @@ internal sealed class InlineLayout
             IsAtomic = atomic;
             IsOutOfFlow = outOfFlow;
             IsEmpty = empty;
+            NoteSource = noteSource;
+            InterlineNote = interlineNote;
+            InterlineAnchor = interlineAnchor;
+            MarginNote = marginNote;
+            Flow = flow;
         }
 
         public String? Text { get; }
@@ -6392,6 +8834,21 @@ internal sealed class InlineLayout
         /// </summary>
         public Boolean IsEmpty { get; }
 
+        /// <summary>Gets the source of the inline note this item carries, or null for ordinary content.</summary>
+        public NoteSource? NoteSource { get; }
+
+        /// <summary>Gets the interline note whose zero-width position this item marks.</summary>
+        public InterlineNoteSource? InterlineNote { get; }
+
+        /// <summary>Gets the midpoint target that begins an interline note in its shared flow.</summary>
+        public InterlineFlowAnchor? InterlineAnchor { get; }
+
+        /// <summary>Gets the margin note whose zero-width declaration this item marks.</summary>
+        public MarginNoteSource? MarginNote { get; }
+
+        /// <summary>Gets the flow this run uses where it differs from its source box's flow.</summary>
+        public WritingModeInfo? Flow { get; }
+
         /// <summary>Gets the annotation of a ruby item, or null when the item carries none.</summary>
         public String? AnnotationText { get; }
 
@@ -6404,8 +8861,13 @@ internal sealed class InlineLayout
         /// <summary>Gets whether the item is a ruby pair: base text with an annotation over it.</summary>
         public Boolean IsRuby => AnnotationText is not null;
 
-        public static InlineItem CreateText(String text, ComputedStyle style, Box box, InlineAncestor? inline) =>
-            new(text, style, box, inline, false, false);
+        public static InlineItem CreateText(
+            String text,
+            ComputedStyle style,
+            Box box,
+            InlineAncestor? inline,
+            WritingModeInfo? flow = null) =>
+            new(text, style, box, inline, false, false, flow: flow);
 
         public static InlineItem CreateBreak(ComputedStyle style, Box box, InlineAncestor? inline) =>
             new(null, style, box, inline, true, false);
@@ -6431,6 +8893,310 @@ internal sealed class InlineLayout
             Box annotationBox,
             InlineAncestor? inline) =>
             new(text, style, box, inline, false, false, annotationText, annotationStyle, annotationBox);
+
+        public static InlineItem CreateNote(NoteSource source, Box box, InlineAncestor? inline) =>
+            new(null, box.Style, box, inline, false, false, noteSource: source);
+
+        public static InlineItem CreateInterlineNote(NoteSource source, Box box, InlineAncestor? inline) =>
+            new(null, box.Style, box, inline, false, false,
+                interlineNote: new InterlineNoteSource(source, box));
+
+        public static InlineItem CreateInterlineAnchor(Int32 slot, Double position, Box box) =>
+            new(null, box.Style, box, null, false, false,
+                interlineAnchor: new InterlineFlowAnchor(slot, position));
+
+        public static InlineItem CreateMarginNote(Box box, InlineAncestor? inline) =>
+            new(null, box.Style, box, inline, false, false,
+                marginNote: new MarginNoteSource(box));
+    }
+
+    private sealed record InterlineNoteSource(NoteSource Content, Box Box);
+
+    private readonly record struct InterlineFlowAnchor(Int32 Slot, Double Position);
+
+    /// <summary>The styled text an inline note holds, kept as spans so nested markup survives.</summary>
+    private sealed class NoteSource
+    {
+        private NoteSource(
+            String text,
+            IReadOnlyList<NoteSpan> spans,
+            IReadOnlyList<NestedInterlineNote> nestedInterline,
+            IReadOnlyList<NestedMarginNote> nestedMargin)
+        {
+            Text = text;
+            Spans = spans;
+            NestedInterline = nestedInterline;
+            NestedMargin = nestedMargin;
+        }
+
+        public String Text { get; }
+
+        public IReadOnlyList<NoteSpan> Spans { get; }
+
+        /// <summary>Gets the interline notes hoisted out of this inline note's text.</summary>
+        public IReadOnlyList<NestedInterlineNote> NestedInterline { get; }
+
+        /// <summary>Gets the margin notes hoisted out of this note's text.</summary>
+        public IReadOnlyList<NestedMarginNote> NestedMargin { get; }
+
+        /// <summary>Gets the styled span holding the character at the text position.</summary>
+        public NoteSpan SpanAt(Int32 position)
+        {
+            var low = 0;
+            var high = Spans.Count - 1;
+
+            while (low <= high)
+            {
+                var middle = low + ((high - low) / 2);
+                var span = Spans[middle];
+
+                if (position < span.Start)
+                {
+                    high = middle - 1;
+                }
+                else if (position >= span.Start + span.Length)
+                {
+                    low = middle + 1;
+                }
+                else
+                {
+                    return span;
+                }
+            }
+
+            throw new InvalidOperationException("A note's text position must belong to one of its spans.");
+        }
+
+        /// <summary>
+        /// Gets whether the note still has something to draw after its text nodes' white-space rules
+        /// collapse their spaces. A note made only of ordinary spaces is the same as no note at all.
+        /// </summary>
+        public Boolean HasInk
+        {
+            get
+            {
+                foreach (var span in Spans)
+                {
+                    for (var at = 0; at < span.Length; at++)
+                    {
+                        if (!span.Style.CollapsesSpaces ||
+                            !TextChunker.IsCollapsible(Text, span.Start + at, 1))
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
+        }
+
+        public static NoteSource Read(
+            Box note,
+            Boolean hoistInterline = false,
+            Boolean hoistMargin = false)
+        {
+            var text = new System.Text.StringBuilder();
+            var spans = new List<NoteSpan>();
+            var nested = new List<NestedInterlineNote>();
+            var nestedMargin = new List<NestedMarginNote>();
+            Append(note, text, spans, nested, nestedMargin, new List<Box>(), hoistInterline, hoistMargin);
+
+            return new NoteSource(text.ToString(), spans, nested, nestedMargin);
+        }
+
+        private static void Append(
+            Box box,
+            System.Text.StringBuilder text,
+            List<NoteSpan> spans,
+            List<NestedInterlineNote> nested,
+            List<NestedMarginNote> nestedMargin,
+            List<Box> ancestors,
+            Boolean hoistInterline,
+            Boolean hoistMargin)
+        {
+            if (box.Kind == BoxKind.Text)
+            {
+                if (box.Text is { Length: > 0 } run)
+                {
+                    // Segment breaks in the source are ordinary collapsible spaces unless this
+                    // element's white-space mode preserves them. Keeping them as line feeds here
+                    // would turn the pretty-printing of the document into hard note breaks.
+                    if (box.Style.CollapsesSpaces &&
+                        !box.Style.KeepsSegmentBreaks &&
+                        (run.Contains('\r') || run.Contains('\n')))
+                    {
+                        run = run.Replace('\r', ' ').Replace('\n', ' ');
+                    }
+
+                    spans.Add(new NoteSpan(
+                        text.Length,
+                        run.Length,
+                        box.Style,
+                        box,
+                        box.Flow,
+                        ancestors.ToArray()));
+                    text.Append(run);
+                }
+
+                return;
+            }
+
+            if (box.Kind == BoxKind.LineBreak)
+            {
+                text.Append('\n');
+                return;
+            }
+
+            if (hoistInterline &&
+                box.Kind == BoxKind.Inline &&
+                box.Style.NotePlacement == NotePlacement.Interline)
+            {
+                var content = Read(box, hoistMargin: true);
+                nested.Add(new NestedInterlineNote(
+                    text.Length,
+                    new InterlineNoteSource(content, box),
+                    ancestors.ToArray()));
+                return;
+            }
+
+            if (hoistMargin &&
+                box.Kind == BoxKind.Inline &&
+                box.Style.NotePlacement == NotePlacement.Margin)
+            {
+                nestedMargin.Add(new NestedMarginNote(
+                    text.Length,
+                    new MarginNoteSource(box),
+                    ancestors.ToArray()));
+                return;
+            }
+
+            foreach (var child in box.Children)
+            {
+                var isNested = child.Kind == BoxKind.Inline;
+
+                if (isNested)
+                {
+                    ancestors.Add(child);
+                }
+
+                Append(
+                    child,
+                    text,
+                    spans,
+                    nested,
+                    nestedMargin,
+                    ancestors,
+                    hoistInterline,
+                    hoistMargin);
+
+                if (isNested)
+                {
+                    ancestors.RemoveAt(ancestors.Count - 1);
+                }
+            }
+        }
+    }
+
+    private readonly record struct NoteSpan(
+        Int32 Start,
+        Int32 Length,
+        ComputedStyle Style,
+        Box Box,
+        WritingModeInfo Flow,
+        IReadOnlyList<Box> Ancestors);
+
+    private readonly record struct NestedInterlineNote(
+        Int32 Position,
+        InterlineNoteSource Note,
+        IReadOnlyList<Box> Ancestors);
+
+    private readonly record struct NestedMarginNote(
+        Int32 Position,
+        MarginNoteSource Note,
+        IReadOnlyList<Box> Ancestors);
+
+    private sealed record MarginNoteSource(Box Box);
+
+    private readonly record struct NoteExpansion(
+        TextFragment Fragment,
+        Line? First,
+        Line? Second,
+        Double Edges,
+        Boolean EndsLine,
+        Int32 FirstPlaces,
+        Int32 SecondPlaces,
+        Double FirstWidth,
+        Double SecondWidth);
+
+    /// <summary>One outer fragment of a two-line inline note.</summary>
+    private sealed class NoteRun
+    {
+        public NoteRun(
+            Line? first,
+            Line? second,
+            WritingModeInfo flow,
+            Double emptyLineHeight,
+            Double blockSize,
+            Double lineGap,
+            Boolean reachedLineEnd,
+            Thickness margin,
+            Thickness padding,
+            Thickness border)
+        {
+            First = first;
+            Second = second;
+            Flow = flow;
+            EmptyLineHeight = emptyLineHeight;
+            BlockSize = blockSize;
+            LineGap = lineGap;
+            ReachedLineEnd = reachedLineEnd;
+            Margin = margin;
+            Padding = padding;
+            Border = border;
+        }
+
+        public Line? First { get; }
+
+        public Line? Second { get; }
+
+        public Double FirstWidth => First?.Used ?? 0;
+
+        public Double SecondWidth => Second?.Used ?? 0;
+
+        public WritingModeInfo Flow { get; }
+
+        /// <summary>Gets the computed note line-height used when one subline is empty.</summary>
+        public Double EmptyLineHeight { get; }
+
+        public Double BlockSize { get; }
+
+        /// <summary>Gets the body's half-leading kept at each block edge of an expanded note line.</summary>
+        public Double LineGap { get; }
+
+        /// <summary>Gets whether more content in this segment was pushed to the next outer line.</summary>
+        public Boolean ReachedLineEnd { get; }
+
+        /// <summary>Gets or sets whether this note is the last visible content on its outer line.</summary>
+        public Boolean EndsOuterLine { get; set; }
+
+        /// <summary>Gets this fragment's inline margin, padding and border.</summary>
+        public Double InlineEdges
+        {
+            get
+            {
+                var (marginStart, marginEnd) = Flow.InlineMargins(Margin);
+                var (paddingStart, paddingEnd) = Flow.InlineMargins(Padding);
+                var (borderStart, borderEnd) = Flow.InlineMargins(Border);
+                return marginStart + marginEnd + paddingStart + paddingEnd + borderStart + borderEnd;
+            }
+        }
+
+        public Thickness Margin { get; }
+
+        public Thickness Padding { get; }
+
+        public Thickness Border { get; }
     }
 
     private sealed class TextFragment
@@ -6449,7 +9215,13 @@ internal sealed class InlineLayout
             RubyAnnotation? ruby = null,
             Double baseWidth = 0,
             AtomicInline? atomic = null,
-            Boolean outOfFlow = false)
+            Boolean outOfFlow = false,
+            NoteRun? note = null,
+            InterlineNoteSource? interlineNote = null,
+            Boolean interlineGap = false,
+            Double? interlinePosition = null,
+            MarginNoteSource? marginNote = null,
+            Double? hang = null)
         {
             Source = source;
             Start = start;
@@ -6465,10 +9237,31 @@ internal sealed class InlineLayout
             BaseWidth = baseWidth;
             Atomic = atomic;
             OutOfFlow = outOfFlow;
+            Note = note;
+            InterlineNote = interlineNote;
+            InterlineGap = interlineGap;
+            InterlinePosition = interlinePosition;
+            MarginNote = marginNote;
+            Hang = hang;
         }
 
         /// <summary>Gets whether the fragment is a box that left the flow, placed but not drawn here.</summary>
         public Boolean OutOfFlow { get; }
+
+        /// <summary>Gets the two-line inline note this fragment draws, or null for ordinary content.</summary>
+        public NoteRun? Note { get; }
+
+        /// <summary>Gets the interline note whose zero-width position this fragment marks.</summary>
+        public InterlineNoteSource? InterlineNote { get; }
+
+        /// <summary>Gets whether this zero-length fragment is fixed positioning room in an interline flow.</summary>
+        public Boolean InterlineGap { get; }
+
+        /// <summary>Gets the line-relative position a hoisted interline-note marker stands at.</summary>
+        public Double? InterlinePosition { get; }
+
+        /// <summary>Gets the margin note whose zero-width declaration this fragment marks.</summary>
+        public MarginNoteSource? MarginNote { get; }
 
         /// <summary>
         /// Gets or sets whether the run reads right to left at the level the bidi algorithm gave it, or
@@ -6495,6 +9288,12 @@ internal sealed class InlineLayout
         /// the room the annotation needed.
         /// </summary>
         public Double BaseWidth { get; }
+
+        /// <summary>
+        /// Gets how far a ruby's base stands inside the room the pair takes, where the reading has hung
+        /// over the text beside it; null where the pair's halves are simply centred on each other.
+        /// </summary>
+        public Double? Hang { get; }
 
         /// <summary>
         /// Gets the string the fragment's text is a piece of. A fragment whose pieces came from two
@@ -6619,6 +9418,13 @@ internal sealed class InlineLayout
             Justify = share;
             Expansions = places;
             Width = Measured.Value + (share * places);
+        }
+
+        /// <summary>Sets the width justification gave a fragment whose growth is not one repeated share.</summary>
+        public void SetJustifiedWidth(Double width)
+        {
+            Measured ??= Width;
+            Width = width;
         }
 
         public ComputedStyle Style { get; }
@@ -6885,7 +9691,7 @@ internal sealed class InlineLayout
     /// </remarks>
     private readonly struct LinePlanKey : IEquatable<LinePlanKey>
     {
-        public LinePlanKey(Box container, Double maxInline, Double indent, Int32 flow, FloatBand? band)
+        public LinePlanKey(Box container, Double maxInline, TextIndentation indent, Int32 flow, FloatBand? band)
         {
             Container = container;
             MaxInline = maxInline;
@@ -6900,7 +9706,7 @@ internal sealed class InlineLayout
 
         public Double MaxInline { get; }
 
-        public Double Indent { get; }
+        public TextIndentation Indent { get; }
 
         public Int32 Flow { get; }
 
@@ -6962,11 +9768,12 @@ internal sealed class InlineLayout
         /// <summary>How far down the band the open line stands, which is what a shape is read across.</summary>
         private Double _height;
 
-        public LineRoom(FloatBand? band, Double max, Boolean reversed)
+        public LineRoom(FloatBand? band, Double max, Boolean reversed, Double start = 0)
         {
             _band = band;
             _max = max;
             _reversed = reversed;
+            Top = start;
             Open();
         }
 
@@ -6990,6 +9797,19 @@ internal sealed class InlineLayout
         /// </summary>
         public void Next(Double height)
         {
+            Top += height;
+            _height = 0;
+            Open();
+        }
+
+        /// <summary>Advances over a body line's block extent without emitting another note line.</summary>
+        public void Skip(Double height)
+        {
+            if (height <= 0)
+            {
+                return;
+            }
+
             Top += height;
             _height = 0;
             Open();
@@ -7201,6 +10021,12 @@ internal sealed class InlineLayout
         /// <summary>Gets the extent the line's fragments take along the inline axis, before alignment.</summary>
         public Double Used { get; set; }
 
+        /// <summary>Gets or sets the used extent before justification, which every later pass starts from.</summary>
+        public Double? NaturalUsed { get; set; }
+
+        /// <summary>Gets or sets the extent the line was broken at before justification, which a later pass restores.</summary>
+        public Double? NaturalExtent { get; set; }
+
         /// <summary>
         /// Gets or sets how much of the last fragment's width hangs past the line's advance. The spaces
         /// a <c>pre-wrap</c> line trails into are drawn where they stand but take no room (CSS Text 3
@@ -7215,6 +10041,14 @@ internal sealed class InlineLayout
         /// in what the indentation leaves, and the indent is what they are then all moved by.
         /// </summary>
         public Double Indent { get; set; }
+
+        /// <summary>
+        /// Gets or sets how much the line's text was scaled to fill its line box by <c>text-fit</c>, or one
+        /// where the line stands at the size the page wrote. The runs it holds are already measured at the
+        /// scaled size; what is left is to draw them with a font of that size, which is the question the
+        /// placing pass asks this for (CSS Text 5 §1.1).
+        /// </summary>
+        public Double Scale { get; set; } = 1;
 
         /// <summary>Gets where the line's content starts along the inline axis, after alignment.</summary>
         public Double Offset { get; set; }
@@ -7262,6 +10096,15 @@ internal sealed class InlineLayout
         /// (CSS Text 3 §6.3).
         /// </summary>
         public Boolean ForceEnded { get; set; }
+
+        /// <summary>Gets or sets whether this line belongs to a shared interline-note flow.</summary>
+        public Boolean IsInterlineNote { get; set; }
+
+        /// <summary>Gets or sets whether a fragment break should keep this line with the one after it.</summary>
+        public Boolean KeepWithNext { get; set; }
+
+        /// <summary>Gets or sets the body-line slot this note line fills, or -1 for an ordinary line.</summary>
+        public Int32 SlotIndex { get; set; } = -1;
     }
 
     /// <summary>
@@ -7288,10 +10131,17 @@ internal sealed class InlineLayout
         private readonly Int32 _inlineStartSide;
         private readonly Int32 _inlineEndSide;
 
-        public InlineAncestor(Box box, InlineAncestor? parent, Double basis, WritingModeInfo flow, ITextMeasurer measurer)
+        public InlineAncestor(
+            Box box,
+            InlineAncestor? parent,
+            Double basis,
+            WritingModeInfo flow,
+            ITextMeasurer measurer,
+            Boolean noteContent = false)
         {
             Box = box;
             Parent = parent;
+            NoteContent = noteContent;
 
             Padding = box.Style.Padding.Resolve(basis);
             Border = BlockLayout.BorderOf(box);
@@ -7327,6 +10177,9 @@ internal sealed class InlineLayout
 
         /// <summary>Gets the element this one sits inside, or null when it is the outermost.</summary>
         public InlineAncestor? Parent { get; }
+
+        /// <summary>Gets whether this inline wrapper was reconstructed from note content.</summary>
+        public Boolean NoteContent { get; }
 
         /// <summary>Gets the padding the element resolved to, all four sides.</summary>
         public Thickness Padding { get; }
@@ -7491,13 +10344,16 @@ internal sealed class InlineLayout
             HashSet<InlineAncestor>? carried,
             Boolean vertical,
             ITextMeasurer measurer,
-            Boolean startsParagraph)
+            Boolean startsParagraph,
+            Double indent = 0)
         {
             _fallback = fallback;
             _carried = carried;
             _vertical = vertical;
             _measurer = measurer;
             _startsParagraph = startsParagraph;
+            _indent = indent;
+            Width = indent;
         }
 
         private readonly ITextMeasurer _measurer;
@@ -7511,6 +10367,31 @@ internal sealed class InlineLayout
         /// <see cref="Build"/> works the extent it hands back out afresh instead of reusing this.
         /// </summary>
         public Double Width { get; private set; }
+
+        public Double Indent => _indent;
+
+        /// <summary>
+        /// Gets the room the runs already on the line take, using the same fragment accounting as
+        /// <see cref="Build"/> rather than the running wrapping estimate.
+        /// </summary>
+        public Double CurrentUsed()
+        {
+            var open = new List<OpenInline>();
+            var used = 0.0;
+
+            foreach (var fragment in _fragments)
+            {
+                used += Advance(open, fragment.Inline, _carried, origin: 0, apply: true, step: null);
+                used += fragment.Width;
+            }
+
+            foreach (var item in open)
+            {
+                used += item.Ancestor.InlineEndInset;
+            }
+
+            return used;
+        }
 
         /// <summary>
         /// Charges room the line had left off for a glyph that turned out to stand inside it: a stop
@@ -7530,7 +10411,8 @@ internal sealed class InlineLayout
         /// on the line only to say where it would have been, so a line holding nothing else is an empty
         /// line and takes no height.
         /// </summary>
-        public Boolean HasContent => _fragments.Exists(fragment => !fragment.OutOfFlow);
+        public Boolean HasContent =>
+            _fragments.Exists(fragment => !fragment.OutOfFlow && !fragment.InterlineGap);
 
         /// <summary>
         /// Gets whether the line draws anything yet. An empty inline box is content but no ink, and a
@@ -7580,7 +10462,10 @@ internal sealed class InlineLayout
 
                 for (var index = _fragments.Count - 1; index >= 0; index--)
                 {
-                    if (_fragments[index].OutOfFlow)
+                    if (_fragments[index].OutOfFlow ||
+                        _fragments[index].InterlineGap ||
+                        _fragments[index].InterlineNote is not null ||
+                        _fragments[index].MarginNote is not null)
                     {
                         continue;
                     }
@@ -7671,7 +10556,8 @@ internal sealed class InlineLayout
                 {
                     var fragment = _fragments[index];
 
-                    if (fragment.OutOfFlow)
+                    if (fragment.OutOfFlow || fragment.InterlineGap ||
+                        fragment.InterlineNote is not null || fragment.MarginNote is not null)
                     {
                         continue;
                     }
@@ -7771,6 +10657,110 @@ internal sealed class InlineLayout
             Width += atomic.InlineSize;
         }
 
+        /// <summary>Adds one outer fragment of a two-line inline note.</summary>
+        public void AddNote(Box box, ComputedStyle style, WritingModeInfo flow, InlineAncestor? inline, NoteRun note, Double width)
+        {
+            Enter(inline);
+
+            _fragments.Add(new TextFragment(
+                String.Empty,
+                0,
+                0,
+                width,
+                style,
+                box,
+                flow,
+                inline,
+                note: note));
+
+            Width += width;
+        }
+
+        /// <summary>Adds a zero-width marker that records where an interline note was declared.</summary>
+        public void AddInterlineNote(
+            Box box,
+            ComputedStyle style,
+            WritingModeInfo flow,
+            InlineAncestor? inline,
+            InterlineNoteSource note)
+        {
+            Enter(inline);
+
+            _fragments.Add(new TextFragment(
+                String.Empty,
+                0,
+                0,
+                0,
+                style,
+                box,
+                flow,
+                inline,
+                interlineNote: note));
+        }
+
+        /// <summary>Adds a zero-width marker for a margin note declared in the line.</summary>
+        public void AddMarginNote(
+            Box box,
+            ComputedStyle style,
+            WritingModeInfo flow,
+            InlineAncestor? inline,
+            MarginNoteSource note)
+        {
+            _fragments.Add(new TextFragment(
+                String.Empty,
+                0,
+                0,
+                0,
+                style,
+                box,
+                flow,
+                null,
+                marginNote: note));
+        }
+
+        /// <summary>Adds fixed empty room used to place an interline note's midpoint.</summary>
+        public void AddInterlineGap(Box box, ComputedStyle style, WritingModeInfo flow, Double width)
+        {
+            if (width <= 0)
+            {
+                return;
+            }
+
+            _fragments.Add(new TextFragment(
+                String.Empty,
+                0,
+                0,
+                width,
+                style,
+                box,
+                flow,
+                null,
+                interlineGap: true));
+
+            Width += width;
+        }
+
+        /// <summary>Adds a hoisted interline-note marker at a position inside the line it came from.</summary>
+        public void AddMappedInterlineNote(
+            Box box,
+            ComputedStyle style,
+            WritingModeInfo flow,
+            InterlineNoteSource note,
+            Double position)
+        {
+            _fragments.Add(new TextFragment(
+                String.Empty,
+                0,
+                0,
+                0,
+                style,
+                box,
+                flow,
+                null,
+                interlineNote: note,
+                interlinePosition: position));
+        }
+
         /// <summary>
         /// Gets the last character the line has already set, or null where the line holds nothing or
         /// a box that is not text stands between it and what comes next.
@@ -7786,6 +10776,11 @@ internal sealed class InlineLayout
                     if (fragment.OutOfFlow)
                     {
                         continue;
+                    }
+
+                    if (fragment.Note is not null)
+                    {
+                        return null;
                     }
 
                     if (fragment.Length == 0)
@@ -7811,7 +10806,7 @@ internal sealed class InlineLayout
                         trims[last] != '\0';
 
                     return new PreviousText(
-                        NeighborOf(_measurer, fragment.Style, codePoint),
+                        NeighborOf(_measurer, fragment.Style, codePoint, fragment.Flow),
                         fragment.Style,
                         codePoint,
                         trimmed,
@@ -8194,14 +11189,6 @@ internal sealed class InlineLayout
         /// </summary>
         public Boolean CanBreakBefore(String source, Int32 start, ComputedStyle style)
         {
-            // Where the page licensed a break anywhere - `line-break: anywhere`, `overflow-wrap` in
-            // either value, `break-spaces` - the rules between the two characters are set aside, and
-            // the edge of an inline element is no place to bring them back.
-            if (style.BreaksAnywhere || style.BreaksBetweenLetters || style.WrapsLongWords || style.WrapsInsideSpaces)
-            {
-                return true;
-            }
-
             // A box that left the flow holds none of the line's text, so the question is asked of the
             // last run the line really carries (the same reason the other look-backs pass such boxes by).
             TextFragment? last = null;
@@ -8218,6 +11205,33 @@ internal sealed class InlineLayout
             }
 
             if (last is not { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null })
+            {
+                return true;
+            }
+
+            // A run that opens with a space the mode *keeps* stands where no licence reaches: §4.1.3
+            // puts the opportunity after every space the mode keeps, never before the first of them, and
+            // the licences for breaking within words (§5.2-§5.5) speak of words - the space in front of
+            // one is not one. Measured on "X　XX　X" in a four-character box, where the line ends at the
+            // second X and the space hangs past the edge, and on `XXX<span>　</span>X`, where it does not
+            // begin the next line either. Two spaces meeting across an element's edge are the exception:
+            // there the break after the first of them is exactly the place the mode gives, and
+            // `line-break: anywhere` sets the whole question aside.
+            var opensWithKeptSpace = TextChunker.IsBreakSpace(source[start]) &&
+                !TextChunker.IsCollapsible(source[start]);
+            var holdsKeptSpace = TextChunker.IsBreakSpace(last.Source[last.Start + last.Length - 1]) &&
+                !TextChunker.IsCollapsible(last.Source[last.Start + last.Length - 1]);
+
+            if (opensWithKeptSpace && !holdsKeptSpace && !style.BreaksAnywhere)
+            {
+                return false;
+            }
+
+            // Where the page licensed a break anywhere - `line-break: anywhere`, `overflow-wrap` in
+            // either value, `break-spaces`, `word-break: break-all` - the rules between the two
+            // characters are set aside, and the edge of an inline element is no place to bring them
+            // back.
+            if (style.BreaksAnywhere || style.BreaksBetweenLetters || style.WrapsLongWords || style.WrapsInsideSpaces)
             {
                 return true;
             }
@@ -8260,6 +11274,7 @@ internal sealed class InlineLayout
             WritingModeInfo flow,
             RubyAnnotation ruby,
             Double baseWidth,
+            Double? hang,
             InlineAncestor? inline)
         {
             Enter(inline);
@@ -8274,7 +11289,8 @@ internal sealed class InlineLayout
                 flow,
                 inline,
                 ruby: ruby,
-                baseWidth: baseWidth));
+                baseWidth: baseWidth,
+                hang: hang));
 
             Width += width;
         }
@@ -8312,6 +11328,10 @@ internal sealed class InlineLayout
             // to at least the height of the tallest font on it.
             var ascent = Double.NegativeInfinity;
             var descent = Double.NegativeInfinity;
+            Double? statedLine = null;
+            var onlyText = true;
+            var noteBlockSize = 0.0;
+            var noteGap = 0.0;
 
             // How far each fragment reaches above and below the baseline it stands on, kept because a
             // box's alignment is worked out from it once the line knows how far it reached.
@@ -8336,7 +11356,40 @@ internal sealed class InlineLayout
                     continue;
                 }
 
+                if (fragment.InterlineGap)
+                {
+                    above[position] = 0;
+                    below[position] = 0;
+                    continue;
+                }
+
+                if (fragment.InterlineNote is not null || fragment.MarginNote is not null)
+                {
+                    inFlow = true;
+                    above[position] = 0;
+                    below[position] = 0;
+                    continue;
+                }
+
                 inFlow = true;
+
+                // A note occupies room along the line. Its block size joins the line's ascent and
+                // descent symmetrically, so a note larger than the base line grows the line around it.
+                if (fragment.Note is not null)
+                {
+                    onlyText = false;
+                    noteBlockSize = Math.Max(noteBlockSize, fragment.Note.BlockSize);
+                    noteGap = Math.Max(noteGap, fragment.Note.LineGap);
+                    continue;
+                }
+
+                // A run lifted out of its row by vertical-align reaches past the line-height its
+                // text asks for, and that reach is the line's own height rather than an overflow
+                // of the face; the clamp below is only for the face's content area.
+                if (!IsBaseline(fragment.Style) || fragment.BaselineShift != 0)
+                {
+                    onlyText = false;
+                }
 
                 // An inline element that holds nothing gives the line no height of its own: the line
                 // still exists - the room the box takes along it is what keeps the margins around the
@@ -8356,6 +11409,7 @@ internal sealed class InlineLayout
                 // its whole height as ascent and nothing as descent.
                 if (fragment.IsReplaced)
                 {
+                    onlyText = false;
                     // Its bottom margin edge rests on the baseline, so it reaches nothing below it - a
                     // descent of zero, which is not the same as leaving it out where the line gathers
                     // descents from nothing because a run of text may hang above the baseline.
@@ -8371,6 +11425,7 @@ internal sealed class InlineLayout
                 // across the line included, since those are part of the room it takes up there.
                 if (fragment.Atomic is { } atomic)
                 {
+                    onlyText = false;
                     above[position] = atomic.BlockStartMargin + atomic.Ascent;
                     below[position] = atomic.BlockEndMargin + (atomic.BlockSize - atomic.Ascent);
                     ascent = Math.Max(ascent, above[position]);
@@ -8385,6 +11440,11 @@ internal sealed class InlineLayout
                 var fragmentAscent = metrics.Ascent;
                 var fragmentDescent = metrics.Descent;
                 var lineHeight = fragment.Style.LineHeight;
+
+                if (lineHeight is { } stated && (statedLine is null || stated > statedLine))
+                {
+                    statedLine = stated;
+                }
 
                 if (lineHeight.HasValue)
                 {
@@ -8402,6 +11462,7 @@ internal sealed class InlineLayout
                 // adds the difference, so that stacked lines do not overlap.
                 if (fragment.Ruby is { } annotation)
                 {
+                    onlyText = false;
                     if (annotation.Under)
                     {
                         fragmentDescent += Math.Max(0, annotation.Block - (fragmentDescent - metrics.Descent));
@@ -8458,10 +11519,13 @@ internal sealed class InlineLayout
             // take along it and for nothing else: it takes no height from the strut (CSS 2.1 §9.4.2).
             var anchorsOnly = HasContent && !_fragments.Exists(fragment =>
                 !fragment.OutOfFlow &&
-                (fragment.Length > 0 || fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null));
+                (fragment.Length > 0 || fragment.IsReplaced || fragment.Atomic is not null ||
+                    fragment.Ruby is not null || fragment.Note is not null ||
+                    fragment.InterlineNote is not null));
 
             var textual = !anchorsOnly && (_vertical
-                ? _fragments.Count == 0
+                ? _fragments.Count == 0 ||
+                    _fragments.TrueForAll(fragment => fragment.OutOfFlow || fragment.Note is not null)
                 : _fragments.TrueForAll(fragment =>
                     !fragment.IsReplaced && fragment.Atomic is null && fragment.Ruby is null));
 
@@ -8477,6 +11541,19 @@ internal sealed class InlineLayout
                 descent = Double.IsNegativeInfinity(descent)
                     ? strutMetrics.Descent
                     : Math.Max(descent, strutMetrics.Descent);
+
+                // The block's own line-height is a floor for the line, however small the runs on it
+                // ask to be (CSS 2.1 §10.8.1). It is the strut that carries that answer.
+                var strutHeight = strutMetrics.Ascent + strutMetrics.Descent;
+
+                // Only a line height the block *stated* also caps the line: `normal` says the line is as
+                // tall as the faces on it, so a block written at no size must not shrink the line its
+                // runs ask for - which is how a `pre` at `font-size: 0` came to lay two twelve-pixel
+                // lines on top of one another (CSS 2.1 §10.8.1).
+                if (_fallback?.LineHeight is not null)
+                {
+                    statedLine = statedLine is { } stated ? Math.Max(stated, strutHeight) : strutHeight;
+                }
             }
             else if (Double.IsNegativeInfinity(ascent))
             {
@@ -8502,6 +11579,12 @@ internal sealed class InlineLayout
                     var fragment = line.Fragments[position];
 
                     if (fragment.OutOfFlow)
+                    {
+                        continue;
+                    }
+
+                    if (fragment.InterlineGap || fragment.InterlineNote is not null ||
+                        fragment.MarginNote is not null)
                     {
                         continue;
                     }
@@ -8585,6 +11668,24 @@ internal sealed class InlineLayout
                 }
             }
 
+            // A note stands across the line rather than on its baseline. It therefore contributes its
+            // total block size to the line's centre line, not half of it above and below the text
+            // baseline: an asymmetric font baseline must not make a note that exactly fills the line
+            // grow it. A larger note adds the same room at both edges, keeping its margin box centred
+            // in the line that now contains it.
+            var lineBlockSize = ascent + descent;
+
+            if (noteBlockSize > lineBlockSize)
+            {
+                // The note first expands the line to its own margin-box block size. The body's
+                // inter-line gap is then added outside that expanded line, once on each edge.
+                var expanded = noteBlockSize;
+                var withGap = expanded + (noteGap * 2);
+                var extra = (withGap - lineBlockSize) / 2;
+                ascent += extra;
+                descent += extra;
+            }
+
             // A line the page's own soft hyphen ended draws the mark where the character stood: the
             // hyphenate character takes its place and its room, and the run keeps reading as the word
             // the page spelled (CSS Text 3 §6.2). A line that ends anywhere else keeps the hyphen as the
@@ -8658,6 +11759,15 @@ internal sealed class InlineLayout
             line.Ascent = ascent;
             line.Height = ascent + descent;
 
+            // A line of text is as tall as the line-height it asks for, however much taller the
+            // face's own content area is: the glyphs overflow the line rather than growing it
+            // (CSS 2.1 §10.8.1). A replaced box, an atomic inline or a ruby reading is content of
+            // its own and is left to grow the line as it does.
+            if (onlyText && statedLine is { } limit && line.Height > limit)
+            {
+                line.Height = limit;
+            }
+
             // The end of the line is settled once every line is built: the trim a closing punctuation
             // gives up and the glyph a hanging value takes outside the line are decisions about the
             // line's own edge, and which of the two applies depends on whether this is the last line.
@@ -8701,7 +11811,7 @@ internal sealed class InlineLayout
         private ComputedStyle? Governing(TextFragment? first) =>
             first is null
                 ? _fallback
-                : first.Atomic is not null || first.IsReplaced
+                : first.Atomic is not null || first.IsReplaced || first.Note is not null
                     ? _fallback ?? first.Style
                     : first.Style;
 

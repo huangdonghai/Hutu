@@ -113,6 +113,13 @@ public readonly struct WritingModeInfo
     internal Boolean IsRightToLeft => Direction == TextDirection.RightToLeft;
 
     /// <summary>
+    /// Gets whether the writing mode itself turns every glyph a quarter turn, which is what the
+    /// <c>sideways-*</c> modes do. Their text is read along the page rather than down it, so a rule
+    /// beside it follows the row rules rather than the column ones.
+    /// </summary>
+    public Boolean IsSideways => Mode is WritingMode.SidewaysRl or WritingMode.SidewaysLr;
+
+    /// <summary>
     /// Gets whether the text on this line stands against the way the line reads. A row does it by its
     /// nature: its glyphs go left to right while the line runs back from the right edge, and the drawing
     /// follows the glyphs. A column turns its glyphs with the line, so the direction has to be told to
@@ -122,7 +129,13 @@ public readonly struct WritingModeInfo
 
     /// <summary>Gets whether the block axis runs from the right edge back to the left one, which is
     /// what a vertical-rl box does.</summary>
-    internal Boolean BlockIsRightToLeft => Mode is WritingMode.VerticalRl or WritingMode.SidewaysRl;
+    /// <summary>
+    /// Gets whether the block axis runs from the right edge back to the left one, which decides the side
+    /// a rule stood under the text falls on: a line asked to sit on the text's under side stands at the
+    /// left edge of a right-to-left column and at the right edge of a left-to-right one (CSS Text
+    /// Decoration 4 §2.7). Public because the drawing asks it across the backend boundary.
+    /// </summary>
+    public Boolean BlockIsRightToLeft => Mode is WritingMode.VerticalRl or WritingMode.SidewaysRl;
 
     /// <summary>Gets whether the inline axis runs down the page rather than along it.</summary>
     public Boolean IsVertical => Mode != WritingMode.HorizontalTb;
