@@ -89,6 +89,9 @@ internal readonly record struct LineRange(Int32 From, Int32 To);
 /// stands in a fragmentainer of its own, and an offset read against the whole box would be drawn
 /// in the column before the one that carries it (CSS Break 3 §4.5, measured:
 /// out-of-flow-in-multicolumn-073).</param>
+/// <param name="OweStart">How much of the box's own block-start border and padding stands above
+/// this piece, which the content must still be set down by even though the piece draws none of it.
+/// Nothing for a piece whose own box begins at its own head.</param>
 internal readonly record struct FragmentSlice(
     Thickness Border,
     Thickness Padding,
@@ -98,7 +101,8 @@ internal readonly record struct FragmentSlice(
     Double Offset = 0,
     Double Height = 0,
     Rect? Piece = null,
-    Boolean AnchorAtPiece = false);
+    Boolean AnchorAtPiece = false,
+    Double OweStart = 0);
 
 /// <summary>
 /// Works out how many of a block's children a fragment takes (CSS Break 3 §4.1-4.4): a child that does

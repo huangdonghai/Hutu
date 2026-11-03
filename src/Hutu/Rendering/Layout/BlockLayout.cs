@@ -603,8 +603,23 @@ internal sealed class BlockLayout
             return layout;
         }
 
+                // A piece that a column cut out of the middle of a box draws no border and no padding at the
+        // edge it was cut at, but the content it holds still stands where the whole box put it: the room
+        // the decoration took at that edge is owed to the content all the same, or every piece after the
+        // cut loses that much of the flow (CSS Break 3 §4.7 against §4.1, §4.3; measured: the reference
+        // page of gecko/flexbox/pagination/flexbox-single-column-1a, where a container with
+        // `border-block-width: 10px` and `padding-block: 5px` shows 15 pixels of a cut item's tail at the
+        // head of each later column in Chrome - cyan from 208 to 222, the next item from 223 - while we
+        // pulled everything after it up to the head). Only a piece the caller knows stands below that
+        // room says so: a fragment whose own box begins at its own head, like the lines of a broken
+        // paragraph, or a flow that resumed with a child too tall for the column before it, is owed
+        // nothing, or the decoration would be paid to it a second time (measured:
+        // wpt/css-break/line-after-unbreakable-float-after-padding, whose 100-pixel padding-top belongs
+        // to the first column alone and whose float stands at the next column's head, at 58).
+        var owedTop = slice?.OweStart ?? 0.0;
+
         var contentX = borderBox.X + border.Left + padding.Left;
-        var contentY = borderBox.Y + border.Top + padding.Top;
+        var contentY = borderBox.Y + border.Top + padding.Top + owedTop;
         var contentWidth = Math.Max(0, borderBox.Width - border.Horizontal - padding.Horizontal);
         var contentHeight = Math.Max(0, borderBox.Height - border.Vertical - padding.Vertical);
 
@@ -6519,7 +6534,11 @@ internal sealed class BlockLayout
                             cutEnds,
                             whole,
                             Piece: fragment,
-                            AnchorAtPiece: portion.Offset > 0.001));
+                            AnchorAtPiece: portion.Offset > 0.001,
+                            // The stretch of the box this piece stands below is measured in the box's own
+                            // border box, so once the flow has gone past its block-start decoration the
+                            // piece owes that room to its content even though it draws none of it.
+                            OweStart: portion.Offset > 0.001 ? cutBorder.Top + cutPadding.Top : 0));
 
 
                     // The last piece of a box the column cut by its own content units is clipped to the
