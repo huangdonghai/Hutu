@@ -2443,3 +2443,20 @@ Chrome 的逐值把这条规则钉住了（`build/_query` 读 test 页）：表�
 2. **band 递进去以后 `<br clear=all>` 还是不买单。** `.clear` 实测仍是 `142,52.72 70x20.72`（一行高，被挤在第 2 栏两个 float 之间），Chrome 是 `27,61,100,100 | 127,61,100,100 | 227,61,100,53`、橙线落在 (227,111)。也就是 `BandFor(...)` 造出的 band 在行内那侧没有让这条 line 用上净空 —— 要么 `originY/Left/Right` 让它自认为空、要么 `<br clear>` 读的是 `ClearBelow(side, …)` 的另一份数据。没修这条之前把 `.clear` 沿栏切开只会更差（2 505 → 2 715 ✓ 实测）。
 
 （`balancing` 三对在所有组合里都是 850：`FloatFlowColumns` 要 `multi.Fills`，平衡容器根本不进这条路线，跟 §9.152 的旧记录一致；它们要的是另一套——沿栏切 + 平衡重排。）
+
+### 9.178 落下一件真 bug（`2e1a4b01`）：量的缓存不把 float band 算进键，于是「带 float 的那一次量」被「不带 float 的那一次」顶掉
+
+用一个最小页问出来的（`columns:2` + 一个 20x150 float + `<div style="border-bottom:3px solid"><br clear=all>`）：Chrome 那个清除盒从栏头开始、长到 float 的脚，两栏读 `100 | 53`；我们读一行高 20.71875，并且把它整个搬到下一栏的栏头下面。
+
+链路上有两处：
+
+- `MeasureKey(box, width, height)` 没有 float band —— 而 `LinePlanKey` 是带的（它把 `context.Containing.Floats` 放进键里）。于是同一个盒、同一个 extent，先按「没有 band」量一次填了缓存，再按「有 band」量一次拿到的还是第一次的答案：探针里 `plain=20.71875 cleared=20.71875`，而行内那侧 `room.Clear(clear)` 打出来 `dropped=0`（band 根本没走到 `BuildLines`）。把 band 加进 `MeasureKey`（按引用相等，与 `LinePlanKey` 同一口径）之后同一页量出 **103** ✓。
+- `PlaceFloatFlowColumns` 量流成员时用的是不带 band 的 `childContext`；`ArrangeFloatFlowColumns` 排片时也不带。现在两处都按「本栏的 tracks 造 band」递进去（`BandFor(child, here.Tracks, context.Floats, natural - margin.Top, …)`，高度只许升不许降；float 自己不递，它就是这个 band 的成员），并且 `PlaceFloatFlowColumns` 改成把 `FloatFlowColumn` 交出去好把 `Tracks` 带到 arrange 那侧。顺带把「先把盒顶到 `FitBelow` 之下」改成「先按自然位量、band 什么都没改变才 step down」——Chrome 对写在盒**内部**的 `<br clear>` 就是让盒自己长高，而不是把一行的盒搬到 float 脚下去。
+
+全量门禁：红名 **0 进 0 出**，只有 7 个名字动了 ≤144 px（`wpt/css-lists/inline-block-list{,-marker}` +144、`gecko/bidi/712600-{1,2}` −3、`gecko/first-letter/font-text-styles` −2、`wpt/css-pseudo/first-line-line-height-002` +2、`gecko/font-face/local-styled-1` +1）；`floats-clear-multicol` 六对仍是 510/850（它们要的是下面这半步）；单测 2216；打印 193/198 同名五条。
+
+**这套剩下的两步已经具体到行（本轮试过 1+3+7：000/002 → 2 805、003 → 4 620、`-001` 绿 ✓，但 510 仍更好，所以布局那一半已回退，只留上面的 fix）：**
+
+1. **清除要按 float 在流自身轴上的整高付**（§9.152 的 Q2）。现在 `slot.Tracks` 里每条 float 记录的是**本片可见的那段**（第一栏 0..100），所以流成员只付到 100；Chrome 的 `.clear` 读 `27,61,100,100 | 127,61,100,100 | 227,61,100,53` —— 净空落在 250 = float 的**整高**（它自己沿栏续了下去）。做法：量成员时用的 tracks 要把此前每个 float 按 `Slice + Visible` 的整高登记一遍（同一个 `FloatTracks` 只用于「量」；逐片 arrange 仍用本栏那段），这样成员盒自然长到 253。
+2. **比一栏还高的流成员要被切开而不是整条推走**。今天的行为：`top + outer > columnHeight` 就把成员 `at++` 推到下一栏（本轮实测被推 to `127,152.72` —— 落到栏脚之外，整块看不见）。上一轮加的 `cutHere` 分支方向对（对 `BreaksAtLines` 的成员，当它第一个单位在本栏放不下时也走 `CutDownColumns`），但它得排在第 1 步之后：净空没对时切出来的片高 103 而 Chrome 是 100/53，数字反而从 2 505 变 2 715 ✓ 实测过。
+3. 这两步做完，再一起回退/重放上表里的规则 1（`FloatHostWrapper` 允许 percent 宽与背景）、3（`DividesUnits` 站在 float 上的盒 ≥1 个单位即切）、7（`FragmentsInColumns` 放行无子盒 + `AddBoxCut` 的 `HoldsContent` 项）；判定面 000/001/002/003 + `gecko/bugs/379349-2a`，回归面 `wpt/CSS2/floats-clear/*`、`widows-orphans-*`、`tall-float-pushed-*`、`fragmented-autowidth-fc-root-beside-floats`、`overflowing-block-003`、`MulticolBoxCutTests`。
