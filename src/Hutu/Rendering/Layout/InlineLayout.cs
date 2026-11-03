@@ -3439,14 +3439,17 @@ internal sealed class InlineLayout
         ComputedStyle noteStyle,
         WritingModeInfo flow,
         InlineContext context,
-        Double maxInline)
+        Double maxInline,
+        Boolean? orientation = null)
     {
         if (end <= start)
         {
             return null;
         }
 
-        var upright = flow.IsVertical && HasUprightCharacters(source.Text, start, end);
+        // A note is set in one orientation: the one its whole text asks for, not the one a piece of
+        // it would ask for on its own. The caller that splits a note hands the decided value in.
+        var upright = orientation ?? (flow.IsVertical && HasUprightCharacters(source.Text, start, end));
         var lines = BuildLines(
             NoteItems(source, start, end, maxInline, flow, upright),
             maxInline,
@@ -3886,13 +3889,17 @@ internal sealed class InlineLayout
                 var clonesDecoration = noteStyle.ClonesDecoration;
                 var offset = 0;
                 var firstFragment = true;
-                var measured = new Dictionary<(Int32 Start, Int32 End, Double Basis), Line?>();
+                var measured = new Dictionary<(Int32 Start, Int32 End, Double Basis, Boolean Upright), Line?>();
                 var hoistedMarginNotes = new HashSet<Box>();
                 var hoistedInterlineNotes = new HashSet<Box>();
 
+                // The orientation the note's current line is being set in, which every piece of it
+                // takes: a note is upright as a whole, not row by row.
+                var segmentUprightNow = false;
+
                 Line? MeasuredLine(Int32 start, Int32 end, Double basis)
                 {
-                    var key = (start, end, basis);
+                    var key = (start, end, basis, segmentUprightNow);
 
                     if (!measured.TryGetValue(key, out var line))
                     {
@@ -3903,7 +3910,8 @@ internal sealed class InlineLayout
                             noteStyle,
                             noteFlow,
                             context,
-                            basis);
+                            basis,
+                            segmentUprightNow);
                         measured.Add(key, line);
                     }
 
@@ -3988,6 +3996,7 @@ internal sealed class InlineLayout
                     var advances = new Double[count + 1];
                     var segmentUpright = noteFlow.IsVertical &&
                         HasUprightCharacters(noteText, offset, segmentEnd);
+                    segmentUprightNow = segmentUpright;
                     var estimateFlow = segmentUpright
                         ? new WritingModeInfo(
                             noteFlow.Mode,
@@ -3996,9 +4005,9 @@ internal sealed class InlineLayout
                             noteFlow.Direction)
                         : noteFlow;
 
-                    // A full line build is too costly to repeat at every grapheme boundary.
-                    // Cumulative cluster advances locate the balance cheaply; ExactCandidate then
-                    // rebuilds only the neighboring boundaries with the ordinary line engine.
+                    // Cumulative cluster advances answer both the seed and the widths a pair of
+                    // candidates is judged by, so a candidate costs no line at all: only the pair the
+                    // line finally takes is built.
                     for (var unit = 0; unit < count; unit++)
                     {
                         var start = boundaries[unit];
@@ -4007,6 +4016,13 @@ internal sealed class InlineLayout
                         advances[unit + 1] = advances[unit] +
                             MeasureChunk(_measurer, span.Style, noteText, start, end - start, estimateFlow);
                     }
+
+                    // The room a half takes, read off the cumulative advances the segment already
+                    // measured: the whole segment's orientation is the note's, so a half is the same
+                    // clusters in the same flow, and only the boundary rules at a cut are asked of the
+                    // line (the ending grace below).
+                    Double HalfWidth(Int32 from, Int32 to) =>
+                        from >= to ? 0 : advances[to] - advances[from];
 
                     // Punctuation prohibitions can cover every boundary near the width-balanced
                     // estimate. Walk outward for legal splits instead of falling back to one line.
@@ -4059,56 +4075,90 @@ internal sealed class InlineLayout
                         return (first, second);
                     }
 
-                    (
-                        Line? First,
-                        Line? Second,
-                        Double FirstWidth,
-                        Double SecondWidth,
-                        Double Needed) ExactCandidate(Int32 take, Boolean last)
+                    // The two rows a note is set in: the first is never shorter than the second. Among
+                    // the splits that keep it so the narrowest first row wins - the pair that is most
+                    // balanced - and a split that cannot keep it only stands where none can.
+                    Boolean Improves(
+                        Boolean keeps, Double first, Double needed, Boolean bestKeeps,
+                        Double bestFirst, Double bestNeeded, Int32 at, Int32 bestAt)
+                    {
+                        if (keeps != bestKeeps)
+                        {
+                            return keeps;
+                        }
+
+                        if (keeps)
+                        {
+                            if (first < bestFirst - 0.001)
+                            {
+                                return true;
+                            }
+
+                            if (Math.Abs(first - bestFirst) > 0.001)
+                            {
+                                return false;
+                            }
+                        }
+
+                        if (needed < bestNeeded - 0.001)
+                        {
+                            return true;
+                        }
+
+                        return Math.Abs(needed - bestNeeded) <= 0.001 && at > bestAt;
+                    }
+
+                    (Int32 Split, Double Needed) Balanced(Int32 take, Boolean last)
                     {
                         var estimate = Estimate(take, last);
                         var startEdge = firstFragment || clonesDecoration ? startEdges : 0;
                         var endEdge = last || clonesDecoration ? endEdges : 0;
-                        var content = Math.Max(1, available - startEdge - endEdge);
-                        var best = default((Line? First, Line? Second, Double FirstWidth, Double SecondWidth, Double Maximum));
-                        var bestMaximum = Double.PositiveInfinity;
-                        var bestDifference = Double.PositiveInfinity;
                         var bestAt = estimate.Split;
+
+                        // A note that ends here ends at the line's end, where a trailing stop or comma
+                        // may hang: the pair that fits is the pair the built line would report.
+                        var grace = 0.0;
+
+                        if (last && take == count)
+                        {
+                            var start = boundaries[take - 1];
+                            var taken = boundaries[take] - start;
+                            var style = noteSource.SpanAt(start).Style;
+                            var endGrace = EndGrace(_measurer, style, noteText, start, taken, estimateFlow);
+                            var hangGrace = HangGrace(
+                                _measurer, style, noteText, start, taken, segmentEnd,
+                                lastOfContent: true, estimateFlow);
+                            grace = Math.Max(endGrace, hangGrace);
+                        }
+                        var bestKeeps = false;
+                        var bestFirst = Double.PositiveInfinity;
+                        var bestNeeded = Double.PositiveInfinity;
 
                         foreach (var at in NearbySplits(take, estimate.Split, wanted: 3))
                         {
-                            var split = SplitAt(take, at, content);
-                            var firstWidth = split.First?.Used ?? 0;
-                            var secondWidth = split.Second?.Used ?? 0;
-                            var maximum = Math.Max(firstWidth, secondWidth);
-                            var difference = Math.Abs(firstWidth - secondWidth);
+                            var split = boundaries[at];
+                            var first = HalfWidth(0, at);
+                            var second = Math.Max(0, HalfWidth(at, take) - grace);
+                            var needed = Math.Max(first, second) + startEdge + endEdge;
+                            var keeps = first + 0.001 >= second;
 
-                            if (maximum < bestMaximum - 0.001 ||
-                                (Math.Abs(maximum - bestMaximum) <= 0.001 &&
-                                    (difference < bestDifference - 0.001 ||
-                                        (Math.Abs(difference - bestDifference) <= 0.001 && at > bestAt))))
+                            if (Improves(
+                                keeps, first, needed, bestKeeps, bestFirst, bestNeeded, at, bestAt))
                             {
-                                best = (split.First, split.Second, firstWidth, secondWidth, maximum);
-                                bestMaximum = maximum;
-                                bestDifference = difference;
+                                bestKeeps = keeps;
+                                bestFirst = first;
+                                bestNeeded = needed;
                                 bestAt = at;
                             }
                         }
 
-                        if (Double.IsPositiveInfinity(bestMaximum))
+                        if (Double.IsPositiveInfinity(bestNeeded))
                         {
-                            var split = SplitAt(take, take, content);
-                            var firstWidth = split.First?.Used ?? 0;
-                            var secondWidth = split.Second?.Used ?? 0;
-                            best = (split.First, split.Second, firstWidth, secondWidth, Math.Max(firstWidth, secondWidth));
+                            bestAt = take;
+                            bestNeeded = HalfWidth(0, take) + startEdge + endEdge;
                         }
 
-                        return (
-                            best.First,
-                            best.Second,
-                            best.FirstWidth,
-                            best.SecondWidth,
-                            best.Maximum + startEdge + endEdge);
+                        return (bestAt, bestNeeded);
                     }
 
                     (Int32 Split, Double Needed) Estimate(Int32 take, Boolean last)
@@ -4146,7 +4196,7 @@ internal sealed class InlineLayout
 
                     var best = 0;
                     var bestLast = false;
-                    var chosen = default((Line? First, Line? Second, Double FirstWidth, Double SecondWidth, Double Needed));
+                    var chosen = default((Int32 Split, Double Needed));
 
                     if (segmentIsEnd && count > 0)
                     {
@@ -4183,27 +4233,27 @@ internal sealed class InlineLayout
 
                     if (best > 0)
                     {
-                        chosen = ExactCandidate(best, bestLast);
+                        chosen = Balanced(best, bestLast);
 
                         if (chosen.Needed > available && bestLast)
                         {
                             best = segmentIsEnd ? count - 1 : count;
                             bestLast = false;
                             chosen = best > 0
-                                ? ExactCandidate(best, last: false)
+                                ? Balanced(best, last: false)
                                 : default;
                         }
 
                         while (!bestLast && best > 0 && chosen.Needed > available)
                         {
                             best--;
-                            chosen = ExactCandidate(best, last: false);
+                            chosen = Balanced(best, last: false);
                         }
 
                         while (!bestLast && best > 0 && !AllowsBreakAt(boundaries[best]))
                         {
                             best--;
-                            chosen = ExactCandidate(best, last: false);
+                            chosen = Balanced(best, last: false);
                         }
                     }
 
@@ -4219,7 +4269,7 @@ internal sealed class InlineLayout
                         // than stalling the line breaker.
                         best = 1;
                         bestLast = segmentIsEnd;
-                        chosen = ExactCandidate(best, bestLast);
+                        chosen = Balanced(best, bestLast);
                     }
 
                     // The cumulative-advance search is only a fast estimate. Its measured split
@@ -4241,7 +4291,7 @@ internal sealed class InlineLayout
                             break;
                         }
 
-                        var wider = ExactCandidate(next, last: false);
+                        var wider = Balanced(next, last: false);
 
                         if (wider.Needed > available)
                         {
@@ -4254,7 +4304,7 @@ internal sealed class InlineLayout
 
                     if (segmentIsEnd && !bestLast && best == count - 1)
                     {
-                        var whole = ExactCandidate(count, last: true);
+                        var whole = Balanced(count, last: true);
 
                         if (whole.Needed <= available)
                         {
@@ -4265,8 +4315,16 @@ internal sealed class InlineLayout
                     }
 
                     var prefixEnd = boundaries[best];
+                    var content = Math.Max(1, available -
+                        (firstFragment || clonesDecoration ? startEdges : 0) -
+                        (bestLast || clonesDecoration ? endEdges : 0));
+                    var drawn = SplitAt(best, chosen.Split, content);
+                    var firstLine = drawn.First;
+                    var secondLine = drawn.Second;
+                    var firstWidth = firstLine?.Used ?? 0;
+                    var secondWidth = secondLine?.Used ?? 0;
 
-                    var drawsNothing = chosen.First is null && chosen.Second is null;
+                    var drawsNothing = firstLine is null && secondLine is null;
                     var fragmentMargin = clonesDecoration
                         ? margin
                         : SliceEdges(noteFlow, margin, firstFragment, bestLast);
@@ -4279,14 +4337,14 @@ internal sealed class InlineLayout
                     var (blockMarginStart, blockMarginEnd) = noteFlow.BlockMargins(margin);
                     var (blockPaddingStart, blockPaddingEnd) = noteFlow.BlockMargins(padding);
                     var (blockBorderStart, blockBorderEnd) = noteFlow.BlockMargins(border);
-                    var blockSize = (chosen.First?.Height ?? noteLineHeight) +
-                        (chosen.Second?.Height ?? noteLineHeight) +
+                    var blockSize = (firstLine?.Height ?? noteLineHeight) +
+                        (secondLine?.Height ?? noteLineHeight) +
                         blockMarginStart + blockMarginEnd +
                         blockPaddingStart + blockPaddingEnd +
                         blockBorderStart + blockBorderEnd;
                     var run = new NoteRun(
-                        chosen.First,
-                        chosen.Second,
+                        firstLine,
+                        secondLine,
                         noteFlow,
                         noteLineHeight,
                         blockSize,
@@ -4295,7 +4353,7 @@ internal sealed class InlineLayout
                         fragmentMargin,
                         fragmentPadding,
                         fragmentBorder);
-                    var inlineSize = Math.Max(chosen.FirstWidth, chosen.SecondWidth) +
+                    var inlineSize = Math.Max(firstWidth, secondWidth) +
                         (firstFragment || clonesDecoration ? startEdges : 0) +
                         (bestLast || clonesDecoration ? endEdges : 0);
                     var noteStart = builder.Width;
@@ -4348,8 +4406,8 @@ internal sealed class InlineLayout
                         }
                     }
 
-                    HoistNested(chosen.First);
-                    HoistNested(chosen.Second);
+                    HoistNested(firstLine);
+                    HoistNested(secondLine);
 
                     offset = prefixEnd;
 
