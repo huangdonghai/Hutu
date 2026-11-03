@@ -1203,7 +1203,14 @@ internal sealed record LayoutProfile(
         var key = new MeasureKey(
             box,
             constraints.AvailableWidth ?? context.ContainingBlock.Width,
-            constraints.AvailableHeight ?? context.ContainingBlock.Height);
+            constraints.AvailableHeight ?? context.ContainingBlock.Height,
+            // The band the box's lines stand in is part of the question, not of the box: the same box at
+            // the same extent is a different height beside a float than with nothing beside it, and a
+            // cache that cannot tell the two apart answers a measuring pass that asks twice - once
+            // without the floats a column has placed, once with them (CSS 2.1 §9.5.2, measured with
+            // BuildLines dropping a `<br clear=both>` line below a float and the answer never reaching
+            // the caller because the earlier plain measure had filled the entry first).
+            context.Floats);
 
         if (_cache.TryGetValue(key, out var cached))
         {
@@ -1847,24 +1854,28 @@ internal sealed record LayoutProfile(
         private readonly Box _box;
         private readonly Double _width;
         private readonly Double _height;
+        private readonly FloatBand? _floats;
 
-        public MeasureKey(Box box, Double width, Double height)
+        public MeasureKey(Box box, Double width, Double height, FloatBand? floats = null)
         {
             _box = box;
             _width = width;
             _height = height;
+            _floats = floats;
         }
 
         public Boolean Equals(MeasureKey other) =>
             ReferenceEquals(_box, other._box) &&
             _width.Equals(other._width) &&
-            _height.Equals(other._height);
+            _height.Equals(other._height) &&
+            ReferenceEquals(_floats, other._floats);
 
         public override Boolean Equals(Object? obj) => obj is MeasureKey other && Equals(other);
 
         public override Int32 GetHashCode() => HashCode.Combine(
             System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_box),
             _width,
-            _height);
+            _height,
+            _floats is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_floats));
     }
 }

@@ -3417,7 +3417,7 @@ internal sealed class BlockLayout
     /// Fragmentation 3 §4.3, measured: tall-float-pushed-to-next-fragmentainer-002, whose two floats
     /// share the second column at 98,50 and 58,50 while the box that clears them comes to 58,110).
     /// </summary>
-    private List<List<FloatFlowItem>> PlaceFloatFlowColumns(
+    private List<FloatFlowColumn> PlaceFloatFlowColumns(
         Box box,
         Double share,
         Double columnHeight,
@@ -3468,13 +3468,57 @@ internal sealed class BlockLayout
             // (CSS 2.1 §9.5.1-§9.5.2, measured: widows-orphans-020 against
             // tall-float-pushed-to-next-fragmentainer-002, whose cleared box keeps overlapping the
             // narrow right-hand float rather than going below it).
-            var top = floating
+            var natural = floating
                 ? child.Style.Clear == ClearSide.None
                     ? here.Flow + margin.Top
                     : here.Tracks.ClearBelow(child.Style.Clear, here.Flow) + margin.Top
-                : BreaksAtLines(child)
-                    ? here.Tracks.FitBelow(here.Tracks.ClearBelow(child.Style.Clear, here.Flow), size.Width)
-                    : here.Tracks.ClearBelow(child.Style.Clear, here.Flow);
+                : here.Tracks.ClearBelow(child.Style.Clear, here.Flow) + margin.Top;
+
+            // Where the box holds lines, the floats beside them are told to the box as a band and it grows
+            // to hold whatever of its own drops below them; the box itself only steps down where that band
+            // changes nothing, which is the shape widows-orphans-020 asks for. Laying the band down first
+            // is what Chrome does for a cleared break written *inside* the box: the box begins at the
+            // column's head and comes to the float's foot, rather than being a one-line box stood on it
+            // (CSS 2.1 §9.5.1-§9.5.2, CSS Fragmentation 3 §4.1, measured: a `columns: 2` box holding
+            // a 20x150 float and then `<div style="border-bottom:3px solid"><br clear="all">`, whose
+            // cleared box Chrome reads 100 | 53 down the two columns - 153 in all).
+            var top = natural;
+
+            // What a member of the flow holds stands in the band of the floats the column already has, so
+            // a clearance written *inside* it is paid against them: measured with nothing to stand aside a
+            // `<br clear=all>` takes one line of room where Chrome gives it the whole height of the floats
+            // it clears (CSS 2.1 §9.5.2, CSS Fragmentation 3 §4.1, measured: a `columns: 2` box holding a
+            // 20x150 float and then a `<div style="border-bottom:3px solid"><br clear="all">`, whose
+            // cleared box Chrome makes 100 | 53 down the two columns - 153 in all - where we made it one
+            // line tall). Only ever raised: the band can shorten lines and drop them, never lift them.
+            if (!floating)
+            {
+                var seen = childContext.WithFloats(BandFor(
+                    child,
+                    here.Tracks,
+                    context.Floats,
+                    natural - margin.Top,
+                    margin.Left,
+                    margin.Right,
+                    0,
+                    0,
+                    member.Width));
+                var cleared = _engine.Measure(
+                    child,
+                    MeasureConstraints.FitWidth(member.Width),
+                    seen);
+
+                if (cleared.Height > size.Height)
+                {
+                    size = cleared;
+                    outer = size.Height + margin.Top + margin.Bottom;
+                }
+                else if (BreaksAtLines(child))
+                {
+                    top = here.Tracks.FitBelow(natural - margin.Top, size.Width) + margin.Top;
+                }
+
+            }
 
             if (floating)
             {
@@ -3669,14 +3713,7 @@ internal sealed class BlockLayout
             here.Flow = top + size.Height + margin.Bottom;
         }
 
-        var runs = new List<List<FloatFlowItem>>();
-
-        foreach (var state in columns)
-        {
-            runs.Add(state.Items);
-        }
-
-        return runs;
+        return columns;
     }
 
     /// <summary>Measures that sharing: the container keeps the height it was told to be, and what does
@@ -3709,7 +3746,7 @@ internal sealed class BlockLayout
         {
             var originX = content.X + run * (share + multi.Gap);
 
-            foreach (var item in runs[run])
+            foreach (var item in runs[run].Items)
             {
                 var visible = item.Visible > 0.001 ? item.Visible : item.Size.Height;
                 var wholeHeight = item.Whole > 0.001 ? item.Whole : item.Size.Height;
@@ -3723,10 +3760,27 @@ internal sealed class BlockLayout
                     item.Size.Width,
                     wholeHeight);
                 var held = new Rect(originX + item.X, content.Y + item.Y, item.Size.Width, visible);
+                // The same band the plan measured with: the piece lays its content out beside the floats
+                // standing in its column, and a clearance written inside it has to see them to be paid for
+                // (CSS 2.1 §9.5.2, measured in the same pair of pages as the measure above). A float is
+                // not handed the band, since it is one of the floats the band is made of.
+                var stood = IsFloat(item.Child)
+                    ? childContext
+                    : childContext.WithFloats(BandFor(
+                        item.Child,
+                        runs[run].Tracks,
+                        context.Floats,
+                        item.Y,
+                        item.Margin.Left,
+                        item.Margin.Right,
+                        0,
+                        0,
+                        item.Size.Width));
+
                 var arranged = _engine.Arrange(
                     item.Child,
                     whole,
-                    childContext,
+                    stood,
                     definiteHeight: false,
                     slice: new FragmentSlice(
                         new Thickness(
