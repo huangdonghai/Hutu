@@ -307,8 +307,13 @@ internal sealed class SkiaFontResolver : IDisposable
         foreach (var (file, path) in Nearest(wanted))
         {
             // A collection holds several faces under one name, so a file that carries the name is
-            // asked for each of them until one answers to it.
-            for (var index = 0; index < 8; index++)
+            // asked for each of them until one answers to it. An ordinary face file has the one -
+            // and asking it again reads the whole file again, which is what made a name nothing
+            // on the machine answers to cost seconds per candidate (measured:
+            // gecko/text/initial-zwj-1, whose two Android family names came to 7.4 s).
+            var faces = IsCollection(path) ? 8 : 1;
+
+            for (var index = 0; index < faces; index++)
             {
                 var face = SKTypeface.FromFile(path, index);
 
@@ -330,17 +335,31 @@ internal sealed class SkiaFontResolver : IDisposable
     }
 
     /// <summary>
+    /// Gets whether a font file is a collection - the shape that carries several families under one
+    /// name, and the only one worth reading past its first face.
+    /// </summary>
+    private static Boolean IsCollection(String path) =>
+        path.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".otc", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Gets the files whose names are most like the name asked for, beginning with the likeliest.
     /// </summary>
     private IEnumerable<(String Name, String Path)> Nearest(String wanted)
     {
         var ranked = new List<(Int32 Alike, String Name, String Path)>();
 
+        // A file is worth opening only if its name is made of a real share of the name asked for:
+        // one stray pair of letters in common is what made a page pay seconds per family name that
+        // nothing on the machine answers to, since every candidate file is read whole to ask its
+        // faces (measured: gecko/text/initial-zwj-1, whose two Android family names cost 7.4 s).
+        var least = Math.Max(2, (wanted.Length - 1) / 2);
+
         foreach (var file in _files)
         {
             var alike = Alike(file.Name, wanted);
 
-            if (alike > 0)
+            if (alike >= least)
             {
                 ranked.Add((alike, file.Name, file.Path));
             }
