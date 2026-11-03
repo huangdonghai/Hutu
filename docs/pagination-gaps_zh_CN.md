@@ -2366,3 +2366,24 @@ Chrome 的逐值把这条规则钉住了（`build/_query` 读 test 页）：表�
 - 剩下的不对称只在**竖带的顶端**：10 px 带顶在横线的中部（y=26），15 px 带却顶到片头（y=21）—— 45° 斜接下带越过的量与带自身宽度有关（7.5 > 行盒以上那 5 px，被片的头剪住），两条矩形带画不出这个角，需要给折叠模型单独画梯形/三角路径（`Painter.AddBorder` 的 SideBand 分支 + `SkiaPaintExecutor` 的环带）。⇒ 这一对停在 65 px，先把能整族拿下的放在前面。
 
 ⇒ 下一刀不在这一对（它要的是梯形/三角路径，半天到一天，回归面 = 所有含折叠边框的页）。先做能整族拿下的：6 对 `wpt/CSS2/floats-clear/floats-clear-multicol-*`（510/850，规则已量清 —— 该被浮动清到的盒要继续走进下一栏，那里这些浮动不再挤占它的位置），以及出流子树按片推进（`block-end-aligned-abspos-with-overflow` 3 000、`out-of-flow-in-multicolumn-093` 28，§9.170 已量清缺的两件）。竖排表 6 对、`fieldset-001`、`vertical-wm-*`、`flexbox-069`、`balanced-inner-multicol` 仍是 §9.165 那堵「按 fragmentainer 重排」的墙。
+
+### 9.173 落一刀（`b908a13b`）：竖排表的量法终于按「自己那两条轴」问 —— 5 对转绿、0 对变红
+
+`TableFormattingContext` 的 Measure/Arrange 一直在问物理 x/y，而表格的两条轴在内联轴朝下的书写模式里是互换的：栏沿页的 y 分、行沿页的 x 堆、`block-size` 落在 `Style.Width` 上。逐值（Chrome 对 `wpt/css-break/table/table-col-paint-vlr-rtl` 的 test 页）：
+
+- 表格每片 `(8,492,100,100)`…`(8,192,100,100)`；行 1 = `(68,502,40,80)` + `(8,402,70,80)`（110 沿页 x 被两栏接走 40/70）；单元 = `(68,547,40,35)`、`(68,502,40,35)`…（每格沿页 y 35 = 栏宽，沿页 x = 行的那份）；上标题 `(8,492,50,100)`、下标题 `(33,192,75,100)`。
+- 我们改前：行读 35×100（把行的厚度按 `Style.Height` 读了 —— 竖排表里那是**内**轴）、单元 `35x35`、表格沿页 x 只有 159；改后：表格 `400x100` ✓ 行 `110x100`+`135x100` ✓ 单元 `110x35`/`135x35` ✓ 标题各 50/75 落在页 x 的两端 ✓，第一片整体与 Chrome 逐值相同。
+
+四条改动（都在 `vertical` 分支，横排表一字未动）：
+
+1. `MeasureCellHeights`：行的声明尺寸、单元的底线、量的轴向按流的块轴取（竖排表 = 页 x，用 `Style.Width`/`HintedWidth`，量法用新加的 `MeasureConstraints.FitHeight` 固定内轴）。
+2. `Measure`：`basisInline`/`basisBlock`、内/块的 insets、`ResolveContentWidth` 的声明与钳位（`MaxHeight/MinHeight` 对竖排表就是内轴那条）、返回的 `Size` 一律「先 x 后 y」；标题永远算进**块**轴（先前那条 `vertical ? 0 : captions` 把它们错放进了内轴）。
+3. `ResolveCellIntrinsics`：栏宽 = 单元沿表格内轴的尺寸（竖排表读 `Style.Height`）。
+4. `Arrange`：`gridHeight`（行要填满的块向房间）取 `borderBox.Width`（竖排表）而不是 `Height` —— 这就是「行被拉成 310」的元凶；`basis`/百分比改用「容纳块的**内轴**尺寸」（与 BlockLayout 同一条规则）。
+5. `ArrangeMulticolRunAcross` 加 `inlineReversed`：栏沿内轴排，`direction: rtl` 时内轴反向 ⇒ 第一栏在页面的**下端**（Chrome：容器 y 192..592，第一片 492..592）。
+
+全量：红名 **5 出 0 进** —— `gecko/writing-mode/tables/fixed-table-layout-{005,027}-{vlr,vrl}`、`wpt/css-tables/height-distribution/td-different-subpixel-padding-in-same-row-vertical-rl`。明显靠近：`wpt/css-writing-modes/table-progression-{srl,vrl}-001` 35 970→2 373、`-vlr-001` 30 009→2 373、`table-cell-valign-002` 33 578→**104**、`table-cell-align-001/-003` 6 889/9 599→800、`fixed-table-layout-02{5,6,8,0,1}-vrl` 20 000→6 700。单测 2216；打印 193/198 同名五条；`css-break` 仍 18 对（名单未变）。基线 `build/_full-vtaxis2.md`。
+
+代价也记下来：6 对 `table-{col,row,section}-paint-{vlr,vrl}-rtl` 从 30 050 → 53 700（`table-cell-002` 25 800 → 33 300 同理）。逐像素看了原因 —— **test 那侧已经画对**（第一栏 y=520 处 (68,97) 橙 + (98,107) 天蓝、y=560 处 (68,87) 绿 + (88,107) 蓝，与 Chrome 的 pattern2/pattern1 逐值一致），**坏在 ref 那侧几乎空白**：ref 是「`position:relative` 的 400 长外壳 + 一堆 `position:absolute` 的孩子」，Chrome 把每个出流孩子按栏切开跟着片走（pattern1 读 4 个 rect：`(68,547,40,35)`、`(8,447,100,35)`、`(8,347,100,35)`、`(8,247,15,35)`；下标题落在块向 325..400，只有末栏接得到），我们的出流孩子仍按整盒坐标画、被片的旅行甩在栏外（实测在 y=360 那条片里画到 x=333..407）。
+
+⇒ 这 6 对与 `block-end-aligned-abspos-with-overflow`（3 000）、`out-of-flow-in-multicolumn-093`（28）卡在**同一件**事上：出流后代要按片旅行/延续（含子树里的 `break-inside: avoid` 参与推栏）。这一件做完，六对竖排表 + 两对 OOF 一起收；先前 `at-boundary` 的 65 px 仍是角上斜接（§9.172），与这条无关。
