@@ -2322,3 +2322,13 @@ Q1 有了答案，方向和我猜的不同。三件事：
 - 出流子树里 `break-inside: avoid` 要真躲开：Chrome 把 50x50 的绿块整个推到下一栏（第一栏该处留白），我们在第一栏的窗里露出它 20 px。
 
 ⇒ 下一刀是把这两件补上（判定面：`block-end-aligned-abspos-with-overflow`、`out-of-flow-in-multicolumn-093`（28）、`abspos-in-opacity-*` 与 `grid-item-oof-013` 作回归面）。竖排表 6 对、折叠斜接 3 对、`fieldset-001`、`vertical-wm-*`、`flexbox-069`、`balanced-inner-multicol` 仍是 §9.165 的重排墙。
+
+### 9.170 折叠边的宽度改由「这一行走的段」定（`38b5026c`）；`block-end-aligned` 量出还缺什么
+
+- 之前颜色/笔画按段、宽度按整条线取最大：表格自己那条外沿因此每一行都画成最宽那格的宽度。`at-boundary` 里黑色行（right 10）被画成 15 宽，Chrome 的参考页（手写 div）在 305..314 是 10 宽。改成读写都走同一次 `Resolve`（段为空时仍回落整条线，保 `border-collapse-006` 那条「空段也带全线的颜色」），像素图两边竖边宽度一致；`at-boundary` 2 415 → **2 335**。
+- 全量对照（`build/_full-oofanchor.md` 对 `build/_full-segwidth.md`）：**红名一条不进不出**（gecko 600、wpt 1 374），只有这一条靠近 80 px —— 所有折叠边框表都没被碰坏；单测 2216；打印 193/198 同名五条。基线 `build/_full-segwidth.md`、`build/_break-now.md`。
+- 剩下的 2 335 是**角上的颜色**：参考页在横带那 5 行把横线整条画过去（黑），我们让竖边伸进横带（`SideBand` 的 overhang 那侧），需要的是给折叠模型单独画梯形/三角路径（`Painter.AddBorder` 的 SideBand 分支 + `SkiaPaintExecutor` 的 mitre 环），不是再调归属。
+
+`block-end-aligned-abspos-with-overflow`（3 000）用探针 + Chrome 逐值钉住了缺的机制，不是锚也不是宽度：Chrome 把 abs 盒**自己也切成碎片**——它的 rect 是 (8,128,20,10) 与 (58,58,20,0)，hotpink 层 (8,128,20,30) 与 (58,58,20,50)，绿块 `break-inside:avoid` 整个挪到第二栏 (58,58,50,50)。我们两片画的是**同一份内部布局**（只差锚点），于是第一栏露出绿块上 20 px（该没有）、第二栏绿块顶在 37.72（该 58），合起来差 3 000。⇒ 补的是「出流子树按片推进」：每片从上一片结束的行继续，并且子树里的 `break-inside: avoid` 参与推栏。这条与 `-093`（28）同属一处，做完这两件才算把 OOF 一族收干净。
+
+`css-break` 现状 18 对（gecko 2 + wpt 16）：竖排表 6（29 350~30 050）、折叠边框 3（2 335 + 9 090×2）、`fieldset-001` 84 845、`flexbox-069` 17 750、`transform-006/008` 1 567/11 900、`block-end-aligned` 3 000、`balanced-inner-multicol` 700、`-093` 28。本轮已清：`-045`、`-073`、`-090`。
