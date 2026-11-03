@@ -579,6 +579,37 @@ internal sealed partial class FlexFormattingContext
                 item.BorderBoxWidth,
                 item.BorderBoxHeight);
 
+            // The item a break cut through gives this window the part that stands from the window's head
+            // down: its box is brought to the head and shortened by what the window before it already
+            // showed, which is what Chrome's fragment rect reads (an item of 50 whose first 25 stood in
+            // the window before is (63,78,40,25) here - the head of this column and 25 of it). Only a box
+            // the cut really falls inside gets this: an item whose box stands wholly above the head while
+            // its content hangs down belongs to the window by that hanging part alone, and its own box
+            // stays where the plan put it (CSS Fragmentation 3 §4.1, §4.3, measured: a 50-tall item with a
+            // 210-tall child overflowing it stays green only while its box is left alone -
+            // wpt/css-break/flexbox/multi-line-row-flex-fragmentation-093). What hangs past the bottom is
+            // left alone too: that content belongs to this piece's picture, whatever the box's own edge
+            // does.
+            var mainAt = blockIsY ? item.OffsetY : item.OffsetX;
+            var mainSize = blockIsY ? item.BorderBoxHeight : item.BorderBoxWidth;
+
+            if (mainAt < start - 0.001 && mainAt + mainSize > start + 0.001)
+            {
+                var spent = start - mainAt;
+
+                rect = blockIsY
+                    ? new Rect(
+                        rect.X,
+                        contentY,
+                        rect.Width,
+                        Math.Max(0.0, rect.Height - spent))
+                    : new Rect(
+                        contentX,
+                        rect.Y,
+                        Math.Max(0.0, rect.Width - spent),
+                        rect.Height);
+            }
+
             layout.Children.Add(_engine.Arrange(item.Box, rect, itemContext));
         }
 

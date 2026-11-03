@@ -6334,7 +6334,15 @@ internal sealed class BlockLayout
                 // a painted-over flex container do (gecko/flexbox/pagination/flexbox-single-column-1a
                 // through -1f and -multi-column-1a through -1f stay as they were; -2 and -6, whose
                 // containers do reach past themselves, move +2200 and +500 and are still red).
-                y += portion.Offset > 0.001 && child.Reach > child.Fragment.Height + 0.001
+                // A piece that carries on from the column before stands at the head of its column with
+                // nothing of its own margin left to pay: the room the first column gave the box was
+                // already cut by that margin, and paying it again drops every later column's whole
+                // content down by it (CSS Fragmentation 3 §4.1, measured in Chrome on
+                // gecko/flexbox/pagination/flexbox-single-column-1a and its reference: the container of
+                // `margin-block-start: 25px` reads (13,103,40,25) in the column that begins it and
+                // (63,78,40,50), (113,78,40,50), (163,78,40,25) in the ones that carry on - the head of
+                // each column, not 25 below it).
+                y += portion.Offset > 0.001
                     ? 0
                     : child.Margin.Top;
 
