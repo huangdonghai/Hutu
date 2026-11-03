@@ -108,6 +108,13 @@ public sealed record DecorationSource(
     public Double Start { get; init; }
 
     /// <summary>
+    /// Gets the slot this source's speaker was given while the insets were gathered, or -1 where the
+    /// source asks for no inset and so has no runs to gather. It is not part of what the record
+    /// answers, for the reason <see cref="Speaker"/> is not.
+    /// </summary>
+    internal Int32 SpeakerIndex { get; set; } = -1;
+
+    /// <summary>
     /// Gets where this decorating box stands its underlines (CSS Text Decoration 4 §2.7). Two boxes
     /// that draw the same line but stand it on different sides are different decorators, so the
     /// position is part of the value the record compares.

@@ -67,6 +67,19 @@ internal sealed class LayoutEngine
     private Int32 _marginNoteOrder;
 
     /// <summary>
+    /// The slot each decorating speaker was given while its inset runs were gathered, so every run the
+    /// speaker's lines reach can be written into one stretch of <see cref="_trimmedRuns"/> without
+    /// hashing the speaker again per run.
+    /// </summary>
+    private readonly Dictionary<Object, Int32> _speakerSlots = new();
+    private readonly List<DecorationSource> _speakers = new();
+    private TrimmedRun[] _trimmedRuns = Array.Empty<TrimmedRun>();
+    private Int32[] _trimmedStarts = Array.Empty<Int32>();
+    private Int32[] _trimmedCounts = Array.Empty<Int32>();
+    private Double[] _trimPulls = Array.Empty<Double>();
+    private Double[] _trimPushes = Array.Empty<Double>();
+
+    /// <summary>
     /// Whether the document element hands its overflow to the viewport itself, which is the condition
     /// under which the body may hand its own over instead (CSS Overflow 3 §3.3).
     /// </summary>
@@ -429,6 +442,7 @@ internal sealed record LayoutProfile(
     private void ResolveDecorations(LayoutBox box, Boolean markFirstLine = false)
     {
         _markFirstLine = markFirstLine;
+
         // The document element's own overflow is answered before the walk, because the body's used
         // overflow depends on it: a root that clips - or that contains anything, which stops the handover
         // just the same (CSS Contain 1 §2) - keeps the body's clipping for the body, and a root that does
@@ -604,27 +618,32 @@ internal sealed record LayoutProfile(
     {
         var style = box.Source.Style;
 
-        return style.HasUnderline || style.HasOverline || style.HasLineThrough
-            ? new DecorationSource(
-                style.HasUnderline,
-                style.HasOverline,
-                style.HasLineThrough,
-                style.Decoration,
-                style.DecorationColor ?? ComputedStyle.ToArgb(style.Color),
-                style.DecorationThickness,
-                style.UnderlineOffset,
-                style.DecorationInset)
-            {
-                // The element, not the box: every run of text the element decorates has to be gathered
-                // back into the one line it asked for, and the boxes a font fallback cuts the text into
-                // are not separate decorators. Two runs trimmed as two boxes leave a gap at every font
-                // change (CSS Text Decoration 4 §2.1, §2.9.1).
-                Speaker = box.Source.Element ?? (Object)box.Source,
-                Font = style.GetFont(),
-                Start = box.Flow.InlineStart(box.BorderBox),
-                Position = style.UnderlinePosition,
-            }
-            : null;
+        if (!style.HasUnderline && !style.HasOverline && !style.HasLineThrough)
+        {
+            return null;
+        }
+
+        var font = style.GetFont();
+
+        return new DecorationSource(
+            style.HasUnderline,
+            style.HasOverline,
+            style.HasLineThrough,
+            style.Decoration,
+            style.DecorationColor ?? ComputedStyle.ToArgb(style.Color),
+            style.DecorationThickness,
+            style.UnderlineOffset,
+            style.DecorationInset)
+        {
+            // The element, not the box: every run of text the element decorates has to be gathered
+            // back into the one line it asked for, and the boxes a font fallback cuts the text into
+            // are not separate decorators. Two runs trimmed as two boxes leave a gap at every font
+            // change (CSS Text Decoration 4 §2.1, §2.9.1).
+            Speaker = box.Source.Element ?? (Object)box.Source,
+            Font = font,
+            Start = box.Flow.InlineStart(box.BorderBox),
+            Position = style.UnderlinePosition,
+        };
     }
 
     /// <summary>
@@ -855,142 +874,258 @@ internal sealed record LayoutProfile(
     /// </summary>
     private void ResolveInsets(LayoutBox root)
     {
-        var decorated = new Dictionary<Object, List<TrimmedRun>>();
+        _speakerSlots.Clear();
+        _speakers.Clear();
 
-        CollectTrimmed(root, null, decorated);
+        var counts = _trimmedCounts;
+        Array.Clear(counts, 0, counts.Length);
+        var total = 0;
 
-        foreach (var runs in decorated.Values)
+        CountTrimmed(root, ref counts, ref total);
+        _trimmedCounts = counts;
+
+        if (total == 0)
         {
-            Trim(runs);
+            return;
+        }
+
+        var speakers = _speakers.Count;
+        var starts = Ensure(ref _trimmedStarts, speakers);
+
+        if (_trimmedRuns.Length < total)
+        {
+            _trimmedRuns = new TrimmedRun[Math.Max(total, _trimmedRuns.Length * 2)];
+        }
+
+        var offset = 0;
+
+        for (var slot = 0; slot < speakers; slot++)
+        {
+            starts[slot] = offset;
+            offset += counts[slot];
+
+            // The count becomes the write cursor for this slot on the collecting walk.
+            counts[slot] = starts[slot];
+        }
+
+        CollectTrimmed(root, null, _trimmedRuns, counts);
+
+        for (var slot = 0; slot < speakers; slot++)
+        {
+            var speaker = _speakers[slot];
+
+            Trim(
+                _trimmedRuns,
+                starts[slot],
+                counts[slot] - starts[slot],
+                speaker.Insets!,
+                speaker.Font);
+        }
+    }
+
+    /// <summary>
+    /// Gets the buffer a per-speaker table needs, keeping its contents where it is already large enough.
+    /// </summary>
+    private static Int32[] Ensure(ref Int32[] buffer, Int32 size)
+    {
+        if (buffer.Length < size)
+        {
+            buffer = new Int32[Math.Max(size, buffer.Length * 2)];
+        }
+
+        return buffer;
+    }
+
+    /// <summary>
+    /// Counts the runs each decorating speaker has, so its share of one flat array can be reserved
+    /// before the text is read into it.
+    /// </summary>
+    private void CountTrimmed(LayoutBox box, ref Int32[] counts, ref Int32 total)
+    {
+        if (box.Kind == LayoutKind.Text && box.Decorations is { } asked)
+        {
+            for (var at = 0; at < asked.Count; at++)
+            {
+                var source = asked[at];
+
+                if (source.Insets is null || source.Speaker is not { } speaker)
+                {
+                    continue;
+                }
+
+                var slot = source.SpeakerIndex;
+
+                if (slot < 0)
+                {
+                    if (!_speakerSlots.TryGetValue(speaker, out slot))
+                    {
+                        slot = _speakers.Count;
+                        _speakerSlots.Add(speaker, slot);
+                        _speakers.Add(source);
+                    }
+
+                    // The slot is written back onto the source so the collecting walk reads it without
+                    // hashing the speaker again. The decoration pass makes these sources afresh.
+                    source.SpeakerIndex = slot;
+                }
+
+                if (counts.Length <= slot)
+                {
+                    Array.Resize(ref counts, Math.Max(slot + 1, counts.Length * 2));
+                }
+
+                counts[slot]++;
+                total++;
+            }
+        }
+
+        foreach (var child in box.Children)
+        {
+            CountTrimmed(child, ref counts, ref total);
         }
     }
 
     /// <summary>
     /// Gathers the runs each decorating box asked to have its ends pulled back from, in the order the text
-    /// is read, together with how much inline room the run takes.
+    /// is read, together with how much inline room the run takes. Each speaker's runs are written into
+    /// the stretch of the flat array reserved for it, so the trim that follows reads one interval.
     /// </summary>
     private static void CollectTrimmed(
         LayoutBox box,
         LayoutBox? line,
-        Dictionary<Object, List<TrimmedRun>> into)
+        TrimmedRun[] runs,
+        Int32[] at)
     {
         var standing = box.Kind == LayoutKind.Line ? box : line;
 
         if (box.Kind == LayoutKind.Text && box.Decorations is { } asked)
         {
-            for (var at = 0; at < asked.Count; at++)
+            for (var index = 0; index < asked.Count; index++)
             {
-                if (asked[at].Insets is { } insets && asked[at].Speaker is { } element)
-                {
-                    if (!into.TryGetValue(element, out var runs))
-                    {
-                        runs = new List<TrimmedRun>();
-                        into.Add(element, runs);
-                    }
+                var slot = asked[index].SpeakerIndex;
 
-                    runs.Add(new TrimmedRun(
+                if (slot >= 0 && asked[index].Insets is not null)
+                {
+                    runs[at[slot]++] = new TrimmedRun(
                         box,
-                        at,
+                        index,
                         box.Vertical ? box.BorderBox.Height : box.BorderBox.Width,
-                        standing,
-                        insets,
-                        asked[at].Font));
+                        standing);
                 }
             }
         }
 
         foreach (var child in box.Children)
         {
-            CollectTrimmed(child, standing, into);
+            CollectTrimmed(child, standing, runs, at);
         }
     }
 
     /// <summary>Carries one decorating box's inset out along the text it decorates.</summary>
-    private void Trim(List<TrimmedRun> runs)
+    private void Trim(
+        TrimmedRun[] runs,
+        Int32 start,
+        Int32 count,
+        DecorationInsets insets,
+        FontStyle font)
     {
-        var insets = runs[0].Insets;
+        var end = start + count;
+        var from = start;
 
-        foreach (var segment in Segments(runs, insets.PerFragment))
+        while (from < end)
         {
-            var total = 0.0;
-            var thickness = 1.0;
+            var to = from + 1;
 
-            foreach (var run in segment)
+            if (insets.PerFragment)
             {
-                total += run.Size;
-                thickness = Math.Max(thickness, run.Thickness);
+                var line = runs[from].Line;
+
+                while (to < end && ReferenceEquals(runs[to].Line, line))
+                {
+                    to++;
+                }
+            }
+            else
+            {
+                to = end;
             }
 
-            var (start, end) = Distances(insets, total, thickness);
-
-            // The spaces the decorated text opens and closes with are pulled off the ends as well where
-            // the page asked for it: the line stops at the first letter it has a rule to stand under and
-            // begins again at the last, however much white space the mode kept on either side of them
-            // (CSS Text Decoration 4 §2.9.2). What lies between two letters is left alone, since that is
-            // part of the text the one rule runs across.
-            if (insets.Spaces.HasFlag(DecorationSkipSpaces.Start))
-            {
-                start += segment[0].Spaces(_measurer, fromEnd: false);
-            }
-
-            if (insets.Spaces.HasFlag(DecorationSkipSpaces.End))
-            {
-                end += segment[^1].Spaces(_measurer, fromEnd: true);
-            }
-
-            var pulls = new Double[segment.Count];
-            var pushes = new Double[segment.Count];
-
-            // One distance shared out along the stretch: the runs take what is left of it in the order
-            // they are read, and a run the whole distance falls across draws nothing. A negative distance
-            // is an extension and belongs to the run at that end whole, since it moves the endpoint
-            // outward rather than eating the line away.
-            var ahead = start;
-
-            for (var at = 0; at < segment.Count; at++)
-            {
-                var size = segment[at].Size;
-                pulls[at] = ahead < 0 ? ahead : Math.Max(0, Math.Min(ahead, size));
-                ahead -= pulls[at];
-            }
-
-            var behind = end;
-
-            for (var at = segment.Count - 1; at >= 0; at--)
-            {
-                var size = segment[at].Size;
-                pushes[at] = behind < 0 ? behind : Math.Max(0, Math.Min(behind, size - pulls[at]));
-                behind -= pushes[at];
-            }
-
-            for (var at = 0; at < segment.Count; at++)
-            {
-                segment[at].Apply(pulls[at], pushes[at]);
-            }
+            TrimSegment(runs, from, to, insets, font);
+            from = to;
         }
     }
 
-    /// <summary>
-    /// Splits the text one box decorates into the stretches its inset is counted across: every fragment of
-    /// a box that repeats its decoration on each line stands on its own, and a box that slices its
-    /// decoration is one stretch however many lines it reaches.
-    /// </summary>
-    private static List<List<TrimmedRun>> Segments(List<TrimmedRun> runs, Boolean perFragment)
+    /// <summary>Pulls back the ends of one stretch of text a decoration is counted across.</summary>
+    private void TrimSegment(
+        TrimmedRun[] runs,
+        Int32 from,
+        Int32 to,
+        DecorationInsets insets,
+        FontStyle font)
     {
-        var segments = new List<List<TrimmedRun>>();
+        var count = to - from;
+        var total = 0.0;
+        var thickness = 1.0;
 
-        foreach (var run in runs)
+        for (var at = from; at < to; at++)
         {
-            if (segments.Count == 0 ||
-                (perFragment && !ReferenceEquals(segments[^1][0].Line, run.Line)))
-            {
-                segments.Add(new List<TrimmedRun>());
-            }
-
-            segments[^1].Add(run);
+            total += runs[at].Size;
+            thickness = Math.Max(thickness, runs[at].Thickness);
         }
 
-        return segments;
+        var (start, end) = Distances(insets, total, thickness);
+
+        // The spaces the decorated text opens and closes with are pulled off the ends as well where
+        // the page asked for it: the line stops at the first letter it has a rule to stand under and
+        // begins again at the last, however much white space the mode kept on either side of them
+        // (CSS Text Decoration 4 §2.9.2). What lies between two letters is left alone, since that is
+        // part of the text the one rule runs across.
+        if (insets.Spaces.HasFlag(DecorationSkipSpaces.Start))
+        {
+            start += runs[from].Spaces(_measurer, font, fromEnd: false);
+        }
+
+        if (insets.Spaces.HasFlag(DecorationSkipSpaces.End))
+        {
+            end += runs[to - 1].Spaces(_measurer, font, fromEnd: true);
+        }
+
+        if (_trimPulls.Length < count)
+        {
+            var size = Math.Max(count, _trimPulls.Length * 2);
+            _trimPulls = new Double[size];
+            _trimPushes = new Double[size];
+        }
+
+        var pulls = _trimPulls;
+        var pushes = _trimPushes;
+
+        // One distance shared out along the stretch: the runs take what is left of it in the order
+        // they are read, and a run the whole distance falls across draws nothing. A negative distance
+        // is an extension and belongs to the run at that end whole, since it moves the endpoint
+        // outward rather than eating the line away.
+        var ahead = start;
+
+        for (var at = 0; at < count; at++)
+        {
+            var size = runs[from + at].Size;
+            pulls[at] = ahead < 0 ? ahead : Math.Max(0, Math.Min(ahead, size));
+            ahead -= pulls[at];
+        }
+
+        var behind = end;
+
+        for (var at = count - 1; at >= 0; at--)
+        {
+            var size = runs[from + at].Size;
+            pushes[at] = behind < 0 ? behind : Math.Max(0, Math.Min(behind, size - pulls[at]));
+            behind -= pushes[at];
+        }
+
+        for (var at = 0; at < count; at++)
+        {
+            runs[from + at].Apply(pulls[at], pushes[at]);
+        }
     }
 
     /// <summary>
@@ -1008,13 +1143,11 @@ internal sealed record LayoutProfile(
     /// One run of text whose decoration has ends to pull in, with the room it takes along the line and
     /// how far each end came to standing.
     /// </summary>
-    private sealed record TrimmedRun(
+    private readonly record struct TrimmedRun(
         LayoutBox Box,
         Int32 At,
         Double Size,
-        LayoutBox? Line,
-        DecorationInsets Insets,
-        FontStyle Font)
+        LayoutBox? Line)
     {
         internal Double Thickness =>
             Box.DecorationPlacements is { } placed && At < placed.Count
@@ -1027,7 +1160,7 @@ internal sealed record LayoutProfile(
         /// letter answers with nothing, and so does one that is nothing but spaces: the room of a run
         /// with no letter on the far side of it belongs to the line rather than to a space to skip.
         /// </summary>
-        internal Double Spaces(ITextMeasurer measurer, Boolean fromEnd)
+        internal Double Spaces(ITextMeasurer measurer, FontStyle font, Boolean fromEnd)
         {
             if (Box.Kind != LayoutKind.Text || Box.Text is not { Length: > 0 } text)
             {
@@ -1050,7 +1183,7 @@ internal sealed record LayoutProfile(
             // from cell to cell, which is the extent the line is pulled back by.
             return Math.Min(Size, measurer.MeasureAdvance(
                 text.Substring(fromEnd ? text.Length - run : 0, run),
-                Font,
+                font,
                 Box.Source.Style.Flow));
         }
 
