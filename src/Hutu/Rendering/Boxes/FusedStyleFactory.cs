@@ -615,6 +615,8 @@ internal static class FusedStyleFactory
         Func<String, Boolean>? applies = null,
         String? pseudoElement = null)
     {
+        var fonts = pool?.Fonts ?? FontStyleManager.Shared;
+
         // The scope is read through only where one exists: a page that declares no custom property
         // never asks for a substitution, and the cascade's own lookup - with the answers it remembers -
         // is then the reader, exactly as it was before variables came in.
@@ -680,7 +682,7 @@ internal static class FusedStyleFactory
             : ComputedStyle.ResolveFontSizeFused(
                 find("font-size"),
                 new LengthReader.FontSource(
-                    new Hutu.Rendering.Layout.FontStyle(parent.FontFamily, parent.FontSize, parent.Weight, parent.Italic, parent.FontAdjust)),
+                    fonts.GetOrAdd(parent.FontFamily, parent.FontSize, parent.Weight, parent.Italic, parent.FontAdjust)),
                 dimensions);
 
         // The root's size is the number every `rem` further down the document is a share of, and the
@@ -713,8 +715,7 @@ internal static class FusedStyleFactory
             // and none of them was written here, so the face is the parent's own interned one.
             font = inheritedFont;
             face = new LengthReader.FontSource(
-                new Hutu.Rendering.Layout.FontStyle(
-                    font.Family, font.Size, font.Weight, font.Italic, font.Adjust, font.Features));
+                fonts.GetOrAdd(font.Family, font.Size, font.Weight, font.Italic, font.Adjust, font.Features));
         }
         else if (cache is not null && cache.TryFont(fontKey, out font))
         {
@@ -722,8 +723,7 @@ internal static class FusedStyleFactory
             // matched alike, at the same size, under the same inherited font and the same authored
             // line-height.
             face = new LengthReader.FontSource(
-                new Hutu.Rendering.Layout.FontStyle(
-                    font.Family, font.Size, font.Weight, font.Italic, font.Adjust, font.Features));
+                fonts.GetOrAdd(font.Family, font.Size, font.Weight, font.Italic, font.Adjust, font.Features));
         }
         else
         {
@@ -746,8 +746,7 @@ internal static class FusedStyleFactory
             // A font-relative unit is measured against the size the face is really drawn at, so the
             // adjustment travels into the font a length is read with (font-size-adjust-order-001).
             face = new LengthReader.FontSource(
-                new Hutu.Rendering.Layout.FontStyle(
-                    family, size, weight, italic, adjust, features));
+                fonts.GetOrAdd(family, size, weight, italic, adjust, features));
 
             var letterHit = find("letter-spacing");
             var wordHit = find("word-spacing");
@@ -1365,6 +1364,7 @@ internal static class FusedStyleFactory
         }
 
         var values = new ComputedStyle.StyleValues();
+        values.FontManager = fonts;
 
         // Every area is shared rather than duplicated. An area record is written to be immutable and
         // shared - "the same instance stands for every box whose values agree", as the discipline on them

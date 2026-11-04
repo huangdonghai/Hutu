@@ -194,6 +194,8 @@ internal sealed class LayoutEngine
         var content = ScrollableOverflow.Of(rootBox, initial, _overflowBounds);
         ScrollableOverflow.MoveToOrigin(rootBox, content);
 
+        _inline.ReleasePlanCache();
+
         return new LayoutResult(rootBox, content.Width, content.Height);
     }
 

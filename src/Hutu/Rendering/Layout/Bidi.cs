@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 
 namespace Hutu.Rendering.Layout;
@@ -23,21 +24,28 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 internal static class Bidi
 {
+    /// <summary>Gets the embedding levels of a text, materialised for callers that need to keep them.</summary>
+    internal static Int32[] Levels(String text, Int32 baseLevel)
+    {
+        using var levels = LevelsView(text, baseLevel);
+        return levels.Length == 0 ? Array.Empty<Int32>() : levels.ToArray();
+    }
+
     /// <summary>Gets the embedding level of each code point of the text.</summary>
     /// <param name="text">The text of the paragraph run.</param>
     /// <param name="baseLevel">The paragraph's level: 0 for left-to-right, 1 for right-to-left.</param>
-    internal static Int32[] Levels(String text, Int32 baseLevel)
+    internal static TextClusters.IntSpan LevelsView(String text, Int32 baseLevel)
     {
         var count = text.Length;
 
         if (count == 0)
         {
-            return Array.Empty<Int32>();
+            return default;
         }
 
-        var classes = new BidiClass[count];
-        var levels = new Int32[count];
-        var points = new Int32[count];
+        var classes = ArrayPool<BidiClass>.Shared.Rent(count);
+        var levels = ArrayPool<Int32>.Shared.Rent(count);
+        var points = ArrayPool<Int32>.Shared.Rent(count);
 
         for (var at = 0; at < count;)
         {
@@ -348,7 +356,9 @@ internal static class Bidi
             break;
         }
 
-        return levels;
+        ArrayPool<BidiClass>.Shared.Return(classes);
+        ArrayPool<Int32>.Shared.Return(points);
+        return new TextClusters.IntSpan(levels, count);
     }
 
     /// <summary>
@@ -387,7 +397,9 @@ internal static class Bidi
     };
 
     /// <summary>Gets the runs of equal level the text is made of, in logical order.</summary>
-    internal static List<(Int32 Start, Int32 Length, Int32 Level)> Runs(String text, Int32[] levels)
+    internal static List<(Int32 Start, Int32 Length, Int32 Level)> Runs(
+        String text,
+        ReadOnlySpan<Int32> levels)
     {
         var runs = new List<(Int32 Start, Int32 Length, Int32 Level)>();
 
@@ -422,9 +434,9 @@ internal static class Bidi
     /// Gets the order the runs of a line are drawn in, from the highest level down to the lowest odd
     /// one, each contiguous run at a level or above reversed (UAX #9 L2).
     /// </summary>
-    internal static Int32[] VisualOrder(IReadOnlyList<Int32> levels)
+    internal static Int32[] VisualOrder(ReadOnlySpan<Int32> levels)
     {
-        var order = new Int32[levels.Count];
+        var order = new Int32[levels.Length];
 
         for (var at = 0; at < order.Length; at++)
         {

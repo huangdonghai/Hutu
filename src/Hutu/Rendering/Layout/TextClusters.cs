@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Globalization;
 
@@ -18,6 +19,39 @@ namespace Hutu.Rendering.Layout;
 /// </remarks>
 public static class TextClusters
 {
+    /// <summary>A rented integer run whose logical length may be shorter than the backing array.</summary>
+    internal readonly struct IntSpan : IDisposable
+    {
+        private readonly Int32[]? _buffer;
+
+        public IntSpan(Int32[] buffer, Int32 length)
+        {
+            _buffer = buffer;
+            Length = length;
+        }
+
+        public Int32 Length { get; }
+
+        public Int32 this[Int32 index] => _buffer![index];
+
+        public void CopyTo(Int32 sourceIndex, Span<Int32> destination) =>
+            _buffer.AsSpan(sourceIndex, destination.Length).CopyTo(destination);
+
+        public Int32[] ToArray()
+        {
+            var copy = new Int32[Length];
+            _buffer.AsSpan(0, Length).CopyTo(copy);
+            return copy;
+        }
+
+        public void Dispose()
+        {
+            if (_buffer is not null)
+            {
+                ArrayPool<Int32>.Shared.Return(_buffer);
+            }
+        }
+    }
     /// <summary>
     /// Gets how many of the string's characters the character at an index is made of - the base with the
     /// marks that stand on it, the joiners that tie it to its neighbour and the selector that says which
@@ -233,6 +267,93 @@ public static class TextClusters
         }
 
         return points.ToArray();
+    }
+
+    /// <summary>Counts the places a line may justify without materialising their array.</summary>
+    internal static Int32 ExpansionPointCount(String text, Int32 start, Int32 length, String expand)
+    {
+        var end = start + length;
+        var inside = false;
+        var count = 0;
+
+        for (var index = start; index < end;)
+        {
+            var lengthOf = TextChunker.UnitsAt(text, index);
+            var next = index + lengthOf;
+
+            index += lengthOf;
+
+            if (TextChunker.IsCollapsible(text[index - lengthOf]))
+            {
+                inside = true;
+                continue;
+            }
+
+            if (inside)
+            {
+                count++;
+                inside = false;
+            }
+
+            if (next < end && Offers(expand, text, index - lengthOf, next))
+            {
+                count++;
+            }
+        }
+
+        return inside ? count + 1 : count;
+    }
+
+    /// <summary>Gets the justification places in a rented array.</summary>
+    internal static IntSpan ExpansionPointsView(String text, Int32 start, Int32 length, String expand)
+    {
+        if (length <= 0)
+        {
+            return default;
+        }
+
+        var buffer = ArrayPool<Int32>.Shared.Rent(length);
+        var count = 0;
+        var end = start + length;
+        var inside = false;
+
+        for (var index = start; index < end;)
+        {
+            var lengthOf = TextChunker.UnitsAt(text, index);
+            var next = index + lengthOf;
+
+            index += lengthOf;
+
+            if (TextChunker.IsCollapsible(text[index - lengthOf]))
+            {
+                inside = true;
+                continue;
+            }
+
+            if (inside)
+            {
+                buffer[count++] = index - lengthOf - 1;
+                inside = false;
+            }
+
+            if (next < end && Offers(expand, text, index - lengthOf, next))
+            {
+                buffer[count++] = next - 1;
+            }
+        }
+
+        if (inside)
+        {
+            buffer[count++] = end - 1;
+        }
+
+        if (count == 0)
+        {
+            ArrayPool<Int32>.Shared.Return(buffer);
+            return default;
+        }
+
+        return new IntSpan(buffer, count);
     }
 
     /// <summary>

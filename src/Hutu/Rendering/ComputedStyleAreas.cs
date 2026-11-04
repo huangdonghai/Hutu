@@ -630,6 +630,8 @@ internal sealed record ListArea
 /// </remarks>
 internal sealed class StyleIntern
 {
+    private readonly Layout.FontStyleManager _fonts;
+
     private readonly Dictionary<BorderArea, BorderArea> _border = new();
 
     private readonly Dictionary<BoxModelArea, BoxModelArea> _boxModel = new();
@@ -645,6 +647,12 @@ internal sealed class StyleIntern
     private readonly Dictionary<TextDecorationArea, TextDecorationArea> _decoration = new();
 
     private readonly Dictionary<ListArea, ListArea> _list = new();
+
+    internal StyleIntern(Layout.FontStyleManager? fonts = null) =>
+        _fonts = fonts ?? new Layout.FontStyleManager();
+
+    /// <summary>Gets the font table every style built through this pool shares.</summary>
+    internal Layout.FontStyleManager Fonts => _fonts;
 
     /// <summary>Gets the instance standing for a list marker style.</summary>
     internal ListArea List(ListArea area)

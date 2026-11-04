@@ -29,7 +29,7 @@ internal sealed class RenderingPipeline
     private readonly LayoutEngine? _layout;
     private readonly IImageProvider? _images;
     private readonly Painter _painter = new();
-    private readonly StyleResolution _styles = new();
+    private readonly StyleResolution _styles;
 
     /// <summary>The layout and paint wall clock of the last <see cref="LayOut"/>, filled only while measuring.</summary>
     private Double _laidMs;
@@ -53,11 +53,16 @@ internal sealed class RenderingPipeline
     private PageSize _paper;
     private Layout.Thickness _paperMargins;
 
-    public RenderingPipeline(HutuRenderDevice device, ITextMeasurer? textMeasurer = null, IImageProvider? images = null)
+    public RenderingPipeline(
+        HutuRenderDevice device,
+        ITextMeasurer? textMeasurer = null,
+        IImageProvider? images = null,
+        FontStyleManager? fontStyles = null)
     {
         _device = device;
         _layout = textMeasurer is null ? null : new LayoutEngine(textMeasurer);
         _images = images;
+        _styles = new StyleResolution(fontStyles);
     }
 
     /// <summary>

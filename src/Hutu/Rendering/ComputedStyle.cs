@@ -265,6 +265,7 @@ internal readonly struct ComputedStyle
             DisplayPositioning = DisplayPositioningArea.Block,
             VisualEffects = VisualEffectsArea.Default,
             Font = _values.Font,
+            FontManager = _values.FontManager,
             Text = text,
             Decoration = _values.Decoration,
             List = _values.List,
@@ -3508,6 +3509,19 @@ internal readonly struct ComputedStyle
         internal VisualEffectsArea VisualEffects = VisualEffectsArea.Default;
 
         internal FontArea Font = new();
+
+        /// <summary>
+        /// The manager a box's font handles are filed in. The fused builder sets it to the table the
+        /// whole document shares; a style built without one falls back to the process-wide table that
+        /// backs the public <see cref="Layout.FontStyle"/> constructor.
+        /// </summary>
+        internal Layout.FontStyleManager FontManager = Layout.FontStyleManager.Shared;
+
+        /// <summary>The last handle this element asked for, and the area and size it was made from.</summary>
+        internal Layout.FontStyle Handle;
+        internal Layout.FontStyleManager? HandleManager;
+        internal FontArea? HandleArea;
+        internal Double HandleSize;
 
         internal TextArea Text = new();
 

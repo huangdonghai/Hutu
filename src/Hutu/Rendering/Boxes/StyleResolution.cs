@@ -186,7 +186,8 @@ internal static class ConstraintValidity
 internal sealed class StyleResolution
 {
     private RuleBucketIndex? _index;
-    private StyleIntern _pool = new();
+    private readonly Layout.FontStyleManager _fonts;
+    private StyleIntern _pool;
     private FusedAreaCache _cache = new();
     private readonly FusedStyleCache _styles = new();
     private Boolean _restylesWithoutRelayout;
@@ -199,11 +200,20 @@ internal sealed class StyleResolution
     /// </summary>
     private readonly Dictionary<MatchedCascade, VariableScope> _heads = new();
 
+    public StyleResolution(Layout.FontStyleManager? fonts = null)
+    {
+        _fonts = fonts ?? new Layout.FontStyleManager();
+        _pool = new StyleIntern(_fonts);
+    }
+
     /// <summary>Gets the index of the last build, or null when the sheets have to be scanned again.</summary>
     internal RuleBucketIndex? Index => _index;
 
     /// <summary>Gets the intern table the last build filled.</summary>
     internal StyleIntern Pool => _pool;
+
+    /// <summary>Gets the font table shared by every build this document runs.</summary>
+    internal Layout.FontStyleManager Fonts => _fonts;
 
     /// <summary>Gets the area cache the last build filled.</summary>
     internal FusedAreaCache Cache => _cache;
@@ -267,7 +277,7 @@ internal sealed class StyleResolution
     internal void Reset()
     {
         _index = null;
-        _pool = new StyleIntern();
+        _pool = new StyleIntern(_fonts);
         _cache = new FusedAreaCache();
         _styles.Clear();
         _restylesWithoutRelayout = false;

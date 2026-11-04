@@ -23,8 +23,9 @@ namespace Hutu.Skia;
 /// because there is only the one set of numbers to drift from.
 /// </para>
 /// </remarks>
-public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
+public sealed class SkiaTextMeasurer : ITextMeasurer, IFontStyleManagerSource, IDisposable
 {
+    private readonly FontStyleManager _fontStyles = new();
     private readonly SkiaFontResolver _resolver;
     private readonly SkiaTextShaper _shaper = new();
     private readonly SkiaOpenTypeMetrics _openType = new();
@@ -63,6 +64,9 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 
     /// <summary>Gets the resolver this measurer shares its typefaces with.</summary>
     internal SkiaFontResolver Fonts => _resolver;
+
+    /// <summary>Gets the font table this measurer's caches and the document's layout share.</summary>
+    public FontStyleManager FontStyles => _fontStyles;
 
     /// <summary>Gets the shaper every glyph this measurer speaks of was shaped by.</summary>
     internal SkiaTextShaper Shaper => _shaper;
@@ -424,8 +428,8 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
     }
 
     /// <summary>Gets the style without the features that change a glyph's advance.</summary>
-    private static FontStyle WithoutFeatures(FontStyle style) =>
-        new(style.Family, style.Size, style.Weight, style.IsItalic, style.Adjust);
+    private FontStyle WithoutFeatures(FontStyle style) =>
+        _fontStyles.GetOrAdd(style.Family, style.Size, style.Weight, style.IsItalic, style.Adjust);
 
     private List<UprightCell> DecomposeUprightInto(String text, FontStyle style)
     {
@@ -621,7 +625,7 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IDisposable
 
         var aspect = _aspects.GetOrAdd(new AspectKey(style.Family, style.Weight, style.IsItalic), key =>
         {
-            var probe = new FontStyle(key.Family, AspectProbeSize, key.Weight, key.Italic);
+            var probe = _fontStyles.GetOrAdd(key.Family, AspectProbeSize, key.Weight, key.Italic);
             var typeface = _resolver.Resolve(probe);
             var height = _openType.GetXHeight(typeface, (Single)AspectProbeSize);
 

@@ -1,5 +1,6 @@
 using AngleSharp.Css.Dom;
 using Hutu.Rendering.Boxes;
+using System.Buffers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -104,13 +105,343 @@ internal sealed class InlineLayout
     /// </summary>
     private readonly List<TailStep> _tail = new();
 
+    /// <summary>The break opportunities each text and word-breaking rule set was cut into, together
+    /// with the width of every chunk at the style and flow last asked for. The intrinsic, measuring and
+    /// arranging phases ask the same text for the same boundaries, and the cache is cleared with the
+    /// plans when the pass ends.</summary>
+    private readonly Dictionary<ChunkKey, TextPlan> _textPlans = new();
+
+    /// <summary>Marks that change how a character is drawn, kept out of the run strings. A mark names
+    /// the character in its source by absolute position, so slicing a fragment is moving its bounds,
+    /// not copying a mask.</summary>
+    private readonly List<MaskMark> _maskMarks = new();
+
+    /// <summary>Scratch mark lists the line builder fills before handing them to a run.</summary>
+    private readonly List<MaskMark> _trimMarks = new();
+    private readonly List<MaskMark> _autoMarks = new();
+
+    /// <summary>Item lists are scratch buffers, not part of a plan: after their lines are built they
+    /// are cleared and their backing arrays kept for the next container.</summary>
+    private readonly Stack<List<InlineItem>> _itemLists = new();
+
+    private const Int32 ItemListPoolLimit = 16;
+    private const Int32 ItemListCapacityBudget = 8_192;
+
+    private Int32 _itemListCapacity;
+
+    [ThreadStatic]
+    private static Stack<List<InlineAncestor>>? _ancestorLists;
+
+    private const Int32 AncestorListPoolLimit = 16;
+    private const Int32 AncestorListCapacityBudget = 1_024;
+
+    [ThreadStatic]
+    private static Int32 _ancestorListCapacity;
+
+    private FragmentStore? _fragmentStore;
+    private LineStore? _lineStore;
+
+    [ThreadStatic]
+    private static Stack<FragmentStore>? _fragmentStores;
+
+    [ThreadStatic]
+    private static Stack<LineStore>? _lineStores;
+
+    /// <summary>Builders available to a line plan; a nested plan gets one of its own rather than
+    /// clearing the one an outer plan is still filling.</summary>
+    private readonly Stack<LineBuilder> _builders = new();
+
     private readonly record struct BaselineKey(Box Box, Double Width, Double Height, Double Basis, Double ContainingWidth, Double ContainingHeight);
+
+    private static Int32[] RentInts(Int32 length) =>
+        ArrayPool<Int32>.Shared.Rent(Math.Max(1, length));
+
+    private static void ReturnInts(Int32[] values) =>
+        ArrayPool<Int32>.Shared.Return(values);
+
+    private static Double[] RentDoubles(Int32 length)
+    {
+        var values = ArrayPool<Double>.Shared.Rent(Math.Max(1, length));
+        Array.Clear(values, 0, length);
+        return values;
+    }
+
+    private static void ReturnDoubles(Double[] values) =>
+        ArrayPool<Double>.Shared.Return(values);
+
+    private List<InlineItem> RentItems()
+    {
+        if (_itemLists.Count == 0)
+        {
+            return new List<InlineItem>();
+        }
+
+        var list = _itemLists.Pop();
+        _itemListCapacity -= list.Capacity;
+        list.Clear();
+        return list;
+    }
+
+    private void ReturnItems(List<InlineItem> items)
+    {
+        items.Clear();
+
+        if (items.Capacity > ItemListCapacityBudget ||
+            _itemLists.Count >= ItemListPoolLimit ||
+            _itemListCapacity + items.Capacity > ItemListCapacityBudget)
+        {
+            return;
+        }
+
+        _itemLists.Push(items);
+        _itemListCapacity += items.Capacity;
+    }
+
+    private static List<InlineAncestor> RentAncestorList()
+    {
+        var lists = _ancestorLists;
+
+        if (lists is null || lists.Count == 0)
+        {
+            return new List<InlineAncestor>(3);
+        }
+
+        var list = lists.Pop();
+        _ancestorListCapacity -= list.Capacity;
+        list.Clear();
+        return list;
+    }
+
+    private static void ReturnAncestorList(List<InlineAncestor> list)
+    {
+        list.Clear();
+
+        if (list.Capacity > AncestorListCapacityBudget ||
+            (_ancestorLists?.Count ?? 0) >= AncestorListPoolLimit ||
+            _ancestorListCapacity + list.Capacity > AncestorListCapacityBudget)
+        {
+            return;
+        }
+
+        (_ancestorLists ??= new Stack<List<InlineAncestor>>()).Push(list);
+        _ancestorListCapacity += list.Capacity;
+    }
+
+    private TextFragment NewFragment(
+        String source,
+        Int32 start,
+        Int32 length,
+        Double width,
+        ComputedStyle style,
+        Box box,
+        WritingModeInfo flow,
+        InlineAncestor? inline,
+        Boolean isReplaced = false,
+        Double contentHeight = 0,
+        RubyAnnotation? ruby = null,
+        Double baseWidth = 0,
+        AtomicInline? atomic = null,
+        Boolean outOfFlow = false,
+        NoteRun? note = null,
+        InterlineNoteSource? interlineNote = null,
+        Boolean interlineGap = false,
+        Double? interlinePosition = null,
+        MarginNoteSource? marginNote = null,
+        Double? hang = null)
+    {
+        var node = new FragmentNode(
+            source, start, length, width, style, box, flow, inline, isReplaced,
+            contentHeight, ruby, baseWidth, atomic, outOfFlow, note, interlineNote,
+            interlineGap, interlinePosition, marginNote, hang);
+
+        var store = _fragmentStore ??= Rent(_fragmentStores ??= new Stack<FragmentStore>());
+        return new TextFragment(store, store.Add(node));
+    }
+
+    private Line NewLine(HashSet<InlineAncestor>? carried)
+    {
+        var node = new LineNode
+        {
+            Fragments = new List<TextFragment>(),
+            Scale = 1,
+            Alignment = CssInitialValues.TextAlign,
+            ContinuesFromPrevious = carried,
+            SlotIndex = -1,
+        };
+
+        var store = _lineStore ??= Rent(_lineStores ??= new Stack<LineStore>());
+        return new Line(store, store.Add(node));
+    }
+
+    private static T Rent<T>(Stack<T> stores)
+        where T : class, new() =>
+        stores.Count > 0 ? stores.Pop() : new T();
 
     /// <summary>Drops the plans, which belong to one layout pass as the engine's own caches do.</summary>
     internal void ResetPlanCache()
     {
+        ReleasePlans();
+    }
+
+    /// <summary>Releases the line and fragment arenas once the layout tree has been built. Their
+    /// chunks stay allocated for the next pass; only the handles into them are dropped.</summary>
+    internal void ReleasePlanCache()
+    {
+        ReleasePlans();
+    }
+
+    private void ReleasePlans()
+    {
         _plans.Clear();
         _baselines.Clear();
+        _textPlans.Clear();
+
+        if (_lineStore is { } lineStore)
+        {
+            lineStore.Clear();
+            (_lineStores ??= new Stack<LineStore>()).Push(lineStore);
+            _lineStore = null;
+        }
+
+        if (_fragmentStore is { } fragmentStore)
+        {
+            fragmentStore.Clear();
+            (_fragmentStores ??= new Stack<FragmentStore>()).Push(fragmentStore);
+            _fragmentStore = null;
+        }
+
+        while (_builders.Count > 0)
+        {
+            _builders.Pop().ReleaseReferences();
+        }
+
+        _maskMarks.Clear();
+        _trimMarks.Clear();
+        _autoMarks.Clear();
+    }
+
+    private TextPlan TextPlanFor(
+        String text,
+        ComputedStyle style,
+        WritingModeInfo flow,
+        LineBreaks.WordBreaking word,
+        Boolean continuesWord,
+        Boolean needWidths)
+    {
+        var key = new ChunkKey(text, word, continuesWord);
+        var flowSignature = FlowSignature(flow);
+
+        if (_textPlans.TryGetValue(key, out var known))
+        {
+            if (!needWidths || known.Matches(style.Values, flowSignature))
+            {
+                return known;
+            }
+
+            known.Measure(_measurer, text, style, flow, flowSignature);
+            return known;
+        }
+
+        var ranges = new List<TextChunker.ChunkRange>();
+
+        foreach (var range in TextChunker.Ranges(text, word, continuesWord))
+        {
+            ranges.Add(range);
+        }
+
+        var plan = new TextPlan(ranges.ToArray());
+
+        if (needWidths)
+        {
+            plan.Measure(_measurer, text, style, flow, flowSignature);
+        }
+
+        _textPlans[key] = plan;
+
+        return plan;
+    }
+
+    private readonly struct ChunkKey : IEquatable<ChunkKey>
+    {
+        public ChunkKey(String text, LineBreaks.WordBreaking word, Boolean continuesWord)
+        {
+            Text = text;
+            Word = word;
+            ContinuesWord = continuesWord;
+        }
+
+        public String Text { get; }
+
+        public LineBreaks.WordBreaking Word { get; }
+
+        public Boolean ContinuesWord { get; }
+
+        public Boolean Equals(ChunkKey other) =>
+            String.Equals(Text, other.Text, StringComparison.Ordinal) &&
+            Word == other.Word &&
+            ContinuesWord == other.ContinuesWord;
+
+        public override Boolean Equals(Object? obj) => obj is ChunkKey other && Equals(other);
+
+        public override Int32 GetHashCode() =>
+            HashCode.Combine(StringComparer.Ordinal.GetHashCode(Text), Word, ContinuesWord);
+    }
+
+    private sealed class TextPlan
+    {
+        private ComputedStyle.StyleValues? _style;
+        private Int32 _flow;
+
+        public TextPlan(TextChunker.ChunkRange[] chunks)
+        {
+            Chunks = chunks;
+            Widths = new Double[chunks.Length];
+        }
+
+        public TextChunker.ChunkRange[] Chunks { get; }
+
+        public Double[] Widths { get; }
+
+        public Boolean Matches(ComputedStyle.StyleValues style, Int32 flow) =>
+            ReferenceEquals(_style, style) && _flow == flow;
+
+        public void Measure(
+            ITextMeasurer measurer,
+            String text,
+            ComputedStyle style,
+            WritingModeInfo flow,
+            Int32 flowSignature)
+        {
+            for (var index = 0; index < Chunks.Length; index++)
+            {
+                var chunk = Chunks[index];
+
+                // White space is measured by where the line has reached, not by the font alone: a tab
+                // runs on to a stop and a run beginning a collapsed line takes no room. The two callers
+                // both take that answer from the line, so the plan carries no width for it.
+                Widths[index] = TextChunker.IsCollapsible(text, chunk.Start, chunk.Length)
+                    ? 0
+                    : MeasureChunk(measurer, style, text, chunk.Start, chunk.Length, flow);
+            }
+
+            _style = style.Values;
+            _flow = flowSignature;
+        }
+    }
+
+    private readonly record struct MaskMark(Int32 Offset, Char Code);
+
+    private readonly struct MaskSpan
+    {
+        public MaskSpan(Int32 start, Int32 count)
+        {
+            Start = start;
+            Count = count;
+        }
+
+        public Int32 Start { get; }
+
+        public Int32 Count { get; }
     }
 
     /// <summary>
@@ -139,7 +470,7 @@ internal sealed class InlineLayout
             return known;
         }
 
-        var items = new List<InlineItem>();
+        var items = RentItems();
         Collect(container, items, flow, null, maxInline);
 
         // Content with nothing to break still gets a plan: the phases ask again for the same answer and
@@ -172,6 +503,7 @@ internal sealed class InlineLayout
 
         lines = AddInterlineNotes(container, lines, maxInline, flow, context);
 
+        ReturnItems(items);
         _plans[key] = lines;
         return lines;
     }
@@ -219,7 +551,7 @@ internal sealed class InlineLayout
             return;
         }
 
-        var factors = new Double[lines.Count];
+        var factors = RentDoubles(lines.Count);
         var shared = 1.0;
 
         for (var index = 0; index < lines.Count; index++)
@@ -271,6 +603,9 @@ internal sealed class InlineLayout
 
             ScaleLine(container, line, factor);
         }
+
+        ReturnDoubles(factors);
+
     }
 
     /// <summary>
@@ -348,13 +683,7 @@ internal sealed class InlineLayout
             return font;
         }
 
-        return new FontStyle(
-            font.Family,
-            font.Size * line.Scale,
-            font.Weight,
-            font.IsItalic,
-            font.Adjust,
-            font.Features);
+        return font.WithSize(font.Size * line.Scale);
     }
 
     /// <summary>
@@ -393,7 +722,7 @@ internal sealed class InlineLayout
             var blankStyle = container.Style;
             var blankWidth = MeasureChunk(_measurer, blankStyle, mark, 0, mark.Length, flow);
 
-            line.Fragments.Add(new TextFragment(mark, 0, mark.Length, blankWidth, blankStyle, container, flow, null));
+            line.Fragments.Add(NewFragment(mark, 0, mark.Length, blankWidth, blankStyle, container, flow, null));
             return;
         }
 
@@ -485,7 +814,7 @@ internal sealed class InlineLayout
             return;
         }
 
-        line.Fragments.Add(new TextFragment(
+        line.Fragments.Add(NewFragment(
             mark, 0, mark.Length, markWidth, style, container, flow, null));
     }
 
@@ -565,19 +894,32 @@ internal sealed class InlineLayout
         TextIndentation indent,
         InlineStart start)
     {
-        var items = new List<InlineItem>();
+        var items = RentItems();
         Collect(container, items, flow, null, maxInline);
 
         var kept = Resume(items, start);
 
         if (kept.Count == 0)
         {
+            if (!ReferenceEquals(kept, items))
+            {
+                ReturnItems(kept);
+            }
+
+            ReturnItems(items);
             return new List<Line>();
         }
 
         var lines = BuildLines(kept, maxInline, flow, context, container.Style, indent);
+        var result = AddInterlineNotes(container, lines, maxInline, flow, context);
 
-        return AddInterlineNotes(container, lines, maxInline, flow, context);
+        if (!ReferenceEquals(kept, items))
+        {
+            ReturnItems(kept);
+        }
+
+        ReturnItems(items);
+        return result;
     }
 
     /// <summary>
@@ -585,7 +927,7 @@ internal sealed class InlineLayout
     /// break fell in is cut from the offset and everything before it is dropped. A place no item answers
     /// is not taken to mean the content is over - the whole list comes back instead.
     /// </summary>
-    private static List<InlineItem> Resume(List<InlineItem> items, InlineStart start)
+    private List<InlineItem> Resume(List<InlineItem> items, InlineStart start)
     {
         var after = -1;
 
@@ -602,10 +944,8 @@ internal sealed class InlineLayout
             {
                 if (start.Offset < text.Length)
                 {
-                    var kept = new List<InlineItem>(items.Count - index)
-                    {
-                        InlineItem.CreateText(text.Substring(start.Offset), item.Style, item.Box, item.Inline),
-                    };
+                    var kept = RentItems();
+                    kept.Add(InlineItem.CreateText(text.Substring(start.Offset), item.Style, item.Box, item.Inline));
 
                     for (var rest = index + 1; rest < items.Count; rest++)
                     {
@@ -625,7 +965,19 @@ internal sealed class InlineLayout
             break;
         }
 
-        return after < 0 ? items : items.GetRange(after, items.Count - after);
+        if (after < 0)
+        {
+            return items;
+        }
+
+        var slice = RentItems();
+
+        for (var index = after; index < items.Count; index++)
+        {
+            slice.Add(items[index]);
+        }
+
+        return slice;
     }
 
     /// <summary>Gets where the line at <paramref name="index"/> of the box's plan ends, for resuming.</summary>
@@ -821,7 +1173,7 @@ internal sealed class InlineLayout
 
     private IntrinsicSize MeasureIntrinsicCore(Box container, Double basis, WritingModeInfo flow, InlineContext context)
     {
-        var items = new List<InlineItem>();
+        var items = RentItems();
         Collect(container, items, flow, null, basis);
 
         // The first line carries the box's indentation ahead of anything set on it, so both extents the
@@ -873,7 +1225,7 @@ internal sealed class InlineLayout
         // Where each item stands along the one line the content needs. A reading hanging past its pair
         // asks the room of a neighbour whose tab stops are already decided by that place, and the walk
         // from the pair outward cannot answer it for itself.
-        var begins = new Double[items.Count];
+        var begins = RentDoubles(items.Count);
 
         for (var position = 0; position < items.Count; position++)
         {
@@ -1004,13 +1356,23 @@ internal sealed class InlineLayout
             // what the rules ask for - a mark written after it is read as that character's own.
             var before = -1;
 
-            foreach (var chunk in TextChunker.Ranges(source, item.Style.WordBreakingRules))
+            var textPlan = TextPlanFor(
+                source,
+                item.Style,
+                flow,
+                item.Style.WordBreakingRules,
+                continuesWord: false,
+                needWidths: true);
+
+            for (var chunkIndex = 0; chunkIndex < textPlan.Chunks.Length; chunkIndex++)
             {
+                var chunk = textPlan.Chunks[chunkIndex];
+
                 // A tab asks the same question here as on a line: how far the content has run decides
                 // where the next stop is.
                 var width = TextChunker.IsCollapsible(source, chunk.Start, chunk.Length)
                     ? WhiteSpaceWidth(item.Style, container.Style, source, chunk.Start, chunk.Length, maxContent, flow)
-                    : Measure(item.Style, source, chunk.Start, chunk.Length, flow);
+                    : textPlan.Widths[chunkIndex];
                 var space = TextChunker.IsCollapsible(source, chunk.Start, chunk.Length);
                 var collapsible = space && item.Style.CollapsesSpaces;
 
@@ -1217,6 +1579,8 @@ internal sealed class InlineLayout
         minContent = Math.Max(minContent, unbreakable - closingRoom);
         widest = Math.Max(widest, maxContent - closingRoom);
 
+        ReturnItems(items);
+        ReturnDoubles(begins);
         return new IntrinsicSize(minContent, Math.Max(widest, minContent));
     }
 
@@ -1499,6 +1863,7 @@ internal sealed class InlineLayout
                 emergency: false,
                 settleEdges: true);
 
+        ReturnItems(items);
         AlignLastLines(lines, inlineExtent);
         DistributeSpace(lines);
 
@@ -1697,7 +2062,7 @@ internal sealed class InlineLayout
                 // room the line was given, so the box of the run that trails into them is narrowed by
                 // that much: either way the glyphs land where a line without the spaces would have put
                 // them, which is what a right-to-line-end hanging looks like from both directions.
-                var room = ReferenceEquals(fragment, last) ? fragment.Width - line.Hanging : fragment.Width;
+                var room = fragment.Equals(last) ? fragment.Width - line.Hanging : fragment.Width;
 
                 Place(fragment, open, lineBox, contentBox, flow, line, box, cursor, context, room, placement, _measurer);
 
@@ -1787,7 +2152,7 @@ internal sealed class InlineLayout
             // or an isolate embeds the line in what it already is, while an override rewrites the
             // direction of every character written on it (CSS Writing Modes 3 §5.2).
             var wrapped = new System.Text.StringBuilder(text.Length + (group.Count * 8) + 4);
-            var starts = new Int32[group.Count];
+            var starts = RentInts(group.Count);
             var lineMarks = Overrides(container) ? Controls(container) : default;
 
             if (lineMarks.Open is { } opening)
@@ -1824,53 +2189,66 @@ internal sealed class InlineLayout
                 wrapped.Append(closing);
             }
 
-            var levels = Bidi.Levels(wrapped.ToString(), level);
+            using var levels = Bidi.LevelsView(wrapped.ToString(), level);
 
             for (var index = 0; index < group.Count; index++)
             {
                 var fragment = group[index];
-                var own = new Int32[fragment.Length];
-                Array.Copy(levels, starts[index], own, 0, fragment.Length);
+                var own = RentInts(fragment.Length);
 
-                var uniform = true;
-
-                for (var at = 1; at < own.Length; at++)
+                try
                 {
-                    if (own[at] != own[0])
+                    levels.CopyTo(starts[index], own.AsSpan(0, fragment.Length));
+
+                    var uniform = true;
+
+                    for (var at = 1; at < fragment.Length; at++)
                     {
-                        uniform = false;
-                        break;
+                        if (own[at] != own[0])
+                        {
+                            uniform = false;
+                            break;
+                        }
                     }
-                }
 
-                if (uniform)
-                {
-                    fragment.RightToLeft = own[0] % 2 == 1;
-                    fragment.Level = own[0];
-                    ordered.Add(fragment);
-                    continue;
-                }
+                    if (uniform)
+                    {
+                        fragment.RightToLeft = own[0] % 2 == 1;
+                        fragment.Level = own[0];
+                        ordered.Add(fragment);
+                        continue;
+                    }
 
-                changed = true;
-                var runs = Bidi.Runs(fragment.Text, own);
-                var pieces = new List<TextFragment>(runs.Count);
-                var earned = 0.0;
+                    changed = true;
+                    var runs = Bidi.Runs(fragment.Text, own.AsSpan(0, fragment.Length));
+                    var pieces = new List<TextFragment>(runs.Count);
+                    var earned = 0.0;
 
                 foreach (var run in runs)
                 {
                     var width = MeasureChunk(_measurer, fragment.Style, fragment.Text, run.Start, run.Length, fragment.Flow);
                     earned += width;
 
-                    pieces.Add(new TextFragment(
+                    var piece = NewFragment(
                         fragment.Text, run.Start, run.Length, width,
-                        fragment.Style, fragment.Box, fragment.Flow, fragment.Inline)
-                    {
-                        RightToLeft = run.Level % 2 == 1,
-                        Level = run.Level,
-                        Trims = MaskOf(fragment.Trims, run.Start, run.Length, false),
-                        AutoSpaces = MaskOf(fragment.AutoSpaces, run.Start, run.Length, true),
-                        AutoSpaceRoom = fragment.AutoSpaceRoom,
-                    });
+                        fragment.Style, fragment.Box, fragment.Flow, fragment.Inline);
+
+                    piece.RightToLeft = run.Level % 2 == 1;
+                    piece.Level = run.Level;
+                    piece.Trims = SliceMask(
+                        fragment.Trims,
+                        fragment.Start + run.Start,
+                        run.Length,
+                        clearBoundary: false,
+                        offsetDelta: -fragment.Start);
+                    piece.AutoSpaces = SliceMask(
+                        fragment.AutoSpaces,
+                        fragment.Start + run.Start,
+                        run.Length,
+                        clearBoundary: true,
+                        offsetDelta: -fragment.Start);
+                    piece.AutoSpaceRoom = fragment.AutoSpaceRoom;
+                    pieces.Add(piece);
                 }
 
                 // The room a merge folded into the run stands between two pieces of it, and the pieces
@@ -1880,7 +2258,8 @@ internal sealed class InlineLayout
                 {
                     if (SpacedBefore(fragment, runs[at].Start))
                     {
-                        pieces[at - 1].Width += fragment.AutoSpaceRoom;
+                        var piece = pieces[at - 1];
+                        piece.Width += fragment.AutoSpaceRoom;
                         earned += fragment.AutoSpaceRoom;
                     }
                 }
@@ -1908,8 +2287,8 @@ internal sealed class InlineLayout
 
                             var places = Math.Min(
                                 room,
-                                TextClusters.ExpansionPoints(
-                                    piece.Source, piece.Start, piece.Length, piece.Style.TextJustify).Length);
+                                TextClusters.ExpansionPointCount(
+                                    piece.Source, piece.Start, piece.Length, piece.Style.TextJustify));
 
                             if (places <= 0)
                             {
@@ -1932,18 +2311,21 @@ internal sealed class InlineLayout
 
                     if (Math.Abs(fragment.Width - earned - expansion) > 0.0001)
                     {
-                        pieces[^1].Width += fragment.Width - earned - expansion;
+                        var piece = pieces[^1];
+                        piece.Width += fragment.Width - earned - expansion;
                     }
 
                     // A hung glyph is one character and keeps the edge of the run it was cut from:
                     // the piece that begins at the run's start, or the one that ends at its end.
                     if (fragment.HangSide == HangStart)
                     {
-                        pieces[0].HangSide = HangStart;
+                        var piece = pieces[0];
+                        piece.HangSide = HangStart;
                     }
                     else if (fragment.HangSide == HangEnd)
                     {
-                        pieces[^1].HangSide = HangEnd;
+                        var piece = pieces[^1];
+                        piece.HangSide = HangEnd;
                     }
 
                     // The space a pre-wrap line hangs is at the end of its own text, so it is the last
@@ -1951,18 +2333,25 @@ internal sealed class InlineLayout
                     // draws it without the characters it hangs.
                     if (fragment.Hanging > 0)
                     {
-                        pieces[^1].Hanging = Math.Min(fragment.Hanging, pieces[^1].Length);
+                        var piece = pieces[^1];
+                        piece.Hanging = Math.Min(fragment.Hanging, piece.Length);
                     }
                 }
 
-                foreach (var piece in pieces)
+                    foreach (var piece in pieces)
+                    {
+                        ordered.Add(piece);
+                    }
+                }
+                finally
                 {
-                    ordered.Add(piece);
+                    ReturnInts(own);
                 }
             }
 
             group.Clear();
             joined.Clear();
+            ReturnInts(starts);
         }
 
         foreach (var fragment in line.Fragments)
@@ -2025,19 +2414,21 @@ internal sealed class InlineLayout
             return;
         }
 
-        var levels = new Int32[line.Fragments.Count];
+        var levels = RentInts(line.Fragments.Count);
 
-        for (var index = 0; index < levels.Length; index++)
+        for (var index = 0; index < line.Fragments.Count; index++)
         {
             if (line.Fragments[index].Level < 0)
             {
+                ReturnInts(levels);
                 return;
             }
 
             levels[index] = line.Fragments[index].Level;
         }
 
-        var visual = Bidi.VisualOrder(levels);
+        var visual = Bidi.VisualOrder(levels.AsSpan(0, line.Fragments.Count));
+        ReturnInts(levels);
 
         if (baseLevel == 1)
         {
@@ -2063,7 +2454,7 @@ internal sealed class InlineLayout
     private static List<ComputedStyle> Embeddings(TextFragment fragment)
     {
         var chain = new List<ComputedStyle>(3);
-        var ancestors = new List<InlineAncestor>(3);
+        var ancestors = RentAncestorList();
 
         for (var ancestor = fragment.Inline; ancestor is not null; ancestor = ancestor.Parent)
         {
@@ -2080,6 +2471,7 @@ internal sealed class InlineLayout
             }
         }
 
+        ReturnAncestorList(ancestors);
         return chain;
     }
 
@@ -2157,11 +2549,11 @@ internal sealed class InlineLayout
         }
 
         var (first, last) = ContentEnds(lines);
-        var start = first is not null && trim is TextBoxTrim.Start or TextBoxTrim.Both
-            ? Leading(first, container.Style.TextBoxEdgeStart, atStart: true)
+        var start = first is { } firstLine && trim is TextBoxTrim.Start or TextBoxTrim.Both
+            ? Leading(firstLine, container.Style.TextBoxEdgeStart, atStart: true)
             : 0;
-        var end = last is not null && trim is TextBoxTrim.End or TextBoxTrim.Both
-            ? Leading(last, container.Style.TextBoxEdgeEnd, atStart: false)
+        var end = last is { } lastLine && trim is TextBoxTrim.End or TextBoxTrim.Both
+            ? Leading(lastLine, container.Style.TextBoxEdgeEnd, atStart: false)
             : 0;
 
         return (start, end);
@@ -2538,10 +2930,8 @@ internal sealed class InlineLayout
         var run = new LayoutBox(fragment.Box, LayoutKind.Text)
         {
             Text = text,
-            Trims = fragment.Trims is { } trims && text.Length <= trims.Length ? trims[..text.Length] : null,
-            AutoSpaces = fragment.AutoSpaces is { } spaces && text.Length <= spaces.Length
-                ? spaces[..text.Length]
-                : null,
+            Trims = MaskText(fragment.Trims, fragment.Start, text.Length),
+            AutoSpaces = MaskText(fragment.AutoSpaces, fragment.Start, text.Length),
             AutoSpaceRoom = fragment.AutoSpaceRoom,
             Font = FittedFont(line, fragment.Style),
             FitScale = line.Scale,
@@ -2607,7 +2997,7 @@ internal sealed class InlineLayout
 
         void PlaceRow(Line? row, Double rowOffset)
         {
-            if (row is null)
+            if (row is not { } line)
             {
                 return;
             }
@@ -2615,7 +3005,7 @@ internal sealed class InlineLayout
             PlaceLines(
                 fragment.Box,
                 outer,
-                [row],
+                [line],
                 0,
                 1,
                 outer.ContentBox,
@@ -2660,7 +3050,11 @@ internal sealed class InlineLayout
 
         // A mark is drawn at half the size of the text it marks, which is the size a reading of that base
         // comes to.
-        var drawn = new FontStyle(font.Family, Math.Max(1, font.Size / 2), font.Weight, font.IsItalic);
+        var drawn = (font.Manager ?? FontStyleManager.Shared).GetOrAdd(
+            font.Family,
+            Math.Max(1, font.Size / 2),
+            font.Weight,
+            font.IsItalic);
         var metrics = measurer.GetMetrics(drawn);
 
         // A mark is set solid in a strip its own size: the glyph is lifted to the middle of that strip,
@@ -3273,7 +3667,7 @@ internal sealed class InlineLayout
         Boolean upright,
         InlineAncestor? root = null)
     {
-        var items = new List<InlineItem>();
+        var items = RentItems();
         var ancestors = new Dictionary<Box, InlineAncestor>();
         var markers = source.NestedInterline
             .Where(marker =>
@@ -3458,8 +3852,9 @@ internal sealed class InlineLayout
         // A note is set in one orientation: the one its whole text asks for, not the one a piece of
         // it would ask for on its own. The caller that splits a note hands the decided value in.
         var upright = orientation ?? (flow.IsVertical && HasUprightCharacters(source.Text, start, end));
+        var noteItems = NoteItems(source, start, end, maxInline, flow, upright);
         var lines = BuildLines(
-            NoteItems(source, start, end, maxInline, flow, upright),
+            noteItems,
             maxInline,
             flow,
             context,
@@ -3467,6 +3862,7 @@ internal sealed class InlineLayout
             emergency: false,
             singleLine: true,
             settleEdges: false);
+        ReturnItems(noteItems);
 
         if (lines.Count == 0)
         {
@@ -3543,6 +3939,38 @@ internal sealed class InlineLayout
         Int32 initialSlot = 0,
         IReadOnlyList<Line>? slotBodyLines = null)
     {
+        var builder = _builders.Count > 0 ? _builders.Pop() : new LineBuilder(this);
+
+        try
+        {
+            return BuildLinesCore(
+                items, maxInline, flow, context, strut, indent, emergency, singleLine,
+                settleEdges, blockStart, slotExtents, minimumInlineStarts, initialSlot,
+                slotBodyLines, builder);
+        }
+        finally
+        {
+            _builders.Push(builder);
+        }
+    }
+
+    private List<Line> BuildLinesCore(
+        List<InlineItem> items,
+        Double maxInline,
+        WritingModeInfo flow,
+        InlineContext context,
+        ComputedStyle strut,
+        TextIndentation indent = default,
+        Boolean emergency = true,
+        Boolean singleLine = false,
+        Boolean settleEdges = true,
+        Double blockStart = 0,
+        IReadOnlyList<Double>? slotExtents = null,
+        IReadOnlyList<Double>? minimumInlineStarts = null,
+        Int32 initialSlot = 0,
+        IReadOnlyList<Line>? slotBodyLines = null,
+        LineBuilder builder = default)
+    {
         var lines = new List<Line>();
 
         // Where the content's last drawing character stands: the white space a page trails into is
@@ -3589,7 +4017,7 @@ internal sealed class InlineLayout
         // so a float standing where the indent reaches leaves the line to start where the float ends, not
         // that far past it. A negative indent hangs out of the box and is never pulled back in.
         var leading = Settled(first: true, afterBreak: false);
-        var builder = new LineBuilder(
+        builder = builder.Reset(
             strut!,
             leading,
             flow.IsVertical,
@@ -3631,7 +4059,8 @@ internal sealed class InlineLayout
             // before no longer reaches past itself.
             if (lines.Count > 0)
             {
-                lines[^1].Tail = 0;
+                var previous = lines[^1];
+                previous.Tail = 0;
             }
 
             var line = filled.Build(_measurer, room.Room, carried, forced, hyphen);
@@ -3664,7 +4093,7 @@ internal sealed class InlineLayout
         void NextLine(Boolean forced = false, Boolean hyphenate = false)
         {
             Close(builder, forced, hyphenate);
-            builder = new LineBuilder(
+            builder = builder.Reset(
                 strut,
                 carried,
                 flow.IsVertical,
@@ -3689,7 +4118,7 @@ internal sealed class InlineLayout
             }
             else
             {
-                builder = new LineBuilder(
+                builder = builder.Reset(
                     strut,
                     carried,
                     flow.IsVertical,
@@ -3705,7 +4134,7 @@ internal sealed class InlineLayout
             {
                 room.Skip(slotExtents[slot]);
                 slot++;
-                builder = new LineBuilder(
+                builder = builder.Reset(
                     strut,
                     carried,
                     flow.IsVertical,
@@ -3762,7 +4191,7 @@ internal sealed class InlineLayout
 
         // Where each item begins along the line the builder is filling. A reading hanging past its pair
         // asks the room of a neighbour whose tabs are already placed, and only the line can say where.
-        var begins = new Double[items.Count];
+        var begins = RentDoubles(items.Count);
 
         for (var index = 0; index < items.Count; index++)
         {
@@ -3783,7 +4212,8 @@ internal sealed class InlineLayout
                 // does follow takes the room instead, and the tail is dropped where it is built.
                 if (dropped > 0 && lines.Count > 0)
                 {
-                    lines[^1].Tail = Math.Max(lines[^1].Tail, room.Top);
+                    var previous = lines[^1];
+                    previous.Tail = Math.Max(previous.Tail, room.Top);
                 }
 
 
@@ -4006,7 +4436,7 @@ internal sealed class InlineLayout
                         return LineBreaks.MayBreak(before, after, style.WordBreakingRules);
                     }
 
-                    var advances = new Double[count + 1];
+                    var advances = RentDoubles(count + 1);
                     var segmentUpright = noteFlow.IsVertical &&
                         HasUprightCharacters(noteText, offset, segmentEnd);
                     segmentUprightNow = segmentUpright;
@@ -4275,6 +4705,7 @@ internal sealed class InlineLayout
                         if (builder.HasContent)
                         {
                             NextLine();
+                            ReturnDoubles(advances);
                             continue;
                         }
 
@@ -4381,12 +4812,12 @@ internal sealed class InlineLayout
 
                     void HoistNested(Line? row)
                     {
-                        if (row is null)
+                        if (row is not { } line)
                         {
                             return;
                         }
 
-                        foreach (var marker in row.Fragments)
+                        foreach (var marker in line.Fragments)
                         {
                             if (marker.InterlineNote is not { } nested)
                             {
@@ -4406,7 +4837,7 @@ internal sealed class InlineLayout
                                 continue;
                             }
 
-                            var at = InterlineAnchorPosition(row, marker, 0);
+                            var at = InterlineAnchorPosition(line, marker, 0);
                             if (hoistedInterlineNotes.Add(nested.Box))
                             {
                                 builder.AddMappedInterlineNote(
@@ -4422,6 +4853,7 @@ internal sealed class InlineLayout
                     HoistNested(firstLine);
                     HoistNested(secondLine);
 
+                    ReturnDoubles(advances);
                     offset = prefixEnd;
 
                     if (offset < noteText.Length)
@@ -4627,11 +5059,31 @@ internal sealed class InlineLayout
             var continuesWord = builder.LastCodePoint is { } prior &&
                 LineBreaks.ContinuesWord(prior, item.Style.WordBreakingRules);
 
-            foreach (var chunk in TextChunker.Ranges(item.Text!, item.Style.WordBreakingRules, continuesWord))
+            var textPlan = TextPlanFor(
+                item.Text!,
+                item.Style,
+                itemFlow,
+                item.Style.WordBreakingRules,
+                continuesWord,
+                needWidths: !itemFlow.IsVertical);
+
+            for (var chunkIndex = 0; chunkIndex < textPlan.Chunks.Length; chunkIndex++)
             {
+                var chunk = textPlan.Chunks[chunkIndex];
+
                 foreach (var run in new OrientedPieces(item.Text!, chunk.Start, chunk.Length, itemFlow))
                 {
-                    var piece = Measure(item.Style, font, run, itemFlow);
+                    var piece = !itemFlow.IsVertical &&
+                        run.Start == chunk.Start &&
+                        run.Length == chunk.Length
+                        ? new MeasuredRun(
+                            run.Source,
+                            run.Start,
+                            run.Length,
+                            textPlan.Widths[chunkIndex],
+                            itemFlow,
+                            TextChunker.IsCollapsible(run.Source, run.Start, run.Length))
+                        : Measure(item.Style, font, run, itemFlow);
 
                     // A tab's room is the line running on to its next stop, which is a question about
                     // where the line stands rather than about the font, so it is asked here where that
@@ -4967,6 +5419,7 @@ internal sealed class InlineLayout
             SettleLines(lines);
         }
 
+        ReturnDoubles(begins);
         return lines;
     }
 
@@ -4983,9 +5436,9 @@ internal sealed class InlineLayout
         InlineContext context)
     {
         var anchors = new List<(Int32 Slot, InterlineNoteSource Note, Double Position)>();
-        var slotTops = new Double[bodyLines.Count];
-        var slotExtents = new Double[bodyLines.Count];
-        var minimumStarts = new Double[bodyLines.Count];
+        var slotTops = RentDoubles(bodyLines.Count);
+        var slotExtents = RentDoubles(bodyLines.Count);
+        var minimumStarts = RentDoubles(bodyLines.Count);
         var top = 0.0;
 
         for (var bodyIndex = 0; bodyIndex < bodyLines.Count; bodyIndex++)
@@ -5028,6 +5481,9 @@ internal sealed class InlineLayout
 
         if (anchors.Count == 0)
         {
+            ReturnDoubles(slotTops);
+            ReturnDoubles(slotExtents);
+            ReturnDoubles(minimumStarts);
             return bodyLines;
         }
 
@@ -5037,11 +5493,14 @@ internal sealed class InlineLayout
             maxInline,
             flow,
             context,
-            slotTops,
-            slotExtents,
-            minimumStarts,
+            new ArraySegment<Double>(slotTops, 0, bodyLines.Count),
+            new ArraySegment<Double>(slotExtents, 0, bodyLines.Count),
+            new ArraySegment<Double>(minimumStarts, 0, bodyLines.Count),
             anchors[0].Slot,
             bodyLines);
+        ReturnDoubles(slotTops);
+        ReturnDoubles(slotExtents);
+        ReturnDoubles(minimumStarts);
         var bySlot = new Dictionary<Int32, List<Line>>();
 
         foreach (var noteLine in noteLines)
@@ -5077,7 +5536,8 @@ internal sealed class InlineLayout
                     lines.Add(noteLine);
                 }
 
-                notes[^1].KeepWithNext = true;
+                var lastNote = notes[^1];
+                lastNote.KeepWithNext = true;
                 bodyLine.GapBefore -= InterlineBodyAdjustment(container, bodyLine, notes[^1]);
             }
 
@@ -5102,7 +5562,7 @@ internal sealed class InlineLayout
         {
             at += Advance(open, fragment.Inline, line.ContinuesFromPrevious, at, apply: true, step: null);
 
-            if (ReferenceEquals(fragment, marker))
+            if (fragment.Equals(marker))
             {
                 return line.Left + alignment + at;
             }
@@ -5122,11 +5582,15 @@ internal sealed class InlineLayout
     {
         var alignment = BodyLineAlignment(container, line, index, count);
 
+        var fragmentFlow = line.Fragments.Count > 0
+            ? line.Fragments[0].Flow
+            : container.Flow;
+
         return AlignmentOffset(
             alignment,
             Math.Max(0, line.Extent - line.Indent),
             line.Used,
-            line.Fragments.FirstOrDefault()?.Flow ?? container.Flow);
+            fragmentFlow);
     }
 
     private static String BodyLineAlignment(Box container, Line line, Int32 index, Int32 count)
@@ -5143,17 +5607,44 @@ internal sealed class InlineLayout
             : style.TextAlign;
     }
 
+    private static ComputedStyle FirstTextStyle(List<TextFragment> fragments, ComputedStyle fallback)
+    {
+        foreach (var fragment in fragments)
+        {
+            if (fragment.Length > 0)
+            {
+                return fragment.Style;
+            }
+        }
+
+        return fallback;
+    }
+
     /// <summary>
     /// Gets the leading the note and body lines share at their boundary, which is removed from the
     /// ordinary gap between their two line boxes so the note stands nearer to the body it annotates.
     /// </summary>
     private Double InterlineBodyAdjustment(Box container, Line bodyLine, Line noteLine)
     {
-        var noteStyle = noteLine.Governing ??
-            noteLine.Fragments.LastOrDefault(fragment => !fragment.InterlineGap)?.Style ??
-            container.Style;
+        var noteStyle = noteLine.Governing;
 
-        return InterlineBodyAdjustment(bodyLine, noteStyle);
+        if (noteStyle is null)
+        {
+            for (var index = noteLine.Fragments.Count - 1; index >= 0; index--)
+            {
+                var fragment = noteLine.Fragments[index];
+
+                if (!fragment.InterlineGap)
+                {
+                    noteStyle = fragment.Style;
+                    break;
+                }
+            }
+        }
+
+        noteStyle ??= container.Style;
+
+        return InterlineBodyAdjustment(bodyLine, noteStyle.Value);
     }
 
     /// <summary>
@@ -5172,8 +5663,7 @@ internal sealed class InlineLayout
         }
 
         var bodyStyle = bodyLine.Governing ??
-            bodyLine.Fragments.FirstOrDefault()?.Style ??
-            noteStyle;
+            (bodyLine.Fragments.Count > 0 ? bodyLine.Fragments[0].Style : noteStyle);
         return Math.Min(HalfLeading(bodyStyle), noteGap);
     }
 
@@ -5192,9 +5682,7 @@ internal sealed class InlineLayout
                 continue;
             }
 
-            var style = first.Governing ??
-                first.Fragments.FirstOrDefault(row => row.Length > 0)?.Style ??
-                fragment.Style;
+            var style = first.Governing ?? FirstTextStyle(first.Fragments, fragment.Style);
             var (blockMarginStart, _) = note.Flow.BlockMargins(note.Margin);
             var (blockPaddingStart, _) = note.Flow.BlockMargins(note.Padding);
             var (blockBorderStart, _) = note.Flow.BlockMargins(note.Border);
@@ -5236,7 +5724,7 @@ internal sealed class InlineLayout
         Int32 firstSlot,
         IReadOnlyList<Line> slotBodyLines)
     {
-        var items = new List<InlineItem>();
+        var items = RentItems();
         ComputedStyle? strut = null;
 
         foreach (var (slot, note, position) in anchors)
@@ -5258,11 +5746,13 @@ internal sealed class InlineLayout
                 items.Add(item);
             }
 
+            ReturnItems(noteItems);
             strut ??= note.Box.Style;
         }
 
         if (items.Count == 0 || strut is null)
         {
+            ReturnItems(items);
             return new List<Line>();
         }
 
@@ -5293,6 +5783,7 @@ internal sealed class InlineLayout
             line.Offset = Aligned(line, maxInline);
         }
 
+        ReturnItems(items);
         return noteLines;
     }
 
@@ -5334,6 +5825,8 @@ internal sealed class InlineLayout
                 continue;
             }
 
+            var lastFragment = last.Value;
+
             // A line whose visible content is entirely notes is a note layout line even when its
             // naturally ending fragment leaves some trailing room. That trailing room is outside
             // the note, just as the remaining part of a line box is outside a short final line.
@@ -5362,11 +5855,11 @@ internal sealed class InlineLayout
             }
 
             var naturalContent = rows.Count == 0 ? 0 : rows.Max(row => row.Used);
-            var alignLast = last.Style.TextAlignLast;
+            var alignLast = lastFragment.Style.TextAlignLast;
             var lastSpokenFor = lineIndex == lines.Count - 1 || line.ForceEnded;
             var justified = alignLast.Equals("justify", StringComparison.OrdinalIgnoreCase) ||
                 (!lastSpokenFor &&
-                    last.Style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase));
+                    lastFragment.Style.TextAlign.Equals("justify", StringComparison.OrdinalIgnoreCase));
 
             foreach (var row in rows)
             {
@@ -5382,8 +5875,8 @@ internal sealed class InlineLayout
             }
 
             var grown = naturalContent + note.InlineEdges;
-            line.Used += grown - last.Width;
-            last.Width = grown;
+            line.Used += grown - lastFragment.Width;
+            lastFragment.Width = grown;
             line.Offset = Aligned(line, line.Extent);
         }
     }
@@ -5503,15 +5996,13 @@ internal sealed class InlineLayout
             }
 
             var at = visible - 1;
-            var chars = (fragment.Trims ?? new String('\0', fragment.Length)).ToCharArray();
 
-            if (at >= chars.Length || chars[at] != '\0')
+            if (at < 0 || CodeAt(fragment.Trims, fragment.Start + at) != '\0')
             {
                 return 0;
             }
 
-            chars[at] = TrimClosing;
-            fragment.Trims = MaskOf(chars);
+            AppendMark(ref fragment.TrimsRef, fragment.Start + at, TrimClosing);
 
             var delta = TrimDelta(_measurer, fragment.Style, codePoint, fragment.Flow);
             fragment.Width -= delta;
@@ -5790,7 +6281,7 @@ internal sealed class InlineLayout
     {
         var width = MeasureChunk(_measurer, fragment.Style, fragment.Source, start, length, fragment.Flow);
 
-        var hung = new TextFragment(
+        var hung = NewFragment(
             fragment.Source,
             start,
             length,
@@ -5798,23 +6289,20 @@ internal sealed class InlineLayout
             fragment.Style,
             fragment.Box,
             fragment.Flow,
-            fragment.Inline)
-        {
-            RightToLeft = fragment.RightToLeft,
-            Level = fragment.Level,
-            BaselineShift = fragment.BaselineShift,
-            HangSide = side,
-            Trims = MaskOf(fragment.Trims, start - fragment.Start, length, false),
-            AutoSpaces = MaskOf(fragment.AutoSpaces, start - fragment.Start, length, false),
-        };
+            fragment.Inline);
+
+        hung.RightToLeft = fragment.RightToLeft;
+        hung.Level = fragment.Level;
+        hung.BaselineShift = fragment.BaselineShift;
+        hung.HangSide = side;
+        hung.Trims = SliceMask(fragment.Trims, start, length, clearBoundary: false);
+        hung.AutoSpaces = SliceMask(fragment.AutoSpaces, start, length, clearBoundary: false);
 
         var at = line.Fragments.IndexOf(fragment);
         var rest = fragment.Length - length;
 
         if (side == HangStart)
         {
-            fragment.Trims = MaskOf(fragment.Trims, length, rest, false);
-            fragment.AutoSpaces = MaskOf(fragment.AutoSpaces, length, rest, false);
             fragment.TrimStart(length);
             fragment.Width -= width;
             line.Fragments.Insert(at, hung);
@@ -5823,8 +6311,6 @@ internal sealed class InlineLayout
         {
             var kept = start - fragment.Start;
 
-            fragment.Trims = MaskOf(fragment.Trims, 0, kept, false);
-            fragment.AutoSpaces = MaskOf(fragment.AutoSpaces, 0, kept, false);
             fragment.Length = kept;
             fragment.Width -= width;
             line.Fragments.Insert(at + 1, hung);
@@ -5916,7 +6402,8 @@ internal sealed class InlineLayout
             // The line is aligned on the extent it ends up with, which may have shrunk by the edge an
             // element that stops here no longer draws twice.
             line.Offset = Aligned(line, maxInline);
-            lines[index + 1].ContinuesFromPrevious = pending;
+            var nextLine = lines[index + 1];
+            nextLine.ContinuesFromPrevious = pending;
         }
     }
 
@@ -5974,7 +6461,7 @@ internal sealed class InlineLayout
 
         // Outermost first, so that this chain and the open one line up and can be compared from the
         // outside in. A step only happens where an element begins or ends, so this is rare.
-        var target = new List<InlineAncestor>();
+        var target = RentAncestorList();
 
         for (var ancestor = chain; ancestor is not null; ancestor = ancestor.Parent)
         {
@@ -6039,6 +6526,7 @@ internal sealed class InlineLayout
             position += margin + inset;
         }
 
+        ReturnAncestorList(target);
         return added;
     }
 
@@ -6471,7 +6959,7 @@ internal sealed class InlineLayout
             ? Math.Max(0, size.Height - padding.Vertical - border.Vertical)
             : Math.Max(0, size.Width - padding.Horizontal - border.Horizontal);
 
-        var items = new List<InlineItem>();
+        var items = RentItems();
         Collect(box, items, box.Flow, null, contentInline);
 
         var lines = BuildLines(items, contentInline, box.Flow, context, style, Indentation(box, box.Flow, contentInline));
@@ -6480,6 +6968,7 @@ internal sealed class InlineLayout
         {
             // A box with nothing to set has no line of its own, so its baseline is the one its font
             // would have given it.
+            ReturnItems(items);
             return start + _measurer.GetMetrics(style.GetFont()).Ascent;
         }
 
@@ -6490,6 +6979,7 @@ internal sealed class InlineLayout
             baseline += lines[index].Height;
         }
 
+        ReturnItems(items);
         return baseline + lines[^1].Ascent;
     }
 
@@ -6819,7 +7309,6 @@ internal sealed class InlineLayout
     /// the range gives up because this range begins with a punctuation beside it.
     /// </summary>
     private readonly record struct TrimStep(
-        String? Mask,
         Double BoundaryDelta,
         Double RetroDelta,
         Char RetroCode);
@@ -6902,7 +7391,6 @@ internal sealed class InlineLayout
     /// <summary>What one range of text contributes to a line's autospacing.</summary>
     private readonly record struct AutoSpaceStep(
         Double BoundaryDelta,
-        String? Mask,
         Double Room,
         Double RetroDelta,
         Boolean Inside);
@@ -6972,7 +7460,7 @@ internal sealed class InlineLayout
         ComputedStyle style,
         WritingModeInfo flow,
         PreviousText? previous,
-        Boolean wantMask)
+        List<MaskMark>? mask)
     {
         var value = style.TextAutospace;
 
@@ -6991,7 +7479,6 @@ internal sealed class InlineLayout
         var boundary = 0.0;
         var retro = 0.0;
         var inside = false;
-        Char[]? mask = null;
         var end = start + length;
 
         // A range that begins with a mark or a selector continues the character before it, so the
@@ -7045,17 +7532,17 @@ internal sealed class InlineLayout
                     // drawn with rather than in the gap before it.
                     inside = true;
 
-                    if (wantMask)
+                    if (mask is not null)
                     {
                         // The character this range completes is the cluster its first units make, so
                         // the room is marked on that cluster - the one the range opens with.
-                        (mask ??= new Char[length])[0] = AutoSpaceAfter;
+                        mask.Add(new MaskMark(start, AutoSpaceAfter));
                     }
                 }
             }
         }
 
-        if (wantMask)
+        if (mask is not null)
         {
 
             // A space that opens the range is a boundary the caller may keep between two runs; a
@@ -7075,7 +7562,7 @@ internal sealed class InlineLayout
                     flow,
                     space) is var replaced and > 0)
             {
-                (mask ??= new Char[length])[0] = AutoSpaceReplace;
+                mask.Add(new MaskMark(start, AutoSpaceReplace));
                 boundary -= measurer.MeasureWidth(" ", style.GetFont()) - replaced;
             }
 
@@ -7089,11 +7576,11 @@ internal sealed class InlineLayout
 
                     if (code == AutoSpaceAfter)
                     {
-                        (mask ??= new Char[length])[index - start] = code;
+                        mask.Add(new MaskMark(index, code));
                     }
                     else if (code == AutoSpaceReplace)
                     {
-                        (mask ??= new Char[length])[next - start] = code;
+                        mask.Add(new MaskMark(next, code));
                     }
                 }
 
@@ -7101,7 +7588,7 @@ internal sealed class InlineLayout
             }
         }
 
-        return new AutoSpaceStep(boundary, MaskOf(mask), space, retro, inside);
+        return new AutoSpaceStep(boundary, space, retro, inside);
     }
 
     /// <summary>
@@ -7248,7 +7735,7 @@ internal sealed class InlineLayout
         PreviousText? previous,
         Boolean lineEmpty,
         Boolean startsParagraph,
-        Boolean wantMask)
+        List<MaskMark>? mask)
     {
         if (length <= 0)
         {
@@ -7256,7 +7743,6 @@ internal sealed class InlineLayout
         }
 
         var value = style.TextSpacingTrim;
-        Char[]? mask = null;
         var boundary = 0.0;
         var enabled = !TextSpacingTrim.HasExclusiveFeature(style.ResolvedFont.Features);
 
@@ -7282,9 +7768,9 @@ internal sealed class InlineLayout
 
             if (trimmed)
             {
-                if (wantMask)
+                if (mask is not null)
                 {
-                    (mask ??= new Char[length])[0] = CodeOf(firstKind);
+                    mask.Add(new MaskMark(start, CodeOf(firstKind)));
                 }
 
                 boundary = TrimDelta(measurer, style, firstCodePoint, flow);
@@ -7313,7 +7799,7 @@ internal sealed class InlineLayout
             }
         }
 
-        if (enabled && wantMask)
+        if (enabled && mask is not null)
         {
             var end = start + length;
 
@@ -7352,7 +7838,7 @@ internal sealed class InlineLayout
 
                     if (trimmed)
                     {
-                        (mask ??= new Char[length])[index - start] = CodeOf(kind);
+                        mask.Add(new MaskMark(index, CodeOf(kind)));
                     }
                 }
 
@@ -7360,72 +7846,206 @@ internal sealed class InlineLayout
             }
         }
 
-        return new TrimStep(MaskOf(mask), boundary, retro, retroCode);
+        return new TrimStep(boundary, retro, retroCode);
     }
 
-    private static String? MaskOf(Char[]? mask)
+    private MaskSpan CaptureMask(List<MaskMark> marks)
     {
-        if (mask is null)
+        if (marks.Count == 0)
+        {
+            return default;
+        }
+
+        var start = _maskMarks.Count;
+        _maskMarks.AddRange(marks);
+        return new MaskSpan(start, marks.Count);
+    }
+
+    private void AppendMask(ref MaskSpan span, List<MaskMark> marks, Int32 offsetDelta = 0)
+    {
+        if (marks.Count == 0)
+        {
+            return;
+        }
+
+        MoveMaskToEnd(ref span);
+
+        foreach (var mark in marks)
+        {
+            _maskMarks.Add(new MaskMark(mark.Offset + offsetDelta, mark.Code));
+        }
+
+        span = new MaskSpan(span.Start, span.Count + marks.Count);
+    }
+
+    private void AppendMark(ref MaskSpan span, Int32 offset, Char code)
+    {
+        MoveMaskToEnd(ref span);
+        _maskMarks.Add(new MaskMark(offset, code));
+        span = new MaskSpan(span.Start, span.Count + 1);
+    }
+
+    private void MoveMaskToEnd(ref MaskSpan span)
+    {
+        if (span.Count == 0)
+        {
+            span = new MaskSpan(_maskMarks.Count, 0);
+            return;
+        }
+
+        if (span.Start + span.Count == _maskMarks.Count)
+        {
+            return;
+        }
+
+        var start = _maskMarks.Count;
+
+        for (var index = 0; index < span.Count; index++)
+        {
+            _maskMarks.Add(_maskMarks[span.Start + index]);
+        }
+
+        span = new MaskSpan(start, span.Count);
+    }
+
+    private void RebaseMask(ref MaskSpan span, Int32 origin)
+    {
+        if (span.Count == 0)
+        {
+            return;
+        }
+
+        var start = _maskMarks.Count;
+
+        for (var index = 0; index < span.Count; index++)
+        {
+            var mark = _maskMarks[span.Start + index];
+            _maskMarks.Add(new MaskMark(mark.Offset - origin, mark.Code));
+        }
+
+        span = new MaskSpan(start, span.Count);
+    }
+
+    /// <summary>Gets the part of a mask one source range covers, or an empty span where it marks
+    /// nothing.</summary>
+    private MaskSpan SliceMask(
+        MaskSpan span,
+        Int32 start,
+        Int32 length,
+        Boolean clearBoundary,
+        Int32 offsetDelta = 0)
+    {
+        if (span.Count == 0 || length <= 0)
+        {
+            return default;
+        }
+
+        var end = start + length;
+        var kept = 0;
+
+        for (var index = 0; index < span.Count; index++)
+        {
+            var mark = _maskMarks[span.Start + index];
+
+            if (mark.Offset >= start &&
+                mark.Offset < end &&
+                !(clearBoundary && mark.Offset == end - 1 && mark.Code == AutoSpaceAfter))
+            {
+                kept++;
+            }
+        }
+
+        if (kept == 0)
+        {
+            return default;
+        }
+
+        var target = _maskMarks.Count;
+
+        for (var index = 0; index < span.Count; index++)
+        {
+            var mark = _maskMarks[span.Start + index];
+
+            if (mark.Offset >= start &&
+                mark.Offset < end &&
+                !(clearBoundary && mark.Offset == end - 1 && mark.Code == AutoSpaceAfter))
+            {
+                _maskMarks.Add(new MaskMark(mark.Offset + offsetDelta, mark.Code));
+            }
+        }
+
+        return new MaskSpan(target, kept);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private Char CodeAt(MaskSpan span, Int32 offset)
+    {
+        for (var index = span.Start + span.Count - 1; index >= span.Start; index--)
+        {
+            var mark = _maskMarks[index];
+
+            if (mark.Offset == offset)
+            {
+                return mark.Code;
+            }
+        }
+
+        return '\0';
+    }
+
+    /// <summary>Materialises the mask a painter takes, once per placed run. The line builder keeps
+    /// marks sparse and in source coordinates, so a run that merges many chunks never writes out their
+    /// growing shared prefix.</summary>
+    private String? MaskText(MaskSpan span, Int32 start, Int32 length)
+    {
+        if (span.Count == 0 || length <= 0)
         {
             return null;
         }
 
-        foreach (var code in mask)
+        var end = start + length;
+        var marked = false;
+
+        for (var index = 0; index < span.Count; index++)
         {
-            if (code != '\0')
+            var offset = _maskMarks[span.Start + index].Offset;
+
+            if (offset >= start && offset < end)
             {
-                return new String(mask);
+                marked = true;
+                break;
             }
         }
 
-        return null;
-    }
-
-    /// <summary>
-    /// Gets the part of a mask one range of the text covers, or null where the range marks nothing.
-    /// </summary>
-    /// <param name="clearBoundary">
-    /// Whether the code on the range's last character is taken out. A boundary at the end of a piece
-    /// stands between it and the piece after it, which is a gap between boxes rather than a mask.
-    /// </param>
-    private static String? MaskOf(String? mask, Int32 start, Int32 length, Boolean clearBoundary)
-    {
-        if (mask is null || start < 0 || length <= 0 || start + length > mask.Length)
+        if (!marked)
         {
             return null;
         }
 
-        var chars = new Char[length];
-
-        for (var index = 0; index < length; index++)
-        {
-            chars[index] = mask[start + index];
-        }
-
-        if (clearBoundary)
-        {
-            var at = chars.Length - 1;
-
-            while (at > 0 && Char.IsLowSurrogate(chars[at]))
+        return String.Create(
+            length,
+            (_maskMarks, span, start, end),
+            static (chars, state) =>
             {
-                at--;
-            }
+                for (var index = 0; index < state.span.Count; index++)
+                {
+                    var mark = state._maskMarks[state.span.Start + index];
+                    var at = mark.Offset - state.start;
 
-            if (chars[at] == AutoSpaceAfter)
-            {
-                chars[at] = '\0';
-            }
-        }
-
-        return MaskOf(chars);
+                    if (at >= 0 && at < chars.Length)
+                    {
+                        chars[at] = mark.Code;
+                    }
+                }
+            });
     }
 
     /// <summary>
     /// Gets whether the character before a place in a fragment is one a spaced boundary follows.
     /// </summary>
-    private static Boolean SpacedBefore(TextFragment fragment, Int32 at)
+    private Boolean SpacedBefore(TextFragment fragment, Int32 at)
     {
-        if (fragment.AutoSpaces is not { } mask || at <= 0)
+        if (fragment.AutoSpaces.Count == 0 || at <= 0)
         {
             return false;
         }
@@ -7437,7 +8057,7 @@ internal sealed class InlineLayout
             index--;
         }
 
-        return index < mask.Length && mask[index] == AutoSpaceAfter;
+        return CodeAt(fragment.AutoSpaces, fragment.Start + index) == AutoSpaceAfter;
     }
 
     private static Char CodeOf(PunctuationClass kind) => kind switch
@@ -8096,21 +8716,13 @@ internal sealed class InlineLayout
     /// </summary>
     private MeasuredRun Measure(ComputedStyle style, FontStyle font, OrientedRun run, WritingModeInfo flow)
     {
-        // The same two spacings the intrinsic arithmetic charges: the letter spacing once per character of
-        // the run, and the room between words once per separator it is drawn with.
-        var spacing = (style.LetterSpacing * SpacingUnits(run.Source, run.Start, run.Length, flow)) +
-            (style.WordSpacing * TextChunker.WordSeparators(run.Source, run.Start, run.Length));
-
-        var width = flow.IsVertical
-            ? run.Advance(font, _measurer, style.FontSize, flow) + spacing
-            : _measurer.MeasureWidth(run.Source.Substring(run.Start, run.Length), font) + spacing;
+        var width = MeasureChunk(_measurer, style, run.Source, run.Start, run.Length, flow);
 
         return new MeasuredRun(
             run.Source,
             run.Start,
             run.Length,
-            width + AutoSpaceWithin(_measurer, style, run.Source, run.Start, run.Length, flow) -
-                TrimWithin(_measurer, style, run.Source, run.Start, run.Length, flow),
+            width,
             PinOrientation(flow, run),
             TextChunker.IsCollapsible(run.Source, run.Start, run.Length));
     }
@@ -8339,8 +8951,8 @@ internal sealed class InlineLayout
                     note.Second,
                     Math.Max(0, fragment.Width - naturalContent),
                     note.EndsOuterLine,
-                    note.First is null ? 0 : LinePlaces(note.First),
-                    note.Second is null ? 0 : LinePlaces(note.Second),
+                    note.First is { } firstRow ? LinePlaces(firstRow) : 0,
+                    note.Second is { } secondRow ? LinePlaces(secondRow) : 0,
                     firstWidth,
                     secondWidth));
             }
@@ -8514,8 +9126,8 @@ internal sealed class InlineLayout
             note.SecondWidth < target
             ? (target - note.SecondWidth) / note.SecondPlaces
             : share;
-        var firstGrowth = note.First is null ? 0 : ExpandByShare(note.First, firstShare);
-        var secondGrowth = note.Second is null ? 0 : ExpandByShare(note.Second, secondShare);
+        var firstGrowth = note.First is { } firstRow ? ExpandByShare(firstRow, firstShare) : 0;
+        var secondGrowth = note.Second is { } secondRow ? ExpandByShare(secondRow, secondShare) : 0;
         var firstUsed = note.FirstWidth + firstGrowth;
         var secondUsed = note.SecondWidth + secondGrowth;
         var content = Math.Max(firstUsed, secondUsed);
@@ -8579,23 +9191,33 @@ internal sealed class InlineLayout
         var places = 0;
         var atEdge = false;
 
-        foreach (var point in TextClusters.ExpansionPoints(
-            fragment.Source, fragment.Start, fragment.Length, justify))
+        var points = TextClusters.ExpansionPointsView(
+            fragment.Source, fragment.Start, fragment.Length, justify);
+        try
         {
-            if (point < last)
+            for (var at = 0; at < points.Length; at++)
             {
-                places++;
-                continue;
-            }
+                var point = points[at];
 
-            // The room past the edge of the line is nowhere to put, and a place standing at the edge of
-            // the fragment already carries the seam into what comes next.
-            atEdge = true;
+                if (point < last)
+                {
+                    places++;
+                    continue;
+                }
 
-            if (!EndsLine(line, index))
-            {
-                places++;
+                // The room past the edge of the line is nowhere to put, and a place standing at the edge of
+                // the fragment already carries the seam into what comes next.
+                atEdge = true;
+
+                if (!EndsLine(line, index))
+                {
+                    places++;
+                }
             }
+        }
+        finally
+        {
+            points.Dispose();
         }
 
         // A fragment that carries no text - the empty inline box a page puts between two words - has no
@@ -9286,9 +9908,37 @@ internal sealed class InlineLayout
         public Thickness Border { get; }
     }
 
-    private sealed class TextFragment
+    private struct FragmentNode
     {
-        public TextFragment(
+        public FragmentNode(
+            String source,
+            Int32 start,
+            Int32 length,
+            Double width,
+            ComputedStyle style,
+            Box box,
+            WritingModeInfo flow,
+            InlineAncestor? inline,
+            Boolean isReplaced = false,
+            Double contentHeight = 0,
+            RubyAnnotation? ruby = null,
+            Double baseWidth = 0,
+            AtomicInline? atomic = null,
+            Boolean outOfFlow = false,
+            NoteRun? note = null,
+            InterlineNoteSource? interlineNote = null,
+            Boolean interlineGap = false,
+            Double? interlinePosition = null,
+            MarginNoteSource? marginNote = null,
+            Double? hang = null)
+        {
+            Reset(
+                source, start, length, width, style, box, flow, inline, isReplaced,
+                contentHeight, ruby, baseWidth, atomic, outOfFlow, note, interlineNote,
+                interlineGap, interlinePosition, marginNote, hang);
+        }
+
+        public void Reset(
             String source,
             Int32 start,
             Int32 length,
@@ -9330,25 +9980,37 @@ internal sealed class InlineLayout
             InterlinePosition = interlinePosition;
             MarginNote = marginNote;
             Hang = hang;
+            RightToLeft = null;
+            Level = -1;
+            FromTab = false;
+            Hanging = 0;
+            HangSide = 0;
+            Trims = default;
+            AutoSpaces = default;
+            AutoSpaceRoom = 0;
+            Measured = null;
+            Justify = 0;
+            Expansions = 0;
+            BaselineShift = 0;
         }
 
         /// <summary>Gets whether the fragment is a box that left the flow, placed but not drawn here.</summary>
-        public Boolean OutOfFlow { get; }
+        public Boolean OutOfFlow { get; private set; }
 
         /// <summary>Gets the two-line inline note this fragment draws, or null for ordinary content.</summary>
-        public NoteRun? Note { get; }
+        public NoteRun? Note { get; private set; }
 
         /// <summary>Gets the interline note whose zero-width position this fragment marks.</summary>
-        public InterlineNoteSource? InterlineNote { get; }
+        public InterlineNoteSource? InterlineNote { get; private set; }
 
         /// <summary>Gets whether this zero-length fragment is fixed positioning room in an interline flow.</summary>
-        public Boolean InterlineGap { get; }
+        public Boolean InterlineGap { get; private set; }
 
         /// <summary>Gets the line-relative position a hoisted interline-note marker stands at.</summary>
-        public Double? InterlinePosition { get; }
+        public Double? InterlinePosition { get; private set; }
 
         /// <summary>Gets the margin note whose zero-width declaration this fragment marks.</summary>
-        public MarginNoteSource? MarginNote { get; }
+        public MarginNoteSource? MarginNote { get; private set; }
 
         /// <summary>
         /// Gets or sets whether the run reads right to left at the level the bidi algorithm gave it, or
@@ -9367,20 +10029,20 @@ internal sealed class InlineLayout
         /// Gets the annotation that goes on the block-start side of this fragment's text, or null when
         /// the fragment is ordinary text.
         /// </summary>
-        public RubyAnnotation? Ruby { get; }
+        public RubyAnnotation? Ruby { get; private set; }
 
         /// <summary>
         /// Gets the extent the base text itself takes along the inline axis. For a ruby fragment the
         /// fragment is as long as the wider of its two parts, and this is what centres the base inside
         /// the room the annotation needed.
         /// </summary>
-        public Double BaseWidth { get; }
+        public Double BaseWidth { get; private set; }
 
         /// <summary>
         /// Gets how far a ruby's base stands inside the room the pair takes, where the reading has hung
         /// over the text beside it; null where the pair's halves are simply centred on each other.
         /// </summary>
-        public Double? Hang { get; }
+        public Double? Hang { get; private set; }
 
         /// <summary>
         /// Gets the string the fragment's text is a piece of. A fragment whose pieces came from two
@@ -9391,14 +10053,16 @@ internal sealed class InlineLayout
         private Int32 _start;
         private Int32 _length;
         private Int32 _trailingSoftHyphens = -1;
+        private String? _text;
 
         public String Source
         {
             get => _source;
-            private set
+            set
             {
                 _source = value;
                 _trailingSoftHyphens = -1;
+                _text = null;
             }
         }
 
@@ -9406,10 +10070,11 @@ internal sealed class InlineLayout
         public Int32 Start
         {
             get => _start;
-            private set
+            set
             {
                 _start = value;
                 _trailingSoftHyphens = -1;
+                _text = null;
             }
         }
 
@@ -9421,6 +10086,7 @@ internal sealed class InlineLayout
             {
                 _length = value;
                 _trailingSoftHyphens = -1;
+                _text = null;
             }
         }
 
@@ -9451,7 +10117,7 @@ internal sealed class InlineLayout
         /// Asked once per fragment, when the line is placed - not once per chunk of it, as it was while
         /// the chunks were being appended one character at a time.
         /// </summary>
-        public String Text => Source.Substring(Start, Length);
+        public String Text => _text ??= Source.Substring(Start, Length);
 
         /// <summary>
         /// Gets how many soft hyphens the fragment ends with. The answer is kept because a line asks it
@@ -9512,20 +10178,15 @@ internal sealed class InlineLayout
 
         public Double Width { get; set; }
 
-        /// <summary>
-        /// Gets or sets the characters the line set half-width, one code per UTF-16 unit of the
-        /// fragment's text: <c>'\0'</c> for a character the property left alone, <c>'\1'</c> for a
-        /// trimmed opening punctuation, <c>'\2'</c> for a closing one and <c>'\3'</c> for a middle dot.
-        /// Null when the run has nothing to trim (CSS Text 4 §8.5).
-        /// </summary>
-        public String? Trims { get; set; }
+        /// <summary>Gets or sets the sparse marks the line set half-width: the source offsets whose
+        /// character is a trimmed opening punctuation, closing punctuation or middle dot (CSS Text 4
+        /// §8.5). An empty span is a run with nothing to trim.</summary>
+        public MaskSpan Trims;
 
-        /// <summary>
-        /// Gets or sets which boundaries of the fragment the property widened, one code per UTF-16
-        /// unit: <c>'\1'</c> when a space follows the unit, <c>'\2'</c> when the unit is a space the
-        /// boundary takes the place of; null when the fragment spaces nothing (CSS Text 4 §8.4).
-        /// </summary>
-        public String? AutoSpaces { get; set; }
+        /// <summary>Gets or sets the sparse boundaries the property widened: the source offset where
+        /// a space follows the unit, or the source offset of the space a boundary replaces (CSS Text 4
+        /// §8.4). An empty span is a run with no widened boundary.</summary>
+        public MaskSpan AutoSpaces;
 
         /// <summary>
         /// Gets or sets the room one spaced boundary of the fragment adds, which is the eighth of the
@@ -9569,32 +10230,32 @@ internal sealed class InlineLayout
             Width = width;
         }
 
-        public ComputedStyle Style { get; }
+        public ComputedStyle Style { get; private set; }
 
-        public Box Box { get; }
+        public Box Box { get; private set; } = null!;
 
         /// <summary>
         /// Gets the innermost inline element the run sits inside, or null when it sits in none. The
         /// rest of the chain is reached through <see cref="InlineAncestor.Parent"/>.
         /// </summary>
-        public InlineAncestor? Inline { get; }
+        public InlineAncestor? Inline { get; private set; }
 
         /// <summary>Gets the orientation the fragment's glyphs are drawn in, which in a column may
         /// differ from one run to the next even inside a single element.</summary>
-        public WritingModeInfo Flow { get; }
+        public WritingModeInfo Flow { get; private set; }
 
         /// <summary>Gets whether this fragment is an atomic replaced box rather than text.</summary>
-        public Boolean IsReplaced { get; }
+        public Boolean IsReplaced { get; private set; }
 
         /// <summary>
         /// Gets the measurements of an inline-block, or null when the fragment is not one. The width of
         /// such a fragment is what the box's own margins add to the size it was measured to, so the size
         /// the line reserved and the size the box is drawn at are not the same number.
         /// </summary>
-        public AtomicInline? Atomic { get; }
+        public AtomicInline? Atomic { get; private set; }
 
         /// <summary>Gets the extent of the replaced content along the block axis, which sits on the baseline.</summary>
-        public Double ContentHeight { get; }
+        public Double ContentHeight { get; private set; }
 
         /// <summary>
         /// Gets the offset the line's shared baseline is moved by for this fragment, which is where
@@ -9603,6 +10264,215 @@ internal sealed class InlineLayout
         /// until the runs on it have been measured.
         /// </summary>
         public Double BaselineShift { get; set; }
+    }
+
+    /// <summary>Fixed-size chunks of fragment state. A fragment is an int handle into these chunks,
+    /// so a line can hold runs without one heap object per run.</summary>
+    private sealed class FragmentStore
+    {
+        private const Int32 ChunkShift = 8;
+        private const Int32 ChunkSize = 1 << ChunkShift;
+        private const Int32 ChunkMask = ChunkSize - 1;
+
+        private FragmentNode[][] _chunks = Array.Empty<FragmentNode[]>();
+        private Int32 _count;
+
+        public Int32 Count => _count;
+
+        public ref FragmentNode this[Int32 id] => ref _chunks[id >> ChunkShift][id & ChunkMask];
+
+        public Int32 Add(in FragmentNode node)
+        {
+            var id = _count++;
+            var chunk = id >> ChunkShift;
+
+            if (chunk >= _chunks.Length)
+            {
+                Array.Resize(ref _chunks, Math.Max(chunk + 1, Math.Max(4, _chunks.Length * 2)));
+            }
+
+            _chunks[chunk] ??= new FragmentNode[ChunkSize];
+            _chunks[chunk][id & ChunkMask] = node;
+            return id;
+        }
+
+        public void Clear()
+        {
+            for (var id = 0; id < _count; id++)
+            {
+                ref var node = ref this[id];
+                node = default;
+            }
+
+            _count = 0;
+        }
+    }
+
+    /// <summary>A stable handle to one fragment in the chunked store.</summary>
+    private readonly struct TextFragment : IEquatable<TextFragment>
+    {
+        private readonly FragmentStore _store;
+        private readonly Int32 _id;
+
+        public TextFragment(FragmentStore store, Int32 id)
+        {
+            _store = store;
+            _id = id;
+        }
+
+        private ref FragmentNode Node => ref _store[_id];
+
+        public Boolean OutOfFlow => Node.OutOfFlow;
+
+        public NoteRun? Note => Node.Note;
+
+        public InterlineNoteSource? InterlineNote => Node.InterlineNote;
+
+        public Boolean InterlineGap => Node.InterlineGap;
+
+        public Double? InterlinePosition => Node.InterlinePosition;
+
+        public MarginNoteSource? MarginNote => Node.MarginNote;
+
+        public Boolean? RightToLeft
+        {
+            get => Node.RightToLeft;
+            set => Node.RightToLeft = value;
+        }
+
+        public Int32 Level
+        {
+            get => Node.Level;
+            set => Node.Level = value;
+        }
+
+        public RubyAnnotation? Ruby => Node.Ruby;
+
+        public Double BaseWidth => Node.BaseWidth;
+
+        public Double? Hang => Node.Hang;
+
+        public String Source
+        {
+            get => Node.Source;
+            private set => Node.Source = value;
+        }
+
+        public Int32 Start
+        {
+            get => Node.Start;
+            private set => Node.Start = value;
+        }
+
+        public Int32 Length
+        {
+            get => Node.Length;
+            set => Node.Length = value;
+        }
+
+        public Boolean FromTab
+        {
+            get => Node.FromTab;
+            set => Node.FromTab = value;
+        }
+
+        public Int32 Hanging
+        {
+            get => Node.Hanging;
+            set => Node.Hanging = value;
+        }
+
+        public Int32 HangSide
+        {
+            get => Node.HangSide;
+            set => Node.HangSide = value;
+        }
+
+        public String Text => Node.Text;
+
+        public Int32 TrailingSoftHyphens => Node.TrailingSoftHyphens;
+
+        public Double Width
+        {
+            get => Node.Width;
+            set => Node.Width = value;
+        }
+
+        public MaskSpan Trims
+        {
+            get => Node.Trims;
+            set => Node.Trims = value;
+        }
+
+        public ref MaskSpan TrimsRef => ref Node.Trims;
+
+        public MaskSpan AutoSpaces
+        {
+            get => Node.AutoSpaces;
+            set => Node.AutoSpaces = value;
+        }
+
+        public ref MaskSpan AutoSpacesRef => ref Node.AutoSpaces;
+
+        public Double AutoSpaceRoom
+        {
+            get => Node.AutoSpaceRoom;
+            set => Node.AutoSpaceRoom = value;
+        }
+
+        public Double? Measured => Node.Measured;
+
+        public Double Justify => Node.Justify;
+
+        public Int32 Expansions => Node.Expansions;
+
+        public ComputedStyle Style => Node.Style;
+
+        public Box Box => Node.Box;
+
+        public InlineAncestor? Inline => Node.Inline;
+
+        public WritingModeInfo Flow => Node.Flow;
+
+        public Boolean IsReplaced => Node.IsReplaced;
+
+        public AtomicInline? Atomic => Node.Atomic;
+
+        public Double ContentHeight => Node.ContentHeight;
+
+        public Double BaselineShift
+        {
+            get => Node.BaselineShift;
+            set => Node.BaselineShift = value;
+        }
+
+        public void MergeInto(String text)
+        {
+            Source = text;
+            Start = 0;
+            Length = text.Length;
+        }
+
+        public void TrimStart(Int32 length)
+        {
+            Start += length;
+            Length -= length;
+        }
+
+        public Int32 TrailingSpaces() => Node.TrailingSpaces();
+
+        public void Expand(Double share, Int32 places) => Node.Expand(share, places);
+
+        public void SetJustifiedWidth(Double width) => Node.SetJustifiedWidth(width);
+
+        public Boolean Equals(TextFragment other) =>
+            ReferenceEquals(_store, other._store) && _id == other._id;
+
+        public override Boolean Equals(Object? obj) =>
+            obj is TextFragment other && Equals(other);
+
+        public override Int32 GetHashCode() =>
+            HashCode.Combine(RuntimeHelpers.GetHashCode(_store), _id);
     }
 
     /// <summary>
@@ -9636,7 +10506,7 @@ internal sealed class InlineLayout
     /// <summary>Gets the chain of inline elements a run sits inside, innermost last.</summary>
     private static List<InlineAncestor> Chain(InlineAncestor? inline)
     {
-        var chain = new List<InlineAncestor>();
+        var chain = RentAncestorList();
 
         for (var ancestor = inline; ancestor is not null; ancestor = ancestor.Parent)
         {
@@ -10127,9 +10997,9 @@ internal sealed class InlineLayout
         }
     }
 
-    private sealed class Line
+    private struct LineNode
     {
-        public List<TextFragment> Fragments { get; } = new();
+        public List<TextFragment> Fragments;
 
         public Double Ascent { get; set; }
 
@@ -10190,7 +11060,7 @@ internal sealed class InlineLayout
         /// scaled size; what is left is to draw them with a font of that size, which is the question the
         /// placing pass asks this for (CSS Text 5 §1.1).
         /// </summary>
-        public Double Scale { get; set; } = 1;
+        public Double Scale { get; set; }
 
         /// <summary>Gets where the line's content starts along the inline axis, after alignment.</summary>
         public Double Offset { get; set; }
@@ -10200,7 +11070,7 @@ internal sealed class InlineLayout
         /// block's <c>text-align-last</c> speaks for this line - which it does for the line that ends the
         /// block and for every line a forced break ended (CSS Text 3 §6.3).
         /// </summary>
-        public String Alignment { get; set; } = CssInitialValues.TextAlign;
+        public String Alignment { get; set; }
 
         /// <summary>
         /// Gets or sets the style whose <c>text-align</c> and <c>text-align-last</c> the line is set with.
@@ -10246,7 +11116,206 @@ internal sealed class InlineLayout
         public Boolean KeepWithNext { get; set; }
 
         /// <summary>Gets or sets the body-line slot this note line fills, or -1 for an ordinary line.</summary>
-        public Int32 SlotIndex { get; set; } = -1;
+        public Int32 SlotIndex { get; set; }
+    }
+
+    /// <summary>Fixed-size chunks of line state, addressed by an int handle like the fragments a
+    /// line holds.</summary>
+    private sealed class LineStore
+    {
+        private const Int32 ChunkShift = 8;
+        private const Int32 ChunkSize = 1 << ChunkShift;
+        private const Int32 ChunkMask = ChunkSize - 1;
+
+        private LineNode[][] _chunks = Array.Empty<LineNode[]>();
+        private Int32 _count;
+
+        public ref LineNode this[Int32 id] => ref _chunks[id >> ChunkShift][id & ChunkMask];
+
+        public Int32 Add(in LineNode node)
+        {
+            var id = _count++;
+            var chunk = id >> ChunkShift;
+
+            if (chunk >= _chunks.Length)
+            {
+                Array.Resize(ref _chunks, Math.Max(chunk + 1, Math.Max(4, _chunks.Length * 2)));
+            }
+
+            _chunks[chunk] ??= new LineNode[ChunkSize];
+            _chunks[chunk][id & ChunkMask] = node;
+            return id;
+        }
+
+        public void Clear()
+        {
+            for (var id = 0; id < _count; id++)
+            {
+                ref var node = ref this[id];
+                node.Fragments?.Clear();
+                node = default;
+            }
+
+            _count = 0;
+        }
+    }
+
+    /// <summary>A stable handle to one line in the chunked store.</summary>
+    private readonly struct Line : IEquatable<Line>
+    {
+        private readonly LineStore _store;
+        private readonly Int32 _id;
+
+        public Line(LineStore store, Int32 id)
+        {
+            _store = store;
+            _id = id;
+        }
+
+        private ref LineNode Node => ref _store[_id];
+
+        public List<TextFragment> Fragments => Node.Fragments;
+
+        public Double Ascent
+        {
+            get => Node.Ascent;
+            set => Node.Ascent = value;
+        }
+
+        public Double Height
+        {
+            get => Node.Height;
+            set => Node.Height = value;
+        }
+
+        public Double Tail
+        {
+            get => Node.Tail;
+            set => Node.Tail = value;
+        }
+
+        public Double Left
+        {
+            get => Node.Left;
+            set => Node.Left = value;
+        }
+
+        public Double Extent
+        {
+            get => Node.Extent;
+            set => Node.Extent = value;
+        }
+
+        public Double GapBefore
+        {
+            get => Node.GapBefore;
+            set => Node.GapBefore = value;
+        }
+
+        public Double Used
+        {
+            get => Node.Used;
+            set => Node.Used = value;
+        }
+
+        public Double? NaturalUsed
+        {
+            get => Node.NaturalUsed;
+            set => Node.NaturalUsed = value;
+        }
+
+        public Double? NaturalExtent
+        {
+            get => Node.NaturalExtent;
+            set => Node.NaturalExtent = value;
+        }
+
+        public Double Hanging
+        {
+            get => Node.Hanging;
+            set => Node.Hanging = value;
+        }
+
+        public Double Indent
+        {
+            get => Node.Indent;
+            set => Node.Indent = value;
+        }
+
+        public Double Scale
+        {
+            get => Node.Scale;
+            set => Node.Scale = value;
+        }
+
+        public Double Offset
+        {
+            get => Node.Offset;
+            set => Node.Offset = value;
+        }
+
+        public String Alignment
+        {
+            get => Node.Alignment;
+            set => Node.Alignment = value;
+        }
+
+        public ComputedStyle? Governing
+        {
+            get => Node.Governing;
+            set => Node.Governing = value;
+        }
+
+        public HashSet<InlineAncestor>? ContinuesFromPrevious
+        {
+            get => Node.ContinuesFromPrevious;
+            set => Node.ContinuesFromPrevious = value;
+        }
+
+        public HashSet<InlineAncestor>? ContinuesToNext
+        {
+            get => Node.ContinuesToNext;
+            set => Node.ContinuesToNext = value;
+        }
+
+        public Dictionary<InlineAncestor, Double>? BandShifts
+        {
+            get => Node.BandShifts;
+            set => Node.BandShifts = value;
+        }
+
+        public Boolean ForceEnded
+        {
+            get => Node.ForceEnded;
+            set => Node.ForceEnded = value;
+        }
+
+        public Boolean IsInterlineNote
+        {
+            get => Node.IsInterlineNote;
+            set => Node.IsInterlineNote = value;
+        }
+
+        public Boolean KeepWithNext
+        {
+            get => Node.KeepWithNext;
+            set => Node.KeepWithNext = value;
+        }
+
+        public Int32 SlotIndex
+        {
+            get => Node.SlotIndex;
+            set => Node.SlotIndex = value;
+        }
+
+        public Boolean Equals(Line other) =>
+            ReferenceEquals(_store, other._store) && _id == other._id;
+
+        public override Boolean Equals(Object? obj) =>
+            obj is Line other && Equals(other);
+
+        public override Int32 GetHashCode() =>
+            HashCode.Combine(RuntimeHelpers.GetHashCode(_store), _id);
     }
 
     /// <summary>
@@ -10446,20 +11515,58 @@ internal sealed class InlineLayout
         Boolean OutOfFlow = false,
         Boolean Empty = false);
 
-    private sealed class LineBuilder
+    private struct LineBuilder
     {
-        private readonly List<TextFragment> _fragments = new();
-        private readonly List<OpenInline> _open = new();
+        private readonly InlineLayout _owner;
+        private List<TextFragment> _fragments;
+        private List<OpenInline> _open;
+        private List<OpenInline> _buildOpen;
+        private List<OpenInline> _usedOpen;
+        private Double[] _above;
+        private Double[] _below;
+        private PreviousText? _previousLast;
+        private Boolean _previousKnown;
 
         /// <summary>The chain a captured line stood with, kept from one capture to the next.</summary>
-        private OpenInline[] _opened = Array.Empty<OpenInline>();
-        private readonly HashSet<InlineAncestor>? _carried;
-        private readonly ComputedStyle? _fallback;
-        private readonly Boolean _vertical;
-        private readonly Double _indent;
+        private OpenInline[] _opened;
+        private HashSet<InlineAncestor>? _carried;
+        private ComputedStyle? _fallback;
+        private Boolean _vertical;
+        private Double _indent;
+        private ITextMeasurer _measurer;
+        private Boolean _startsParagraph;
+        private Boolean _firstLine;
 
-        public LineBuilder()
+        public LineBuilder(InlineLayout owner)
         {
+            _owner = owner;
+            _fragments = new List<TextFragment>();
+            _open = new List<OpenInline>();
+            _buildOpen = new List<OpenInline>();
+            _usedOpen = new List<OpenInline>();
+            _above = Array.Empty<Double>();
+            _below = Array.Empty<Double>();
+            _previousLast = null;
+            _previousKnown = false;
+            _opened = Array.Empty<OpenInline>();
+            _carried = null;
+            _fallback = null;
+            _vertical = false;
+            _indent = 0;
+            _measurer = null!;
+            _startsParagraph = false;
+            _firstLine = false;
+            Width = 0;
+        }
+
+        public void ReleaseReferences()
+        {
+            _fragments.Clear();
+            _open.Clear();
+            _buildOpen.Clear();
+            _usedOpen.Clear();
+            Array.Clear(_opened, 0, _opened.Length);
+            _previousKnown = false;
         }
 
         /// <param name="indent">
@@ -10467,24 +11574,31 @@ internal sealed class InlineLayout
         /// out having used, so the run that would not have fitted without it is carried to the next
         /// line - which is what an indented first line does to the text on it.
         /// </param>
-        public LineBuilder(
-            ComputedStyle strut,
+        public LineBuilder Reset(
+            ComputedStyle fallback,
             Double indent,
             Boolean vertical,
             ITextMeasurer measurer,
             Boolean startsParagraph,
             Boolean firstLine = false)
         {
-            _fallback = strut;
+            _fallback = fallback;
+            _carried = null;
             _indent = indent;
             _vertical = vertical;
             _measurer = measurer;
             _startsParagraph = startsParagraph;
             _firstLine = firstLine;
             Width = indent;
+            _fragments.Clear();
+            _open.Clear();
+            _buildOpen.Clear();
+            _usedOpen.Clear();
+            _previousKnown = false;
+            return this;
         }
 
-        public LineBuilder(
+        public LineBuilder Reset(
             ComputedStyle fallback,
             HashSet<InlineAncestor>? carried,
             Boolean vertical,
@@ -10494,16 +11608,19 @@ internal sealed class InlineLayout
         {
             _fallback = fallback;
             _carried = carried;
+            _indent = indent;
             _vertical = vertical;
             _measurer = measurer;
             _startsParagraph = startsParagraph;
-            _indent = indent;
+            _firstLine = false;
             Width = indent;
+            _fragments.Clear();
+            _open.Clear();
+            _buildOpen.Clear();
+            _usedOpen.Clear();
+            _previousKnown = false;
+            return this;
         }
-
-        private readonly ITextMeasurer _measurer;
-        private readonly Boolean _startsParagraph;
-        private readonly Boolean _firstLine;
 
         /// <summary>
         /// Gets the extent the line takes as it is being built, which is what the wrap test is made
@@ -10521,7 +11638,8 @@ internal sealed class InlineLayout
         /// </summary>
         public Double CurrentUsed()
         {
-            var open = new List<OpenInline>();
+            var open = _usedOpen;
+            open.Clear();
             var used = 0.0;
 
             foreach (var fragment in _fragments)
@@ -10620,14 +11738,15 @@ internal sealed class InlineLayout
                     break;
                 }
 
-                if (last is not { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null })
+                if (last is not { } run ||
+                    !(run.Length > 0 && !run.IsReplaced && run.Ruby is null && run.Atomic is null))
                 {
                     return false;
                 }
 
-                var trailing = last.TrailingSoftHyphens;
+                var trailing = run.TrailingSoftHyphens;
 
-                return trailing > 0 && (last.Length > trailing || wordsBefore > 0);
+                return trailing > 0 && (run.Length > trailing || wordsBefore > 0);
             }
         }
 
@@ -10655,8 +11774,8 @@ internal sealed class InlineLayout
                 _fragments.Count,
                 _fragments.Count > 0 ? _fragments[^1].Length : 0,
                 _fragments.Count > 0 ? _fragments[^1].Width : 0,
-                _fragments.Count > 0 ? _fragments[^1].Trims : null,
-                _fragments.Count > 0 ? _fragments[^1].AutoSpaces : null,
+                _fragments.Count > 0 ? _fragments[^1].Trims : default,
+                _fragments.Count > 0 ? _fragments[^1].AutoSpaces : default,
                 Width,
                 _opened,
                 opened);
@@ -10669,6 +11788,8 @@ internal sealed class InlineLayout
         /// </summary>
         public void Restore(Checkpoint at)
         {
+            _previousKnown = false;
+
             if (_fragments.Count > at.Fragments)
             {
                 _fragments.RemoveRange(at.Fragments, _fragments.Count - at.Fragments);
@@ -10697,8 +11818,8 @@ internal sealed class InlineLayout
             Int32 Fragments,
             Int32 Length,
             Double RunWidth,
-            String? RunTrims,
-            String? RunAutoSpaces,
+            MaskSpan RunTrims,
+            MaskSpan RunAutoSpaces,
             Double Width,
             OpenInline[] Open,
             Int32 Opened);
@@ -10751,17 +11872,19 @@ internal sealed class InlineLayout
         /// </summary>
         public void AddEmpty(Box box, ComputedStyle style, WritingModeInfo flow, InlineAncestor inline)
         {
+            _previousKnown = false;
             Enter(inline);
 
-            _fragments.Add(new TextFragment(String.Empty, 0, 0, 0, style, box, flow, inline));
+            _fragments.Add(_owner.NewFragment(String.Empty, 0, 0, 0, style, box, flow, inline));
         }
 
         /// <summary>Adds an atomic replaced box, which occupies its own used size on the line.</summary>
         public void AddReplaced(Box box, Double width, Double height, InlineAncestor? inline)
         {
+            _previousKnown = false;
             Enter(inline);
 
-            _fragments.Add(new TextFragment(
+            _fragments.Add(_owner.NewFragment(
                 String.Empty,
                 0,
                 0,
@@ -10783,9 +11906,10 @@ internal sealed class InlineLayout
         /// </summary>
         public void AddOutOfFlow(Box box, ComputedStyle style, InlineAncestor? inline)
         {
+            _previousKnown = false;
             Enter(inline);
 
-            _fragments.Add(new TextFragment(
+            _fragments.Add(_owner.NewFragment(
                 String.Empty,
                 0,
                 0,
@@ -10803,9 +11927,10 @@ internal sealed class InlineLayout
         /// </summary>
         public void AddAtomic(Box box, AtomicInline atomic, InlineAncestor? inline)
         {
+            _previousKnown = false;
             Enter(inline);
 
-            _fragments.Add(new TextFragment(
+            _fragments.Add(_owner.NewFragment(
                 String.Empty,
                 0,
                 0,
@@ -10822,9 +11947,10 @@ internal sealed class InlineLayout
         /// <summary>Adds one outer fragment of a two-line inline note.</summary>
         public void AddNote(Box box, ComputedStyle style, WritingModeInfo flow, InlineAncestor? inline, NoteRun note, Double width)
         {
+            _previousKnown = false;
             Enter(inline);
 
-            _fragments.Add(new TextFragment(
+            _fragments.Add(_owner.NewFragment(
                 String.Empty,
                 0,
                 0,
@@ -10846,9 +11972,10 @@ internal sealed class InlineLayout
             InlineAncestor? inline,
             InterlineNoteSource note)
         {
+            _previousKnown = false;
             Enter(inline);
 
-            _fragments.Add(new TextFragment(
+            _fragments.Add(_owner.NewFragment(
                 String.Empty,
                 0,
                 0,
@@ -10868,7 +11995,8 @@ internal sealed class InlineLayout
             InlineAncestor? inline,
             MarginNoteSource note)
         {
-            _fragments.Add(new TextFragment(
+            _previousKnown = false;
+            _fragments.Add(_owner.NewFragment(
                 String.Empty,
                 0,
                 0,
@@ -10883,12 +12011,14 @@ internal sealed class InlineLayout
         /// <summary>Adds fixed empty room used to place an interline note's midpoint.</summary>
         public void AddInterlineGap(Box box, ComputedStyle style, WritingModeInfo flow, Double width)
         {
+            _previousKnown = false;
+
             if (width <= 0)
             {
                 return;
             }
 
-            _fragments.Add(new TextFragment(
+            _fragments.Add(_owner.NewFragment(
                 String.Empty,
                 0,
                 0,
@@ -10910,7 +12040,8 @@ internal sealed class InlineLayout
             InterlineNoteSource note,
             Double position)
         {
-            _fragments.Add(new TextFragment(
+            _previousKnown = false;
+            _fragments.Add(_owner.NewFragment(
                 String.Empty,
                 0,
                 0,
@@ -10931,6 +12062,11 @@ internal sealed class InlineLayout
         {
             get
             {
+                if (_previousKnown)
+                {
+                    return _previousLast;
+                }
+
                 for (var index = _fragments.Count - 1; index >= 0; index--)
                 {
                     var fragment = _fragments[index];
@@ -10942,6 +12078,8 @@ internal sealed class InlineLayout
 
                     if (fragment.Note is not null)
                     {
+                        _previousLast = null;
+                        _previousKnown = true;
                         return null;
                     }
 
@@ -10952,6 +12090,8 @@ internal sealed class InlineLayout
 
                     if (fragment.IsReplaced || fragment.Atomic is not null || fragment.Ruby is not null)
                     {
+                        _previousLast = null;
+                        _previousKnown = true;
                         return null;
                     }
 
@@ -10963,21 +12103,51 @@ internal sealed class InlineLayout
                         ? CodePointBefore(fragment.Source, stop - take)
                         : 0;
                     var last = fragment.Length - 1;
-                    var trimmed = fragment.Trims is { } trims &&
-                        last < trims.Length &&
-                        trims[last] != '\0';
+                    var trimmed = _owner.CodeAt(fragment.Trims, fragment.Start + last) != '\0';
 
-                    return new PreviousText(
+                    _previousLast = new PreviousText(
                         NeighborOf(_measurer, fragment.Style, codePoint, fragment.Flow),
                         fragment.Style,
                         codePoint,
                         trimmed,
                         fragment.Flow,
                         before);
+                    _previousKnown = true;
+                    return _previousLast;
                 }
 
+                _previousLast = null;
+                _previousKnown = true;
                 return null;
             }
+        }
+
+        private void Remember(TextFragment fragment)
+        {
+            if (fragment.Length == 0)
+            {
+                _previousKnown = false;
+                return;
+            }
+
+            var stop = fragment.Start + fragment.Length;
+            var codePoint = TextClusters.BaseBefore(fragment.Source, stop);
+            var take = stop >= 2 && Char.IsSurrogatePair(fragment.Source, stop - 2) ? 2 : 1;
+            var before = fragment.Length > take
+                ? CodePointBefore(fragment.Source, stop - take)
+                : 0;
+            var trimmed = _owner.CodeAt(
+                fragment.Trims,
+                fragment.Start + fragment.Length - 1) != '\0';
+
+            _previousLast = new PreviousText(
+                NeighborOf(_measurer, fragment.Style, codePoint, fragment.Flow),
+                fragment.Style,
+                codePoint,
+                trimmed,
+                fragment.Flow,
+                before);
+            _previousKnown = true;
         }
 
         /// <summary>
@@ -11000,7 +12170,7 @@ internal sealed class InlineLayout
                 Previous,
                 !HasContent,
                 _startsParagraph,
-                wantMask: false);
+                mask: null);
 
         /// <summary>
         /// Gets what adding this range would space, without adding it: the caller asks before it tests
@@ -11020,7 +12190,7 @@ internal sealed class InlineLayout
                 style,
                 flow,
                 Previous,
-                wantMask: false);
+                mask: null);
 
         /// <summary>
         /// Takes the room a trimmed character gives up off the last run the line holds, and marks it
@@ -11048,15 +12218,13 @@ internal sealed class InlineLayout
                 }
 
                 var last = fragment.Length - 1;
-                var chars = (fragment.Trims ?? new String('\0', fragment.Length)).ToCharArray();
 
-                if (last >= chars.Length || chars[last] != '\0')
+                if (last < 0 || _owner.CodeAt(fragment.Trims, fragment.Start + last) != '\0')
                 {
                     return;
                 }
 
-                chars[last] = code;
-                fragment.Trims = MaskOf(chars);
+                _owner.AppendMark(ref fragment.TrimsRef, fragment.Start + last, code);
                 fragment.Width -= delta;
                 Width -= delta;
                 return;
@@ -11117,15 +12285,12 @@ internal sealed class InlineLayout
                     at--;
                 }
 
-                var chars = (fragment.AutoSpaces ?? new String('\0', fragment.Length)).ToCharArray();
-
-                if (at >= chars.Length || chars[at] != '\0')
+                if (at < 0 || _owner.CodeAt(fragment.AutoSpaces, fragment.Start + at) != '\0')
                 {
                     return;
                 }
 
-                chars[at] = AutoSpaceReplace;
-                fragment.AutoSpaces = MaskOf(chars);
+                _owner.AppendMark(ref fragment.AutoSpacesRef, fragment.Start + at, AutoSpaceReplace);
                 fragment.Width -= delta;
                 Width -= delta;
                 return;
@@ -11136,7 +12301,7 @@ internal sealed class InlineLayout
         /// Marks the last character the line holds as one a spaced boundary follows, which is what the
         /// merged run needs to draw the room the boundary between its pieces added.
         /// </summary>
-        private static void MarkLastBoundary(TextFragment fragment, Int32 before)
+        private void MarkLastBoundary(TextFragment fragment, Int32 before)
         {
             var text = fragment.Text;
             var at = Math.Max(0, before - 1);
@@ -11146,36 +12311,10 @@ internal sealed class InlineLayout
                 at--;
             }
 
-            var chars = (fragment.AutoSpaces ?? new String('\0', text.Length)).ToCharArray();
-
-            if (at < chars.Length)
+            if (at < text.Length)
             {
-                chars[at] = AutoSpaceAfter;
+                _owner.AppendMark(ref fragment.AutoSpacesRef, fragment.Start + at, AutoSpaceAfter);
             }
-
-            fragment.AutoSpaces = MaskOf(chars);
-        }
-
-        private static String? Concat(String? left, Int32 leftLength, String? right, Int32 rightLength)
-        {
-            if (left is null && right is null)
-            {
-                return null;
-            }
-
-            var chars = new Char[leftLength + rightLength];
-
-            if (left is not null)
-            {
-                left.CopyTo(0, chars, 0, Math.Min(leftLength, left.Length));
-            }
-
-            if (right is not null)
-            {
-                right.CopyTo(0, chars, leftLength, Math.Min(rightLength, right.Length));
-            }
-
-            return MaskOf(chars);
         }
 
         public void Add(
@@ -11207,6 +12346,8 @@ internal sealed class InlineLayout
             }
 
             var previous = Previous;
+            _owner._trimMarks.Clear();
+            _owner._autoMarks.Clear();
 
             var trim = PlanTrim(
                 _measurer,
@@ -11218,11 +12359,12 @@ internal sealed class InlineLayout
                 previous,
                 !HasContent,
                 _startsParagraph,
-                wantMask: true);
+                _owner._trimMarks);
 
             if (trim.RetroDelta != 0)
             {
                 TrimLast(trim.RetroDelta, trim.RetroCode);
+                _previousKnown = false;
 
                 // The trim just marked the character this looks back on, and a mark is part of what
                 // it answers: only the walk has to be taken again, and only here.
@@ -11239,7 +12381,7 @@ internal sealed class InlineLayout
                 style,
                 flow,
                 previous,
-                wantMask: true);
+                _owner._autoMarks);
 
             if (auto.RetroDelta != 0)
             {
@@ -11304,16 +12446,23 @@ internal sealed class InlineLayout
                     // character.
                     var before = last.Length;
 
-                    if (drawn is null && ReferenceEquals(last.Source, source) && last.Start + last.Length == start)
+                    var sameSource = ReferenceEquals(last.Source, source) && last.Start + last.Length == start;
+
+                    if (drawn is null && sameSource)
                     {
                         last.Length += length;
                     }
                     else
                     {
+                        _owner.RebaseMask(ref last.TrimsRef, last.Start);
+                        _owner.RebaseMask(ref last.AutoSpacesRef, last.Start);
                         last.MergeInto(last.Text + (drawn ?? source.Substring(start, length)));
                     }
 
-                    last.Trims = Concat(last.Trims, before, trim.Mask, length);
+                    _owner.AppendMask(
+                        ref last.TrimsRef,
+                        _owner._trimMarks,
+                        sameSource && drawn is null ? 0 : before - start);
 
                     // The two pieces are drawn as one run, so the room the boundary added is not a gap
                     // between boxes any more: it rides in the merged run's mask, on the last character
@@ -11323,29 +12472,34 @@ internal sealed class InlineLayout
                         MarkLastBoundary(last, before);
                     }
 
-                    last.AutoSpaces = Concat(last.AutoSpaces, before, auto.Mask, length);
+                    _owner.AppendMask(
+                        ref last.AutoSpacesRef,
+                        _owner._autoMarks,
+                        sameSource && drawn is null ? 0 : before - start);
                     last.Width += width;
                     last.FromTab = drawn is not null;
                     Width += width;
+                    Remember(last);
                     return;
                 }
             }
 
-            var added = new TextFragment(source, start, length, width, style, box, flow, inline)
-            {
-                Trims = trim.Mask,
-                AutoSpaces = auto.Mask,
-                AutoSpaceRoom = auto.Room,
-            };
+            var added = _owner.NewFragment(source, start, length, width, style, box, flow, inline);
+            added.Trims = _owner.CaptureMask(_owner._trimMarks);
+            added.AutoSpaces = _owner.CaptureMask(_owner._autoMarks);
+            added.AutoSpaceRoom = auto.Room;
 
             if (drawn is not null)
             {
+                _owner.RebaseMask(ref added.TrimsRef, start);
+                _owner.RebaseMask(ref added.AutoSpacesRef, start);
                 added.MergeInto(drawn);
                 added.FromTab = true;
             }
 
             _fragments.Add(added);
             Width += width;
+            Remember(added);
         }
 
         /// <summary>
@@ -11372,7 +12526,8 @@ internal sealed class InlineLayout
                 break;
             }
 
-            if (last is not { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null })
+            if (last is not { } run ||
+                !(run.Length > 0 && !run.IsReplaced && run.Ruby is null && run.Atomic is null))
             {
                 return true;
             }
@@ -11387,8 +12542,8 @@ internal sealed class InlineLayout
             // `line-break: anywhere` sets the whole question aside.
             var opensWithKeptSpace = TextChunker.IsBreakSpace(source[start]) &&
                 !TextChunker.IsCollapsible(source[start]);
-            var holdsKeptSpace = TextChunker.IsBreakSpace(last.Source[last.Start + last.Length - 1]) &&
-                !TextChunker.IsCollapsible(last.Source[last.Start + last.Length - 1]);
+            var holdsKeptSpace = TextChunker.IsBreakSpace(run.Source[run.Start + run.Length - 1]) &&
+                !TextChunker.IsCollapsible(run.Source[run.Start + run.Length - 1]);
 
             if (opensWithKeptSpace && !holdsKeptSpace && !style.BreaksAnywhere)
             {
@@ -11404,10 +12559,10 @@ internal sealed class InlineLayout
                 return true;
             }
 
-            var end = last.Start + last.Length;
+            var end = run.Start + run.Length;
 
             return LineBreaks.MayBreak(
-                TextChunker.CodePointBefore(last.Source, end),
+                TextChunker.CodePointBefore(run.Source, end),
                 TextChunker.CodePointAt(source, start),
                 style.WordBreakingRules);
         }
@@ -11445,9 +12600,10 @@ internal sealed class InlineLayout
             Double? hang,
             InlineAncestor? inline)
         {
+            _previousKnown = false;
             Enter(inline);
 
-            _fragments.Add(new TextFragment(
+            _fragments.Add(_owner.NewFragment(
                 text,
                 0,
                 text.Length,
@@ -11483,12 +12639,13 @@ internal sealed class InlineLayout
         {
             TrimTrailingSpaces(measurer);
 
-            var line = new Line { ContinuesFromPrevious = carried };
+            var line = _owner.NewLine(carried);
             line.Fragments.AddRange(_fragments);
 
             // The extent is worked out afresh from the runs the trimming left, because the padding and
             // border a chain change brings in are part of it and a run taken back out takes them with it.
-            var open = new List<OpenInline>();
+            var open = _buildOpen;
+            open.Clear();
             var used = 0.0;
 
             // Gathered from nothing rather than from zero: a face set on a line shorter than itself has a
@@ -11503,8 +12660,16 @@ internal sealed class InlineLayout
 
             // How far each fragment reaches above and below the baseline it stands on, kept because a
             // box's alignment is worked out from it once the line knows how far it reached.
-            var above = new Double[line.Fragments.Count];
-            var below = new Double[line.Fragments.Count];
+            if (_above.Length < line.Fragments.Count)
+            {
+                _above = new Double[line.Fragments.Count];
+                _below = new Double[line.Fragments.Count];
+            }
+
+            var above = _above;
+            var below = _below;
+            Array.Clear(above, 0, line.Fragments.Count);
+            Array.Clear(below, 0, line.Fragments.Count);
             var runAscent = Double.NegativeInfinity;
             var runDescent = Double.NegativeInfinity;
             var inFlow = false;
@@ -11814,6 +12979,7 @@ internal sealed class InlineLayout
                     fragment.BaselineShift = running;
                     alignedReach = Math.Max(alignedReach, above[position] - running);
                     alignedDepth = Math.Max(alignedDepth, below[position] + running);
+                    ReturnAncestorList(parents);
                 }
             }
 
@@ -11878,13 +13044,17 @@ internal sealed class InlineLayout
                     break;
                 }
 
-                if (last is { Length: > 0, IsReplaced: false, Ruby: null, Atomic: null } &&
-                    last.Source[last.Start + last.Length - 1] == '­' &&
-                    !String.IsNullOrEmpty(last.Style.HyphenateCharacter))
+                if (last is { } run &&
+                    run.Length > 0 &&
+                    !run.IsReplaced &&
+                    run.Ruby is null &&
+                    run.Atomic is null &&
+                    run.Source[run.Start + run.Length - 1] == '­' &&
+                    !String.IsNullOrEmpty(run.Style.HyphenateCharacter))
                 {
                     // A run of soft hyphens stands where the page could have cut the word once: the whole
                     // run gives way to the single mark the break draws.
-                    var text = last.Text;
+                    var text = run.Text;
                     var trailing = 0;
 
                     while (trailing < text.Length && text[text.Length - 1 - trailing] == (Char)0x00AD)
@@ -11892,24 +13062,24 @@ internal sealed class InlineLayout
                         trailing++;
                     }
 
-                    var mark = HyphenMark(last.Style, last.Flow);
+                    var mark = HyphenMark(run.Style, run.Flow);
                     var shy = text.Substring(text.Length - trailing, trailing);
-                    var gained = MeasureChunk(measurer, last.Style, mark, 0, mark.Length, last.Flow) -
-                        MeasureChunk(measurer, last.Style, shy, 0, shy.Length, last.Flow);
+                    var gained = MeasureChunk(measurer, run.Style, mark, 0, mark.Length, run.Flow) -
+                        MeasureChunk(measurer, run.Style, shy, 0, shy.Length, run.Flow);
 
-                    last.MergeInto(text[..^trailing] + mark);
-                    last.Width += gained;
+                    run.MergeInto(text[..^trailing] + mark);
+                    run.Width += gained;
                     used += gained;
 
                     // The mark now stands in the run's text, so the line is as tall as the character it
                     // draws: a column's upright hyphen is taller than the letters beside it, and the
                     // line that does not count it stands a little narrower than the same word spelled
                     // with the hyphen written out (hyphens-vertical-001).
-                    var drawnMark = measurer.GetRunMetrics(mark, last.Style.GetFont());
+                    var drawnMark = measurer.GetRunMetrics(mark, run.Style.GetFont());
                     var markAscent = drawnMark.Ascent;
                     var markDescent = drawnMark.Descent;
 
-                    if (last.Style.LineHeight is { } markLine)
+                    if (run.Style.LineHeight is { } markLine)
                     {
                         var half = (markLine - (markAscent + markDescent)) / 2;
                         markAscent += half;
@@ -11977,11 +13147,11 @@ internal sealed class InlineLayout
         /// styles (CSS Text 3 §6.2).
         /// </summary>
         private ComputedStyle? Governing(TextFragment? first) =>
-            first is null
+            first is not { } fragment
                 ? _fallback
-                : first.Atomic is not null || first.IsReplaced || first.Note is not null
-                    ? _fallback ?? first.Style
-                    : first.Style;
+                : fragment.Atomic is not null || fragment.IsReplaced || fragment.Note is not null
+                    ? _fallback ?? fragment.Style
+                    : fragment.Style;
 
         /// <summary>
         /// Gets the width of the white space the line trails into where its mode hangs it, marking each

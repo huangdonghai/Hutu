@@ -51,7 +51,8 @@ public sealed class HutuViewInternal : IDisposable
         IImageLoader? imageLoader = null,
         IFontLoader? fontLoader = null)
     {
-        _pipeline = new RenderingPipeline(_renderDevice, textMeasurer, imageLoader);
+        var fontStyles = (textMeasurer as IFontStyleManagerSource)?.FontStyles;
+        _pipeline = new RenderingPipeline(_renderDevice, textMeasurer, imageLoader, fontStyles);
         _renderDevice.Text = textMeasurer;
         _imageLoader = imageLoader;
         _fontLoader = fontLoader;

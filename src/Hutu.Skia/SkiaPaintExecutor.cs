@@ -1330,7 +1330,7 @@ public sealed class SkiaPaintExecutor
     /// </summary>
     private void DrawMarginText(SKCanvas canvas, PageMarginBand band)
     {
-        var font = new FontStyle(band.Family, band.FontSize, band.Weight, band.Italic);
+        var font = _measurer.FontStyles.GetOrAdd(band.Family, band.FontSize, band.Weight, band.Italic);
         var metrics = _measurer.GetMetrics(font);
         var width = _measurer.MeasureWidth(band.Text, font);
         var height = metrics.Ascent + metrics.Descent;
