@@ -895,7 +895,7 @@ internal sealed record LayoutProfile(
             return;
         }
 
-        if (face is null || !face.Equals(own))
+        if (face is null || !face.Value.Equals(own))
         {
             parent = face;
             face = own;
