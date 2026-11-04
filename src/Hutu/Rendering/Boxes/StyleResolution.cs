@@ -188,6 +188,7 @@ internal sealed class StyleResolution
     private RuleBucketIndex? _index;
     private StyleIntern _pool = new();
     private FusedAreaCache _cache = new();
+    private readonly FusedStyleCache _styles = new();
     private Boolean _restylesWithoutRelayout;
     private readonly Dictionary<IElement, StyleRecord> _records = new();
 
@@ -206,6 +207,9 @@ internal sealed class StyleResolution
 
     /// <summary>Gets the area cache the last build filled.</summary>
     internal FusedAreaCache Cache => _cache;
+
+    /// <summary>Gets the whole styles the current build has already resolved.</summary>
+    internal FusedStyleCache Styles => _styles;
 
     /// <summary>Gets the head links of the scope chain, which have no parent to be filed under.</summary>
     internal Dictionary<MatchedCascade, VariableScope> Heads => _heads;
@@ -265,6 +269,7 @@ internal sealed class StyleResolution
         _index = null;
         _pool = new StyleIntern();
         _cache = new FusedAreaCache();
+        _styles.Clear();
         _restylesWithoutRelayout = false;
         _records.Clear();
         _heads.Clear();

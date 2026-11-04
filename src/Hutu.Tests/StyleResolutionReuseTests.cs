@@ -223,6 +223,26 @@ public sealed class StyleResolutionReuseTests
             "and occupies the same frame");
     }
 
+    [Test]
+    public async Task ElementsThatDifferOnlyByAPresentationalHintDoNotShareAStyle()
+    {
+        using var view = new HutuViewInternal(new FakeTextMeasurer());
+        view.SetViewportSize(400, 600);
+        await view.SetHtml(
+            "<html><body style='margin:0'>" +
+            "<table><tr>" +
+            "<td valign='top'>top</td>" +
+            "<td valign='bottom'>bottom</td>" +
+            "</tr></table>" +
+            "</body></html>");
+
+        Assert.That(
+            TextRun(view, "top").Source.Style.VerticalAlign,
+            Is.EqualTo("top"),
+            "the hint is part of what a style cache has to key on");
+        Assert.That(TextRun(view, "bottom").Source.Style.VerticalAlign, Is.EqualTo("bottom"));
+    }
+
     private static String Page(String css) =>
         "<html><head><style>" + css + "</style></head>" +
         "<body style='margin:0'><div class='box'>text</div></body></html>";

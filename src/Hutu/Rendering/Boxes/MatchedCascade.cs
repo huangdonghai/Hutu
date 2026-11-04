@@ -343,36 +343,67 @@ internal sealed class MatchedCascade
         return _scan.Value;
     }
 
+    /// <summary>Gets whether any rule or the inline style declares the property.</summary>
+    internal Boolean Declares(String name) =>
+        Scan().Declared?.Contains(name) == true ||
+        name is "overflow-x" or "overflow-y" && Scan().Declared?.Contains("overflow") == true;
+
+    /// <summary>Gets whether any of the properties is declared.</summary>
+    internal Boolean DeclaresAny(ReadOnlySpan<String> names)
+    {
+        if (Scan().Declared is not { } declared)
+        {
+            return false;
+        }
+
+        foreach (var name in names)
+        {
+            if (declared.Contains(name))
+            {
+                return true;
+            }
+        }
+
+        // `overflow` is the one shorthand the CSSOM keeps written as a shorthand rather than
+        // expanding, so a question about either axis has to look for it by its own name too.
+        return (names.Contains("overflow-x") || names.Contains("overflow-y")) &&
+            declared.Contains("overflow");
+    }
+
     private static readonly IReadOnlyList<String> NoNames = Array.Empty<String>();
 
     private CascadeScan Walk()
     {
         List<String>? names = null;
+        HashSet<String>? declared = null;
         var environment = false;
         var variable = false;
 
         for (var i = 0; i < _rules.Count; i++)
         {
-            Read(_rules[i].Rule.Style, ref names, ref environment, ref variable);
+            Read(_rules[i].Rule.Style, ref names, ref declared, ref environment, ref variable);
         }
 
         if (_inline is not null)
         {
-            Read(_inline, ref names, ref environment, ref variable);
+            Read(_inline, ref names, ref declared, ref environment, ref variable);
         }
 
-        return new CascadeScan(names is null ? NoNames : names, variable, environment);
+        return new CascadeScan(names is null ? NoNames : names, variable, environment, declared);
     }
 
     private static void Read(
         ICssStyleDeclaration declaration,
         ref List<String>? names,
+        ref HashSet<String>? declared,
         ref Boolean environment,
         ref Boolean variable)
     {
         foreach (var property in declaration)
         {
             var name = property.Name;
+
+            (declared ??= new HashSet<String>(StringComparer.Ordinal)).Add(name);
 
             if (name.StartsWith("--", StringComparison.Ordinal))
             {
@@ -407,8 +438,12 @@ internal sealed class MatchedCascade
     /// <param name="UsesVariable">Whether a value names a variable - which needs a scope to read even
     /// when this cascade declares nothing, because the answer may be the fallback written after the name.</param>
     /// <param name="UsesEnvironment">Whether a value names an environment variable.</param>
+    /// <param name="Declared">Every property name a rule or the inline style declares, or null where
+    /// the cascade declares nothing at all. It answers the question a resolver asks before it reads a
+    /// group of properties whose answer would otherwise be the inherited or initial one.</param>
     internal readonly record struct CascadeScan(
         IReadOnlyList<String> CustomProperties,
         Boolean UsesVariable,
-        Boolean UsesEnvironment);
+        Boolean UsesEnvironment,
+        HashSet<String>? Declared);
 }

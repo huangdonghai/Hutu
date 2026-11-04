@@ -106,6 +106,23 @@ internal sealed class FusedAreaCache
     internal String? Hints(IElement element) =>
         PresentationalHints.Fingerprint(element) is { } hints ? Intern(hints) : null;
 
+    /// <summary>
+    /// Gets the element's own contribution to the text area: the tag that decides its white-space and
+    /// autospacing defaults, and the two obsolete attributes that hint its alignment and vertical
+    /// alignment. A text area is otherwise decided by the cascade and the parent's text.
+    /// </summary>
+    internal String TextKind(IElement element) =>
+        Intern(Tag(element.LocalName) + "|" + (element.GetAttribute("align") ?? String.Empty) +
+            "|" + (element.GetAttribute("valign") ?? String.Empty));
+
+    /// <summary>
+    /// Gets the element's own contribution to display and positioning: the obsolete <c>clear</c> a
+    /// break is read through, and the <c>align</c> that floats a table.
+    /// </summary>
+    internal String DisplayKind(IElement element) =>
+        Intern((PresentationalHints.Clear(element) ?? String.Empty) + "|" +
+            (PresentationalHints.Float(element)?.ToString() ?? String.Empty));
+
     /// <summary>Keeps one string per distinct stamp, so a key compares by reference like every other slot.</summary>
     private String Intern(String name)
     {
@@ -182,7 +199,8 @@ internal readonly struct AreaKey : IEquatable<AreaKey>
         Object? identity = null,
         Int32 stamp = 0,
         Object? variables = null,
-        Object? parentBox = null)
+        Object? parentBox = null,
+        Object? extra = null)
     {
         Cascade = cascade;
         Scalar = scalar;
@@ -191,6 +209,7 @@ internal readonly struct AreaKey : IEquatable<AreaKey>
         Stamp = stamp;
         Variables = variables;
         ParentBox = parentBox;
+        Extra = extra;
     }
 
     public MatchedCascade Cascade { get; }
@@ -206,6 +225,9 @@ internal readonly struct AreaKey : IEquatable<AreaKey>
     /// under parents of different sizes are two answers. Null for every other kind of resolution.
     /// </summary>
     public Object? ParentBox { get; }
+
+    /// <summary>Gets a further input a resolution reads, where one key slot is not enough.</summary>
+    public Object? Extra { get; }
 
     /// <summary>
     /// Gets the element's own contribution beyond the declarations: the property a relative
@@ -230,6 +252,7 @@ internal readonly struct AreaKey : IEquatable<AreaKey>
         ReferenceEquals(Identity, other.Identity) &&
         ReferenceEquals(Variables, other.Variables) &&
         ReferenceEquals(ParentBox, other.ParentBox) &&
+        ReferenceEquals(Extra, other.Extra) &&
         Stamp == other.Stamp &&
         BitConverter.DoubleToInt64Bits(Scalar) == BitConverter.DoubleToInt64Bits(other.Scalar);
 
@@ -250,5 +273,6 @@ internal readonly struct AreaKey : IEquatable<AreaKey>
             RuntimeHelpers.GetHashCode(Identity),
             Stamp,
             RuntimeHelpers.GetHashCode(Variables),
-            RuntimeHelpers.GetHashCode(ParentBox));
+            RuntimeHelpers.GetHashCode(ParentBox),
+            RuntimeHelpers.GetHashCode(Extra));
 }

@@ -660,6 +660,62 @@ internal static class PresentationalHints
         return keyed.Length == 0 ? null : keyed.ToString();
     }
 
+    /// <summary>
+    /// Gets every attribute of the element that a fused style reads directly, as one string - the
+    /// part of the element's identity a style can see. Two elements that match the same rules and
+    /// carry the same string here resolve the same style, so a style one of them paid for can serve
+    /// the other.
+    /// </summary>
+    /// <remarks>
+    /// The tag name is not written here: the caller keys it beside this, interned once per build.
+    /// The table hints a cell inherits from its table are folded in through <see cref="Fingerprint"/>,
+    /// because those are read off an ancestor and would otherwise be invisible to this element.
+    /// </remarks>
+    public static String? StyleFingerprint(IElement? element)
+    {
+        if (element is null)
+        {
+            return null;
+        }
+
+        StringBuilder? keyed = null;
+
+        // One walk over the attributes the element actually carries, rather than a lookup for each
+        // name a style might read: most elements carry a class and nothing else, and an attribute
+        // map asked sixteen times is a scan sixteen times.
+        foreach (var attribute in element.Attributes)
+        {
+            var name = attribute.Name;
+
+            if (name.Equals("href", StringComparison.OrdinalIgnoreCase))
+            {
+                // The engine paints an anchor with an `href` as a link, and a link asks for the
+                // pointer even when no rule says so. The value itself does not reach the style.
+                (keyed ??= new StringBuilder()).Append("href;");
+            }
+            else if (IsStyleHint(name) && attribute.Value is { Length: > 0 } value)
+            {
+                (keyed ??= new StringBuilder()).Append(name).Append('=').Append(value).Append(';');
+            }
+        }
+
+        if (Fingerprint(element) is { } table)
+        {
+            (keyed ??= new StringBuilder()).Append(table);
+        }
+
+        return keyed?.ToString();
+    }
+
+    /// <summary>Gets whether the attribute is one a fused style reads from its own element.</summary>
+    private static Boolean IsStyleHint(String name) => name switch
+    {
+        "lang" or "dir" or "text" or "bgcolor" or "background" or "border" or "bordercolor" or
+        "cellpadding" or "cellspacing" or "rules" or "frame" or "align" or "valign" or "clear" or
+        "width" or "height" => true,
+        _ => false,
+    };
+
     /// <summary>The elements HTML hints a size or a room at.</summary>
     private static readonly HashSet<String> TableFamily = new(StringComparer.OrdinalIgnoreCase)
     {

@@ -130,6 +130,36 @@ internal readonly struct ComputedStyle
         _values = values;
     }
 
+    /// <summary>
+    /// Builds a style from areas another element of the same kind already resolved, with this
+    /// element's own identity kept: a cached style is the values, not the element that first asked
+    /// for them, and a later read that turns to the element - a presentational hint, a link, a table
+    /// the sampled sheet gives a default - has to see the box it belongs to.
+    /// </summary>
+    internal ComputedStyle(
+        IRenderDimensions dimensions,
+        IElement? element,
+        StyleValues values,
+        FontFaceTable? faces,
+        Double zoom,
+        ColorFilter filter)
+    {
+        _style = null!;
+        _specified = null;
+        _dimensions = dimensions;
+        _element = element;
+        _parentFontSize = 0;
+        _parentColor = null;
+        _declaresFontSize = false;
+        _faces = faces;
+        _zoom = zoom > 0 ? zoom : 1;
+        _filter = filter;
+        _values = values;
+    }
+
+    /// <summary>Gets the resolved areas behind this style, shared by every box the same inputs serve.</summary>
+    internal StyleValues Values => _values;
+
     /// <summary>Gets the scale this box's lengths are used at, one where nothing was zoomed.</summary>
     internal Double Zoom => _zoom;
 
@@ -3462,6 +3492,13 @@ internal readonly struct ComputedStyle
     /// </remarks>
     internal sealed class StyleValues
     {
+        /// <summary>
+        /// Gets a copy of these values for one element: the areas are interned and safe to share, but
+        /// the slots the style fills lazily - a table, a position, a first letter - are written in
+        /// place and must belong to the box that writes them.
+        /// </summary>
+        internal StyleValues Copy() => (StyleValues)MemberwiseClone();
+
         internal BorderArea Border = BorderArea.Default;
 
         internal BoxModelArea BoxModel = BoxModelArea.Default;

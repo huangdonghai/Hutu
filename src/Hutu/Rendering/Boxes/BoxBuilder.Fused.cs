@@ -62,6 +62,7 @@ internal static partial class BoxBuilder
         // with nothing carried starts from a fresh state, which is what a document that has just
         // been loaded pays.
         var state = carried ?? new StyleResolution();
+        state.Styles.Clear();
         var index = state.Index;
         var supported = true;
 
@@ -94,6 +95,8 @@ internal static partial class BoxBuilder
             profile.FreshMatches = index.FreshMatches;
             profile.OpenedScopes = VariableScope.Opened;
             profile.ReusedScopes = VariableScope.Reused;
+            profile.StyleHits = state.Styles.Hits;
+            profile.StyleMisses = state.Styles.Misses;
         }
 
         if (!supported || box is null)
@@ -290,7 +293,33 @@ internal static partial class BoxBuilder
         else
         {
             var buildStart = FusedProfile.Stamp(profile);
-            style = FusedStyleFactory.Build(element, cascade, parent, device, faces, state.Pool, state.Cache, variables);
+            var styleKey = variables is null
+                ? new StyleKey(
+                    cascade,
+                    parent.Values,
+                    parent.Tag,
+                    parent.LineHeightHit,
+                    variables,
+                    element.LocalName,
+                    PresentationalHints.StyleFingerprint(element),
+                    device.RootFontSize,
+                    marks)
+                : default;
+
+            if (variables is null && state.Styles.TryGet(styleKey, out var held))
+            {
+                style = held.Create(element, device, faces);
+            }
+            else
+            {
+                style = FusedStyleFactory.Build(element, cascade, parent, device, faces, state.Pool, state.Cache, variables);
+
+                if (variables is null)
+                {
+                    state.Styles.Add(styleKey, new StyleEntry(style.Values.Copy(), style.Zoom, style.Effect));
+                }
+            }
+
             state.Remember(element, new StyleRecord(cascade, variables, style, marks));
 
             if (profile is not null)
@@ -926,6 +955,12 @@ internal sealed class FusedProfile
 
     /// <summary>How many variable-scope lookups were handed a link that was already open.</summary>
     public Int32 ReusedScopes;
+
+    /// <summary>How many elements read a style another element of the same build had resolved.</summary>
+    public Int32 StyleHits;
+
+    /// <summary>How many elements resolved a style of their own.</summary>
+    public Int32 StyleMisses;
 
     /// <summary>Takes a timestamp, or zero when there is no profile to fill.</summary>
     public static Int64 Stamp(FusedProfile? profile) => profile is null ? 0L : Stopwatch.GetTimestamp();

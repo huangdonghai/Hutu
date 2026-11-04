@@ -391,6 +391,13 @@ internal sealed class FusedParent
     /// </remarks>
     internal Boolean Stands { get; init; }
 
+    /// <summary>
+    /// Gets the resolved areas the box that handed this parent down owns. A child's style cache keys
+    /// on this instance: two boxes that look alike inherit alike, and every child of one box inherits
+    /// from the very same areas.
+    /// </summary>
+    public ComputedStyle.StyleValues? Values { get; init; }
+
     /// <summary>The values a parent hands down to its children.</summary>
     /// <param name="stands">
     /// Whether this parent's own style, match and scope are the instances the previous build
@@ -404,6 +411,7 @@ internal sealed class FusedParent
         Boolean stands = false) => new()
     {
         Stands = stands,
+        Values = style.Values,
 
         // What travels down is the value as the sheets wrote it: a child's own zoom is applied to its
         // own lengths, and the effective zoom it inherits is carried beside them in `Zoom`, so scaling
@@ -522,6 +530,79 @@ internal sealed class FusedParent
 /// </remarks>
 internal static class FusedStyleFactory
 {
+    /// <summary>The properties whose answer is the font area: every one is inherited, so a cascade
+    /// that writes none of them hands the parent's font down whole.</summary>
+    private static readonly String[] FontProperties =
+    {
+        "font", "font-size", "font-family", "font-weight", "font-style", "font-size-adjust",
+        "font-variant-east-asian", "font-feature-settings", "letter-spacing", "word-spacing",
+        "line-height",
+    };
+
+    /// <summary>The properties whose answer is the border area.</summary>
+    private static readonly String[] BorderProperties =
+    {
+        "border", "border-top", "border-right", "border-bottom", "border-left",
+        "border-block", "border-block-start", "border-block-end",
+        "border-inline", "border-inline-start", "border-inline-end",
+        "border-block-style", "border-block-width",
+        "border-inline-style", "border-inline-width",
+        "border-top-style", "border-right-style", "border-bottom-style", "border-left-style",
+        "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+        "border-block-start-style", "border-block-end-style",
+        "border-inline-start-style", "border-inline-end-style",
+        "border-block-start-width", "border-block-end-width",
+        "border-inline-start-width", "border-inline-end-width",
+        "border-radius",
+        "border-top-left-radius", "border-top-right-radius",
+        "border-bottom-right-radius", "border-bottom-left-radius",
+        "border-start-start-radius", "border-start-end-radius",
+        "border-end-start-radius", "border-end-end-radius",
+    };
+
+    /// <summary>The properties whose answer is the outline area.</summary>
+    private static readonly String[] VisualProperties =
+    {
+        "outline", "outline-style", "outline-width", "outline-offset",
+    };
+
+    /// <summary>The properties whose answer is the text area. A cascade that writes none of them leaves
+    /// the inherited text behaviour standing and only the initial non-inherited values to fill in.</summary>
+    private static readonly String[] TextProperties =
+    {
+        "white-space", "text-align", "text-align-last", "text-justify", "text-spacing-trim",
+        "text-autospace", "hanging-punctuation", "text-wrap-style", "text-wrap", "hyphens",
+        "hyphenate-character", "text-overflow", "overflow", "overflow-x", "overflow-y",
+        "-webkit-line-clamp", "line-clamp", "-webkit-box-orient", "vertical-align", "text-indent",
+        "text-fit", "tab-size", "overflow-wrap", "word-wrap", "word-break", "line-break",
+        "text-box-trim", "text-box-edge", "visibility",
+    };
+
+    /// <summary>The keyword properties whose answer is not already carried by a parent value. A cascade
+    /// that writes none of them leaves every one of these at its inherited or initial answer.</summary>
+    private static readonly String[] KeywordProperties =
+    {
+        "background", "background-color", "background-image", "background-position",
+        "background-position-x", "background-position-y", "background-size", "background-repeat",
+        "background-repeat-x", "background-repeat-y", "background-attachment", "background-origin",
+        "background-clip", "-webkit-background-clip",
+        "border-color", "border-top-color", "border-right-color", "border-bottom-color",
+        "border-left-color", "border-block-start-color", "border-block-end-color",
+        "border-inline-start-color", "border-inline-end-color",
+        "border-image-source", "border-image-slice", "border-image-width", "border-image-outset",
+        "border-image-repeat",
+        "box-shadow", "text-shadow", "clip", "clip-path", "corner-shape", "shape-outside",
+        "shape-margin", "cursor", "ruby-position", "ruby-overhang", "ruby-align",
+        "text-underline-position", "outline-color", "box-decoration-break",
+        "-webkit-text-fill-color", "text-stroke", "-webkit-text-stroke", "text-stroke-width",
+        "text-stroke-color", "-webkit-text-stroke-width", "-webkit-text-stroke-color",
+        "transform", "translate", "rotate", "scale", "order", "filter", "backdrop-filter",
+        "opacity", "mix-blend-mode", "scroll-marker-group", "will-change", "transform-style",
+        "transform-box", "transform-origin", "perspective", "perspective-origin",
+        "backface-visibility", "offset-path", "offset-distance", "offset-rotate", "offset-anchor",
+        "offset-position", "offset", "-hutu-note-placement", "-hutu-note-side",
+    };
+
     public static ComputedStyle Build(
         IElement element,
         MatchedCascade cascade,
@@ -590,12 +671,17 @@ internal static class FusedStyleFactory
         };
 
         // The parent's face travels with its size, because a relative font-size written in ex or ch is
-        // measured off that face rather than off the number.
-        var size = ComputedStyle.ResolveFontSizeFused(
-            find("font-size"),
-            new LengthReader.FontSource(
-                new Hutu.Rendering.Layout.FontStyle(parent.FontFamily, parent.FontSize, parent.Weight, parent.Italic, parent.FontAdjust)),
-            dimensions);
+        // measured off that face rather than off the number. A cascade that writes no font property at
+        // all has the parent's face, and reading the declarations to find that out would be the whole
+        // cost of a group whose answer is already in hand.
+        var fontDeclared = cascade.DeclaresAny(FontProperties);
+        var size = !fontDeclared && parent.Font is { } inheritedSize
+            ? inheritedSize.Size
+            : ComputedStyle.ResolveFontSizeFused(
+                find("font-size"),
+                new LengthReader.FontSource(
+                    new Hutu.Rendering.Layout.FontStyle(parent.FontFamily, parent.FontSize, parent.Weight, parent.Italic, parent.FontAdjust)),
+                dimensions);
 
         // The root's size is the number every `rem` further down the document is a share of, and the
         // length conversion has only the device to ask for it - so this is the one moment it is known,
@@ -619,8 +705,18 @@ internal static class FusedStyleFactory
         // fractions of the size, so a fold that is handed the number alone has nothing to measure them
         // against - and the answer is settled here, once, whether the font was read or reused.
         LengthReader.FontSource face;
+        FontArea font;
 
-        if (cache is not null && cache.TryFont(fontKey, out var font))
+        if (!fontDeclared && parent.Font is { } inheritedFont)
+        {
+            // Family, weight, slant, size adjustment, features, spacing and leading are all inherited
+            // and none of them was written here, so the face is the parent's own interned one.
+            font = inheritedFont;
+            face = new LengthReader.FontSource(
+                new Hutu.Rendering.Layout.FontStyle(
+                    font.Family, font.Size, font.Weight, font.Italic, font.Adjust, font.Features));
+        }
+        else if (cache is not null && cache.TryFont(fontKey, out font))
         {
             // Nothing read: family, weight, slant, spacing and leading all came from an element that
             // matched alike, at the same size, under the same inherited font and the same authored
@@ -696,9 +792,43 @@ internal static class FusedStyleFactory
         // read against the direction the parent's lines ran in, so two parents that aligned alike and
         // read the other way hand down two different answers.
         var textKey = new AreaKey(
-            cascade, size, parent.Text, stamp: (Int32)parent.Direction, variables: variables);
+            cascade,
+            size,
+            parent.Text,
+            identity: cache?.TextKind(element),
+            stamp: (Int32)parent.Direction,
+            variables: variables,
+            extra: parent.LineHeightHit);
 
-        if (cache is not null && cache.TryText(textKey, out var text))
+        var textDeclared = cascade.DeclaresAny(TextProperties);
+        var inheritedText = parent.Text;
+        var textPlain = !fontDeclared && !textDeclared &&
+            inheritedText is not null &&
+            PresentationalHints.Align(element) is null &&
+            PresentationalHints.DefaultTextAlign(element) is null &&
+            PresentationalHints.Valign(element) is null &&
+            !ComputedStyle.KeepsTextAsWritten(element.LocalName) &&
+            !element.LocalName.Equals("textarea", StringComparison.OrdinalIgnoreCase);
+        TextArea text;
+
+        if (textPlain)
+        {
+            // Every text property is inherited and none was written, so the parent's area stands for
+            // this element too. The values that are not inherited - the alignment the element has on
+            // its line, the mark a clipped line ends in, and the line-box trim - are the initial ones.
+            text = inheritedText! with
+            {
+                TextOverflow = "clip",
+                EllipsisOverflow = false,
+                LineClamp = null,
+                VerticalAlign = CssInitialValues.VerticalAlign,
+                Trim = TextBoxTrim.None,
+                EdgeStart = TextBoxEdge.Text,
+                EdgeEnd = TextBoxEdge.Text,
+            };
+            text = pool is null ? text : pool.Text(text);
+        }
+        else if (cache is not null && cache.TryText(textKey, out text))
         {
             // Nothing read.
         }
@@ -839,7 +969,22 @@ internal static class FusedStyleFactory
         var key = new AreaKey(
             cascade, size, parent.Border, identity: cache?.Hints(element), stamp: FlowStamp(parent), variables: variables);
 
-        if (cache is not null && cache.TryBorder(key, out var border))
+        var borderDeclared = cascade.DeclaresAny(BorderProperties);
+        var borderHint = PresentationalHints.Border(element);
+        BorderArea border;
+
+        if (!borderDeclared && borderHint is null)
+        {
+            // No border or radius was written and the element carries no obsolete border hint: the
+            // initial area - nothing drawn, no width - is the answer whatever the element is.
+            border = pool is null ? BorderArea.Default : pool.Border(BorderArea.Default);
+
+            if (cache is not null)
+            {
+                cache.Store(key, border);
+            }
+        }
+        else if (cache is not null && cache.TryBorder(key, out border))
         {
             // Resolved for this cascade and size already: the four style longhands, the four widths,
             // the line kinds and the four radii are not read again.
@@ -848,7 +993,7 @@ internal static class FusedStyleFactory
         {
             var borderStyles = ComputedStyle.ResolveBorderStylesFused(find, element, flow);
             var borderWidths = ComputedStyle.ResolveBorderWidthsFused(
-                find, borderStyles, face, dimensions, parent.Border, PresentationalHints.Border(element), flow);
+                find, borderStyles, face, dimensions, parent.Border, borderHint, flow);
             var built = new BorderArea
             {
                 TopStyle = borderStyles.Top,
@@ -970,7 +1115,7 @@ internal static class FusedStyleFactory
         // packed stamp, and the obsolete clear attribute a break is read through, which the cascade
         // cannot see at all.
         var plain = new AreaKey(
-            cascade, 0, identity: PresentationalHints.Clear(element),
+            cascade, 0, identity: cache?.DisplayKind(element),
             stamp: OverflowStamp(parent), variables: variables);
 
         if (cache is not null && cache.TryDisplay(plain, out var display))
@@ -1015,7 +1160,20 @@ internal static class FusedStyleFactory
             }
         }
 
-        if (cache is not null && cache.TryVisual(key, out var visual))
+        var visualDeclared = cascade.DeclaresAny(VisualProperties);
+        VisualEffectsArea visual;
+
+        if (!visualDeclared)
+        {
+            // No outline was written: nothing is drawn, whatever the element is.
+            visual = pool is null ? VisualEffectsArea.Default : pool.VisualEffects(VisualEffectsArea.Default);
+
+            if (cache is not null)
+            {
+                cache.Store(key, visual);
+            }
+        }
+        else if (cache is not null && cache.TryVisual(key, out visual))
         {
             // The outline was resolved for this cascade and size already.
         }
@@ -1070,7 +1228,47 @@ internal static class FusedStyleFactory
         var fillColor = ComputedStyle.ResolveTextFillColorFused(
             find("-webkit-text-fill-color")?.Value, parent.TextFillColor);
 
-        var keywords = new ComputedStyle.FusedKeywords
+        var keywordPlain = !cascade.DeclaresAny(KeywordProperties) &&
+            !element.HasAttribute("href") &&
+            !element.LocalName.Equals("textarea", StringComparison.OrdinalIgnoreCase) &&
+            PresentationalHints.BackgroundColor(element) is null &&
+            PresentationalHints.BorderColor(element) is null &&
+            ComputedStyle.BackgroundImageWithHint(null, element) is null;
+
+        ComputedStyle.FusedKeywords keywords;
+
+        if (keywordPlain)
+        {
+            // No keyword property was written and the element carries no legacy colour or picture
+            // hint. Everything inherited is the parent's answer; everything else is the initial
+            // one. The two properties still read here are the ones the cascade states on almost
+            // every block - `unicode-bidi`, whose UA value differs by element - and the text stroke
+            // and fill already resolved above.
+            keywords = new ComputedStyle.FusedKeywords
+            {
+                WritingMode = writingMode,
+                Direction = direction,
+                Language = language,
+                UnicodeBidi = find("unicode-bidi")?.Value,
+                Orientation = orientation,
+                CombinesUpright = combine,
+                Color = color,
+                TextShadows = parent.TextShadows,
+                Cursor = parent.Cursor,
+                Ruby = parent.Ruby,
+                RubyOverhang = parent.RubyOverhang,
+                RubyAlign = parent.RubyAlign,
+                UnderlinePosition = parent.UnderlinePosition,
+                OutlineColor = color,
+                BackgroundClip = Hutu.Rendering.BackgroundClip.BorderBox,
+                TextStrokeWidth = strokeWidth,
+                TextStrokeColor = strokeColor,
+                TextFillColor = fillColor,
+            };
+        }
+        else
+        {
+            keywords = new ComputedStyle.FusedKeywords
         {
             WritingMode = writingMode,
             Direction = direction,
@@ -1164,6 +1362,7 @@ internal static class FusedStyleFactory
             BorderBottomColor = ComputedStyle.ResolveBorderColorFused(ComputedStyle.BorderSideDeclaration(find, borderSides.Bottom, "bottom", "color"), color) ?? PresentationalHints.BorderColor(element),
             BorderLeftColor = ComputedStyle.ResolveBorderColorFused(ComputedStyle.BorderSideDeclaration(find, borderSides.Left, "left", "color"), color) ?? PresentationalHints.BorderColor(element),
         };
+        }
 
         var values = new ComputedStyle.StyleValues();
 
