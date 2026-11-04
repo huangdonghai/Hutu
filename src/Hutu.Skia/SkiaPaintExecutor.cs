@@ -1362,7 +1362,7 @@ public sealed class SkiaPaintExecutor
         if (!command.Flow.IsVertical)
         {
             var baseline = (Single)(command.Bounds.Y + command.Baseline);
-            var ink = Along(command, baseline);
+            var ink = NeedsInk(command) ? Along(command, baseline) : Array.Empty<SKRect>();
 
             DrawDecorations(canvas, paint, command, metrics, baseline, alongLine: true, ink, through: false);
 
@@ -1392,7 +1392,7 @@ public sealed class SkiaPaintExecutor
         // column is the one line stood off something else - the font its own decorating box is set in -
         // and DrawDecorations lays that out (CSS Text Decoration 4 §2.5, §2.9).
         var across = (Single)Axis(command, metrics);
-        var beside = Beside(command, metrics);
+        var beside = NeedsInk(command) ? Beside(command, metrics) : Array.Empty<SKRect>();
 
         DrawDecorations(canvas, paint, command, metrics, across, alongLine: false, beside, through: false);
 
@@ -2072,6 +2072,30 @@ public sealed class SkiaPaintExecutor
                 command.Trims,
                 command.AutoSpaces,
                 command.AutoSpaceRoom);
+
+    /// <summary>
+    /// Gets whether drawing this run needs glyph ink boxes: a line-through never skips, an
+    /// underline or overline only does where the run's script lets it, and a run with no
+    /// decoration asks for no ink at all.
+    /// </summary>
+    private static Boolean NeedsInk(TextCommand command)
+    {
+        if (command.Decorations.Count == 0 || command.Skip == DecorationSkip.None)
+        {
+            return false;
+        }
+
+        foreach (var decoration in command.Decorations)
+        {
+            if (decoration.Underline || decoration.Overline)
+            {
+                return command.Skip == DecorationSkip.All ||
+                    !TextClusters.StandsAcrossTheLine(command.Text);
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>Moves a run's boxes into the space the page is drawn in.</summary>
     private static SKRect[] Moved(SKRect[] boxes, Single x, Single y) =>
