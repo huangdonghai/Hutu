@@ -96,6 +96,14 @@ internal sealed class InlineLayout
     /// </summary>
     private readonly Dictionary<BaselineKey, Double> _baselines = new();
 
+    /// <summary>
+    /// The steps taken after a break opportunity, kept for the next line and reused by the next call.
+    /// A line may offer an opportunity after every character, so this list reaches the length of the
+    /// longest line and is then cleared rather than let go: one buffer serves every block of a layout,
+    /// and a fresh one per block cost the page its whole line length in entries each time.
+    /// </summary>
+    private readonly List<TailStep> _tail = new();
+
     private readonly record struct BaselineKey(Box Box, Double Width, Double Height, Double Basis, Double ContainingWidth, Double ContainingHeight);
 
     /// <summary>Drops the plans, which belong to one layout pass as the engine's own caches do.</summary>
@@ -3595,8 +3603,13 @@ internal sealed class InlineLayout
         List<TailStep>? following = null;
 
         // The one buffer the steps after an opportunity are kept in. Text that may break after every
-        // character made a fresh opportunity at every one of them, and a fresh list each time.
-        var tail = new List<TailStep>();
+        // character made a fresh opportunity at every one of them, and a fresh list each time; the
+        // buffer outlives the line and the block, because a break only ever reads the newest one.
+        // A nested call would clear the steps an outer line still holds, so the walk must stay a tree
+        // of calls that never re-enters itself - it does: a line plan makes its lines, and the note
+        // and balance passes that build their own run after it, not inside it.
+        var tail = _tail;
+        tail.Clear();
 
         // The room a stop or comma at the end of the line was left off for, which it only keeps while
         // it is the last thing on the line: the next thing put there takes that room back, and the
