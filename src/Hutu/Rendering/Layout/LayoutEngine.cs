@@ -74,7 +74,7 @@ internal sealed class LayoutEngine
     private readonly Dictionary<Object, Int32> _speakerSlots = new();
     private readonly List<DecorationSource> _speakers = new();
     private readonly List<ConsideredRun> _consideredRuns = new();
-    private readonly Dictionary<(IReadOnlyList<DecorationSource>, Int32), LineIdeal> _decorationIdeals = new();
+    private readonly List<DecorationIdeal> _decorationIdeals = new();
     private TrimmedRun[] _trimmedRuns = Array.Empty<TrimmedRun>();
     private Int32[] _trimmedStarts = Array.Empty<Int32>();
     private Int32[] _trimmedCounts = Array.Empty<Int32>();
@@ -88,6 +88,7 @@ internal sealed class LayoutEngine
     private Boolean _rootTakesOverflow;
     private Boolean _markFirstLine;
     private Boolean _collectOverflow;
+    private Boolean _hasOutsideMarkers;
     private Rect? _overflowBounds;
     private GatheredRun[] _gatheredRuns = Array.Empty<GatheredRun>();
     private Int32 _gatheredCount;
@@ -452,6 +453,7 @@ internal sealed record LayoutProfile(
     {
         _markFirstLine = markFirstLine;
         _collectOverflow = collectOverflow;
+        _hasOutsideMarkers = false;
         _gatheredCount = 0;
         _speakerSlots.Clear();
         _speakers.Clear();
@@ -475,7 +477,7 @@ internal sealed record LayoutProfile(
         // A marker stands on the finished geometry of the item it belongs to, so the whole tree is walked
         // once here, after every box has its place. Resolving one from the decorative walk per box would
         // walk each subtree again from every box above it, and measure every marker once per walk.
-        if (markFirstLine)
+        if (markFirstLine && _hasOutsideMarkers)
         {
             ResolveMarkers(box, FloatsOf(box.Source));
         }
@@ -532,9 +534,10 @@ internal sealed record LayoutProfile(
             ? whole
             : box.BorderBox;
 
-        box.Radii = style.BorderRadius.Equals(StyleCornerRadii.None)
+        var border = style.BorderRadius;
+        box.Radii = border.Equals(StyleCornerRadii.None)
             ? CornerRadii.None
-            : CornerRadii.Resolve(style.BorderRadius, rounded.Width, rounded.Height);
+            : CornerRadii.Resolve(border, rounded.Width, rounded.Height);
         box.BackgroundClip = style.BackgroundClip;
 
         // An inline element has no box of its own to clip anything to, and CSS says `overflow` has no
@@ -542,18 +545,34 @@ internal sealed record LayoutProfile(
         // The root's overflow is not its own to honour either - it is fixed to the viewport instead
         // (CSS Overflow 3 §3.3), and the viewport is the window the page is drawn into, not the box the
         // document's own content made, which can be a good deal shorter.
-        var isRoot = box.Source.Element is { } source &&
-            ReferenceEquals(source, source.Owner?.DocumentElement);
+        var clips = box.Kind != LayoutKind.Inline && style.ClipsOverflow;
 
-        // The body's overflow is not its own either where the root clips nothing: the viewport takes it
-        // instead, and the element it came from keeps the visible value it had before it was handed over
-        // (CSS Overflow 3 §3.3). A body that contains anything keeps its overflow to itself - the handover
-        // is off the moment the element asks not to be reached into (CSS Contain 1 §2).
-        var isBody = _rootTakesOverflow && !style.Contain.Stated &&
-            !style.Display.Equals("none", StringComparison.OrdinalIgnoreCase) &&
-            box.Source.Element is { } body && IsBodyOfRoot(body);
+        if (clips)
+        {
+            var isRoot = box.Source.Element is { } source &&
+                ReferenceEquals(source, source.Owner?.DocumentElement);
 
-        box.ClipsOverflow = box.Kind != LayoutKind.Inline && style.ClipsOverflow && !isRoot && !isBody;
+            // The body's overflow is not its own either where the root clips nothing: the viewport takes it
+            // instead, and the element it came from keeps the visible value it had before it was handed over
+            // (CSS Overflow 3 §3.3). A body that contains anything keeps its overflow to itself - the handover
+            // is off the moment the element asks not to be reached into (CSS Contain 1 §2).
+            var isBody = !isRoot && _rootTakesOverflow && !style.Contain.Stated &&
+                !style.Display.Equals("none", StringComparison.OrdinalIgnoreCase) &&
+                box.Source.Element is { } body && IsBodyOfRoot(body);
+
+            box.ClipsOverflow = !isRoot && !isBody;
+        }
+        else
+        {
+            box.ClipsOverflow = false;
+        }
+
+        if (box.Kind == LayoutKind.Block &&
+            box.Source.Marker is { Length: > 0 } &&
+            box.Source.MarkerPosition == MarkerPosition.Outside)
+        {
+            _hasOutsideMarkers = true;
+        }
 
         // The page's scrollable region is the union of every box the viewport can reach. The walk this
         // pass already makes has both the final geometry and the clip and fixed-frame answers - which
@@ -814,13 +833,31 @@ internal sealed record LayoutProfile(
     /// answered from.
     /// </summary>
     private static LineIdeal Ideal(
-        Dictionary<(IReadOnlyList<DecorationSource>, Int32), LineIdeal> ideals,
+        List<DecorationIdeal> ideals,
         LayoutBox line,
         ConsideredRun run,
-        Int32 asked) =>
-        ideals.TryGetValue((run.Asked, asked), out var ideal)
-            ? ideal
-            : ideals[(run.Asked, asked)] = new LineIdeal(Along(line));
+        Int32 asked)
+    {
+        for (var at = 0; at < ideals.Count; at++)
+        {
+            var held = ideals[at];
+
+            if (held.Index == asked && ReferenceEquals(held.Asked, run.Asked))
+            {
+                return held.Ideal;
+            }
+        }
+
+        var opened = new LineIdeal(Along(line));
+        ideals.Add(new DecorationIdeal(run.Asked, asked, opened));
+
+        return opened;
+    }
+
+    private readonly record struct DecorationIdeal(
+        List<DecorationSource> Asked,
+        Int32 Index,
+        LineIdeal Ideal);
 
     /// <summary>
     /// Sums what one decorating box's line takes from each run of the text it decorates: the ideal offsets
@@ -948,7 +985,7 @@ internal sealed record LayoutProfile(
     /// </summary>
     private readonly record struct ConsideredRun(
         LayoutBox Box,
-        IReadOnlyList<DecorationSource> Asked,
+        List<DecorationSource> Asked,
         FontStyle Parent,
         Double Baseline,
         Int32 Own,

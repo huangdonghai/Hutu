@@ -77,7 +77,15 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IFontStyleManagerSource, I
     internal SkiaTextBlobCache Blobs => _blobs;
 
     /// <summary>Gets the cached font for the style; the paint executor draws with the same instance.</summary>
-    public SKFont GetFont(FontStyle style) => _fonts.GetOrAdd(style, CreateFont);
+    public SKFont GetFont(FontStyle style)
+    {
+        if (_fonts.TryGetValue(style, out var held))
+        {
+            return held;
+        }
+
+        return _fonts.GetOrAdd(style, CreateFont(style));
+    }
 
     /// <summary>
     /// Gets the font a character is drawn with: the style's own font when it carries the glyph, and
@@ -98,7 +106,15 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IFontStyleManagerSource, I
     public Boolean HasGlyph(FontStyle style, Int32 codepoint) =>
         GetFont(style, codepoint).Typeface?.GetGlyph(codepoint) != 0;
 
-    public FontMetrics GetMetrics(FontStyle style) => _metrics.GetOrAdd(style, Measure);
+    public FontMetrics GetMetrics(FontStyle style)
+    {
+        if (_metrics.TryGetValue(style, out var held))
+        {
+            return held;
+        }
+
+        return _metrics.GetOrAdd(style, Measure(style));
+    }
 
     /// <summary>
     /// Gets the metrics a stretch of text is set with: the tallest ascent and descent among the fonts
@@ -210,9 +226,14 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IFontStyleManagerSource, I
             }
         }
 
-        return _decompositions.GetOrAdd(
-            new DecompositionKey(style, text),
-            _ => DecomposeInto(text, style, GetFont(style)));
+        var key = new DecompositionKey(style, text);
+
+        if (_decompositions.TryGetValue(key, out var held))
+        {
+            return held;
+        }
+
+        return _decompositions.GetOrAdd(key, DecomposeInto(text, style, GetFont(style)));
     }
 
     /// <summary>
@@ -235,9 +256,14 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IFontStyleManagerSource, I
             return Array.Empty<UprightCell>();
         }
 
-        return _uprightCells.GetOrAdd(
-            new DecompositionKey(style, text),
-            _ => DecomposeUprightInto(text, style));
+        var key = new DecompositionKey(style, text);
+
+        if (_uprightCells.TryGetValue(key, out var held))
+        {
+            return held;
+        }
+
+        return _uprightCells.GetOrAdd(key, DecomposeUprightInto(text, style));
     }
 
     public Double MeasureWidth(String text, FontStyle style)
@@ -620,9 +646,19 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IFontStyleManagerSource, I
 
         // The font is cached by typeface rather than by character, so two characters the same face
         // carries share one font and the run they sit in is not needlessly split between them.
-        return face is null
-            ? null
-            : _fallbackFonts.GetOrAdd(new FallbackFontKey(style, face.Handle), _ => new SKFont(face, (Single)EffectiveSize(style)));
+        if (face is null)
+        {
+            return null;
+        }
+
+        var key = new FallbackFontKey(style, face.Handle);
+
+        if (_fallbackFonts.TryGetValue(key, out var held))
+        {
+            return held;
+        }
+
+        return _fallbackFonts.GetOrAdd(key, new SKFont(face, (Single)EffectiveSize(style)));
     }
 
     private FontMetrics Measure(FontStyle style)
@@ -675,14 +711,16 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IFontStyleManagerSource, I
             return style.Size;
         }
 
-        var aspect = _aspects.GetOrAdd(new AspectKey(style.Family, style.Weight, style.IsItalic), key =>
+        var aspectKey = new AspectKey(style.Family, style.Weight, style.IsItalic);
+
+        if (!_aspects.TryGetValue(aspectKey, out var aspect))
         {
-            var probe = _fontStyles.GetOrAdd(key.Family, AspectProbeSize, key.Weight, key.Italic);
+            var probe = _fontStyles.GetOrAdd(aspectKey.Family, AspectProbeSize, aspectKey.Weight, aspectKey.Italic);
             var typeface = _resolver.Resolve(probe);
             var height = _openType.GetXHeight(typeface, (Single)AspectProbeSize);
 
-            return height is > 0 ? height.Value / AspectProbeSize : 0;
-        });
+            aspect = _aspects.GetOrAdd(aspectKey, height is > 0 ? height.Value / AspectProbeSize : 0);
+        }
 
         return aspect > 0 ? Math.Max(0, style.Size * adjust / aspect) : style.Size;
     }
