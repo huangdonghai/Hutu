@@ -238,6 +238,12 @@ internal sealed class LayoutBox
     internal List<DecorationSource>? Decorations { get; set; }
 
     /// <summary>
+    /// Gets or sets whether any text run on this line carries a decoration. A line with none does
+    /// not need the per-line decoration geometry pass at all.
+    /// </summary>
+    internal Boolean NeedsDecorationLines { get; set; }
+
+    /// <summary>
     /// Gets where a fieldset's rendered legend stands, in document coordinates, so that the border it
     /// stands in can leave a gap for it (HTML rendering §15.3.12).
     /// </summary>

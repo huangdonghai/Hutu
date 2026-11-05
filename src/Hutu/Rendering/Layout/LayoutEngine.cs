@@ -73,6 +73,8 @@ internal sealed class LayoutEngine
     /// </summary>
     private readonly Dictionary<Object, Int32> _speakerSlots = new();
     private readonly List<DecorationSource> _speakers = new();
+    private readonly List<ConsideredRun> _consideredRuns = new();
+    private readonly Dictionary<(IReadOnlyList<DecorationSource>, Int32), LineIdeal> _decorationIdeals = new();
     private TrimmedRun[] _trimmedRuns = Array.Empty<TrimmedRun>();
     private Int32[] _trimmedStarts = Array.Empty<Int32>();
     private Int32[] _trimmedCounts = Array.Empty<Int32>();
@@ -470,6 +472,14 @@ internal sealed record LayoutProfile(
 
         ResolveDecorations(box, null, null, null);
 
+        // A marker stands on the finished geometry of the item it belongs to, so the whole tree is walked
+        // once here, after every box has its place. Resolving one from the decorative walk per box would
+        // walk each subtree again from every box above it, and measure every marker once per walk.
+        if (markFirstLine)
+        {
+            ResolveMarkers(box, FloatsOf(box.Source));
+        }
+
         // The inset a decorating box asked for is counted along the whole of the text it decorates, which
         // is only known once every run carries the lines reaching it.
         ResolveInsets();
@@ -522,7 +532,9 @@ internal sealed record LayoutProfile(
             ? whole
             : box.BorderBox;
 
-        box.Radii = CornerRadii.Resolve(style.BorderRadius, rounded.Width, rounded.Height);
+        box.Radii = style.BorderRadius.Equals(StyleCornerRadii.None)
+            ? CornerRadii.None
+            : CornerRadii.Resolve(style.BorderRadius, rounded.Width, rounded.Height);
         box.BackgroundClip = style.BackgroundClip;
 
         // An inline element has no box of its own to clip anything to, and CSS says `overflow` has no
@@ -619,6 +631,13 @@ internal sealed record LayoutProfile(
 
         box.OwnDecoration = own;
 
+        if (box.Kind == LayoutKind.Text &&
+            box.Decorations is { Count: > 0 } &&
+            standing is { } decoratedLine)
+        {
+            decoratedLine.NeedsDecorationLines = true;
+        }
+
         // The final pass that gathers the page's overflow is also the one that settles the inset runs:
         // the text, its line and its decorations are all in hand here, so the inset is gathered without
         // two further walks of the tree.
@@ -670,15 +689,17 @@ internal sealed record LayoutProfile(
 
         // One line of text is underlined as one thing, however many runs of text it is set out of, so
         // its answer is taken from the runs once they know which boxes decorate them.
-        if (box.Kind == LayoutKind.Line)
+        if (box.Kind == LayoutKind.Line && box.NeedsDecorationLines)
         {
             SetDecorationLines(box);
         }
 
         if (_markFirstLine)
         {
-            Hutu.Rendering.Boxes.FirstLine.Step(box);
-            ResolveMarkers(box, FloatsOf(box.Source), recurse: false);
+            if (box.Source.FirstLinePaint is not null)
+            {
+                Hutu.Rendering.Boxes.FirstLine.Step(box);
+            }
         }
     }
 
@@ -736,12 +757,14 @@ internal sealed record LayoutProfile(
     /// </summary>
     private void SetDecorationLines(LayoutBox line)
     {
-        var runs = new List<ConsideredRun>();
+        var runs = _consideredRuns;
+        runs.Clear();
         ConsideredRuns(line, null, null, runs);
 
         // One answer per decorating box, told apart by the list of lines it reaches and the place in it:
         // a run's own lines and its container's are averaged separately, since each box lays its own.
-        var ideals = new Dictionary<(IReadOnlyList<DecorationSource>, Int32), LineIdeal>();
+        var ideals = _decorationIdeals;
+        ideals.Clear();
 
         foreach (var run in runs)
         {
@@ -923,7 +946,7 @@ internal sealed record LayoutProfile(
     /// parent is set in, which of the lines reaching it its own element asked for, and whether it stands
     /// out of the row its line is drawn on.
     /// </summary>
-    private sealed record ConsideredRun(
+    private readonly record struct ConsideredRun(
         LayoutBox Box,
         IReadOnlyList<DecorationSource> Asked,
         FontStyle Parent,
@@ -1254,10 +1277,7 @@ internal sealed record LayoutProfile(
     /// marker is. Only the marker that hangs beside an item is placed from the finished geometry.
     /// </para>
     /// </remarks>
-    private void ResolveMarkers(LayoutBox box, FloatTracks? around) =>
-        ResolveMarkers(box, around, recurse: true);
-
-    private void ResolveMarkers(LayoutBox box, FloatTracks? around, Boolean recurse)
+    private void ResolveMarkers(LayoutBox box, FloatTracks? around)
     {
         var source = box.Source;
 
@@ -1358,7 +1378,7 @@ internal sealed record LayoutProfile(
 
         foreach (var child in box.Children)
         {
-            ResolveMarkers(child, FloatsOf(box.Source) ?? around, recurse: true);
+            ResolveMarkers(child, FloatsOf(box.Source) ?? around);
         }
     }
 
