@@ -1410,8 +1410,13 @@ internal sealed partial class InlineLayout
         (flow.IsVertical
             ? MeasureColumn(source, start, length, style.GetFont(), style.FontSize, flow, measurer)
             : measurer.MeasureWidth(source.Substring(start, length), style.GetFont()))
-        + (style.LetterSpacing * SpacingUnits(source, start, length, flow))
-        + (style.WordSpacing * TextChunker.WordSeparators(source, start, length))
+        // Each spacing term is skipped where it cannot contribute: the multiplier is zero on every
+        // page that does not ask for the property, while the walk it multiplies costs the whole
+        // range - and `SpacingUnits` counts characters from the start of the node, so paying it per
+        // chunk made a long CJK text node quadratic. Zero times any count is zero, so the sum is
+        // the same one the terms would have added.
+        + (style.LetterSpacing == 0 ? 0 : style.LetterSpacing * SpacingUnits(source, start, length, flow))
+        + (style.WordSpacing == 0 ? 0 : style.WordSpacing * TextChunker.WordSeparators(source, start, length))
         + AutoSpaceWithin(measurer, style, source, start, length, flow)
         - TrimWithin(measurer, style, source, start, length, flow);
 

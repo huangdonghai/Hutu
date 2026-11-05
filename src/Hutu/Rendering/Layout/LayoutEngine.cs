@@ -387,13 +387,28 @@ internal sealed record LayoutProfile(
     private Size MeasureRoot(Box root, Double width, LayoutContext context)
     {
         var constraints = MeasureConstraints.FitWidth(width);
+
+        // Whether the page-flow mapping moves the root's inline margins is a question about margins
+        // alone, and `UsedMargin` reads the border box's width only through its auto sides. A root
+        // with no auto side therefore answers it before its content is measured - and the content is
+        // then line-broken once. Measuring first and re-measuring with the mapped margins broke the
+        // whole tree twice: the first breaking was at an extent the arranging pass never asked for,
+        // so no plan it made could serve, and every container paid for its lines a second time.
+        if (!root.Style.Margin.Left.IsAuto && !root.Style.Margin.Right.IsAuto)
+        {
+            var unmapped = BoxModel.UsedMargin(root.Style, width, width);
+            var mapped = RootMargin(root.Style, root.Flow, width, width);
+
+            return PlacesInlineAt(root, unmapped, mapped)
+                ? Measure(root, constraints, context)
+                : MeasureCore(root, constraints, context, mapped);
+        }
+
         var size = Measure(root, constraints, context);
         var own = BoxModel.UsedMargin(root.Style, width, size.Width);
         var margin = RootMargin(root.Style, root.Flow, width, size.Width);
-        var ownInline = root.Flow.InlineMargins(own);
-        var mappedInline = root.Flow.InlineMargins(margin);
 
-        if (ownInline.Start == mappedInline.Start && ownInline.End == mappedInline.End)
+        if (PlacesInlineAt(root, own, margin))
         {
             return size;
         }
@@ -401,6 +416,18 @@ internal sealed record LayoutProfile(
         // This is the same root box at the same available width, with only the page-flow margin
         // interpretation changed. Measuring it directly avoids confusing the ordinary cache entry.
         return MeasureCore(root, constraints, context, margin);
+    }
+
+    /// <summary>
+    /// Gets whether two resolved margins put the root's inline start and end in the same place, which
+    /// is what decides if the page-flow mapping asks for a breaking of its own.
+    /// </summary>
+    private static Boolean PlacesInlineAt(Box root, Thickness own, Thickness mapped)
+    {
+        var ownInline = root.Flow.InlineMargins(own);
+        var mappedInline = root.Flow.InlineMargins(mapped);
+
+        return ownInline.Start == mappedInline.Start && ownInline.End == mappedInline.End;
     }
 
     /// <summary>The root's border box, exactly as <see cref="Layout"/> computes it.</summary>
