@@ -398,6 +398,7 @@ internal sealed class SkiaTextShaper : IDisposable
 
                 var glyphs = new UInt16[infos.Length];
                 var points = new SKPoint[infos.Length];
+                var advances = new Single[infos.Length];
                 var advance = 0f;
 
                 // Skia's shaper repeats a horizontal advance down a column for some faces (Microsoft
@@ -421,12 +422,13 @@ internal sealed class SkiaTextShaper : IDisposable
                         positions[index].XOffset,
                         step <= 0 ? 0 : -(Single)positions[index].YOffset * font.Size / step);
 
-                    advance += face is null
+                    advances[index] = face is null
                         ? positions[index].YAdvance
                         : face.GetVerticalGlyphAdvance(glyphs[index]) / FixedPoint;
+                    advance += advances[index];
                 }
 
-                return new ShapedRun(glyphs, points, advance, true);
+                return new ShapedRun(glyphs, points, advance, true, advances);
             }
         }
         catch (Exception exception)
@@ -533,6 +535,7 @@ internal sealed class SkiaTextShaper : IDisposable
 
                 var glyphs = new UInt16[infos.Length];
                 var points = new SKPoint[infos.Length];
+                var advances = vertical ? new Single[infos.Length] : null;
                 var advance = 0f;
                 var walked = 0f;
 
@@ -550,7 +553,8 @@ internal sealed class SkiaTextShaper : IDisposable
                             positions[index].XOffset / FixedPoint,
                             step <= 0 ? 0 : -(Single)positions[index].YOffset * font.Size / step);
 
-                        advance += positions[index].YAdvance / FixedPoint;
+                        advances![index] = positions[index].YAdvance / FixedPoint;
+                        advance += advances[index];
                     }
                     else
                     {
@@ -567,7 +571,7 @@ internal sealed class SkiaTextShaper : IDisposable
                     }
                 }
 
-                return new ShapedRun(glyphs, points, advance, true);
+                return new ShapedRun(glyphs, points, advance, true, advances);
             }
         }
         catch (Exception exception)
@@ -734,12 +738,18 @@ internal sealed class SkiaTextShaper : IDisposable
 /// </remarks>
 internal readonly struct ShapedRun
 {
-    public ShapedRun(UInt16[] glyphs, SKPoint[] points, Single advance, Boolean succeeded)
+    public ShapedRun(
+        UInt16[] glyphs,
+        SKPoint[] points,
+        Single advance,
+        Boolean succeeded,
+        Single[]? verticalAdvances = null)
     {
         Glyphs = glyphs;
         Points = points;
         Advance = advance;
         Succeeded = succeeded;
+        VerticalAdvances = verticalAdvances ?? Array.Empty<Single>();
     }
 
     /// <summary>Gets the run that stands for shaping that did not happen, so the caller falls back.</summary>
@@ -753,6 +763,9 @@ internal readonly struct ShapedRun
 
     /// <summary>Gets the distance the whole run advances along the axis it is set on.</summary>
     public Single Advance { get; }
+
+    /// <summary>Gets the advance of each glyph down a column, or an empty array for a line.</summary>
+    public Single[] VerticalAdvances { get; }
 
     /// <summary>Gets whether the run was shaped, rather than left as the caller had it.</summary>
     public Boolean Succeeded { get; }

@@ -1,8 +1,10 @@
 using Hutu.Rendering.Layout;
 using SkiaSharp;
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Text;
 
 namespace Hutu.Skia;
 
@@ -433,111 +435,161 @@ public sealed class SkiaTextMeasurer : ITextMeasurer, IFontStyleManagerSource, I
 
     private List<UprightCell> DecomposeUprightInto(String text, FontStyle style)
     {
-        var cells = new List<UprightCell>(text.Length);
+        var segments = ArrayPool<VerticalSegment>.Shared.Rent(text.Length);
 
-        // Walked by code point, because a column takes one cell to the character of its text and the
-        // pair written above the BMP is one character: asked by character, each half was drawn in a cell
-        // of its own as the glyph a font keeps for what it has none of.
-        for (var position = 0; position < text.Length;)
+        try
         {
-            var length = WidthAt(text, position);
-            var codePoint = CodepointAt(text, position);
-            var characterText = text.Substring(position, length);
-            var start = position;
+            var segmentCount = 0;
 
-            position += length;
-
-            var font = GetFont(style, codePoint);
-            var vertical = _shaper.ShapeVertical(font, characterText, style.Features);
-            var hasOrigin = vertical.Succeeded && vertical.Glyphs.Length == 1;
-            var verticalAdvance = Math.Abs(vertical.Advance);
-            var exact = style.AsksForVerticalWidth &&
-                vertical.Succeeded &&
-                verticalAdvance > 0;
-            var horizontal = MeasureWidth(characterText, style);
-            var ownVertical = vertical.Succeeded &&
-                verticalAdvance > 0 &&
-                Math.Abs(verticalAdvance - horizontal) > 0.001;
-            // The half-width forms are half the em, whatever advance the face carries for the glyph it
-            // substituted - see OrientedRun.Advance for the layout's side of the same answer.
-            var advance = exact
-                ? Math.Max(verticalAdvance, style.Size / 2)
-                : ownVertical
-                    ? verticalAdvance
-                    : horizontal;
-
-            // The cell is centred across the column by the character's own width, not by a width
-            // feature: halt and vhal change how far the glyph advances, not where it stands across
-            // the column (CSS Writing Modes 3 §5.1).
-            var centreWidth = style.Features is null
-                ? horizontal
-                : MeasureWidth(characterText, WithoutFeatures(style));
-
-            // The form the font substitutes for the character is drawn by id, because it need not
-            // stand for one a document could name. The cell is still centred by the character's own
-            // width, which is the room the layout gave it.
-            if (hasOrigin && IsSubstituted(font, codePoint, vertical.Glyphs[0]))
+            // Walked by code point, because a column takes one cell to the character of its text and
+            // the pair written above the BMP is one character: asked by character, each half was drawn
+            // in a cell of its own as the glyph a font keeps for what it has none of.
+            for (var position = 0; position < text.Length;)
             {
-                cells.Add(new UprightCell(
-                    font,
-                    vertical.Glyphs[0],
+                var length = WidthAt(text, position);
+                var codePoint = CodepointAt(text, position);
+                var characterText = text.Substring(position, length);
+                var start = position;
+
+                position += length;
+
+                var font = GetFont(style, codePoint);
+                String? replacementText = null;
+
+                if (codePoint <= Char.MaxValue &&
+                    VerticalForms.TryGet((Char)codePoint, out var replacementCode) &&
+                    font.Typeface?.GetGlyph(replacementCode) != 0)
+                {
+                    replacementText = replacementCode.ToString();
+                }
+
+                segments[segmentCount++] = new VerticalSegment(
+                    start,
                     characterText,
-                    drawByGlyph: true,
-                    vertical.Points[0].Y,
-                    advance,
-                    centreWidth,
-                    start,
-                    exactAdvance: exact,
-                    ownVerticalAdvance: ownVertical));
-                continue;
-            }
-
-            // A font that has no form of its own is asked for the form Unicode reserved; the form is
-            // a glyph of the same font, drawn where the font puts that glyph. The reserved forms are a
-            // block of the BMP, so a character from the planes above has no form to be asked for.
-            if (codePoint <= Char.MaxValue &&
-                VerticalForms.TryGet((Char)codePoint, out var replacement) &&
-                font.Typeface?.GetGlyph(replacement) != 0)
-            {
-                var replacementText = replacement.ToString();
-                var replacementFont = font;
-                var replacementRun = _shaper.ShapeVertical(replacementFont, replacementText, style.Features);
-                var replacementHasOrigin = replacementRun.Succeeded && replacementRun.Glyphs.Length == 1;
-                var replacementCentre = style.Features is null
-                    ? MeasureWidthWith(replacementFont, replacementText, features: null)
-                    : MeasureWidthWith(replacementFont, replacementText, WithoutFeatures(style).Features);
-
-                cells.Add(new UprightCell(
-                    replacementFont,
-                    0,
                     replacementText,
-                    drawByGlyph: false,
-                    replacementHasOrigin ? replacementRun.Points[0].Y : null,
-                    advance,
-                    replacementCentre,
-                    start,
-                    exactAdvance: exact,
-                    ownVerticalAdvance: ownVertical));
-                continue;
+                    font,
+                    codePoint);
             }
 
-            // A character with no form at all is drawn as it was, on the baseline the font declared
-            // for it when it declared one at all.
-            cells.Add(new UprightCell(
-                font,
-                0,
-                characterText,
-                drawByGlyph: false,
-                hasOrigin ? vertical.Points[0].Y : null,
-                advance,
-                centreWidth,
-                start,
-                exactAdvance: exact,
-                ownVerticalAdvance: ownVertical));
+            var cells = new List<UprightCell>(segmentCount);
+
+            for (var start = 0; start < segmentCount;)
+            {
+                var font = segments[start].Font;
+                var end = start;
+                var runText = new StringBuilder();
+
+                while (end < segmentCount && ReferenceEquals(segments[end].Font, font))
+                {
+                    runText.Append(segments[end].CharacterText);
+                    end++;
+                }
+
+                var shaped = _shaper.ShapeVertical(font, runText.ToString(), style.Features);
+                var count = end - start;
+
+                if (shaped.Succeeded &&
+                    shaped.Glyphs.Length == count &&
+                    shaped.VerticalAdvances.Length == count)
+                {
+                    for (var at = start; at < end; at++)
+                    {
+                        AddUprightCell(cells, segments[at], shaped, at - start, style);
+                    }
+                }
+                else
+                {
+                    // A face that does not map one glyph to one cell keeps the cell-level fallback:
+                    // correctness wins over the run-level shape in that rare case.
+                    for (var at = start; at < end; at++)
+                    {
+                        var one = _shaper.ShapeVertical(font, segments[at].CharacterText, style.Features);
+                        AddUprightCell(cells, segments[at], one, 0, style);
+                    }
+                }
+
+                start = end;
+            }
+
+            return cells;
+        }
+        finally
+        {
+            ArrayPool<VerticalSegment>.Shared.Return(segments, clearArray: true);
+        }
+    }
+
+    private void AddUprightCell(
+        List<UprightCell> cells,
+        VerticalSegment segment,
+        ShapedRun vertical,
+        Int32 offset,
+        FontStyle style)
+    {
+        var glyph = vertical.Succeeded && offset < vertical.Glyphs.Length
+            ? vertical.Glyphs[offset]
+            : (UInt16)0;
+        var hasOrigin = vertical.Succeeded && offset < vertical.Glyphs.Length &&
+            offset < vertical.Points.Length;
+        var baseline = hasOrigin ? vertical.Points[offset].Y : (Single?)null;
+        var text = segment.CharacterText;
+        var drawByGlyph = hasOrigin &&
+            IsSubstituted(segment.Font, segment.CodePoint, glyph);
+
+        if (!drawByGlyph && segment.ReplacementText is { } replacementText)
+        {
+            var replacement = _shaper.ShapeVertical(segment.Font, replacementText, style.Features);
+            var replacementHasOrigin = replacement.Succeeded && replacement.Glyphs.Length > 0;
+            glyph = replacementHasOrigin ? replacement.Glyphs[0] : (UInt16)0;
+            baseline = replacementHasOrigin && replacement.Points.Length > 0
+                ? replacement.Points[0].Y
+                : null;
+            text = replacementText;
         }
 
-        return cells;
+        var verticalAdvance = vertical.Succeeded && offset < vertical.VerticalAdvances.Length
+            ? Math.Abs(vertical.VerticalAdvances[offset])
+            : 0;
+        var exact = style.AsksForVerticalWidth && vertical.Succeeded && verticalAdvance > 0;
+        var horizontal = MeasureWidth(segment.CharacterText, style);
+        var ownVertical = vertical.Succeeded &&
+            verticalAdvance > 0 &&
+            Math.Abs(verticalAdvance - horizontal) > 0.001;
+        var advance = exact
+            ? Math.Max(verticalAdvance, style.Size / 2)
+            : ownVertical
+                ? verticalAdvance
+                : horizontal;
+        var centreWidth = style.Features is null
+            ? horizontal
+            : MeasureWidth(segment.CharacterText, WithoutFeatures(style));
+
+        if (segment.ReplacementText is not null && !drawByGlyph)
+        {
+            centreWidth = style.Features is null
+                ? MeasureWidthWith(segment.Font, text, features: null)
+                : MeasureWidthWith(segment.Font, text, WithoutFeatures(style).Features);
+        }
+
+        cells.Add(new UprightCell(
+            segment.Font,
+            glyph,
+            text,
+            drawByGlyph,
+            baseline,
+            advance,
+            centreWidth,
+            segment.Start,
+            exactAdvance: exact,
+            ownVerticalAdvance: ownVertical));
     }
+
+    private readonly record struct VerticalSegment(
+        Int32 Start,
+        String CharacterText,
+        String? ReplacementText,
+        SKFont Font,
+        Int32 CodePoint);
 
     /// <summary>Measures a stretch with the exact face and features the caller chose.</summary>
     private Double MeasureWidthWith(SKFont font, String text, String? features)
@@ -878,7 +930,10 @@ internal readonly struct UprightCell
     /// <summary>Gets the font the cell is drawn with, after the fallback and the substitution.</summary>
     public SKFont Font { get; }
 
-    /// <summary>Gets the glyph the font substitutes for the character, when <see cref="DrawByGlyph"/> is set.</summary>
+    /// <summary>
+    /// Gets the glyph the shaped vertical run gave the cell. It is non-zero for an ordinary
+    /// substituted or mapped character, and zero only when shaping/mapping produced no glyph.
+    /// </summary>
     public UInt16 Glyph { get; }
 
     /// <summary>Gets the text the cell draws when it is not drawn by glyph id: the character, or the presentation form that stands for it.</summary>

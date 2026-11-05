@@ -1,6 +1,7 @@
 using Hutu.Rendering.Layout;
 using SkiaSharp;
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
@@ -33,6 +34,11 @@ internal sealed class SkiaTextBlobCache : IDisposable
     // A glyph's ink box is the shape of what it puts on the page, and it belongs to the face rather than
     // to the run: the same glyph asked by a decoration and by the next one is asked for the same answer.
     private readonly Dictionary<(Int32 Font, UInt16 Glyph), SKRect> _bounds = new();
+
+    // A character's fallback glyphs and their positions are a property of the face and the text, not
+    // of the cell that happens to hold them. A column repeats many characters, and the same mapping
+    // is asked for every one of those cells.
+    private readonly Dictionary<(SKFont Font, String Text), MappedRun> _mapped = new();
 
     // A blob is native memory, so the loser of the usual get-or-add race would leak what it built:
     // the build is kept under a lock, which costs nothing that matters, since it runs once per key.
@@ -221,6 +227,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
         lock (_gate)
         {
             _blobs.Clear();
+            _mapped.Clear();
         }
     }
 
@@ -232,6 +239,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
         }
 
         _blobs.Clear();
+        _mapped.Clear();
     }
 
     /// <summary>
@@ -624,7 +632,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
             cells[index] = cell;
         }
 
-        placements.Add(new Placement(run.Font, glyphs, positions, cells));
+        placements.Add(new Placement(run.Font, glyphs, positions, cells, glyphs.Length));
 
         return trimBefore - autoBefore + (clusterCode != '\0' ? clusterDelta : 0);
     }
@@ -650,8 +658,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
             return 0;
         }
 
-        var glyphs = run.Font.GetGlyphs(run.Text);
-        var positions = run.Font.GetGlyphPositions(run.Text, new SKPoint(pen, 0));
+        var mapped = Mapped(run.Font, run.Text);
+        var glyphs = mapped.Glyphs;
+        var positions = new SKPoint[mapped.Points.Length];
         var cells = new Single[positions.Length];
         var crossed = 0;
         var trimBefore = 0.0;
@@ -691,15 +700,38 @@ internal sealed class SkiaTextBlobCache : IDisposable
                 autoBefore -= advance - autoSpace;
             }
 
-            cells[index] = positions[index].X;
-            positions[index].X += (Single)((letterSpacing * index) + (wordSpacing * crossed) +
-                autoBefore - trimBefore + shift);
+            cells[index] = mapped.Points[index].X + pen;
+            positions[index] = new SKPoint(
+                cells[index] + (Single)((letterSpacing * index) + (wordSpacing * crossed) +
+                    autoBefore - trimBefore + shift),
+                mapped.Points[index].Y);
             trimBefore += delta;
         }
 
-        placements.Add(new Placement(run.Font, glyphs, positions, cells));
+        placements.Add(new Placement(run.Font, glyphs, positions, cells, glyphs.Length));
 
         return trimBefore - autoBefore;
+    }
+
+    /// <summary>
+    /// Gets the glyphs and relative positions a font's own mapping gives a stretch of text. The
+    /// mapping belongs to the face and the text, so a repeated character in a column is looked up
+    /// rather than asked of the native font again.
+    /// </summary>
+    private MappedRun Mapped(SKFont font, String text)
+    {
+        var key = (font, text);
+
+        if (_mapped.TryGetValue(key, out var known))
+        {
+            return known;
+        }
+
+        var glyphs = font.GetGlyphs(text);
+        var points = font.GetGlyphPositions(text, SKPoint.Empty);
+        var mapped = new MappedRun(glyphs, points);
+        _mapped[key] = mapped;
+        return mapped;
     }
 
     /// <summary>
@@ -730,7 +762,7 @@ internal sealed class SkiaTextBlobCache : IDisposable
         var metrics = _measurer.GetMetrics(style);
         var emBox = metrics.Ascent + metrics.Descent;
         var cells = _measurer.DecomposeUpright(text, style);
-        var placements = new List<Placement>();
+        using var placements = new ColumnPlacements();
 
         // The room goes after each place in the text the cells were cut from, which is read by the
         // character each cell stands for rather than by the glyph it draws: the form a font substitutes
@@ -747,8 +779,9 @@ internal sealed class SkiaTextBlobCache : IDisposable
         var reached = 0.0;
         var end = 0f;
 
-        foreach (var cell in cells)
+        for (var cellIndex = 0; cellIndex < cells.Count; cellIndex++)
         {
+            var cell = cells[cellIndex];
             while (crossed < points.Length && points[crossed] < cell.Index)
             {
                 crossed++;
@@ -808,19 +841,23 @@ internal sealed class SkiaTextBlobCache : IDisposable
             var baseline = (Single)(reached + naturalBaseline + shift);
             var centre = (Single)((emBox - cell.CentreWidth) / 2);
 
-            if (cell.DrawByGlyph)
+            if (cell.Glyph != 0)
             {
-                AddGlyph(placements, cell.Font, cell.Glyph, centre, baseline, (Single)reached);
+                placements.AddGlyph(cell.Font, cell.Glyph, centre, baseline, (Single)reached);
             }
             else
             {
-                AddMappedText(placements, cell.Font, cell.Text, centre, baseline, (Single)reached);
+                placements.AddMapped(
+                    cell.Font,
+                    Mapped(cell.Font, cell.Text),
+                    centre,
+                    baseline);
             }
 
             inline += step;
         }
 
-        Emit(builder, placements, end, along: false, reverse, ink);
+        Emit(builder, placements.Complete(), end, along: false, reverse, ink);
 
         return builder?.Build();
     }
@@ -895,30 +932,107 @@ internal sealed class SkiaTextBlobCache : IDisposable
         _ => 0,
     };
 
-    private void AddGlyph(
-        List<Placement> placements, SKFont font, UInt16 glyph, Single x, Single y, Single cell) =>
-        placements.Add(new Placement(font, [glyph], [new SKPoint(x, y)], [cell]));
-
-    private void AddMappedText(
-        List<Placement> placements, SKFont font, String text, Single x, Single y, Single cell)
+    /// <summary>
+    /// Collects a column's cells into one positioned run per contiguous font, rather than one
+    /// native run per character.
+    /// </summary>
+    private sealed class ColumnPlacements : IDisposable
     {
-        if (text.Length == 0)
+        private readonly List<Placement> _placements = new();
+        private readonly List<UInt16> _glyphs = new();
+        private readonly List<SKPoint> _positions = new();
+        private readonly List<Single> _cells = new();
+        private readonly List<Array> _rented = new();
+        private SKFont? _font;
+
+        public void AddGlyph(SKFont font, UInt16 glyph, Single x, Single y, Single cell)
         {
-            return;
+            Ensure(font);
+            _glyphs.Add(glyph);
+            _positions.Add(new SKPoint(x, y));
+            _cells.Add(cell);
         }
 
-        var glyphs = font.GetGlyphs(text);
-        var positions = font.GetGlyphPositions(text, new SKPoint(x, y));
-        var cells = new Single[positions.Length];
-
-        // Each of the glyphs the mapping made owns the room from where it stands to the next one down,
-        // which is what a back-to-front column moves.
-        for (var index = 0; index < cells.Length; index++)
+        public void AddMapped(SKFont font, MappedRun mapped, Single x, Single y)
         {
-            cells[index] = positions[index].Y;
+            Ensure(font);
+
+            for (var index = 0; index < mapped.Glyphs.Length; index++)
+            {
+                var point = index < mapped.Points.Length ? mapped.Points[index] : SKPoint.Empty;
+                _glyphs.Add(mapped.Glyphs[index]);
+                _positions.Add(new SKPoint(x + point.X, y + point.Y));
+                _cells.Add(y + point.Y);
+            }
         }
 
-        placements.Add(new Placement(font, glyphs, positions, cells));
+        public List<Placement> Complete()
+        {
+            Flush();
+            return _placements;
+        }
+
+        private void Ensure(SKFont font)
+        {
+            if (_font is null)
+            {
+                _font = font;
+            }
+            else if (!ReferenceEquals(_font, font))
+            {
+                Flush();
+                _font = font;
+            }
+        }
+
+        private void Flush()
+        {
+            if (_font is null || _glyphs.Count == 0)
+            {
+                return;
+            }
+
+            var glyphs = ArrayPool<UInt16>.Shared.Rent(_glyphs.Count);
+            var positions = ArrayPool<SKPoint>.Shared.Rent(_positions.Count);
+            var cells = ArrayPool<Single>.Shared.Rent(_cells.Count);
+            _glyphs.CopyTo(glyphs);
+            _positions.CopyTo(positions);
+            _cells.CopyTo(cells);
+            _rented.Add(glyphs);
+            _rented.Add(positions);
+            _rented.Add(cells);
+            _placements.Add(new Placement(
+                _font,
+                glyphs,
+                positions,
+                cells,
+                _glyphs.Count));
+
+            _glyphs.Clear();
+            _positions.Clear();
+            _cells.Clear();
+        }
+
+        public void Dispose()
+        {
+            foreach (var buffer in _rented)
+            {
+                switch (buffer)
+                {
+                    case UInt16[] glyphs:
+                        ArrayPool<UInt16>.Shared.Return(glyphs);
+                        break;
+                    case SKPoint[] positions:
+                        ArrayPool<SKPoint>.Shared.Return(positions);
+                        break;
+                    case Single[] cells:
+                        ArrayPool<Single>.Shared.Return(cells);
+                        break;
+                }
+            }
+
+            _rented.Clear();
+        }
     }
 
     /// <summary>
@@ -939,50 +1053,89 @@ internal sealed class SkiaTextBlobCache : IDisposable
     {
         // The room one glyph owns reaches to where the next of the run begins and the last of them to the
         // end of the run, so the cells are counted across the stretches rather than within one.
-        var begins = new List<Single>();
+        Single[]? begins = null;
+        var beginCount = 0;
 
-        foreach (var placement in placements)
+        if (reverse)
         {
-            begins.AddRange(placement.Cells);
+            foreach (var placement in placements)
+            {
+                beginCount += placement.Count;
+            }
+
+            begins = ArrayPool<Single>.Shared.Rent(beginCount);
+            var at = 0;
+
+            foreach (var placement in placements)
+            {
+                for (var index = 0; index < placement.Count; index++)
+                {
+                    begins[at++] = placement.Cells[index];
+                }
+            }
         }
 
-        var taken = 0;
-
-        foreach (var placement in placements)
+        try
         {
-            var positions = placement.Positions;
+            var taken = 0;
 
-            if (reverse)
+            foreach (var placement in placements)
             {
-                var moved = new SKPoint[positions.Length];
+                var count = placement.Count;
+                var positions = placement.Positions;
+                SKPoint[]? moved = null;
 
-                for (var index = 0; index < positions.Length; index++)
+                if (reverse)
                 {
-                    var stop = taken + index + 1 < begins.Count ? begins[taken + index + 1] : extent;
-                    var offset = along
-                        ? positions[index].X - placement.Cells[index]
-                        : positions[index].Y - placement.Cells[index];
+                    moved = ArrayPool<SKPoint>.Shared.Rent(count);
 
-                    moved[index] = along
-                        ? new SKPoint(extent - stop + offset, positions[index].Y)
-                        : new SKPoint(positions[index].X, extent - stop + offset);
+                    for (var index = 0; index < count; index++)
+                    {
+                        var stop = taken + index + 1 < beginCount
+                            ? begins![taken + index + 1]
+                            : extent;
+                        var offset = along
+                            ? positions[index].X - placement.Cells[index]
+                            : positions[index].Y - placement.Cells[index];
+
+                        moved[index] = along
+                            ? new SKPoint(extent - stop + offset, positions[index].Y)
+                            : new SKPoint(positions[index].X, extent - stop + offset);
+                    }
+
+                    positions = moved;
                 }
 
-                positions = moved;
+                try
+                {
+                    if (builder is not null)
+                    {
+                        var placed = builder.AllocatePositionedRun(placement.Font, count);
+                        placed.SetGlyphs(placement.Glyphs.AsSpan(0, count));
+                        placed.SetPositions(positions.AsSpan(0, count));
+                    }
+
+                    if (ink is not null)
+                    {
+                        Record(placement.Font, placement.Glyphs.AsSpan(0, count), positions.AsSpan(0, count), ink);
+                    }
+                }
+                finally
+                {
+                    if (moved is not null)
+                    {
+                        ArrayPool<SKPoint>.Shared.Return(moved);
+                    }
+                }
+
+                taken += count;
             }
-
-            taken += positions.Length;
-
-            if (builder is not null)
+        }
+        finally
+        {
+            if (begins is not null)
             {
-                var placed = builder.AllocatePositionedRun(placement.Font, placement.Glyphs.Length);
-                placed.SetGlyphs(placement.Glyphs);
-                placed.SetPositions(positions);
-            }
-
-            if (ink is not null)
-            {
-                Record(placement.Font, placement.Glyphs, positions, ink);
+                ArrayPool<Single>.Shared.Return(begins);
             }
         }
     }
@@ -1042,12 +1195,20 @@ internal sealed class SkiaTextBlobCache : IDisposable
     /// </summary>
     private sealed record TextBlob(SKTextBlob? Blob, SKRect[]? Ink);
 
+    /// <summary>A face's own glyph mapping for one text, with positions relative to the text origin.</summary>
+    private readonly record struct MappedRun(UInt16[] Glyphs, SKPoint[] Points);
+
     /// <summary>
     /// One stretch of the text as the font that carries it, the glyphs it was set in, where each stands
     /// and where the room each owns begins along the axis the text is set on. Collected before any of it
     /// goes on the builder, so a run asked back to front can move the whole of it at once.
     /// </summary>
-    private sealed record Placement(SKFont Font, UInt16[] Glyphs, SKPoint[] Positions, Single[] Cells);
+    private sealed record Placement(
+        SKFont Font,
+        UInt16[] Glyphs,
+        SKPoint[] Positions,
+        Single[] Cells,
+        Int32 Count);
 
     /// <summary>Whether a blob sets its text along a line or down a column.</summary>
     private enum BlobKind
