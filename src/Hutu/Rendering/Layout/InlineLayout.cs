@@ -159,6 +159,8 @@ internal sealed class InlineLayout
     private static void ReturnInts(Int32[] values) =>
         ArrayPool<Int32>.Shared.Return(values);
 
+    private const Int32 StackScratchLimit = 64;
+
     private static Double[] RentDoubles(Int32 length)
     {
         var values = ArrayPool<Double>.Shared.Rent(Math.Max(1, length));
@@ -551,7 +553,10 @@ internal sealed class InlineLayout
             return;
         }
 
-        var factors = RentDoubles(lines.Count);
+        Double[]? rentedFactors = null;
+        Span<Double> factors = lines.Count <= StackScratchLimit
+            ? stackalloc Double[lines.Count]
+            : (rentedFactors = RentDoubles(lines.Count));
         var shared = 1.0;
 
         for (var index = 0; index < lines.Count; index++)
@@ -604,7 +609,10 @@ internal sealed class InlineLayout
             ScaleLine(container, line, factor);
         }
 
-        ReturnDoubles(factors);
+        if (rentedFactors is not null)
+        {
+            ReturnDoubles(rentedFactors);
+        }
 
     }
 
@@ -2152,7 +2160,10 @@ internal sealed class InlineLayout
             // or an isolate embeds the line in what it already is, while an override rewrites the
             // direction of every character written on it (CSS Writing Modes 3 §5.2).
             var wrapped = new System.Text.StringBuilder(text.Length + (group.Count * 8) + 4);
-            var starts = RentInts(group.Count);
+            Int32[]? rentedStarts = null;
+            Span<Int32> starts = group.Count <= StackScratchLimit
+                ? stackalloc Int32[group.Count]
+                : (rentedStarts = RentInts(group.Count));
             var lineMarks = Overrides(container) ? Controls(container) : default;
 
             if (lineMarks.Open is { } opening)
@@ -2351,7 +2362,11 @@ internal sealed class InlineLayout
 
             group.Clear();
             joined.Clear();
-            ReturnInts(starts);
+
+            if (rentedStarts is not null)
+            {
+                ReturnInts(rentedStarts);
+            }
         }
 
         foreach (var fragment in line.Fragments)
@@ -2414,21 +2429,32 @@ internal sealed class InlineLayout
             return;
         }
 
-        var levels = RentInts(line.Fragments.Count);
+        Int32[]? rentedLevels = null;
+        Span<Int32> levels = line.Fragments.Count <= StackScratchLimit
+            ? stackalloc Int32[line.Fragments.Count]
+            : (rentedLevels = RentInts(line.Fragments.Count));
 
         for (var index = 0; index < line.Fragments.Count; index++)
         {
             if (line.Fragments[index].Level < 0)
             {
-                ReturnInts(levels);
+                if (rentedLevels is not null)
+                {
+                    ReturnInts(rentedLevels);
+                }
+
                 return;
             }
 
             levels[index] = line.Fragments[index].Level;
         }
 
-        var visual = Bidi.VisualOrder(levels.AsSpan(0, line.Fragments.Count));
-        ReturnInts(levels);
+        var visual = Bidi.VisualOrder(levels);
+
+        if (rentedLevels is not null)
+        {
+            ReturnInts(rentedLevels);
+        }
 
         if (baseLevel == 1)
         {
