@@ -97,6 +97,16 @@ internal sealed class LayoutBox
         Kind = kind;
     }
 
+    /// <summary>
+    /// The fields most boxes never carry, made on the first one that is asked for. A page's tree holds
+    /// one box per line fragment per element, and the properties only a transform, a fragment, a marker
+    /// or a table needs were most of every box's bytes - paid by the thousands of plain text and line
+    /// boxes that never look at them.
+    /// </summary>
+    private LayoutBoxTail? _tail;
+
+    private LayoutBoxTail Tail => _tail ??= new LayoutBoxTail();
+
     public Box Source { get; }
 
     public LayoutKind Kind { get; }
@@ -127,7 +137,24 @@ internal sealed class LayoutBox
     public Boolean HasStackingLevel { get; set; }
 
     /// <summary>Gets or sets the rule that pins a sticky box to the viewport as the page scrolls.</summary>
-    public StickyConstraint? Sticky { get; set; }
+    public StickyConstraint? Sticky
+    {
+        get => _tail?.Sticky;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.Sticky = null;
+                }
+            }
+            else
+            {
+                Tail.Sticky = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets whether the box forms a stacking context: the levels its descendants name are its own
@@ -157,7 +184,24 @@ internal sealed class LayoutBox
     /// pseudo-element is a box around the line, so anything it says nothing about is left as the text came
     /// to it - which is what lets a colour declared on the text inside stand beside a line that is red.
     /// </summary>
-    public Hutu.Rendering.Boxes.FirstLine.Paint? FirstLinePaint { get; set; }
+    public Hutu.Rendering.Boxes.FirstLine.Paint? FirstLinePaint
+    {
+        get => _tail?.FirstLinePaint;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.FirstLinePaint = null;
+                }
+            }
+            else
+            {
+                Tail.FirstLinePaint = value;
+            }
+        }
+    }
 
     public Thickness Margin { get; set; }
 
@@ -235,6 +279,17 @@ internal sealed class LayoutBox
     /// line lies over an outer one (CSS Text Decoration 4 §5.1). Resolved once the tree is placed, where
     /// the ancestry of a box is known and the painter need only read what it was given.
     /// </summary>
+    /// <summary>
+    /// Gets or sets the lines to draw across this box's text: the decorating boxes whose decoration
+    /// reaches here, from the outermost in - which is also the order they are painted in, so an inner
+    /// line lies over an outer one (CSS Text Decoration 4 §5.1). Resolved once the tree is placed, where
+    /// the ancestry of a box is known and the painter need only read what it was given.
+    /// </summary>
+    /// <remarks>
+    /// Kept on the box itself rather than in <see cref="LayoutBoxTail"/>: a page with an underlined
+    /// link gives one to every run it decorates, which in a document of cross-references is most of
+    /// the text.
+    /// </remarks>
     internal List<DecorationSource>? Decorations { get; set; }
 
     /// <summary>
@@ -247,7 +302,24 @@ internal sealed class LayoutBox
     /// Gets where a fieldset's rendered legend stands, in document coordinates, so that the border it
     /// stands in can leave a gap for it (HTML rendering §15.3.12).
     /// </summary>
-    internal Rect? LegendBox { get; set; }
+    internal Rect? LegendBox
+    {
+        get => _tail?.LegendBox;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.LegendBox = null;
+                }
+            }
+            else
+            {
+                Tail.LegendBox = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets whether this run is a ruby annotation, set above its base rather than text the line
@@ -286,14 +358,48 @@ internal sealed class LayoutBox
     /// no line - it hangs beside the item, in the space the list was given for it, and takes no part in
     /// where the item's own text stands.
     /// </remarks>
-    public Rect? MarkerBounds { get; set; }
+    public Rect? MarkerBounds
+    {
+        get => _tail?.MarkerBounds;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.MarkerBounds = null;
+                }
+            }
+            else
+            {
+                Tail.MarkerBounds = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets the distance from the top edge of <see cref="MarkerBounds"/> to the baseline the marker
     /// stands on, stated the way <see cref="Baseline"/> is - as a distance inside the box rather than a
     /// coordinate of the page.
     /// </summary>
-    public Double MarkerBaseline { get; set; }
+    public Double MarkerBaseline
+    {
+        get => _tail?.MarkerBaseline ?? 0;
+        set
+        {
+            if (value == 0)
+            {
+                if (_tail is not null)
+                {
+                    _tail.MarkerBaseline = 0;
+                }
+            }
+            else
+            {
+                Tail.MarkerBaseline = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets the writing mode, text orientation and upright combining the box was laid out
@@ -306,29 +412,114 @@ internal sealed class LayoutBox
     public Boolean Vertical => Flow.IsVertical;
 
     /// <summary>Gets the absolute URL of the image drawn in an <see cref="LayoutKind.Image"/> box.</summary>
-    public String? ImageUrl { get; set; }
+    public String? ImageUrl
+    {
+        get => _tail?.ImageUrl;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.ImageUrl = null;
+                }
+            }
+            else
+            {
+                Tail.ImageUrl = value;
+            }
+        }
+    }
 
     /// <summary>Gets how the image content is fitted into its box.</summary>
-    public ObjectFit ImageFit { get; set; }
+    public ObjectFit ImageFit
+    {
+        get => _tail?.ImageFit ?? default;
+        set
+        {
+            if (value == default)
+            {
+                if (_tail is not null)
+                {
+                    _tail.ImageFit = default;
+                }
+            }
+            else
+            {
+                Tail.ImageFit = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets the standalone SVG markup drawn in a <see cref="LayoutKind.Svg"/> box: the element's
     /// own subtree with any <c>&lt;use&gt;</c>-referenced symbols inlined, ready for the backend to parse.
     /// </summary>
-    public String? SvgMarkup { get; set; }
+    public String? SvgMarkup
+    {
+        get => _tail?.SvgMarkup;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.SvgMarkup = null;
+                }
+            }
+            else
+            {
+                Tail.SvgMarkup = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets the resolved corner radii of the border box. They are filled in once, after the
     /// box has been sized, because a percentage radius is relative to that size.
     /// </summary>
-    public CornerRadii Radii { get; set; }
+    public CornerRadii Radii
+    {
+        get => _tail?.Radii ?? CornerRadii.None;
+        set
+        {
+            if (value.IsZero)
+            {
+                if (_tail is not null)
+                {
+                    _tail.Radii = CornerRadii.None;
+                }
+            }
+            else
+            {
+                Tail.Radii = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets the box's resolved 2D transform, or null when it carries none. It is filled in once
     /// the box is sized, because a <c>translate</c> percentage and the transform origin are relative to
     /// the border box. It changes only how the box is drawn, never where the layout put it.
     /// </summary>
-    public Affine? Transform { get; set; }
+    public Affine? Transform
+    {
+        get => _tail?.Transform;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.Transform = null;
+                }
+            }
+            else
+            {
+                Tail.Transform = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets the point the <see cref="Transform"/> is taken about, within the border box: the
@@ -336,39 +527,106 @@ internal sealed class LayoutBox
     /// coordinates, so that moving the box later - a relative offset on an ancestor, a scroll, a table
     /// alignment - carries the point along without patching it wherever the box is moved.
     /// </summary>
-    public Offset TransformOrigin { get; set; }
+    public Offset TransformOrigin
+    {
+        get => _tail?.TransformOrigin ?? default;
+        set
+        {
+            if (value.X == 0 && value.Y == 0)
+            {
+                if (_tail is not null)
+                {
+                    _tail.TransformOrigin = default;
+                }
+            }
+            else
+            {
+                Tail.TransformOrigin = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets whether the box's plane is turned away from the viewer, which is when a box with
     /// <c>backface-visibility: hidden</c> shows nothing (CSS Transforms 2 §backface-visibility).
     /// </summary>
-    public Boolean FacesAway { get; set; }
+    public Boolean FacesAway
+    {
+        get => _tail?.FacesAway ?? false;
+        set
+        {
+            if (value)
+            {
+                Tail.FacesAway = true;
+            }
+            else if (_tail is not null)
+            {
+                _tail.FacesAway = false;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets whether the box is drawn through a matrix that cannot be undone - a zero scale, say -
     /// which CSS Transforms 2 §mathematical-description answers with nothing at all, the box and
     /// everything inside it.
     /// </summary>
-    public Boolean SingularTransform { get; set; }
+    public Boolean SingularTransform
+    {
+        get => _tail?.SingularTransform ?? false;
+        set
+        {
+            if (value)
+            {
+                Tail.SingularTransform = true;
+            }
+            else if (_tail is not null)
+            {
+                _tail.SingularTransform = false;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets the box's own matrix as a 4×4 of the page: the transform (and its origin) without any
     /// perspective a parent states, which is what a 3D rendering context composes.
     /// </summary>
-    internal Matrix4 OwnTransform4 { get; set; } = Matrix4.Identity;
+    internal Matrix4 OwnTransform4
+    {
+        get => _tail?.Matrices?.Own ?? Matrix4.Identity;
+        set => (Tail.Matrices ??= new LayoutBoxMatrices()).Own = value;
+    }
 
     /// <summary>
     /// Gets or sets the perspective the parent states, as a 4×4 of the page. It is carried apart from
     /// <see cref="OwnTransform4"/> because it applies to what is inside the box rather than to the box.
     /// </summary>
-    internal Matrix4 ParentView4 { get; set; } = Matrix4.Identity;
+    internal Matrix4 ParentView4
+    {
+        get => _tail?.Matrices?.ParentView ?? Matrix4.Identity;
+        set => (Tail.Matrices ??= new LayoutBoxMatrices()).ParentView = value;
+    }
 
     /// <summary>
     /// Gets or sets whether <see cref="Transform"/> already carries every ancestor's transform, which is
     /// what a box inside a 3D rendering context is drawn with: it is placed in the page outright rather
     /// than through the matrices the boxes around it were drawn with.
     /// </summary>
-    public Boolean AbsoluteTransform { get; set; }
+    public Boolean AbsoluteTransform
+    {
+        get => _tail?.AbsoluteTransform ?? false;
+        set
+        {
+            if (value)
+            {
+                Tail.AbsoluteTransform = true;
+            }
+            else if (_tail is not null)
+            {
+                _tail.AbsoluteTransform = false;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets the corner radii of the padding box, which is where the background stops once the border
@@ -411,7 +669,24 @@ internal sealed class LayoutBox
 
     /// <summary>Gets or sets the fragment this piece of a broken box shows, where the content was laid
     /// out in the whole box and only the stretch inside the fragment may be drawn.</summary>
-    public Rect? FragmentClip { get; set; }
+    public Rect? FragmentClip
+    {
+        get => _tail?.FragmentClip;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.FragmentClip = null;
+                }
+            }
+            else
+            {
+                Tail.FragmentClip = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets whether the fragment also cuts the inline axis. A column in continuous media names
@@ -426,14 +701,48 @@ internal sealed class LayoutBox
     /// <summary>Gets or sets the table box - the grid and the border around it, without the captions,
     /// which stand in the wrapper outside it. The table's background and border are painted there and
     /// not over them.</summary>
-    public Rect? TableBox { get; set; }
+    public Rect? TableBox
+    {
+        get => _tail?.TableBox;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.TableBox = null;
+                }
+            }
+            else
+            {
+                Tail.TableBox = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets the border box the block would have had before it was broken, where this fragment is
     /// one piece of it: a background is painted over that whole box and then cut with the box, which is
     /// what keeps one gradient running down both pieces of a sliced block.
     /// </summary>
-    public Rect? BackgroundOrigin { get; set; }
+    public Rect? BackgroundOrigin
+    {
+        get => _tail?.BackgroundOrigin;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.BackgroundOrigin = null;
+                }
+            }
+            else
+            {
+                Tail.BackgroundOrigin = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets whether the descendants are clipped to the padding box, which is what an
@@ -451,19 +760,70 @@ internal sealed class LayoutBox
 
     /// <summary>Gets or sets the border colours to paint instead of the box's own, set when the
     /// borders come from a shared table grid line.</summary>
-    public BorderColors? BorderColors { get; set; }
+    public BorderColors? BorderColors
+    {
+        get => _tail?.BorderColors;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.BorderColors = null;
+                }
+            }
+            else
+            {
+                Tail.BorderColors = value;
+            }
+        }
+    }
 
     /// <summary>Gets or sets the strokes to paint instead of the box's own, set with
     /// <see cref="BorderColors"/>: a collapsed line is drawn in the stroke of whichever border won it,
     /// which may be a row's or a column's rather than this box's.</summary>
-    public BorderStyles? BorderStyles { get; set; }
+    public BorderStyles? BorderStyles
+    {
+        get => _tail?.BorderStyles;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.BorderStyles = null;
+                }
+            }
+            else
+            {
+                Tail.BorderStyles = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets the band a box's left and right borders are drawn over, where that is not the box's own
     /// rectangle: under the collapsing border model the line a cell runs along reaches to the middle of
     /// the horizontal lines above and below it (CSS 2.1 §17.6.2). Null everywhere else.
     /// </summary>
-    public Rect? SideBand { get; set; }
+    public Rect? SideBand
+    {
+        get => _tail?.SideBand;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.SideBand = null;
+                }
+            }
+            else
+            {
+                Tail.SideBand = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets the two bands a table's own halves of its top and bottom lines are drawn in, under the
@@ -471,21 +831,72 @@ internal sealed class LayoutBox
     /// the table's edge when the rows' lines on the table's vertical edges differ in width (CSS 2.1
     /// §17.6.2, measured: wpt/css-break/table/table-collapsed-borders-paint-at-boundary). Null elsewhere.
     /// </summary>
-    public (Rect Top, Rect Bottom)? TableEdgeBands { get; set; }
+    public (Rect Top, Rect Bottom)? TableEdgeBands
+    {
+        get => _tail?.TableEdgeBands;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.TableEdgeBands = null;
+                }
+            }
+            else
+            {
+                Tail.TableEdgeBands = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets the decorations the container laid out its gaps with. Only a context that makes gaps
     /// - and knows how many of them there are and where each one stands - can say which of the container's
     /// rule list a gap takes, so it hands the finished bands to the painter here.
     /// </summary>
-    public List<GapRuleSegment>? GapDecorations { get; set; }
+    public List<GapRuleSegment>? GapDecorations
+    {
+        get => _tail?.GapDecorations;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.GapDecorations = null;
+                }
+            }
+            else
+            {
+                Tail.GapDecorations = value;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets the marks this run of text is drawn with, one per character the page asked to have
     /// marked, placed against the line the run stands on. They are paint alone: the line was laid out as
     /// though the text had none.
     /// </summary>
-    public List<EmphasisMark>? Marks { get; set; }
+    public List<EmphasisMark>? Marks
+    {
+        get => _tail?.Marks;
+        set
+        {
+            if (value is null)
+            {
+                if (_tail is not null)
+                {
+                    _tail.Marks = null;
+                }
+            }
+            else
+            {
+                Tail.Marks = value;
+            }
+        }
+    }
 
     public Rect ContentBox => new(
         BorderBox.X + Border.Left + Padding.Left,
@@ -499,4 +910,46 @@ internal sealed class LayoutBox
         BorderBox.Y + Border.Top,
         Math.Max(0, BorderBox.Width - Border.Horizontal),
         Math.Max(0, BorderBox.Height - Border.Vertical));
+}
+
+/// <summary>
+/// The cold half of a <see cref="LayoutBox"/>: what only a transformed, broken, marked or tabular box
+/// carries. It is made on the first such field a box is given, so the plain text and line boxes that
+/// make up most of a page's tree pay one reference for it and nothing else.
+/// </summary>
+internal sealed class LayoutBoxTail
+{
+    public StickyConstraint? Sticky;
+    public Hutu.Rendering.Boxes.FirstLine.Paint? FirstLinePaint;
+    public Rect? MarkerBounds;
+    public Double MarkerBaseline;
+    public String? ImageUrl;
+    public ObjectFit ImageFit;
+    public String? SvgMarkup;
+    public CornerRadii Radii;
+    public Affine? Transform;
+    public Offset TransformOrigin;
+    public Boolean FacesAway;
+    public Boolean SingularTransform;
+    public Boolean AbsoluteTransform;
+    public Rect? FragmentClip;
+    public Rect? TableBox;
+    public Rect? BackgroundOrigin;
+    public Rect? SideBand;
+    public (Rect Top, Rect Bottom)? TableEdgeBands;
+    public BorderColors? BorderColors;
+    public BorderStyles? BorderStyles;
+    public List<GapRuleSegment>? GapDecorations;
+    public List<EmphasisMark>? Marks;
+    public Rect? LegendBox;
+
+    /// <summary>The 3D matrices, kept apart because a page rarely states a perspective at all.</summary>
+    public LayoutBoxMatrices? Matrices;
+}
+
+/// <summary>A box's own 4×4 and the perspective a parent states over it.</summary>
+internal sealed class LayoutBoxMatrices
+{
+    public Matrix4 Own = Matrix4.Identity;
+    public Matrix4 ParentView = Matrix4.Identity;
 }
