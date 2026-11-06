@@ -1238,8 +1238,16 @@ internal sealed class RuleBucketIndex
     /// Gets the element's inline style. Only the two element kinds that can carry a style attribute
     /// have one, which is the same test the cascade made before it was cached.
     /// </summary>
+    /// <summary>
+    /// Gets the element's own declaration, or null where it states no <c>style</c> attribute. The
+    /// reader hands out a declaration for every element it is asked about, so asking one that writes
+    /// none makes an empty object to answer with - and the cascade key serialises that declaration to
+    /// text, which took a pooled string builder (and its lock) on every element of every build.
+    /// </summary>
     private static ICssStyleDeclaration? InlineOf(IElement element) =>
-        element is IHtmlElement || element is ISvgElement ? element.GetStyle() : null;
+        (element is IHtmlElement || element is ISvgElement) && element.HasAttribute("style")
+            ? element.GetStyle()
+            : null;
 
     /// <summary>
     /// What one match is worth to another: the rules it matched, in the order the cascade applied
