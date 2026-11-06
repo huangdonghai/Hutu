@@ -273,6 +273,12 @@ internal sealed record LayoutProfile(
         }
 
         // Allocation, each phase measured on its own so the figure is that phase's garbage alone.
+        //
+        // The count is the thread's, not the process's: layout runs on one thread, and the process-wide
+        // figure is not precise - it is read back from a running total the runtime updates at its own
+        // pace, so a collection during one phase can land the previous phase's bytes in its total and
+        // make an arrangement look twice as expensive as it is. The thread's own count is exact and
+        // costs a field read.
         var measureAlloc = 0.0;
         var arrangeAlloc = 0.0;
         var decorationAlloc = 0.0;
@@ -281,18 +287,18 @@ internal sealed record LayoutProfile(
         for (var iteration = 0; iteration < allocRuns; iteration++)
         {
             ResetCaches();
-            var before = GC.GetTotalAllocatedBytes(false);
+            var before = GC.GetAllocatedBytesForCurrentThread();
             MeasureRoot(root, width, context);
-            measureAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
+            measureAlloc += (GC.GetAllocatedBytesForCurrentThread() - before) / 1048576.0;
         }
 
         for (var iteration = 0; iteration < allocRuns; iteration++)
         {
             ResetCaches();
             var size = MeasureRoot(root, width, context);
-            var before = GC.GetTotalAllocatedBytes(false);
+            var before = GC.GetAllocatedBytesForCurrentThread();
             Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
-            arrangeAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
+            arrangeAlloc += (GC.GetAllocatedBytesForCurrentThread() - before) / 1048576.0;
         }
 
         for (var iteration = 0; iteration < allocRuns; iteration++)
@@ -300,9 +306,9 @@ internal sealed record LayoutProfile(
             ResetCaches();
             var size = MeasureRoot(root, width, context);
             var rootBox = Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
-            var before = GC.GetTotalAllocatedBytes(false);
+            var before = GC.GetAllocatedBytesForCurrentThread();
             ResolveDecorations(rootBox);
-            decorationAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
+            decorationAlloc += (GC.GetAllocatedBytesForCurrentThread() - before) / 1048576.0;
         }
 
         for (var iteration = 0; iteration < allocRuns; iteration++)
@@ -312,9 +318,9 @@ internal sealed record LayoutProfile(
             var rootBox = Arrange(root, RootBorderBox(root, size, width, viewport, context), context);
             ResolveDecorations(rootBox);
             var content = ScrollableOverflow.Of(rootBox, new Rect(0, 0, width, viewport.Height));
-            var before = GC.GetTotalAllocatedBytes(false);
+            var before = GC.GetAllocatedBytesForCurrentThread();
             ScrollableOverflow.MoveToOrigin(rootBox, content);
-            overflowAlloc += (GC.GetTotalAllocatedBytes(false) - before) / 1048576.0;
+            overflowAlloc += (GC.GetAllocatedBytesForCurrentThread() - before) / 1048576.0;
         }
 
         return new LayoutProfile(
