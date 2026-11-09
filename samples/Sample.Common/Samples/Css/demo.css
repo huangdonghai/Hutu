@@ -9,6 +9,7 @@ body {
     background: #fff;
     font-family: Arial, "Microsoft YaHei", sans-serif;
     line-height: 1.65;
+	text-autospace: normal;
 }
 
 .demo {
